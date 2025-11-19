@@ -1,0 +1,24 @@
+DEBUG: Source: PROJ-0004, Target: PROJ-0005
+DEBUG: Calling merge_projects
+DEBUG: Checking PSOA Project.project_name for PROJ-0004
+DEBUG: Checking Payment Entry.project for PROJ-0004
+DEBUG: Checking Loyalty Program.project for PROJ-0004
+DEBUG: Checking POS Invoice.project for PROJ-0004
+DEBUG: Checking Shipping Rule.project for PROJ-0004
+DEBUG: Checking Budget.project for PROJ-0004
+DEBUG: Checking Journal Entry Account.project for PROJ-0004
+DEBUG: Checking Advance Taxes and Charges.project for PROJ-0004
+DEBUG: Checking Sales Invoice.project for PROJ-0004
+DEBUG: Checking Purchase Taxes and Charges.project for PROJ-0004
+DEBUG: Checking POS Profile.project for PROJ-0004
+DEBUG: Checking Sales Taxes and Charges.project for PROJ-0004
+DEBUG: Checking Bank Guarantee.project for PROJ-0004
+DEBUG: Checking GL Entry.project for PROJ-0004
+DEBUG: Checking Account Closing Balance.project for PROJ-0004
+DEBUG: Checking POS Invoice Item.project for PROJ-0004
+DEBUG: Checking Sales Invoice Item.project for PROJ-0004
+DEBUG: Checking Purchase Invoice Item.project for PROJ-0004
+DEBUG: Checking Payment Request.project for PROJ-0004
+DEBUG: Checking Payment Reconciliation.project for PROJ-0004
+DEBUG: Checking Purchase Invoice.project for PROJ-0004
+DEBUG: Checking Opening Invoice Creation Tool.project for PROJ-0004

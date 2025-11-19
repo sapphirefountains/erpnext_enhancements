@@ -1,0 +1,2 @@
+DEBUG: Source: PROJ-0003, Target: PROJ-0004
+DEBUG: Calling merge_projects
