@@ -63,7 +63,7 @@ def _sync_to_event(source_doc, subject, starts_on, ends_on, description):
 		event.starts_on = starts_on
 		event.ends_on = ends_on
 		# status mapping could be added here (e.g. if Task is Closed, close Event)
-		if source_doc.status in ["Closed", "Cancelled", "Completed"]:
+		if source_doc.status in ["Closed", "Canceled", "Completed"]:
 			event.status = "Closed"
 		else:
 			event.status = "Open"
@@ -74,7 +74,7 @@ def _sync_to_event(source_doc, subject, starts_on, ends_on, description):
 	else:
 		# Create new event
 		# Only create if the source doc is not closed/cancelled
-		if source_doc.status in ["Closed", "Cancelled", "Completed"]:
+		if source_doc.status in ["Closed", "Canceled"]:
 			return
 
 		new_event = frappe.get_doc({
@@ -83,7 +83,7 @@ def _sync_to_event(source_doc, subject, starts_on, ends_on, description):
 			"starts_on": starts_on,
 			"ends_on": ends_on,
 			"status": "Open",
-			"event_type": "Private", # Change to 'Public' if you want others to see it
+			"event_type": "Public", # Change to 'Public' if you want others to see it
 			"description": description, 
 			"sync_with_google_calendar": 1, # Important for Google Sync
 			"owner": source_doc.owner # Assign event to the document owner
