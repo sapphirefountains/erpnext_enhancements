@@ -139,6 +139,15 @@ doctype_js = {
 # ---------------
 # Hook on document methods and events
 
+doc_events = {
+	"Task": {
+		"on_update": "erpnext_enhancements.calendar_sync.sync_task_to_event"
+	},
+	"ToDo": {
+		"on_update": "erpnext_enhancements.calendar_sync.sync_todo_to_event"
+	}
+}
+
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
