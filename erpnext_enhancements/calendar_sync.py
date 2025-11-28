@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import add_to_date, get_datetime, get_system_timezone
+from frappe.utils import add_to_date, get_datetime, get_system_timezone, get_url_to_form
 from googleapiclient.errors import HttpError
 
 def sync_task_to_event(doc, method):
@@ -39,7 +39,7 @@ def sync_task_to_event(doc, method):
 		summary=summary,
 		start_dt=start_dt,
 		end_dt=end_dt,
-		description=f"Task: {doc.name}"
+		description=f"Task: {doc.name}\n\nLink: {get_url_to_form(doc.doctype, doc.name)}"
 	)
 
 def sync_todo_to_event(doc, method):
@@ -68,7 +68,7 @@ def sync_todo_to_event(doc, method):
 		summary=summary,
 		start_dt=start_dt,
 		end_dt=end_dt,
-		description=f"ToDo: {doc.name}"
+		description=f"ToDo: {doc.name}\n\nLink: {get_url_to_form(doc.doctype, doc.name)}"
 	)
 
 def delete_event_from_google(doc, method=None):
