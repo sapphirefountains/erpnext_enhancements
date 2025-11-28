@@ -142,6 +142,7 @@ doctype_js = {
 doc_events = {
 	"Task": {
 		"on_update": "erpnext_enhancements.calendar_sync.sync_task_to_event",
+		"erpnext_enhancements.tasks.generate_next_task",
 		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
 	},
 	"ToDo": {
