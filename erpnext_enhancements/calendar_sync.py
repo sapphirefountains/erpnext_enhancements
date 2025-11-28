@@ -171,8 +171,8 @@ def get_google_calendar_conf(user):
 		if global_settings.default_google_calendar_config:
 			google_calendar_doc = frappe.get_doc("Google Calendar", global_settings.default_google_calendar_config)
 			if google_calendar_doc.enable:
-				service = get_google_calendar_object(google_calendar_doc)
-				return service, google_calendar_doc.google_calendar_id
+				gcal_service, gcal_calendar_id = get_google_calendar_object(google_calendar_doc)
+				return gcal_service, gcal_calendar_id or google_calendar_doc.google_calendar_id
 
 		# 2. Fallback: User-specific Calendar
 		# Find the Google Calendar record for this user
@@ -180,8 +180,8 @@ def get_google_calendar_conf(user):
 		
 		if google_calendar_name:
 			google_calendar_doc = frappe.get_doc("Google Calendar", google_calendar_name)
-			service = get_google_calendar_object(google_calendar_doc)
-			return service, google_calendar_doc.google_calendar_id
+			gcal_service, gcal_calendar_id = get_google_calendar_object(google_calendar_doc)
+			return gcal_service, gcal_calendar_id or google_calendar_doc.google_calendar_id
 			
 	except ImportError:
 		frappe.log_error("Google Calendar Integration module not found.", "Google Calendar Sync")
