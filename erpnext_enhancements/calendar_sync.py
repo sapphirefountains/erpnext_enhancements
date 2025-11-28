@@ -179,8 +179,8 @@ def get_google_calendar_conf(user):
 		
 		if google_calendar_name:
 			google_calendar_doc = frappe.get_doc("Google Calendar", google_calendar_name)
-			                gcal_service, _ = get_google_calendar_object(google_calendar_doc)
-			                return gcal_service, google_calendar_doc.google_calendar_id			
+				gcal_service, _ = get_google_calendar_object(google_calendar_doc)
+				return gcal_service, google_calendar_doc.google_calendar_id			
 	except ImportError:
 		frappe.log_error(message="Google Calendar Integration module not found.", title="Google Calendar Sync")
 	except Exception as e:
