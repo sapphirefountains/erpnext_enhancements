@@ -99,9 +99,9 @@ def delete_event_from_google(doc, method=None):
 			if method != "on_trash":
 				doc.db_set("custom_google_event_id", None)
 		else:
-			frappe.log_error(f"Google Calendar Delete Error: {e}", "Google Calendar Sync")
+			frappe.log_error(message=f"Google Calendar Delete Error: {e}", title="Google Calendar Sync")
 	except Exception as e:
-		frappe.log_error(f"Google Calendar Delete Error: {e}", "Google Calendar Sync")
+		frappe.log_error(message=f"Google Calendar Delete Error: {e}", title="Google Calendar Sync")
 
 def sync_to_google_calendar(doc, summary, start_dt, end_dt, description):
 	service, calendar_id = get_google_calendar_conf(doc.owner)
@@ -141,12 +141,12 @@ def sync_to_google_calendar(doc, summary, start_dt, end_dt, description):
 					# Re-create it
 					_create_event(doc, service, calendar_id, event_body)
 				else:
-					frappe.log_error(f"Google Calendar Sync Error (Patch): {e}", "Google Calendar Sync")
+					frappe.log_error(message=f"Google Calendar Sync Error (Patch): {e}", title="Google Calendar Sync")
 		else:
 			_create_event(doc, service, calendar_id, event_body)
 
 	except Exception as e:
-		frappe.log_error(f"Google Calendar Sync Error: {e}", "Google Calendar Sync")
+		frappe.log_error(message=f"Google Calendar Sync Error: {e}", title="Google Calendar Sync")
 
 def _create_event(doc, service, calendar_id, event_body):
 	try:
@@ -155,7 +155,7 @@ def _create_event(doc, service, calendar_id, event_body):
 		if event.get("id"):
 			doc.db_set("custom_google_event_id", event.get("id"))
 	except Exception as e:
-		frappe.log_error(f"Google Calendar Sync Error (Insert): {e}", "Google Calendar Sync")
+		frappe.log_error(message=f"Google Calendar Sync Error (Insert): {e}", title="Google Calendar Sync")
 
 def get_google_calendar_conf(user):
 	"""
@@ -184,8 +184,8 @@ def get_google_calendar_conf(user):
 			return gcal_service, gcal_calendar_id or google_calendar_doc.google_calendar_id
 			
 	except ImportError:
-		frappe.log_error("Google Calendar Integration module not found.", "Google Calendar Sync")
+		frappe.log_error(message="Google Calendar Integration module not found.", title="Google Calendar Sync")
 	except Exception as e:
-		frappe.log_error(f"Error retrieving Google Calendar service: {e}", "Google Calendar Sync")
+		frappe.log_error(message=f"Error retrieving Google Calendar service: {e}", title="Google Calendar Sync")
 
 	return None, None
