@@ -141,10 +141,12 @@ doctype_js = {
 
 doc_events = {
 	"Task": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_task_to_event"
+		"on_update": "erpnext_enhancements.calendar_sync.sync_task_to_event",
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
 	},
 	"ToDo": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_todo_to_event"
+		"on_update": "erpnext_enhancements.calendar_sync.sync_todo_to_event",
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
 	}
 }
 

@@ -1,0 +1,46 @@
+{
+ "actions": [],
+ "creation": "2024-05-22 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "google_calendar_section",
+  "default_google_calendar_config"
+ ],
+ "fields": [
+  {
+   "fieldname": "google_calendar_section",
+   "fieldtype": "Section Break",
+   "label": "Google Calendar Sync"
+  },
+  {
+   "fieldname": "default_google_calendar_config",
+   "fieldtype": "Link",
+   "label": "Shared Google Calendar Configuration",
+   "options": "Google Calendar",
+   "description": "Select a Google Calendar Integration record to use as the shared calendar for all Tasks and ToDos. If left blank, the system will attempt to use the User's own calendar configuration."
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2024-05-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ERPNext Enhancements",
+ "name": "ERPNext Enhancements Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
