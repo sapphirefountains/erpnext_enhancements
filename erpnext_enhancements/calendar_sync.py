@@ -34,12 +34,15 @@ def sync_task_to_event(doc, method):
 	project_part = f" - {doc.project}" if doc.project else ""
 	summary = f"{doc.subject}{project_part} ({doc.name})"
 	
+	location = doc.get("custom_locationaddress_of_task")
+
 	sync_to_google_calendar(
 		doc,
 		summary=summary,
 		start_dt=start_dt,
 		end_dt=end_dt,
-		description=f"Task: {doc.name}\n\nLink: {get_url_to_form(doc.doctype, doc.name)}"
+		description=f"Task: {doc.name}\n\nLink: {get_url_to_form(doc.doctype, doc.name)}",
+		location=location
 	)
 
 def sync_todo_to_event(doc, method):
@@ -103,7 +106,7 @@ def delete_event_from_google(doc, method=None):
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Delete Error: {e}", title="Google Calendar Sync")
 
-def sync_to_google_calendar(doc, summary, start_dt, end_dt, description):
+def sync_to_google_calendar(doc, summary, start_dt, end_dt, description, location=None):
 	service, calendar_id = get_google_calendar_conf(doc.owner)
 	if not service:
 		# No credentials found, skip sync
@@ -124,6 +127,9 @@ def sync_to_google_calendar(doc, summary, start_dt, end_dt, description):
 			"timeZone": time_zone,
 		},
 	}
+
+	if location:
+		event_body["location"] = location
 
 	event_id = doc.get("custom_google_event_id")
 
