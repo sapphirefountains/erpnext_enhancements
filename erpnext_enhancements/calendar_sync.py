@@ -34,7 +34,12 @@ def sync_task_to_event(doc, method):
 	project_part = f" - {doc.project}" if doc.project else ""
 	summary = f"{doc.subject}{project_part} ({doc.name})"
 	
-	location = doc.get("custom_locationaddress_of_task")
+	location_link = doc.get("custom_locationaddress_of_task")
+	location = location_link
+	if location_link:
+		location_from_address = frappe.db.get_value("Address", location_link, "custom_full_address")
+		if location_from_address:
+			location = location_from_address
 
 	sync_to_google_calendar(
 		doc,
