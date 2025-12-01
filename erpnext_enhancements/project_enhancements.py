@@ -122,3 +122,68 @@ def get_procurement_status(project_name):
         })
         
     return result
+
+def sync_attachments_from_opportunity(doc, method):
+    """
+    Sync attachments from the linked Opportunity (and its parent Lead) to the Project.
+    """
+    if not doc.custom_sales_opportunity:
+        return
+
+    # 1. Get the list of files ALREADY on this Project (prevent duplicates)
+    existing_files = frappe.get_all("File", 
+        filters={
+            "attached_to_doctype": "Project",
+            "attached_to_name": doc.name
+        },
+        pluck="file_name"
+    )
+
+    # 2. Identify all related IDs (Opportunity + original Lead)
+    ids_to_check = [doc.custom_sales_opportunity]
+    
+    # We need to load the Opportunity to see if it has a parent Lead
+    try:
+        # Try loading as standard Opportunity
+        source_opp = frappe.get_doc("Opportunity", doc.custom_sales_opportunity)
+        
+        # Check if it is linked to a Lead (standard field 'party_name' or 'lead')
+        if source_opp.opportunity_from == "Lead" and source_opp.party_name:
+            ids_to_check.append(source_opp.party_name)
+            
+    except Exception:
+        # If standard load fails, it might be a 'CRM Opportunity' (custom app)
+        # We try to find the Lead ID from the ID string itself if possible
+        pass
+
+    # 3. Find files attached to ANY of these IDs (Opportunity OR Lead)
+    # We filter ONLY by name, ignoring the DocType, to catch both Lead and Opp files
+    source_files = frappe.get_all("File", 
+        filters={
+            "attached_to_name": ["in", ids_to_check]
+        },
+        fields=["file_name", "file_url", "is_private", "attached_to_name"]
+    )
+
+    copied_count = 0
+
+    # 4. Copy the files
+    for file in source_files:
+        if file.file_name not in existing_files:
+            try:
+                new_file = frappe.get_doc({
+                    "doctype": "File",
+                    "file_name": file.file_name,
+                    "file_url": file.file_url,
+                    "attached_to_doctype": "Project",
+                    "attached_to_name": doc.name,
+                    "is_private": file.is_private
+                })
+                new_file.insert(ignore_permissions=True)
+                copied_count += 1
+            except Exception as e:
+                frappe.log_error(f"Error copying {file.file_name}: {str(e)}")
+
+    # 5. Success Message
+    if copied_count > 0:
+        frappe.msgprint(f"Success: Synced {copied_count} attachments (from Opportunity/Lead).")
