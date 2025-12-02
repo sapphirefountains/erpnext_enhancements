@@ -50,35 +50,6 @@ def sync_task_to_event(doc, method):
 		location=location
 	)
 
-def sync_todo_to_event(doc, method):
-	"""
-	Syncs ToDo to Google Calendar.
-	Triggered by: ToDo > on_update
-	"""
-	# Handle cancellation by removing the event
-	if doc.status == "Cancelled":
-		delete_event_from_google(doc, method)
-		return
-
-	if not doc.date:
-		return
-
-	# Title: "{doc.description} - {doc.reference_name} ({doc.name})"
-	ref_part = f" - {doc.reference_name}" if doc.reference_name else ""
-	summary = f"{doc.description}{ref_part} ({doc.name})"
-	
-	start_dt = doc.date
-	# Default duration: 1 hour
-	end_dt = add_to_date(start_dt, hours=1)
-
-	sync_to_google_calendar(
-		doc,
-		summary=summary,
-		start_dt=start_dt,
-		end_dt=end_dt,
-		description=f"ToDo: {doc.name}\n\nLink: {get_url_to_form(doc.doctype, doc.name)}"
-	)
-
 def delete_event_from_google(doc, method=None):
 	"""
 	Deletes the associated Google Calendar event.
