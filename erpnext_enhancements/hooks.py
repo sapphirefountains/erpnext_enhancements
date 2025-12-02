@@ -147,10 +147,6 @@ doc_events = {
         ],
 		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
 	},
-	"ToDo": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_todo_to_event",
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
-	},
     "Project": {
         "after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity"
     }
