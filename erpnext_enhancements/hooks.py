@@ -163,23 +163,11 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"erpnext_enhancements.tasks.all"
-# 	],
-# 	"daily": [
-# 		"erpnext_enhancements.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"erpnext_enhancements.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"erpnext_enhancements.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"erpnext_enhancements.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"daily": [
+		"erpnext_enhancements.project_enhancements.send_project_start_reminders"
+	]
+}
 
 # Testing
 # -------
