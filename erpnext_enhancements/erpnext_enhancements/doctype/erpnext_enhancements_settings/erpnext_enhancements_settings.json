@@ -5,7 +5,9 @@
  "engine": "InnoDB",
  "field_order": [
   "google_calendar_section",
-  "default_google_calendar_config"
+  "default_google_calendar_config",
+  "project_reminders_section",
+  "project_reminder_emails"
  ],
  "fields": [
   {
@@ -19,6 +21,17 @@
    "label": "Shared Google Calendar Configuration",
    "options": "Google Calendar",
    "description": "Select a Google Calendar Integration record to use as the shared calendar for all Tasks and ToDos. If left blank, the system will attempt to use the User's own calendar configuration."
+  },
+  {
+   "fieldname": "project_reminders_section",
+   "fieldtype": "Section Break",
+   "label": "Project Reminders"
+  },
+  {
+   "fieldname": "project_reminder_emails",
+   "fieldtype": "Table",
+   "label": "Reminder Emails",
+   "options": "Project Reminder Email"
   }
  ],
  "issingle": 1,

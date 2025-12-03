@@ -187,3 +187,34 @@ def sync_attachments_from_opportunity(doc, method):
     # 5. Success Message
     if copied_count > 0:
         frappe.msgprint(f"Success: Synced {copied_count} attachments (from Opportunity/Lead).")
+
+
+def send_project_start_reminders():
+    """
+    Sends email reminders for projects starting today.
+    Run daily at midnight.
+    """
+    today = frappe.utils.nowdate()
+    projects = frappe.get_all("Project", filters={"expected_start_date": today}, fields=["name", "project_name", "expected_start_date"])
+
+    if not projects:
+        return
+
+    settings = frappe.get_single("ERPNext Enhancements Settings")
+    if not settings.project_reminder_emails:
+        return
+
+    recipients = [row.email for row in settings.project_reminder_emails if row.email]
+    if not recipients:
+        return
+
+    for project in projects:
+        subject = _("Project Reminder: {0} starts today").format(project.project_name or project.name)
+
+        message = f"""
+        <h3>{_("Project Reminder")}</h3>
+        <p>{_("The project <b>{0}</b> is expected to start today ({1}).").format(project.project_name or project.name, project.expected_start_date)}</p>
+        <p><a href="{frappe.utils.get_url_to_form('Project', project.name)}">{_("View Project")}</a></p>
+        """
+
+        frappe.sendmail(recipients=recipients, subject=subject, message=message)
