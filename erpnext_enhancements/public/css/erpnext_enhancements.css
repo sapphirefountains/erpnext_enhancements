@@ -1,0 +1,20 @@
+/* Enable horizontal scrolling for Kanban boards */
+.kanban, .kanban-board, .kanban-container {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden; /* Allow vertical scroll if content overflows vertically inside, but usually page handles it */
+    width: 100%;
+    align-items: stretch;
+}
+
+/* Ensure columns don't shrink */
+.kanban-column {
+    flex: 0 0 auto !important;
+    /* Maintain default width logic, usually handled by Frappe JS, but ensure flex doesn't squash them */
+}
+
+/* Fix for full-width container if needed */
+.page-container.full-width .kanban {
+    width: 100%;
+}
