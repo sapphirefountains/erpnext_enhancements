@@ -46,6 +46,9 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 doctype_js = {
 	"Project": ["public/js/project_merge.js", "public/js/project_enhancements.js"]
 }
+doctype_list_js = {
+    "ToDo": "public/js/todo_list.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
