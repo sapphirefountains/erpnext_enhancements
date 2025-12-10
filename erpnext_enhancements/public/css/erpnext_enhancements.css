@@ -18,3 +18,42 @@
 .page-container.full-width .kanban {
     width: 100%;
 }
+
+/* --- Glassmorphism Enhancements --- */
+
+/* 1. Color Palette & Buttons */
+.btn-primary {
+    background-color: #007bff !important;
+    border-color: #007bff !important;
+    color: #fff !important;
+    /* Shiny glass effect setup */
+    background-image: linear-gradient(120deg, transparent 0%, transparent 30%, rgba(255, 255, 255, 0.5) 50%, transparent 70%, transparent 100%);
+    background-size: 200% 100%;
+    background-position: 100% 0;
+    transition: background-position 0.5s ease, box-shadow 0.3s ease;
+}
+
+.btn-primary:hover {
+    background-position: 0 0; /* Move the shine across */
+    box-shadow: 0 0 15px rgba(0, 123, 255, 0.6); /* Glow/Depth */
+}
+
+/* 2. Modals & Quick Entry (Glassmorphism) */
+.modal-content,
+.desk-search-modal,
+.awesomplete > ul {
+    background-color: rgba(255, 255, 255, 0.75) !important; /* Semi-transparent white */
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important; /* Subtle semi-transparent border */
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15) !important; /* Soft shadow */
+}
+
+/* Ensure search results in awesomplete don't have conflicting white backgrounds on items */
+.awesomplete > ul > li {
+    background: transparent !important;
+}
+.awesomplete > ul > li:hover,
+.awesomplete > ul > li[aria-selected="true"] {
+    background-color: rgba(0, 123, 255, 0.1) !important; /* Light blue tint on hover */
+}
