@@ -1,0 +1,70 @@
+[
+ {
+  "fieldname": "custom_calendar_datetime_start",
+  "fieldtype": "Datetime",
+  "label": "Calendar Start Time",
+  "insert_after": "project_name",
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "custom_calendar_datetime_end",
+  "fieldtype": "Datetime",
+  "label": "Calendar End Time",
+  "insert_after": "custom_calendar_datetime_start",
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "google_calendar_events",
+  "fieldtype": "Table",
+  "label": "Google Calendar Events",
+  "options": "Google Calendar Event Log",
+  "insert_after": "custom_calendar_datetime_end",
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "custom_calendar_datetime_start",
+  "fieldtype": "Datetime",
+  "label": "Calendar Start Time",
+  "insert_after": "description",
+  "dt": "ToDo",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "custom_calendar_datetime_end",
+  "fieldtype": "Datetime",
+  "label": "Calendar End Time",
+  "insert_after": "custom_calendar_datetime_start",
+  "dt": "ToDo",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "google_calendar_events",
+  "fieldtype": "Table",
+  "label": "Google Calendar Events",
+  "options": "Google Calendar Event Log",
+  "insert_after": "custom_calendar_datetime_end",
+  "dt": "ToDo",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "google_calendar_events",
+  "fieldtype": "Table",
+  "label": "Google Calendar Events",
+  "options": "Google Calendar Event Log",
+  "insert_after": "description",
+  "dt": "Task",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "google_calendar_events",
+  "fieldtype": "Table",
+  "label": "Google Calendar Events",
+  "options": "Google Calendar Event Log",
+  "insert_after": "description",
+  "dt": "Event",
+  "module": "ERPNext Enhancements"
+ }
+]
