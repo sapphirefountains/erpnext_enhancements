@@ -1,0 +1,92 @@
+/* ==========================================================================
+   DESK ENHANCEMENTS (Internal System Only)
+   ========================================================================== */
+
+/* 1. KANBAN BOARD FIXES */
+.kanban, .kanban-board, .kanban-container {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    width: 100%;
+    align-items: stretch;
+}
+
+.kanban-column {
+    flex: 0 0 auto !important;
+}
+
+/* 2. GLASSMORPHISM BUTTONS (Global for Desk) */
+
+/* General Button Style */
+.btn {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: all 0.3s ease;
+}
+
+/* Default/Secondary Buttons */
+.btn-default, .btn-secondary {
+    background-color: rgba(255, 255, 255, 0.6) !important;
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.btn-default:hover, .btn-secondary:hover {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+/* Primary Buttons (Blue - Shiny Glass Effect) */
+.btn-primary {
+    background-color: #007bff !important;
+    background-image: linear-gradient(120deg,
+        rgba(0, 123, 255, 0.85) 0%,
+        rgba(0, 123, 255, 0.85) 30%,
+        rgba(255, 255, 255, 0.4) 50%,
+        rgba(0, 123, 255, 0.85) 70%,
+        rgba(0, 123, 255, 0.85) 100%) !important;
+    background-size: 200% 100% !important;
+    background-position: 100% 0 !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+    color: #fff !important;
+    transition: background-position 0.5s ease, box-shadow 0.3s ease, transform 0.2s ease !important;
+}
+
+.btn-primary:hover {
+    background-position: 0 0 !important;
+    box-shadow: 0 6px 20px rgba(0, 123, 255, 0.6) !important;
+    transform: translateY(-1px);
+}
+
+/* Danger Buttons */
+.btn-danger {
+    background-color: rgba(220, 53, 69, 0.85) !important;
+    border: 1px solid rgba(220, 53, 69, 0.5) !important;
+    box-shadow: 0 4px 10px rgba(220, 53, 69, 0.3);
+    backdrop-filter: blur(4px);
+    color: white !important;
+}
+
+/* 3. MODALS & SEARCH (Desk) */
+.modal-content,
+.desk-search-modal,
+.awesomplete > ul {
+    background-color: rgba(255, 255, 255, 0.85) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15) !important;
+}
+
+.awesomplete > ul > li {
+    background: transparent !important;
+}
+.awesomplete > ul > li:hover,
+.awesomplete > ul > li[aria-selected="true"] {
+    background-color: rgba(0, 123, 255, 0.1) !important;
+}
