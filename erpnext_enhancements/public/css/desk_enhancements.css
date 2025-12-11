@@ -124,3 +124,29 @@ header.navbar {
     text-decoration: underline !important;
     text-decoration-color: #007bff !important; /* Blue underline to look like a link */
 }
+
+/* 7. OPEN LINK BUTTON ENHANCEMENTS */
+/* Target both Link and Dynamic Link fields */
+.frappe-control[data-fieldtype="Link"] .btn-open,
+.frappe-control[data-fieldtype="Dynamic Link"] .btn-open {
+    display: inline-flex !important; /* Use flex to center icon */
+    opacity: 1 !important;
+    visibility: visible !important;
+
+    /* Make it larger */
+    width: 28px !important;  /* Increased from standard small size */
+    height: 28px !important;
+    padding: 4px !important; /* Increase clickable area */
+
+    /* Center the icon */
+    align-items: center;
+    justify-content: center;
+}
+
+/* Make the icon inside larger */
+.frappe-control[data-fieldtype="Link"] .btn-open svg,
+.frappe-control[data-fieldtype="Dynamic Link"] .btn-open svg {
+    width: 16px !important; /* Standard is often 12px or 14px */
+    height: 16px !important;
+    font-size: 16px !important; /* Just in case it uses font icons */
+}
