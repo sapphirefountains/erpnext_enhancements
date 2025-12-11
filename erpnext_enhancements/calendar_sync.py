@@ -87,21 +87,29 @@ def get_sync_data(doc):
 			description += f"\n\n{doc.get('description')}"
 
 	elif doc.doctype == "Project":
-		start_dt = doc.get("custom_calendar_datetime_start")
-		end_dt = doc.get("custom_calendar_datetime_end")
+		start_dt = doc.get("custom_start_datetime")
+		end_dt = doc.get("custom_end_datetime")
 		if not (start_dt and end_dt):
 			start_dt = doc.get("expected_start_date")
 			end_dt = doc.get("expected_end_date")
 		summary = doc.get("project_name") or doc.name
 
+		location_link = doc.get("custom_locationaddress_of_project")
+		if location_link:
+			location = frappe.db.get_value("Address", location_link, "custom_full_address")
+
 	elif doc.doctype == "ToDo":
-		start_dt = doc.get("custom_calendar_datetime_start")
-		end_dt = doc.get("custom_calendar_datetime_end")
+		start_dt = doc.get("custom_start_datetime")
+		end_dt = doc.get("custom_end_datetime")
 		if not (start_dt and end_dt) and doc.get("due_date"):
 			start_dt = doc.get("due_date")
 			end_dt = add_to_date(start_dt, hours=1)
 		summary = strip_html(doc.get("description") or doc.name)
 		description = f"Link: {get_url_to_form(doc.doctype, doc.name)}"
+
+		location_link = doc.get("custom_locationaddress_of_todo")
+		if location_link:
+			location = frappe.db.get_value("Address", location_link, "custom_full_address")
 
 	return start_dt, end_dt, summary, description, location
 

@@ -205,8 +205,8 @@ class TestGetSyncData(unittest.TestCase):
 		doc = MagicMock()
 		doc.doctype = "Project"
 		doc.get.side_effect = lambda key: {
-			"custom_calendar_datetime_start": None,
-			"custom_calendar_datetime_end": None,
+			"custom_start_datetime": None,
+			"custom_end_datetime": None,
 			"expected_start_date": "2024-01-01",
 			"expected_end_date": "2024-01-31",
 			"project_name": "Test Project Fallback"
@@ -222,8 +222,8 @@ class TestGetSyncData(unittest.TestCase):
 		doc = MagicMock()
 		doc.doctype = "ToDo"
 		doc.get.side_effect = lambda key: {
-			"custom_calendar_datetime_start": None,
-			"custom_calendar_datetime_end": None,
+			"custom_start_datetime": None,
+			"custom_end_datetime": None,
 			"due_date": "2024-02-15 10:00:00",
 			"description": "Test ToDo Fallback"
 		}.get(key)
@@ -237,3 +237,39 @@ class TestGetSyncData(unittest.TestCase):
 			self.assertEqual(start_dt, "2024-02-15 10:00:00")
 			self.assertEqual(end_dt, "2024-02-15 11:00:00")
 			mock_add_date.assert_called_once_with("2024-02-15 10:00:00", hours=1)
+
+	@patch("frappe.db.get_value")
+	def test_project_location_sync(self, mock_get_value):
+		# Setup a mock Project doc with a location link
+		doc = MagicMock()
+		doc.doctype = "Project"
+		doc.get.side_effect = lambda key: {
+			"custom_start_datetime": "2024-03-01 10:00:00",
+			"custom_end_datetime": "2024-03-01 11:00:00",
+			"custom_locationaddress_of_project": "Address-123",
+			"project_name": "Test Project Location"
+		}.get(key)
+		mock_get_value.return_value = "123 Main St"
+
+		_, _, _, _, location = get_sync_data(doc)
+
+		self.assertEqual(location, "123 Main St")
+		mock_get_value.assert_called_once_with("Address", "Address-123", "custom_full_address")
+
+	@patch("frappe.db.get_value")
+	def test_todo_location_sync(self, mock_get_value):
+		# Setup a mock ToDo doc with a location link
+		doc = MagicMock()
+		doc.doctype = "ToDo"
+		doc.get.side_effect = lambda key: {
+			"custom_start_datetime": "2024-04-01 10:00:00",
+			"custom_end_datetime": "2024-04-01 11:00:00",
+			"custom_locationaddress_of_todo": "Address-456",
+			"description": "Test ToDo Location"
+		}.get(key)
+		mock_get_value.return_value = "456 Oak Ave"
+
+		_, _, _, _, location = get_sync_data(doc)
+
+		self.assertEqual(location, "456 Oak Ave")
+		mock_get_value.assert_called_once_with("Address", "Address-456", "custom_full_address")
