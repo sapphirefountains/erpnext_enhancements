@@ -112,6 +112,7 @@ frappe.ui.form.on('Project', {
             return;
         }
         frappe.new_doc('Material Request', {
+            custom_project: frm.doc.name,
             project: frm.doc.name
         });
     },
@@ -122,6 +123,7 @@ frappe.ui.form.on('Project', {
             return;
         }
         frappe.new_doc('Request for Quotation', {
+            custom_project: frm.doc.name,
             project: frm.doc.name
         });
     },
