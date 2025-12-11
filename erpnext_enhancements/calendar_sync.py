@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import add_to_date, get_datetime, get_system_timezone, get_url_to_form
+from frappe.utils import add_to_date, get_datetime, get_system_timezone, get_url_to_form, strip_html
 from googleapiclient.errors import HttpError
 
 def sync_doctype_to_event(doc, method):
@@ -82,9 +82,8 @@ def get_sync_data(doc):
 	elif doc.doctype == "ToDo":
 		start_dt = doc.get("custom_calendar_datetime_start")
 		end_dt = doc.get("custom_calendar_datetime_end")
-		summary = doc.get("description") or doc.name
-		# ToDo description is the summary, so maybe don't duplicate it in description?
-		# But link is useful.
+		summary = strip_html(doc.get("description") or doc.name)
+		description = f"Link: {get_url_to_form(doc.doctype, doc.name)}"
 
 	return start_dt, end_dt, summary, description, location
 
