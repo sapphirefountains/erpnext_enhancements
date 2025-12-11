@@ -19,7 +19,88 @@ $(document).on('app_ready', function() {
 			}
 		};
 	}
+
+	// Global Map Placeholder Logic
+	// Automatically renders a Google Map in 'custom_map_placeholder' field
+	// if the DocType has exactly one Link field to 'Address'.
+	if (frappe.ui && frappe.ui.form && frappe.ui.form.Controller) {
+		const original_form_refresh = frappe.ui.form.Controller.prototype.refresh;
+		frappe.ui.form.Controller.prototype.refresh = function() {
+			// Run the original refresh
+			const ret = original_form_refresh.apply(this, arguments);
+
+			// Run our custom map logic
+			try {
+				render_address_map(this);
+			} catch (e) {
+				console.error("Error in Global Map Placeholder logic:", e);
+			}
+
+			return ret;
+		};
+	}
 });
+
+function render_address_map(frm) {
+	// 1. Check if the target placeholder field exists
+	if (!frm.fields_dict.custom_map_placeholder) {
+		return;
+	}
+
+	// 2. Find Link fields pointing to "Address"
+	// We use frm.meta.fields to get the doctype definition
+	if (!frm.meta || !frm.meta.fields) return;
+
+	const address_link_fields = frm.meta.fields.filter(df =>
+		df.fieldtype === 'Link' && df.options === 'Address'
+	);
+
+	// 3. Ensure exactly one link field exists to avoid ambiguity
+	if (address_link_fields.length !== 1) {
+		// If 0, we can't do anything.
+		// If >1, we avoid conflicts by doing nothing.
+		return;
+	}
+
+	const link_field = address_link_fields[0];
+	const address_name = frm.doc[link_field.fieldname];
+
+	// 4. If we have a linked address, fetch details and render
+	if (address_name) {
+		frappe.db.get_value('Address', address_name, 'custom_full_address')
+			.then(r => {
+				if (r && r.message && r.message.custom_full_address) {
+					const full_address = r.message.custom_full_address;
+					const map_html = `
+						<div class="map-wrapper" style="width: 100%; height: 400px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+							<iframe
+								width="100%"
+								height="100%"
+								frameborder="0"
+								scrolling="no"
+								marginheight="0"
+								marginwidth="0"
+								src="https://maps.google.com/maps?q=${encodeURIComponent(full_address)}&output=embed">
+							</iframe>
+						</div>
+					`;
+					if (frm.fields_dict.custom_map_placeholder.$wrapper) {
+						frm.fields_dict.custom_map_placeholder.$wrapper.html(map_html);
+					}
+				} else {
+					// Address linked but no full address found
+					if (frm.fields_dict.custom_map_placeholder.$wrapper) {
+						frm.fields_dict.custom_map_placeholder.$wrapper.html('');
+					}
+				}
+			});
+	} else {
+		// No address selected yet
+		if (frm.fields_dict.custom_map_placeholder.$wrapper) {
+			frm.fields_dict.custom_map_placeholder.$wrapper.html('');
+		}
+	}
+}
 
 // Global Event Listener for Link Field Navigation
 // Strategy: "Proxy Click"
