@@ -115,6 +115,9 @@ header.navbar {
 /* 6. LINK FIELD NAVIGATION (Enhancement) */
 /* Make text inside Link Fields clickable and look like a link */
 .frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]) {
-    text-decoration: underline;
     cursor: pointer;
+}
+
+.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]):hover {
+    text-decoration: underline;
 }
