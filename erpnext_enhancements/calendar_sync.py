@@ -241,6 +241,9 @@ def _create_event(service, calendar_id, event_body):
 def get_google_calendars_for_doctype(doctype, user):
 	"""
 	Returns a list of Google Calendar docs configured for this DocType.
+	Priority:
+	1. Global settings table `google_calendar_sync_map`.
+	2. Fallback to the user's individually configured Google Calendar.
 	"""
 	calendars = []
 
@@ -254,15 +257,20 @@ def get_google_calendars_for_doctype(doctype, user):
 					if gc.enable:
 						calendars.append(gc)
 				except:
-					continue
+					pass  # Ignore if calendar is not found
 
-	# 2. Check User's Personal Calendar (Fallback or Additive?)
-	# Original code had fallback. User request implies specific configuration.
-	# "I want the Google Calendar Sync to be a table so I can select multiple calendars"
-	# It implies explicit configuration.
-	# However, if the table is empty for a DocType, should we fallback?
-	# "as well as select which DocType syncs to which calendar"
-	# I will stick to the explicit configuration in the table.
-	# If nothing is in the table, nothing syncs.
+	if calendars:
+		return calendars
+
+	# 2. Fallback to User's Personal Calendar
+	user_calendar_name = frappe.db.get_value(
+		"Google Calendar", {"user": user, "enable": 1}, "name"
+	)
+	if user_calendar_name:
+		try:
+			gc = frappe.get_doc("Google Calendar", user_calendar_name)
+			calendars.append(gc)
+		except:
+			pass  # Ignore if calendar is not found
 
 	return calendars
