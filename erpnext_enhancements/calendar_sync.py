@@ -243,6 +243,10 @@ def get_google_calendars_for_doctype(doctype, user):
 	Returns a list of Google Calendar docs configured for this DocType.
 	Combines calendars from global settings and the user's personal calendar.
 	"""
+	# Early exit if the doctype is not a sync-able type
+	if doctype not in ["ToDo", "Task", "Project", "Event"]:
+		return []
+
 	calendars = {}  # Use a dict to avoid duplicates by name
 
 	# 1. Check Global Settings Map
