@@ -7,3 +7,4 @@
 erpnext_enhancements.erpnext_enhancements.patches.migrate_google_calendar_sync
 erpnext_enhancements.patches.migrate_todo_dates
 erpnext_enhancements.patches.fix_todo_date_props
+erpnext_enhancements.patches.add_project_procurement_buttons

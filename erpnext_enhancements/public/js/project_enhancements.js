@@ -104,5 +104,65 @@ frappe.ui.form.on('Project', {
                 }
             }
         });
+    },
+
+    custom_btn_material_request: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Material Request', {
+            project: frm.doc.name
+        });
+    },
+
+    custom_btn_request_quote: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Request for Quotation', {
+            project: frm.doc.name
+        });
+    },
+
+    custom_btn_supplier_quotation: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Supplier Quotation', {
+            project: frm.doc.name
+        });
+    },
+
+    custom_btn_purchase_order: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Purchase Order', {
+            project: frm.doc.name
+        });
+    },
+
+    custom_btn_purchase_receipt: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Purchase Receipt', {
+            project: frm.doc.name
+        });
+    },
+
+    custom_btn_purchase_invoice: function (frm) {
+        if (frm.is_new()) {
+            frappe.msgprint(__('Please save the Project before creating linked documents.'));
+            return;
+        }
+        frappe.new_doc('Purchase Invoice', {
+            project: frm.doc.name
+        });
     }
 });
