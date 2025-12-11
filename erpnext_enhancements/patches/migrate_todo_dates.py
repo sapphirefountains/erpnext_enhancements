@@ -54,6 +54,7 @@ def execute():
         "fieldname": "date",
         "property": "hidden",
         "value": 1,
+        "property_type": "Check",
         "doctype_or_field": "DocField"
     })
 
@@ -62,6 +63,7 @@ def execute():
         "fieldname": "date",
         "property": "reqd",
         "value": 0,
+        "property_type": "Check",
         "doctype_or_field": "DocField"
     })
 
@@ -70,6 +72,7 @@ def execute():
         "fieldname": "date",
         "property": "in_list_view",
         "value": 0,
+        "property_type": "Check",
         "doctype_or_field": "DocField"
     })
 
