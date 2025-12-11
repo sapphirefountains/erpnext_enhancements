@@ -79,7 +79,11 @@ def get_procurement_status(project_name):
             LEFT JOIN
                 `tabStock Entry` se ON se.name = sed.parent
             WHERE
-                mr_item.project = %(project)s
+                (
+                    mr_item.project = %(project)s
+                    OR mr.custom_project = %(project)s
+                    OR rfq.custom_project = %(project)s
+                )
                 AND mr.docstatus < 2
 
             UNION ALL
