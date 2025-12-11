@@ -269,3 +269,20 @@ def send_project_start_reminders():
         """
 
         frappe.sendmail(recipients=recipients, subject=subject, message=message)
+
+def get_dashboard_data(data):
+    """
+    Override Project dashboard to include documents linked via custom_project field.
+    """
+    if not data:
+        data = {}
+
+    if "non_standard_fieldnames" not in data:
+        data["non_standard_fieldnames"] = {}
+
+    data["non_standard_fieldnames"].update({
+        "Material Request": "custom_project",
+        "Request for Quotation": "custom_project"
+    })
+
+    return data
