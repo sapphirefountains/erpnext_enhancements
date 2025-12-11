@@ -93,24 +93,68 @@ class TestGetGoogleCalendars(unittest.TestCase):
 	@patch("frappe.get_single")
 	@patch("frappe.db.get_value")
 	@patch("frappe.get_doc")
-	def test_global_mapping_precedence(self, mock_get_doc, mock_get_value, mock_get_single):
-		# Setup: Global mapping exists for 'Task'
+	def test_combines_global_and_user_calendars(self, mock_get_doc, mock_get_value, mock_get_single):
+		# Setup: Global mapping exists for 'Task', and user has a personal calendar.
 		mock_settings = MagicMock()
 		mock_settings.google_calendar_sync_map = [
 			MagicMock(reference_doctype="Task", google_calendar="Global Calendar")
 		]
 		mock_get_single.return_value = mock_settings
-		mock_gc_doc = MagicMock(enable=1)
-		mock_get_doc.return_value = mock_gc_doc
+
+		mock_get_value.return_value = "User Calendar"
+
+		# Return different mocks for global and user calendars
+		global_cal = MagicMock(enable=1)
+		global_cal.name = "Global Calendar"
+		user_cal = MagicMock(enable=1)
+		user_cal.name = "User Calendar"
+
+		def get_doc_side_effect(doctype, name):
+			if name == "Global Calendar":
+				return global_cal
+			if name == "User Calendar":
+				return user_cal
+			return MagicMock()
+
+		mock_get_doc.side_effect = get_doc_side_effect
 
 		# Execute
 		calendars = get_google_calendars_for_doctype("Task", "test_user@example.com")
 
-		# Assert
+		# Assert: Both calendars should be returned
+		self.assertEqual(len(calendars), 2)
+		self.assertIn(global_cal, calendars)
+		self.assertIn(user_cal, calendars)
+		mock_get_doc.assert_any_call("Google Calendar", "Global Calendar")
+		mock_get_value.assert_called_with(
+			"Google Calendar", {"user": "test_user@example.com", "enable": 1}, "name"
+		)
+		mock_get_doc.assert_any_call("Google Calendar", "User Calendar")
+
+	@patch("frappe.get_single")
+	@patch("frappe.db.get_value")
+	@patch("frappe.get_doc")
+	def test_deduplicates_calendars(self, mock_get_doc, mock_get_value, mock_get_single):
+		# Setup: Global mapping and user calendar refer to the same calendar.
+		mock_settings = MagicMock()
+		mock_settings.google_calendar_sync_map = [
+			MagicMock(reference_doctype="Task", google_calendar="Shared Calendar")
+		]
+		mock_get_single.return_value = mock_settings
+
+		mock_get_value.return_value = "Shared Calendar"
+
+		shared_cal = MagicMock(enable=1)
+		shared_cal.name = "Shared Calendar"
+		mock_get_doc.return_value = shared_cal
+
+		# Execute
+		calendars = get_google_calendars_for_doctype("Task", "test_user@example.com")
+
+		# Assert: Only one calendar instance is returned.
 		self.assertEqual(len(calendars), 1)
-		self.assertEqual(calendars[0], mock_gc_doc)
-		mock_get_doc.assert_called_with("Google Calendar", "Global Calendar")
-		mock_get_value.assert_not_called()  # User calendar should not be checked
+		self.assertEqual(calendars[0], shared_cal)
+		mock_get_doc.assert_called_once_with("Google Calendar", "Shared Calendar")
 
 	@patch("frappe.get_single")
 	@patch("frappe.db.get_value")
@@ -124,6 +168,7 @@ class TestGetGoogleCalendars(unittest.TestCase):
 		mock_get_single.return_value = mock_settings
 		mock_get_value.return_value = "User Calendar"  # User has a calendar
 		mock_gc_doc = MagicMock(enable=1)
+		mock_gc_doc.name = "User Calendar"
 		mock_get_doc.return_value = mock_gc_doc
 
 		# Execute

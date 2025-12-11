@@ -241,11 +241,9 @@ def _create_event(service, calendar_id, event_body):
 def get_google_calendars_for_doctype(doctype, user):
 	"""
 	Returns a list of Google Calendar docs configured for this DocType.
-	Priority:
-	1. Global settings table `google_calendar_sync_map`.
-	2. Fallback to the user's individually configured Google Calendar.
+	Combines calendars from global settings and the user's personal calendar.
 	"""
-	calendars = []
+	calendars = {}  # Use a dict to avoid duplicates by name
 
 	# 1. Check Global Settings Map
 	settings = frappe.get_single("ERPNext Enhancements Settings")
@@ -255,22 +253,20 @@ def get_google_calendars_for_doctype(doctype, user):
 				try:
 					gc = frappe.get_doc("Google Calendar", row.google_calendar)
 					if gc.enable:
-						calendars.append(gc)
-				except:
-					pass  # Ignore if calendar is not found
+						calendars[gc.name] = gc
+				except Exception:
+					pass  # Ignore if calendar is not found or other errors
 
-	if calendars:
-		return calendars
-
-	# 2. Fallback to User's Personal Calendar
+	# 2. Add User's Personal Calendar if not already included
 	user_calendar_name = frappe.db.get_value(
 		"Google Calendar", {"user": user, "enable": 1}, "name"
 	)
 	if user_calendar_name:
-		try:
-			gc = frappe.get_doc("Google Calendar", user_calendar_name)
-			calendars.append(gc)
-		except:
-			pass  # Ignore if calendar is not found
+		if user_calendar_name not in calendars:
+			try:
+				gc = frappe.get_doc("Google Calendar", user_calendar_name)
+				calendars[gc.name] = gc
+			except Exception:
+				pass  # Ignore if calendar is not found or other errors
 
-	return calendars
+	return list(calendars.values())
