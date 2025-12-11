@@ -110,11 +110,24 @@ def delete_event_from_google(doc, method=None):
 	# Also check legacy field for migration/backward compatibility if data exists there and not in table yet
 	legacy_event_id = doc.get("custom_google_event_id")
 	if legacy_event_id:
-		# Try to delete using legacy logic (guessing the calendar)
-		# Or just ignore if we are strictly moving to table.
-		# If migration happens, it should be in table.
-		# Let's support it if present.
-		pass
+		calendars = get_google_calendars_for_doctype(doc.doctype, doc.owner)
+		if calendars:
+			from frappe.integrations.doctype.google_calendar.google_calendar import get_google_calendar_object
+			for calendar_conf in calendars:
+				try:
+					service, _ = get_google_calendar_object(calendar_conf)
+					calendar_id = calendar_conf.google_calendar_id or "primary"
+					service.events().delete(calendarId=calendar_id, eventId=legacy_event_id).execute()
+				except HttpError as e:
+					if e.resp.status not in [404, 410]:
+						frappe.log_error(message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync")
+				except Exception as e:
+					frappe.log_error(message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync")
+
+		if method != "on_trash" and doc.meta.has_field("custom_google_event_id"):
+			doc.custom_google_event_id = None
+			if not events_table:
+				doc.save(ignore_permissions=True)
 
 	if not events_table:
 		return

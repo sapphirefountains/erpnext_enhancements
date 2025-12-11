@@ -28,6 +28,9 @@ class TestCalendarSyncLogic(unittest.TestCase):
 			doc = MagicMock()
 			doc.doctype = doctype
 			doc.get.side_effect = lambda key: status if key == "status" else None
+			# Fix: mock flags to be False initially so sync proceeds
+			doc.flags = MagicMock()
+			doc.flags.in_google_calendar_sync = False
 			return doc
 
 		# Test Task
