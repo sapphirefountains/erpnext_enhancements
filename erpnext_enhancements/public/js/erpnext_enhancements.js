@@ -21,61 +21,96 @@ $(document).on('app_ready', function() {
 	}
 });
 
-// Patch Link Field to be clickable for navigation
-// We use a function to allow retrying if ControlLink is not yet available
-const patchLinkField = function(retry_count = 0) {
-	if (frappe.ui && frappe.ui.form && frappe.ui.form.ControlLink) {
-		if (frappe.ui.form.ControlLink.prototype.make_input.patched) return;
+// Global Event Listener for Link Field Navigation
+// This replaces the monkey-patching approach to be more robust across all Link fields
+// and ensure compatibility with dynamic loading and different contexts (Form, Grid, etc.)
 
-		const original_make_input = frappe.ui.form.ControlLink.prototype.make_input;
-		frappe.ui.form.ControlLink.prototype.make_input = function() {
-			original_make_input.apply(this, arguments);
+// Helper to find the control associated with an input element
+function get_field_control(element) {
+    // Try to find the control instance
+    // 1. Check direct data attachment
+    let $el = $(element);
+    let field = $el.data('control'); // Often attached by custom scripts or framework
+    if (field) return field;
 
-			if (this.$input && this.$input[0]) {
-				// Use native addEventListener with capture=true to ensure we catch the event
-				// before any other handlers (like Awesomplete) can stop it.
-				this.$input[0].addEventListener('click', (e) => {
-					// 0. Ensure this is explicitly a Link field (prevents regression with Dynamic Link)
-					if (this.df.fieldtype !== 'Link') {
-						return;
-					}
+    // 2. Iterate cur_frm fields
+    if (window.cur_frm && window.cur_frm.fields_dict) {
+        const fieldname = $el.closest('[data-fieldname]').attr('data-fieldname');
+        if (fieldname && cur_frm.fields_dict[fieldname]) {
+            return cur_frm.fields_dict[fieldname];
+        }
+    }
 
-					// 1. Check if the field is editable (not read-only)
-					// We check df.read_only and also the input properties just in case
-					if (this.df.read_only || this.$input.prop('readonly') || this.$input.prop('disabled')) {
-						return;
-					}
+    // 3. Grid Row fields
+    const grid_row = $el.closest('.grid-row');
+    if (grid_row.length) {
+        const grid_row_obj = grid_row.data('grid_row');
+        const fieldname = $el.closest('[data-fieldname]').attr('data-fieldname');
+        if (grid_row_obj && grid_row_obj.docfields) {
+             const df = grid_row_obj.docfields.find(d => d.fieldname === fieldname);
+             if (df) return { df: df }; // Return an object mimicking the control with just df
+        }
+    }
 
-					// 2. Check if the field has a value
-					const value = this.get_value();
+    return null;
+}
 
-					// 3. Navigate if value exists and it's a valid link field
-					if (value && this.df.options) {
-						frappe.set_route('Form', this.df.options, value);
+document.addEventListener('click', function(e) {
+	// 1. Identify if the click target is an input field
+	const target = e.target;
+	if (target.tagName !== 'INPUT') return;
 
-						// 4. Prevent default focus/edit behavior
-						// The user explicitly requested this behavior, acknowledging they will use the 'X' button to clear/edit.
-						e.preventDefault();
-						e.stopPropagation();
-						e.stopImmediatePropagation();
-					}
-				}, true); // Capture phase
-			}
-		};
-		frappe.ui.form.ControlLink.prototype.make_input.patched = true;
-		console.log("ERPNext Enhancements: ControlLink patched successfully.");
-	} else {
-		// Retry a few times if ControlLink is not yet loaded
-		if (retry_count < 5) {
-			setTimeout(() => patchLinkField(retry_count + 1), 1000);
-		}
+	// 2. Quick check: Must be inside a frappe-control or have input-with-feedback class
+    // and ideally should be a Link field type.
+    const controlElement = target.closest('.frappe-control');
+    // If we can't determine it's a link field from DOM, we might skip, but let's check deeper.
+
+    let isLink = false;
+    if (controlElement && controlElement.getAttribute('data-fieldtype') === 'Link') {
+        isLink = true;
+    }
+
+    if (!isLink) {
+        // Double check via control object if possible
+        const c = get_field_control(target);
+        if (c && c.df && c.df.fieldtype === 'Link') {
+            isLink = true;
+        }
+    }
+
+    if (!isLink) return;
+
+	// 3. Check editability
+    // If it's read-only, we let default behavior happen
+	if (target.readOnly || target.disabled) {
+		return;
 	}
-};
 
-// Attempt to patch immediately (for cases where script loads late)
-patchLinkField();
+    // 4. Get Control to check options
+    const control = get_field_control(target);
+    let doctype = null;
+    let isReadOnlyField = false;
 
-// Attempt to patch on app_ready (for cases where script loads early)
-$(document).on('app_ready', function() {
-	patchLinkField();
-});
+    if (control && control.df) {
+        doctype = control.df.options;
+        isReadOnlyField = control.df.read_only;
+    } else {
+        // Fallback: try data-target
+        doctype = target.getAttribute('data-target');
+    }
+
+    if (isReadOnlyField) return;
+
+	// 5. Navigate if value exists
+	const value = target.value;
+	if (value && doctype) {
+        // Prevent default focus/edit behavior
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        frappe.set_route('Form', doctype, value);
+        target.blur();
+	}
+
+}, true); // Capture phase is crucial
