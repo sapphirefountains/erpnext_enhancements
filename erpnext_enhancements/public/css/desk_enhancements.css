@@ -111,3 +111,10 @@ header.navbar,
 header.navbar {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
 }
+
+/* 6. LINK FIELD NAVIGATION (Enhancement) */
+/* Make text inside Link Fields clickable and look like a link */
+.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]) {
+    text-decoration: underline;
+    cursor: pointer;
+}
