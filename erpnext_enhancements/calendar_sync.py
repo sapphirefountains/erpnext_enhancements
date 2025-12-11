@@ -8,14 +8,16 @@ def sync_doctype_to_event(doc, method):
 	Triggered by: on_update of configured DocTypes.
 	"""
 	# Handle cancellation/closure by removing the event
-	# Check specific statuses for different DocTypes if needed, but generic "Cancelled"/"Closed" is common.
-	# For Task: Cancelled, Closed.
-	# For Event: Cancelled.
-	# For Project: Cancelled, Completed? (Maybe just keep it if completed?)
-	# User didn't specify deletion criteria for Project/ToDo/Event, but usually sync should reflect state.
-	# If cancelled, usually remove from calendar.
+	# Check specific statuses for different DocTypes.
+	deletion_statuses = {
+		"Task": ["Cancelled", "Closed"],
+		"Event": ["Cancelled"],
+		"Project": ["Cancelled"],
+		"ToDo": ["Cancelled"],
+	}
+
 	status_field = doc.get("status")
-	if status_field in ["Cancelled", "Closed"]:
+	if status_field in deletion_statuses.get(doc.doctype, ["Cancelled"]):
 		delete_event_from_google(doc, method)
 		return
 
