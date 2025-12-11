@@ -5,72 +5,130 @@ from frappe import _
 def get_procurement_status(project_name):
     """
     Fetches the procurement status for items linked to a Project.
-    Trace: Material Request -> RFQ -> SQ -> PO -> PR -> PI
+    Aggregates data from:
+    1. Material Requests (External Purchasing & Internal Transfers)
+    2. Direct Purchase Orders (No Material Request)
     """
     if not project_name:
         return []
 
-    # Fetch Material Request Items linked to the project
-    # We use a raw SQL query for better performance with multiple joins
-    # Note: This assumes the standard flow. Variations might exist.
-    
+    # Combined query for Material Request based flows and Direct Purchase Orders
     sql = """
         SELECT
-            mr_item.item_code,
-            mr_item.item_name,
-            mr_item.qty as mr_qty,
-            mr.name as mr_name,
-            mr.status as mr_status,
-            rfq.name as rfq_name,
-            rfq.status as rfq_status,
-            sq.name as sq_name,
-            sq.status as sq_status,
-            po.name as po_name,
-            po.status as po_status,
-            pr.name as pr_name,
-            pr.status as pr_status,
-            pi.name as pi_name,
-            pi.status as pi_status,
-            pr_item.warehouse as warehouse,
-            po_item.qty as ordered_qty,
-            pr_item.qty as received_qty
-        FROM
-            `tabMaterial Request Item` mr_item
-        JOIN
-            `tabMaterial Request` mr ON mr.name = mr_item.parent
-        LEFT JOIN
-            `tabRequest for Quotation Item` rfq_item ON rfq_item.material_request_item = mr_item.name
-        LEFT JOIN
-            `tabRequest for Quotation` rfq ON rfq.name = rfq_item.parent
-        LEFT JOIN
-            `tabSupplier Quotation Item` sq_item ON sq_item.request_for_quotation_item = rfq_item.name
-        LEFT JOIN
-            `tabSupplier Quotation` sq ON sq.name = sq_item.parent
-        LEFT JOIN
-            `tabPurchase Order Item` po_item ON (
-                po_item.supplier_quotation_item = sq_item.name 
-                OR po_item.material_request_item = mr_item.name
-            )
-        LEFT JOIN
-            `tabPurchase Order` po ON po.name = po_item.parent
-        LEFT JOIN
-            `tabPurchase Receipt Item` pr_item ON pr_item.purchase_order_item = po_item.name
-        LEFT JOIN
-            `tabPurchase Receipt` pr ON pr.name = pr_item.parent
-        LEFT JOIN
-            `tabPurchase Invoice Item` pi_item ON (
-                pi_item.pr_detail = pr_item.name
-                OR pi_item.po_detail = po_item.name
-            )
-        LEFT JOIN
-            `tabPurchase Invoice` pi ON pi.name = pi_item.parent
-        WHERE
-            mr.name IN (
-                SELECT parent FROM `tabMaterial Request Item` WHERE project = %(project)s
-            )
-            AND mr.docstatus < 2
+            *
+        FROM (
+            /* PART 1: Material Request Flow (External & Internal) */
+            SELECT
+                mr_item.item_code,
+                mr_item.item_name,
+                mr_item.qty as mr_qty,
+                mr.name as mr_name,
+                mr.transaction_date as transaction_date,
+                mr.status as mr_status,
+                rfq.name as rfq_name,
+                rfq.status as rfq_status,
+                sq.name as sq_name,
+                sq.status as sq_status,
+                po.name as po_name,
+                po.status as po_status,
+                pr.name as pr_name,
+                pr.status as pr_status,
+                pi.name as pi_name,
+                pi.status as pi_status,
+                se.name as se_name,
+                CASE
+                    WHEN se.docstatus=1 THEN 'Submitted'
+                    WHEN se.docstatus=2 THEN 'Cancelled'
+                    ELSE 'Draft'
+                END as se_status,
+                COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
+                po_item.qty as ordered_qty,
+                COALESCE(pr_item.qty, sed.qty) as received_qty
+            FROM
+                `tabMaterial Request Item` mr_item
+            JOIN
+                `tabMaterial Request` mr ON mr.name = mr_item.parent
+            LEFT JOIN
+                `tabRequest for Quotation Item` rfq_item ON rfq_item.material_request_item = mr_item.name
+            LEFT JOIN
+                `tabRequest for Quotation` rfq ON rfq.name = rfq_item.parent
+            LEFT JOIN
+                `tabSupplier Quotation Item` sq_item ON sq_item.request_for_quotation_item = rfq_item.name
+            LEFT JOIN
+                `tabSupplier Quotation` sq ON sq.name = sq_item.parent
+            LEFT JOIN
+                `tabPurchase Order Item` po_item ON (
+                    po_item.supplier_quotation_item = sq_item.name
+                    OR po_item.material_request_item = mr_item.name
+                )
+            LEFT JOIN
+                `tabPurchase Order` po ON po.name = po_item.parent
+            LEFT JOIN
+                `tabPurchase Receipt Item` pr_item ON pr_item.purchase_order_item = po_item.name
+            LEFT JOIN
+                `tabPurchase Receipt` pr ON pr.name = pr_item.parent
+            LEFT JOIN
+                `tabPurchase Invoice Item` pi_item ON (
+                    pi_item.pr_detail = pr_item.name
+                    OR pi_item.po_detail = po_item.name
+                )
+            LEFT JOIN
+                `tabPurchase Invoice` pi ON pi.name = pi_item.parent
+            LEFT JOIN
+                `tabStock Entry Detail` sed ON sed.material_request_item = mr_item.name
+            LEFT JOIN
+                `tabStock Entry` se ON se.name = sed.parent
+            WHERE
+                mr_item.project = %(project)s
+                AND mr.docstatus < 2
+
+            UNION ALL
+
+            /* PART 2: Direct Purchase Orders */
+            SELECT
+                po_item.item_code,
+                po_item.item_name,
+                0 as mr_qty,
+                NULL as mr_name,
+                po.transaction_date as transaction_date,
+                NULL as mr_status,
+                NULL as rfq_name,
+                NULL as rfq_status,
+                NULL as sq_name,
+                NULL as sq_status,
+                po.name as po_name,
+                po.status as po_status,
+                pr.name as pr_name,
+                pr.status as pr_status,
+                pi.name as pi_name,
+                pi.status as pi_status,
+                NULL as se_name,
+                NULL as se_status,
+                pr_item.warehouse as warehouse,
+                po_item.qty as ordered_qty,
+                pr_item.qty as received_qty
+            FROM
+                `tabPurchase Order Item` po_item
+            JOIN
+                `tabPurchase Order` po ON po.name = po_item.parent
+            LEFT JOIN
+                `tabPurchase Receipt Item` pr_item ON pr_item.purchase_order_item = po_item.name
+            LEFT JOIN
+                `tabPurchase Receipt` pr ON pr.name = pr_item.parent
+            LEFT JOIN
+                `tabPurchase Invoice Item` pi_item ON (
+                    pi_item.pr_detail = pr_item.name
+                    OR pi_item.po_detail = po_item.name
+                )
+            LEFT JOIN
+                `tabPurchase Invoice` pi ON pi.name = pi_item.parent
+            WHERE
+                po_item.project = %(project)s
+                AND (po_item.material_request_item IS NULL OR po_item.material_request_item = '')
+                AND po.docstatus < 2
+        ) as combined_results
         ORDER BY
-            mr.transaction_date DESC, mr.name DESC
+            transaction_date DESC, mr_name DESC, po_name DESC
     """
     
     data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
@@ -82,23 +140,14 @@ def get_procurement_status(project_name):
         mr_qty = row.get('mr_qty') or 0
         
         # Use Material Request Qty if no PO Qty (Draft/Pending stage)
+        # For Direct POs, mr_qty is 0, so display_ordered_qty will be ordered_qty
         display_ordered_qty = ordered_qty if ordered_qty > 0 else mr_qty
+
         received_qty = row.get('received_qty') or 0
         
         completion_percentage = 0
         if display_ordered_qty > 0:
             completion_percentage = (received_qty / display_ordered_qty) * 100
-            # Cap at 100% for display if over-received (unless user wants to see >100%)
-            # Usually >100% is possible, but for status bar/color it might be capped.
-            # We will keep the actual percentage but handle styling in JS.
-        
-        # Handle partial shipments:
-        # The SQL above might return multiple rows for the same MR Item if there are multiple PRs for a PO.
-        # However, the requirement asks to "trace the lineage".
-        # If we have multiple PRs for one PO, the Left Join will duplicate the PO details.
-        # For a simple list, this is acceptable as it shows each "receipt event".
-        # If we wanted to aggregate, we would need to group by MR Item.
-        # Given the requirement "Flow to Track", showing the individual chain is likely desired.
         
         result.append({
             'item_code': row.get('item_code'),
@@ -115,6 +164,8 @@ def get_procurement_status(project_name):
             'pr_status': row.get('pr_status'),
             'pi': row.get('pi_name'),
             'pi_status': row.get('pi_status'),
+            'stock_entry': row.get('se_name'), # Renamed key for clarity
+            'stock_entry_status': row.get('se_status'), # Renamed key
             'warehouse': row.get('warehouse'),
             'ordered_qty': display_ordered_qty,
             'received_qty': received_qty,
