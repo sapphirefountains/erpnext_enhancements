@@ -115,12 +115,15 @@ header.navbar {
 /* 6. LINK FIELD NAVIGATION (Enhancement) */
 /* Make text inside Link Fields clickable and look like a link */
 /* Using !important to ensure it overrides any standard form-control styles */
-.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]) {
+.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]),
+.frappe-control[data-fieldtype="Dynamic Link"] input:not([readonly]):not([disabled]) {
     cursor: pointer !important;
 }
 
-/* Apply underline on hover to indicate clickability */
-.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]):hover {
+/* Apply underline and color on hover to indicate clickability */
+.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]):hover,
+.frappe-control[data-fieldtype="Dynamic Link"] input:not([readonly]):not([disabled]):hover {
     text-decoration: underline !important;
-    text-decoration-color: #007bff !important; /* Blue underline to look like a link */
+    text-decoration-color: #007bff !important; /* Blue underline */
+    color: #007bff !important; /* Blue text */
 }

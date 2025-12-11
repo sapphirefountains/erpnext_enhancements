@@ -35,22 +35,40 @@ function get_field_control(element) {
 	let field = $el.data('control'); // Often attached by custom scripts or framework
 	if (field) return field;
 
+	const fieldname = $el.closest('[data-fieldname]').attr('data-fieldname');
+
 	// 2. Iterate cur_frm fields
-	if (window.cur_frm && window.cur_frm.fields_dict) {
-		const fieldname = $el.closest('[data-fieldname]').attr('data-fieldname');
-		if (fieldname && cur_frm.fields_dict[fieldname]) {
+	if (fieldname && window.cur_frm && window.cur_frm.fields_dict) {
+		if (cur_frm.fields_dict[fieldname]) {
 			return cur_frm.fields_dict[fieldname];
 		}
 	}
 
-	// 3. Grid Row fields
+	// 3. Iterate cur_dialog fields (for modals)
+	if (fieldname && window.cur_dialog && window.cur_dialog.fields_dict) {
+		if (cur_dialog.fields_dict[fieldname]) {
+			return cur_dialog.fields_dict[fieldname];
+		}
+	}
+
+	// 4. Grid Row fields
 	const grid_row = $el.closest('.grid-row');
 	if (grid_row.length) {
 		const grid_row_obj = grid_row.data('grid_row');
-		const fieldname = $el.closest('[data-fieldname]').attr('data-fieldname');
-		if (grid_row_obj && grid_row_obj.docfields) {
+		if (grid_row_obj && grid_row_obj.docfields && fieldname) {
+			// Logic to get the grid column definition
 			const df = grid_row_obj.docfields.find(d => d.fieldname === fieldname);
-			if (df) return { df: df }; // Return an object mimicking the control with just df
+			// For grids, we don't have a full control object for each cell usually,
+			// but we might get the value from the doc.
+			if (df) {
+				return {
+					df: df,
+					get_value: () => {
+						// Return value from the row doc
+						return grid_row_obj.doc[fieldname];
+					}
+				};
+			}
 		}
 	}
 
@@ -58,7 +76,8 @@ function get_field_control(element) {
 }
 
 document.addEventListener('click', function(e) {
-	// 1. Identify if the click target is an input field
+	// 1. Basic Checks
+	if (e.button !== 0) return; // Only allow Left Click
 	const target = e.target;
 	if (target.tagName !== 'INPUT') return;
 
@@ -70,10 +89,11 @@ document.addEventListener('click', function(e) {
 	let isLink = false;
 	const fieldtype = controlElement.getAttribute('data-fieldtype');
 
+	// Primary check via attribute
 	if (fieldtype && (fieldtype === 'Link' || fieldtype === 'Dynamic Link')) {
 		isLink = true;
 	} else {
-		// Double check via control object if possible
+		// Secondary check via control object
 		const c = get_field_control(target);
 		if (c && c.df && (c.df.fieldtype === 'Link' || c.df.fieldtype === 'Dynamic Link')) {
 			isLink = true;
@@ -84,7 +104,6 @@ document.addEventListener('click', function(e) {
 
 	// 4. Check editability and state
 	if (target.readOnly || target.disabled) {
-		// If it's read-only/disabled, default behavior might be fine, or handled by Frappe
 		return;
 	}
 
@@ -93,57 +112,77 @@ document.addEventListener('click', function(e) {
 		return;
 	}
 
-	// 6. Find the "Open Link" button
-	// Frappe standard renders a button with class 'btn-open' or similar logic inside the control-input-wrapper.
+	// 6. Navigation Logic
 	const $control = $(controlElement);
 	let $linkBtn = $control.find('.btn-open');
 
-	// Fallback search if .btn-open isn't used (varies by version/theme)
-	if ($linkBtn.length === 0) {
-		$linkBtn = $control.find('[data-action="open-link"]');
-	}
+	// Fallback selectors for the link button
+	if ($linkBtn.length === 0) $linkBtn = $control.find('[data-action="open-link"]');
+	if ($linkBtn.length === 0) $linkBtn = $control.find('.link-btn'); // Common wrapper in some versions
+	if ($linkBtn.length === 0) $linkBtn = $control.find('a.btn-open'); // Specific tag check
 
-	// Another fallback: Look for the element containing the 'arrow-right' icon
-	// Note: 'use[*|href*="arrow-right"]' selector handles namespaced href (xlink:href)
-	if ($linkBtn.length === 0) {
-		$linkBtn = $control.find('.icon-sm use[*|href*="arrow-right"]').closest('a, button');
-	}
-
-    // Fallback for Dynamic Link where button might be obscure or different
-    // In some versions, the button is hidden until hover, but we can still click it.
-
-	// 7. Execute Navigation
+	// If we found the button, we can just click it (Proxy Click)
 	if ($linkBtn.length > 0) {
-		// Prevent default focus/edit behavior
+		// If user pressed Ctrl/Meta, we might want to open in new tab.
+		// Most .btn-open handlers use frappe.set_route which stays in same tab.
+		// If we want New Tab support, we have to construct the URL manually.
+		if (e.ctrlKey || e.metaKey) {
+			// Proceed to manual URL construction if possible, otherwise let it behave normally (often does nothing for div/button)
+			// We will fall through to Manual Routing logic if we can resolve the doc.
+		} else {
+			e.preventDefault();
+			e.stopPropagation();
+			e.stopImmediatePropagation();
+			$linkBtn[0].click();
+			target.blur();
+			return;
+		}
+	}
+
+	// 7. Manual Routing (Fallback or New Tab)
+	// If button missing OR New Tab requested
+	const control = get_field_control(target);
+	let doctype = null;
+	let docname = null;
+
+	if (control && control.df) {
+		// Resolve DocType
+		if (control.df.fieldtype === 'Link') {
+			doctype = control.df.options;
+		} else if (control.df.fieldtype === 'Dynamic Link') {
+			// Dynamic Link requires resolving the 'options' field which points to another fieldname
+			// that holds the actual DocType.
+			if (control.df.options && window.cur_frm) {
+				doctype = cur_frm.doc[control.df.options];
+			} else if (control.df.options && control.get_model_value) {
+				// Try to find it via model value if available
+				// This is tricky for grids without full context
+			}
+		}
+
+		// Resolve DocName (Value)
+		// Use get_value() if available to get the ID, not the Title
+		if (control.get_value) {
+			docname = control.get_value();
+		} else {
+			// Fallback to target.value, but this risks being the Title
+			docname = target.value;
+		}
+	}
+
+	if (doctype && docname) {
 		e.preventDefault();
 		e.stopPropagation();
 		e.stopImmediatePropagation();
 
-		// Trigger the navigation
-		$linkBtn[0].click();
+		const url = frappe.utils.get_form_link(doctype, docname);
 
-		// Blur the input to prevent focus state artifacts
+		if (e.ctrlKey || e.metaKey) {
+			window.open(url, '_blank');
+		} else {
+			frappe.set_route('Form', doctype, docname);
+		}
 		target.blur();
-	} else {
-		// If we cannot find the button, we attempt to route manually ONLY if we are certain about the doctype.
-		const control = get_field_control(target);
-		let doctype = null;
-
-		if (control && control.df && control.df.options && control.df.fieldtype === 'Link') {
-			doctype = control.df.options;
-		}
-        // Note: Dynamic Link requires looking at another field for doctype,
-        // which makes manual routing risky without the button logic.
-        // We will skip manual routing for Dynamic Link if button is missing.
-
-		if (doctype && target.value) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
-			frappe.set_route('Form', doctype, target.value);
-			target.blur();
-		}
 	}
 
-}, true); // Capture phase is crucial
+}, true); // Capture phase
