@@ -21,39 +21,51 @@ $(document).on('app_ready', function() {
 	}
 });
 
-// Make text inside Link Fields clickable for navigation
-// This is outside app_ready to ensure it applies before controls are created
-if (frappe.ui && frappe.ui.form && frappe.ui.form.ControlLink) {
-	const original_make_input = frappe.ui.form.ControlLink.prototype.make_input;
-	frappe.ui.form.ControlLink.prototype.make_input = function() {
-		original_make_input.apply(this, arguments);
+// Patch Link Field to be clickable for navigation
+// We use a function to allow retrying if ControlLink is not yet available
+const patchLinkField = function() {
+	if (frappe.ui && frappe.ui.form && frappe.ui.form.ControlLink) {
+		if (frappe.ui.form.ControlLink.prototype.make_input.patched) return;
 
-		if (this.$input) {
-			this.$input.on('click', (e) => {
-				// 0. Ensure this is explicitly a Link field (prevents regression with Dynamic Link)
-				if (this.df.fieldtype !== 'Link') {
-					return;
-				}
+		const original_make_input = frappe.ui.form.ControlLink.prototype.make_input;
+		frappe.ui.form.ControlLink.prototype.make_input = function() {
+			original_make_input.apply(this, arguments);
 
-				// 1. Check if the field is editable (not read-only)
-				// We check df.read_only and also the input properties just in case
-				if (this.df.read_only || this.$input.prop('readonly') || this.$input.prop('disabled')) {
-					return;
-				}
+			if (this.$input) {
+				this.$input.on('click', (e) => {
+					// 0. Ensure this is explicitly a Link field (prevents regression with Dynamic Link)
+					if (this.df.fieldtype !== 'Link') {
+						return;
+					}
 
-				// 2. Check if the field has a value
-				const value = this.get_value();
+					// 1. Check if the field is editable (not read-only)
+					// We check df.read_only and also the input properties just in case
+					if (this.df.read_only || this.$input.prop('readonly') || this.$input.prop('disabled')) {
+						return;
+					}
 
-				// 3. Navigate if value exists and it's a valid link field
-				if (value && this.df.options) {
-					frappe.set_route('Form', this.df.options, value);
+					// 2. Check if the field has a value
+					const value = this.get_value();
 
-					// 4. Prevent default focus/edit behavior
-					// The user explicitly requested this behavior, acknowledging they will use the 'X' button to clear/edit.
-					e.preventDefault();
-					e.stopPropagation();
-				}
-			});
-		}
-	};
-}
+					// 3. Navigate if value exists and it's a valid link field
+					if (value && this.df.options) {
+						frappe.set_route('Form', this.df.options, value);
+
+						// 4. Prevent default focus/edit behavior
+						// The user explicitly requested this behavior, acknowledging they will use the 'X' button to clear/edit.
+						e.preventDefault();
+						e.stopPropagation();
+					}
+				});
+			}
+		};
+		frappe.ui.form.ControlLink.prototype.make_input.patched = true;
+		console.log("ERPNext Enhancements: ControlLink patched successfully.");
+	}
+};
+
+// Attempt to patch immediately (for cases where script loads late)
+patchLinkField();
+
+// Attempt to patch on app_ready (for cases where script loads early)
+$(document).on('app_ready', patchLinkField);
