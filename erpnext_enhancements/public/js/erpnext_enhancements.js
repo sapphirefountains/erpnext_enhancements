@@ -21,61 +21,83 @@ $(document).on('app_ready', function() {
 	}
 });
 
-// Patch Link Field to be clickable for navigation
-// We use a function to allow retrying if ControlLink is not yet available
-const patchLinkField = function(retry_count = 0) {
-	if (frappe.ui && frappe.ui.form && frappe.ui.form.ControlLink) {
-		if (frappe.ui.form.ControlLink.prototype.make_input.patched) return;
+// Global Event Listener for Link Field Navigation
+// Strategy: "Proxy Click"
+// If the user clicks the text input of a link field, we find the associated "Open Link" button (->)
+// and click it programmatically. This ensures we support Link, Dynamic Link, and any other
+// field type that Frappe renders with a navigation button, preserving the correct routing logic.
 
-		const original_make_input = frappe.ui.form.ControlLink.prototype.make_input;
-		frappe.ui.form.ControlLink.prototype.make_input = function() {
-			original_make_input.apply(this, arguments);
+document.addEventListener('click', function(e) {
+	// 1. Identify if the click target is an input field
+	const target = e.target;
+	if (target.tagName !== 'INPUT') return;
 
-			if (this.$input && this.$input[0]) {
-				// Use native addEventListener with capture=true to ensure we catch the event
-				// before any other handlers (like Awesomplete) can stop it.
-				this.$input[0].addEventListener('click', (e) => {
-					// 0. Ensure this is explicitly a Link field (prevents regression with Dynamic Link)
-					if (this.df.fieldtype !== 'Link') {
-						return;
-					}
+    // 2. Check if this input belongs to a Frappe Control
+    const controlElement = target.closest('.frappe-control');
+    if (!controlElement) return;
 
-					// 1. Check if the field is editable (not read-only)
-					// We check df.read_only and also the input properties just in case
-					if (this.df.read_only || this.$input.prop('readonly') || this.$input.prop('disabled')) {
-						return;
-					}
+	// 3. Filter for Link-like fields
+    // We check for "Link" or "Dynamic Link" in the fieldtype.
+    // Using check for "Link" at the end of the string covers both "Link" and "Dynamic Link".
+    const fieldtype = controlElement.getAttribute('data-fieldtype');
+    if (!fieldtype || !fieldtype.endsWith('Link')) {
+        return;
+    }
 
-					// 2. Check if the field has a value
-					const value = this.get_value();
-
-					// 3. Navigate if value exists and it's a valid link field
-					if (value && this.df.options) {
-						frappe.set_route('Form', this.df.options, value);
-
-						// 4. Prevent default focus/edit behavior
-						// The user explicitly requested this behavior, acknowledging they will use the 'X' button to clear/edit.
-						e.preventDefault();
-						e.stopPropagation();
-						e.stopImmediatePropagation();
-					}
-				}, true); // Capture phase
-			}
-		};
-		frappe.ui.form.ControlLink.prototype.make_input.patched = true;
-		console.log("ERPNext Enhancements: ControlLink patched successfully.");
-	} else {
-		// Retry a few times if ControlLink is not yet loaded
-		if (retry_count < 5) {
-			setTimeout(() => patchLinkField(retry_count + 1), 1000);
-		}
+	// 4. Check editability
+    // If it's read-only, Frappe handles it (and the input might not be the click target anyway).
+    // If disabled, do nothing.
+	if (target.readOnly || target.disabled) {
+		return;
 	}
-};
 
-// Attempt to patch immediately (for cases where script loads late)
-patchLinkField();
+    // 5. Ensure the field has a value
+    if (!target.value) {
+        return;
+    }
 
-// Attempt to patch on app_ready (for cases where script loads early)
-$(document).on('app_ready', function() {
-	patchLinkField();
-});
+    // 6. Find the "Open Link" button
+    // Frappe standard renders a button with class 'btn-open' or similar logic inside the control-input-wrapper.
+    // Structure: .control-input-wrapper -> .link-btn (which is the button)
+    // Or sometimes it's an 'a' tag.
+
+    // We look for the specific button that Frappe uses to navigate.
+    // In V13/V14/V15, it's often an element with class `btn-open` or `link-btn`
+    // or an anchor with data-action.
+
+    const $control = $(controlElement);
+    let $linkBtn = $control.find('.btn-open');
+
+    // Fallback search if .btn-open isn't used (varies by version/theme)
+    if ($linkBtn.length === 0) {
+        $linkBtn = $control.find('[data-action="open-link"]');
+    }
+
+    // Another fallback: Look for the element containing the 'arrow-right' icon
+    if ($linkBtn.length === 0) {
+        // This is looser but might catch it if classes changed
+        $linkBtn = $control.find('.icon-sm use[*|href*="arrow-right"]').closest('a, button');
+    }
+
+    // 7. Execute Navigation
+    if ($linkBtn.length > 0 && $linkBtn.is(':visible')) {
+        // Prevent default focus/edit
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        // Trigger the navigation
+        $linkBtn[0].click();
+
+        // Blur the input to prevent focus state artifacts
+        target.blur();
+    } else {
+        // If we can't find the button, we shouldn't guess.
+        // The user might have a custom field that doesn't link anywhere.
+        // However, for standard Link fields without a button (e.g. sometimes in Grid),
+        // we might want to fall back to the previous logic?
+        // Current decision: Safe "Proxy Click" only. If no arrow, no click.
+        // This aligns with "it should be the same process of how a Read Only link field works".
+    }
+
+}, true); // Capture phase is crucial
