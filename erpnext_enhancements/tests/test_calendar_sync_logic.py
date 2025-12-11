@@ -12,7 +12,7 @@ if "frappe" not in sys.modules:
 else:
     import frappe
 
-from erpnext_enhancements.calendar_sync import get_google_calendars_for_doctype, sync_doctype_to_event
+from erpnext_enhancements.calendar_sync import get_google_calendars_for_doctype, sync_doctype_to_event, get_sync_data
 
 
 class TestCalendarSyncLogic(unittest.TestCase):
@@ -196,3 +196,44 @@ class TestGetGoogleCalendars(unittest.TestCase):
 
 		# Assert
 		self.assertEqual(len(calendars), 0)
+
+
+class TestGetSyncData(unittest.TestCase):
+	def test_project_fallback_dates(self):
+		# Setup a mock Project doc that will return None for custom fields
+		# but will return values for the standard date fields.
+		doc = MagicMock()
+		doc.doctype = "Project"
+		doc.get.side_effect = lambda key: {
+			"custom_calendar_datetime_start": None,
+			"custom_calendar_datetime_end": None,
+			"expected_start_date": "2024-01-01",
+			"expected_end_date": "2024-01-31",
+			"project_name": "Test Project Fallback"
+		}.get(key)
+
+		start_dt, end_dt, _, _, _ = get_sync_data(doc)
+
+		self.assertEqual(start_dt, "2024-01-01")
+		self.assertEqual(end_dt, "2024-01-31")
+
+	def test_todo_fallback_dates(self):
+		# Setup a mock ToDo doc with no custom dates but a due_date
+		doc = MagicMock()
+		doc.doctype = "ToDo"
+		doc.get.side_effect = lambda key: {
+			"custom_calendar_datetime_start": None,
+			"custom_calendar_datetime_end": None,
+			"due_date": "2024-02-15 10:00:00",
+			"description": "Test ToDo Fallback"
+		}.get(key)
+
+		# We also need to patch add_to_date used by the fallback
+		with patch("erpnext_enhancements.calendar_sync.add_to_date") as mock_add_date:
+			mock_add_date.return_value = "2024-02-15 11:00:00" # Expected end time
+
+			start_dt, end_dt, _, _, _ = get_sync_data(doc)
+
+			self.assertEqual(start_dt, "2024-02-15 10:00:00")
+			self.assertEqual(end_dt, "2024-02-15 11:00:00")
+			mock_add_date.assert_called_once_with("2024-02-15 10:00:00", hours=1)
