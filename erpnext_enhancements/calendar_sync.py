@@ -7,6 +7,16 @@ def sync_doctype_to_event(doc, method):
 	Syncs a supported DocType to Google Calendar(s).
 	Triggered by: on_update of configured DocTypes.
 	"""
+	if doc.flags.in_google_calendar_sync:
+		return
+
+	doc.flags.in_google_calendar_sync = True
+	try:
+		_sync_doctype_to_event(doc, method)
+	finally:
+		doc.flags.in_google_calendar_sync = False
+
+def _sync_doctype_to_event(doc, method):
 	# Handle cancellation/closure by removing the event
 	# Check specific statuses for different DocTypes if needed, but generic "Cancelled"/"Closed" is common.
 	# For Task: Cancelled, Closed.
@@ -132,14 +142,7 @@ def delete_event_from_google(doc, method=None):
 	if method != "on_trash":
 		# Clear the table
 		doc.set("google_calendar_events", [])
-		# doc.save() # Avoid save in on_update
-		# Use db update if possible, but clearing child table is complex with db_set
-		# If this is called during on_update, modifying doc is okay if we don't save.
-		# But we need it to persist.
-		# frappe.db.delete("Google Calendar Event Log", {"parent": doc.name}) ?
-		# Safer to just let the doc update handle it if possible, but this is a side effect.
-		# If we are in `on_update`, we shouldn't `doc.save()`.
-		pass
+		doc.save(ignore_permissions=True)
 
 def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt, description, location=None):
 	from frappe.integrations.doctype.google_calendar.google_calendar import get_google_calendar_object
@@ -207,22 +210,7 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 					"google_calendar": google_calendar_doc.name,
 					"event_id": new_id
 				})
-				# Persist the new row immediately so we don't lose it if on_update doesn't save
-				# But we can't easily persist just one row if the parent is unsaved.
-				# However, since this is called in on_update, the parent IS saving/saved.
-				# But changes to `doc` in `on_update` are not automatically saved to DB unless we call save, which recurses.
-				# Best practice: use frappe.db.set_value or raw SQL for the child table?
-				# Or better: `doc.save(ignore_permissions=True)` but inhibit recursion?
-				# `flags.ignore_permissions = True`
-				# Actually, if we are in on_update, we can assume the doc is being saved.
-				# But we need to update the child table in DB.
-
-				# Let's insert the child row directly to DB.
-				last_row = doc.google_calendar_events[-1]
-				last_row.parent = doc.name
-				last_row.parenttype = doc.doctype
-				last_row.parentfield = "google_calendar_events"
-				last_row.db_insert()
+				doc.save(ignore_permissions=True)
 
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Sync Error: {e}", title="Google Calendar Sync")
