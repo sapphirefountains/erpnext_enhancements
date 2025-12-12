@@ -43,12 +43,8 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {
-	"Project": ["public/js/project_merge.js", "public/js/project_enhancements.js"]
-}
-doctype_list_js = {
-    "ToDo": "public/js/todo_list.js"
-}
+doctype_js = {"Project": ["public/js/project_merge.js", "public/js/project_enhancements.js"]}
+doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -145,24 +141,24 @@ doctype_list_js = {
 doc_events = {
 	"Task": {
 		"on_update": [
-            "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-            "erpnext_enhancements.tasks.generate_next_task"
-        ],
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
+			"erpnext_enhancements.calendar_sync.sync_doctype_to_event",
+			"erpnext_enhancements.tasks.generate_next_task",
+		],
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
 	},
-    "Project": {
-        "on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-        "on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
-        "after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity"
-    },
-    "Event": {
-        "on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-        "on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
-    },
-    "ToDo": {
-        "on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-        "on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google"
-    }
+	"Project": {
+		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
+		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
+	},
+	"Event": {
+		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
+	},
+	"ToDo": {
+		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
+		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
+	},
 }
 
 # doc_events = {
@@ -176,11 +172,7 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-scheduler_events = {
-	"daily": [
-		"erpnext_enhancements.project_enhancements.send_project_start_reminders"
-	]
-}
+scheduler_events = {"daily": ["erpnext_enhancements.project_enhancements.send_project_start_reminders"]}
 
 fixtures = ["Custom Field"]
 
@@ -199,9 +191,7 @@ override_whitelisted_methods = {
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
-override_doctype_dashboards = {
-	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data"
-}
+override_doctype_dashboards = {"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data"}
 
 # exempt linked doctypes from being automatically cancelled
 #

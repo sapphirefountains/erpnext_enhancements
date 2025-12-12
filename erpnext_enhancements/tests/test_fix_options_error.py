@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
 import frappe
+
 from erpnext_enhancements.calendar_sync import sync_to_google_calendar
+
 
 class TestFixOptionsError(unittest.TestCase):
 	@patch("erpnext_enhancements.calendar_sync.get_google_calendar_object")
@@ -15,15 +18,15 @@ class TestFixOptionsError(unittest.TestCase):
 		# Setup mocks
 		mock_service = MagicMock()
 		mock_get_gc_obj.return_value = (mock_service, "creds")
-		mock_service.events().patch.side_effect = Exception("Event not found") # Force create path
+		mock_service.events().patch.side_effect = Exception("Event not found")  # Force create path
 		mock_service.events().insert().execute.return_value = {"id": "new_event_id"}
 
-		mock_get_all.return_value = [] # No existing logs
+		mock_get_all.return_value = []  # No existing logs
 
 		doc = MagicMock()
 		doc.name = "TASK-001"
 		doc.doctype = "Task"
-		doc.get.return_value = None # doc.get("google_calendar_events") -> None
+		doc.get.return_value = None  # doc.get("google_calendar_events") -> None
 
 		# Simulate missing field in meta
 		doc.meta.get_field.return_value = None
@@ -34,12 +37,7 @@ class TestFixOptionsError(unittest.TestCase):
 
 		# Run function
 		sync_to_google_calendar(
-			doc,
-			google_calendar_doc,
-			"Summary",
-			"2023-01-01 10:00:00",
-			"2023-01-01 11:00:00",
-			"Description"
+			doc, google_calendar_doc, "Summary", "2023-01-01 10:00:00", "2023-01-01 11:00:00", "Description"
 		)
 
 		# Verify doc.append was NOT called
@@ -48,7 +46,7 @@ class TestFixOptionsError(unittest.TestCase):
 		# Verify error was logged
 		mock_log_error.assert_called_with(
 			message="Field 'google_calendar_events' missing in Task. Skipping event log save.",
-			title="Google Calendar Sync Error"
+			title="Google Calendar Sync Error",
 		)
 
 	@patch("erpnext_enhancements.calendar_sync.get_google_calendar_object")
@@ -81,12 +79,7 @@ class TestFixOptionsError(unittest.TestCase):
 
 		# Run function
 		sync_to_google_calendar(
-			doc,
-			google_calendar_doc,
-			"Summary",
-			"2023-01-01 10:00:00",
-			"2023-01-01 11:00:00",
-			"Description"
+			doc, google_calendar_doc, "Summary", "2023-01-01 10:00:00", "2023-01-01 11:00:00", "Description"
 		)
 
 		# Verify doc.append WAS called
@@ -96,6 +89,7 @@ class TestFixOptionsError(unittest.TestCase):
 		args, _ = mock_log_error.call_args
 		self.assertIn("Google Calendar Sync Save Error (Metadata Issue)", args[0])
 		self.assertIn("'NoneType' object has no attribute 'options'", args[0])
+
 
 if __name__ == "__main__":
 	# Minimal mock for frappe.get_doc or other calls if needed by the test runner context
