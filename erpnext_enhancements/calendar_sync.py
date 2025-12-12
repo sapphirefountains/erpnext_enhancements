@@ -31,6 +31,10 @@ def _sync_doctype_to_event(doc, method):
 		delete_event_from_google(doc, method)
 		return
 
+	# Check if relevant fields have changed (Optimization)
+	if not has_relevant_fields_changed(doc):
+		return
+
 	# Determine fields based on DocType
 	start_dt, end_dt, summary, description, location = get_sync_data(doc)
 	
@@ -53,6 +57,50 @@ def _sync_doctype_to_event(doc, method):
 			description=description,
 			location=location
 		)
+
+def has_relevant_fields_changed(doc):
+	"""
+	Checks if fields relevant to Google Calendar sync have changed.
+	"""
+	if doc.is_new():
+		return True
+
+	doc_before_save = doc.get_doc_before_save()
+	if not doc_before_save:
+		# Fallback: if we can't get previous state, assume changed to be safe
+		return True
+
+	# Common fields for all types
+	fields_to_check = ["status", "description"]
+
+	if doc.doctype == "Task":
+		fields_to_check.extend([
+			"custom_start_datetime", "custom_end_datetime",
+			"exp_start_date", "exp_end_date",
+			"subject", "project", "custom_locationaddress_of_task"
+		])
+	elif doc.doctype == "Event":
+		fields_to_check.extend(["starts_on", "ends_on", "subject"])
+	elif doc.doctype == "Project":
+		fields_to_check.extend([
+			"custom_calendar_datetime_start", "custom_calendar_datetime_end",
+			"expected_start_date", "expected_end_date", "project_name"
+		])
+	elif doc.doctype == "ToDo":
+		fields_to_check.extend([
+			"custom_calendar_datetime_start", "custom_calendar_datetime_end",
+			"due_date", "description"
+		])
+
+	for field in fields_to_check:
+		old_value = doc_before_save.get(field)
+		new_value = doc.get(field)
+
+		# Handle date/datetime comparison quirks if necessary, but direct comparison usually works
+		if old_value != new_value:
+			return True
+
+	return False
 
 def get_sync_data(doc):
 	"""
@@ -198,17 +246,22 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 		event_body["location"] = location
 
 	# Check if we already have an event for this calendar
+	# IMPORTANT: Fetch directly from DB to ensure we don't miss it if doc is partial
 	event_id = None
-	row_idx = -1
+	existing_log_name = None
 
-	if not doc.get("google_calendar_events"):
-		doc.set("google_calendar_events", [])
+	existing_logs = frappe.db.get_all("Google Calendar Event Log",
+		filters={
+			"parent": doc.name,
+			"parenttype": doc.doctype,
+			"google_calendar": google_calendar_doc.name
+		},
+		fields=["name", "event_id"]
+	)
 
-	for idx, row in enumerate(doc.google_calendar_events):
-		if row.google_calendar == google_calendar_doc.name:
-			event_id = row.event_id
-			row_idx = idx
-			break
+	if existing_logs:
+		event_id = existing_logs[0].event_id
+		existing_log_name = existing_logs[0].name
 
 	try:
 		if event_id:
@@ -219,22 +272,35 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 					body=event_body
 				).execute()
 			except HttpError as e:
-				if e.resp.status == 404:
+				if e.resp.status == 404 or e.resp.status == 410:
 					# Event ID found in doc but not in Google (deleted remotely?)
 					# Re-create it
 					new_id = _create_event(service, calendar_id, event_body)
 					if new_id:
-						doc.google_calendar_events[row_idx].event_id = new_id
-						doc.google_calendar_events[row_idx].db_update()
+						frappe.db.set_value("Google Calendar Event Log", existing_log_name, "event_id", new_id)
 				else:
 					frappe.log_error(message=f"Google Calendar Sync Error (Patch): {e}", title="Google Calendar Sync")
 		else:
 			new_id = _create_event(service, calendar_id, event_body)
 			if new_id:
-				doc.append("google_calendar_events", {
-					"google_calendar": google_calendar_doc.name,
-					"event_id": new_id
-				})
+				# Use append and save, but ensure we don't duplicate in the list if the doc object was stale
+				if not doc.get("google_calendar_events"):
+					doc.set("google_calendar_events", [])
+
+				# Check if it's already in the doc list (to avoid duplicates in current session)
+				found_in_doc = False
+				for row in doc.google_calendar_events:
+					if row.google_calendar == google_calendar_doc.name:
+						row.event_id = new_id
+						found_in_doc = True
+						break
+
+				if not found_in_doc:
+					doc.append("google_calendar_events", {
+						"google_calendar": google_calendar_doc.name,
+						"event_id": new_id
+					})
+
 				doc.save(ignore_permissions=True)
 
 	except Exception as e:
