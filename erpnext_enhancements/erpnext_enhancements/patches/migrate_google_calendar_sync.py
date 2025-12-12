@@ -1,11 +1,13 @@
 import frappe
 
+
 def execute():
 	"""
 	Migrates legacy Google Calendar settings and Task event IDs to the new structure.
 	"""
 	migrate_settings()
 	migrate_task_event_ids()
+
 
 def migrate_settings():
 	try:
@@ -18,6 +20,7 @@ def migrate_settings():
 			settings.save()
 	except Exception as e:
 		frappe.log_error(f"Migration Error (Settings): {e}", "Google Calendar Sync Migration")
+
 
 def migrate_task_event_ids():
 	try:
@@ -41,26 +44,32 @@ def migrate_task_event_ids():
 				global_calendar = row.google_calendar
 				break
 
-		tasks = frappe.get_all("Task", filters={"custom_google_event_id": ["is", "set"]}, fields=["name", "owner", "custom_google_event_id"])
+		tasks = frappe.get_all(
+			"Task",
+			filters={"custom_google_event_id": ["is", "set"]},
+			fields=["name", "owner", "custom_google_event_id"],
+		)
 
 		for task_data in tasks:
 			task = frappe.get_doc("Task", task_data.name)
 
 			if task.google_calendar_events:
-				continue # Already has entries? Skip.
+				continue  # Already has entries? Skip.
 
 			# Determine which calendar to assign
 			assigned_calendar = global_calendar
 
 			if not assigned_calendar:
 				# Fallback to User's calendar as per old logic
-				assigned_calendar = frappe.db.get_value("Google Calendar", {"user": task.owner, "enable": 1}, "name")
+				assigned_calendar = frappe.db.get_value(
+					"Google Calendar", {"user": task.owner, "enable": 1}, "name"
+				)
 
 			if assigned_calendar and task.custom_google_event_id:
-				task.append("google_calendar_events", {
-					"google_calendar": assigned_calendar,
-					"event_id": task.custom_google_event_id
-				})
+				task.append(
+					"google_calendar_events",
+					{"google_calendar": assigned_calendar, "event_id": task.custom_google_event_id},
+				)
 				# Disable validation/hooks during migration to prevent double sync attempts
 				task.flags.ignore_validate = True
 				task.flags.ignore_links = True
