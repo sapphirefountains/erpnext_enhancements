@@ -326,9 +326,12 @@ function should_trigger_autosave(target) {
 function try_autosave_if_dirty() {
 	if (!window.cur_frm || !cur_frm.doc) return;
 	if (cur_frm.is_new()) return;
+	console.log("[Autosave Debug] Checking...", { is_dirty: cur_frm.is_dirty(), saving: cur_frm.saving, doc: cur_frm.doc.name });
 	if (!cur_frm.is_dirty()) return;
 	if (cur_frm.saving) return;
 	if (EXCLUDED_DOCTYPES.includes(cur_frm.doc.doctype)) return;
+
+    console.log("[Autosave Debug] Attempting save...");
 
     // Safety fallback
     if (!_original_msgprint) _original_msgprint = frappe.msgprint;
@@ -344,34 +347,42 @@ function try_autosave_if_dirty() {
 
     try {
         // Run validation
+        console.log("[Autosave Debug] Validating...");
         const validation_result = cur_frm.validate_form_action('Save');
 
         if (validation_result instanceof Promise) {
+            console.log("[Autosave Debug] Validation is Promise");
             validation_result.then(() => {
+                console.log("[Autosave Debug] Promise resolved. is_valid:", is_valid);
                 if (is_valid) {
                     restore_globals();
                     perform_save();
                 } else {
                     restore_globals();
                 }
-            }).catch(() => {
+            }).catch((e) => {
+                console.log("[Autosave Debug] Promise rejected", e);
                 restore_globals();
             });
             return;
         } else {
              // Synchronous return
+             console.log("[Autosave Debug] Validation Sync:", validation_result);
              if (!validation_result) is_valid = false;
         }
     } catch(e) {
+        console.log("[Autosave Debug] Validation Exception", e);
         is_valid = false;
     }
 
     if (!is_valid) {
+        console.log("[Autosave Debug] Invalid, skipping save");
         restore_globals();
         return;
     }
 
     // If we are here and it was synchronous valid:
+    console.log("[Autosave Debug] Sync Valid. Saving...");
     restore_and_save();
 
     function restore_globals() {
@@ -386,18 +397,21 @@ function try_autosave_if_dirty() {
     }
 
     function perform_save() {
+        console.log("[Autosave Debug] perform_save called");
         // Suppress only show_alert (Success toaster)
         frappe.show_alert = () => {};
 
         cur_frm.save('Save',
-            () => { restore_show_alert(); }, // Success
+            () => { console.log("[Autosave Debug] Save Success Callback"); restore_show_alert(); }, // Success
             null, // btn
-            () => { restore_show_alert(); }  // Error
+            () => { console.log("[Autosave Debug] Save Error Callback"); restore_show_alert(); }  // Error
         ).then(() => {
              // Promise resolve
+             console.log("[Autosave Debug] Save Promise Resolved");
              restore_show_alert();
-        }).catch(() => {
+        }).catch((e) => {
              // Promise reject
+             console.log("[Autosave Debug] Save Promise Rejected", e);
              restore_show_alert();
         });
     }
