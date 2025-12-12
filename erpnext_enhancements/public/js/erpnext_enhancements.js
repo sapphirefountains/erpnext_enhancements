@@ -377,7 +377,7 @@ function try_autosave_if_dirty() {
         } else {
              // Synchronous return
              console.log("[Autosave Debug] Validation Sync:", validation_result);
-             if (!validation_result) is_valid = false;
+             if (validation_result === false) is_valid = false;
         }
     } catch(e) {
         console.log("[Autosave Debug] Validation Exception", e);
