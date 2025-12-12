@@ -27,7 +27,10 @@ $(document).on('app_ready', function() {
 		const original_form_refresh = frappe.ui.form.Controller.prototype.refresh;
 		frappe.ui.form.Controller.prototype.refresh = function() {
 			// Run the original refresh
-			const ret = original_form_refresh.apply(this, arguments);
+			let ret;
+			if (original_form_refresh) {
+				ret = original_form_refresh.apply(this, arguments);
+			}
 
 			// Run our custom map logic
 			try {
