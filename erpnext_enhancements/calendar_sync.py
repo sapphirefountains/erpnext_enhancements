@@ -296,12 +296,31 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 						break
 
 				if not found_in_doc:
-					doc.append("google_calendar_events", {
-						"google_calendar": google_calendar_doc.name,
-						"event_id": new_id
-					})
+					# Verify field exists to avoid "NoneType object has no attribute 'options'" error
+					# if metadata is stale or corrupted
+					if doc.meta.get_field("google_calendar_events"):
+						doc.append("google_calendar_events", {
+							"google_calendar": google_calendar_doc.name,
+							"event_id": new_id
+						})
+					else:
+						frappe.log_error(
+							message=f"Field 'google_calendar_events' missing in {doc.doctype}. Skipping event log save.",
+							title="Google Calendar Sync Error"
+						)
+						return
 
-				doc.save(ignore_permissions=True)
+				try:
+					doc.save(ignore_permissions=True)
+				except AttributeError as e:
+					# Catch specific metadata error common in sync scenarios
+					if "'NoneType' object has no attribute 'options'" in str(e):
+						frappe.log_error(
+							message=f"Google Calendar Sync Save Error (Metadata Issue): {e}",
+							title="Google Calendar Sync"
+						)
+					else:
+						raise e
 
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Sync Error: {e}", title="Google Calendar Sync")
