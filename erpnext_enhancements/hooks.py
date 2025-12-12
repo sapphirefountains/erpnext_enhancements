@@ -158,7 +158,6 @@ doc_events = {
 	"ToDo": {
 		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
 		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
-		"validate": "erpnext_enhancements.todo.validate_todo_dates",
 	},
 }
 
