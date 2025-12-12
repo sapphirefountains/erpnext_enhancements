@@ -34,7 +34,7 @@ $(document).on('app_ready', function() {
 
 			// Run our custom map logic
 			try {
-				render_address_map(this);
+				render_address_map(this.frm || this);
 			} catch (e) {
 				console.error("Error in Global Map Placeholder logic:", e);
 			}
@@ -45,6 +45,9 @@ $(document).on('app_ready', function() {
 });
 
 function render_address_map(frm) {
+	// 0. Safety Check
+	if (!frm || !frm.fields_dict) return;
+
 	// 1. Check if the target placeholder field exists
 	if (!frm.fields_dict.custom_map_placeholder) {
 		return;
