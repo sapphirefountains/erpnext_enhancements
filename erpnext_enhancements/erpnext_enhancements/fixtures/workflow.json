@@ -1,0 +1,114 @@
+[
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow",
+  "document_type": "Travel Trip",
+  "is_active": 1,
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow",
+  "owner": "Administrator",
+  "states": [
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "0",
+    "state": "Draft",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "0",
+    "state": "Requested",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "Approved",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "0",
+    "state": "Rejected",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "Booking in Progress",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "Ready for Travel",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "In Progress",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "Expense Review",
+    "update_field": "workflow_state"
+   },
+   {
+    "allow_edit": "System Manager",
+    "doc_status": "1",
+    "state": "Closed",
+    "update_field": "workflow_state"
+   }
+  ],
+  "transitions": [
+   {
+    "action": "Submit Request",
+    "allow": "System Manager",
+    "next_state": "Requested",
+    "state": "Draft"
+   },
+   {
+    "action": "Approve",
+    "allow": "System Manager",
+    "next_state": "Approved",
+    "state": "Requested"
+   },
+   {
+    "action": "Reject",
+    "allow": "System Manager",
+    "next_state": "Rejected",
+    "state": "Requested"
+   },
+   {
+    "action": "Start Booking",
+    "allow": "System Manager",
+    "next_state": "Booking in Progress",
+    "state": "Approved"
+   },
+   {
+    "action": "Finalize",
+    "allow": "System Manager",
+    "next_state": "Ready for Travel",
+    "state": "Booking in Progress"
+   },
+   {
+    "action": "Complete",
+    "allow": "System Manager",
+    "next_state": "Expense Review",
+    "state": "In Progress"
+   },
+   {
+    "action": "Close Trip",
+    "allow": "System Manager",
+    "next_state": "Closed",
+    "state": "Expense Review"
+   }
+  ],
+  "workflow_name": "Travel Trip Workflow"
+ }
+]

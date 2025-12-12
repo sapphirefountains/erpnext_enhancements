@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "poi_name",
+  "category",
+  "geolocation",
+  "column_break_1",
+  "address",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "poi_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "POI Name",
+   "reqd": 1,
+   "title": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "Hardware Store\nSupply Depot\nClient HQ\nHotel\nOther"
+  },
+  {
+   "fieldname": "geolocation",
+   "fieldtype": "Geolocation",
+   "label": "Geolocation"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Travel POI",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+    "create": 1,
+    "delete": 1,
+    "email": 1,
+    "export": 1,
+    "print": 1,
+    "read": 1,
+    "report": 1,
+    "role": "Employee",
+    "share": 1,
+    "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

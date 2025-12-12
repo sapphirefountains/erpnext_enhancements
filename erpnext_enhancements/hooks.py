@@ -43,7 +43,10 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Project": ["public/js/project_merge.js", "public/js/project_enhancements.js"]}
+doctype_js = {
+    "Project": ["public/js/project_merge.js", "public/js/project_enhancements.js"],
+    "Travel Trip": ["public/js/travel_trip.js"]
+}
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
@@ -174,7 +177,27 @@ doc_events = {
 
 scheduler_events = {"daily": ["erpnext_enhancements.project_enhancements.send_project_start_reminders"]}
 
-fixtures = ["Custom Field"]
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["name", "in", [
+                "Expense Claim-custom_travel_trip",
+                "Project-custom_calendar_datetime_start",
+                "Project-custom_calendar_datetime_end",
+                "Project-google_calendar_events",
+                "ToDo-custom_calendar_datetime_start",
+                "ToDo-custom_calendar_datetime_end",
+                "ToDo-google_calendar_events",
+                "Task-google_calendar_events",
+                "Event-google_calendar_events"
+            ]]
+        ]
+    },
+    {"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
+    {"dt": "Workflow State", "filters": [["name", "in", ["Draft", "Requested", "Approved", "Booking in Progress", "Ready for Travel", "In Progress", "Expense Review", "Closed"]]]},
+    {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]}
+]
 
 # Testing
 # -------
@@ -191,7 +214,10 @@ override_whitelisted_methods = {
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
-override_doctype_dashboards = {"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data"}
+override_doctype_dashboards = {
+    "Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",
+    "Employee": "erpnext_enhancements.dashboard_overrides.get_data"
+}
 
 # exempt linked doctypes from being automatically cancelled
 #

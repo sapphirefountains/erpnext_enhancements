@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "airline",
+  "flight_number",
+  "column_break_1",
+  "departure_airport",
+  "departure_time",
+  "section_break_1",
+  "arrival_airport",
+  "arrival_time",
+  "column_break_2",
+  "booking_reference",
+  "cost",
+  "attachment"
+ ],
+ "fields": [
+  {
+   "fieldname": "airline",
+   "fieldtype": "Link",
+   "label": "Airline",
+   "options": "Supplier",
+   "reqd": 1
+  },
+  {
+   "fieldname": "flight_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Flight Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "departure_airport",
+   "fieldtype": "Data",
+   "label": "Departure Airport"
+  },
+  {
+   "fieldname": "departure_time",
+   "fieldtype": "Datetime",
+   "label": "Departure Time"
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "arrival_airport",
+   "fieldtype": "Data",
+   "label": "Arrival Airport"
+  },
+  {
+   "fieldname": "arrival_time",
+   "fieldtype": "Datetime",
+   "label": "Arrival Time"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "booking_reference",
+   "fieldtype": "Data",
+   "label": "Booking Reference/PNR"
+  },
+  {
+   "fieldname": "cost",
+   "fieldtype": "Currency",
+   "label": "Cost"
+  },
+  {
+   "fieldname": "attachment",
+   "fieldtype": "Attach",
+   "label": "Attachment"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Trip Flight",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
