@@ -1,6 +1,9 @@
 frappe.provide("frappe.search");
 
+console.log("[ERPNext Enhancements] Script loaded");
+
 $(document).on("app_ready", function () {
+	console.log("[ERPNext Enhancements] app_ready");
 	if (frappe.search.AwesomeBar) {
 		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
 		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
@@ -290,6 +293,7 @@ let _original_throw = null;
 let _original_show_alert = null;
 
 function setup_global_autosave() {
+	console.log("[ERPNext Enhancements] setup_global_autosave");
 	// Capture originals once
 	if (!_original_msgprint) _original_msgprint = frappe.msgprint;
 	if (!_original_throw) _original_throw = frappe.throw;
