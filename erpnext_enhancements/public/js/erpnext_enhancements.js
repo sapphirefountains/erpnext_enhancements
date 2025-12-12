@@ -331,6 +331,12 @@ function try_autosave_if_dirty() {
 	if (cur_frm.saving) return;
 	if (EXCLUDED_DOCTYPES.includes(cur_frm.doc.doctype)) return;
 
+	// Check mandatory fields before saving to prevent UI freeze/validation errors
+	if (!check_mandatory_fields(cur_frm)) {
+		console.log("[Autosave Debug] Skipping save: Mandatory fields missing.");
+		return;
+	}
+
     console.log("[Autosave Debug] Attempting silent save...");
 
     // 1. Save original globals
@@ -369,4 +375,34 @@ function try_autosave_if_dirty() {
         restore_globals();
         console.log("[Autosave Debug] Finished attempt, globals restored.");
     });
+}
+
+function check_mandatory_fields(frm) {
+	if (!frm || !frm.doc || !frm.meta || !frm.meta.fields) return true;
+
+	for (let i = 0; i < frm.meta.fields.length; i++) {
+		const df = frm.meta.fields[i];
+		const fieldname = df.fieldname;
+
+		// Use the runtime docfield if available (handles dynamic properties like Mandatory Depends On)
+		const effective_df = (frm.fields_dict && frm.fields_dict[fieldname] && frm.fields_dict[fieldname].df) ? frm.fields_dict[fieldname].df : df;
+
+		if (effective_df.reqd && !effective_df.hidden) {
+			const value = frm.doc[fieldname];
+
+			// Table Check
+			if (effective_df.fieldtype === 'Table') {
+				if (!value || value.length === 0) {
+					return false;
+				}
+			}
+			// Standard Check
+			else if (value === null || value === undefined || value === "") {
+				if (value !== 0) {
+					return false;
+				}
+			}
+		}
+	}
+	return true;
 }
