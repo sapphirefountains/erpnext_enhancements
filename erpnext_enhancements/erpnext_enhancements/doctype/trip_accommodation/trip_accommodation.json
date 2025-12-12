@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "hotel_lodging",
+  "address",
+  "column_break_1",
+  "check_in_date",
+  "check_out_date",
+  "section_break_1",
+  "booking_confirmation",
+  "cost"
+ ],
+ "fields": [
+  {
+   "fieldname": "hotel_lodging",
+   "fieldtype": "Link",
+   "label": "Hotel/Lodging",
+   "options": "Supplier",
+   "reqd": 1
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Data",
+   "fetch_from": "hotel_lodging.address",
+   "label": "Address"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "check_in_date",
+   "fieldtype": "Date",
+   "label": "Check-in Date"
+  },
+  {
+   "fieldname": "check_out_date",
+   "fieldtype": "Date",
+   "label": "Check-out Date"
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "booking_confirmation",
+   "fieldtype": "Data",
+   "label": "Booking Confirmation #"
+  },
+  {
+   "fieldname": "cost",
+   "fieldtype": "Currency",
+   "label": "Cost"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Trip Accommodation",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

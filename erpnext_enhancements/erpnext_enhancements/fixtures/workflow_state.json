@@ -1,0 +1,101 @@
+[
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Draft",
+  "owner": "Administrator",
+  "style": "Gray",
+  "workflow_state_name": "Draft"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Requested",
+  "owner": "Administrator",
+  "style": "Orange",
+  "workflow_state_name": "Requested"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Approved",
+  "owner": "Administrator",
+  "style": "Blue",
+  "workflow_state_name": "Approved"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Rejected",
+  "owner": "Administrator",
+  "style": "Red",
+  "workflow_state_name": "Rejected"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Booking in Progress",
+  "owner": "Administrator",
+  "style": "Purple",
+  "workflow_state_name": "Booking in Progress"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Ready for Travel",
+  "owner": "Administrator",
+  "style": "Green",
+  "workflow_state_name": "Ready for Travel"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "In Progress",
+  "owner": "Administrator",
+  "style": "Cyan",
+  "workflow_state_name": "In Progress"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Expense Review",
+  "owner": "Administrator",
+  "style": "Yellow",
+  "workflow_state_name": "Expense Review"
+ },
+ {
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow State",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Closed",
+  "owner": "Administrator",
+  "style": "Dark",
+  "workflow_state_name": "Closed"
+ }
+]

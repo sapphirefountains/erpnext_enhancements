@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "transport_type",
+  "transport_ref_doctype",
+  "transport_ref_name",
+  "column_break_1",
+  "pickup_location",
+  "dropoff_location"
+ ],
+ "fields": [
+  {
+   "fieldname": "transport_type",
+   "fieldtype": "Select",
+   "label": "Transport Type",
+   "options": "Rental/Third Party\nCompany Fleet",
+   "reqd": 1
+  },
+  {
+   "fieldname": "transport_ref_doctype",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Transport Ref DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transport_ref_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Transport Ref Name",
+   "options": "transport_ref_doctype"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pickup_location",
+   "fieldtype": "Data",
+   "label": "Pickup Location"
+  },
+  {
+   "fieldname": "dropoff_location",
+   "fieldtype": "Data",
+   "label": "Drop-off Location"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Trip Ground Transport",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

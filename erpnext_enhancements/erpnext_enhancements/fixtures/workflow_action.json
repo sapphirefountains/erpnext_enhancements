@@ -1,0 +1,79 @@
+[
+ {
+  "action": "Submit Request",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Submit Request",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Approve",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Approve",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Reject",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Reject",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Start Booking",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Start Booking",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Finalize",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Finalize",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Complete",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Complete",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ },
+ {
+  "action": "Close Trip",
+  "creation": "2024-05-23 10:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Workflow Action",
+  "modified": "2024-05-23 10:00:00.000000",
+  "modified_by": "Administrator",
+  "name": "Travel Trip Workflow-Close Trip",
+  "owner": "Administrator",
+  "workflow": "Travel Trip Workflow"
+ }
+]

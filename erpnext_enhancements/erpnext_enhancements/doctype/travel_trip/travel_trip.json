@@ -1,0 +1,215 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "department",
+  "purpose",
+  "project",
+  "status",
+  "workflow_state",
+  "column_break_1",
+  "start_date",
+  "end_date",
+  "total_estimated_cost",
+  "section_break_1",
+  "trip_description",
+  "travel_type",
+  "logistics_tab",
+  "flights_section",
+  "flights",
+  "accommodation_section",
+  "accommodation",
+  "ground_transport_section",
+  "ground_transport",
+  "itinerary_tab",
+  "itinerary"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "employee.department",
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "label": "Department",
+   "options": "Department",
+   "read_only": 1
+  },
+  {
+   "fieldname": "purpose",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Purpose",
+   "reqd": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Status",
+   "options": "Draft\nRequested\nApproved\nBooking in Progress\nReady for Travel\nIn Progress\nExpense Review\nClosed"
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "label": "Workflow State",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_estimated_cost",
+   "fieldtype": "Currency",
+   "label": "Total Estimated Cost"
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "trip_description",
+   "fieldtype": "Text Editor",
+   "label": "Trip Description"
+  },
+  {
+   "fieldname": "travel_type",
+   "fieldtype": "Select",
+   "label": "Travel Type",
+   "options": "Domestic\nInternational\nLocal Site Visit"
+  },
+  {
+   "fieldname": "logistics_tab",
+   "fieldtype": "Tab Break",
+   "label": "Logistics"
+  },
+  {
+   "fieldname": "flights_section",
+   "fieldtype": "Section Break",
+   "label": "Flights"
+  },
+  {
+   "fieldname": "flights",
+   "fieldtype": "Table",
+   "label": "Flights",
+   "options": "Trip Flight"
+  },
+  {
+   "fieldname": "accommodation_section",
+   "fieldtype": "Section Break",
+   "label": "Accommodation"
+  },
+  {
+   "fieldname": "accommodation",
+   "fieldtype": "Table",
+   "label": "Accommodation",
+   "options": "Trip Accommodation"
+  },
+  {
+   "fieldname": "ground_transport_section",
+   "fieldtype": "Section Break",
+   "label": "Ground Transport"
+  },
+  {
+   "fieldname": "ground_transport",
+   "fieldtype": "Table",
+   "label": "Ground Transport",
+   "options": "Trip Ground Transport"
+  },
+  {
+   "fieldname": "itinerary_tab",
+   "fieldtype": "Tab Break",
+   "label": "Itinerary"
+  },
+  {
+   "fieldname": "itinerary",
+   "fieldtype": "Table",
+   "label": "Itinerary",
+   "options": "Trip Agenda"
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Travel Trip",
+ "naming_rule": "By \"Naming Series\" field",
+ "autoname": "naming_series:",
+ "naming_series": "TRIP-.YYYY.-.#####",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Employee",
+   "share": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 0,
+   "amend": 0
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
