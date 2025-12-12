@@ -96,8 +96,8 @@ def has_relevant_fields_changed(doc):
 		old_value = doc_before_save.get(field)
 		new_value = doc.get(field)
 
-		# Handle date/datetime comparison quirks if necessary, but direct comparison usually works
-		if old_value != new_value:
+		# Compare as strings to prevent type mismatches (e.g. str vs datetime)
+		if str(old_value or "") != str(new_value or ""):
 			return True
 
 	return False
