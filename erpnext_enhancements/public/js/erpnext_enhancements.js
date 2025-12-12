@@ -42,6 +42,8 @@ $(document).on('app_ready', function() {
 			return ret;
 		};
 	}
+
+	setup_global_autosave();
 });
 
 function render_address_map(frm) {
@@ -273,3 +275,134 @@ document.addEventListener('click', function(e) {
 	}
 
 }, true); // Capture phase
+
+
+/* Global Autosave Implementation */
+const AUTOSAVE_INTERVAL = 10000;
+const AUTOSAVE_DEBOUNCE = 1000;
+const EXCLUDED_DOCTYPES = [];
+let autosave_debounce_timer = null;
+
+// Persistent references to original functions
+let _original_msgprint = null;
+let _original_throw = null;
+let _original_show_alert = null;
+
+function setup_global_autosave() {
+	// Capture originals once
+	if (!_original_msgprint) _original_msgprint = frappe.msgprint;
+	if (!_original_throw) _original_throw = frappe.throw;
+	if (!_original_show_alert) _original_show_alert = frappe.show_alert;
+
+	// 1. Interval Listener
+	setInterval(() => {
+		try_autosave_if_dirty();
+	}, AUTOSAVE_INTERVAL);
+
+	// 2. Blur/FocusOut Listener
+	document.addEventListener('focusout', (e) => {
+		if (should_trigger_autosave(e.target)) {
+			clearTimeout(autosave_debounce_timer);
+			autosave_debounce_timer = setTimeout(() => {
+				try_autosave_if_dirty();
+			}, AUTOSAVE_DEBOUNCE);
+		}
+	}, true); // Capture phase
+}
+
+function should_trigger_autosave(target) {
+	if (!window.cur_frm || !cur_frm.doc) return false;
+
+	// Must be an input element
+	const tag = target.tagName;
+	if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return false;
+
+	// Must be inside the form wrapper
+	if (!$(target).closest('.frappe-control').length) return false;
+
+	return true;
+}
+
+function try_autosave_if_dirty() {
+	if (!window.cur_frm || !cur_frm.doc) return;
+	if (cur_frm.is_new()) return;
+	if (!cur_frm.is_dirty()) return;
+	if (cur_frm.saving) return;
+	if (EXCLUDED_DOCTYPES.includes(cur_frm.doc.doctype)) return;
+
+    // Safety fallback
+    if (!_original_msgprint) _original_msgprint = frappe.msgprint;
+    if (!_original_throw) _original_throw = frappe.throw;
+    if (!_original_show_alert) _original_show_alert = frappe.show_alert;
+
+    let is_valid = true;
+
+    // Mock
+    frappe.msgprint = () => { is_valid = false; };
+    frappe.throw = () => { is_valid = false; throw new Error("Silent Validation Error"); };
+    frappe.show_alert = () => { };
+
+    try {
+        // Run validation
+        const validation_result = cur_frm.validate_form_action('Save');
+
+        if (validation_result instanceof Promise) {
+            validation_result.then(() => {
+                if (is_valid) {
+                    restore_globals();
+                    perform_save();
+                } else {
+                    restore_globals();
+                }
+            }).catch(() => {
+                restore_globals();
+            });
+            return;
+        } else {
+             // Synchronous return
+             if (!validation_result) is_valid = false;
+        }
+    } catch(e) {
+        is_valid = false;
+    }
+
+    if (!is_valid) {
+        restore_globals();
+        return;
+    }
+
+    // If we are here and it was synchronous valid:
+    restore_and_save();
+
+    function restore_globals() {
+        if (_original_msgprint) frappe.msgprint = _original_msgprint;
+        if (_original_throw) frappe.throw = _original_throw;
+        if (_original_show_alert) frappe.show_alert = _original_show_alert;
+    }
+
+    function restore_and_save() {
+        restore_globals();
+        perform_save();
+    }
+
+    function perform_save() {
+        // Suppress only show_alert (Success toaster)
+        frappe.show_alert = () => {};
+
+        cur_frm.save('Save',
+            () => { restore_show_alert(); }, // Success
+            null, // btn
+            () => { restore_show_alert(); }  // Error
+        ).then(() => {
+             // Promise resolve
+             restore_show_alert();
+        }).catch(() => {
+             // Promise reject
+             restore_show_alert();
+        });
+    }
+
+    function restore_show_alert() {
+        if (_original_show_alert) frappe.show_alert = _original_show_alert;
+    }
+}
