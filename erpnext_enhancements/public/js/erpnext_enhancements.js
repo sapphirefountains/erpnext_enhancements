@@ -283,21 +283,12 @@ document.addEventListener(
 
 /* Global Autosave Implementation */
 const AUTOSAVE_INTERVAL = 10000;
-const AUTOSAVE_DEBOUNCE = 1000;
+const AUTOSAVE_DEBOUNCE = 3000;
 const EXCLUDED_DOCTYPES = [];
 let autosave_debounce_timer = null;
 
-// Persistent references to original functions
-let _original_msgprint = null;
-let _original_throw = null;
-let _original_show_alert = null;
-
 function setup_global_autosave() {
 	console.log("[ERPNext Enhancements] setup_global_autosave");
-	// Capture originals once
-	if (!_original_msgprint) _original_msgprint = frappe.msgprint;
-	if (!_original_throw) _original_throw = frappe.throw;
-	if (!_original_show_alert) _original_show_alert = frappe.show_alert;
 
 	// 1. Interval Listener
 	setInterval(() => {
@@ -340,92 +331,42 @@ function try_autosave_if_dirty() {
 	if (cur_frm.saving) return;
 	if (EXCLUDED_DOCTYPES.includes(cur_frm.doc.doctype)) return;
 
-    console.log("[Autosave Debug] Attempting save...");
+    console.log("[Autosave Debug] Attempting silent save...");
 
-    // Safety fallback
-    if (!_original_msgprint) _original_msgprint = frappe.msgprint;
-    if (!_original_throw) _original_throw = frappe.throw;
-    if (!_original_show_alert) _original_show_alert = frappe.show_alert;
+    // 1. Save original globals
+    const _original_msgprint = frappe.msgprint;
+    const _original_throw = frappe.throw;
+    const _original_show_alert = frappe.show_alert;
+    const _original_freeze = frappe.dom.freeze;
+    const _original_unfreeze = frappe.dom.unfreeze;
 
-    let is_valid = true;
+    // 2. Define restoration
+    const restore_globals = () => {
+        frappe.msgprint = _original_msgprint;
+        frappe.throw = _original_throw;
+        frappe.show_alert = _original_show_alert;
+        frappe.dom.freeze = _original_freeze;
+        frappe.dom.unfreeze = _original_unfreeze;
+    };
 
-    // Mock
-    frappe.msgprint = () => { is_valid = false; };
-    frappe.throw = () => { is_valid = false; throw new Error("Silent Validation Error"); };
-    frappe.show_alert = () => { };
+    // 3. Mock globals to silence UI
+    frappe.msgprint = () => {};
+    frappe.throw = (msg) => { throw new Error(msg); };
+    frappe.show_alert = () => {};
+    // Prevent UI freezing
+    frappe.dom.freeze = () => {};
+    frappe.dom.unfreeze = () => {};
 
-    try {
-        // Run validation
-        console.log("[Autosave Debug] Validating...");
-        const validation_result = cur_frm.validate_form_action('Save');
-
-        if (validation_result instanceof Promise) {
-            console.log("[Autosave Debug] Validation is Promise");
-            validation_result.then(() => {
-                console.log("[Autosave Debug] Promise resolved. is_valid:", is_valid);
-                if (is_valid) {
-                    restore_globals();
-                    perform_save();
-                } else {
-                    restore_globals();
-                }
-            }).catch((e) => {
-                console.log("[Autosave Debug] Promise rejected", e);
-                restore_globals();
-            });
-            return;
-        } else {
-             // Synchronous return
-             console.log("[Autosave Debug] Validation Sync:", validation_result);
-             if (validation_result === false) is_valid = false;
-        }
-    } catch(e) {
-        console.log("[Autosave Debug] Validation Exception", e);
-        is_valid = false;
-    }
-
-    if (!is_valid) {
-        console.log("[Autosave Debug] Invalid, skipping save");
+    // 4. Call Save
+    // We use cur_frm.save but rely on our mocks to suppress validation errors/dialogs
+    cur_frm.save(
+        'Save',
+        null, // callback - usually handles UI update, but we want to stay silent or let frappe handle it
+        null, // btn
+        null  // on_error - if validation fails, it calls this. We don't need to do anything as msgprint is mocked.
+    ).finally(() => {
+        // Always restore globals after the attempt
         restore_globals();
-        return;
-    }
-
-    // If we are here and it was synchronous valid:
-    console.log("[Autosave Debug] Sync Valid. Saving...");
-    restore_and_save();
-
-    function restore_globals() {
-        if (_original_msgprint) frappe.msgprint = _original_msgprint;
-        if (_original_throw) frappe.throw = _original_throw;
-        if (_original_show_alert) frappe.show_alert = _original_show_alert;
-    }
-
-    function restore_and_save() {
-        restore_globals();
-        perform_save();
-    }
-
-    function perform_save() {
-        console.log("[Autosave Debug] perform_save called");
-        // Suppress only show_alert (Success toaster)
-        frappe.show_alert = () => {};
-
-        cur_frm.save('Save',
-            () => { console.log("[Autosave Debug] Save Success Callback"); restore_show_alert(); }, // Success
-            null, // btn
-            () => { console.log("[Autosave Debug] Save Error Callback"); restore_show_alert(); }  // Error
-        ).then(() => {
-             // Promise resolve
-             console.log("[Autosave Debug] Save Promise Resolved");
-             restore_show_alert();
-        }).catch((e) => {
-             // Promise reject
-             console.log("[Autosave Debug] Save Promise Rejected", e);
-             restore_show_alert();
-        });
-    }
-
-    function restore_show_alert() {
-        if (_original_show_alert) frappe.show_alert = _original_show_alert;
-    }
+        console.log("[Autosave Debug] Finished attempt, globals restored.");
+    });
 }
