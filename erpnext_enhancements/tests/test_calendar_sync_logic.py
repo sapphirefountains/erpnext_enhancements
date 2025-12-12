@@ -5,14 +5,98 @@ from unittest.mock import MagicMock, patch
 # Check if frappe is already imported, if not mock it
 if "frappe" not in sys.modules:
     frappe = MagicMock()
+    frappe.utils = MagicMock()
+    frappe.integrations = MagicMock()
+    frappe.integrations.doctype = MagicMock()
+    frappe.integrations.doctype.google_calendar = MagicMock()
+    frappe.integrations.doctype.google_calendar.google_calendar = MagicMock()
     sys.modules["frappe"] = frappe
-    sys.modules["frappe.utils"] = MagicMock()
-    sys.modules["frappe.integrations.doctype.google_calendar.google_calendar"] = MagicMock()
-    sys.modules["googleapiclient.errors"] = MagicMock()
+    sys.modules["frappe.utils"] = frappe.utils
+    sys.modules["frappe.integrations"] = frappe.integrations
+    sys.modules["frappe.integrations.doctype"] = frappe.integrations.doctype
+    sys.modules["frappe.integrations.doctype.google_calendar"] = frappe.integrations.doctype.google_calendar
+    sys.modules["frappe.integrations.doctype.google_calendar.google_calendar"] = frappe.integrations.doctype.google_calendar.google_calendar
 else:
     import frappe
 
-from erpnext_enhancements.calendar_sync import get_google_calendars_for_doctype, sync_doctype_to_event, get_sync_data
+# Mock googleapiclient and create a proper Exception for HttpError
+if "googleapiclient" not in sys.modules:
+    googleapiclient = MagicMock()
+    sys.modules["googleapiclient"] = googleapiclient
+    googleapiclient_errors = MagicMock()
+    googleapiclient_errors.HttpError = type('HttpError', (Exception,), {})
+    sys.modules["googleapiclient.errors"] = googleapiclient_errors
+
+
+from erpnext_enhancements.calendar_sync import get_google_calendars_for_doctype, sync_doctype_to_event, get_sync_data, has_relevant_fields_changed, delete_event_from_google
+from datetime import datetime
+
+
+class TestDeleteEventFromGoogle(unittest.TestCase):
+	@patch('erpnext_enhancements.calendar_sync.get_google_calendars_for_doctype')
+	@patch('frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object')
+	def test_delete_legacy_event_on_trash(self, mock_get_gc_object, mock_get_calendars):
+		# Setup mocks for Google Calendar API
+		mock_service = MagicMock()
+		mock_get_gc_object.return_value = (mock_service, None)
+
+		mock_calendar_conf = MagicMock()
+		mock_calendar_conf.google_calendar_id = 'primary_test_calendar'
+		mock_get_calendars.return_value = [mock_calendar_conf]
+
+		# Setup a mock document with a legacy event ID
+		doc = MagicMock()
+		doc.doctype = 'ToDo'
+		doc.owner = 'test_user@example.com'
+		legacy_event_id = 'legacy_event_xyz123'
+
+		# Configure the .get() method on the mock
+		doc.get.side_effect = lambda key: {
+			'custom_google_event_id': legacy_event_id,
+			'google_calendar_events': []  # No child table events
+		}.get(key)
+
+		doc.meta.has_field.return_value = True
+
+		# Call the function being tested, simulating an 'on_trash' event
+		delete_event_from_google(doc, method='on_trash')
+
+		# Assertions to verify the correct calls were made
+		mock_get_calendars.assert_called_once_with('ToDo', 'test_user@example.com')
+		mock_get_gc_object.assert_called_once_with(mock_calendar_conf)
+		mock_service.events().delete.assert_called_once_with(
+			calendarId='primary_test_calendar', eventId=legacy_event_id
+		)
+
+		# Ensure that doc.save() is not called during 'on_trash'
+		doc.save.assert_not_called()
+
+
+class TestHasRelevantFieldsChanged(unittest.TestCase):
+	@patch('erpnext_enhancements.calendar_sync.get_datetime')
+	def test_datetime_normalization_and_change_detection(self, mock_get_datetime):
+		# Mock get_datetime to behave like the real one for this test
+		def get_dt_side_effect(val):
+			if isinstance(val, datetime):
+				return val
+			# Basic string parsing for test purposes
+			return datetime.strptime(str(val).split('.')[0], '%Y-%m-%d %H:%M:%S')
+		mock_get_datetime.side_effect = get_dt_side_effect
+
+		doc_before_save = MagicMock()
+		doc = MagicMock()
+		doc.doctype = "ToDo"
+		doc.is_new.return_value = False
+		doc.get_doc_before_save.return_value = doc_before_save
+
+		# Case 1: No change (different format, same value)
+		doc_before_save.get.side_effect = lambda key: {"due_date": datetime(2024, 1, 1, 10, 0, 0)}.get(key)
+		doc.get.side_effect = lambda key: {"due_date": "2024-01-01 10:00:00.000000"}.get(key)
+		self.assertFalse(has_relevant_fields_changed(doc), "Should detect no change for same datetime in different format")
+
+		# Case 2: Change in time
+		doc.get.side_effect = lambda key: {"due_date": "2024-01-01 11:00:00"}.get(key)
+		self.assertTrue(has_relevant_fields_changed(doc), "Should detect change in datetime")
 
 
 class TestCalendarSyncLogic(unittest.TestCase):
