@@ -1,19 +1,20 @@
 import frappe
 from frappe import _
 
+
 @frappe.whitelist()
 def get_procurement_status(project_name):
-    """
-    Fetches the procurement status for items linked to a Project.
-    Aggregates data from:
-    1. Material Requests (External Purchasing & Internal Transfers)
-    2. Direct Purchase Orders (No Material Request)
-    """
-    if not project_name:
-        return []
+	"""
+	Fetches the procurement status for items linked to a Project.
+	Aggregates data from:
+	1. Material Requests (External Purchasing & Internal Transfers)
+	2. Direct Purchase Orders (No Material Request)
+	"""
+	if not project_name:
+		return []
 
-    # Combined query for Material Request based flows and Direct Purchase Orders
-    sql = """
+	# Combined query for Material Request based flows and Direct Purchase Orders
+	sql = """
         SELECT
             *
         FROM (
@@ -134,159 +135,163 @@ def get_procurement_status(project_name):
         ORDER BY
             transaction_date DESC, mr_name DESC, po_name DESC
     """
-    
-    data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
-    
-    # Post-processing to calculate percentages and format data
-    result = []
-    for row in data:
-        ordered_qty = row.get('ordered_qty') or 0
-        mr_qty = row.get('mr_qty') or 0
-        
-        # Use Material Request Qty if no PO Qty (Draft/Pending stage)
-        # For Direct POs, mr_qty is 0, so display_ordered_qty will be ordered_qty
-        display_ordered_qty = ordered_qty if ordered_qty > 0 else mr_qty
 
-        received_qty = row.get('received_qty') or 0
-        
-        completion_percentage = 0
-        if display_ordered_qty > 0:
-            completion_percentage = (received_qty / display_ordered_qty) * 100
-        
-        result.append({
-            'item_code': row.get('item_code'),
-            'item_name': row.get('item_name'),
-            'mr': row.get('mr_name'),
-            'mr_status': row.get('mr_status'),
-            'rfq': row.get('rfq_name'),
-            'rfq_status': row.get('rfq_status'),
-            'sq': row.get('sq_name'),
-            'sq_status': row.get('sq_status'),
-            'po': row.get('po_name'),
-            'po_status': row.get('po_status'),
-            'pr': row.get('pr_name'),
-            'pr_status': row.get('pr_status'),
-            'pi': row.get('pi_name'),
-            'pi_status': row.get('pi_status'),
-            'stock_entry': row.get('se_name'), # Renamed key for clarity
-            'stock_entry_status': row.get('se_status'), # Renamed key
-            'warehouse': row.get('warehouse'),
-            'ordered_qty': display_ordered_qty,
-            'received_qty': received_qty,
-            'completion_percentage': round(completion_percentage, 2)
-        })
-        
-    return result
+	data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
+
+	# Post-processing to calculate percentages and format data
+	result = []
+	for row in data:
+		ordered_qty = row.get("ordered_qty") or 0
+		mr_qty = row.get("mr_qty") or 0
+
+		# Use Material Request Qty if no PO Qty (Draft/Pending stage)
+		# For Direct POs, mr_qty is 0, so display_ordered_qty will be ordered_qty
+		display_ordered_qty = ordered_qty if ordered_qty > 0 else mr_qty
+
+		received_qty = row.get("received_qty") or 0
+
+		completion_percentage = 0
+		if display_ordered_qty > 0:
+			completion_percentage = (received_qty / display_ordered_qty) * 100
+
+		result.append(
+			{
+				"item_code": row.get("item_code"),
+				"item_name": row.get("item_name"),
+				"mr": row.get("mr_name"),
+				"mr_status": row.get("mr_status"),
+				"rfq": row.get("rfq_name"),
+				"rfq_status": row.get("rfq_status"),
+				"sq": row.get("sq_name"),
+				"sq_status": row.get("sq_status"),
+				"po": row.get("po_name"),
+				"po_status": row.get("po_status"),
+				"pr": row.get("pr_name"),
+				"pr_status": row.get("pr_status"),
+				"pi": row.get("pi_name"),
+				"pi_status": row.get("pi_status"),
+				"stock_entry": row.get("se_name"),  # Renamed key for clarity
+				"stock_entry_status": row.get("se_status"),  # Renamed key
+				"warehouse": row.get("warehouse"),
+				"ordered_qty": display_ordered_qty,
+				"received_qty": received_qty,
+				"completion_percentage": round(completion_percentage, 2),
+			}
+		)
+
+	return result
+
 
 def sync_attachments_from_opportunity(doc, method):
-    """
-    Sync attachments from the linked Opportunity (and its parent Lead) to the Project.
-    """
-    if not doc.custom_sales_opportunity:
-        return
+	"""
+	Sync attachments from the linked Opportunity (and its parent Lead) to the Project.
+	"""
+	if not doc.custom_sales_opportunity:
+		return
 
-    # 1. Get the list of files ALREADY on this Project (prevent duplicates)
-    existing_files = frappe.get_all("File", 
-        filters={
-            "attached_to_doctype": "Project",
-            "attached_to_name": doc.name
-        },
-        pluck="file_name"
-    )
+	# 1. Get the list of files ALREADY on this Project (prevent duplicates)
+	existing_files = frappe.get_all(
+		"File", filters={"attached_to_doctype": "Project", "attached_to_name": doc.name}, pluck="file_name"
+	)
 
-    # 2. Identify all related IDs (Opportunity + original Lead)
-    ids_to_check = [doc.custom_sales_opportunity]
-    
-    # We need to load the Opportunity to see if it has a parent Lead
-    try:
-        # Try loading as standard Opportunity
-        source_opp = frappe.get_doc("Opportunity", doc.custom_sales_opportunity)
-        
-        # Check if it is linked to a Lead (standard field 'party_name' or 'lead')
-        if source_opp.opportunity_from == "Lead" and source_opp.party_name:
-            ids_to_check.append(source_opp.party_name)
-            
-    except Exception:
-        # If standard load fails, it might be a 'CRM Opportunity' (custom app)
-        # We try to find the Lead ID from the ID string itself if possible
-        pass
+	# 2. Identify all related IDs (Opportunity + original Lead)
+	ids_to_check = [doc.custom_sales_opportunity]
 
-    # 3. Find files attached to ANY of these IDs (Opportunity OR Lead)
-    # We filter ONLY by name, ignoring the DocType, to catch both Lead and Opp files
-    source_files = frappe.get_all("File", 
-        filters={
-            "attached_to_name": ["in", ids_to_check]
-        },
-        fields=["file_name", "file_url", "is_private", "attached_to_name"]
-    )
+	# We need to load the Opportunity to see if it has a parent Lead
+	try:
+		# Try loading as standard Opportunity
+		source_opp = frappe.get_doc("Opportunity", doc.custom_sales_opportunity)
 
-    copied_count = 0
+		# Check if it is linked to a Lead (standard field 'party_name' or 'lead')
+		if source_opp.opportunity_from == "Lead" and source_opp.party_name:
+			ids_to_check.append(source_opp.party_name)
 
-    # 4. Copy the files
-    for file in source_files:
-        if file.file_name not in existing_files:
-            try:
-                new_file = frappe.get_doc({
-                    "doctype": "File",
-                    "file_name": file.file_name,
-                    "file_url": file.file_url,
-                    "attached_to_doctype": "Project",
-                    "attached_to_name": doc.name,
-                    "is_private": file.is_private
-                })
-                new_file.insert(ignore_permissions=True)
-                copied_count += 1
-            except Exception as e:
-                frappe.log_error(f"Error copying {file.file_name}: {str(e)}")
+	except Exception:
+		# If standard load fails, it might be a 'CRM Opportunity' (custom app)
+		# We try to find the Lead ID from the ID string itself if possible
+		pass
 
-    # 5. Success Message
-    if copied_count > 0:
-        frappe.msgprint(f"Success: Synced {copied_count} attachments (from Opportunity/Lead).")
+	# 3. Find files attached to ANY of these IDs (Opportunity OR Lead)
+	# We filter ONLY by name, ignoring the DocType, to catch both Lead and Opp files
+	source_files = frappe.get_all(
+		"File",
+		filters={"attached_to_name": ["in", ids_to_check]},
+		fields=["file_name", "file_url", "is_private", "attached_to_name"],
+	)
+
+	copied_count = 0
+
+	# 4. Copy the files
+	for file in source_files:
+		if file.file_name not in existing_files:
+			try:
+				new_file = frappe.get_doc(
+					{
+						"doctype": "File",
+						"file_name": file.file_name,
+						"file_url": file.file_url,
+						"attached_to_doctype": "Project",
+						"attached_to_name": doc.name,
+						"is_private": file.is_private,
+					}
+				)
+				new_file.insert(ignore_permissions=True)
+				copied_count += 1
+			except Exception as e:
+				frappe.log_error(f"Error copying {file.file_name}: {e!s}")
+
+	# 5. Success Message
+	if copied_count > 0:
+		frappe.msgprint(f"Success: Synced {copied_count} attachments (from Opportunity/Lead).")
 
 
 def send_project_start_reminders():
-    """
-    Sends email reminders for projects starting today.
-    Run daily at midnight.
-    """
-    today = frappe.utils.nowdate()
-    projects = frappe.get_all("Project", filters={"expected_start_date": today}, fields=["name", "project_name", "expected_start_date"])
+	"""
+	Sends email reminders for projects starting today.
+	Run daily at midnight.
+	"""
+	today = frappe.utils.nowdate()
+	projects = frappe.get_all(
+		"Project",
+		filters={"expected_start_date": today},
+		fields=["name", "project_name", "expected_start_date"],
+	)
 
-    if not projects:
-        return
+	if not projects:
+		return
 
-    settings = frappe.get_single("ERPNext Enhancements Settings")
-    if not settings.project_reminder_emails:
-        return
+	settings = frappe.get_single("ERPNext Enhancements Settings")
+	if not settings.project_reminder_emails:
+		return
 
-    recipients = [row.email for row in settings.project_reminder_emails if row.email]
-    if not recipients:
-        return
+	recipients = [row.email for row in settings.project_reminder_emails if row.email]
+	if not recipients:
+		return
 
-    for project in projects:
-        subject = _("Project Reminder: {0} starts today").format(project.project_name or project.name)
+	for project in projects:
+		subject = _("Project Reminder: {0} starts today").format(project.project_name or project.name)
 
-        message = f"""
+		message = f"""
         <h3>{_("Project Reminder")}</h3>
         <p>{_("The project <b>{0}</b> is expected to start today ({1}).").format(project.project_name or project.name, project.expected_start_date)}</p>
         <p><a href="{frappe.utils.get_url_to_form('Project', project.name)}">{_("View Project")}</a></p>
         """
 
-        frappe.sendmail(recipients=recipients, subject=subject, message=message)
+		frappe.sendmail(recipients=recipients, subject=subject, message=message)
+
 
 def get_dashboard_data(data):
-    """
-    Override Project dashboard to include documents linked via custom_project field.
-    """
-    if not data:
-        data = {}
+	"""
+	Override Project dashboard to include documents linked via custom_project field.
+	"""
+	if not data:
+		data = {}
 
-    if "non_standard_fieldnames" not in data:
-        data["non_standard_fieldnames"] = {}
+	if "non_standard_fieldnames" not in data:
+		data["non_standard_fieldnames"] = {}
 
-    data["non_standard_fieldnames"].update({
-        "Material Request": "custom_project",
-        "Request for Quotation": "custom_project"
-    })
+	data["non_standard_fieldnames"].update(
+		{"Material Request": "custom_project", "Request for Quotation": "custom_project"}
+	)
 
-    return data
+	return data
