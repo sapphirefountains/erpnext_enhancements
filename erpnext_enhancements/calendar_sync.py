@@ -67,37 +67,43 @@ def has_relevant_fields_changed(doc):
 
 	doc_before_save = doc.get_doc_before_save()
 	if not doc_before_save:
-		# Fallback: if we can't get previous state, assume changed to be safe
 		return True
 
-	# Common fields for all types
-	fields_to_check = ["status", "description"]
-
-	if doc.doctype == "Task":
-		fields_to_check.extend([
-			"custom_start_datetime", "custom_end_datetime",
-			"exp_start_date", "exp_end_date",
-			"subject", "project", "custom_locationaddress_of_task"
-		])
-	elif doc.doctype == "Event":
-		fields_to_check.extend(["starts_on", "ends_on", "subject"])
-	elif doc.doctype == "Project":
-		fields_to_check.extend([
+	fields_to_check = {
+		"Task": [
+			"custom_start_datetime", "custom_end_datetime", "exp_start_date",
+			"exp_end_date", "subject", "project",
+			"custom_locationaddress_of_task", "status", "description"
+		],
+		"Event": ["starts_on", "ends_on", "subject", "status", "description"],
+		"Project": [
 			"custom_calendar_datetime_start", "custom_calendar_datetime_end",
-			"expected_start_date", "expected_end_date", "project_name"
-		])
-	elif doc.doctype == "ToDo":
-		fields_to_check.extend([
+			"expected_start_date", "expected_end_date", "project_name",
+			"status", "description"
+		],
+		"ToDo": [
 			"custom_calendar_datetime_start", "custom_calendar_datetime_end",
-			"due_date", "description"
-		])
+			"due_date", "status", "description"
+		],
+	}
 
-	for field in fields_to_check:
-		old_value = doc_before_save.get(field)
-		new_value = doc.get(field)
+	# Helper to normalize values for comparison
+	def normalize(value):
+		if value is None:
+			return ""
+		# Attempt to parse as datetime, format it, otherwise stringify
+		try:
+			# Use frappe's get_datetime to handle string or datetime objects
+			dt = get_datetime(value)
+			return dt.strftime('%Y-%m-%d %H:%M:%S')
+		except (ValueError, TypeError):
+			return str(value)
 
-		# Compare as strings to prevent type mismatches (e.g. str vs datetime)
-		if str(old_value or "") != str(new_value or ""):
+	for field in fields_to_check.get(doc.doctype, []):
+		old_value = normalize(doc_before_save.get(field))
+		new_value = normalize(doc.get(field))
+
+		if old_value != new_value:
 			return True
 
 	return False
