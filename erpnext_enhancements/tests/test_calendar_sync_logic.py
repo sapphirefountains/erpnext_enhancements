@@ -301,18 +301,16 @@ class TestGetSyncData(unittest.TestCase):
 		self.assertEqual(start_dt, "2024-01-01")
 		self.assertEqual(end_dt, "2024-01-31")
 
-	def test_todo_fallback_dates(self):
-		# Setup a mock ToDo doc with no custom dates but a due_date
+	def test_todo_uses_due_date(self):
+		# Setup a mock ToDo doc with a due_date
 		doc = MagicMock()
 		doc.doctype = "ToDo"
 		doc.get.side_effect = lambda key: {
-			"custom_calendar_datetime_start": None,
-			"custom_calendar_datetime_end": None,
 			"due_date": "2024-02-15 10:00:00",
-			"description": "Test ToDo Fallback"
+			"description": "Test ToDo uses due_date"
 		}.get(key)
 
-		# We also need to patch add_to_date used by the fallback
+		# We also need to patch add_to_date
 		with patch("erpnext_enhancements.calendar_sync.add_to_date") as mock_add_date:
 			mock_add_date.return_value = "2024-02-15 11:00:00" # Expected end time
 
@@ -321,3 +319,24 @@ class TestGetSyncData(unittest.TestCase):
 			self.assertEqual(start_dt, "2024-02-15 10:00:00")
 			self.assertEqual(end_dt, "2024-02-15 11:00:00")
 			mock_add_date.assert_called_once_with("2024-02-15 10:00:00", hours=1)
+
+	def test_todo_ignores_custom_dates(self):
+		# Setup a mock ToDo doc with both custom dates and a due_date
+		# to ensure due_date is always used.
+		doc = MagicMock()
+		doc.doctype = "ToDo"
+		doc.get.side_effect = lambda key: {
+			"custom_calendar_datetime_start": "2099-01-01 12:00:00", # Should be ignored
+			"custom_calendar_datetime_end": "2099-01-01 13:00:00",   # Should be ignored
+			"due_date": "2024-03-20 14:00:00",                      # Should be used
+			"description": "Test ToDo Prioritization"
+		}.get(key)
+
+		with patch("erpnext_enhancements.calendar_sync.add_to_date") as mock_add_date:
+			mock_add_date.return_value = "2024-03-20 15:00:00"
+
+			start_dt, end_dt, _, _, _ = get_sync_data(doc)
+
+			self.assertEqual(start_dt, "2024-03-20 14:00:00")
+			self.assertEqual(end_dt, "2024-03-20 15:00:00")
+			mock_add_date.assert_called_once_with("2024-03-20 14:00:00", hours=1)
