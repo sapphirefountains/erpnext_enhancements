@@ -17,17 +17,20 @@
   {
    "fieldname": "date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "Date",
    "reqd": 1
   },
   {
    "fieldname": "time",
    "fieldtype": "Time",
+   "in_list_view": 1,
    "label": "Time"
   },
   {
    "fieldname": "activity_description",
    "fieldtype": "Small Text",
+   "in_list_view": 1,
    "label": "Activity Description",
    "reqd": 1
   },
@@ -38,18 +41,21 @@
   {
    "fieldname": "related_party_doctype",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Related Party DocType",
    "options": "DocType"
   },
   {
    "fieldname": "related_party_name",
    "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
    "label": "Related Party",
    "options": "related_party_doctype"
   },
   {
    "fieldname": "location",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Location",
    "options": "Travel POI"
   }

@@ -73,16 +73,19 @@
   {
    "fieldname": "booking_reference",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Booking Reference/PNR"
   },
   {
    "fieldname": "cost",
    "fieldtype": "Currency",
+   "in_list_view": 1,
    "label": "Cost"
   },
   {
    "fieldname": "attachment",
    "fieldtype": "Attach",
+   "in_list_view": 1,
    "label": "Attachment"
   }
  ],

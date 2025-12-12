@@ -27,6 +27,7 @@
    "fieldname": "address",
    "fieldtype": "Data",
    "fetch_from": "hotel_lodging.address",
+   "in_list_view": 1,
    "label": "Address"
   },
   {
@@ -58,6 +59,7 @@
   {
    "fieldname": "cost",
    "fieldtype": "Currency",
+   "in_list_view": 1,
    "label": "Cost"
   }
  ],
