@@ -1,6 +1,9 @@
 frappe.provide("frappe.search");
 
+console.log("[ERPNext Enhancements] Script loaded");
+
 $(document).on("app_ready", function () {
+	console.log("[ERPNext Enhancements] app_ready");
 	if (frappe.search.AwesomeBar) {
 		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
 		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
@@ -290,6 +293,7 @@ let _original_throw = null;
 let _original_show_alert = null;
 
 function setup_global_autosave() {
+	console.log("[ERPNext Enhancements] setup_global_autosave");
 	// Capture originals once
 	if (!_original_msgprint) _original_msgprint = frappe.msgprint;
 	if (!_original_throw) _original_throw = frappe.throw;
@@ -424,94 +428,4 @@ function try_autosave_if_dirty() {
     function restore_show_alert() {
         if (_original_show_alert) frappe.show_alert = _original_show_alert;
     }
-	// Safety fallback
-	if (!_original_msgprint) _original_msgprint = frappe.msgprint;
-	if (!_original_throw) _original_throw = frappe.throw;
-	if (!_original_show_alert) _original_show_alert = frappe.show_alert;
-
-	let is_valid = true;
-
-	// Mock
-	frappe.msgprint = () => {
-		is_valid = false;
-	};
-	frappe.throw = () => {
-		is_valid = false;
-		throw new Error("Silent Validation Error");
-	};
-	frappe.show_alert = () => {};
-
-	try {
-		// Run validation
-		const validation_result = cur_frm.validate_form_action("Save");
-
-		if (validation_result instanceof Promise) {
-			validation_result
-				.then(() => {
-					if (is_valid) {
-						restore_globals();
-						perform_save();
-					} else {
-						restore_globals();
-					}
-				})
-				.catch(() => {
-					restore_globals();
-				});
-			return;
-		} else {
-			// Synchronous return
-			if (!validation_result) is_valid = false;
-		}
-	} catch (e) {
-		is_valid = false;
-	}
-
-	if (!is_valid) {
-		restore_globals();
-		return;
-	}
-
-	// If we are here and it was synchronous valid:
-	restore_and_save();
-
-	function restore_globals() {
-		if (_original_msgprint) frappe.msgprint = _original_msgprint;
-		if (_original_throw) frappe.throw = _original_throw;
-		if (_original_show_alert) frappe.show_alert = _original_show_alert;
-	}
-
-	function restore_and_save() {
-		restore_globals();
-		perform_save();
-	}
-
-	function perform_save() {
-		// Suppress only show_alert (Success toaster)
-		frappe.show_alert = () => {};
-
-		cur_frm
-			.save(
-				"Save",
-				() => {
-					restore_show_alert();
-				}, // Success
-				null, // btn
-				() => {
-					restore_show_alert();
-				} // Error
-			)
-			.then(() => {
-				// Promise resolve
-				restore_show_alert();
-			})
-			.catch(() => {
-				// Promise reject
-				restore_show_alert();
-			});
-	}
-
-	function restore_show_alert() {
-		if (_original_show_alert) frappe.show_alert = _original_show_alert;
-	}
 }
