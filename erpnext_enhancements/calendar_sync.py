@@ -149,9 +149,12 @@ def get_sync_data(doc):
 		summary = doc.get("project_name") or doc.name
 
 	elif doc.doctype == "ToDo":
-		if doc.get("due_date"):
-			start_dt = doc.get("due_date")
-			end_dt = add_to_date(start_dt, hours=1)
+		start_dt = doc.get("custom_calendar_datetime_start")
+		end_dt = doc.get("custom_calendar_datetime_end")
+		if not (start_dt and end_dt):
+			if doc.get("due_date"):
+				start_dt = doc.get("due_date")
+				end_dt = add_to_date(start_dt, hours=1)
 		summary = strip_html(doc.get("description") or doc.name)
 		description = f"Link: {get_url_to_form(doc.doctype, doc.name)}"
 
