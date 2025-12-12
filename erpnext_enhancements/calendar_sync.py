@@ -166,6 +166,10 @@ def delete_event_from_google(doc, method=None):
 		doc.save(ignore_permissions=True)
 
 def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt, description, location=None):
+	# Ensure end time is after start time to avoid Google API errors
+	if get_datetime(end_dt) <= get_datetime(start_dt):
+		end_dt = add_to_date(start_dt, minutes=30)
+
 	from frappe.integrations.doctype.google_calendar.google_calendar import get_google_calendar_object
 
 	try:
