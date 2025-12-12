@@ -2,15 +2,11 @@ import frappe
 from frappe.utils import nowdate, get_datetime
 
 @frappe.whitelist()
-def get_events(start, end, user=None, filters=None, frappe_get_all=None):
+def get_todo_events(start, end, user=None, filters=None):
     if not user:
         user = frappe.session.user
 
-    # Use the provided frappe_get_all function for testing, otherwise default to frappe.get_all
-    if not frappe_get_all:
-        frappe_get_all = frappe.get_all
-
-    events = frappe_get_all("ToDo",
+    events = frappe.get_all("ToDo",
         filters=[
             {"owner": user},
             {"custom_calendar_datetime_start": ["<=", end]},

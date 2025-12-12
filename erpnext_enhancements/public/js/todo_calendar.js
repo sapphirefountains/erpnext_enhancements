@@ -1,5 +1,5 @@
 frappe.views.calendar["ToDo"] = {
-	get_events_method: "erpnext_enhancements.todo.get_events",
+	get_events_method: "erpnext_enhancements.todo.get_todo_events",
 };
 
 frappe.ui.form.on("ToDo", {

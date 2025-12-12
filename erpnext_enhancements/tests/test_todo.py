@@ -7,7 +7,7 @@ from datetime import datetime
 sys.modules["frappe"] = MagicMock()
 sys.modules["frappe.utils"] = MagicMock()
 
-from erpnext_enhancements.todo import validate_todo_dates, get_events
+from erpnext_enhancements.todo import validate_todo_dates, get_todo_events
 
 class TestToDo(unittest.TestCase):
     def setUp(self):
@@ -48,10 +48,12 @@ class TestToDo(unittest.TestCase):
         validate_todo_dates(doc, None)
         mock_frappe_throw.assert_called_once_with("End date and time cannot be before start date and time")
 
-    def test_get_events(self):
+    @patch("erpnext_enhancements.todo.frappe")
+    def test_get_todo_events(self, mock_frappe):
         """Test fetching of calendar events."""
-        mock_frappe_get_all = MagicMock()
-        mock_frappe_get_all.return_value = [
+        mock_frappe.session.user = "test@example.com"
+
+        mock_frappe.get_all.return_value = [
             {
                 "name": "test-todo-1",
                 "description": "Test ToDo 1",
@@ -60,13 +62,13 @@ class TestToDo(unittest.TestCase):
             }
         ]
 
-        events = get_events("2024-01-01", "2024-01-31", user="test@example.com", frappe_get_all=mock_frappe_get_all)
+        events = get_todo_events("2024-01-01", "2024-01-31")
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["name"], "test-todo-1")
 
-        # Verify that the mock function was called with the correct parameters
-        mock_frappe_get_all.assert_called_once_with(
+        # Verify that frappe.get_all was called with the correct parameters
+        mock_frappe.get_all.assert_called_once_with(
             "ToDo",
             filters=[
                 {"owner": "test@example.com"},
