@@ -352,3 +352,73 @@ class TestGetSyncData(unittest.TestCase):
 			self.assertEqual(start_dt, "2024-02-15 10:00:00")
 			self.assertEqual(end_dt, "2024-02-15 11:00:00")
 			mock_add_date.assert_called_once_with("2024-02-15 10:00:00", hours=1)
+
+class TestSyncLogInsertion(unittest.TestCase):
+	@patch("erpnext_enhancements.calendar_sync.get_datetime")
+	@patch("erpnext_enhancements.calendar_sync._create_event")
+	def test_sync_creates_log_entry_directly(self, mock_create_event, mock_get_datetime):
+		# Use the global mock frappe
+		global frappe
+		mock_frappe = frappe
+		mock_frappe.reset_mock() # Clear previous calls
+
+		# Setup
+		doc = MagicMock()
+		doc.doctype = "Task"
+		doc.name = "TASK-001"
+		doc.meta.get_field.return_value = True
+		# Setup doc.google_calendar_events as a list
+		doc.google_calendar_events = []
+		doc.get.side_effect = lambda k: doc.google_calendar_events if k == "google_calendar_events" else None
+
+		google_calendar_doc = MagicMock()
+		google_calendar_doc.name = "My Calendar"
+		google_calendar_doc.google_calendar_id = "primary"
+
+		# Mocks
+		mock_frappe.db.get_all.return_value = [] # No existing log
+		mock_create_event.return_value = "new_event_id"
+
+		mock_log_entry = MagicMock()
+		mock_log_entry.name = "log-123"
+		mock_frappe.get_doc.return_value = mock_log_entry
+
+		# Mock get_datetime to return a datetime object that has isoformat
+		mock_dt = MagicMock()
+		mock_dt.isoformat.return_value = "2024-01-01T10:00:00"
+		# Mock comparision: end <= start. We want end > start, so le should return False
+		mock_dt.__le__.return_value = False
+		mock_get_datetime.return_value = mock_dt
+
+		# Also mock get_google_calendar_object which is imported inside the function
+		# It's imported from frappe.integrations...
+		# Since frappe is mocked globally, frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object
+		# needs to be set.
+		mock_service = MagicMock()
+		mock_frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object.return_value = (mock_service, None)
+
+		# Import function to test
+		from erpnext_enhancements.calendar_sync import sync_to_google_calendar
+
+		# Call
+		sync_to_google_calendar(doc, google_calendar_doc, "Summary", "2024-01-01 10:00:00", "2024-01-01 11:00:00", "Desc")
+
+		# Assert
+		# Should have tried to create a new log entry
+		mock_frappe.get_doc.assert_called_with({
+			"doctype": "Google Calendar Event Log",
+			"parent": doc.name,
+			"parenttype": doc.doctype,
+			"parentfield": "google_calendar_events",
+			"google_calendar": google_calendar_doc.name,
+			"event_id": "new_event_id"
+		})
+
+		# Should have called insert
+		mock_log_entry.insert.assert_called()
+
+		# Should NOT have called doc.save
+		doc.save.assert_not_called()
+
+		# Should have updated doc object
+		doc.append.assert_called_with("google_calendar_events", mock_log_entry)
