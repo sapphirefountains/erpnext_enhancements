@@ -3,17 +3,48 @@
    Scoped strictly to login elements to avoid affecting public website.
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   THEME VARIABLES (Sapphire Light vs Sapphire Night)
+   -------------------------------------------------------------------------- */
+:root, [data-theme="light"] {
+    --sapphire-login-card-bg: rgba(255, 255, 255, 0.75);
+    --sapphire-login-border: rgba(255, 255, 255, 0.5);
+    --sapphire-login-shadow: rgba(31, 38, 135, 0.2);
+
+    --sapphire-input-bg: rgba(255, 255, 255, 0.8);
+    --sapphire-input-border: rgba(0, 0, 0, 0.1);
+    --sapphire-input-focus-bg: #fff;
+    --sapphire-input-text: inherit;
+
+    --sapphire-login-text: inherit;
+}
+
+[data-theme="dark"] {
+    /* Sapphire Night */
+    --sapphire-login-card-bg: rgba(30, 30, 30, 0.6);
+    --sapphire-login-border: rgba(255, 255, 255, 0.1);
+    --sapphire-login-shadow: rgba(0, 0, 0, 0.5);
+
+    --sapphire-input-bg: rgba(40, 40, 40, 0.6);
+    --sapphire-input-border: rgba(255, 255, 255, 0.1);
+    --sapphire-input-focus-bg: rgba(50, 50, 50, 0.9);
+    --sapphire-input-text: #fff;
+
+    --sapphire-login-text: #e0e0e0;
+}
+
 /* Target the main login card wrappers */
 .login-content.page-card,
 .for-login .page-card,
 .for-forgot .page-card,
 .for-signup .page-card {
-    background-color: rgba(255, 255, 255, 0.75) !important;
+    background-color: var(--sapphire-login-card-bg) !important;
     backdrop-filter: blur(15px) !important;
     -webkit-backdrop-filter: blur(15px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.5) !important;
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2) !important;
+    border: 1px solid var(--sapphire-login-border) !important;
+    box-shadow: 0 8px 32px 0 var(--sapphire-login-shadow) !important;
     border-radius: 16px !important;
+    color: var(--sapphire-login-text);
 }
 
 /* Scoped Button Styles for Login Page */
@@ -26,6 +57,7 @@
 }
 
 /* Primary Button on Login */
+/* Keeping blue as branding, but ensuring contrast */
 .login-content .btn-primary,
 .for-login .btn-primary,
 .for-forgot .btn-primary {
@@ -40,6 +72,7 @@
     background-position: 100% 0 !important;
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
     box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4) !important;
+    color: #fff !important;
 }
 
 .login-content .btn-primary:hover,
@@ -53,13 +86,15 @@
 .login-content .form-control,
 .for-login .form-control,
 .for-forgot .form-control {
-    background-color: rgba(255, 255, 255, 0.8) !important;
-    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    background-color: var(--sapphire-input-bg) !important;
+    border: 1px solid var(--sapphire-input-border) !important;
+    color: var(--sapphire-input-text) !important;
 }
 
 .login-content .form-control:focus,
 .for-login .form-control:focus,
 .for-forgot .form-control:focus {
-    background-color: #fff !important;
+    background-color: var(--sapphire-input-focus-bg) !important;
     box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25) !important;
+    color: var(--sapphire-input-text) !important;
 }
