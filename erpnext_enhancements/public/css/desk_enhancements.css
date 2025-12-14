@@ -2,6 +2,55 @@
    DESK ENHANCEMENTS (Internal System Only)
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   THEME VARIABLES (Sapphire Light vs Sapphire Night)
+   -------------------------------------------------------------------------- */
+:root, [data-theme="light"] {
+    /* Backgrounds */
+    --sapphire-glass-bg: rgba(255, 255, 255, 0.85);
+    --sapphire-glass-header-bg: rgba(255, 255, 255, 0.75);
+    --sapphire-btn-default-bg: rgba(255, 255, 255, 0.6);
+    --sapphire-btn-default-hover-bg: rgba(255, 255, 255, 0.9);
+
+    /* Borders */
+    --sapphire-glass-border: rgba(255, 255, 255, 0.6);
+    --sapphire-btn-border: rgba(0, 0, 0, 0.1);
+    --sapphire-header-border: rgba(255, 255, 255, 0.4);
+
+    /* Shadows */
+    --sapphire-glass-shadow: rgba(31, 38, 135, 0.15);
+    --sapphire-header-shadow: rgba(0, 0, 0, 0.05);
+
+    /* Text */
+    --sapphire-text-color: inherit;
+
+    /* Search/Dropdown */
+    --sapphire-dropdown-hover-bg: rgba(0, 123, 255, 0.1);
+}
+
+[data-theme="dark"] {
+    /* Backgrounds - Sapphire Night (Dark Glass) */
+    --sapphire-glass-bg: rgba(30, 30, 30, 0.65);
+    --sapphire-glass-header-bg: rgba(30, 30, 30, 0.75);
+    --sapphire-btn-default-bg: rgba(60, 60, 60, 0.6);
+    --sapphire-btn-default-hover-bg: rgba(80, 80, 80, 0.8);
+
+    /* Borders */
+    --sapphire-glass-border: rgba(255, 255, 255, 0.1);
+    --sapphire-btn-border: rgba(255, 255, 255, 0.1);
+    --sapphire-header-border: rgba(255, 255, 255, 0.1);
+
+    /* Shadows */
+    --sapphire-glass-shadow: rgba(0, 0, 0, 0.4);
+    --sapphire-header-shadow: rgba(0, 0, 0, 0.2);
+
+    /* Text */
+    --sapphire-text-color: #e0e0e0;
+
+    /* Search/Dropdown */
+    --sapphire-dropdown-hover-bg: rgba(0, 123, 255, 0.2);
+}
+
 /* 1. KANBAN BOARD FIXES */
 .kanban, .kanban-board, .kanban-container {
     display: flex !important;
@@ -27,18 +76,20 @@
 
 /* Default/Secondary Buttons */
 .btn-default, .btn-secondary {
-    background-color: rgba(255, 255, 255, 0.6) !important;
-    border: 1px solid rgba(0, 0, 0, 0.1) !important;
+    background-color: var(--sapphire-btn-default-bg) !important;
+    border: 1px solid var(--sapphire-btn-border) !important;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    color: var(--sapphire-text-color) !important;
 }
 
 .btn-default:hover, .btn-secondary:hover {
-    background-color: rgba(255, 255, 255, 0.9) !important;
+    background-color: var(--sapphire-btn-default-hover-bg) !important;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     transform: translateY(-1px);
 }
 
 /* Primary Buttons (Blue - Shiny Glass Effect) */
+/* Kept mostly as is, but ensuring text color is white for contrast against blue */
 .btn-primary {
     background-color: #007bff !important;
     background-image: linear-gradient(120deg,
@@ -76,19 +127,21 @@
 .modal-content,
 .desk-search-modal,
 .awesomplete > ul {
-    background-color: rgba(255, 255, 255, 0.85) !important;
+    background-color: var(--sapphire-glass-bg) !important;
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.6) !important;
-    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15) !important;
+    border: 1px solid var(--sapphire-glass-border) !important;
+    box-shadow: 0 8px 32px var(--sapphire-glass-shadow) !important;
+    color: var(--sapphire-text-color);
 }
 
 .awesomplete > ul > li {
     background: transparent !important;
+    color: var(--sapphire-text-color);
 }
 .awesomplete > ul > li:hover,
 .awesomplete > ul > li[aria-selected="true"] {
-    background-color: rgba(0, 123, 255, 0.1) !important;
+    background-color: var(--sapphire-dropdown-hover-bg) !important;
 }
 
 /* 4. MODAL BACKDROP (Frosted Glass) */
@@ -102,14 +155,15 @@
 /* 5. STICKY HEADERS & NAVBAR (Frosted Glass) */
 header.navbar,
 .page-head {
-    background-color: rgba(255, 255, 255, 0.75) !important;
+    background-color: var(--sapphire-glass-header-bg) !important;
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.4) !important;
+    border-bottom: 1px solid var(--sapphire-header-border) !important;
+    color: var(--sapphire-text-color);
 }
 
 header.navbar {
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05) !important;
+    box-shadow: 0 4px 10px var(--sapphire-header-shadow) !important;
 }
 
 /* 6. LINK FIELD NAVIGATION (Enhancement) */
