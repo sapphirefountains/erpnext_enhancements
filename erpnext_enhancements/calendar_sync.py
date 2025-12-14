@@ -311,44 +311,46 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 		else:
 			new_id = _create_event(service, calendar_id, event_body)
 			if new_id:
-				# Use append and save, but ensure we don't duplicate in the list if the doc object was stale
-				if not doc.get("google_calendar_events"):
-					doc.set("google_calendar_events", [])
-
-				# Check if it's already in the doc list (to avoid duplicates in current session)
-				found_in_doc = False
-				for row in doc.google_calendar_events:
-					if row.google_calendar == google_calendar_doc.name:
-						row.event_id = new_id
-						found_in_doc = True
-						break
-
-				if not found_in_doc:
-					# Verify field exists to avoid "NoneType object has no attribute 'options'" error
-					# if metadata is stale or corrupted
+				# Use direct insert to avoid recursion/save issues in on_update
+				try:
+					# 1. Insert directly into DB to ensure persistence
 					if doc.meta.get_field("google_calendar_events"):
-						doc.append(
-							"google_calendar_events",
-							{"google_calendar": google_calendar_doc.name, "event_id": new_id},
-						)
+						new_log = frappe.get_doc({
+							"doctype": "Google Calendar Event Log",
+							"parent": doc.name,
+							"parenttype": doc.doctype,
+							"parentfield": "google_calendar_events",
+							"google_calendar": google_calendar_doc.name,
+							"event_id": new_id
+						})
+						new_log.insert(ignore_permissions=True)
+
+						# 2. Update in-memory doc to match DB
+						if not doc.get("google_calendar_events"):
+							doc.set("google_calendar_events", [])
+
+						found_in_doc = False
+						for row in doc.google_calendar_events:
+							if row.google_calendar == google_calendar_doc.name:
+								# Update existing memory object to match DB object
+								row.name = new_log.name
+								row.event_id = new_id
+								found_in_doc = True
+								break
+
+						if not found_in_doc:
+							doc.append("google_calendar_events", new_log)
 					else:
 						frappe.log_error(
 							message=f"Field 'google_calendar_events' missing in {doc.doctype}. Skipping event log save.",
 							title="Google Calendar Sync Error",
 						)
-						return
 
-				try:
-					doc.save(ignore_permissions=True)
-				except AttributeError as e:
-					# Catch specific metadata error common in sync scenarios
-					if "'NoneType' object has no attribute 'options'" in str(e):
-						frappe.log_error(
-							message=f"Google Calendar Sync Save Error (Metadata Issue): {e}",
-							title="Google Calendar Sync",
-						)
-					else:
-						raise e
+				except Exception as e:
+					frappe.log_error(
+						message=f"Google Calendar Sync Save Error (Insert): {e}",
+						title="Google Calendar Sync",
+					)
 
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Sync Error: {e}", title="Google Calendar Sync")
