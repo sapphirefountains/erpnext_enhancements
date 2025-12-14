@@ -22,6 +22,7 @@
   {
    "fieldname": "airline",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Airline",
    "options": "Supplier",
    "reqd": 1
@@ -40,11 +41,13 @@
   {
    "fieldname": "departure_airport",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Departure Airport"
   },
   {
    "fieldname": "departure_time",
    "fieldtype": "Datetime",
+   "in_list_view": 1,
    "label": "Departure Time"
   },
   {
@@ -54,11 +57,13 @@
   {
    "fieldname": "arrival_airport",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Arrival Airport"
   },
   {
    "fieldname": "arrival_time",
    "fieldtype": "Datetime",
+   "in_list_view": 1,
    "label": "Arrival Time"
   },
   {
@@ -68,16 +73,19 @@
   {
    "fieldname": "booking_reference",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Booking Reference/PNR"
   },
   {
    "fieldname": "cost",
    "fieldtype": "Currency",
+   "in_list_view": 1,
    "label": "Cost"
   },
   {
    "fieldname": "attachment",
    "fieldtype": "Attach",
+   "in_list_view": 1,
    "label": "Attachment"
   }
  ],

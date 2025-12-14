@@ -16,6 +16,7 @@
   {
    "fieldname": "transport_type",
    "fieldtype": "Select",
+   "in_list_view": 1,
    "label": "Transport Type",
    "options": "Rental/Third Party\nCompany Fleet",
    "reqd": 1
@@ -31,6 +32,7 @@
   {
    "fieldname": "transport_ref_name",
    "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
    "label": "Transport Ref Name",
    "options": "transport_ref_doctype"
   },
@@ -41,11 +43,13 @@
   {
    "fieldname": "pickup_location",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Pickup Location"
   },
   {
    "fieldname": "dropoff_location",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Drop-off Location"
   }
  ],

@@ -18,6 +18,7 @@
   {
    "fieldname": "hotel_lodging",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Hotel/Lodging",
    "options": "Supplier",
    "reqd": 1
@@ -26,6 +27,7 @@
    "fieldname": "address",
    "fieldtype": "Data",
    "fetch_from": "hotel_lodging.address",
+   "in_list_view": 1,
    "label": "Address"
   },
   {
@@ -35,11 +37,13 @@
   {
    "fieldname": "check_in_date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "Check-in Date"
   },
   {
    "fieldname": "check_out_date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "Check-out Date"
   },
   {
@@ -49,11 +53,13 @@
   {
    "fieldname": "booking_confirmation",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Booking Confirmation #"
   },
   {
    "fieldname": "cost",
    "fieldtype": "Currency",
+   "in_list_view": 1,
    "label": "Cost"
   }
  ],
