@@ -4,6 +4,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "naming_series",
   "employee",
   "employee_name",
   "department",
@@ -29,6 +30,13 @@
   "itinerary"
  ],
  "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRIP-.YYYY.-.#####"
+  },
   {
    "fieldname": "employee",
    "fieldtype": "Link",
