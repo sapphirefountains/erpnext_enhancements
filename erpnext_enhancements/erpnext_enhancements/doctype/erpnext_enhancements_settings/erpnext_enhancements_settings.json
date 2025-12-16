@@ -8,7 +8,10 @@
   "google_calendar_sync_map",
   "default_google_calendar_config",
   "project_reminders_section",
-  "project_reminder_emails"
+  "project_reminder_emails",
+  "auto_save_section",
+  "enable_autosave",
+  "user_configs"
  ],
  "fields": [
   {
@@ -41,6 +44,24 @@
    "fieldtype": "Table",
    "label": "Reminder Emails",
    "options": "Project Reminder Email"
+  },
+  {
+   "fieldname": "auto_save_section",
+   "fieldtype": "Section Break",
+   "label": "Auto Save Settings"
+  },
+  {
+   "fieldname": "enable_autosave",
+   "fieldtype": "Check",
+   "label": "Enable Auto Save Globally",
+   "default": "1"
+  },
+  {
+   "fieldname": "user_configs",
+   "fieldtype": "Table",
+   "label": "User Exceptions/Overrides",
+   "options": "Auto Save User Config",
+   "description": "Override global setting for specific users."
   }
  ],
  "issingle": 1,
