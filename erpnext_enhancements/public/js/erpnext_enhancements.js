@@ -282,14 +282,70 @@ document.addEventListener(
 ); // Capture phase
 
 /* Global Autosave Implementation */
-const AUTOSAVE_INTERVAL = 10000;
-const AUTOSAVE_DEBOUNCE = 3000;
+const AUTOSAVE_INTERVAL = 60000;
+const AUTOSAVE_DEBOUNCE = 30000;
 const EXCLUDED_DOCTYPES = [];
 let autosave_debounce_timer = null;
+let autosave_enabled = true;
 
 function setup_global_autosave() {
 	console.log("[ERPNext Enhancements] setup_global_autosave");
 
+	frappe.call({
+		method: "frappe.client.get",
+		args: {
+			doctype: "ERPNext Enhancements Settings",
+		},
+		callback: function (r) {
+			if (r.message) {
+				const settings = r.message;
+				const user = frappe.session.user;
+
+				// Global setting (default to true if undefined)
+				const global_enabled = settings.enable_autosave !== 0;
+
+				// Check for user-specific override
+				let user_override = null;
+				if (settings.user_configs && Array.isArray(settings.user_configs)) {
+					const user_config = settings.user_configs.find((uc) => uc.user === user);
+					if (user_config) {
+						user_override = user_config.enabled !== 0;
+					}
+				}
+
+				// Determine final status
+				if (user_override !== null) {
+					autosave_enabled = user_override;
+				} else {
+					autosave_enabled = global_enabled;
+				}
+
+				console.log("[ERPNext Enhancements] Autosave Configuration:", {
+					user,
+					global_enabled,
+					user_override,
+					autosave_enabled,
+				});
+
+				if (autosave_enabled) {
+					initialize_autosave_listeners();
+				} else {
+					console.log("[ERPNext Enhancements] Autosave is disabled for this user.");
+				}
+			} else {
+				// Fallback if settings not found
+				console.warn("[ERPNext Enhancements] Settings not found, defaulting to ENABLED.");
+				initialize_autosave_listeners();
+			}
+		},
+		error: function (e) {
+			console.error("[ERPNext Enhancements] Failed to fetch settings, defaulting to ENABLED.", e);
+			initialize_autosave_listeners();
+		}
+	});
+}
+
+function initialize_autosave_listeners() {
 	// 1. Interval Listener
 	setInterval(() => {
 		try_autosave_if_dirty();
