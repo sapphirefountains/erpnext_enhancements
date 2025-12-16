@@ -302,14 +302,15 @@ function setup_global_autosave() {
 				const user = frappe.session.user;
 
 				// Global setting (default to true if undefined)
-				const global_enabled = settings.enable_autosave !== 0;
+				// Handle both integer 0 and string "0"
+				const global_enabled = settings.enable_autosave != 0;
 
 				// Check for user-specific override
 				let user_override = null;
 				if (settings.user_configs && Array.isArray(settings.user_configs)) {
 					const user_config = settings.user_configs.find((uc) => uc.user === user);
 					if (user_config) {
-						user_override = user_config.enabled !== 0;
+						user_override = user_config.enabled != 0;
 					}
 				}
 
@@ -380,6 +381,7 @@ function should_trigger_autosave(target) {
 }
 
 function try_autosave_if_dirty() {
+	if (!autosave_enabled) return;
 	if (!window.cur_frm || !cur_frm.doc) return;
 	if (cur_frm.is_new()) return;
 	console.log("[Autosave Debug] Checking...", { is_dirty: cur_frm.is_dirty(), saving: cur_frm.saving, doc: cur_frm.doc.name });
