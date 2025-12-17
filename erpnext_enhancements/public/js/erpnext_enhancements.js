@@ -136,6 +136,9 @@ function trigger_auto_save(frm) {
 
     // Check main doc fields
     $.each(frm.fields_dict, function(fieldname, field) {
+        // Skip system fields like __newname
+        if (fieldname.startsWith("__")) return true;
+
         if (field.df.reqd && !field.get_value()) {
             missing_mandatory = true;
             // console.log("[Auto-Save] Missing mandatory:", fieldname);
