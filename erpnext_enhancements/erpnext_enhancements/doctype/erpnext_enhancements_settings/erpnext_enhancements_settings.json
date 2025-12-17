@@ -10,8 +10,8 @@
   "project_reminders_section",
   "project_reminder_emails",
   "auto_save_section",
-  "enable_autosave",
-  "user_configs"
+  "auto_save_doctypes",
+  "auto_save_users"
  ],
  "fields": [
   {
@@ -51,17 +51,18 @@
    "label": "Auto Save Settings"
   },
   {
-   "fieldname": "enable_autosave",
-   "fieldtype": "Check",
-   "label": "Enable Auto Save Globally",
-   "default": "1"
+   "fieldname": "auto_save_doctypes",
+   "fieldtype": "Table",
+   "label": "Allowed DocTypes",
+   "options": "Auto Save Allowed DocType",
+   "description": "Enable auto-save only for these DocTypes."
   },
   {
-   "fieldname": "user_configs",
+   "fieldname": "auto_save_users",
    "fieldtype": "Table",
-   "label": "User Exceptions/Overrides",
-   "options": "Auto Save User Config",
-   "description": "Override global setting for specific users."
+   "label": "Allowed Users",
+   "options": "Auto Save Allowed User",
+   "description": "Enable auto-save only for these users."
   }
  ],
  "issingle": 1,

@@ -2,8 +2,43 @@ frappe.provide("frappe.search");
 
 console.log("[ERPNext Enhancements] Script loaded");
 
+// Auto-Save Configuration Cache
+let auto_save_config = {
+    doctypes: [],
+    users: [],
+    loaded: false
+};
+
+// Global Debounce Timer
+let auto_save_timer = null;
+
 $(document).on("app_ready", function () {
 	console.log("[ERPNext Enhancements] app_ready");
+
+    // Load Auto-Save Settings
+    frappe.call({
+        method: "frappe.client.get",
+        args: {
+            doctype: "ERPNext Enhancements Settings",
+            name: "ERPNext Enhancements Settings"
+        },
+        callback: function(r) {
+            if (r.message) {
+                const settings = r.message;
+                // Parse allowed doctypes
+                if (settings.auto_save_doctypes && Array.isArray(settings.auto_save_doctypes)) {
+                    auto_save_config.doctypes = settings.auto_save_doctypes.map(d => d.dt);
+                }
+                // Parse allowed users
+                if (settings.auto_save_users && Array.isArray(settings.auto_save_users)) {
+                    auto_save_config.users = settings.auto_save_users.map(u => u.user);
+                }
+                auto_save_config.loaded = true;
+                console.log("[ERPNext Enhancements] Auto-Save Config Loaded:", auto_save_config);
+            }
+        }
+    });
+
 	if (frappe.search.AwesomeBar) {
 		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
 		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
@@ -35,17 +70,123 @@ $(document).on("app_ready", function () {
 				ret = original_form_refresh.apply(this, arguments);
 			}
 
+            const frm = this.frm || this;
+
 			// Run our custom map logic
 			try {
-				render_address_map(this.frm || this);
+				render_address_map(frm);
 			} catch (e) {
 				console.error("Error in Global Map Placeholder logic:", e);
 			}
+
+            // Init Auto-Save Listener
+            try {
+                init_auto_save(frm);
+            } catch (e) {
+                console.error("Error in Auto-Save logic:", e);
+            }
 
 			return ret;
 		};
 	}
 });
+
+function init_auto_save(frm) {
+    if (!frm || !frm.wrapper) return;
+
+    // Remove existing listeners to prevent duplicates if refresh is called multiple times
+    frm.wrapper.off('keydown.autosave click.autosave change.autosave');
+
+    frm.wrapper.on('keydown.autosave click.autosave change.autosave', function() {
+        // Reset timer on any activity
+        if (auto_save_timer) {
+            clearTimeout(auto_save_timer);
+        }
+
+        // Start new timer (15 seconds)
+        auto_save_timer = setTimeout(function() {
+            trigger_auto_save(frm);
+        }, 15000);
+    });
+}
+
+function trigger_auto_save(frm) {
+    // 0. Config Loaded?
+    if (!auto_save_config.loaded) return;
+
+    // 1. Check Whitelists
+    if (!auto_save_config.doctypes.includes(frm.doctype)) {
+        // console.log("[Auto-Save] DocType not whitelisted:", frm.doctype);
+        return;
+    }
+    if (!auto_save_config.users.includes(frappe.session.user)) {
+        // console.log("[Auto-Save] User not whitelisted:", frappe.session.user);
+        return;
+    }
+
+    // 2. Document State Checks
+    if (frm.is_new()) return; // Only saved docs
+    if (frm.doc.docstatus !== 0) return; // Only Drafts
+    if (!frm.is_dirty()) return; // Only if modified
+
+    // 3. Silent Mandatory Check
+    // We manually check reqd fields to avoid triggering the alert popup from frm.save()
+    let missing_mandatory = false;
+
+    // Check main doc fields
+    $.each(frm.fields_dict, function(fieldname, field) {
+        if (field.df.reqd && !field.get_value()) {
+            missing_mandatory = true;
+            // console.log("[Auto-Save] Missing mandatory:", fieldname);
+            return false; // break loop
+        }
+    });
+
+    if (missing_mandatory) return;
+
+    // Check Child Tables?
+    // Usually frm.save() validates child tables too.
+    // Implementing deep silent validation for child tables is complex.
+    // For now, if we pass the main doc check, we attempt save.
+    // If frm.save() fails due to child table validation, it WILL show a popup.
+    // However, the requirement is "don't attempt a save if the form has mandatory fields left unfilled out".
+    // We should make a best effort to check child tables if possible, but accessing them reliably generically is tricky.
+    // Let's rely on Frappe's visual feedback for child tables if they break,
+    // OR we could try to emulate `frm.validate_mandatory_fields()` without the UI part.
+    // But `validate_mandatory_fields` is mixed with UI logic.
+
+    // Given the constraints, checking header fields is the 90% solution.
+    // If a child row is incomplete, the user will get a popup.
+    // The user said: "Forget the silent save part, let the notifications flow through." (Re: Success)
+    // But for failures: "abort... avoid validation errors and triggers".
+    // So if we missed a child table check, and it errors, we failed the requirement slightly.
+    // Let's iterate child tables too.
+
+    const table_fields = frm.meta.fields.filter(df => df.fieldtype === 'Table');
+    for (let tf of table_fields) {
+        const rows = frm.doc[tf.fieldname] || [];
+        // We need the meta for the child doctype
+        const child_meta = frappe.get_meta(tf.options);
+        if (!child_meta) continue;
+
+        for (let row of rows) {
+            for (let child_field of child_meta.fields) {
+                if (child_field.reqd && !row[child_field.fieldname]) {
+                    missing_mandatory = true;
+                    break;
+                }
+            }
+            if (missing_mandatory) break;
+        }
+        if (missing_mandatory) break;
+    }
+
+    if (missing_mandatory) return;
+
+    // 4. Execute Save
+    console.log("[ERPNext Enhancements] Triggering Auto-Save for", frm.docname);
+    frm.save();
+}
 
 function render_address_map(frm) {
 	// 0. Safety Check
@@ -278,4 +419,3 @@ document.addEventListener(
 	},
 	true
 ); // Capture phase
-
