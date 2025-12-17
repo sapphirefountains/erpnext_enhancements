@@ -95,9 +95,10 @@ function init_auto_save(frm) {
     if (!frm || !frm.wrapper) return;
 
     // Remove existing listeners to prevent duplicates if refresh is called multiple times
-    frm.wrapper.off('keydown.autosave click.autosave change.autosave');
+    const $wrapper = $(frm.wrapper);
+    $wrapper.off('keydown.autosave click.autosave change.autosave');
 
-    frm.wrapper.on('keydown.autosave click.autosave change.autosave', function() {
+    $wrapper.on('keydown.autosave click.autosave change.autosave', function() {
         // Reset timer on any activity
         if (auto_save_timer) {
             clearTimeout(auto_save_timer);
