@@ -17,21 +17,17 @@ $(document).on("app_ready", function () {
 
     // Load Auto-Save Settings
     frappe.call({
-        method: "frappe.client.get",
-        args: {
-            doctype: "ERPNext Enhancements Settings",
-            name: "ERPNext Enhancements Settings"
-        },
+        method: "erpnext_enhancements.erpnext_enhancements.doctype.erpnext_enhancements_settings.erpnext_enhancements_settings.get_auto_save_configuration",
         callback: function(r) {
             if (r.message) {
                 const settings = r.message;
                 // Parse allowed doctypes
                 if (settings.auto_save_doctypes && Array.isArray(settings.auto_save_doctypes)) {
-                    auto_save_config.doctypes = settings.auto_save_doctypes.map(d => d.dt);
+                    auto_save_config.doctypes = settings.auto_save_doctypes;
                 }
                 // Parse allowed users
                 if (settings.auto_save_users && Array.isArray(settings.auto_save_users)) {
-                    auto_save_config.users = settings.auto_save_users.map(u => u.user);
+                    auto_save_config.users = settings.auto_save_users;
                 }
                 auto_save_config.loaded = true;
                 console.log("[ERPNext Enhancements] Auto-Save Config Loaded:", auto_save_config);
