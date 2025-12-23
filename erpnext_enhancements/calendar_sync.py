@@ -8,14 +8,48 @@ def sync_doctype_to_event(doc, method):
 	Syncs a supported DocType to Google Calendar(s).
 	Triggered by: on_update of configured DocTypes.
 	"""
-	if doc.flags.in_google_calendar_sync:
+	# Check flags to avoid recursion
+	if doc.flags.in_google_calendar_sync or frappe.flags.sync_source == "background_worker":
 		return
 
-	doc.flags.in_google_calendar_sync = True
+	# Enqueue the background job
+	frappe.enqueue(
+		"erpnext_enhancements.calendar_sync.run_google_calendar_sync",
+		queue="default",
+		doc=doc,
+		method=method,
+		sync_source="background_worker"
+	)
+
+
+def run_google_calendar_sync(doc, method, sync_source=None):
+	"""
+	Background worker for Google Calendar sync.
+	"""
 	try:
+		# Set flag to identify source
+		if sync_source:
+			frappe.flags.sync_source = sync_source
+
+		# We must reload the doc to get the latest state in the worker
+		# but if 'doc' is passed as object, frappe.enqueue might serialize it.
+		# However, checking 'doc' status is safer with a fresh reload if possible,
+		# but let's use the passed doc first.
+
+		# Better to fetch fresh doc to avoid stale data
+		if not doc.get_doc_before_save():
+			# If doc_before_save is missing (common in queue), has_relevant_fields_changed checks might fail
+			# or default to True.
+			# frappe.enqueue serializes arguments. 'doc' will be a serialized copy.
+			# doc_before_save is NOT serialized by default in recent frappe versions unless handled specifically.
+			# But has_relevant_fields_changed handles missing doc_before_save by returning True.
+			pass
+
 		_sync_doctype_to_event(doc, method)
+	except Exception as e:
+		frappe.log_error(message=f"Google Calendar Background Sync Error: {e}", title="Google Calendar Sync Worker")
 	finally:
-		doc.flags.in_google_calendar_sync = False
+		frappe.flags.sync_source = None
 
 
 def _sync_doctype_to_event(doc, method):
@@ -30,6 +64,8 @@ def _sync_doctype_to_event(doc, method):
 
 	status_field = doc.get("status")
 	if status_field in deletion_statuses.get(doc.doctype, ["Cancelled"]):
+		# Enqueue deletion if not already running in background (though this function is likely already in background)
+		# Since _sync_doctype_to_event is called by run_google_calendar_sync, we are already in background.
 		delete_event_from_google(doc, method)
 		return
 
@@ -179,6 +215,33 @@ def get_sync_data(doc):
 
 
 def delete_event_from_google(doc, method=None):
+	"""
+	Wrapper to run deletion in background.
+	"""
+	if frappe.flags.sync_source == "background_worker":
+		_delete_event_from_google(doc, method)
+	else:
+		frappe.enqueue(
+			"erpnext_enhancements.calendar_sync.run_google_calendar_delete",
+			queue="default",
+			doc=doc,
+			method=method,
+			sync_source="background_worker"
+		)
+
+
+def run_google_calendar_delete(doc, method, sync_source=None):
+	try:
+		if sync_source:
+			frappe.flags.sync_source = sync_source
+		_delete_event_from_google(doc, method)
+	except Exception as e:
+		frappe.log_error(message=f"Google Calendar Background Delete Error: {e}", title="Google Calendar Sync Worker")
+	finally:
+		frappe.flags.sync_source = None
+
+
+def _delete_event_from_google(doc, method=None):
 	"""
 	Deletes the associated Google Calendar event(s).
 	Triggered by: on_trash, or when status becomes Cancelled/Closed

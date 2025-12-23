@@ -46,10 +46,9 @@ def generate_next_task(doc, method):
 
 def get_next_weekly_date(doc, last_date, repeat_every):
 	"""
-	Finds the next valid day of the week.
+	Finds the next valid day of the week using direct arithmetic.
 	If the next valid day is in a future week, apply the 'repeat_every' gap.
 	"""
-	# Map weekdays to your specific field names
 	day_map = {
 		"Monday": "custom_monday",
 		"Tuesday": "custom_tuesday",
@@ -60,33 +59,43 @@ def get_next_weekly_date(doc, last_date, repeat_every):
 		"Sunday": "custom_sunday",
 	}
 
-	# Safety valve: Look ahead max 1 year (366 days)
-	for i in range(1, 366):
-		candidate_date = add_days(last_date, i)
-		weekday_name = get_weekday(candidate_date)
+	# 0 = Monday, 6 = Sunday
+	weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-		# 1. Check if this day is allowed (Checked in the form)
-		field_name = day_map.get(weekday_name)
+	current_weekday_idx = last_date.weekday() # 0-6
+
+	# 1. Check remaining days in current week
+	for i in range(current_weekday_idx + 1, 7):
+		day_name = weekdays[i]
+		field_name = day_map.get(day_name)
 		if doc.get(field_name):
-			# 2. Check Week Intervals
-			last_week_iso = last_date.isocalendar()[1]
-			curr_week_iso = candidate_date.isocalendar()[1]
+			return add_days(last_date, i - current_weekday_idx)
 
-			# Handle year rollovers for week numbers roughly
-			if candidate_date.year > last_date.year:
-				curr_week_iso += 52
+	# 2. Check days in "Start of Next Week" to find the first valid one
+	# If we didn't find one in the remainder, we wrap around to the next week cycle.
 
-			week_diff = curr_week_iso - last_week_iso
+	first_valid_idx = -1
+	for i in range(0, 7):
+		day_name = weekdays[i]
+		field_name = day_map.get(day_name)
+		if doc.get(field_name):
+			first_valid_idx = i
+			break
 
-			if week_diff == 0:
-				# Same week, so it's the next day in the sequence
-				return candidate_date
-			elif week_diff >= 1:
-				# We moved to a new week.
-				# If Repeat Every > 1, ensure we skip the correct number of weeks.
-				weeks_to_add = repeat_every - 1
-				final_date = add_days(candidate_date, weeks_to_add * 7)
-				return final_date
+	if first_valid_idx != -1:
+		# Days to get to the *next* occurrence of this day
+		# Logic: (Days left in current week) + (Days into next week)
+		# = (7 - current_weekday_idx) + first_valid_idx
+		days_until_next_week_day = (7 - current_weekday_idx) + first_valid_idx
+
+		# Base target date (Start of next cycle - i.e., first valid day of Next Week)
+		target_date = add_days(last_date, days_until_next_week_day)
+
+		# Apply Repeat Every Gap
+		# if repeat_every = 1 (Weekly), gap=0.
+		# if repeat_every = 2 (Bi-Weekly), gap=7 (Skip one full week).
+		gap_days = (repeat_every - 1) * 7
+		return add_days(target_date, gap_days)
 
 	return None
 
