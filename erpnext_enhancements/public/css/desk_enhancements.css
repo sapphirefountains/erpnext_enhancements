@@ -30,10 +30,11 @@
 
 [data-theme="dark"] {
     /* Backgrounds - Sapphire Night (Dark Glass) */
-    --sapphire-glass-bg: rgba(30, 30, 30, 0.65);
-    --sapphire-glass-header-bg: rgba(30, 30, 30, 0.75);
-    --sapphire-btn-default-bg: rgba(60, 60, 60, 0.6);
-    --sapphire-btn-default-hover-bg: rgba(80, 80, 80, 0.8);
+    /* UPDATED: Increased opacity and darker base for WCAG contrast compliance */
+    --sapphire-glass-bg: rgba(15, 15, 15, 0.85);
+    --sapphire-glass-header-bg: rgba(15, 15, 15, 0.85);
+    --sapphire-btn-default-bg: rgba(40, 40, 40, 0.85);
+    --sapphire-btn-default-hover-bg: rgba(60, 60, 60, 0.9);
 
     /* Borders */
     --sapphire-glass-border: rgba(255, 255, 255, 0.1);

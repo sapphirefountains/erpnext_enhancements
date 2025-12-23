@@ -12,6 +12,10 @@ let auto_save_config = {
 // Track registered handlers to avoid duplicates
 let registered_autosave_doctypes = new Set();
 
+// Session Management for Auto-Save
+const TAB_ID = Math.random().toString(36).substring(2, 10);
+console.log("[Auto-Save] Session ID:", TAB_ID);
+
 $(document).on("app_ready", function () {
 	console.log("[ERPNext Enhancements] app_ready");
 
@@ -197,20 +201,6 @@ function is_modified(current_doc, stored_data) {
              // Simple length check or reference check
              // Note: stored_val might be null if not in draft
              if (!stored_val || val.length !== stored_val.length) return true;
-             // Deep diff is expensive, so we assume if length is same, it *might* be same.
-             // But user might edit a row.
-             // Let's do a quick JSON string check on the array if length is small?
-             // Or better: Just assume child table modification marks dirty if interaction happens.
-             // But this function is called inside the timer loop which fires on input.
-             // If input happens, frm.is_dirty() is true.
-             // We want to know if current_doc is DIFFERENT from what we last saved to localStorage.
-
-             // Wait, the caller compares current_doc vs localStorage?
-             // No, the caller logic is: `if (frm.is_dirty()) ... save ...`
-             // frm.is_dirty() just means it differs from DB.
-             // We want to avoid writing to localStorage if it hasn't changed *since last auto-save*.
-             // But we overwrite the key every 15s if is_dirty.
-             // To optimize, we should keep a copy of 'last_autosaved_doc' in memory.
         } else {
              if (val !== stored_val) return true;
         }
@@ -240,6 +230,7 @@ function setup_auto_save(frm) {
     frm._autosave_storage_key = storage_key;
     frm._autosave_is_new_at_init = is_new;
     frm._last_autosaved_json = null; // Memory cache to prevent redundant writes
+    frm._last_known_storage_ts = null; // For Conflict Detection
 
     // 1. Recovery Check (On Refresh)
     try {
@@ -248,6 +239,11 @@ function setup_auto_save(frm) {
             const stored = JSON.parse(stored_raw);
             const server_ts = frm.doc.modified;
 
+            // Initialize last known storage timestamp
+            if (stored.timestamp) {
+                frm._last_known_storage_ts = stored.timestamp;
+            }
+
             let should_prompt = false;
 
             if (is_new) {
@@ -255,17 +251,9 @@ function setup_auto_save(frm) {
                 should_prompt = true;
             } else {
                 // For Existing Docs: Server-Anchored Check
-                // 1. Check if the draft was created from the CURRENT server version
-                // We compare the 'source_modified' stored in draft vs current 'modified'
                 if (stored.source_modified && stored.source_modified === server_ts) {
-                     // The base versions match. Now check if content is different.
-                     // Simple check: if timestamps differ (which they should if draft is newer)
-                     // Or we could do a deep diff, but assumption is if we saved a draft, it's different.
-                     // However, we must ensure we don't prompt if the draft is identical to current state (unlikely but possible)
                      should_prompt = true;
                 } else {
-                     // Mismatch! The server has moved on since this draft was made.
-                     // Do NOT prompt. Log it.
                      console.log("[Auto-Save] Local draft ignored due to version mismatch (Server-Anchored check).");
                 }
             }
@@ -280,7 +268,6 @@ function setup_auto_save(frm) {
                     'Restore Draft',
                     () => {
                         localStorage.removeItem(storage_key);
-                        // Removed update_silent_indicator to avoid "Saved" confusion
                         frappe.show_alert({message: 'Draft Discarded', indicator: 'orange'});
                     },
                     'Discard Draft'
@@ -306,31 +293,51 @@ function setup_auto_save(frm) {
             if (frm.is_dirty()) {
                 const now = frappe.datetime.now_datetime();
                 const current_data = frm.doc;
-
-                // Diff Check Optimization
-                // We compare current_data against what we LAST auto-saved (in memory)
-                // This prevents writing to localStorage if the user is typing but then undoes,
-                // or if events trigger without real data change (unlikely but possible).
-                // Actually, the main cost is JSON.stringify and localStorage IO.
-                // We can cache the stringified version.
-
                 const current_json = JSON.stringify(current_data);
 
                 if (frm._last_autosaved_json && frm._last_autosaved_json === current_json) {
-                    // No change since last auto-save, skip IO
                     return;
                 }
 
+                // --- CONFLICT CHECK START ---
                 try {
-                    // Use the potentially updated key (if needed) but usually we stick to the init key
-                    // until refresh happens. For New docs, key is _new until saved and refreshed.
-                    localStorage.setItem(storage_key, JSON.stringify({
+                    const current_stored_raw = localStorage.getItem(storage_key);
+                    if (current_stored_raw) {
+                        const current_stored = JSON.parse(current_stored_raw);
+
+                        // If another tab wrote to it:
+                        // 1. tab_id differs
+                        // 2. AND the content changed from what we last knew (timestamp check)
+
+                        if (current_stored.tab_id && current_stored.tab_id !== TAB_ID) {
+                            if (frm._last_known_storage_ts && current_stored.timestamp !== frm._last_known_storage_ts) {
+                                // CONFLICT: The storage changed since we last touched it/loaded it
+                                console.warn("[Auto-Save] Conflict detected. Pausing auto-save.");
+                                frappe.show_alert({
+                                    message: 'Auto-save paused: Draft is being edited in another tab',
+                                    indicator: 'red'
+                                }, 5);
+                                return; // ABORT SAVE
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Conflict check error:", e);
+                }
+                // --- CONFLICT CHECK END ---
+
+                try {
+                    const payload = {
                         timestamp: now,
-                        source_modified: frm.doc.modified, // Anchor to current server version
-                        data: current_data
-                    }));
+                        source_modified: frm.doc.modified,
+                        data: current_data,
+                        tab_id: TAB_ID // Identify this session
+                    };
+
+                    localStorage.setItem(storage_key, JSON.stringify(payload));
 
                     frm._last_autosaved_json = current_json;
+                    frm._last_known_storage_ts = now; // Update our known timestamp
                     update_silent_indicator(frm);
                 } catch (e) {
                     console.error("[Auto-Save] Write failed:", e);
