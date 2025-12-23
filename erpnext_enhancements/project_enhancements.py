@@ -143,7 +143,11 @@ def get_procurement_status(project_name):
 	data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
 
 	# Post-processing to group by doctype and format data
-	result = {}
+	result = {
+		'Material Request': [],
+		'Purchase Order': [],
+		'Subcontracting Receipt': []
+	}
 	for row in data:
 		ordered_qty = row.get("ordered_qty") or 0
 		mr_qty = row.get("mr_qty") or 0
