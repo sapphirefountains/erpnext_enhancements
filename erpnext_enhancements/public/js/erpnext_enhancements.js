@@ -9,6 +9,9 @@ let auto_save_config = {
     loaded: false
 };
 
+// Track registered handlers to avoid duplicates
+let registered_autosave_doctypes = new Set();
+
 $(document).on("app_ready", function () {
 	console.log("[ERPNext Enhancements] app_ready");
 
@@ -26,6 +29,12 @@ $(document).on("app_ready", function () {
                 }
                 auto_save_config.loaded = true;
                 console.log("[ERPNext Enhancements] Auto-Save Config Loaded:", auto_save_config);
+
+                // Register Global Handlers
+                register_global_autosave_handlers(auto_save_config.doctypes);
+            } else {
+                // Fallback to defaults if no settings found
+                register_global_autosave_handlers(auto_save_config.doctypes);
             }
         }
     });
@@ -82,8 +91,61 @@ $(document).on("app_ready", function () {
 // Auto-Save Logic (Client-Side LocalStorage)
 // ==========================================
 
+function register_global_autosave_handlers(doctypes) {
+    doctypes.forEach(doctype => {
+        if (!registered_autosave_doctypes.has(doctype)) {
+            frappe.ui.form.on(doctype, 'after_save', function(frm) {
+                // Cleanup Logic
+                if (frm._autosave_storage_key) {
+                    localStorage.removeItem(frm._autosave_storage_key);
+                    console.log("[Auto-Save] Cleared local draft for", frm._autosave_storage_key);
+
+                    // If it was new, also ensure we clear that specifically just in case
+                    if (frm._autosave_is_new_at_init) {
+                         const user = frappe.session.user;
+                         const new_key = `sf_autosave_${user}_${frm.doctype}_new`;
+                         localStorage.removeItem(new_key);
+                    }
+                }
+            });
+            registered_autosave_doctypes.add(doctype);
+            console.log(`[Auto-Save] Registered after_save handler for ${doctype}`);
+        }
+    });
+}
+
+function update_silent_indicator(frm) {
+    const $header = $(frm.wrapper).find('.page-head .page-title .indicator-pill').parent();
+
+    // Safety check: if we can't find the header location, abort
+    if ($header.length === 0) return;
+
+    let $indicator = $('#sf-autosave-status');
+
+    // Create if not exists
+    if ($indicator.length === 0) {
+        $indicator = $('<span id="sf-autosave-status"></span>');
+        // Insert before the indicator pill or append to title area
+        $header.append($indicator);
+    }
+
+    const now = frappe.datetime.now_time();
+    $indicator.text(`Local Draft Saved ${now}`);
+
+    // Show
+    $indicator.addClass('visible');
+
+    // Fade out after 3 seconds
+    setTimeout(() => {
+        $indicator.removeClass('visible');
+    }, 3000);
+}
+
 function setup_auto_save(frm) {
     if (!frm || !frm.wrapper) return;
+
+    // 0. Skip if Submitted or Cancelled
+    if (frm.doc.docstatus > 0) return;
 
     // Check Whitelist
     if (!auto_save_config.doctypes.includes(frm.doctype)) {
@@ -110,10 +172,22 @@ function setup_auto_save(frm) {
             let should_prompt = false;
 
             if (is_new) {
+                // For New Docs: Just check if we have data
                 should_prompt = true;
             } else {
-                if (stored.timestamp > server_ts) {
-                    should_prompt = true;
+                // For Existing Docs: Server-Anchored Check
+                // 1. Check if the draft was created from the CURRENT server version
+                // We compare the 'source_modified' stored in draft vs current 'modified'
+                if (stored.source_modified && stored.source_modified === server_ts) {
+                     // The base versions match. Now check if content is different.
+                     // Simple check: if timestamps differ (which they should if draft is newer)
+                     // Or we could do a deep diff, but assumption is if we saved a draft, it's different.
+                     // However, we must ensure we don't prompt if the draft is identical to current state (unlikely but possible)
+                     should_prompt = true;
+                } else {
+                     // Mismatch! The server has moved on since this draft was made.
+                     // Do NOT prompt. Log it.
+                     console.log("[Auto-Save] Local draft ignored due to version mismatch (Server-Anchored check).");
                 }
             }
 
@@ -127,6 +201,7 @@ function setup_auto_save(frm) {
                     'Restore Draft',
                     () => {
                         localStorage.removeItem(storage_key);
+                        update_silent_indicator(frm); // Just to verify UI works, or maybe show a "Discarded" message?
                         frappe.show_alert({message: 'Draft Discarded', indicator: 'orange'});
                     },
                     'Discard Draft'
@@ -158,43 +233,17 @@ function setup_auto_save(frm) {
                     // until refresh happens. For New docs, key is _new until saved and refreshed.
                     localStorage.setItem(storage_key, JSON.stringify({
                         timestamp: now,
+                        source_modified: frm.doc.modified, // Anchor to current server version
                         data: current_data
                     }));
 
-                    frappe.show_alert({message: 'Draft Saved Locally', indicator: 'green'}, 3);
+                    update_silent_indicator(frm);
                 } catch (e) {
                     console.error("[Auto-Save] Write failed:", e);
                 }
             }
         }, 15000);
     });
-
-    // 3. Cleanup on Server Save
-    // Avoid recursive wrapping
-    if (!frm.cscript.after_save || !frm.cscript.after_save.__is_autosave_hook) {
-        const old_after_save = frm.cscript.after_save;
-
-        frm.cscript.after_save = function(doc, dt, dn) {
-            if (old_after_save) {
-                old_after_save.apply(this, arguments);
-            }
-
-            // Cleanup Logic
-            if (frm._autosave_storage_key) {
-                localStorage.removeItem(frm._autosave_storage_key);
-                console.log("[Auto-Save] Cleared local draft for", frm._autosave_storage_key);
-
-                // If it was new, also ensure we clear that specifically just in case
-                if (frm._autosave_is_new_at_init) {
-                     const user = frappe.session.user;
-                     const new_key = `sf_autosave_${user}_${frm.doctype}_new`;
-                     localStorage.removeItem(new_key);
-                }
-            }
-        };
-        // Mark our wrapper
-        frm.cscript.after_save.__is_autosave_hook = true;
-    }
 }
 
 function restore_local_draft(frm, data) {
@@ -208,17 +257,33 @@ function restore_local_draft(frm, data) {
         'docstatus', 'idx', 'parent', 'parenttype', 'parentfield'
     ];
 
-    const fields = Object.keys(data);
-    let promise_chain = Promise.resolve();
+    const simple_fields_dict = {};
+    let child_tables = {};
 
-    fields.forEach(key => {
+    Object.keys(data).forEach(key => {
         if (system_fields.includes(key)) return;
         if (key.startsWith('_')) return;
 
         const value = data[key];
 
+        if (Array.isArray(value)) {
+             child_tables[key] = value;
+        } else {
+             simple_fields_dict[key] = value;
+        }
+    });
+
+    // 1. Batch Update Simple Fields
+    // This is much faster than one-by-one
+    let promise_chain = frm.set_value(simple_fields_dict);
+
+    // 2. Handle Child Tables sequentially
+    // Child tables are tricky to batch-set safely without resetting the whole table sometimes
+    // But usually frm.set_value(fieldname, array) works for tables too in newer Frappe
+    // Let's try adding them to the chain
+    Object.keys(child_tables).forEach(key => {
         promise_chain = promise_chain.then(() => {
-            return frm.set_value(key, value);
+            return frm.set_value(key, child_tables[key]);
         });
     });
 
