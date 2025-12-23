@@ -31,18 +31,8 @@ def run_google_calendar_sync(doc, method, sync_source=None):
 		if sync_source:
 			frappe.flags.sync_source = sync_source
 
-		# We must reload the doc to get the latest state in the worker
-		# but if 'doc' is passed as object, frappe.enqueue might serialize it.
-		# However, checking 'doc' status is safer with a fresh reload if possible,
-		# but let's use the passed doc first.
-
 		# Better to fetch fresh doc to avoid stale data
 		if not doc.get_doc_before_save():
-			# If doc_before_save is missing (common in queue), has_relevant_fields_changed checks might fail
-			# or default to True.
-			# frappe.enqueue serializes arguments. 'doc' will be a serialized copy.
-			# doc_before_save is NOT serialized by default in recent frappe versions unless handled specifically.
-			# But has_relevant_fields_changed handles missing doc_before_save by returning True.
 			pass
 
 		_sync_doctype_to_event(doc, method)
@@ -54,7 +44,6 @@ def run_google_calendar_sync(doc, method, sync_source=None):
 
 def _sync_doctype_to_event(doc, method):
 	# Handle cancellation/closure by removing the event
-	# Check specific statuses for different DocTypes.
 	deletion_statuses = {
 		"Task": ["Cancelled", "Closed"],
 		"Event": ["Cancelled"],
@@ -64,8 +53,6 @@ def _sync_doctype_to_event(doc, method):
 
 	status_field = doc.get("status")
 	if status_field in deletion_statuses.get(doc.doctype, ["Cancelled"]):
-		# Enqueue deletion if not already running in background (though this function is likely already in background)
-		# Since _sync_doctype_to_event is called by run_google_calendar_sync, we are already in background.
 		delete_event_from_google(doc, method)
 		return
 
@@ -143,9 +130,7 @@ def has_relevant_fields_changed(doc):
 	def normalize(value):
 		if value is None:
 			return ""
-		# Attempt to parse as datetime, format it, otherwise stringify
 		try:
-			# Use frappe's get_datetime to handle string or datetime objects
 			dt = get_datetime(value)
 			return dt.strftime("%Y-%m-%d %H:%M:%S")
 		except (ValueError, TypeError):
@@ -189,7 +174,6 @@ def get_sync_data(doc):
 		start_dt = doc.get("starts_on")
 		end_dt = doc.get("ends_on")
 		summary = doc.get("subject") or doc.name
-		# Event might have description field
 		if doc.get("description"):
 			description += f"\n\n{doc.get('description')}"
 
@@ -246,10 +230,14 @@ def _delete_event_from_google(doc, method=None):
 	Deletes the associated Google Calendar event(s).
 	Triggered by: on_trash, or when status becomes Cancelled/Closed
 	"""
-	# Check for child table events
-	events_table = doc.get("google_calendar_events")
+	# Get events from Global Calendar Sync Log
+	sync_logs = frappe.get_all(
+		"Global Calendar Sync Log",
+		filters={"reference_doctype": doc.doctype, "reference_docname": doc.name},
+		fields=["name", "google_calendar", "event_id"]
+	)
 
-	# Also check legacy field for migration/backward compatibility if data exists there and not in table yet
+	# Legacy support: check field just in case
 	legacy_event_id = doc.get("custom_google_event_id")
 	if legacy_event_id:
 		calendars = get_google_calendars_for_doctype(doc.doctype, doc.owner)
@@ -263,48 +251,38 @@ def _delete_event_from_google(doc, method=None):
 					service.events().delete(calendarId=calendar_id, eventId=legacy_event_id).execute()
 				except HttpError as e:
 					if e.resp.status not in [404, 410]:
-						frappe.log_error(
-							message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync"
-						)
+						frappe.log_error(message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync")
 				except Exception as e:
-					frappe.log_error(
-						message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync"
-					)
+					frappe.log_error(message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync")
 
+		# Clear legacy field
 		if method != "on_trash" and doc.meta.has_field("custom_google_event_id"):
 			doc.custom_google_event_id = None
-			if not events_table:
-				doc.save(ignore_permissions=True)
+			doc.save(ignore_permissions=True)
 
-	if not events_table:
+	if not sync_logs:
 		return
-
-	# We need the service object to delete.
-	# Since we store multiple events, we need to know which calendar each belongs to.
-	# The child table stores `google_calendar` link.
 
 	from frappe.integrations.doctype.google_calendar.google_calendar import get_google_calendar_object
 
-	for row in events_table:
-		if not row.event_id:
+	for log in sync_logs:
+		if not log.event_id:
 			continue
 
 		try:
-			google_calendar_doc = frappe.get_doc("Google Calendar", row.google_calendar)
+			google_calendar_doc = frappe.get_doc("Google Calendar", log.google_calendar)
 			service, _ = get_google_calendar_object(google_calendar_doc)
 			calendar_id = google_calendar_doc.google_calendar_id or "primary"
 
-			service.events().delete(calendarId=calendar_id, eventId=row.event_id).execute()
+			service.events().delete(calendarId=calendar_id, eventId=log.event_id).execute()
 		except HttpError as e:
 			if e.resp.status not in [404, 410]:
 				frappe.log_error(message=f"Google Calendar Delete Error: {e}", title="Google Calendar Sync")
 		except Exception as e:
 			frappe.log_error(message=f"Google Calendar Delete Error: {e}", title="Google Calendar Sync")
 
-	if method != "on_trash":
-		# Clear the table
-		doc.set("google_calendar_events", [])
-		doc.save(ignore_permissions=True)
+		# Delete the log entry
+		frappe.delete_doc("Global Calendar Sync Log", log.name, ignore_permissions=True)
 
 
 def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt, description, location=None):
@@ -339,15 +317,18 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 	if location:
 		event_body["location"] = location
 
-	# Check if we already have an event for this calendar
-	# IMPORTANT: Fetch directly from DB to ensure we don't miss it if doc is partial
+	# Check for existing event log
 	event_id = None
 	existing_log_name = None
 
-	existing_logs = frappe.db.get_all(
-		"Google Calendar Event Log",
-		filters={"parent": doc.name, "parenttype": doc.doctype, "google_calendar": google_calendar_doc.name},
-		fields=["name", "event_id"],
+	existing_logs = frappe.get_all(
+		"Global Calendar Sync Log",
+		filters={
+			"reference_doctype": doc.doctype,
+			"reference_docname": doc.name,
+			"google_calendar": google_calendar_doc.name
+		},
+		fields=["name", "event_id"]
 	)
 
 	if existing_logs:
@@ -360,60 +341,30 @@ def sync_to_google_calendar(doc, google_calendar_doc, summary, start_dt, end_dt,
 				service.events().patch(calendarId=calendar_id, eventId=event_id, body=event_body).execute()
 			except HttpError as e:
 				if e.resp.status == 404 or e.resp.status == 410:
-					# Event ID found in doc but not in Google (deleted remotely?)
 					# Re-create it
 					new_id = _create_event(service, calendar_id, event_body)
 					if new_id:
 						frappe.db.set_value(
-							"Google Calendar Event Log", existing_log_name, "event_id", new_id
+							"Global Calendar Sync Log", existing_log_name, "event_id", new_id
 						)
 				else:
-					frappe.log_error(
-						message=f"Google Calendar Sync Error (Patch): {e}", title="Google Calendar Sync"
-					)
+					frappe.log_error(message=f"Google Calendar Sync Error (Patch): {e}", title="Google Calendar Sync")
 		else:
 			new_id = _create_event(service, calendar_id, event_body)
 			if new_id:
-				# Use direct insert to avoid recursion/save issues in on_update
 				try:
-					# 1. Insert directly into DB to ensure persistence
-					if doc.meta.get_field("google_calendar_events"):
-						new_log = frappe.get_doc({
-							"doctype": "Google Calendar Event Log",
-							"parent": doc.name,
-							"parenttype": doc.doctype,
-							"parentfield": "google_calendar_events",
-							"google_calendar": google_calendar_doc.name,
-							"event_id": new_id
-						})
-						new_log.insert(ignore_permissions=True)
-
-						# 2. Update in-memory doc to match DB
-						if not doc.get("google_calendar_events"):
-							doc.set("google_calendar_events", [])
-
-						found_in_doc = False
-						for row in doc.google_calendar_events:
-							if row.google_calendar == google_calendar_doc.name:
-								# Update existing memory object to match DB object
-								row.name = new_log.name
-								row.event_id = new_id
-								found_in_doc = True
-								break
-
-						if not found_in_doc:
-							doc.append("google_calendar_events", new_log)
-					else:
-						frappe.log_error(
-							message=f"Field 'google_calendar_events' missing in {doc.doctype}. Skipping event log save.",
-							title="Google Calendar Sync Error",
-						)
+					# Create new sync log
+					new_log = frappe.get_doc({
+						"doctype": "Global Calendar Sync Log",
+						"reference_doctype": doc.doctype,
+						"reference_docname": doc.name,
+						"google_calendar": google_calendar_doc.name,
+						"event_id": new_id
+					})
+					new_log.insert(ignore_permissions=True)
 
 				except Exception as e:
-					frappe.log_error(
-						message=f"Google Calendar Sync Save Error (Insert): {e}",
-						title="Google Calendar Sync",
-					)
+					frappe.log_error(message=f"Google Calendar Sync Save Error (Insert): {e}", title="Google Calendar Sync")
 
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Sync Error: {e}", title="Google Calendar Sync")
@@ -433,11 +384,10 @@ def get_google_calendars_for_doctype(doctype, user):
 	Returns a list of Google Calendar docs configured for this DocType.
 	Combines calendars from global settings and the user's personal calendar.
 	"""
-	# Early exit if the doctype is not a sync-able type
 	if doctype not in ["ToDo", "Task", "Project", "Event"]:
 		return []
 
-	calendars = {}  # Use a dict to avoid duplicates by name
+	calendars = {}
 
 	# 1. Check Global Settings Map
 	settings = frappe.get_single("ERPNext Enhancements Settings")
@@ -449,9 +399,9 @@ def get_google_calendars_for_doctype(doctype, user):
 					if gc.enable:
 						calendars[gc.name] = gc
 				except Exception:
-					pass  # Ignore if calendar is not found or other errors
+					pass
 
-	# 2. Add User's Personal Calendar if not already included
+	# 2. Add User's Personal Calendar
 	user_calendar_name = frappe.db.get_value("Google Calendar", {"user": user, "enable": 1}, "name")
 	if user_calendar_name:
 		if user_calendar_name not in calendars:
@@ -459,6 +409,6 @@ def get_google_calendars_for_doctype(doctype, user):
 				gc = frappe.get_doc("Google Calendar", user_calendar_name)
 				calendars[gc.name] = gc
 			except Exception:
-				pass  # Ignore if calendar is not found or other errors
+				pass
 
 	return list(calendars.values())

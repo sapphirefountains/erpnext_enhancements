@@ -12,6 +12,7 @@
   "project",
   "status",
   "workflow_state",
+  "custom_expense_claim",
   "column_break_1",
   "start_date",
   "end_date",
@@ -85,6 +86,13 @@
    "fieldtype": "Link",
    "label": "Workflow State",
    "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_expense_claim",
+   "fieldtype": "Link",
+   "label": "Expense Claim",
+   "options": "Expense Claim",
    "read_only": 1
   },
   {
