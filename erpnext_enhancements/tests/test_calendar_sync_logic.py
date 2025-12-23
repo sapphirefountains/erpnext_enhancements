@@ -37,6 +37,7 @@ from erpnext_enhancements.calendar_sync import (
 	get_google_calendars_for_doctype,
 	get_sync_data,
 	has_relevant_fields_changed,
+	run_google_calendar_sync,
 	sync_doctype_to_event,
 )
 
@@ -67,8 +68,11 @@ class TestDeleteEventFromGoogle(unittest.TestCase):
 
 		doc.meta.has_field.return_value = True
 
+		# Force immediate execution
+		frappe.flags.sync_source = "background_worker"
+
 		# Call the function being tested, simulating an 'on_trash' event
-		delete_event_from_google(doc, method="on_trash")
+		delete_event_from_google(doc, trigger_method="on_trash")
 
 		# Assertions to verify the correct calls were made
 		mock_get_calendars.assert_called_once_with("ToDo", "test_user@example.com")
@@ -131,56 +135,59 @@ class TestCalendarSyncLogic(unittest.TestCase):
 			doc.flags.in_google_calendar_sync = False
 			return doc
 
+		# Force immediate execution
+		frappe.flags.sync_source = "background_worker"
+
 		# Test Task
 		# Task should be deleted if status is Cancelled or Closed
 		doc = get_doc("Task", "Cancelled")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_called_with(doc, "on_update")
 		mock_delete.reset_mock()
 
 		doc = get_doc("Task", "Closed")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_called_with(doc, "on_update")
 		mock_delete.reset_mock()
 
 		doc = get_doc("Task", "Completed")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_not_called()
 		mock_delete.reset_mock()
 
 		# Test Event
 		# Event should be deleted only if Cancelled
 		doc = get_doc("Event", "Cancelled")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_called_with(doc, "on_update")
 		mock_delete.reset_mock()
 
 		doc = get_doc("Event", "Closed")  # Should NOT delete
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_not_called()
 		mock_delete.reset_mock()
 
 		# Test Project
 		# Project should be deleted only if Cancelled
 		doc = get_doc("Project", "Cancelled")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_called_with(doc, "on_update")
 		mock_delete.reset_mock()
 
 		doc = get_doc("Project", "Completed")  # Should NOT delete
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_not_called()
 		mock_delete.reset_mock()
 
 		# Test ToDo
 		# ToDo should be deleted only if Cancelled
 		doc = get_doc("ToDo", "Cancelled")
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_called_with(doc, "on_update")
 		mock_delete.reset_mock()
 
 		doc = get_doc("ToDo", "Closed")  # Should NOT delete
-		sync_doctype_to_event(doc, "on_update")
+		run_google_calendar_sync(doc, "on_update")
 		mock_delete.assert_not_called()
 		mock_delete.reset_mock()
 
@@ -376,7 +383,7 @@ class TestSyncLogInsertion(unittest.TestCase):
 		google_calendar_doc.google_calendar_id = "primary"
 
 		# Mocks
-		mock_frappe.db.get_all.return_value = [] # No existing log
+		mock_frappe.get_all.return_value = [] # No existing log
 		mock_create_event.return_value = "new_event_id"
 
 		mock_log_entry = MagicMock()
@@ -406,10 +413,9 @@ class TestSyncLogInsertion(unittest.TestCase):
 		# Assert
 		# Should have tried to create a new log entry
 		mock_frappe.get_doc.assert_called_with({
-			"doctype": "Google Calendar Event Log",
-			"parent": doc.name,
-			"parenttype": doc.doctype,
-			"parentfield": "google_calendar_events",
+			"doctype": "Global Calendar Sync Log",
+			"reference_doctype": doc.doctype,
+			"reference_docname": doc.name,
 			"google_calendar": google_calendar_doc.name,
 			"event_id": "new_event_id"
 		})
@@ -419,6 +425,3 @@ class TestSyncLogInsertion(unittest.TestCase):
 
 		# Should NOT have called doc.save
 		doc.save.assert_not_called()
-
-		# Should have updated doc object
-		doc.append.assert_called_with("google_calendar_events", mock_log_entry)
