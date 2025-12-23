@@ -11,7 +11,7 @@ def get_procurement_status(project_name):
 	2. Direct Purchase Orders (No Material Request)
 	"""
 	if not project_name:
-		return []
+		return {}
 
 	# Combined query for Material Request based flows and Direct Purchase Orders
 	sql = """
@@ -20,6 +20,7 @@ def get_procurement_status(project_name):
         FROM (
             /* PART 1: Material Request Flow (External & Internal) */
             SELECT
+                'Material Request' as source_doctype,
                 mr_item.item_code,
                 mr_item.item_name,
                 mr_item.qty as mr_qty,
@@ -44,7 +45,8 @@ def get_procurement_status(project_name):
                 END as se_status,
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
                 po_item.qty as ordered_qty,
-                COALESCE(pr_item.qty, sed.qty) as received_qty
+                COALESCE(pr_item.qty, sed.qty) as received_qty,
+                pr_item.parent_doctype as pr_parent_doctype
             FROM
                 `tabMaterial Request Item` mr_item
             JOIN
@@ -91,6 +93,7 @@ def get_procurement_status(project_name):
 
             /* PART 2: Direct Purchase Orders */
             SELECT
+                'Purchase Order' as source_doctype,
                 po_item.item_code,
                 po_item.item_name,
                 0 as mr_qty,
@@ -111,7 +114,8 @@ def get_procurement_status(project_name):
                 NULL as se_status,
                 pr_item.warehouse as warehouse,
                 po_item.qty as ordered_qty,
-                pr_item.qty as received_qty
+                pr_item.qty as received_qty,
+                pr_item.parent_doctype as pr_parent_doctype
             FROM
                 `tabPurchase Order Item` po_item
             JOIN
@@ -138,23 +142,26 @@ def get_procurement_status(project_name):
 
 	data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
 
-	# Post-processing to calculate percentages and format data
-	result = []
+	# Post-processing to group by doctype and format data
+	result = {}
 	for row in data:
 		ordered_qty = row.get("ordered_qty") or 0
 		mr_qty = row.get("mr_qty") or 0
-
-		# Use Material Request Qty if no PO Qty (Draft/Pending stage)
-		# For Direct POs, mr_qty is 0, so display_ordered_qty will be ordered_qty
 		display_ordered_qty = ordered_qty if ordered_qty > 0 else mr_qty
-
 		received_qty = row.get("received_qty") or 0
-
 		completion_percentage = 0
 		if display_ordered_qty > 0:
 			completion_percentage = (received_qty / display_ordered_qty) * 100
 
-		result.append(
+		# Determine the primary doctype for this procurement chain
+		doctype = row.get("source_doctype")
+		if row.get('pr_parent_doctype') == 'Subcontracting Receipt':
+			doctype = 'Subcontracting Receipt'
+
+		if doctype not in result:
+			result[doctype] = []
+
+		result[doctype].append(
 			{
 				"item_code": row.get("item_code"),
 				"item_name": row.get("item_name"),
@@ -170,8 +177,8 @@ def get_procurement_status(project_name):
 				"pr_status": row.get("pr_status"),
 				"pi": row.get("pi_name"),
 				"pi_status": row.get("pi_status"),
-				"stock_entry": row.get("se_name"),  # Renamed key for clarity
-				"stock_entry_status": row.get("se_status"),  # Renamed key
+				"stock_entry": row.get("se_name"),
+				"stock_entry_status": row.get("se_status"),
 				"warehouse": row.get("warehouse"),
 				"ordered_qty": display_ordered_qty,
 				"received_qty": received_qty,
