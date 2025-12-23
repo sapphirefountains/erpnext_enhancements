@@ -21,7 +21,8 @@
 
 [data-theme="dark"] {
     /* Sapphire Night */
-    --sapphire-login-card-bg: rgba(30, 30, 30, 0.6);
+    /* UPDATED: Increased opacity and darker base for WCAG contrast compliance */
+    --sapphire-login-card-bg: rgba(15, 15, 15, 0.85);
     --sapphire-login-border: rgba(255, 255, 255, 0.1);
     --sapphire-login-shadow: rgba(0, 0, 0, 0.5);
 

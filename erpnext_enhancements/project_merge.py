@@ -3,6 +3,72 @@ from frappe import _
 
 
 @frappe.whitelist()
+def get_merge_stats(source_project, target_project):
+	"""
+	Returns a summary of documents that will be impacted by the merge.
+	Structure: {
+		"Task": { "count": 5, "items": ["TASK-001", "TASK-002", ...] },
+		"Material Request": { "count": 2, "items": ["MR-001", "MR-002"] },
+		...
+	}
+	"""
+	# Basic validation (same as merge_projects)
+	if not source_project or not target_project:
+		frappe.throw(_("Source and Target Project are required."))
+
+	if source_project == target_project:
+		frappe.throw(_("Source and Target Project cannot be the same."))
+
+	if not frappe.db.exists("Project", source_project):
+		frappe.throw(_("Source Project {0} does not exist.").format(source_project))
+
+	impact_map = get_impacted_documents(source_project)
+
+	# Clean up for UI consumption (remove empty doctypes)
+	result = {}
+	for doctype, items in impact_map.items():
+		if items:
+			result[doctype] = {
+				"count": len(items),
+				"items": items
+			}
+
+	return result
+
+
+def get_impacted_documents(source_project):
+	"""
+	Finds all documents linked to the source_project.
+	Returns a dict: { DocType: [doc_name, ...] }
+	"""
+	linked_doctypes = get_linked_doctypes("Project")
+	impact_map = {}
+
+	for doctype, fields in linked_doctypes.items():
+		impact_map[doctype] = []
+
+		for field in fields:
+			if doctype == "Project" and field == "name":
+				continue
+
+			# Find documents where the link field is the source project
+			docs = frappe.db.get_all(doctype, filters={field: source_project}, pluck="name")
+
+			if docs:
+				# Use set to avoid duplicates if multiple fields link to Project in same doc
+				# (Unlikely but possible)
+				impact_map[doctype].extend(docs)
+
+		# Deduplicate
+		if impact_map[doctype]:
+			impact_map[doctype] = list(set(impact_map[doctype]))
+		else:
+			del impact_map[doctype]
+
+	return impact_map
+
+
+@frappe.whitelist()
 def merge_projects(source_project, target_project):
 	"""
 	Merge source_project into target_project.
@@ -29,28 +95,28 @@ def merge_projects(source_project, target_project):
 	if not frappe.has_permission("Project", "write", doc=target_project):
 		frappe.throw(_("You do not have permission to modify the Target Project."))
 
-	# Dynamic discovery of linked doctypes
+	# Dynamic discovery of linked doctypes via helper
 	linked_doctypes = get_linked_doctypes("Project")
 
 	updated_count = 0
+
+	# We iterate again here instead of using get_impacted_documents because
+	# we need to know WHICH field to update, and get_impacted_documents just gives names.
+	# Although we could refactor get_impacted_documents to return {doctype: {docname: [field, ...]}}
+	# keeping the logic separated for "Stats" (read-only) vs "Merge" (write) is safer for now.
 
 	for doctype, fields in linked_doctypes.items():
 		is_table = frappe.get_meta(doctype).istable
 
 		for field in fields:
-			# Find documents where the link field is the source project
 			if doctype == "Project" and field == "name":
 				continue
 
-			print(f"DEBUG: Checking {doctype}.{field} for {source_project}")
 			docs_to_update = frappe.db.get_all(doctype, filters={field: source_project}, pluck="name")
 
 			if docs_to_update:
-				print(f"DEBUG: Found {len(docs_to_update)} docs in {doctype}")
 				for doc_name in docs_to_update:
 					try:
-						print(f"DEBUG: Updating {doctype} {doc_name}")
-
 						if is_table:
 							# High volume child tables: Use set_value for speed
 							frappe.db.set_value(doctype, doc_name, field, target_project)
