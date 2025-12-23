@@ -46,7 +46,7 @@ def get_procurement_status(project_name):
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
                 po_item.qty as ordered_qty,
                 COALESCE(pr_item.qty, sed.qty) as received_qty,
-                pr_item.parent_doctype as pr_parent_doctype
+                pr.is_subcontracted as is_subcontracted
             FROM
                 `tabMaterial Request Item` mr_item
             JOIN
@@ -115,7 +115,7 @@ def get_procurement_status(project_name):
                 pr_item.warehouse as warehouse,
                 po_item.qty as ordered_qty,
                 pr_item.qty as received_qty,
-                pr_item.parent_doctype as pr_parent_doctype
+                pr.is_subcontracted as is_subcontracted
             FROM
                 `tabPurchase Order Item` po_item
             JOIN
@@ -155,7 +155,7 @@ def get_procurement_status(project_name):
 
 		# Determine the primary doctype for this procurement chain
 		doctype = row.get("source_doctype")
-		if row.get('pr_parent_doctype') == 'Subcontracting Receipt':
+		if row.get('is_subcontracted') == 1:
 			doctype = 'Subcontracting Receipt'
 
 		if doctype not in result:
