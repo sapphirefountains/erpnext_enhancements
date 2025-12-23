@@ -97,6 +97,8 @@ function register_global_autosave_handlers(doctypes) {
             frappe.ui.form.on(doctype, 'after_save', function(frm) {
                 // Cleanup Logic
                 if (frm._autosave_storage_key) {
+                    // Safety Guard: Ensure we only delete the key belonging to THIS instance
+                    // (frm._autosave_storage_key is unique to the frm instance)
                     localStorage.removeItem(frm._autosave_storage_key);
                     console.log("[Auto-Save] Cleared local draft for", frm._autosave_storage_key);
 
@@ -201,7 +203,7 @@ function setup_auto_save(frm) {
                     'Restore Draft',
                     () => {
                         localStorage.removeItem(storage_key);
-                        update_silent_indicator(frm); // Just to verify UI works, or maybe show a "Discarded" message?
+                        // Removed update_silent_indicator to avoid "Saved" confusion
                         frappe.show_alert({message: 'Draft Discarded', indicator: 'orange'});
                     },
                     'Discard Draft'
