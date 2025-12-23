@@ -6,7 +6,7 @@ from frappe import _
 def merge_projects(source_project, target_project):
 	"""
 	Merge source_project into target_project.
-	1. Validate projects.
+	1. Validate projects and permissions.
 	2. Find all documents linked to source_project.
 	3. Update links to target_project.
 	4. Cancel source_project.
@@ -23,19 +23,22 @@ def merge_projects(source_project, target_project):
 	if not frappe.db.exists("Project", target_project):
 		frappe.throw(_("Target Project {0} does not exist.").format(target_project))
 
+	# Permission Check
+	if not frappe.has_permission("Project", "write", doc=source_project):
+		frappe.throw(_("You do not have permission to modify the Source Project."))
+	if not frappe.has_permission("Project", "write", doc=target_project):
+		frappe.throw(_("You do not have permission to modify the Target Project."))
+
 	# Dynamic discovery of linked doctypes
 	linked_doctypes = get_linked_doctypes("Project")
 
 	updated_count = 0
 
 	for doctype, fields in linked_doctypes.items():
+		is_table = frappe.get_meta(doctype).istable
+
 		for field in fields:
 			# Find documents where the link field is the source project
-			# We avoid updating the Project doctype itself (except maybe parent project?)
-			# But Project linking to Project is usually 'parent_project' or similar.
-			# We should be careful not to merge a project into its own child if that creates a loop,
-			# but for now we just assume standard linking.
-
 			if doctype == "Project" and field == "name":
 				continue
 
@@ -47,13 +50,20 @@ def merge_projects(source_project, target_project):
 				for doc_name in docs_to_update:
 					try:
 						print(f"DEBUG: Updating {doctype} {doc_name}")
-						frappe.db.set_value(doctype, doc_name, field, target_project)
-						msg = _("Merged from Project {0}").format(source_project)
-						frappe.msgprint(_("Updated {0} {1}: {2}").format(doctype, doc_name, msg))
 
-						# Add a comment if possible
-						if frappe.get_meta(doctype).issingle == 0:
-							frappe.get_doc(doctype, doc_name).add_comment("Info", msg)
+						if is_table:
+							# High volume child tables: Use set_value for speed
+							frappe.db.set_value(doctype, doc_name, field, target_project)
+						else:
+							# Parent DocTypes: Use doc.save() to trigger logic/dashboards
+							doc_to_update = frappe.get_doc(doctype, doc_name)
+							doc_to_update.set(field, target_project)
+							doc_to_update.save()
+
+							# Add a comment if possible
+							msg = _("Merged from Project {0}").format(source_project)
+							if not is_table and frappe.get_meta(doctype).issingle == 0:
+								doc_to_update.add_comment("Info", msg)
 
 						updated_count += 1
 					except Exception as e:

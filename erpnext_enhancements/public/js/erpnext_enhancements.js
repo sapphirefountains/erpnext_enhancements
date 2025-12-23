@@ -15,6 +15,13 @@ let registered_autosave_doctypes = new Set();
 $(document).on("app_ready", function () {
 	console.log("[ERPNext Enhancements] app_ready");
 
+    // Run Auto-Save Cleanup (LRU or Age-based)
+    try {
+        cleanup_old_drafts();
+    } catch (e) {
+        console.error("[Auto-Save] Cleanup failed:", e);
+    }
+
     // Load Auto-Save Settings
     frappe.call({
         method: "erpnext_enhancements.erpnext_enhancements.doctype.erpnext_enhancements_settings.erpnext_enhancements_settings.get_auto_save_configuration",
@@ -116,6 +123,36 @@ function register_global_autosave_handlers(doctypes) {
     });
 }
 
+function cleanup_old_drafts() {
+    const keys = Object.keys(localStorage);
+    const now = new Date();
+    const expiry_ms = 7 * 24 * 60 * 60 * 1000; // 7 Days
+
+    let removed_count = 0;
+
+    keys.forEach(key => {
+        if (key.startsWith("sf_autosave_")) {
+            try {
+                const item = JSON.parse(localStorage.getItem(key));
+                if (item && item.timestamp) {
+                    const saved_time = frappe.datetime.str_to_obj(item.timestamp);
+                    if ((now - saved_time) > expiry_ms) {
+                        localStorage.removeItem(key);
+                        removed_count++;
+                    }
+                }
+            } catch (e) {
+                // Corrupt data, remove it
+                localStorage.removeItem(key);
+            }
+        }
+    });
+
+    if (removed_count > 0) {
+        console.log(`[Auto-Save] Cleaned up ${removed_count} old drafts.`);
+    }
+}
+
 function update_silent_indicator(frm) {
     const $header = $(frm.wrapper).find('.page-head .page-title .indicator-pill').parent();
 
@@ -143,6 +180,45 @@ function update_silent_indicator(frm) {
     }, 3000);
 }
 
+function is_modified(current_doc, stored_data) {
+    if (!stored_data) return true;
+
+    // Top-level field comparison (Shallow)
+    const keys = Object.keys(current_doc);
+    for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (key.startsWith('_')) continue; // Skip internal fields
+
+        const val = current_doc[key];
+        const stored_val = stored_data[key];
+
+        // If Array (Child Table)
+        if (Array.isArray(val)) {
+             // Simple length check or reference check
+             // Note: stored_val might be null if not in draft
+             if (!stored_val || val.length !== stored_val.length) return true;
+             // Deep diff is expensive, so we assume if length is same, it *might* be same.
+             // But user might edit a row.
+             // Let's do a quick JSON string check on the array if length is small?
+             // Or better: Just assume child table modification marks dirty if interaction happens.
+             // But this function is called inside the timer loop which fires on input.
+             // If input happens, frm.is_dirty() is true.
+             // We want to know if current_doc is DIFFERENT from what we last saved to localStorage.
+
+             // Wait, the caller compares current_doc vs localStorage?
+             // No, the caller logic is: `if (frm.is_dirty()) ... save ...`
+             // frm.is_dirty() just means it differs from DB.
+             // We want to avoid writing to localStorage if it hasn't changed *since last auto-save*.
+             // But we overwrite the key every 15s if is_dirty.
+             // To optimize, we should keep a copy of 'last_autosaved_doc' in memory.
+        } else {
+             if (val !== stored_val) return true;
+        }
+    }
+
+    return false;
+}
+
 function setup_auto_save(frm) {
     if (!frm || !frm.wrapper) return;
 
@@ -163,6 +239,7 @@ function setup_auto_save(frm) {
     // Store key on frm for access in cleanup hook
     frm._autosave_storage_key = storage_key;
     frm._autosave_is_new_at_init = is_new;
+    frm._last_autosaved_json = null; // Memory cache to prevent redundant writes
 
     // 1. Recovery Check (On Refresh)
     try {
@@ -230,6 +307,20 @@ function setup_auto_save(frm) {
                 const now = frappe.datetime.now_datetime();
                 const current_data = frm.doc;
 
+                // Diff Check Optimization
+                // We compare current_data against what we LAST auto-saved (in memory)
+                // This prevents writing to localStorage if the user is typing but then undoes,
+                // or if events trigger without real data change (unlikely but possible).
+                // Actually, the main cost is JSON.stringify and localStorage IO.
+                // We can cache the stringified version.
+
+                const current_json = JSON.stringify(current_data);
+
+                if (frm._last_autosaved_json && frm._last_autosaved_json === current_json) {
+                    // No change since last auto-save, skip IO
+                    return;
+                }
+
                 try {
                     // Use the potentially updated key (if needed) but usually we stick to the init key
                     // until refresh happens. For New docs, key is _new until saved and refreshed.
@@ -239,6 +330,7 @@ function setup_auto_save(frm) {
                         data: current_data
                     }));
 
+                    frm._last_autosaved_json = current_json;
                     update_silent_indicator(frm);
                 } catch (e) {
                     console.error("[Auto-Save] Write failed:", e);
