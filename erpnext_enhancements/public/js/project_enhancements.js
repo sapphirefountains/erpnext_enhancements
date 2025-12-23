@@ -100,7 +100,7 @@ frappe.ui.form.on("Project", {
 								<div v-for="doctype in getGroupKeys()" :key="doctype">
 									<div class="group-header" @click="toggleGroup(doctype)">
 										<span>{{ doctype }}</span>
-										<span class="badge">{{ (filteredGroups[doctype] || []).length }}</span>
+										<span class="badge">{{ groupedItems[doctype].length }}</span>
 									</div>
 									<div v-if="!collapsedGroups[doctype]" class="group-content" style="padding: 10px; border: 1px solid #ddd; border-top: none;">
 										<input type="text" v-model="groupSearchTerms[doctype]" :placeholder="'Search in ' + doctype + '...'" class="search-bar" style="margin-top: 10px;">
