@@ -17,12 +17,12 @@ def sync_doctype_to_event(doc, method):
 		"erpnext_enhancements.calendar_sync.run_google_calendar_sync",
 		queue="default",
 		doc=doc,
-		method=method,
+		trigger_method=method,
 		sync_source="background_worker"
 	)
 
 
-def run_google_calendar_sync(doc, method, sync_source=None):
+def run_google_calendar_sync(doc, trigger_method, sync_source=None):
 	"""
 	Background worker for Google Calendar sync.
 	"""
@@ -35,14 +35,14 @@ def run_google_calendar_sync(doc, method, sync_source=None):
 		if not doc.get_doc_before_save():
 			pass
 
-		_sync_doctype_to_event(doc, method)
+		_sync_doctype_to_event(doc, trigger_method)
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Background Sync Error: {e}", title="Google Calendar Sync Worker")
 	finally:
 		frappe.flags.sync_source = None
 
 
-def _sync_doctype_to_event(doc, method):
+def _sync_doctype_to_event(doc, trigger_method):
 	# Handle cancellation/closure by removing the event
 	deletion_statuses = {
 		"Task": ["Cancelled", "Closed"],
@@ -53,7 +53,7 @@ def _sync_doctype_to_event(doc, method):
 
 	status_field = doc.get("status")
 	if status_field in deletion_statuses.get(doc.doctype, ["Cancelled"]):
-		delete_event_from_google(doc, method)
+		delete_event_from_google(doc, trigger_method)
 		return
 
 	# Check if relevant fields have changed (Optimization)
@@ -198,34 +198,34 @@ def get_sync_data(doc):
 	return start_dt, end_dt, summary, description, location
 
 
-def delete_event_from_google(doc, method=None):
+def delete_event_from_google(doc, trigger_method=None):
 	"""
 	Wrapper to run deletion in background.
 	"""
 	if frappe.flags.sync_source == "background_worker":
-		_delete_event_from_google(doc, method)
+		_delete_event_from_google(doc, trigger_method)
 	else:
 		frappe.enqueue(
 			"erpnext_enhancements.calendar_sync.run_google_calendar_delete",
 			queue="default",
 			doc=doc,
-			method=method,
+			trigger_method=trigger_method,
 			sync_source="background_worker"
 		)
 
 
-def run_google_calendar_delete(doc, method, sync_source=None):
+def run_google_calendar_delete(doc, trigger_method, sync_source=None):
 	try:
 		if sync_source:
 			frappe.flags.sync_source = sync_source
-		_delete_event_from_google(doc, method)
+		_delete_event_from_google(doc, trigger_method)
 	except Exception as e:
 		frappe.log_error(message=f"Google Calendar Background Delete Error: {e}", title="Google Calendar Sync Worker")
 	finally:
 		frappe.flags.sync_source = None
 
 
-def _delete_event_from_google(doc, method=None):
+def _delete_event_from_google(doc, trigger_method=None):
 	"""
 	Deletes the associated Google Calendar event(s).
 	Triggered by: on_trash, or when status becomes Cancelled/Closed
@@ -256,7 +256,7 @@ def _delete_event_from_google(doc, method=None):
 					frappe.log_error(message=f"Google Calendar Legacy Delete Error: {e}", title="Google Calendar Sync")
 
 		# Clear legacy field
-		if method != "on_trash" and doc.meta.has_field("custom_google_event_id"):
+		if trigger_method != "on_trash" and doc.meta.has_field("custom_google_event_id"):
 			doc.custom_google_event_id = None
 			doc.save(ignore_permissions=True)
 
