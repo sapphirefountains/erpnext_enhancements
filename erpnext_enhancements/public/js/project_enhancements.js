@@ -238,6 +238,7 @@ frappe.ui.form.on("Project", {
 
 											.glass-table {
 												width: 100%;
+												min-width: 1000px;
 												border-collapse: separate;
 												border-spacing: 0;
 												background: var(--glass-bg);
@@ -248,7 +249,8 @@ frappe.ui.form.on("Project", {
 											}
 
 											.glass-table th {
-												background: rgba(0, 0, 0, 0.03);
+												background: rgba(0, 123, 255, 0.15);
+												color: #004085;
 												padding: 12px 15px;
 												text-align: left;
 												font-weight: 600;
@@ -284,7 +286,7 @@ frappe.ui.form.on("Project", {
                                                 border-radius: 4px;
                                                 font-size: 0.85em;
                                                 font-weight: 500;
-                                                margin-left: 5px;
+                                                white-space: nowrap;
                                                 display: inline-block;
                                             }
 
@@ -324,6 +326,7 @@ frappe.ui.form.on("Project", {
                                                 display: flex;
                                                 align-items: center;
                                                 flex-wrap: wrap;
+                                                gap: 8px;
                                             }
 										</style>
 
