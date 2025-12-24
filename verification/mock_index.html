@@ -1,42 +1,79 @@
-frappe.ui.form.on("Project", {
-	refresh: function (frm) {
-		if (!frm.doc.__islocal) {
-			frm.trigger("render_procurement_tracker");
-		}
-	},
 
-	render_procurement_tracker: function (frm) {
-		try {
-			if (typeof Vue === 'undefined') {
-				frappe.msgprint("Error: Vue is not defined. Please check if vue.global.js is loaded.");
-				return;
-			}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mock Procurement Tracker</title>
+    <script src="vue.global.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: #ddd; padding: 20px; }
+        /* Simulate Frappe globals */
+    </style>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="procurement-tracker-app"></div>
+    </div>
 
-			if (!frm.fields_dict["custom_material_request_feed"]) {
-				console.warn('Field "custom_material_request_feed" not found in Project DocType.');
-				frappe.msgprint('Field "custom_material_request_feed" not found in Project DocType.');
-				return;
-			}
+    <script>
+        // Mock Frappe
+        window.frappe = {
+            set_route: function() { console.log("frappe.set_route called", arguments); },
+            msgprint: function(msg) { alert(msg); }
+        };
 
-			const wrapper = frm.fields_dict["custom_material_request_feed"].wrapper;
-			$(wrapper).html('<div id="procurement-tracker-app">Loading Procurement Tracker...</div>');
+        // Mock Data
+        const mockData = {
+            "Material Request": [
+                {
+                    "item_code": "801-060",
+                    "item_name": "TEE, STRAIGHT, SOC, PVC, 6\" SCH80",
+                    "mr": "MAT-MR-2025-00006-2",
+                    "mr_status": "Ordered",
+                    "rfq": "RFQ-2025-0001",
+                    "rfq_status": "Submitted",
+                    "po": "PO-2025-00018",
+                    "po_status": "Draft",
+                    "warehouse": null,
+                    "ordered_qty": 10,
+                    "received_qty": 0,
+                    "completion_percentage": 0
+                },
+                {
+                     "item_code": "P1000T",
+                     "item_name": "STRUT CHANNEL, SLOTTED",
+                     "mr": "MAT-MR-2025-00006-2",
+                     "mr_status": "Ordered",
+                     "po": "PO-2025-00017",
+                     "po_status": "To Receive and Bill",
+                     "ordered_qty": 80,
+                     "received_qty": 0,
+                     "completion_percentage": 0
+                }
+            ],
+            "Purchase Order": [
+                 {
+                     "item_code": "DIRECT-ITEM",
+                     "item_name": "Direct Purchase Item",
+                     "po": "PO-2025-00099",
+                     "po_status": "Closed",
+                     "ordered_qty": 5,
+                     "received_qty": 5,
+                     "completion_percentage": 100
+                 }
+            ]
+        };
 
-			frappe.call({
-				method: "erpnext_enhancements.project_enhancements.get_procurement_status",
-				args: {
-					project_name: frm.doc.name,
-				},
-				callback: function (r) {
-					try {
-						if (r.message) {
-							const app = Vue.createApp({
+        // App Config
+        const appConfig = {
 								data() {
 									return {
-										groupedItems: r.message,
+										groupedItems: mockData,
 										globalSearchTerm: '',
 										sortKey: '',
 										sortOrder: 'asc',
-										collapsedGroups: Object.keys(r.message).reduce((acc, key) => {
+										collapsedGroups: Object.keys(mockData).reduce((acc, key) => {
 											acc[key] = true; // Collapsed by default
 											return acc;
 										}, {}),
@@ -433,87 +470,10 @@ frappe.ui.form.on("Project", {
 										</div>
 									</div>
 								`
-							});
-							app.mount('#procurement-tracker-app');
-						} else {
-							$(wrapper).html('<div class="text-center text-muted">No procurement data returned.</div>');
-						}
-					} catch (e) {
-						console.error(e);
-						frappe.msgprint("Error inside procurement tracker callback: " + e.message);
-						$(wrapper).html('<div class="text-danger">Error: ' + e.message + '</div>');
-					}
-				},
-				error: function(r) {
-					frappe.msgprint("Server Error in get_procurement_status");
-					 $(wrapper).html('<div class="text-danger">Server Error</div>');
-				}
-			});
-		} catch (e) {
-			console.error(e);
-			frappe.msgprint("Error in render_procurement_tracker: " + e.message);
-		}
-	},
+							};
 
-	custom_btn_material_request: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Material Request", {
-			custom_project: frm.doc.name,
-			project: frm.doc.name,
-		});
-	},
-
-	custom_btn_request_quote: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Request for Quotation", {
-			custom_project: frm.doc.name,
-			project: frm.doc.name,
-		});
-	},
-
-	custom_btn_supplier_quotation: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Supplier Quotation", {
-			project: frm.doc.name,
-		});
-	},
-
-	custom_btn_purchase_order: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Purchase Order", {
-			project: frm.doc.name,
-		});
-	},
-
-	custom_btn_purchase_receipt: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Purchase Receipt", {
-			project: frm.doc.name,
-		});
-	},
-
-	custom_btn_purchase_invoice: function (frm) {
-		if (frm.is_new()) {
-			frappe.msgprint(__("Please save the Project before creating linked documents."));
-			return;
-		}
-		frappe.new_doc("Purchase Invoice", {
-			project: frm.doc.name,
-		});
-	},
-});
+        const app = Vue.createApp(appConfig);
+        app.mount('#procurement-tracker-app');
+    </script>
+</body>
+</html>
