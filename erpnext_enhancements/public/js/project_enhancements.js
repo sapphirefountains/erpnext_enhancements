@@ -154,7 +154,7 @@ frappe.ui.form.on("Project", {
 																<td colspan="5" class="text-center text-muted">No matching records found.</td>
 															</tr>
 															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + row.mr">
-																<td v-html="highlight(row.item_code + '<br><small class=\'text-muted\'>' + row.item_name + '</small>', globalSearchTerm || groupSearchTerms[doctype])"></td>
+																<td v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm || groupSearchTerms[doctype])"></td>
 																<td>
 																	<!-- Doc Chain rendering -->
 																	<div v-if="row.mr"><span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.mr_status }})</span></div>
