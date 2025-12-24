@@ -89,11 +89,16 @@ class TestProcurementStatus(FrappeTestCase):
 		# Run function
 		status = get_procurement_status(self.project.name)
 
-		mr_entry = next((x for x in status if x["mr"] == mr.name), None)
-		self.assertIsNotNone(mr_entry)
+		# Expect the item to be "graduated" to the Stock Entry stage
+		self.assertIn("Stock Entry", status, "Result should contain 'Stock Entry' key")
 
-		# Check if we can see SE info (now using the correct key 'stock_entry')
-		self.assertIn("stock_entry", mr_entry, "Stock Entry field missing in result (Expected for Transfer)")
+		# Find the entry
+		se_list = status["Stock Entry"]
+		mr_entry = next((x for x in se_list if x["mr"] == mr.name), None)
+
+		self.assertIsNotNone(mr_entry, "Item should be found under Stock Entry group")
+
+		# Check if we can see SE info
 		self.assertEqual(mr_entry["stock_entry"], se.name)
 		self.assertEqual(mr_entry["stock_entry_status"], "Draft")  # docstatus 0
 
@@ -120,8 +125,12 @@ class TestProcurementStatus(FrappeTestCase):
 		# Run function
 		status = get_procurement_status(self.project.name)
 
+		# Expect the item to be "graduated" to the Purchase Order stage
+		self.assertIn("Purchase Order", status, "Result should contain 'Purchase Order' key")
+
 		# Verify
-		# This should now be found
-		po_entry = next((x for x in status if x.get("po") == po.name), None)
-		self.assertIsNotNone(po_entry, "Direct PO not found in procurement status")
+		po_list = status["Purchase Order"]
+		po_entry = next((x for x in po_list if x.get("po") == po.name), None)
+
+		self.assertIsNotNone(po_entry, "Direct PO not found in Purchase Order group")
 		self.assertEqual(po_entry["ordered_qty"], 10)
