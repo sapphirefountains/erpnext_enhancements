@@ -35,8 +35,10 @@ frappe.ui.form.on("Project", {
 										groupedItems: r.message,
 										globalSearchTerm: '',
 										groupSearchTerms: {},
+										sortKey: '',
+										sortOrder: 'asc',
 										collapsedGroups: Object.keys(r.message).reduce((acc, key) => {
-											acc[key] = true;
+											acc[key] = false; // Expanded by default
 											return acc;
 										}, {}),
 									};
@@ -45,10 +47,9 @@ frappe.ui.form.on("Project", {
 									globalSearchTerm(newVal) {
 										const term = newVal.toLowerCase();
 										if (!term) {
-											// Collapse all when search is cleared
-											this.getGroupKeys().forEach(doctype => this.collapsedGroups[doctype] = true);
 											return;
 										}
+										// Auto-expand groups with matches
 										this.getGroupKeys().forEach(doctype => {
 											const hasMatch = this.groupedItems[doctype].some(item =>
 												Object.values(item).some(val => String(val).toLowerCase().includes(term))
@@ -63,24 +64,46 @@ frappe.ui.form.on("Project", {
 										const globalTerm = this.globalSearchTerm.toLowerCase();
 
 										for (const doctype in this.groupedItems) {
-											const groupTerm = (this.groupSearchTerms[doctype] || '').toLowerCase();
-
-											const items = this.groupedItems[doctype].filter(item => {
-												const matchesGlobal = !globalTerm || Object.values(item).some(val =>
+											// Filter
+											let items = this.groupedItems[doctype].filter(item => {
+												return !globalTerm || Object.values(item).some(val =>
 													String(val).toLowerCase().includes(globalTerm)
 												);
-												const matchesGroup = !groupTerm || Object.values(item).some(val =>
-													String(val).toLowerCase().includes(groupTerm)
-												);
-												return matchesGlobal && matchesGroup;
 											});
+
+											// Sort
+											if (this.sortKey) {
+												items.sort((a, b) => {
+													let valA = this.getSortValue(a, this.sortKey);
+													let valB = this.getSortValue(b, this.sortKey);
+
+													if (valA < valB) return this.sortOrder === 'asc' ? -1 : 1;
+													if (valA > valB) return this.sortOrder === 'asc' ? 1 : -1;
+													return 0;
+												});
+											}
 
 											result[doctype] = items;
 										}
 										return result;
-									}
+									},
 								},
 								methods: {
+									sortBy(key) {
+										if (this.sortKey === key) {
+											this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+										} else {
+											this.sortKey = key;
+											this.sortOrder = 'asc';
+										}
+									},
+									getSortValue(item, key) {
+										if (key === 'qty') return item.ordered_qty || 0;
+										if (key === 'status') return item.completion_percentage || 0;
+										// For doc chain, sort by the ID of the main document of that group if possible, or MR
+										if (key === 'doc_chain') return item.mr || item.po || '';
+										return (item[key] || '').toString().toLowerCase();
+									},
 									toggleGroup(doctype) {
 										this.collapsedGroups[doctype] = !this.collapsedGroups[doctype];
 									},
@@ -94,78 +117,234 @@ frappe.ui.form.on("Project", {
 										if (!term) return text;
 										const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 										const regex = new RegExp(`(${escapedTerm})`, 'gi');
-										return String(text).replace(regex, '<b>$1</b>');
+										return String(text).replace(regex, '<mark>$1</mark>');
 									}
 								},
 								template: `
-									<div class="procurement-tracker">
+									<div class="procurement-tracker sapphire-theme">
 										<style>
-											.procurement-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-											.procurement-table th, .procurement-table td { border: 1px solid #d1d8dd; padding: 8px; text-align: left; }
-											.procurement-table th { background-color: #f8f9fa; font-weight: bold; }
-											.status-complete { color: #28a745; font-weight: bold; }
-											.status-pending { color: #fd7e14; font-weight: bold; }
-											.doc-link { color: #007bff; cursor: pointer; text-decoration: underline; }
-											.doc-link:hover { color: #0056b3; }
+											/* Theme Scoped Styles */
+											.sapphire-theme {
+												--glass-bg: var(--sapphire-glass-bg, rgba(255, 255, 255, 0.85));
+												--glass-border: var(--sapphire-glass-border, rgba(255, 255, 255, 0.4));
+												--glass-shadow: var(--sapphire-glass-shadow, 0 8px 32px rgba(31, 38, 135, 0.15));
+												--text-color: var(--sapphire-text-color, inherit);
+												--accent-color: #007bff;
+											}
+
+											.procurement-tracker {
+												font-family: inherit;
+												color: var(--text-color);
+											}
+
+											/* Floating Search Bar */
+											.sticky-search-bar {
+												position: sticky;
+												top: 10px;
+												z-index: 100;
+												margin-bottom: 20px;
+												backdrop-filter: blur(8px);
+												-webkit-backdrop-filter: blur(8px);
+											}
+
+											.glass-input {
+												width: 100%;
+												padding: 10px 15px;
+												border: 1px solid var(--glass-border);
+												border-radius: 8px;
+												background: var(--glass-bg);
+												color: var(--text-color);
+												box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+												outline: none;
+												transition: all 0.3s ease;
+											}
+
+											.glass-input:focus {
+												box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+												border-color: var(--accent-color);
+											}
+
+											/* Group Header (Accordion) */
 											.group-header {
-												background-color: #f8f9fa;
-												padding: 12px 15px;
-												cursor: pointer;
-												border: 1px solid #d1d8dd;
-												border-radius: 4px;
-												margin-top: 10px;
-												font-weight: 600; /* Bolder */
 												display: flex;
 												justify-content: space-between;
 												align-items: center;
-												transition: background-color 0.2s;
+												padding: 12px 20px;
+												margin-top: 15px;
+												background: var(--glass-bg);
+												border: 1px solid var(--glass-border);
+												border-radius: 8px;
+												cursor: pointer;
+												font-weight: 600;
+												backdrop-filter: blur(4px);
+												transition: all 0.2s;
+												user-select: none;
 											}
-											.group-header:hover { background-color: #e9ecef; }
-											.search-bar { margin-bottom: 15px; padding: 8px; width: 100%; border: 1px solid #ccc; border-radius: 4px; }
-											b { background-color: yellow; }
+
+											.group-header:hover {
+												background: rgba(255, 255, 255, 0.1); /* Subtle lighten */
+												transform: translateY(-1px);
+											}
+
+											.group-title {
+												display: flex;
+												align-items: center;
+												gap: 10px;
+											}
+
+											.chevron {
+												transition: transform 0.3s ease;
+												opacity: 0.7;
+											}
+
+											.chevron.expanded {
+												transform: rotate(90deg);
+											}
+
+											/* Glass Table */
+											.group-content {
+												margin-top: 5px;
+												margin-bottom: 20px;
+												animation: slideDown 0.3s ease-out;
+											}
+
+											@keyframes slideDown {
+												from { opacity: 0; transform: translateY(-10px); }
+												to { opacity: 1; transform: translateY(0); }
+											}
+
+											.table-responsive {
+												overflow-x: auto;
+												border-radius: 8px;
+												box-shadow: var(--glass-shadow);
+											}
+
+											.glass-table {
+												width: 100%;
+												border-collapse: separate;
+												border-spacing: 0;
+												background: var(--glass-bg);
+												backdrop-filter: blur(4px);
+												border: 1px solid var(--glass-border);
+												border-radius: 8px;
+												font-size: 13px;
+											}
+
+											.glass-table th {
+												background: rgba(0, 0, 0, 0.03);
+												padding: 12px 15px;
+												text-align: left;
+												font-weight: 600;
+												border-bottom: 1px solid var(--glass-border);
+												white-space: nowrap;
+											}
+
+											.glass-table td {
+												padding: 10px 15px;
+												border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+												vertical-align: top;
+											}
+
+											.glass-table tr:last-child td {
+												border-bottom: none;
+											}
+
+											.glass-table tr:hover td {
+												background-color: rgba(0, 123, 255, 0.05);
+											}
+
+											/* Badges & Status */
+											.badge-count {
+												background: var(--accent-color);
+												color: white;
+												padding: 2px 8px;
+												border-radius: 12px;
+												font-size: 0.8em;
+											}
+
+											.status-complete { color: #28a745; font-weight: bold; }
+											.status-pending { color: #fd7e14; font-weight: bold; }
+
+											.doc-link {
+												color: var(--accent-color);
+												text-decoration: none;
+												font-weight: 500;
+												cursor: pointer;
+											}
+											.doc-link:hover { text-decoration: underline; }
+
+											mark {
+												background-color: rgba(255, 235, 59, 0.4);
+												color: inherit;
+												padding: 0 2px;
+												border-radius: 2px;
+											}
 										</style>
 
-										<input type="text" v-model="globalSearchTerm" placeholder="Search all documents..." class="search-bar">
+										<div class="sticky-search-bar">
+											<input type="text" v-model="globalSearchTerm" placeholder="Search all documents..." class="glass-input">
+										</div>
 
-										<div v-if="getGroupKeys().length === 0" class="text-center text-muted">
+										<div v-if="getGroupKeys().length === 0" class="text-center text-muted" style="padding: 20px;">
 											No procurement records found.
 										</div>
 
 										<div v-for="doctype in getGroupKeys()" :key="doctype">
 											<div class="group-header" @click="toggleGroup(doctype)">
-												<span>{{ doctype }}</span>
-												<span class="badge">{{ groupedItems[doctype].length }}</span>
+												<div class="group-title">
+													<!-- Chevron Icon (SVG) -->
+													<svg class="chevron" :class="{ 'expanded': !collapsedGroups[doctype] }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+														<polyline points="9 18 15 12 9 6"></polyline>
+													</svg>
+													<span>{{ doctype }}</span>
+												</div>
+												<span class="badge-count">{{ groupedItems[doctype].length }}</span>
 											</div>
-											<div v-if="!collapsedGroups[doctype]" class="group-content" style="padding: 10px; border: 1px solid #ddd; border-top: none;">
-												<input type="text" v-model="groupSearchTerms[doctype]" :placeholder="'Search in ' + doctype + '...'" class="search-bar" style="margin-top: 10px;">
+
+											<div v-if="!collapsedGroups[doctype]" class="group-content">
 												<div class="table-responsive">
-													<table class="table table-bordered procurement-table">
+													<table class="glass-table">
 														<thead>
 															<tr>
-																<th>Item Details</th>
-																<th>Doc Chain</th>
-																<th>Warehouse</th>
-																<th>Qty (Ord / Rec)</th>
-																<th>Status</th>
+																<th @click="sortBy('item_code')" style="cursor: pointer;">
+																	Item Details
+																	<span v-if="sortKey === 'item_code'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
+																<th @click="sortBy('doc_chain')" style="cursor: pointer;">
+																	Doc Chain
+																	<span v-if="sortKey === 'doc_chain'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
+																<th @click="sortBy('warehouse')" style="cursor: pointer;">
+																	Warehouse
+																	<span v-if="sortKey === 'warehouse'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
+																<th @click="sortBy('qty')" style="cursor: pointer;">
+																	Qty (Ord / Rec)
+																	<span v-if="sortKey === 'qty'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
+																<th @click="sortBy('status')" style="cursor: pointer;">
+																	Status
+																	<span v-if="sortKey === 'status'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
 															</tr>
 														</thead>
 														<tbody>
 															<tr v-if="(filteredGroups[doctype] || []).length === 0">
 																<td colspan="5" class="text-center text-muted">No matching records found.</td>
 															</tr>
-															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + row.mr">
-																<td v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm || groupSearchTerms[doctype])"></td>
+															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)">
+																<td v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)"></td>
 																<td>
 																	<!-- Doc Chain rendering -->
-																	<div v-if="row.mr"><span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.mr_status }})</span></div>
-																	<div v-if="row.rfq"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="highlight(row.rfq, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.rfq_status }})</span></div>
-																	<div v-if="row.sq"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="highlight(row.sq, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.sq_status }})</span></div>
-																	<div v-if="row.po"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="highlight(row.po, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.po_status }})</span></div>
-																	<div v-if="row.pr"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="highlight(row.pr, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.pr_status }})</span></div>
-																	<div v-if="row.pi"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="highlight(row.pi, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.pi_status }})</span></div>
-																	<div v-if="row.stock_entry"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="highlight(row.stock_entry, globalSearchTerm || groupSearchTerms[doctype])"></span> <span class="text-muted">({{ row.stock_entry_status }})</span></div>
+																	<div v-if="row.mr"><span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm)"></span> <span class="text-muted">({{ row.mr_status }})</span></div>
+																	<div v-if="row.rfq"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="highlight(row.rfq, globalSearchTerm)"></span> <span class="text-muted">({{ row.rfq_status }})</span></div>
+																	<div v-if="row.sq"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="highlight(row.sq, globalSearchTerm)"></span> <span class="text-muted">({{ row.sq_status }})</span></div>
+																	<div v-if="row.po"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="highlight(row.po, globalSearchTerm)"></span> <span class="text-muted">({{ row.po_status }})</span></div>
+																	<div v-if="row.pr"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="highlight(row.pr, globalSearchTerm)"></span> <span class="text-muted">({{ row.pr_status }})</span></div>
+																	<div v-if="row.pi"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="highlight(row.pi, globalSearchTerm)"></span> <span class="text-muted">({{ row.pi_status }})</span></div>
+																	<div v-if="row.stock_entry"><span class="text-muted">↓</span><br><span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="highlight(row.stock_entry, globalSearchTerm)"></span> <span class="text-muted">({{ row.stock_entry_status }})</span></div>
 																</td>
-																<td v-html="highlight(row.warehouse || '-', globalSearchTerm || groupSearchTerms[doctype])"></td>
+																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
 																<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
 																<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
 																	{{ row.completion_percentage }}% Received

@@ -143,11 +143,7 @@ def get_procurement_status(project_name):
 	data = frappe.db.sql(sql, {"project": project_name}, as_dict=True)
 
 	# Post-processing to group by doctype and format data
-	result = {
-		'Material Request': [],
-		'Purchase Order': [],
-		'Subcontracting Receipt': []
-	}
+	result = {}
 	for row in data:
 		ordered_qty = row.get("ordered_qty") or 0
 		mr_qty = row.get("mr_qty") or 0
@@ -157,15 +153,29 @@ def get_procurement_status(project_name):
 		if display_ordered_qty > 0:
 			completion_percentage = (received_qty / display_ordered_qty) * 100
 
-		# Determine the primary doctype for this procurement chain
-		doctype = row.get("source_doctype")
-		if row.get('is_subcontracted') == 1:
-			doctype = 'Subcontracting Receipt'
+		# Determine the latest stage for this procurement chain (Graduation Logic)
+		stage = "Material Request"
+		if row.get("pi_name"):
+			stage = "Purchase Invoice"
+		elif row.get("pr_name"):
+			stage = "Purchase Receipt"
+		elif row.get("se_name"):
+			stage = "Stock Entry"
+		elif row.get("po_name"):
+			stage = "Purchase Order"
+		elif row.get("sq_name"):
+			stage = "Supplier Quotation"
+		elif row.get("rfq_name"):
+			stage = "Request for Quotation"
 
-		if doctype not in result:
-			result[doctype] = []
+		# Special case for Subcontracting
+		if stage == "Purchase Receipt" and row.get("is_subcontracted"):
+			stage = "Subcontracting Receipt"
 
-		result[doctype].append(
+		if stage not in result:
+			result[stage] = []
+
+		result[stage].append(
 			{
 				"item_code": row.get("item_code"),
 				"item_name": row.get("item_name"),
