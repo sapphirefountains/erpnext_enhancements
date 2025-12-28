@@ -4,9 +4,9 @@
  "doc_type": "Page",
  "doctype": "Page",
  "module": "ERPNext Enhancements",
- "name": "Time Kiosk",
+ "name": "time-kiosk",
  "owner": "Administrator",
- "page_name": "Time Kiosk",
+ "page_name": "time-kiosk",
  "public": 1,
  "roles": [
   {
