@@ -11,6 +11,12 @@ frappe.pages['time-kiosk'].on_page_load = function(wrapper) {
 	// Load Vue 3 global script
 	frappe.require('/assets/erpnext_enhancements/js/vue.global.js', function() {
 		try {
+			// Idempotency check: prevent duplicate initialization
+			if (wrapper.vue_app_mounted) return;
+
+			// Verify Vue version
+			console.log('Vue Version:', window.Vue.version);
+
             // Explicitly render and inject the template
             $(page.main).html(frappe.render_template("time_kiosk", {}));
 
@@ -155,6 +161,7 @@ frappe.pages['time-kiosk'].on_page_load = function(wrapper) {
 			};
 
 			createApp(TimeKioskApp).mount('#time-kiosk-app');
+			wrapper.vue_app_mounted = true;
 
 		} catch (e) {
 			console.error("Time Kiosk Vue Error:", e);

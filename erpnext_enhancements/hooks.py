@@ -27,7 +27,6 @@ app_license = "mit"
 # include js, css files in header of desk.html
 app_include_css = "/assets/erpnext_enhancements/css/desk_enhancements.css"
 app_include_js = [
-	"/assets/erpnext_enhancements/js/vue.global.js",
 	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
 ]
 
