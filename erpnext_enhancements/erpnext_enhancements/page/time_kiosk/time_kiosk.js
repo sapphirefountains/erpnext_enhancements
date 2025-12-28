@@ -8,12 +8,12 @@ frappe.pages['time-kiosk'].on_page_load = function(wrapper) {
     // Load CSS
     frappe.require('/assets/erpnext_enhancements/css/time_kiosk.css');
 
-	// Inject mount point
-	$(page.main).html('<div id="time-kiosk-app"></div>');
-
 	// Load Vue 3 global script
 	frappe.require('/assets/erpnext_enhancements/js/vue.global.js', function() {
 		try {
+            // Explicitly render and inject the template
+            $(page.main).html(frappe.render_template("time_kiosk", {}));
+
 			const { createApp, ref, onMounted, computed } = window.Vue;
 
 			const TimeKioskApp = {
@@ -150,68 +150,8 @@ frappe.pages['time-kiosk'].on_page_load = function(wrapper) {
 						currentInterval,
 						handleAction
 					};
-				},
-				template: `
-					<div class="time-kiosk-container" style="max-width: 600px; margin: 0 auto; padding: 20px;">
-						<div class="text-center mb-5">
-							<h1 class="display-1 font-weight-bold">{{ currentTime }}</h1>
-							<p class="text-muted" v-if="loading">Loading...</p>
-                            <p class="text-muted" v-else>
-                                {{ status === 'Open' ? 'Clocked In' : 'Ready to Work' }}
-                            </p>
-						</div>
-
-						<div class="card shadow-sm">
-							<div class="card-body">
-                                <!-- Timer Display -->
-                                <div class="text-center mb-4">
-                                     <h2 class="display-4">{{ timerDisplay }}</h2>
-                                     <p v-if="status === 'Open'" class="text-success font-weight-bold">
-                                        <i class="fa fa-briefcase"></i> {{ currentInterval ? currentInterval.project_title : '' }}
-                                     </p>
-                                </div>
-
-                                <!-- Inputs (Hidden if Clocked In) -->
-								<div v-if="status !== 'Open'" class="form-group">
-									<label>Project</label>
-									<select class="form-control" v-model="selectedProject" :disabled="loading">
-										<option value="">-- Select Project --</option>
-										<option v-for="p in projects" :key="p.name" :value="p.name">
-											{{ p.project_name || p.name }}
-										</option>
-									</select>
-								</div>
-
-								<div v-if="status !== 'Open'" class="form-group">
-									<label>Note (Optional)</label>
-									<textarea class="form-control" v-model="description" rows="3" :disabled="loading" placeholder="What are you working on?"></textarea>
-								</div>
-
-                                <!-- Read-only note if Clocked In -->
-                                <div v-if="status === 'Open'" class="form-group text-center">
-                                    <p class="text-muted font-italic">{{ description || 'No description provided.' }}</p>
-                                </div>
-
-                                <!-- Actions -->
-								<div class="mt-4">
-									<button v-if="status !== 'Open'"
-										@click="handleAction('Start')"
-										class="btn btn-success btn-lg btn-block"
-										:disabled="loading || !selectedProject">
-										<i class="fa fa-play"></i> Clock In
-									</button>
-
-									<button v-else
-										@click="handleAction('Stop')"
-										class="btn btn-danger btn-lg btn-block"
-										:disabled="loading">
-										<i class="fa fa-stop"></i> Clock Out
-									</button>
-								</div>
-							</div>
-						</div>
-					</div>
-				`
+				}
+                // No template property - Vue uses the DOM content
 			};
 
 			createApp(TimeKioskApp).mount('#time-kiosk-app');
