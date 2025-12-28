@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Kiosk Mock</title>
+    <!-- Mock jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- FontAwesome Mock (CDN) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+
+    <style>
+        /* Basic Frappe Mock Styles */
+        body { font-family: sans-serif; background: #f0f4f8; }
+        .page-head { background: white; padding: 15px; border-bottom: 1px solid #ddd; }
+        .page-body { padding: 20px; }
+        /* Add some basic bootstrap-ish styles used in the template */
+        .text-center { text-align: center; }
+        .mb-5 { margin-bottom: 3rem; }
+        .display-1 { font-size: 3rem; }
+        .text-muted { color: #6c757d; }
+        .card { background: white; border: 1px solid rgba(0,0,0,.125); border-radius: .25rem; }
+        .card-body { padding: 1.25rem; }
+        .btn { padding: 10px 20px; border: none; cursor: pointer; color: white; }
+        .btn-success { background-color: #28a745; }
+        .btn-danger { background-color: #dc3545; }
+        .form-control { width: 100%; padding: 10px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="page-container">
+        <div class="page-head">
+            <h3>Time Kiosk (Mock)</h3>
+        </div>
+        <div class="page-body" id="page-body">
+            <!-- App will be mounted here -->
+        </div>
+    </div>
+
+    <script>
+        // Mock Frappe Environment
+        window.frappe = {
+            pages: {
+                'time-kiosk': {},
+                'time_kiosk': {} // Ensure this key exists for our test
+            },
+            ui: {
+                make_app_page: function(opts) {
+                    console.log("make_app_page called", opts);
+                    document.title = opts.title;
+                    return {
+                        main: $('#page-body')
+                    };
+                }
+            },
+            require: function(path, callback) {
+                console.log("frappe.require called for", path);
+                if (path.includes('css')) {
+                    var link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = path; // In our mock, relative path needs adjustment or we use the copied one
+                    // Adjust path for verification folder structure
+                    if (path.startsWith('/assets')) {
+                        link.href = '.' + path;
+                    }
+                    document.head.appendChild(link);
+                    if (callback) callback();
+                } else if (path.includes('js')) {
+                     // Since we need to load Vue, we can cheat and load it via script tag if not already loaded
+                     // But verify_kiosk.py copies it to ./assets/...
+                     var script = document.createElement('script');
+                     if (path.startsWith('/assets')) {
+                        script.src = '.' + path;
+                     } else {
+                        script.src = path;
+                     }
+                     script.onload = callback;
+                     document.body.appendChild(script);
+                }
+            },
+            call: function(opts) {
+                console.log("frappe.call", opts.method);
+                // Mock API responses
+                if (opts.method.includes('get_projects')) {
+                    setTimeout(() => {
+                        opts.callback({
+                            message: [
+                                { name: 'PROJ-001', project_name: 'Website Redesign' },
+                                { name: 'PROJ-002', project_name: 'ERP Implementation' }
+                            ]
+                        });
+                    }, 500);
+                } else if (opts.method.includes('get_current_status')) {
+                    setTimeout(() => {
+                        opts.callback({
+                            message: null // Simulate 'Idle' status first
+                        });
+                    }, 500);
+                } else if (opts.method.includes('log_time')) {
+                    setTimeout(() => {
+                        opts.callback({
+                             message: { status: 'success', message: 'Clocked In' }
+                        });
+                    }, 500);
+                }
+            },
+            msgprint: function(msg) {
+                console.log("MSGPRINT:", msg);
+                // alert(msg); // Don't block automated test
+            },
+            show_alert: function(msg) {
+                console.log("ALERT:", msg);
+            },
+            render_template: function(name, ctx) {
+                return "<div>Template Rendered (Mock)</div>";
+            }
+        };
+
+        // Load the actual script
+        // We defer this to let the Playwright script control the flow if needed,
+        // but for now, we just append it.
+        var script = document.createElement('script');
+        script.src = 'time_kiosk.js';
+        script.onload = function() {
+            console.log("time_kiosk.js loaded");
+            // Simulate Page Load Event
+            // In real frappe, router calls this.
+            if (frappe.pages['time-kiosk'].on_page_load) {
+                frappe.pages['time-kiosk'].on_page_load({ vue_app_mounted: false });
+            }
+        };
+        document.body.appendChild(script);
+
+    </script>
+</body>
+</html>
