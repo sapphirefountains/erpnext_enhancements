@@ -13,6 +13,9 @@
   "end_time",
   "status",
   "naming_series",
+  "sync_section",
+  "sync_status",
+  "sync_attempts",
   "location_section",
   "latitude",
   "longitude",
@@ -64,6 +67,26 @@
    "label": "Naming Series",
    "no_copy": 1,
    "options": "JOB-INT-.#####"
+  },
+  {
+   "fieldname": "sync_section",
+   "fieldtype": "Section Break",
+   "label": "Synchronization"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "sync_status",
+   "fieldtype": "Select",
+   "label": "Sync Status",
+   "options": "Pending\nSynced\nFailed",
+   "read_only": 0
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_attempts",
+   "fieldtype": "Int",
+   "label": "Sync Attempts",
+   "read_only": 0
   },
   {
    "fieldname": "location_section",
