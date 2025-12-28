@@ -1,0 +1,21 @@
+{
+ "content": "",
+ "creation": "2024-05-22 10:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "ERPNext Enhancements",
+ "name": "Time Kiosk",
+ "owner": "Administrator",
+ "page_name": "Time Kiosk",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Employee"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Time Kiosk"
+}

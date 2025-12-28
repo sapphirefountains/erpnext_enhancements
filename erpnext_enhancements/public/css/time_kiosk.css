@@ -1,0 +1,36 @@
+.time-kiosk-page {
+    padding: 20px;
+}
+
+.kiosk-status-card {
+    background: var(--card-bg, #fff);
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+#status-text {
+    font-weight: bold;
+    color: var(--text-color);
+}
+
+#timer-text {
+    font-size: 2.5rem;
+    font-family: monospace;
+    font-weight: bold;
+}
+
+.kiosk-form {
+    background: var(--card-bg, #fff);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.btn-lg {
+    padding: 15px 20px;
+    font-size: 1.25rem;
+    text-transform: uppercase;
+    font-weight: bold;
+}
