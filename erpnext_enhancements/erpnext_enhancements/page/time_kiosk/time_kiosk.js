@@ -82,7 +82,7 @@ function debug_log(msg) {
         // Server Log
         if (window.frappe && frappe.call) {
              frappe.call({
-                method: 'erpnext_enhancements.erpnext_enhancements.api.logger.log_client_error',
+                method: 'erpnext_enhancements.api.logger.log_client_error',
                 args: { error_message: "[Time Kiosk Client Log] " + msg },
                 callback: function() {},
                 freeze: false
@@ -175,7 +175,7 @@ const init_time_kiosk = function(wrapper) {
                         const fetchProjects = () => {
                             debug_log("Fetching projects...");
                             frappe.call({
-                                method: 'erpnext_enhancements.erpnext_enhancements.api.time_kiosk.get_projects',
+                                method: 'erpnext_enhancements.api.time_kiosk.get_projects',
                                 callback: (r) => {
                                     if (r.message) {
                                         projects.value = r.message;
@@ -191,7 +191,7 @@ const init_time_kiosk = function(wrapper) {
                         const fetchStatus = () => {
                             loading.value = true;
                             frappe.call({
-                                method: 'erpnext_enhancements.erpnext_enhancements.api.time_kiosk.get_current_status',
+                                method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
                                 callback: (r) => {
                                     loading.value = false;
                                     if (r.message) {
@@ -250,7 +250,7 @@ const init_time_kiosk = function(wrapper) {
                             debug_log("Action: " + action + " Location: " + JSON.stringify(loc));
 
                             frappe.call({
-                                method: 'erpnext_enhancements.erpnext_enhancements.api.time_kiosk.log_time',
+                                method: 'erpnext_enhancements.api.time_kiosk.log_time',
                                 args: {
                                     project: selectedProject.value,
                                     action: action,
@@ -330,4 +330,22 @@ if (frappe.pages['time_kiosk']) {
 } else {
     debug_log("Creating new frappe.pages['time_kiosk'] entry");
     frappe.pages['time_kiosk'] = { on_page_load: init_time_kiosk };
+}
+
+// Fallback: Register for "Time Kiosk" (spaces) as seen in screenshot
+if (frappe.pages['Time Kiosk']) {
+    debug_log("Hooking into existing frappe.pages['Time Kiosk']");
+    frappe.pages['Time Kiosk'].on_page_load = init_time_kiosk;
+} else {
+    debug_log("Creating new frappe.pages['Time Kiosk'] entry");
+    frappe.pages['Time Kiosk'] = { on_page_load: init_time_kiosk };
+}
+
+// Fallback: Register for "Time%20Kiosk" (encoded) just in case
+if (frappe.pages['Time%20Kiosk']) {
+    debug_log("Hooking into existing frappe.pages['Time%20Kiosk']");
+    frappe.pages['Time%20Kiosk'].on_page_load = init_time_kiosk;
+} else {
+    debug_log("Creating new frappe.pages['Time%20Kiosk'] entry");
+    frappe.pages['Time%20Kiosk'] = { on_page_load: init_time_kiosk };
 }
