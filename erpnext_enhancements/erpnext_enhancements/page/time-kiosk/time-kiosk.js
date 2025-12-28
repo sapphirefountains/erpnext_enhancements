@@ -107,7 +107,7 @@ const init_time_kiosk = function(wrapper) {
         debug_log("Page structure created via make_app_page");
 
         // Load CSS
-        frappe.require('/assets/erpnext_enhancements/css/time_kiosk.css');
+        frappe.require('/assets/erpnext_enhancements/css/time-kiosk.css');
         debug_log("CSS required");
 
         // Load Vue 3 global script
