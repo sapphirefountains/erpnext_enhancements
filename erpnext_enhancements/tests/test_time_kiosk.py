@@ -31,6 +31,7 @@ from frappe import _
 
 # Configure now_datetime mock
 frappe.utils.now_datetime = MagicMock(return_value=datetime.datetime(2023, 1, 1, 12, 0, 0))
+frappe.utils.get_datetime = MagicMock(side_effect=lambda x: x if isinstance(x, datetime.datetime) else datetime.datetime.now())
 
 # Import the module to test
 import erpnext_enhancements.api.time_kiosk as time_kiosk
@@ -89,21 +90,49 @@ class TestTimeKiosk(unittest.TestCase):
 
     def test_log_time_stop_success(self):
         # Setup mocks
-        frappe.db.get_value.side_effect = lambda dt, filters, field=None, **kwargs: "EMP-001" if dt == "Employee" else "JOB-INT-OPEN"
+        # logic:
+        # 1. get employee -> "EMP-001"
+        # 2. get open interval -> "JOB-INT-OPEN"
+        # 3. sync_interval_to_timesheet calls get_value("Timesheet") -> "TS-001"
+
+        def get_value_side_effect(dt, filters, field=None, **kwargs):
+            if dt == "Employee": return "EMP-001"
+            if dt == "Job Interval" and isinstance(filters, dict) and filters.get("status") == "Open": return "JOB-INT-OPEN"
+            if dt == "Timesheet": return "TS-001" # Existing timesheet
+            return None
+
+        frappe.db.get_value.side_effect = get_value_side_effect
 
         mock_doc = MagicMock()
         mock_doc.name = "JOB-INT-OPEN"
-        frappe.get_doc.return_value = mock_doc
+        mock_doc.start_time = datetime.datetime(2023, 1, 1, 10, 0, 0)
+        mock_doc.end_time = datetime.datetime(2023, 1, 1, 12, 0, 0)
+
+        mock_ts = MagicMock()
+        mock_ts.time_logs = []
+
+        def get_doc_side_effect(dt, name=None):
+            if dt == "Job Interval": return mock_doc
+            if dt == "Timesheet": return mock_ts
+            return MagicMock()
+
+        frappe.get_doc.side_effect = get_doc_side_effect
 
         # Execute
         result = time_kiosk.log_time(None, "Stop")
 
         # Verify
         self.assertEqual(result["status"], "success")
-        frappe.get_doc.assert_called_with("Job Interval", "JOB-INT-OPEN")
+
+        # Verify Job Interval was saved
+        # Note: We can't use assert_called_with on frappe.get_doc because it's called multiple times
+        # But we can verify mock_doc.save was called
         self.assertEqual(mock_doc.status, "Completed")
-        self.assertIsNotNone(mock_doc.end_time)
-        mock_doc.save.assert_called_once()
+        mock_doc.save.assert_called()
+
+        # Verify Timesheet sync happened
+        mock_ts.append.assert_called()
+        mock_ts.save.assert_called()
 
     def test_log_time_stop_fail_no_open(self):
         # Setup mocks
@@ -131,6 +160,7 @@ class TestTimeKiosk(unittest.TestCase):
 
         status = time_kiosk.get_current_status()
         self.assertEqual(status["project_title"], "Test Project")
+        self.assertEqual(status["employee"], "EMP-001")
 
     @patch('erpnext_enhancements.api.time_kiosk.frappe.get_meta')
     def test_get_projects_active_field(self, mock_get_meta):

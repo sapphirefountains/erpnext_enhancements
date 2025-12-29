@@ -1,6 +1,7 @@
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import now_datetime, get_datetime
+from datetime import timedelta
 
 @frappe.whitelist()
 def log_time(project, action, lat=None, lng=None, description=None):
@@ -50,23 +51,103 @@ def log_time(project, action, lat=None, lng=None, description=None):
         doc = frappe.get_doc("Job Interval", open_interval)
         doc.end_time = now_datetime()
         doc.status = "Completed"
-        # We generally don't update description on stop unless provided? Prompt didn't specify.
-        # But we don't update lat/lng on stop as per plan decision.
         doc.save(ignore_permissions=True)
+
+        # Sync to Timesheet
+        sync_interval_to_timesheet(doc)
+
         return {"status": "success", "message": "Work stopped.", "doc": doc.name}
 
     else:
         frappe.throw(_("Invalid action. Must be 'Start' or 'Stop'."))
 
+def sync_interval_to_timesheet(interval_doc):
+    """
+    Syncs a completed Job Interval to a Timesheet.
+    """
+    try:
+        employee = interval_doc.employee
+        project = interval_doc.project
+        start_time = get_datetime(interval_doc.start_time)
+        end_time = get_datetime(interval_doc.end_time)
+
+        # Calculate hours
+        duration_seconds = (end_time - start_time).total_seconds()
+        hours = duration_seconds / 3600.0
+
+        date_key = start_time.date()
+
+        # Find existing Draft Timesheet for this employee and date
+        filters = {
+            "employee": employee,
+            "status": "Draft",
+            "start_date": ["<=", date_key],
+            "end_date": [">=", date_key]
+        }
+
+        timesheet_name = frappe.db.get_value("Timesheet", filters, "name")
+
+        new_log = {
+            "project": project,
+            "hours": hours,
+            "activity_type": "Execution",
+            "from_time": start_time,
+            "to_time": end_time,
+            "description": interval_doc.description or "Synced from Job Interval"
+        }
+
+        if timesheet_name:
+            ts_doc = frappe.get_doc("Timesheet", timesheet_name)
+
+            # Simple idempotency check: Check if an identical log exists
+            # We compare project and start time
+            exists = False
+            for row in ts_doc.time_logs:
+                # Compare basic fields
+                row_start = get_datetime(row.from_time)
+                if row.project == project and abs(row.hours - hours) < 0.01 and row_start == start_time:
+                    exists = True
+                    break
+
+            if not exists:
+                ts_doc.append("time_logs", new_log)
+                ts_doc.save(ignore_permissions=True)
+
+        else:
+            # Create new Timesheet
+            ts_doc = frappe.get_doc({
+                "doctype": "Timesheet",
+                "employee": employee,
+                "start_date": date_key,
+                "end_date": date_key,
+                "time_logs": [new_log]
+            })
+            ts_doc.insert(ignore_permissions=True)
+
+        # Update Job Interval sync status
+        interval_doc.db_set("sync_status", "Synced")
+
+    except Exception as e:
+        frappe.log_error(f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {str(e)}", "Time Kiosk Sync Error")
+        # Update Job Interval sync status to Failed
+        interval_doc.db_set("sync_status", "Failed")
+
+
 @frappe.whitelist()
 def get_current_status():
     """
     Returns the current open interval for the logged in user.
+    Also returns employee info even if no interval is open.
     """
     user = frappe.session.user
     employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
 
+    result = {}
+    if employee:
+        result["employee"] = employee
+
     if not employee:
+        # If no employee record, we can't really do anything
         return None
 
     # Get open interval
@@ -79,9 +160,13 @@ def get_current_status():
         # Use dictionary access for compatibility with plain dicts (in case of custom queries/mocks)
         project_title = frappe.db.get_value("Project", interval.get("project"), "project_name")
         interval["project_title"] = project_title or interval.get("project")
-        return interval
 
-    return None
+        # Merge interval data into result
+        result.update(interval)
+        return result
+
+    # Return at least the employee ID if idle
+    return result
 
 @frappe.whitelist()
 def get_projects():

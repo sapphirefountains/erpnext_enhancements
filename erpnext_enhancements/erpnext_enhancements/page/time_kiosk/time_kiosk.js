@@ -1,6 +1,6 @@
 const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-container" style="max-width: 600px; margin: 0 auto; padding: 20px;">
     <div class="text-center mb-5">
-        <h1 id="tk-current-time" class="display-1 font-weight-bold">--:--:--</h1>
+        <h1 id="tk-current-time" class="display-3 font-weight-bold">--:--:--</h1>
         <p id="tk-loading-msg" class="text-muted" style="display: none;">Loading...</p>
         <p id="tk-status-text" class="text-muted">Ready to Work</p>
     </div>
@@ -44,6 +44,10 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                 <button id="tk-btn-clock-out" class="btn btn-danger btn-lg btn-block" style="display: none;">
                     <i class="fa fa-stop"></i> Clock Out
                 </button>
+
+                <a id="tk-btn-history" href="/app/job-interval" class="btn btn-secondary btn-lg btn-block mt-3">
+                    <i class="fa fa-history"></i> View My History
+                </a>
             </div>
         </div>
     </div>
@@ -119,6 +123,7 @@ const init_time_kiosk = function(wrapper) {
 
         const $btnClockIn = $('#tk-btn-clock-in');
         const $btnClockOut = $('#tk-btn-clock-out');
+        const $btnHistory = $('#tk-btn-history');
 
         let kioskState = {
             status: null, // 'Open', 'Idle'
@@ -189,6 +194,14 @@ const init_time_kiosk = function(wrapper) {
             });
         };
 
+        const updateHistoryLink = (employeeId) => {
+             if (employeeId) {
+                 // Use frappe.utils.get_form_link if possible, or just build URL
+                 const url = `/app/job-interval?employee=${encodeURIComponent(employeeId)}`;
+                 $btnHistory.attr('href', url);
+             }
+        };
+
         // 5. Timer Logic
         const updateClock = () => {
             $currentTime.text(new Date().toLocaleTimeString());
@@ -243,10 +256,26 @@ const init_time_kiosk = function(wrapper) {
                         kioskState.status = 'Open';
                         kioskState.currentInterval = r.message;
                         debug_log("Status: Open (Interval ID: " + r.message.name + ")");
+
+                        if (r.message.employee) {
+                            updateHistoryLink(r.message.employee);
+                        }
                     } else {
                         kioskState.status = 'Idle';
                         kioskState.currentInterval = null;
                         debug_log("Status: Idle");
+
+                        // If idle, we still might want the employee ID.
+                        // If backend returns null message, we can't get it easily.
+                        // Ideally get_current_status should always return metadata if logged in.
+                        // For now, if logged in but idle, we might not get employee ID until next fetch or if backend supports it.
+                        // I will rely on the backend sending it even if idle, or fetch separately if needed.
+                        // Checking get_current_status backend logic: returns None if no open interval.
+                        // I'll update backend to return {status: 'Idle', employee: '...'} instead of None.
+
+                        if (r.message && r.message.employee) {
+                             updateHistoryLink(r.message.employee);
+                        }
                     }
                     renderState();
                 },
