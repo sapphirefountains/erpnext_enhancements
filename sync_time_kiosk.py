@@ -159,9 +159,13 @@ class TimeKioskSync:
                     await self.update_timesheet(timesheet_name, data)
                 else:
                     # Branch B: Create
-                    await self.create_timesheet(data)
+                    timesheet_name = await self.create_timesheet(data)
 
-                # 2. Update Source Job Intervals
+                # 2. Update Timesheet Note (Aggregate all daily notes)
+                if timesheet_name:
+                    await self.update_daily_note(timesheet_name, data["employee"], data["date"])
+
+                # 3. Update Source Job Intervals
                 await self.update_source_status(data["source_ids"], "Synced")
                 return True
 
@@ -170,6 +174,57 @@ class TimeKioskSync:
                 # Update failure count/status
                 await self.handle_sync_failure(data["source_ids"])
                 return False
+
+    async def update_daily_note(self, timesheet_name: str, employee: str, date_str: str):
+        """
+        Fetches all job intervals for the day and updates the Timesheet note.
+        """
+        try:
+            intervals = await self.fetch_daily_intervals(employee, date_str)
+            notes = []
+            for interval in intervals:
+                desc = interval.get("description")
+                if desc:
+                    project = interval.get("project")
+                    notes.append(f"{project} - {desc}")
+
+            if notes:
+                final_note = "\n".join(notes)
+                # Update Timesheet
+                payload = {"note": final_note}
+                await self.retry_request(self.client.put, f"/api/resource/Timesheet/{timesheet_name}", json=payload)
+        except Exception as e:
+            logger.error(f"Failed to update daily note for {timesheet_name}: {e}")
+
+    async def fetch_daily_intervals(self, employee: str, date_str: str) -> List[Dict[str, Any]]:
+        """
+        Fetches ALL intervals for the employee on the given date (start_time).
+        """
+        start_of_day = f"{date_str} 00:00:00"
+        end_of_day = f"{date_str} 23:59:59.999999"
+
+        filters = [
+            ["employee", "=", employee],
+            ["start_time", ">=", start_of_day],
+            ["start_time", "<=", end_of_day]
+        ]
+
+        params = {
+            "doctype": "Job Interval",
+            "fields": '["project", "description", "start_time"]',
+            "filters": json.dumps(filters),
+            "order_by": "start_time asc",
+            "limit_page_length": 500
+        }
+
+        try:
+            response = await self.retry_request(self.client.get, "/api/resource/Job Interval", params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", [])
+        except Exception as e:
+            logger.error(f"Failed to fetch daily intervals: {e}")
+            return []
 
     async def find_existing_timesheet(self, employee: str, date: str) -> str:
         """
@@ -210,9 +265,9 @@ class TimeKioskSync:
             "to_time": end_dt.strftime("%Y-%m-%d %H:%M:%S")
         }
 
-    async def create_timesheet(self, data: Dict[str, Any]):
+    async def create_timesheet(self, data: Dict[str, Any]) -> str:
         """
-        Creates a new Timesheet.
+        Creates a new Timesheet and returns its name.
         """
         payload = {
             "employee": data["employee"],
@@ -222,6 +277,10 @@ class TimeKioskSync:
         }
         response = await self.retry_request(self.client.post, "/api/resource/Timesheet", json=payload)
         response.raise_for_status()
+        result = response.json()
+        if result.get("data"):
+            return result["data"]["name"]
+        return None
 
     async def update_timesheet(self, timesheet_name: str, data: Dict[str, Any]):
         """
