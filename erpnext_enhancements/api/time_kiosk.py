@@ -133,6 +133,10 @@ def sync_interval_to_timesheet(interval_doc):
             })
             ts_doc.insert(ignore_permissions=True)
 
+        # Update Timesheet Note (Aggregate all notes for the day)
+        if ts_doc.name:
+            update_timesheet_note(ts_doc.name, employee, start_time)
+
         # Update Job Interval sync status
         interval_doc.db_set("sync_status", "Synced")
 
@@ -141,6 +145,49 @@ def sync_interval_to_timesheet(interval_doc):
         # Update Job Interval sync status to Failed
         interval_doc.db_set("sync_status", "Failed")
 
+
+def update_timesheet_note(timesheet_name, employee, date_obj):
+    """
+    Aggregates all Job Interval notes for the given employee and date,
+    then updates the Timesheet's 'note' field.
+    """
+    try:
+        if hasattr(date_obj, 'date'):
+             date_val = date_obj.date()
+        else:
+             # If it's already a date object or string, handle accordingly
+             # For robustness, we assume date_obj is datetime or date
+             date_val = get_datetime(date_obj).date()
+
+        # Define day range
+        start_of_day = date_val.strftime("%Y-%m-%d 00:00:00")
+        end_of_day = date_val.strftime("%Y-%m-%d 23:59:59.999999")
+
+        intervals = frappe.get_all("Job Interval",
+            filters={
+                "employee": employee,
+                "start_time": ["between", (start_of_day, end_of_day)]
+            },
+            fields=["project", "description"],
+            order_by="start_time asc"
+        )
+
+        notes = []
+        for interval in intervals:
+            if interval.get("description"):
+                project_name = interval.get("project")
+                # Optional: Fetch project title if needed, but ID is standard
+                # project_title = frappe.db.get_value("Project", project_name, "project_name") or project_name
+
+                note_line = f"{project_name} - {interval.get('description')}"
+                notes.append(note_line)
+
+        if notes:
+            final_note = "\n".join(notes)
+            frappe.db.set_value("Timesheet", timesheet_name, "note", final_note)
+
+    except Exception as e:
+        frappe.log_error(f"Failed to update Timesheet note: {str(e)}", "Time Kiosk Sync Error")
 
 @frappe.whitelist()
 def get_current_status():
