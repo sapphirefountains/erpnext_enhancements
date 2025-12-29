@@ -1,56 +1,47 @@
 const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-container" style="max-width: 600px; margin: 0 auto; padding: 20px;">
     <div class="text-center mb-5">
-        <h1 class="display-1 font-weight-bold">{{ currentTime }}</h1>
-        <p class="text-muted" v-if="loading">Loading...</p>
-        <p class="text-muted" v-else>
-            {{ status === 'Open' ? 'Clocked In' : 'Ready to Work' }}
-        </p>
+        <h1 id="tk-current-time" class="display-1 font-weight-bold">--:--:--</h1>
+        <p id="tk-loading-msg" class="text-muted" style="display: none;">Loading...</p>
+        <p id="tk-status-text" class="text-muted">Ready to Work</p>
     </div>
 
     <div class="card shadow-sm">
         <div class="card-body">
             <!-- Timer Display -->
             <div class="text-center mb-4">
-                 <h2 class="display-4">{{ timerDisplay }}</h2>
-                 <p v-if="status === 'Open'" class="text-success font-weight-bold">
-                    <i class="fa fa-briefcase"></i> {{ currentInterval ? currentInterval.project_title : '' }}
+                 <h2 id="tk-timer-display" class="display-4">--:--:--</h2>
+                 <p id="tk-active-project-display" class="text-success font-weight-bold" style="display: none;">
+                    <i class="fa fa-briefcase"></i> <span id="tk-active-project-name"></span>
                  </p>
             </div>
 
             <!-- Inputs (Hidden if Clocked In) -->
-            <div v-if="status !== 'Open'" class="form-group">
-                <label>Project</label>
-                <select class="form-control" v-model="selectedProject" :disabled="loading">
-                    <option value="">-- Select Project --</option>
-                    <option v-for="p in projects" :key="p.name" :value="p.name">
-                        {{ p.project_name || p.name }}
-                    </option>
-                </select>
-            </div>
+            <div id="tk-input-section">
+                <div class="form-group">
+                    <label>Project</label>
+                    <select id="tk-project-select" class="form-control">
+                        <option value="">-- Select Project --</option>
+                    </select>
+                </div>
 
-            <div v-if="status !== 'Open'" class="form-group">
-                <label>Note (Optional)</label>
-                <textarea class="form-control" v-model="description" rows="3" :disabled="loading" placeholder="What are you working on?"></textarea>
+                <div class="form-group">
+                    <label>Note (Optional)</label>
+                    <textarea id="tk-note-input" class="form-control" rows="3" placeholder="What are you working on?"></textarea>
+                </div>
             </div>
 
             <!-- Read-only note if Clocked In -->
-            <div v-if="status === 'Open'" class="form-group text-center">
-                <p class="text-muted font-italic">{{ description || 'No description provided.' }}</p>
+            <div id="tk-read-only-note-section" class="form-group text-center" style="display: none;">
+                <p id="tk-read-only-note" class="text-muted font-italic"></p>
             </div>
 
             <!-- Actions -->
             <div class="mt-4">
-                <button v-if="status !== 'Open'"
-                    @click="handleAction('Start')"
-                    class="btn btn-success btn-lg btn-block"
-                    :disabled="loading || !selectedProject">
+                <button id="tk-btn-clock-in" class="btn btn-success btn-lg btn-block">
                     <i class="fa fa-play"></i> Clock In
                 </button>
 
-                <button v-else
-                    @click="handleAction('Stop')"
-                    class="btn btn-danger btn-lg btn-block"
-                    :disabled="loading">
+                <button id="tk-btn-clock-out" class="btn btn-danger btn-lg btn-block" style="display: none;">
                     <i class="fa fa-stop"></i> Clock Out
                 </button>
             </div>
@@ -77,7 +68,8 @@ function debug_log(msg) {
             Object.assign(logContainer.style, {
                 position: 'fixed', bottom: '0', left: '0', width: '100%', height: '200px',
                 overflowY: 'scroll', backgroundColor: 'rgba(0,0,0,0.9)', color: '#0f0',
-                zIndex: '99999', padding: '10px', fontSize: '12px', fontFamily: 'monospace'
+                zIndex: '99999', padding: '10px', fontSize: '12px', fontFamily: 'monospace',
+                pointerEvents: 'none' // Allow clicks to pass through
             });
             document.body.appendChild(logContainer);
         }
@@ -105,6 +97,7 @@ const init_time_kiosk = function(wrapper) {
     debug_log("init_time_kiosk execution started");
 
     try {
+        // 1. Setup Page
         var page = frappe.ui.make_app_page({
             parent: wrapper,
             title: 'Time Kiosk',
@@ -116,255 +109,243 @@ const init_time_kiosk = function(wrapper) {
         frappe.require('/assets/erpnext_enhancements/css/time-kiosk.css');
         debug_log("CSS required");
 
-        // --- Vue Application Logic ---
-        const startVueApp = function() {
-            try {
-                // Idempotency check: prevent duplicate initialization
-                if (wrapper.vue_app_mounted) {
-                    debug_log("Wrapper already has vue_app_mounted=true, skipping.");
-                    return;
-                }
+        // 2. Inject HTML
+        $(page.main).html(TIME_KIOSK_TEMPLATE);
+        debug_log("Template HTML injected into page.main");
 
-                if (!window.Vue) {
-                    throw new Error("window.Vue is NOT defined in startVueApp!");
-                }
-                debug_log("Vue available. Version: " + window.Vue.version);
+        // 3. State & Elements
+        const $currentTime = $('#tk-current-time');
+        const $timerDisplay = $('#tk-timer-display');
+        const $statusText = $('#tk-status-text');
+        const $loadingMsg = $('#tk-loading-msg');
 
-                // Explicitly render and inject the template
-                $(page.main).html(TIME_KIOSK_TEMPLATE);
-                debug_log("Template HTML injected into page.main");
+        const $inputSection = $('#tk-input-section');
+        const $readOnlyNoteSection = $('#tk-read-only-note-section');
+        const $projectSelect = $('#tk-project-select');
+        const $noteInput = $('#tk-note-input');
+        const $readOnlyNote = $('#tk-read-only-note');
 
-                const { createApp, ref, onMounted, computed } = window.Vue;
+        const $activeProjectDisplay = $('#tk-active-project-display');
+        const $activeProjectName = $('#tk-active-project-name');
 
-                const TimeKioskApp = {
-                    setup() {
-                        debug_log("Vue setup() running");
-                        const status = ref(null); // 'Open' or null/other
-                        const currentInterval = ref(null); // The actual interval object
-                        const projects = ref([]);
-                        const selectedProject = ref('');
-                        const description = ref('');
-                        const loading = ref(false);
-                        const currentTime = ref(new Date().toLocaleTimeString());
-                        const timerDisplay = ref('--:--:--');
+        const $btnClockIn = $('#tk-btn-clock-in');
+        const $btnClockOut = $('#tk-btn-clock-out');
 
-                        // Clock logic
-                        const updateClock = () => {
-                            currentTime.value = new Date().toLocaleTimeString();
-                            if (currentInterval.value && currentInterval.value.start_time) {
-                                const start = new Date(currentInterval.value.start_time).getTime();
-                                const now = new Date().getTime();
-                                const diff = now - start;
-                                if (diff >= 0) {
-                                    const hours = Math.floor(diff / (1000 * 60 * 60));
-                                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                                    timerDisplay.value = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-                                }
-                            } else {
-                                timerDisplay.value = '--:--:--';
-                            }
-                        };
+        let kioskState = {
+            status: null, // 'Open', 'Idle'
+            currentInterval: null,
+            projects: [],
+            loading: false
+        };
 
-                        onMounted(() => {
-                            debug_log("Vue Component Mounted");
-                            fetchProjects();
-                            fetchStatus();
-                            setInterval(updateClock, 1000);
-                        });
-
-                        const fetchProjects = () => {
-                            debug_log("Fetching projects...");
-                            frappe.call({
-                                method: 'erpnext_enhancements.api.time_kiosk.get_projects',
-                                callback: (r) => {
-                                    if (r.message) {
-                                        projects.value = r.message;
-                                        debug_log("Projects fetched: " + projects.value.length);
-                                    } else {
-                                        debug_log("No projects returned or empty message");
-                                    }
-                                },
-                                error: (r) => { debug_log("Error fetching projects: " + JSON.stringify(r)); }
-                            });
-                        };
-
-                        const fetchStatus = () => {
-                            loading.value = true;
-                            frappe.call({
-                                method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
-                                callback: (r) => {
-                                    loading.value = false;
-                                    if (r.message) {
-                                        status.value = 'Open';
-                                        currentInterval.value = r.message;
-                                        selectedProject.value = r.message.project;
-                                        description.value = r.message.description || '';
-                                        debug_log("Status: Open (Interval ID: " + r.message.name + ")");
-                                    } else {
-                                        status.value = 'Idle';
-                                        currentInterval.value = null;
-                                        debug_log("Status: Idle");
-                                    }
-                                },
-                                error: (r) => {
-                                    loading.value = false;
-                                    debug_log("Error fetching status: " + JSON.stringify(r));
-                                }
-                            });
-                        };
-
-                        const getGeolocation = () => {
-                            return new Promise((resolve, reject) => {
-                                if (!navigator.geolocation) {
-                                    debug_log("Geolocation not supported");
-                                    resolve({ lat: null, lng: null });
-                                } else {
-                                    navigator.geolocation.getCurrentPosition(
-                                        (position) => {
-                                            resolve({
-                                                lat: position.coords.latitude,
-                                                lng: position.coords.longitude
-                                            });
-                                        },
-                                        (error) => {
-                                            console.warn("Geolocation error", error);
-                                            debug_log("Geolocation error: " + error.message);
-                                            resolve({ lat: null, lng: null });
-                                        },
-                                        { timeout: 10000, enableHighAccuracy: true }
-                                    );
-                                }
-                            });
-                        };
-
-                        const handleAction = async (action) => {
-                            if (action === 'Start' && !selectedProject.value) {
-                                frappe.msgprint('Please select a project.');
-                                return;
-                            }
-
-                            loading.value = true;
-                            frappe.show_alert({message: action === 'Start' ? 'Clocking In...' : 'Clocking Out...', indicator: 'orange'});
-
-                            const loc = await getGeolocation();
-                            debug_log("Action: " + action + " Location: " + JSON.stringify(loc));
-
-                            frappe.call({
-                                method: 'erpnext_enhancements.api.time_kiosk.log_time',
-                                args: {
-                                    project: selectedProject.value,
-                                    action: action,
-                                    description: description.value,
-                                    lat: loc.lat,
-                                    lng: loc.lng
-                                },
-                                callback: (r) => {
-                                    if (r.message && r.message.status === 'success') {
-                                        frappe.show_alert({message: r.message.message, indicator: 'green'});
-                                        fetchStatus();
-                                        debug_log("Action successful: " + r.message.message);
-                                    } else {
-                                        loading.value = false;
-                                        debug_log("Action failed or invalid response: " + JSON.stringify(r));
-                                    }
-                                },
-                                error: (r) => {
-                                    loading.value = false;
-                                    debug_log("Action API Error: " + JSON.stringify(r));
-                                }
-                            });
-                        };
-
-                        return {
-                            status,
-                            projects,
-                            selectedProject,
-                            description,
-                            loading,
-                            currentTime,
-                            timerDisplay,
-                            currentInterval,
-                            handleAction
-                        };
-                    }
-                };
-
-                debug_log("Mounting Vue App...");
-                const app = createApp(TimeKioskApp);
-                app.config.errorHandler = (err, vm, info) => {
-                    console.error("Vue Error:", err);
-                    debug_log("Vue Error: " + err + " Info: " + info);
-                };
-
-                app.mount('#time-kiosk-app');
-                wrapper.vue_app_mounted = true;
-                debug_log("Vue App Mounted Successfully");
-
-            } catch (e) {
-                console.error("Time Kiosk Vue Error:", e);
-                debug_log("Error inside Vue Logic: " + e.message + "\n" + e.stack);
-                frappe.msgprint("Error initializing Time Kiosk: " + e.message);
+        // 4. UI Helpers
+        const setLoading = (isLoading) => {
+            kioskState.loading = isLoading;
+            if (isLoading) {
+                $loadingMsg.show();
+                $statusText.hide();
+                $btnClockIn.prop('disabled', true);
+                $btnClockOut.prop('disabled', true);
+                $projectSelect.prop('disabled', true);
+                $noteInput.prop('disabled', true);
+            } else {
+                $loadingMsg.hide();
+                $statusText.show();
+                $btnClockIn.prop('disabled', false);
+                $btnClockOut.prop('disabled', false);
+                $projectSelect.prop('disabled', false);
+                $noteInput.prop('disabled', false);
             }
         };
 
-        // --- Robust Vue Loading Strategy ---
-        const loadVueFromCDN = function() {
-            debug_log("Attempting to load Vue from CDN...");
-            const script = document.createElement('script');
-            script.src = "https://unpkg.com/vue@3/dist/vue.global.js";
-            script.onload = function() {
-                 if (window.Vue) {
-                     debug_log("CDN Vue Loaded. Version: " + window.Vue.version);
-                     startVueApp();
-                 } else {
-                     debug_log("CDN Vue loaded but window.Vue is still undefined.");
-                     frappe.msgprint("Critical Error: Could not load Vue.js from CDN.");
-                 }
-            };
-            script.onerror = function() {
-                 debug_log("CDN Vue failed to load.");
-                 frappe.msgprint("Critical Error: Could not load Vue.js from CDN.");
-            };
-            document.head.appendChild(script);
+        const renderState = () => {
+            if (kioskState.status === 'Open') {
+                // CLOCKED IN
+                $statusText.text('Clocked In');
+
+                $inputSection.hide();
+                $btnClockIn.hide();
+
+                $readOnlyNoteSection.show();
+                $readOnlyNote.text(kioskState.currentInterval.description || 'No description provided.');
+
+                $activeProjectDisplay.show();
+                $activeProjectName.text(kioskState.currentInterval.project_title || kioskState.currentInterval.project);
+
+                $btnClockOut.show();
+
+                // Update clock immediately to avoid flicker
+                updateClock();
+            } else {
+                // IDLE / READY
+                $statusText.text('Ready to Work');
+
+                $inputSection.show();
+                $btnClockIn.show();
+
+                $readOnlyNoteSection.hide();
+                $activeProjectDisplay.hide();
+                $btnClockOut.hide();
+                $timerDisplay.text('--:--:--');
+            }
         };
 
-        if (window.Vue) {
-            debug_log("Vue already loaded globally.");
-            startVueApp();
-        } else {
-            // Try loading local asset manually to handle error scenarios (e.g., HTML response)
-            const localVueUrl = '/assets/erpnext_enhancements/js/vue.global.js';
-            debug_log("Requesting Vue from local: " + localVueUrl);
+        const renderProjects = () => {
+            $projectSelect.empty();
+            $projectSelect.append('<option value="">-- Select Project --</option>');
+            kioskState.projects.forEach(p => {
+                const name = p.project_name || p.name;
+                const $opt = $('<option></option>').val(p.name).text(name);
+                $projectSelect.append($opt);
+            });
+        };
 
-            const script = document.createElement('script');
-            script.src = localVueUrl;
+        // 5. Timer Logic
+        const updateClock = () => {
+            $currentTime.text(new Date().toLocaleTimeString());
 
-            script.onload = function() {
-                // Check if the script executed correctly
-                if (window.Vue) {
-                    debug_log("Local Vue Loaded Successfully.");
-                    startVueApp();
-                } else {
-                    // This happens if the server returned 200 OK but it was an HTML page (like 404),
-                    // so the browser parsed it but threw SyntaxError, leaving window.Vue undefined.
-                    debug_log("Local Vue script 'loaded' but window.Vue is undefined. Likely 404 HTML served.");
-                    loadVueFromCDN();
+            if (kioskState.status === 'Open' && kioskState.currentInterval && kioskState.currentInterval.start_time) {
+                const start = new Date(kioskState.currentInterval.start_time).getTime();
+                const now = new Date().getTime();
+                const diff = now - start;
+
+                if (diff >= 0) {
+                    const hours = Math.floor(diff / (1000 * 60 * 60));
+                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                    $timerDisplay.text(
+                        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+                    );
                 }
-            };
+            } else if (kioskState.status !== 'Open') {
+                 $timerDisplay.text('--:--:--');
+            }
+        };
 
-            script.onerror = function() {
-                // This handles actual network errors (non-200)
-                debug_log("Local Vue failed to load (Network Error).");
-                loadVueFromCDN();
-            };
+        // Start Timer Interval
+        setInterval(updateClock, 1000);
+        updateClock(); // Initial call
 
-            document.head.appendChild(script);
-        }
+        // 6. Data Fetching
+        const fetchProjects = () => {
+            debug_log("Fetching projects...");
+            frappe.call({
+                method: 'erpnext_enhancements.api.time_kiosk.get_projects',
+                callback: (r) => {
+                    if (r.message) {
+                        kioskState.projects = r.message;
+                        debug_log("Projects fetched: " + kioskState.projects.length);
+                        renderProjects();
+                    } else {
+                        debug_log("No projects returned or empty message");
+                    }
+                },
+                error: (r) => { debug_log("Error fetching projects: " + JSON.stringify(r)); }
+            });
+        };
 
-    } catch (outerErr) {
-        debug_log("Critical Error in init_time_kiosk: " + outerErr.message);
-        console.error(outerErr);
+        const fetchStatus = () => {
+            setLoading(true);
+            frappe.call({
+                method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
+                callback: (r) => {
+                    setLoading(false);
+                    if (r.message) {
+                        kioskState.status = 'Open';
+                        kioskState.currentInterval = r.message;
+                        debug_log("Status: Open (Interval ID: " + r.message.name + ")");
+                    } else {
+                        kioskState.status = 'Idle';
+                        kioskState.currentInterval = null;
+                        debug_log("Status: Idle");
+                    }
+                    renderState();
+                },
+                error: (r) => {
+                    setLoading(false);
+                    debug_log("Error fetching status: " + JSON.stringify(r));
+                }
+            });
+        };
+
+        const getGeolocation = () => {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    debug_log("Geolocation not supported");
+                    resolve({ lat: null, lng: null });
+                } else {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            resolve({
+                                lat: position.coords.latitude,
+                                lng: position.coords.longitude
+                            });
+                        },
+                        (error) => {
+                            console.warn("Geolocation error", error);
+                            debug_log("Geolocation error: " + error.message);
+                            resolve({ lat: null, lng: null });
+                        },
+                        { timeout: 10000, enableHighAccuracy: true }
+                    );
+                }
+            });
+        };
+
+        const handleAction = async (action) => {
+            const selectedProject = $projectSelect.val();
+            const description = $noteInput.val();
+
+            if (action === 'Start' && !selectedProject) {
+                frappe.msgprint('Please select a project.');
+                return;
+            }
+
+            setLoading(true);
+            frappe.show_alert({message: action === 'Start' ? 'Clocking In...' : 'Clocking Out...', indicator: 'orange'});
+
+            const loc = await getGeolocation();
+            debug_log("Action: " + action + " Location: " + JSON.stringify(loc));
+
+            frappe.call({
+                method: 'erpnext_enhancements.api.time_kiosk.log_time',
+                args: {
+                    project: selectedProject,
+                    action: action,
+                    description: description,
+                    lat: loc.lat,
+                    lng: loc.lng
+                },
+                callback: (r) => {
+                    if (r.message && r.message.status === 'success') {
+                        frappe.show_alert({message: r.message.message, indicator: 'green'});
+                        // Clear inputs
+                        $noteInput.val('');
+                        fetchStatus(); // Will update UI
+                        debug_log("Action successful: " + r.message.message);
+                    } else {
+                        setLoading(false);
+                        debug_log("Action failed or invalid response: " + JSON.stringify(r));
+                    }
+                },
+                error: (r) => {
+                    setLoading(false);
+                    debug_log("Action API Error: " + JSON.stringify(r));
+                }
+            });
+        };
+
+        // 7. Event Listeners
+        $btnClockIn.on('click', () => handleAction('Start'));
+        $btnClockOut.on('click', () => handleAction('Stop'));
+
+        // 8. Initial Load
+        fetchProjects();
+        fetchStatus();
+
+    } catch (e) {
+        debug_log("Critical Error in init_time_kiosk: " + e.message);
+        console.error(e);
     }
 };
 

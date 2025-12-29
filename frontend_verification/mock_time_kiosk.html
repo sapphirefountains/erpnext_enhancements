@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mock Time Kiosk</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body { padding: 20px; background-color: #f0f2f5; }
+        /* Mock Frappe Page Wrapper */
+        .page-container { background: white; min-height: 80vh; }
+    </style>
+</head>
+<body>
+
+    <div id="frappe-app-wrapper" class="page-container"></div>
+
+    <script>
+        // MOCK FRAPPE OBJECT
+        window.frappe = {
+            pages: {},
+            ui: {
+                make_app_page: function(opts) {
+                    const $wrapper = $(opts.parent);
+                    const $main = $('<div class="page-main"></div>');
+                    $wrapper.append($main);
+                    return { main: $main[0] };
+                }
+            },
+            require: function(path) {
+                console.log("Mock require:", path);
+                // In real app this loads CSS/JS. We can ignore or manually link CSS.
+                if (path.endsWith('.css')) {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    // Adjust path for mock environment if needed, or just rely on manual inclusion
+                    // For this verification, I'll inject the css content directly via playwright or just ignore if bootstrap is enough
+                }
+            },
+            call: function(opts) {
+                console.log("Mock frappe.call:", opts.method);
+
+                // MOCK API RESPONSES
+                if (opts.method === 'erpnext_enhancements.api.time_kiosk.get_projects') {
+                    setTimeout(() => {
+                        opts.callback({
+                            message: [
+                                { name: 'PROJ-001', project_name: 'Website Redesign' },
+                                { name: 'PROJ-002', project_name: 'ERP Implementation' }
+                            ]
+                        });
+                    }, 100);
+                } else if (opts.method === 'erpnext_enhancements.api.time_kiosk.get_current_status') {
+                     setTimeout(() => {
+                        // Simulate IDLE initially
+                        if (window.mockStatus === 'Open') {
+                             opts.callback({
+                                message: {
+                                    name: 'INTERVAL-123',
+                                    project: 'PROJ-001',
+                                    project_title: 'Website Redesign',
+                                    description: 'Coding',
+                                    start_time: new Date(new Date().getTime() - 3600000).toISOString() // 1 hour ago
+                                }
+                            });
+                        } else {
+                            opts.callback({ message: null });
+                        }
+                    }, 100);
+                } else if (opts.method === 'erpnext_enhancements.api.time_kiosk.log_time') {
+                     setTimeout(() => {
+                        if (opts.args.action === 'Start') {
+                            window.mockStatus = 'Open';
+                            opts.callback({ message: { status: 'success', message: 'Clocked In Successfully' } });
+                        } else {
+                            window.mockStatus = 'Idle';
+                             opts.callback({ message: { status: 'success', message: 'Clocked Out Successfully' } });
+                        }
+                    }, 500);
+                }
+            },
+            msgprint: function(msg) { alert(msg); },
+            show_alert: function(msg) {
+                console.log("Alert:", msg);
+                const indicator = msg.indicator || 'blue';
+                const text = msg.message || msg;
+                const $alert = $(`<div style="position:fixed; bottom:20px; right:20px; padding:10px; background:${indicator}; color:white;">${text}</div>`);
+                $('body').append($alert);
+                setTimeout(() => $alert.remove(), 3000);
+            }
+        };
+
+        // Initial Mock State
+        window.mockStatus = 'Idle';
+
+    </script>
+
+    <!-- Load the rewritten script -->
+    <script src="../erpnext_enhancements/erpnext_enhancements/page/time_kiosk/time_kiosk.js"></script>
+
+    <script>
+        // Trigger initialization manually
+        $(document).ready(function() {
+            const wrapper = document.getElementById('frappe-app-wrapper');
+            // Check which key it registered under
+            if (frappe.pages['time-kiosk']) {
+                frappe.pages['time-kiosk'].on_page_load(wrapper);
+            }
+        });
+    </script>
+</body>
+</html>
