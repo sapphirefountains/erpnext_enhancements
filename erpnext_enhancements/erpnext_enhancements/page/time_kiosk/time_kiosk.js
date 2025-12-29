@@ -19,9 +19,7 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
             <div id="tk-input-section">
                 <div class="form-group">
                     <label>Project</label>
-                    <select id="tk-project-select" class="form-control">
-                        <option value="">-- Select Project --</option>
-                    </select>
+                    <div id="tk-project-wrapper"></div>
                 </div>
 
                 <div class="form-group">
@@ -114,7 +112,11 @@ const init_time_kiosk = function(wrapper) {
 
         const $inputSection = $('#tk-input-section');
         const $readOnlyNoteSection = $('#tk-read-only-note-section');
-        const $projectSelect = $('#tk-project-select');
+
+        // Link Field Wrapper
+        const $projectWrapper = $('#tk-project-wrapper');
+        let projectControl = null;
+
         const $noteInput = $('#tk-note-input');
         const $readOnlyNote = $('#tk-read-only-note');
 
@@ -128,9 +130,40 @@ const init_time_kiosk = function(wrapper) {
         let kioskState = {
             status: null, // 'Open', 'Idle'
             currentInterval: null,
-            projects: [],
             loading: false
         };
+
+        // 3.5 Initialize Link Field
+        // Use frappe.ui.form.make_control to create a standard Link field
+        try {
+            projectControl = frappe.ui.form.make_control({
+                parent: $projectWrapper,
+                df: {
+                    fieldtype: 'Link',
+                    options: 'Project',
+                    fieldname: 'project',
+                    label: 'Project',
+                    placeholder: 'Select Project...',
+                    reqd: 1,
+                    only_select: 1 // Attempt to render cleaner if possible, though Link ignores it
+                },
+                render_input: true
+            });
+
+            // Apply Custom Filter: Active Projects Only
+            projectControl.get_query = function() {
+                return {
+                    filters: {
+                        is_active: 'Yes' // Fallback handled by user preference, but usually 'Yes'
+                    }
+                };
+            };
+
+            // Bind change event to update local state if needed (not strictly needed as we read value on action)
+            debug_log("Link field created successfully");
+        } catch (e) {
+            debug_log("Error creating Link field: " + e.message);
+        }
 
         // 4. UI Helpers
         const setLoading = (isLoading) => {
@@ -140,14 +173,20 @@ const init_time_kiosk = function(wrapper) {
                 $statusText.hide();
                 $btnClockIn.prop('disabled', true);
                 $btnClockOut.prop('disabled', true);
-                $projectSelect.prop('disabled', true);
+                if (projectControl) {
+                    projectControl.df.read_only = 1;
+                    projectControl.refresh();
+                }
                 $noteInput.prop('disabled', true);
             } else {
                 $loadingMsg.hide();
                 $statusText.show();
                 $btnClockIn.prop('disabled', false);
                 $btnClockOut.prop('disabled', false);
-                $projectSelect.prop('disabled', false);
+                if (projectControl) {
+                    projectControl.df.read_only = 0;
+                    projectControl.refresh();
+                }
                 $noteInput.prop('disabled', false);
             }
         };
@@ -182,16 +221,6 @@ const init_time_kiosk = function(wrapper) {
                 $btnClockOut.hide();
                 $timerDisplay.text('--:--:--');
             }
-        };
-
-        const renderProjects = () => {
-            $projectSelect.empty();
-            $projectSelect.append('<option value="">-- Select Project --</option>');
-            kioskState.projects.forEach(p => {
-                const name = p.project_name || p.name;
-                const $opt = $('<option></option>').val(p.name).text(name);
-                $projectSelect.append($opt);
-            });
         };
 
         const updateHistoryLink = (employeeId) => {
@@ -229,22 +258,7 @@ const init_time_kiosk = function(wrapper) {
         updateClock(); // Initial call
 
         // 6. Data Fetching
-        const fetchProjects = () => {
-            debug_log("Fetching projects...");
-            frappe.call({
-                method: 'erpnext_enhancements.api.time_kiosk.get_projects',
-                callback: (r) => {
-                    if (r.message) {
-                        kioskState.projects = r.message;
-                        debug_log("Projects fetched: " + kioskState.projects.length);
-                        renderProjects();
-                    } else {
-                        debug_log("No projects returned or empty message");
-                    }
-                },
-                error: (r) => { debug_log("Error fetching projects: " + JSON.stringify(r)); }
-            });
-        };
+        // Deprecated: fetchProjects (replaced by Link field)
 
         const fetchStatus = () => {
             setLoading(true);
@@ -264,14 +278,6 @@ const init_time_kiosk = function(wrapper) {
                         kioskState.status = 'Idle';
                         kioskState.currentInterval = null;
                         debug_log("Status: Idle");
-
-                        // If idle, we still might want the employee ID.
-                        // If backend returns null message, we can't get it easily.
-                        // Ideally get_current_status should always return metadata if logged in.
-                        // For now, if logged in but idle, we might not get employee ID until next fetch or if backend supports it.
-                        // I will rely on the backend sending it even if idle, or fetch separately if needed.
-                        // Checking get_current_status backend logic: returns None if no open interval.
-                        // I'll update backend to return {status: 'Idle', employee: '...'} instead of None.
 
                         if (r.message && r.message.employee) {
                              updateHistoryLink(r.message.employee);
@@ -311,7 +317,11 @@ const init_time_kiosk = function(wrapper) {
         };
 
         const handleAction = async (action) => {
-            const selectedProject = $projectSelect.val();
+            // Get value from Link Control
+            let selectedProject = null;
+            if (projectControl) {
+                selectedProject = projectControl.get_value();
+            }
             const description = $noteInput.val();
 
             if (action === 'Start' && !selectedProject) {
@@ -339,6 +349,7 @@ const init_time_kiosk = function(wrapper) {
                         frappe.show_alert({message: r.message.message, indicator: 'green'});
                         // Clear inputs
                         $noteInput.val('');
+                        if (projectControl) projectControl.set_value('');
                         fetchStatus(); // Will update UI
                         debug_log("Action successful: " + r.message.message);
                     } else {
@@ -358,7 +369,6 @@ const init_time_kiosk = function(wrapper) {
         $btnClockOut.on('click', () => handleAction('Stop'));
 
         // 8. Initial Load
-        fetchProjects();
         fetchStatus();
 
     } catch (e) {
