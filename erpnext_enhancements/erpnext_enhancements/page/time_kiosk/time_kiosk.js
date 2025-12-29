@@ -266,7 +266,7 @@ const init_time_kiosk = function(wrapper) {
                 method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
                 callback: (r) => {
                     setLoading(false);
-                    if (r.message) {
+                    if (r.message && r.message.name) {
                         kioskState.status = 'Open';
                         kioskState.currentInterval = r.message;
                         debug_log("Status: Open (Interval ID: " + r.message.name + ")");
