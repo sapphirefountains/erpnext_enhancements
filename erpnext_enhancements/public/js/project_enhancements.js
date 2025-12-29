@@ -153,9 +153,8 @@ frappe.ui.form.on("Project", {
 													<svg class="chevron" :class="{ 'expanded': !collapsedGroups[doctype] }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 														<polyline points="9 18 15 12 9 6"></polyline>
 													</svg>
-													<span>{{ doctype }}</span>
+													<span>{{ doctype }} ({{ groupedItems[doctype].length }})</span>
 												</div>
-												<span class="badge-count">{{ groupedItems[doctype].length }}</span>
 											</div>
 
 											<div v-if="!collapsedGroups[doctype]" class="group-content">
