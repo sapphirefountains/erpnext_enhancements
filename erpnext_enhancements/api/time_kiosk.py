@@ -4,7 +4,7 @@ from frappe.utils import now_datetime, get_datetime
 from datetime import timedelta
 
 @frappe.whitelist()
-def log_time(project, action, lat=None, lng=None, description=None):
+def log_time(project, action, lat=None, lng=None, description=None, task=None):
     """
     Logs time for the current employee.
     action: "Start" or "Stop"
@@ -32,6 +32,7 @@ def log_time(project, action, lat=None, lng=None, description=None):
             "doctype": "Job Interval",
             "employee": employee,
             "project": project,
+            "task": task,
             "start_time": now_datetime(),
             "status": "Open",
             "latitude": lat,
@@ -98,6 +99,7 @@ def sync_interval_to_timesheet(interval_doc):
 
         new_log = {
             "project": project,
+            "task": interval_doc.task,
             "hours": hours,
             "activity_type": "Execution",
             "from_time": start_time,
@@ -210,12 +212,16 @@ def get_current_status():
     interval = frappe.db.get_value("Job Interval", {
         "employee": employee,
         "status": "Open"
-    }, ["name", "project", "start_time", "description"], as_dict=True)
+    }, ["name", "project", "task", "start_time", "description"], as_dict=True)
 
     if interval:
         # Use dictionary access for compatibility with plain dicts (in case of custom queries/mocks)
         project_title = frappe.db.get_value("Project", interval.get("project"), "project_name")
         interval["project_title"] = project_title or interval.get("project")
+
+        if interval.get("task"):
+            task_title = frappe.db.get_value("Task", interval.get("task"), "subject")
+            interval["task_title"] = task_title or interval.get("task")
 
         # Merge interval data into result
         result.update(interval)
