@@ -16,6 +16,9 @@ def log_time(project, action, lat=None, lng=None, description=None):
         frappe.throw(_("No Employee record found for this user ({0}).").format(user), frappe.PermissionError)
 
     if action == "Start":
+        if not project:
+            frappe.throw(_("Project is required to start work."))
+
         # Check for existing open interval
         existing = frappe.db.exists("Job Interval", {
             "employee": employee,
@@ -68,6 +71,12 @@ def sync_interval_to_timesheet(interval_doc):
     try:
         employee = interval_doc.employee
         project = interval_doc.project
+
+        # RESCUE MECHANISM: If project is missing (e.g. bad data), allow stop but skip sync
+        if not project:
+            interval_doc.db_set("sync_status", "Skipped - No Project")
+            return
+
         start_time = get_datetime(interval_doc.start_time)
         end_time = get_datetime(interval_doc.end_time)
 
