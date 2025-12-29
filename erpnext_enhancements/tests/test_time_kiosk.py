@@ -33,7 +33,7 @@ from frappe import _
 frappe.utils.now_datetime = MagicMock(return_value=datetime.datetime(2023, 1, 1, 12, 0, 0))
 
 # Import the module to test
-import erpnext_enhancements.erpnext_enhancements.api.time_kiosk as time_kiosk
+import erpnext_enhancements.api.time_kiosk as time_kiosk
 
 class TestTimeKiosk(unittest.TestCase):
     def setUp(self):
@@ -132,7 +132,7 @@ class TestTimeKiosk(unittest.TestCase):
         status = time_kiosk.get_current_status()
         self.assertEqual(status["project_title"], "Test Project")
 
-    @patch('erpnext_enhancements.erpnext_enhancements.api.time_kiosk.frappe.get_meta')
+    @patch('erpnext_enhancements.api.time_kiosk.frappe.get_meta')
     def test_get_projects_active_field(self, mock_get_meta):
         mock_field = MagicMock()
         mock_field.fieldname = "is_active"
@@ -142,7 +142,7 @@ class TestTimeKiosk(unittest.TestCase):
 
         frappe.get_list.assert_called_with("Project", filters={"is_active": "Yes"}, fields=["name", "project_name"])
 
-    @patch('erpnext_enhancements.erpnext_enhancements.api.time_kiosk.frappe.get_meta')
+    @patch('erpnext_enhancements.api.time_kiosk.frappe.get_meta')
     def test_get_projects_no_active_field(self, mock_get_meta):
         mock_field = MagicMock()
         mock_field.fieldname = "status"
