@@ -167,10 +167,6 @@ frappe.ui.form.on("Project", {
 																	Item Details
 																	<span v-if="sortKey === 'item_code'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
 																</th>
-																<th @click="sortBy('doc_chain')" style="cursor: pointer;">
-																	Doc Chain
-																	<span v-if="sortKey === 'doc_chain'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
 																<th @click="sortBy('warehouse')" style="cursor: pointer;">
 																	Warehouse
 																	<span v-if="sortKey === 'warehouse'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
@@ -183,6 +179,10 @@ frappe.ui.form.on("Project", {
 																	Status
 																	<span v-if="sortKey === 'status'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
 																</th>
+																<th @click="sortBy('doc_chain')" style="cursor: pointer;">
+																	Doc Chain
+																	<span v-if="sortKey === 'doc_chain'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+																</th>
 															</tr>
 														</thead>
 														<tbody>
@@ -191,6 +191,11 @@ frappe.ui.form.on("Project", {
 															</tr>
 															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)">
 																<td v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)"></td>
+																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
+																<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
+																<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
+																	{{ row.completion_percentage }}% Received
+																</td>
 																<td>
 																	<!-- Doc Chain rendering -->
                                                                     <div class="doc-chain-container">
@@ -230,11 +235,6 @@ frappe.ui.form.on("Project", {
                                                                             <span class="status-badge" :class="getStatusColorClass(row.stock_entry_status)">{{ row.stock_entry_status }}</span>
                                                                         </div>
                                                                     </div>
-																</td>
-																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
-																<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
-																<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
-																	{{ row.completion_percentage }}% Received
 																</td>
 															</tr>
 														</tbody>
