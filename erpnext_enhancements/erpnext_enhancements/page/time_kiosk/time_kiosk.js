@@ -308,37 +308,59 @@ const init_time_kiosk = function(wrapper) {
             }
         };
 
-        // --- Vue Loading Strategy ---
-        const vueUrl = '/assets/erpnext_enhancements/js/vue.global.js';
-        debug_log("Requesting Vue from: " + vueUrl);
-
-        frappe.require(vueUrl, function() {
-            debug_log("frappe.require callback received for Vue");
-
-            if (window.Vue) {
-                // Local load successful
-                startVueApp();
-            } else {
-                // Local load failed (or returned 404 HTML), try CDN Fallback
-                debug_log("window.Vue is undefined. Attempting CDN Fallback...");
-                const script = document.createElement('script');
-                script.src = "https://unpkg.com/vue@3/dist/vue.global.js";
-                script.onload = function() {
-                     if (window.Vue) {
-                         debug_log("CDN Vue Loaded. Version: " + window.Vue.version);
-                         startVueApp();
-                     } else {
-                         debug_log("CDN Vue loaded but window.Vue is still undefined.");
-                         frappe.msgprint("Critical Error: Could not load Vue.js from Local or CDN.");
-                     }
-                };
-                script.onerror = function() {
-                     debug_log("CDN Vue failed to load.");
+        // --- Robust Vue Loading Strategy ---
+        const loadVueFromCDN = function() {
+            debug_log("Attempting to load Vue from CDN...");
+            const script = document.createElement('script');
+            script.src = "https://unpkg.com/vue@3/dist/vue.global.js";
+            script.onload = function() {
+                 if (window.Vue) {
+                     debug_log("CDN Vue Loaded. Version: " + window.Vue.version);
+                     startVueApp();
+                 } else {
+                     debug_log("CDN Vue loaded but window.Vue is still undefined.");
                      frappe.msgprint("Critical Error: Could not load Vue.js from CDN.");
-                };
-                document.head.appendChild(script);
-            }
-        });
+                 }
+            };
+            script.onerror = function() {
+                 debug_log("CDN Vue failed to load.");
+                 frappe.msgprint("Critical Error: Could not load Vue.js from CDN.");
+            };
+            document.head.appendChild(script);
+        };
+
+        if (window.Vue) {
+            debug_log("Vue already loaded globally.");
+            startVueApp();
+        } else {
+            // Try loading local asset manually to handle error scenarios (e.g., HTML response)
+            const localVueUrl = '/assets/erpnext_enhancements/js/vue.global.js';
+            debug_log("Requesting Vue from local: " + localVueUrl);
+
+            const script = document.createElement('script');
+            script.src = localVueUrl;
+
+            script.onload = function() {
+                // Check if the script executed correctly
+                if (window.Vue) {
+                    debug_log("Local Vue Loaded Successfully.");
+                    startVueApp();
+                } else {
+                    // This happens if the server returned 200 OK but it was an HTML page (like 404),
+                    // so the browser parsed it but threw SyntaxError, leaving window.Vue undefined.
+                    debug_log("Local Vue script 'loaded' but window.Vue is undefined. Likely 404 HTML served.");
+                    loadVueFromCDN();
+                }
+            };
+
+            script.onerror = function() {
+                // This handles actual network errors (non-200)
+                debug_log("Local Vue failed to load (Network Error).");
+                loadVueFromCDN();
+            };
+
+            document.head.appendChild(script);
+        }
 
     } catch (outerErr) {
         debug_log("Critical Error in init_time_kiosk: " + outerErr.message);
