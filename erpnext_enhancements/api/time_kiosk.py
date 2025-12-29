@@ -246,3 +246,28 @@ def get_projects():
         return frappe.get_list("Project",
             filters={"status": "Open"},
             fields=["name", "project_name"])
+
+@frappe.whitelist()
+def log_geolocation(employee, latitude, longitude, device_agent, log_status, timestamp):
+    """
+    Logs a geolocation entry to the Time Kiosk Log.
+    """
+    try:
+        if not employee:
+             frappe.throw(_("Employee ID is required for logging location."))
+
+        doc = frappe.get_doc({
+            "doctype": "Time Kiosk Log",
+            "employee": employee,
+            "user": frappe.session.user,
+            "timestamp": timestamp,
+            "latitude": latitude,
+            "longitude": longitude,
+            "device_agent": device_agent,
+            "log_status": log_status
+        })
+        doc.insert(ignore_permissions=True)
+        return {"status": "success", "message": "Location logged."}
+    except Exception as e:
+        frappe.log_error(f"Failed to log location: {str(e)}", "Time Kiosk Location Error")
+        return {"status": "error", "message": str(e)}
