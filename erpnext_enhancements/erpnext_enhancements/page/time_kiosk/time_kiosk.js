@@ -133,6 +133,52 @@ const init_time_kiosk = function(wrapper) {
             loading: false
         };
 
+        // --- WORKER INTEGRATION ---
+        let geoWorker = null;
+
+        const initWorker = (employeeId) => {
+            if (!window.Worker) {
+                console.warn("Web Workers not supported");
+                return;
+            }
+
+            if (geoWorker) return; // Already running
+
+            debug_log("Initializing Geo Worker");
+            geoWorker = new Worker('/assets/erpnext_enhancements/js/geo_worker.js');
+
+            geoWorker.onmessage = (e) => {
+                const { type, data } = e.data;
+                if (type === 'permission_denied') {
+                    frappe.show_alert({
+                        message: "Location access is required for time tracking.",
+                        indicator: "orange"
+                    }, 5);
+                } else if (type === 'log_success') {
+                    debug_log("Location logged successfully");
+                }
+            };
+
+            // Start logging
+            geoWorker.postMessage({
+                type: 'start',
+                data: {
+                    employee: employeeId,
+                    user: frappe.session.user,
+                    csrf_token: frappe.csrf_token
+                }
+            });
+        };
+
+        const stopWorker = () => {
+            if (geoWorker) {
+                debug_log("Stopping Geo Worker");
+                geoWorker.postMessage({ type: 'stop' });
+                geoWorker.terminate(); // Hard stop
+                geoWorker = null;
+            }
+        };
+
         // 3.5 Initialize Link Field
         // Use frappe.ui.form.make_control to create a standard Link field
         try {
@@ -209,6 +255,17 @@ const init_time_kiosk = function(wrapper) {
 
                 // Update clock immediately to avoid flicker
                 updateClock();
+
+                // Worker Check (Idempotent)
+                // If we are open, worker should be running
+                // We rely on localStorage as primary persistent flag for speed,
+                // but server status confirms identity.
+                if (kioskState.currentInterval && kioskState.currentInterval.employee) {
+                    initWorker(kioskState.currentInterval.employee);
+                    localStorage.setItem('tk_is_clocked_in', 'true');
+                    localStorage.setItem('tk_employee', kioskState.currentInterval.employee);
+                }
+
             } else {
                 // IDLE / READY
                 $statusText.text('Ready to Work');
@@ -220,6 +277,11 @@ const init_time_kiosk = function(wrapper) {
                 $activeProjectDisplay.hide();
                 $btnClockOut.hide();
                 $timerDisplay.text('--:--:--');
+
+                // Stop Worker
+                stopWorker();
+                localStorage.removeItem('tk_is_clocked_in');
+                localStorage.removeItem('tk_employee');
             }
         };
 
@@ -261,6 +323,15 @@ const init_time_kiosk = function(wrapper) {
         // Deprecated: fetchProjects (replaced by Link field)
 
         const fetchStatus = () => {
+            // OPTIMISTIC RESTORE: Check localStorage first to start worker ASAP
+            if (localStorage.getItem('tk_is_clocked_in') === 'true') {
+                const storedEmployee = localStorage.getItem('tk_employee');
+                if (storedEmployee) {
+                    debug_log("Optimistic Worker Start from LocalStorage");
+                    initWorker(storedEmployee);
+                }
+            }
+
             setLoading(true);
             frappe.call({
                 method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
