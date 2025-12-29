@@ -438,3 +438,24 @@ mark {
     flex-wrap: wrap;
     gap: 8px;
 }
+/* Procurement Tracker Table Customizations */
+.procurement-tracker .glass-table th {
+    background-color: #f0f0f0; /* Light grey background for tab look */
+    border: 1px solid #666;
+    padding: 12px 15px; /* Ensure padding is maintained */
+}
+
+.procurement-tracker .glass-table td {
+    border: 1px solid #666;
+    padding: 18px 15px; /* Ensure padding is maintained */
+}
+
+[data-theme="dark"] .procurement-tracker .glass-table th {
+    background-color: #2c3e50; /* Darker background for dark theme */
+    color: #ecf0f1;
+    border-color: #555; /* Less harsh border for dark mode */
+}
+
+[data-theme="dark"] .procurement-tracker .glass-table td {
+    border-color: #555; /* Less harsh border for dark mode */
+}
