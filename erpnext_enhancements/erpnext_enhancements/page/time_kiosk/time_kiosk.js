@@ -23,6 +23,11 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                 </div>
 
                 <div class="form-group">
+                    <label>Task (Optional)</label>
+                    <div id="tk-task-wrapper"></div>
+                </div>
+
+                <div class="form-group">
                     <label>Note (Optional)</label>
                     <textarea id="tk-note-input" class="form-control" rows="3" placeholder="What are you working on?"></textarea>
                 </div>
@@ -115,7 +120,9 @@ const init_time_kiosk = function(wrapper) {
 
         // Link Field Wrapper
         const $projectWrapper = $('#tk-project-wrapper');
+        const $taskWrapper = $('#tk-task-wrapper');
         let projectControl = null;
+        let taskControl = null;
 
         const $noteInput = $('#tk-note-input');
         const $readOnlyNote = $('#tk-read-only-note');
@@ -211,6 +218,56 @@ const init_time_kiosk = function(wrapper) {
             debug_log("Error creating Link field: " + e.message);
         }
 
+        // 3.6 Initialize Task Link Field
+        try {
+            taskControl = frappe.ui.form.make_control({
+                parent: $taskWrapper,
+                df: {
+                    fieldtype: 'Link',
+                    options: 'Task',
+                    fieldname: 'task',
+                    label: 'Task',
+                    placeholder: 'Select Task...',
+                    reqd: 0,
+                    only_select: 1
+                },
+                render_input: true
+            });
+
+            // Initial Query (will update on project change)
+            taskControl.get_query = function() {
+                return {
+                    filters: {
+                        project: projectControl ? projectControl.get_value() : ''
+                    }
+                };
+            };
+
+            // Listen to Project Change to filter tasks
+             if (projectControl) {
+                // Use standard jQuery event on input since Link control might not expose simple 'change' callback easily
+                // But frappe controls usually have $input
+                projectControl.$input.on('change', function() {
+                     // Clear task when project changes
+                     taskControl.set_value('');
+
+                     // Update query filter dynamically
+                     const currentProject = projectControl.get_value();
+                     taskControl.get_query = function() {
+                        return {
+                            filters: {
+                                project: currentProject
+                            }
+                        };
+                     };
+                });
+             }
+
+            debug_log("Task Link field created successfully");
+        } catch (e) {
+            debug_log("Error creating Task Link field: " + e.message);
+        }
+
         // 4. UI Helpers
         const setLoading = (isLoading) => {
             kioskState.loading = isLoading;
@@ -223,6 +280,10 @@ const init_time_kiosk = function(wrapper) {
                     projectControl.df.read_only = 1;
                     projectControl.refresh();
                 }
+                if (taskControl) {
+                    taskControl.df.read_only = 1;
+                    taskControl.refresh();
+                }
                 $noteInput.prop('disabled', true);
             } else {
                 $loadingMsg.hide();
@@ -232,6 +293,10 @@ const init_time_kiosk = function(wrapper) {
                 if (projectControl) {
                     projectControl.df.read_only = 0;
                     projectControl.refresh();
+                }
+                if (taskControl) {
+                    taskControl.df.read_only = 0;
+                    taskControl.refresh();
                 }
                 $noteInput.prop('disabled', false);
             }
@@ -249,7 +314,12 @@ const init_time_kiosk = function(wrapper) {
                 $readOnlyNote.text(kioskState.currentInterval.description || 'No description provided.');
 
                 $activeProjectDisplay.show();
-                $activeProjectName.text(kioskState.currentInterval.project_title || kioskState.currentInterval.project);
+                let displayTitle = kioskState.currentInterval.project_title || kioskState.currentInterval.project;
+                if (kioskState.currentInterval.task) {
+                     const taskLabel = kioskState.currentInterval.task_title || kioskState.currentInterval.task;
+                     displayTitle += ' - ' + taskLabel;
+                }
+                $activeProjectName.text(displayTitle);
 
                 $btnClockOut.show();
 
@@ -393,6 +463,12 @@ const init_time_kiosk = function(wrapper) {
             if (projectControl) {
                 selectedProject = projectControl.get_value();
             }
+
+            let selectedTask = null;
+            if (taskControl) {
+                selectedTask = taskControl.get_value();
+            }
+
             const description = $noteInput.val();
 
             if (action === 'Start' && !selectedProject) {
@@ -410,6 +486,7 @@ const init_time_kiosk = function(wrapper) {
                 method: 'erpnext_enhancements.api.time_kiosk.log_time',
                 args: {
                     project: selectedProject,
+                    task: selectedTask,
                     action: action,
                     description: description,
                     lat: loc.lat,
@@ -421,6 +498,7 @@ const init_time_kiosk = function(wrapper) {
                         // Clear inputs
                         $noteInput.val('');
                         if (projectControl) projectControl.set_value('');
+                        if (taskControl) taskControl.set_value('');
                         fetchStatus(); // Will update UI
                         debug_log("Action successful: " + r.message.message);
                     } else {

@@ -60,7 +60,7 @@ class TestTimeKiosk(unittest.TestCase):
         frappe.get_doc.return_value = mock_doc
 
         # Execute
-        result = time_kiosk.log_time("PROJ-001", "Start", "10.0", "20.0", "Test Description")
+        result = time_kiosk.log_time("PROJ-001", "Start", "10.0", "20.0", "Test Description", task="TASK-001")
 
         # Verify
         self.assertEqual(result["status"], "success")
@@ -69,6 +69,7 @@ class TestTimeKiosk(unittest.TestCase):
         self.assertEqual(args["doctype"], "Job Interval")
         self.assertEqual(args["employee"], "EMP-001")
         self.assertEqual(args["project"], "PROJ-001")
+        self.assertEqual(args["task"], "TASK-001")
         self.assertEqual(args["status"], "Open")
         self.assertEqual(args["latitude"], "10.0")
         self.assertEqual(args["longitude"], "20.0")

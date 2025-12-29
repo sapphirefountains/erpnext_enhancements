@@ -9,6 +9,7 @@
  "field_order": [
   "employee",
   "project",
+  "task",
   "start_time",
   "end_time",
   "status",
@@ -37,6 +38,13 @@
    "label": "Project",
    "options": "Project",
    "reqd": 1
+  },
+  {
+   "fieldname": "task",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Task",
+   "options": "Task"
   },
   {
    "fieldname": "start_time",
