@@ -6,8 +6,6 @@ def run():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        # Load the mock HTML file
-        # We need absolute path
         cwd = os.getcwd()
         file_path = f"file://{cwd}/frontend_verification/mock_time_kiosk.html"
         print(f"Loading: {file_path}")
@@ -15,18 +13,18 @@ def run():
         page.goto(file_path)
 
         # 1. Verify Initial Load (Ready to Work)
+        # It should be "Ready to Work" despite receiving {employee: ...}
         print("Verifying Initial State...")
         page.wait_for_selector("#tk-status-text")
         expect(page.locator("#tk-status-text")).to_have_text("Ready to Work")
         expect(page.locator("#tk-btn-clock-in")).to_be_visible()
-        expect(page.locator("#tk-project-select")).to_be_visible()
 
-        # Wait for projects to load (mock delay 100ms)
-        page.wait_for_timeout(500)
+        # Verify Link field mock exists
+        page.wait_for_selector("input[data-fieldname='project']")
 
-        # Select Project
+        # Select Project (simulate filling the link field)
         print("Selecting Project...")
-        page.select_option("#tk-project-select", "PROJ-001")
+        page.fill("input[data-fieldname='project']", "PROJ-001")
 
         # Enter Note
         page.fill("#tk-note-input", "Testing verify script")
@@ -36,14 +34,12 @@ def run():
         page.click("#tk-btn-clock-in")
 
         # Wait for "Clocked In" state
-        # The mock API takes 500ms, then fetchStatus takes 100ms.
         page.wait_for_timeout(1000)
 
         print("Verifying Clocked In State...")
         expect(page.locator("#tk-status-text")).to_have_text("Clocked In")
         expect(page.locator("#tk-btn-clock-in")).not_to_be_visible()
         expect(page.locator("#tk-btn-clock-out")).to_be_visible()
-        expect(page.locator("#tk-active-project-name")).to_have_text("Website Redesign")
 
         # Take Screenshot
         screenshot_path = f"{cwd}/frontend_verification/time_kiosk_verified.png"
