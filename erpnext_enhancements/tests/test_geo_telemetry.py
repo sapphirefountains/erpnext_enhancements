@@ -17,13 +17,18 @@ sys.modules["frappe.model.document"] = MagicMock()
 
 import unittest
 from unittest.mock import patch
+import importlib
 
 # Now import the module under test
-from erpnext_enhancements.api.time_kiosk import log_geolocation
+import erpnext_enhancements.api.time_kiosk
 
 class TestGeoTelemetry(unittest.TestCase):
 
     def setUp(self):
+        # Reload the module to ensure it binds to the current mock_frappe (essential when running multiple test files)
+        importlib.reload(erpnext_enhancements.api.time_kiosk)
+        self.time_kiosk = erpnext_enhancements.api.time_kiosk
+
         # Reset mock
         mock_frappe.reset_mock()
         # Explicitly clear side_effects of critical methods
@@ -43,7 +48,7 @@ class TestGeoTelemetry(unittest.TestCase):
         mock_frappe.get_doc.side_effect = None
 
         # Execute
-        result = log_geolocation(
+        result = self.time_kiosk.log_geolocation(
             employee="EMP-001",
             latitude=37.7749,
             longitude=-122.4194,
@@ -75,7 +80,7 @@ class TestGeoTelemetry(unittest.TestCase):
         mock_frappe.throw.side_effect = Exception("Employee ID is required")
 
         # Execute
-        result = log_geolocation(
+        result = self.time_kiosk.log_geolocation(
             employee=None,
             latitude=0,
             longitude=0,
@@ -92,7 +97,7 @@ class TestGeoTelemetry(unittest.TestCase):
         # Mock get_doc to raise DB error
         mock_frappe.get_doc.side_effect = Exception("DB Error")
 
-        result = log_geolocation(
+        result = self.time_kiosk.log_geolocation(
             employee="EMP-001",
             latitude=0,
             longitude=0,
