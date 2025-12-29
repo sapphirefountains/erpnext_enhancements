@@ -63,6 +63,12 @@ function debug_log(msg) {
     try {
         console.log("[Time Kiosk] " + msg);
 
+        // Check if document.body exists to prevent crash during early load
+        if (!document.body) {
+            console.log("[Time Kiosk] (Body not ready) Visual log skipped.");
+            return;
+        }
+
         // Visual Log
         let logContainer = document.getElementById('debug-log');
         if (!logContainer) {
@@ -110,13 +116,8 @@ const init_time_kiosk = function(wrapper) {
         frappe.require('/assets/erpnext_enhancements/css/time-kiosk.css');
         debug_log("CSS required");
 
-        // Load Vue 3 global script
-        const vueUrl = '/assets/erpnext_enhancements/js/vue.global.js';
-        debug_log("Requesting Vue from: " + vueUrl);
-
-        frappe.require(vueUrl, function() {
-            debug_log("frappe.require callback received for Vue");
-
+        // --- Vue Application Logic ---
+        const startVueApp = function() {
             try {
                 // Idempotency check: prevent duplicate initialization
                 if (wrapper.vue_app_mounted) {
@@ -125,7 +126,7 @@ const init_time_kiosk = function(wrapper) {
                 }
 
                 if (!window.Vue) {
-                    throw new Error("window.Vue is NOT defined after require callback!");
+                    throw new Error("window.Vue is NOT defined in startVueApp!");
                 }
                 debug_log("Vue available. Version: " + window.Vue.version);
 
@@ -302,10 +303,43 @@ const init_time_kiosk = function(wrapper) {
 
             } catch (e) {
                 console.error("Time Kiosk Vue Error:", e);
-                debug_log("Error inside require callback: " + e.message + "\n" + e.stack);
+                debug_log("Error inside Vue Logic: " + e.message + "\n" + e.stack);
                 frappe.msgprint("Error initializing Time Kiosk: " + e.message);
             }
+        };
+
+        // --- Vue Loading Strategy ---
+        const vueUrl = '/assets/erpnext_enhancements/js/vue.global.js';
+        debug_log("Requesting Vue from: " + vueUrl);
+
+        frappe.require(vueUrl, function() {
+            debug_log("frappe.require callback received for Vue");
+
+            if (window.Vue) {
+                // Local load successful
+                startVueApp();
+            } else {
+                // Local load failed (or returned 404 HTML), try CDN Fallback
+                debug_log("window.Vue is undefined. Attempting CDN Fallback...");
+                const script = document.createElement('script');
+                script.src = "https://unpkg.com/vue@3/dist/vue.global.js";
+                script.onload = function() {
+                     if (window.Vue) {
+                         debug_log("CDN Vue Loaded. Version: " + window.Vue.version);
+                         startVueApp();
+                     } else {
+                         debug_log("CDN Vue loaded but window.Vue is still undefined.");
+                         frappe.msgprint("Critical Error: Could not load Vue.js from Local or CDN.");
+                     }
+                };
+                script.onerror = function() {
+                     debug_log("CDN Vue failed to load.");
+                     frappe.msgprint("Critical Error: Could not load Vue.js from CDN.");
+                };
+                document.head.appendChild(script);
+            }
         });
+
     } catch (outerErr) {
         debug_log("Critical Error in init_time_kiosk: " + outerErr.message);
         console.error(outerErr);
