@@ -18408,3 +18408,4 @@ ${codeFrame}` : message);
   return exports;
 
 })({});
+window.Vue = Vue;

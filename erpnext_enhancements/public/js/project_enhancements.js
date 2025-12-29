@@ -7,7 +7,7 @@ frappe.ui.form.on("Project", {
 
 	render_procurement_tracker: function (frm) {
 		try {
-			if (typeof Vue === 'undefined') {
+			if (typeof window.Vue === 'undefined') {
 				frappe.msgprint("Error: Vue is not defined. Please check if vue.global.js is loaded.");
 				return;
 			}
@@ -29,7 +29,7 @@ frappe.ui.form.on("Project", {
 				callback: function (r) {
 					try {
 						if (r.message) {
-							const app = Vue.createApp({
+							const app = window.Vue.createApp({
 								data() {
 									return {
 										groupedItems: r.message,
