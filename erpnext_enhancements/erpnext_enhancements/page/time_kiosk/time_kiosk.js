@@ -105,9 +105,21 @@ const init_time_kiosk = function(wrapper) {
         });
         debug_log("Page structure created via make_app_page");
 
-        // Load CSS
-        frappe.require('/assets/erpnext_enhancements/css/time-kiosk.css');
-        debug_log("CSS required");
+        // Load CSS manually to avoid frappe.require issues
+        const cssId = 'time-kiosk-css';
+        if (!document.getElementById(cssId)) {
+            const head = document.getElementsByTagName('head')[0];
+            const link = document.createElement('link');
+            link.id = cssId;
+            link.rel = 'stylesheet';
+            link.type = 'text/css';
+            link.href = '/assets/erpnext_enhancements/css/time-kiosk.css';
+            link.media = 'all';
+            head.appendChild(link);
+            debug_log("CSS link appended to head");
+        } else {
+             debug_log("CSS already loaded");
+        }
 
         // 2. Inject HTML
         $(page.main).html(TIME_KIOSK_TEMPLATE);
