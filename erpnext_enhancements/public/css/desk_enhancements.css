@@ -244,7 +244,13 @@ header.navbar {
     --glass-shadow: var(--sapphire-glass-shadow, 0 8px 32px rgba(31, 38, 135, 0.15));
     --text-color: var(--sapphire-text-color, inherit);
     --accent-color: #007bff;
+    --border-color: rgba(0, 0, 0, 0.1);
 }
+
+[data-theme="dark"] .sapphire-theme {
+    --border-color: rgba(255, 255, 255, 0.15);
+}
+
 
 .procurement-tracker {
     font-family: inherit;
@@ -278,33 +284,34 @@ header.navbar {
     border-color: var(--accent-color);
 }
 
-/* Group Header (Accordion) */
+/* Group Header (Accordion) - Styled like a tab button */
 .group-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 12px 20px;
+    padding: 12px 15px;
     margin-top: 15px;
-    background: var(--glass-bg);
-    background-color: rgba(0, 0, 0, 0.02); /* Slight tint */
-    border: 1px solid var(--glass-border);
+    background-color: rgba(0, 0, 0, 0.02);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
     cursor: pointer;
     font-weight: 600;
     backdrop-filter: blur(4px);
-    transition: all 0.2s;
+    transition: all 0.2s ease;
     user-select: none;
 }
 
 .group-header:hover {
-    background: rgba(255, 255, 255, 0.1); /* Subtle lighten */
+    background-color: rgba(0, 123, 255, 0.05);
+    border-color: rgba(0, 123, 255, 0.3);
     transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
 }
 
 .group-title {
     display: flex;
     align-items: center;
     gap: 10px;
+    font-size: 1.1em;
 }
 
 .chevron {
@@ -318,7 +325,7 @@ header.navbar {
 
 /* Glass Table */
 .group-content {
-    margin-top: 5px;
+    margin-top: 8px; /* Space between header and table */
     margin-bottom: 20px;
     animation: slideDown 0.3s ease-out;
 }
@@ -332,6 +339,7 @@ header.navbar {
     overflow-x: auto;
     border-radius: 8px;
     box-shadow: var(--glass-shadow);
+    border: 1px solid var(--border-color);
 }
 
 .glass-table {
@@ -341,58 +349,62 @@ header.navbar {
     border-spacing: 0;
     background: var(--glass-bg);
     backdrop-filter: blur(4px);
-    border: 1px solid var(--glass-border);
     border-radius: 8px;
     font-size: 13px;
 }
 
 .glass-table th {
-    background: rgba(0, 123, 255, 0.15);
-    color: #004085;
+    background: rgba(0, 123, 255, 0.05);
     padding: 12px 15px;
     text-align: left;
     font-weight: 600;
-    border-bottom: 1px solid var(--glass-border);
+    border-bottom: 1px solid var(--border-color);
     white-space: nowrap;
 }
 
-.glass-table td {
-    padding: 12px 15px; /* Increased padding */
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-    vertical-align: top;
+[data-theme="dark"] .glass-table th {
+    background: rgba(0, 123, 255, 0.15);
 }
 
+
+.glass-table td {
+    padding: 18px 15px; /* Increased vertical padding for more spacing between items */
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle; /* Align items centrally */
+}
+
+/* Don't add border to the last row */
 .glass-table tr:last-child td {
     border-bottom: none;
 }
 
+/* Add a subtle hover effect to table rows */
 .glass-table tr:hover td {
-    background-color: rgba(0, 123, 255, 0.05);
+    background-color: rgba(0, 123, 255, 0.04);
 }
 
 /* Badges & Status */
-.badge-count {
-    background: var(--accent-color);
-    color: white;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-}
-
 .status-badge {
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
     font-size: 0.85em;
     font-weight: 500;
     white-space: nowrap;
     display: inline-block;
 }
 
-.status-draft { background: #eee; color: #555; }
-.status-submitted { background: #e3f2fd; color: #0d47a1; }
-.status-completed { background: #e8f5e9; color: #1b5e20; }
-.status-cancelled { background: #ffebee; color: #b71c1c; }
-.status-pending { background: #fff3e0; color: #ef6c00; }
+.status-draft { background-color: #eee; color: #555; }
+.status-submitted { background-color: #e3f2fd; color: #0d47a1; }
+.status-completed { background-color: #e8f5e9; color: #1b5e20; }
+.status-cancelled { background-color: #ffebee; color: #b71c1c; }
+.status-pending { background-color: #fff3e0; color: #ef6c00; }
+
+[data-theme="dark"] .status-draft { background-color: #4a4a4a; color: #f0f0f0; }
+[data-theme="dark"] .status-submitted { background-color: #0d47a1; color: #e3f2fd; }
+[data-theme="dark"] .status-completed { background-color: #1b5e20; color: #e8f5e9; }
+[data-theme="dark"] .status-cancelled { background-color: #b71c1c; color: #ffebee; }
+[data-theme="dark"] .status-pending { background-color: #ef6c00; color: #fff3e0; }
+
 
 .status-complete { color: #28a745; font-weight: bold; }
 .status-pending { color: #fd7e14; font-weight: bold; }
@@ -416,8 +428,8 @@ mark {
 .doc-chain-container {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    border-left: 2px solid var(--glass-border);
+    gap: 12px; /* Increased gap for better readability */
+    border-left: 2px solid var(--border-color);
     padding-left: 12px;
 }
 .doc-chain-step {
