@@ -54,29 +54,6 @@ function debug_log(msg) {
     try {
         console.log("[Time Kiosk] " + msg);
 
-        // Check if document.body exists to prevent crash during early load
-        if (!document.body) {
-            console.log("[Time Kiosk] (Body not ready) Visual log skipped.");
-            return;
-        }
-
-        // Visual Log
-        let logContainer = document.getElementById('debug-log');
-        if (!logContainer) {
-            logContainer = document.createElement('div');
-            logContainer.id = 'debug-log';
-            Object.assign(logContainer.style, {
-                position: 'fixed', bottom: '0', left: '0', width: '100%', height: '200px',
-                overflowY: 'scroll', backgroundColor: 'rgba(0,0,0,0.9)', color: '#0f0',
-                zIndex: '99999', padding: '10px', fontSize: '12px', fontFamily: 'monospace',
-                pointerEvents: 'none' // Allow clicks to pass through
-            });
-            document.body.appendChild(logContainer);
-        }
-        const entry = document.createElement('div');
-        entry.innerText = new Date().toLocaleTimeString() + ': ' + msg;
-        logContainer.prepend(entry);
-
         // Server Log
         if (window.frappe && frappe.call) {
              frappe.call({
