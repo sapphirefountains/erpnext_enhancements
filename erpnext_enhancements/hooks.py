@@ -28,6 +28,7 @@ app_license = "mit"
 app_include_css = "/assets/erpnext_enhancements/css/desk_enhancements.css"
 app_include_js = [
 	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
+	"/assets/erpnext_enhancements/js/performance_fixes.js",
 ]
 
 # include js, css files in header of web template
