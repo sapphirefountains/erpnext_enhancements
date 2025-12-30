@@ -190,7 +190,7 @@ frappe.ui.form.on("Project", {
 															</tr>
 															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)">
 																<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
-																	:style="{ cursor: (row.source_doc_type && row.source_doc_name) ? 'pointer' : 'default' }"
+																	:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
 																	v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)">
 																</td>
 																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>

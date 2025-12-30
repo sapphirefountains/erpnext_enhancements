@@ -465,3 +465,12 @@ mark {
 [data-theme="dark"] .procurement-tracker .glass-table td {
     border-color: #555;       /* Less harsh border for dark mode */
 }
+
+/* Ensure clickable cells in the tracker have a pointer and underline on hover */
+.procurement-tracker .glass-table td.doc-link {
+    cursor: pointer;
+}
+
+.procurement-tracker .glass-table td.doc-link:hover {
+    text-decoration: underline;
+}
