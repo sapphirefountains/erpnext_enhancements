@@ -474,3 +474,12 @@ mark {
 .procurement-tracker .glass-table td.doc-link:hover {
     text-decoration: underline;
 }
+
+/*
+  Enhancement: Add a clearer hover indication for procurement tracker rows.
+  This makes it easier to see which item is being pointed at before clicking.
+*/
+.procurement-tracker .glass-table .procurement-item-row:hover td {
+    background-color: var(--sapphire-dropdown-hover-bg);
+    transition: background-color 0.2s ease;
+}
