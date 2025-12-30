@@ -188,7 +188,7 @@ frappe.ui.form.on("Project", {
 															<tr v-if="(filteredGroups[doctype] || []).length === 0">
 																<td colspan="5" class="text-center text-muted">No matching records found.</td>
 															</tr>
-															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)">
+															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)" class="procurement-item-row">
 																<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
 																	:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
 																	v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)">
