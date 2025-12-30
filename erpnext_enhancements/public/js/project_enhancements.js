@@ -189,7 +189,10 @@ frappe.ui.form.on("Project", {
 																<td colspan="5" class="text-center text-muted">No matching records found.</td>
 															</tr>
 															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)">
-																<td v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)"></td>
+																<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
+																	:style="{ cursor: (row.source_doc_type && row.source_doc_name) ? 'pointer' : 'default' }"
+																	v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)">
+																</td>
 																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
 																<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
 																<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">

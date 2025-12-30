@@ -175,8 +175,18 @@ def get_procurement_status(project_name):
 		if stage not in result:
 			result[stage] = []
 
+		source_doc_type = row.get("source_doctype")
+		source_doc_name = None
+		if source_doc_type == 'Material Request':
+			source_doc_name = row.get('mr_name')
+		elif source_doc_type == 'Purchase Order':
+			source_doc_name = row.get('po_name')
+
+
 		result[stage].append(
 			{
+				"source_doc_type": source_doc_type,
+				"source_doc_name": source_doc_name,
 				"item_code": row.get("item_code"),
 				"item_name": row.get("item_name"),
 				"mr": row.get("mr_name"),
