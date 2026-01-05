@@ -8,10 +8,7 @@
   "google_calendar_sync_map",
   "default_google_calendar_config",
   "project_reminders_section",
-  "project_reminder_emails",
-  "auto_save_section",
-  "auto_save_doctypes",
-  "auto_save_users"
+  "project_reminder_emails"
  ],
  "fields": [
   {
@@ -44,25 +41,6 @@
    "fieldtype": "Table",
    "label": "Reminder Emails",
    "options": "Project Reminder Email"
-  },
-  {
-   "fieldname": "auto_save_section",
-   "fieldtype": "Section Break",
-   "label": "Auto Save Settings"
-  },
-  {
-   "fieldname": "auto_save_doctypes",
-   "fieldtype": "Table",
-   "label": "Allowed DocTypes",
-   "options": "Auto Save Allowed DocType",
-   "description": "Enable auto-save only for these DocTypes."
-  },
-  {
-   "fieldname": "auto_save_users",
-   "fieldtype": "Table",
-   "label": "Allowed Users",
-   "options": "Auto Save Allowed User",
-   "description": "Enable auto-save only for these users."
   }
  ],
  "issingle": 1,
