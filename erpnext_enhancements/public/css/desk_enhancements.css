@@ -209,30 +209,6 @@ header.navbar {
     font-size: 16px !important; /* Just in case it uses font icons */
 }
 
-/* 8. SILENT AUTO-SAVE INDICATOR */
-#sf-autosave-status {
-    font-size: 11px;
-    font-weight: 500;
-    margin-right: 10px;
-    opacity: 0;
-    transition: opacity 0.5s ease-in-out;
-    pointer-events: none; /* Let clicks pass through */
-}
-
-/* Light Theme */
-:root #sf-autosave-status, [data-theme="light"] #sf-autosave-status {
-    color: #28a745; /* Greenish tint as requested */
-}
-
-/* Dark Theme */
-[data-theme="dark"] #sf-autosave-status {
-    color: #4cd137; /* Brighter green for dark mode */
-}
-
-#sf-autosave-status.visible {
-    opacity: 1;
-}
-
 /* ==========================================================================
    PROCUREMENT TRACKER STYLES (Moved from Vue Component)
    ========================================================================== */
