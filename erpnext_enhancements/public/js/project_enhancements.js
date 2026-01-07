@@ -68,10 +68,12 @@ frappe.ui.form.on("Project", {
 			},
 			template: `
                 <div class="project-comments-container timeline">
-                    <div class="new-comment-field">
-                        <textarea v-model="newComment" placeholder="Add a comment..."></textarea>
-                        <button class="btn btn-primary btn-sm" @click="addComment">Submit</button>
-                    </div>
+                    <div class="comment-box">
+						<textarea v-model="newComment" placeholder="Add a comment..." class="form-control"></textarea>
+						<div class="comment-box-actions">
+							<button class="btn btn-primary btn-sm" @click="addComment" :disabled="!newComment.trim()">Submit</button>
+						</div>
+					</div>
                     <div v-if="isLoading" class="text-center">Loading...</div>
                     <div v-else class="comments-list">
                         <div v-for="comment in comments" :key="comment.name" class="timeline-item">
@@ -93,7 +95,9 @@ frappe.ui.form.on("Project", {
                                         </button>
                                     </div>
                                 </div>
-                                <div class="timeline-content-body" v-html="comment.content"></div>
+                                <div class="timeline-content-body">
+									<div v-html="comment.content"></div>
+								</div>
                             </div>
                         </div>
                     </div>

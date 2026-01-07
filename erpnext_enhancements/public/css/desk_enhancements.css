@@ -560,3 +560,30 @@ mark {
 .form-footer .comment-box {
 	display: none !important;
 }
+
+/* New Comment Box Styling */
+.project-comments-container .comment-box {
+    background-color: var(--fg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 20px;
+}
+
+.project-comments-container .comment-box textarea {
+    width: 100%;
+    border: none;
+    background-color: transparent;
+    padding: 0;
+    margin: 0;
+    resize: vertical;
+    min-height: 80px;
+    outline: none;
+    box-shadow: none;
+}
+
+.project-comments-container .comment-box-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
