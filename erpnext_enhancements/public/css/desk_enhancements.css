@@ -459,3 +459,80 @@ mark {
     background-color: var(--sapphire-dropdown-hover-bg);
     transition: background-color 0.2s ease;
 }
+
+/* ==========================================================================
+   PROJECT COMMENTS SECTION
+   ========================================================================== */
+.project-comments-section {
+    padding: 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--background-color);
+}
+
+.project-comments-section h4 {
+    margin-bottom: 15px;
+    font-weight: 600;
+}
+
+.new-comment-field {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.new-comment-field textarea {
+    min-height: 80px;
+    border-radius: 6px;
+}
+
+.new-comment-field button {
+    align-self: flex-end;
+}
+
+.comment-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.comment-item {
+    display: flex;
+    gap: 15px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.comment-item:last-child {
+    border-bottom: none;
+}
+
+.comment-avatar .avatar {
+    width: 40px;
+    height: 40px;
+}
+
+.comment-content {
+    flex: 1;
+}
+
+.comment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.comment-user {
+    font-weight: 600;
+}
+
+.comment-time {
+    font-size: 0.85em;
+}
+
+.comment-body {
+    white-space: pre-wrap; /* Preserve line breaks */
+    color: var(--text-color-secondary);
+}
