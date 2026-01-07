@@ -459,3 +459,71 @@ mark {
     background-color: var(--sapphire-dropdown-hover-bg);
     transition: background-color 0.2s ease;
 }
+
+/* Project Comments Section */
+.project-comments-container {
+	margin-top: 15px;
+}
+
+.new-comment-field {
+	display: flex;
+	margin-bottom: 15px;
+}
+
+.new-comment-field textarea {
+	width: 100%;
+	border-radius: 6px;
+	border: 1px solid #d1d8dd;
+	padding: 8px;
+	min-height: 60px;
+}
+
+.new-comment-field .btn {
+	margin-left: 10px;
+	align-self: flex-end;
+}
+
+.comments-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+
+.comment-item {
+	display: flex;
+	padding: 15px 0;
+	border-top: 1px solid #e1e8ed;
+}
+
+.comment-avatar {
+	margin-right: 15px;
+}
+
+.comment-content {
+	flex: 1;
+}
+
+.comment-header {
+	display: flex;
+	align-items: center;
+	margin-bottom: 5px;
+}
+
+.comment-author {
+	font-weight: bold;
+	margin-right: 10px;
+}
+
+.comment-time {
+	font-size: 0.85em;
+	color: #8d99a6;
+}
+
+.comment-body {
+	color: #212529;
+}
+
+/* Hide default comment box */
+.form-footer .comment-box {
+	display: none !important;
+}
