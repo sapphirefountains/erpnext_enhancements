@@ -326,3 +326,68 @@ def get_dashboard_data(data):
 	)
 
 	return data
+
+
+@frappe.whitelist()
+def get_project_comments(project_name):
+	"""
+	Retrieves comments for a given project, along with user details.
+	"""
+	if not project_name:
+		return []
+
+	comments = frappe.get_all(
+		"Comment",
+		filters={"reference_doctype": "Project", "reference_name": project_name},
+		fields=["name", "content", "owner", "creation"],
+		order_by="creation desc",
+	)
+
+	# Get user details in bulk to avoid N+1 queries
+	user_ids = [c.get("owner") for c in comments]
+	if not user_ids:
+		return []
+
+	user_details = frappe.get_all(
+		"User",
+		filters={"name": ["in", user_ids]},
+		fields=["name", "full_name", "user_image"],
+	)
+	user_map = {u.get("name"): u for u in user_details}
+
+	# Combine comment data with user details
+	for comment in comments:
+		user = user_map.get(comment.get("owner"))
+		if user:
+			comment["full_name"] = user.get("full_name")
+			comment["user_image"] = user.get("user_image")
+
+	return comments
+
+
+@frappe.whitelist()
+def add_project_comment(project_name, comment_text):
+	"""
+	Adds a new comment to a project.
+	"""
+	if not project_name or not comment_text:
+		frappe.throw(_("Project name and comment text are required."))
+
+	comment = frappe.new_doc("Comment")
+	comment.reference_doctype = "Project"
+	comment.reference_name = project_name
+	comment.content = comment_text
+	comment.insert(ignore_permissions=True)  # Assuming project members can comment
+
+	# Refetch the comment to include user details for the frontend
+	new_comment_data = frappe.get_all(
+		"Comment",
+		filters={"name": comment.name},
+		fields=["name", "content", "owner", "creation"],
+	)[0]
+
+	user_details = frappe.get_doc("User", new_comment_data.get("owner"))
+	new_comment_data["full_name"] = user_details.full_name
+	new_comment_data["user_image"] = user_details.user_image
+
+	return new_comment_data
