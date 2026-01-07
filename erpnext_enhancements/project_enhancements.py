@@ -377,6 +377,7 @@ def add_project_comment(project_name, comment_text):
 	comment.reference_doctype = "Project"
 	comment.reference_name = project_name
 	comment.content = comment_text
+	comment.comment_type = "Comment"
 	comment.insert(ignore_permissions=True)  # Assuming project members can comment
 
 	# Refetch the comment to include user details for the frontend
