@@ -391,3 +391,21 @@ def add_project_comment(project_name, comment_text):
 	new_comment_data["user_image"] = user_details.user_image
 
 	return new_comment_data
+
+
+@frappe.whitelist()
+def delete_project_comment(comment_name):
+	"""
+	Deletes a comment if the user is the owner.
+	"""
+	if not comment_name:
+		frappe.throw(_("Comment name is required."))
+
+	try:
+		frappe.delete_doc("Comment", comment_name, ignore_permissions=False)
+		return {"success": True}
+	except frappe.PermissionError:
+		frappe.throw(_("You are not allowed to delete this comment."))
+	except Exception as e:
+		frappe.log_error(frappe.get_traceback(), "Comment Deletion Failed")
+		return {"success": False, "error": str(e)}

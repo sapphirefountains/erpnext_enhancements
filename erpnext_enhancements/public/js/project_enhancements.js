@@ -52,31 +52,51 @@ frappe.ui.form.on("Project", {
 				formatDateTime(datetime) {
 					return frappe.datetime.comment_when(datetime);
 				},
+				deleteComment(comment_name) {
+					frappe.confirm("Are you sure you want to delete this comment?", () => {
+						frappe.call({
+							method: "erpnext_enhancements.project_enhancements.delete_project_comment",
+							args: { comment_name: comment_name },
+							callback: (r) => {
+								if (r.message && r.message.success) {
+									this.comments = this.comments.filter(c => c.name !== comment_name);
+								}
+							}
+						});
+					});
+				},
 			},
 			template: `
-                <div class="project-comments-container">
+                <div class="project-comments-container timeline">
                     <div class="new-comment-field">
                         <textarea v-model="newComment" placeholder="Add a comment..."></textarea>
                         <button class="btn btn-primary btn-sm" @click="addComment">Submit</button>
                     </div>
                     <div v-if="isLoading" class="text-center">Loading...</div>
-                    <ul v-else class="comments-list">
-                        <li v-for="comment in comments" :key="comment.name" class="comment-item">
-                            <div class="comment-avatar">
-                                <span class="avatar avatar-small">
+                    <div v-else class="comments-list">
+                        <div v-for="comment in comments" :key="comment.name" class="timeline-item">
+                            <div class="timeline-item-user">
+                                 <span class="avatar avatar-small">
                                     <img :src="comment.user_image" v-if="comment.user_image">
                                     <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
                                 </span>
                             </div>
-                            <div class="comment-content">
-                                <div class="comment-header">
-                                    <span class="comment-author">{{ comment.full_name }}</span>
-                                    <span class="comment-time">{{ formatDateTime(comment.creation) }}</span>
+                            <div class="timeline-item-content">
+                                <div class="timeline-content-header">
+                                    <div class="author-time">
+                                        <span class="author">{{ comment.full_name }}</span>
+                                        <span class="time">{{ formatDateTime(comment.creation) }}</span>
+                                    </div>
+                                     <div class="timeline-actions">
+                                        <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs">
+                                            <i class="fa fa-trash"></i>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="comment-body" v-html="comment.content"></div>
+                                <div class="timeline-content-body" v-html="comment.content"></div>
                             </div>
-                        </li>
-                    </ul>
+                        </div>
+                    </div>
                 </div>
             `,
 		});

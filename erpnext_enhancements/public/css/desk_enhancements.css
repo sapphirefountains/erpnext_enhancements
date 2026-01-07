@@ -460,67 +460,100 @@ mark {
     transition: background-color 0.2s ease;
 }
 
-/* Project Comments Section */
-.project-comments-container {
-	margin-top: 15px;
+/* Project Comments Section - Timeline Style */
+.project-comments-container.timeline {
+    margin-top: 20px;
 }
 
-.new-comment-field {
-	display: flex;
-	margin-bottom: 15px;
+.project-comments-container .new-comment-field {
+    display: flex;
+    margin-bottom: 20px;
 }
 
-.new-comment-field textarea {
-	width: 100%;
-	border-radius: 6px;
-	border: 1px solid #d1d8dd;
-	padding: 8px;
-	min-height: 60px;
+.project-comments-container .new-comment-field textarea {
+    flex: 1;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    min-height: 70px;
+    background-color: var(--control-bg);
+    color: var(--text-color);
 }
 
-.new-comment-field .btn {
-	margin-left: 10px;
-	align-self: flex-end;
+.project-comments-container .new-comment-field .btn {
+    margin-left: 10px;
+    align-self: flex-end;
 }
 
-.comments-list {
-	list-style: none;
-	padding: 0;
-	margin: 0;
+.project-comments-container .comments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
 }
 
-.comment-item {
-	display: flex;
-	padding: 15px 0;
-	border-top: 1px solid #e1e8ed;
+.project-comments-container .timeline-item {
+    display: flex;
+    align-items: flex-start;
 }
 
-.comment-avatar {
-	margin-right: 15px;
+.project-comments-container .timeline-item-user {
+    margin-right: 12px;
 }
 
-.comment-content {
-	flex: 1;
+.project-comments-container .timeline-item-content {
+    flex: 1;
+    background-color: var(--fg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
 }
 
-.comment-header {
-	display: flex;
-	align-items: center;
-	margin-bottom: 5px;
+.project-comments-container .timeline-content-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
 }
 
-.comment-author {
-	font-weight: bold;
-	margin-right: 10px;
+.project-comments-container .author-time .author {
+    font-weight: bold;
+    margin-right: 8px;
 }
 
-.comment-time {
-	font-size: 0.85em;
-	color: #8d99a6;
+.project-comments-container .author-time .time {
+    font-size: 0.85em;
+    color: var(--text-muted);
 }
 
-.comment-body {
-	color: #212529;
+.project-comments-container .timeline-actions {
+    display: flex;
+    gap: 5px;
+    opacity: 0; /* Hidden by default */
+    transition: opacity 0.2s ease;
+}
+
+.project-comments-container .timeline-item:hover .timeline-actions {
+    opacity: 1; /* Show on hover */
+}
+
+.project-comments-container .timeline-actions .btn {
+    padding: 2px 6px;
+    background: transparent !important; /* Override glass buttons for subtlety */
+    border: 1px solid transparent !important;
+}
+.project-comments-container .timeline-actions .btn:hover {
+     background-color: var(--background-color-ext) !important;
+     border-color: var(--border-color) !important;
+}
+
+.project-comments-container .timeline-actions .btn i {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.project-comments-container .timeline-content-body {
+    color: var(--text-color);
+    line-height: 1.6;
 }
 
 /* Hide default comment box */
