@@ -76,28 +76,26 @@ frappe.ui.form.on("Project", {
 					</div>
                     <div v-if="isLoading" class="text-center">Loading...</div>
                     <div v-else class="comments-list">
-                        <div v-for="comment in comments" :key="comment.name" class="timeline-item">
-                            <div class="timeline-item-user">
-                                 <span class="avatar avatar-small">
-                                    <img :src="comment.user_image" v-if="comment.user_image">
-                                    <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
-                                </span>
-                            </div>
-                            <div class="timeline-item-content">
-                                <div class="timeline-content-header">
-                                    <div class="author-time">
-                                        <span class="author">{{ comment.full_name }}</span>
-                                        <span class="time">{{ formatDateTime(comment.creation) }}</span>
-                                    </div>
-                                     <div class="timeline-actions">
-                                        <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs">
-                                            <i class="fa fa-trash"></i>
-                                        </button>
-                                    </div>
+                        <div v-for="comment in comments" :key="comment.name" class="comment-item">
+                            <div class="comment-aside">
+                                <div class="commenter-avatar">
+                                    <span class="avatar avatar-small">
+                                        <img :src="comment.user_image" v-if="comment.user_image">
+                                        <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
+                                    </span>
                                 </div>
-                                <div class="timeline-content-body">
-									<div v-html="comment.content"></div>
-								</div>
+                                <div class="commenter-details">
+                                    <div class="commenter-name">{{ comment.full_name }}</div>
+                                    <div class="comment-time">{{ formatDateTime(comment.creation) }}</div>
+                                </div>
+                            </div>
+                            <div class="comment-main">
+                                <div class="comment-content" v-html="comment.content"></div>
+                                <div class="comment-actions">
+                                    <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs">
+                                        <i class="fa fa-trash"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -587,3 +587,105 @@ mark {
     justify-content: flex-end;
     margin-top: 8px;
 }
+
+/* ==========================================================================
+   Project Comments - New Layout
+   ========================================================================== */
+
+.project-comments-container .comment-item {
+    display: flex;
+    background-color: var(--fg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 15px;
+    gap: 15px;
+}
+
+.project-comments-container .comment-aside {
+    flex: 0 0 180px; /* Fixed width for the left column */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding-right: 15px;
+    border-right: 1px solid var(--border-color);
+}
+
+.project-comments-container .commenter-avatar {
+    margin-bottom: 10px;
+}
+
+.project-comments-container .commenter-details {
+    text-align: left;
+}
+
+.project-comments-container .commenter-name {
+    font-weight: 600;
+    word-wrap: break-word; /* Ensure long names don't overflow */
+}
+
+.project-comments-container .comment-time {
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.project-comments-container .comment-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.project-comments-container .comment-content {
+    line-height: 1.6;
+    margin-bottom: 10px;
+}
+
+.project-comments-container .comment-actions {
+    display: flex;
+    justify-content: flex-end;
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+}
+
+.project-comments-container .comment-item:hover .comment-actions {
+    opacity: 1;
+}
+
+.project-comments-container .comment-actions .btn {
+    padding: 2px 6px;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+}
+
+.project-comments-container .comment-actions .btn:hover {
+    background-color: var(--background-color-ext) !important;
+    border-color: var(--border-color) !important;
+}
+
+.project-comments-container .comment-actions .btn i {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Cleanup of old timeline styles that might conflict */
+.project-comments-container .timeline-item,
+.project-comments-container .timeline-item-user,
+.project-comments-container .timeline-item-content,
+.project-comments-container .timeline-content-header,
+.project-comments-container .author-time,
+.project-comments-container .timeline-actions,
+.project-comments-container .timeline-content-body {
+    display: revert;
+    background-color: revert;
+    border: revert;
+    border-radius: revert;
+    padding: revert;
+    margin: revert;
+    justify-content: revert;
+    align-items: revert;
+    gap: revert;
+    opacity: revert;
+    font-weight: revert;
+    color: revert;
+    line-height: revert;
+}
