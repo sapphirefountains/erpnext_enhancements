@@ -66,7 +66,7 @@ frappe.ui.form.on("Project", {
 								},
 								callback: (r) => {
 									if (r.message) {
-										this.fetchComments();
+										// this.fetchComments(); // REAN: This is no longer needed, Doc will auto-refresh
 										dialog.hide();
 									}
 								},
