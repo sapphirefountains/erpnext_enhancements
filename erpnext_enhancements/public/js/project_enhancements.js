@@ -66,7 +66,7 @@ frappe.ui.form.on("Project", {
 								},
 								callback: (r) => {
 									if (r.message) {
-										this.comments.unshift(r.message);
+										this.fetchComments();
 										dialog.hide();
 									}
 								},
