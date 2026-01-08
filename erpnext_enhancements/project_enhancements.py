@@ -409,3 +409,17 @@ def delete_project_comment(comment_name):
 	except Exception as e:
 		frappe.log_error(frappe.get_traceback(), "Comment Deletion Failed")
 		return {"success": False, "error": str(e)}
+
+@frappe.whitelist()
+def update_project_comment(comment_name, comment_text):
+    if not frappe.has_permission("Comment", "write", comment_name):
+        frappe.throw("Not permitted to edit this comment", frappe.PermissionError)
+
+    try:
+        comment = frappe.get_doc("Comment", comment_name)
+        comment.content = comment_text
+        comment.save(ignore_permissions=True)
+        return comment.as_dict()
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Error updating project comment")
+        return {"error": str(e)}
