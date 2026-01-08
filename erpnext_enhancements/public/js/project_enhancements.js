@@ -28,7 +28,16 @@ frappe.ui.form.on("Project", {
 						method: "erpnext_enhancements.project_enhancements.get_project_comments",
 						args: { project_name: frm.doc.name },
 						callback: (r) => {
-							this.comments = r.message;
+							const comments = r.message || [];
+							this.comments = comments.map(comment => {
+								if (comment.content && /<span class="frappe-timestamp/.test(comment.content)) {
+									comment.content = comment.content.replace(
+										/<span class="frappe-timestamp.*?data-timestamp="(.*?)".*?<\/span>/g,
+										(match, timestamp) => frappe.datetime.str_to_user(timestamp)
+									).trim();
+								}
+								return comment;
+							});
 							this.isLoading = false;
 						},
 					});
