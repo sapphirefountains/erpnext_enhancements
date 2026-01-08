@@ -18,7 +18,7 @@ IGNORED_DOCTYPES = {
 
 def hook_on_update(doc, method=None):
     """Called on every save/update of ANY document."""
-    if doc.doctype in IGNORED_DOCTYPES or doc.issingle:
+    if doc.doctype in IGNORED_DOCTYPES or getattr(doc, "issingle", 0):
         return
 
     # Enqueue to run in background (short queue is fast enough)
