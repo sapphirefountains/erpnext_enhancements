@@ -165,6 +165,11 @@ doc_events = {
 		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
 		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
 	},
+    # Triton Integration Hook
+    "*": {
+        "on_update": "erpnext_enhancements.integrations.triton_bridge.hook_on_update",
+        "on_trash": "erpnext_enhancements.integrations.triton_bridge.hook_on_trash"
+    }
 }
 
 # doc_events = {
