@@ -14,7 +14,6 @@ frappe.ui.form.on("Project", {
 			data() {
 				return {
 					comments: [],
-					newComment: "",
 					isLoading: true,
 				};
 			},
@@ -42,24 +41,84 @@ frappe.ui.form.on("Project", {
 						},
 					});
 				},
-				addComment() {
-					if (!this.newComment.trim()) return;
-					frappe.call({
-						method: "erpnext_enhancements.project_enhancements.add_project_comment",
-						args: {
-							project_name: frm.doc.name,
-							comment_text: this.newComment,
-						},
-						callback: (r) => {
-							if (r.message) {
-								this.comments.unshift(r.message);
-								this.newComment = "";
+				showAddCommentDialog() {
+					let dialog = new frappe.ui.Dialog({
+						title: 'Add a new note',
+						fields: [
+							{
+								label: 'Note',
+								fieldname: 'comment_text',
+								fieldtype: 'TextEditor',
+								reqd: 1
 							}
-						},
+						],
+						primary_action_label: 'Submit',
+						primary_action: (values) => {
+							if (!values.comment_text.trim()) {
+								frappe.msgprint('Comment cannot be empty.');
+								return;
+							}
+							frappe.call({
+								method: "erpnext_enhancements.project_enhancements.add_project_comment",
+								args: {
+									project_name: frm.doc.name,
+									comment_text: values.comment_text,
+								},
+								callback: (r) => {
+									if (r.message) {
+										this.comments.unshift(r.message);
+										dialog.hide();
+									}
+								},
+							});
+						}
 					});
+					dialog.show();
+				},
+				showEditCommentDialog(comment) {
+					let dialog = new frappe.ui.Dialog({
+						title: 'Edit Note',
+						fields: [
+							{
+								label: 'Note',
+								fieldname: 'comment_text',
+								fieldtype: 'TextEditor',
+								default: comment.content,
+								reqd: 1
+							}
+						],
+						primary_action_label: 'Save',
+						primary_action: (values) => {
+							if (!values.comment_text.trim()) {
+								frappe.msgprint('Comment cannot be empty.');
+								return;
+							}
+							frappe.call({
+								method: "erpnext_enhancements.project_enhancements.update_project_comment",
+								args: {
+									comment_name: comment.name,
+									comment_text: values.comment_text,
+								},
+								callback: (r) => {
+									if (r.message && !r.message.error) {
+										const updatedComment = r.message;
+										const index = this.comments.findIndex(c => c.name === updatedComment.name);
+										if (index !== -1) {
+											this.comments[index] = updatedComment;
+										}
+										dialog.hide();
+									} else {
+										frappe.msgprint('There was an error updating the comment.');
+									}
+								},
+							});
+						}
+					});
+					dialog.show();
 				},
 				formatDateTime(datetime) {
-					return frappe.datetime.str_to_user(datetime);
+					// Using comment_when to get "time ago" format
+					return frappe.datetime.comment_when(datetime);
 				},
 				deleteComment(comment_name) {
 					frappe.confirm("Are you sure you want to delete this comment?", () => {
@@ -76,35 +135,41 @@ frappe.ui.form.on("Project", {
 				},
 			},
 			template: `
-                <div class="project-comments-container timeline">
-                    <div class="comment-box">
-						<textarea v-model="newComment" placeholder="Add a comment..." class="form-control"></textarea>
-						<div class="comment-box-actions">
-							<button class="btn btn-primary btn-sm" @click="addComment" :disabled="!newComment.trim()">Submit</button>
-						</div>
-					</div>
-                    <div v-if="isLoading" class="text-center">Loading...</div>
+                <div class="project-comments-container">
+                    <div class="comments-header">
+                        <h6 class="text-muted">Notes</h6>
+                        <button class="btn btn-sm btn-secondary-light" @click="showAddCommentDialog">
+						    <i class="fa fa-plus" style="margin-right: 4px;"></i> New Note
+						</button>
+                    </div>
+                    <div v-if="isLoading" class="text-center" style="padding: 20px;">Loading...</div>
+                    <div v-else-if="comments.length === 0" class="text-center text-muted" style="padding: 20px;">
+                        No notes yet. Be the first to add one!
+                    </div>
                     <div v-else class="comments-list">
                         <div v-for="comment in comments" :key="comment.name" class="comment-item">
-                            <div class="comment-aside">
-                                <div class="commenter-avatar">
-                                    <span class="avatar avatar-small">
-                                        <img :src="comment.user_image" v-if="comment.user_image">
-                                        <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
-                                    </span>
-                                </div>
-                                <div class="commenter-details">
-                                    <div class="commenter-name">{{ comment.full_name }}</div>
-                                    <div class="comment-time">{{ formatDateTime(comment.creation) }}</div>
-                                </div>
+                            <div class="comment-avatar">
+                                <span class="avatar avatar-small" :title="comment.full_name">
+                                    <img :src="comment.user_image" v-if="comment.user_image">
+                                    <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
+                                </span>
                             </div>
                             <div class="comment-main">
-                                <div class="comment-content" v-html="comment.content"></div>
-                                <div class="comment-actions">
-                                    <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs">
-                                        <i class="fa fa-trash"></i>
-                                    </button>
+                                <div class="comment-header">
+                                    <span class="commenter-name">{{ comment.full_name }}</span>
                                 </div>
+                                <div class="comment-content" v-html="comment.content"></div>
+								<div class="comment-footer">
+									<span class="comment-time">{{ formatDateTime(comment.creation) }}</span>
+								</div>
+                            </div>
+                            <div class="comment-actions">
+                                <button @click="showEditCommentDialog(comment)" class="btn btn-default btn-xs" title="Edit Note">
+                                    <i class="fa fa-pencil"></i>
+                                </button>
+                                <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs" title="Delete Note">
+                                    <i class="fa fa-trash"></i>
+                                </button>
                             </div>
                         </div>
                     </div>
