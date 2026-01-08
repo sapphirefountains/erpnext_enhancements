@@ -117,8 +117,7 @@ frappe.ui.form.on("Project", {
 					dialog.show();
 				},
 				formatDateTime(datetime) {
-					// Using comment_when to get "time ago" format
-					return frappe.datetime.comment_when(datetime);
+					return frappe.datetime.str_to_user(datetime);
 				},
 				deleteComment(comment_name) {
 					frappe.confirm("Are you sure you want to delete this comment?", () => {
