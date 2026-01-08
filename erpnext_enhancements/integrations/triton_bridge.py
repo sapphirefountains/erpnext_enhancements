@@ -18,6 +18,7 @@ IGNORED_DOCTYPES = {
 
 def hook_on_update(doc, method=None):
     """Called on every save/update of ANY document."""
+    # Fix: Use getattr to safely check for 'issingle'
     if doc.doctype in IGNORED_DOCTYPES or getattr(doc, "issingle", 0):
         return
 
@@ -32,7 +33,8 @@ def hook_on_update(doc, method=None):
 
 def hook_on_trash(doc, method=None):
     """Called when a document is deleted."""
-    if doc.doctype in IGNORED_DOCTYPES or doc.issingle:
+    # Fix: Use getattr to safely check for 'issingle'
+    if doc.doctype in IGNORED_DOCTYPES or getattr(doc, "issingle", 0):
         return
 
     # For deletion, we can't fetch the doc later because it will be gone.
