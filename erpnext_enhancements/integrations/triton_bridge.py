@@ -83,12 +83,10 @@ def worker_process_update(doctype, name):
         )
         response.raise_for_status()
 
-        frappe.get_doc({
-            "doctype": "Activity Log",
-            "subject": f"Synced {doctype} {name} to Triton",
-            "operation": "Triton Sync",
-            "status": "Success"
-        }).insert(ignore_permissions=True)
+        frappe.log_error(
+            title="Triton Sync Success",
+            message=f"Synced {doctype} {name} to Triton"
+        )
 
     except Exception:
         frappe.log_error(message=traceback.format_exc(), title="Triton Sync Failed")
@@ -110,12 +108,10 @@ def worker_process_delete(doctype, name):
         )
         response.raise_for_status()
 
-        frappe.get_doc({
-            "doctype": "Activity Log",
-            "subject": f"Synced deletion of {doctype} {name} to Triton",
-            "operation": "Triton Sync",
-            "status": "Success"
-        }).insert(ignore_permissions=True)
+        frappe.log_error(
+            title="Triton Sync Success",
+            message=f"Synced deletion of {doctype} {name} to Triton"
+        )
 
     except Exception:
         frappe.log_error(message=traceback.format_exc(), title="Triton Sync Failed")
