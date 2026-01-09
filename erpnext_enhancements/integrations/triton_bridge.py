@@ -15,7 +15,8 @@ IGNORED_DOCTYPES = {
     "DocType", "Property Setter", "Custom Field", "Client Script", "Server Script",
     "Prepared Report", "Report", "User", "Role", "Has Role", "Module Def",
     "Workflow", "Workflow State", "Workflow Action",
-    "Google Calendar", "Global Calendar Sync Log", "Google Calendar Sync Map"
+    "Google Calendar", "Global Calendar Sync Log", "Google Calendar Sync Map",
+    "Route History"
 }
 
 def hook_on_update(doc, method=None):
