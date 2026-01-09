@@ -96,6 +96,7 @@ frappe.ui.form.on("Project", {
 							frappe.call({
 								method: "erpnext_enhancements.project_enhancements.update_project_comment",
 								args: {
+									project_name: frm.doc.name,
 									comment_name: comment.name,
 									comment_text: values.comment_text,
 								},
@@ -104,7 +105,7 @@ frappe.ui.form.on("Project", {
 										const updatedComment = r.message;
 										const index = this.comments.findIndex(c => c.name === updatedComment.name);
 										if (index !== -1) {
-											this.comments[index] = updatedComment;
+											this.comments.splice(index, 1, updatedComment);
 										}
 										dialog.hide();
 									} else {
@@ -123,7 +124,7 @@ frappe.ui.form.on("Project", {
 					frappe.confirm("Are you sure you want to delete this comment?", () => {
 						frappe.call({
 							method: "erpnext_enhancements.project_enhancements.delete_project_comment",
-							args: { comment_name: comment_name },
+							args: { project_name: frm.doc.name, comment_name: comment_name },
 							callback: (r) => {
 								if (r.message && r.message.success) {
 									this.comments = this.comments.filter(c => c.name !== comment_name);
