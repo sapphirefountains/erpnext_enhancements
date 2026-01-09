@@ -22,7 +22,7 @@ $(document).on("app_ready", function () {
 		};
 	}
 
-	// Global Map Placeholder Logic & Auto Save Injection
+	// Global Map Placeholder Logic
 	if (frappe.ui && frappe.ui.form && frappe.ui.form.Controller) {
 		const original_form_refresh = frappe.ui.form.Controller.prototype.refresh;
 		frappe.ui.form.Controller.prototype.refresh = function () {
