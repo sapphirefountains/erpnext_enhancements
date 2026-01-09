@@ -20,79 +20,141 @@ sys.modules["frappe.model"] = MagicMock()
 from erpnext_enhancements import project_enhancements
 
 
+class MockFrappeException(Exception):
+    def __init__(self, msg=""):
+        super().__init__(msg)
+
+class MockPermissionError(MockFrappeException):
+    pass
+
 class TestProjectEnhancements(unittest.TestCase):
     def setUp(self):
-        # Reset all mocks before each test to ensure test isolation
-        mock_frappe.reset_mock()
-        # Re-apply the decorator mock since reset_mock clears all child mock configurations
+        mock_frappe.reset_mock(return_value=True, side_effect=True)
         mock_frappe.whitelist.return_value = lambda f: f
+        mock_frappe.session.user = "test_user"
+        mock_frappe.PermissionError = MockPermissionError
+
+        def mock_throw(msg, exc=MockFrappeException):
+            raise exc(msg)
+        mock_frappe.throw.side_effect = mock_throw
 
     def test_get_project_comments_no_project_name(self):
-        """Test that it returns an empty list if project_name is None or empty."""
         self.assertEqual(project_enhancements.get_project_comments(None), [])
         self.assertEqual(project_enhancements.get_project_comments(""), [])
 
     def test_get_project_comments_no_comments_found(self):
-        """Test that it returns an empty list if no comments exist for the project."""
-        mock_frappe.get_all.return_value = []  # Simulate no comments found
+        mock_project = MagicMock()
+        # Ensure get returns an empty list for any argument
+        mock_project.get.side_effect = lambda key: []
+        mock_frappe.get_doc.return_value = mock_project
         result = project_enhancements.get_project_comments("test_project")
         self.assertEqual(result, [])
-        mock_frappe.get_all.assert_called_once_with(
-            "Comment",
-            filters={"reference_doctype": "Project", "reference_name": "test_project"},
-            fields=["name", "content", "owner", "creation"],
-            order_by="creation desc",
-        )
+        mock_frappe.get_doc.assert_called_once_with("Project", "test_project")
 
     def test_get_project_comments_with_data(self):
-        """Test successful retrieval of comments and user data."""
-        # Simulate finding one comment for owner 'user1'
-        mock_frappe.get_all.side_effect = [
-            [{"owner": "user1", "content": "a comment"}],
-            [{"name": "user1", "full_name": "Test User", "user_image": "avatar.png"}],
+        # Setup mocks for this test specifically
+        mock_note = MagicMock()
+        mock_note.owner = "user1"
+        mock_note.get.side_effect = lambda key: {"owner": "user1"}.get(key)
+
+        mock_project = MagicMock()
+        def project_get_side_effect(key):
+            if key == "custom_project_notes":
+                return [mock_note]
+            return [] # Important: return empty list for other keys
+        mock_project.get.side_effect = project_get_side_effect
+
+        def get_doc_side_effect(doctype, name):
+            if doctype == "Project":
+                return mock_project
+            return MagicMock()
+        mock_frappe.get_doc.side_effect = get_doc_side_effect
+
+        mock_frappe.get_all.return_value = [
+            {"name": "user1", "full_name": "Test User", "user_image": "avatar.png"}
         ]
 
+        # Call function
         result = project_enhancements.get_project_comments("test_project")
 
+        # Assertions
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["full_name"], "Test User")
-        self.assertEqual(result[0]["user_image"], "avatar.png")
-        self.assertEqual(result[0]["content"], "a comment")
+        self.assertEqual(result[0].full_name, "Test User")
 
     def test_add_project_comment_success(self):
-        """Test successful creation of a new comment."""
-        # Mock the `new_doc` call to return a mock document object
-        mock_comment_doc = MagicMock()
-        mock_comment_doc.name = "new_comment_id"  # Must have a .name attribute
-        mock_frappe.new_doc.return_value = mock_comment_doc
+        mock_project = MagicMock()
+        mock_note = MagicMock()
+        mock_note.owner = "test_user"
+        mock_project.append.return_value = mock_note
 
-        # Mock the `get_all` call to refetch the new comment
-        mock_frappe.get_all.return_value = [
-            {"name": "new_comment_id", "owner": "test_user"}
-        ]
-
-        # Mock the `get_doc` call to fetch the user's details
         mock_user_doc = MagicMock()
         mock_user_doc.full_name = "Test User"
-        mock_user_doc.user_image = "avatar.png"
-        mock_frappe.get_doc.return_value = mock_user_doc
 
-        # Call the function
-        result = project_enhancements.add_project_comment(
-            "test_project", "a new comment"
-        )
+        def get_doc_side_effect(doctype, name):
+            if doctype == "Project":
+                return mock_project
+            elif doctype == "User":
+                return mock_user_doc
+            return MagicMock()
+        mock_frappe.get_doc.side_effect = get_doc_side_effect
 
-        # Assertions
-        self.assertEqual(result["full_name"], "Test User")
-        self.assertEqual(result["user_image"], "avatar.png")
+        result = project_enhancements.add_project_comment("test_project", "a new comment")
 
-        # Verify that the new document was created correctly
-        mock_frappe.new_doc.assert_called_once_with("Comment")
-        self.assertEqual(mock_comment_doc.reference_doctype, "Project")
-        self.assertEqual(mock_comment_doc.reference_name, "test_project")
-        self.assertEqual(mock_comment_doc.content, "a new comment")
-        mock_comment_doc.insert.assert_called_once_with(ignore_permissions=True)
+        self.assertEqual(result.full_name, "Test User")
+        mock_project.save.assert_called_once_with(ignore_permissions=True)
 
+    def test_delete_project_comment_success(self):
+        mock_note = MagicMock()
+        mock_note.name = "note1"
+        mock_note.owner = "test_user"
+
+        mock_project = MagicMock()
+        def project_get_side_effect(key):
+            if key == "custom_project_notes":
+                return [mock_note]
+            return []
+        mock_project.get.side_effect = project_get_side_effect
+
+        def get_doc_side_effect(doctype, name):
+            if doctype == "Project":
+                return mock_project
+            return MagicMock()
+        mock_frappe.get_doc.side_effect = get_doc_side_effect
+
+        result = project_enhancements.delete_project_comment("test_project", "note1")
+
+        self.assertEqual(result, {"success": True})
+        mock_project.remove.assert_called_once_with(mock_note)
+        mock_project.save.assert_called_once_with(ignore_permissions=True)
+
+    def test_update_project_comment_success(self):
+        mock_note = MagicMock()
+        mock_note.name = "note1"
+        mock_note.owner = "test_user"
+
+        mock_project = MagicMock()
+        def project_get_side_effect(key):
+            if key == "custom_project_notes":
+                return [mock_note]
+            return []
+        mock_project.get.side_effect = project_get_side_effect
+
+        mock_user_doc = MagicMock()
+        mock_user_doc.full_name = "Updated User"
+
+        def get_doc_side_effect(doctype, name):
+            if doctype == "Project":
+                return mock_project
+            elif doctype == "User":
+                return mock_user_doc
+            return MagicMock()
+        mock_frappe.get_doc.side_effect = get_doc_side_effect
+
+        result = project_enhancements.update_project_comment("test_project", "note1", "new content")
+
+        self.assertEqual(mock_note.content, "new content")
+        self.assertEqual(result.full_name, "Updated User")
+        mock_project.save.assert_called_once_with(ignore_permissions=True)
 
 if __name__ == "__main__":
     unittest.main()
