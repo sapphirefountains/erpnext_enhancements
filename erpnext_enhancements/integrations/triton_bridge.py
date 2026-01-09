@@ -1,6 +1,7 @@
 import frappe
 import requests
 import os
+import traceback
 
 # Configuration
 # ideally move secret to site_config.json, but fallback to string for now
@@ -74,15 +75,23 @@ def worker_process_update(doctype, name):
             "content": "\n".join(content_parts)
         }
 
-        requests.post(
+        response = requests.post(
             TRITON_URL,
             json=payload,
             headers={"X-Triton-Secret": SECRET},
             timeout=10
         )
+        response.raise_for_status()
 
-    except Exception as e:
-        frappe.log_error(f"Triton Update Failed: {str(e)}", "Triton Integration")
+        frappe.get_doc({
+            "doctype": "Activity Log",
+            "subject": f"Synced {doctype} {name} to Triton",
+            "operation": "Triton Sync",
+            "status": "Success"
+        }).insert(ignore_permissions=True)
+
+    except Exception:
+        frappe.log_error(message=traceback.format_exc(), title="Triton Sync Failed")
 
 def worker_process_delete(doctype, name):
     """Background Job: Tells Triton to delete vectors."""
@@ -93,11 +102,20 @@ def worker_process_delete(doctype, name):
             "event": "delete"
         }
         
-        requests.post(
+        response = requests.post(
             TRITON_URL,
             json=payload,
             headers={"X-Triton-Secret": SECRET},
             timeout=10
         )
-    except Exception as e:
-        frappe.log_error(f"Triton Delete Failed: {str(e)}", "Triton Integration")
+        response.raise_for_status()
+
+        frappe.get_doc({
+            "doctype": "Activity Log",
+            "subject": f"Synced deletion of {doctype} {name} to Triton",
+            "operation": "Triton Sync",
+            "status": "Success"
+        }).insert(ignore_permissions=True)
+
+    except Exception:
+        frappe.log_error(message=traceback.format_exc(), title="Triton Sync Failed")
