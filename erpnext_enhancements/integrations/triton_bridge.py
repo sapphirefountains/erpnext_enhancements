@@ -14,11 +14,16 @@ IGNORED_DOCTYPES = {
     "Scheduled Job Log", "Email Queue", "Communication", "Comment",
     "DocType", "Property Setter", "Custom Field", "Client Script", "Server Script",
     "Prepared Report", "Report", "User", "Role", "Has Role", "Module Def",
-    "Workflow", "Workflow State", "Workflow Action"
+    "Workflow", "Workflow State", "Workflow Action",
+    "Google Calendar", "Global Calendar Sync Log", "Google Calendar Sync Map"
 }
 
 def hook_on_update(doc, method=None):
     """Called on every save/update of ANY document."""
+    # Prevent sync loops or double-syncing from background workers
+    if frappe.flags.sync_source == "background_worker":
+        return
+
     # Fix: Use getattr to safely check for 'issingle'
     if doc.doctype in IGNORED_DOCTYPES or getattr(doc, "issingle", 0):
         return
@@ -34,6 +39,10 @@ def hook_on_update(doc, method=None):
 
 def hook_on_trash(doc, method=None):
     """Called when a document is deleted."""
+    # Prevent sync loops or double-syncing from background workers
+    if frappe.flags.sync_source == "background_worker":
+        return
+
     # Fix: Use getattr to safely check for 'issingle'
     if doc.doctype in IGNORED_DOCTYPES or getattr(doc, "issingle", 0):
         return
