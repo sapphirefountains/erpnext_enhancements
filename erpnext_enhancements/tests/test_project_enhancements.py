@@ -30,6 +30,14 @@ class MockPermissionError(MockFrappeException):
 class TestProjectEnhancements(unittest.TestCase):
     def setUp(self):
         mock_frappe.reset_mock(return_value=True, side_effect=True)
+
+        # Explicitly reset mocks on attributes used across different tests to ensure isolation
+        for attr in ["get_all", "get_doc", "throw"]:
+             # These are MagicMocks, they get created on first access.
+             # On subsequent runs, we need to reset them.
+             if hasattr(mock_frappe, attr):
+                getattr(mock_frappe, attr).reset_mock(return_value=True, side_effect=True)
+
         mock_frappe.whitelist.return_value = lambda f: f
         mock_frappe.session.user = "test_user"
         mock_frappe.PermissionError = MockPermissionError
@@ -43,43 +51,35 @@ class TestProjectEnhancements(unittest.TestCase):
         self.assertEqual(project_enhancements.get_project_comments(""), [])
 
     def test_get_project_comments_no_comments_found(self):
-        mock_project = MagicMock()
-        # Ensure get returns an empty list for any argument
-        mock_project.get.side_effect = lambda key: []
-        mock_frappe.get_doc.return_value = mock_project
+        # If frappe.get_all returns an empty list for notes, the function should return []
+        mock_frappe.get_all.return_value = []
         result = project_enhancements.get_project_comments("test_project")
         self.assertEqual(result, [])
-        mock_frappe.get_doc.assert_called_once_with("Project", "test_project")
+        # Check that get_all was called correctly for the 'Project Note' doctype
+        mock_frappe.get_all.assert_called_once()
+        self.assertEqual(mock_frappe.get_all.call_args[0][0], "Project Note")
 
     def test_get_project_comments_with_data(self):
-        # Setup mocks for this test specifically
-        mock_note = MagicMock()
-        mock_note.owner = "user1"
-        mock_note.get.side_effect = lambda key: {"owner": "user1"}.get(key)
-
-        mock_project = MagicMock()
-        def project_get_side_effect(key):
-            if key == "custom_project_notes":
-                return [mock_note]
-            return [] # Important: return empty list for other keys
-        mock_project.get.side_effect = project_get_side_effect
-
-        def get_doc_side_effect(doctype, name):
-            if doctype == "Project":
-                return mock_project
-            return MagicMock()
-        mock_frappe.get_doc.side_effect = get_doc_side_effect
-
-        mock_frappe.get_all.return_value = [
+        # Mock the return values for the two separate calls to frappe.get_all
+        mock_notes_data = [
+            {"name": "note1", "owner": "user1", "content": "Test content", "creation": "2024-01-01 10:00:00"}
+        ]
+        mock_users_data = [
             {"name": "user1", "full_name": "Test User", "user_image": "avatar.png"}
         ]
+
+        # side_effect as a list will return one item per call
+        mock_frappe.get_all.side_effect = [mock_notes_data, mock_users_data]
 
         # Call function
         result = project_enhancements.get_project_comments("test_project")
 
         # Assertions
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].full_name, "Test User")
+        # The result is now a dict, so we access items by key
+        self.assertEqual(result[0]['full_name'], "Test User")
+        self.assertEqual(result[0]['content'], "Test content")
+        self.assertEqual(mock_frappe.get_all.call_count, 2)
 
     def test_add_project_comment_success(self):
         mock_project = MagicMock()

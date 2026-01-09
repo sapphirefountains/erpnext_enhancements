@@ -332,33 +332,56 @@ def get_dashboard_data(data):
 def get_project_comments(project_name):
 	"""
 	Retrieves comments for a given project, along with user details.
+	This function is optimized to prevent N+1 query problems and returns a
+	JSON-safe list of dictionaries.
 	"""
 	if not project_name:
 		return []
 
-	project = frappe.get_doc("Project", project_name)
-	notes = project.get("custom_project_notes") or []
+	try:
+		notes = frappe.get_all(
+			"Project Note",
+			fields=["name", "content", "owner", "creation"],
+			filters={"parent": project_name, "parenttype": "Project"},
+			order_by="creation desc",
+		)
 
-	# Get user details in bulk to avoid N+1 queries
-	user_ids = [note.get("owner") for note in notes]
-	if not user_ids:
-		return []
+		if not notes:
+			return []
 
-	user_details = frappe.get_all(
-		"User",
-		filters={"name": ["in", list(set(user_ids))]},
-		fields=["name", "full_name", "user_image"],
-	)
-	user_map = {u.get("name"): u for u in user_details}
+		# Get user details in bulk to avoid N+1 queries
+		user_ids = list(set(note.get("owner") for note in notes if note.get("owner")))
+		if not user_ids:
+			# If for some reason notes exist but have no owners, we can still return them
+			return notes
 
-	# Combine comment data with user details
-	for note in notes:
-		user = user_map.get(note.get("owner"))
-		if user:
-			note.full_name = user.get("full_name")
-			note.user_image = user.get("user_image")
+		user_details = frappe.get_all(
+			"User",
+			filters={"name": ["in", user_ids]},
+			fields=["name", "full_name", "user_image"],
+		)
+		user_map = {u.get("name"): u for u in user_details}
 
-	return notes
+		# Combine comment data with user details
+		comments_list = []
+		for note in notes:
+			user = user_map.get(note.get("owner"))
+			comments_list.append(
+				{
+					"name": note.get("name"),
+					"content": note.get("content"),
+					"owner": note.get("owner"),
+					"creation": note.get("creation"),
+					"full_name": user.get("full_name") if user else _("Unknown User"),
+					"user_image": user.get("user_image") if user else None,
+				}
+			)
+
+		return comments_list
+
+	except Exception as e:
+		frappe.log_error(frappe.get_traceback(), "Error in get_project_comments")
+		return [] # Return an empty list on error to prevent frontend hangs
 
 
 @frappe.whitelist()
