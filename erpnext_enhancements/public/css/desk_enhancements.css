@@ -798,3 +798,9 @@ mark {
     font-size: 14px;
     color: var(--text-muted);
 }
+
+
+/* Ensure the comment box is visible on the Account doctype */
+.doctype-account .form-footer {
+    display: block !important;
+}
