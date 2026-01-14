@@ -800,14 +800,14 @@ mark {
 }
 
 /* ==========================================================================
-   HOTFIX: Restore Missing Comment Box on Account Doctype
+   FIX: Restore Missing Comment Box on All Doctypes
    ========================================================================== */
 /*
   A global style is hiding the .form-footer on some doctypes.
-  This targeted override ensures it remains visible on the Account form
-  without affecting other pages.
+  This override ensures it remains visible on all forms, restoring
+  the standard comment and attachment functionality.
 */
-.doctype-account .form-footer {
-    display: block;
+.form-footer {
+    display: block !important;
     padding: 15px;
 }
