@@ -893,11 +893,18 @@ mark {
    FIX: Restore Missing Comment Box on All Doctypes
    ========================================================================== */
 /*
-  A global style is hiding the .form-footer on some doctypes.
-  This override ensures it remains visible on all forms, restoring
+  A global style or conflict is hiding the comment section on some doctypes.
+  This override ensures key elements remain visible on all forms, restoring
   the standard comment and attachment functionality.
 */
-.form-footer {
+.form-footer,
+.comment-box,
+.timeline {
     display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.form-footer {
     padding: 15px;
 }
