@@ -556,8 +556,8 @@ mark {
     line-height: 1.6;
 }
 
-/* Hide default comment box */
-.form-footer .comment-box {
+/* Hide default comment box on Project form to avoid conflict with custom Vue component */
+.doctype-project .form-footer .comment-box {
 	display: none !important;
 }
 
