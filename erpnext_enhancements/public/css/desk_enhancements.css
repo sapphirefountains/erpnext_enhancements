@@ -798,3 +798,16 @@ mark {
     font-size: 14px;
     color: var(--text-muted);
 }
+
+/* ==========================================================================
+   HOTFIX: Restore Missing Comment Box on Account Doctype
+   ========================================================================== */
+/*
+  A global style is hiding the .form-footer on some doctypes.
+  This targeted override ensures it remains visible on the Account form
+  without affecting other pages.
+*/
+.doctype-account .form-footer {
+    display: block;
+    padding: 15px;
+}
