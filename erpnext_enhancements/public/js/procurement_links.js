@@ -123,3 +123,15 @@ erpnext_enhancements.procurement.edit_link = function(item_code, supplier, curre
         });
     }, 'Update Purchase Link');
 };
+// Attach to forms
+frappe.ui.form.on('Purchase Order', {
+    refresh: function(frm) {
+        new erpnext_enhancements.procurement.PurchaseLinks(frm);
+    }
+});
+
+frappe.ui.form.on('Material Request', {
+    refresh: function(frm) {
+        new erpnext_enhancements.procurement.PurchaseLinks(frm);
+    }
+});
