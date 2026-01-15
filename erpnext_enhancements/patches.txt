@@ -12,3 +12,4 @@ erpnext_enhancements.patches.reorder_procurement_buttons
 erpnext_enhancements.patches.add_google_calendar_events_table
 erpnext_enhancements.patches.reset_travel_child_table_fields
 erpnext_enhancements.patches.add_project_notes_table
+erpnext_enhancements.patches.add_item_purchase_links
