@@ -21,36 +21,44 @@ jobs:
           - 3306:3306
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
+      - name: Setup System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: '24.12.0'
           cache: 'npm'
 
-      - name: Install Redis
+      - name: Update Pip
         run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          sudo systemctl start redis-server
-          redis-cli ping
+          pip install pip==25.3
 
       - name: Install Frappe Bench
         run: |
-          pip install frappe-bench
+          pip install frappe-bench==5.28.0
 
       - name: Initialize Bench
         run: |
-          bench init --skip-redis-config-generation --skip-assets --python python3.10 frappe-bench --version version-16
+          bench init --skip-redis-config-generation --skip-assets --python python3.14 frappe-bench --version version-16
 
       - name: Configure Bench
         working-directory: frappe-bench
