@@ -10,7 +10,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     services:
       mariadb:
@@ -63,16 +63,39 @@ jobs:
         run: |
           bench new-site test_site --mariadb-root-password root --admin-password admin --no-mariadb-socket --db-host 127.0.0.1 --db-port 3306
 
-      - name: Install App
+      - name: Setup Apps
         working-directory: frappe-bench
         run: |
           # The repo is checked out to $GITHUB_WORKSPACE, but bench expects apps in frappe-bench/apps
           # We can symlink or move. Bench get-app usually clones, but we want to use the checked out code.
           mkdir -p apps
           ln -s $GITHUB_WORKSPACE apps/erpnext_enhancements
+
+          # Install the local app in editable mode and register it
+          pip install -e apps/erpnext_enhancements
           echo "" >> sites/apps.txt
           echo "erpnext_enhancements" >> sites/apps.txt
+
+          # Get Apps
+          # User requested develop/main branch for apps.
+          # Note: Mixing frappe v15 with erpnext develop might be unstable, but we follow instructions.
+          bench get-app erpnext --branch develop
+          bench get-app https://github.com/sapphirefountains/task_enhancements
+          bench get-app https://github.com/sapphirefountains/crm_enhancements
+          bench get-app https://github.com/sapphirefountains/global_enhancements
+          bench get-app https://github.com/sapphirefountains/project_enhancements
+          bench get-app https://github.com/frappe/insights
+          bench get-app https://github.com/buildswithpaul/Frappe_Assistant_Core
+
+          # Install Apps
+          bench --site test_site install-app erpnext
+          bench --site test_site install-app task_enhancements
+          bench --site test_site install-app crm_enhancements
+          bench --site test_site install-app global_enhancements
+          bench --site test_site install-app project_enhancements
           bench --site test_site install-app erpnext_enhancements
+          bench --site test_site install-app insights
+          bench --site test_site install-app frappe_assistant_core
 
       - name: Run Tests
         working-directory: frappe-bench
