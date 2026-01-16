@@ -1,0 +1,2 @@
+faker~=18.0.0
+responses~=0.23.0
