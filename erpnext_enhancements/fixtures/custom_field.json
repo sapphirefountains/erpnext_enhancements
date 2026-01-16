@@ -41,16 +41,6 @@
   "module": "ERPNext Enhancements"
  },
  {
-  "fieldname": "custom_project_notes",
-  "fieldtype": "Table",
-  "label": "Notes",
-  "options": "Project Note",
-  "insert_after": "custom_comments_field",
-  "dt": "Project",
-  "module": "ERPNext Enhancements",
-  "hidden": 1
- },
- {
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
   "label": "Calendar Start Time",

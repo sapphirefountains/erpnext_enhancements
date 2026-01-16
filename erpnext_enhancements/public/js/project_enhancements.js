@@ -1,15 +1,6 @@
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
-			// Automatically hide any child table linked to 'Project Note' (likely custom_project_notes or similar)
-			// This addresses the issue where the table remains visible if the backend config hasn't updated.
-			if (frm.meta.fields) {
-				const notes_field = frm.meta.fields.find(f => f.fieldtype === 'Table' && f.options === 'Project Note');
-				if (notes_field) {
-					frm.set_df_property(notes_field.fieldname, 'hidden', 1);
-				}
-			}
-
 			frm.trigger("render_procurement_tracker");
 			frm.trigger("render_comments_section");
 		}
@@ -17,8 +8,6 @@ frappe.ui.form.on("Project", {
 
 	render_comments_section: function (frm) {
 		if (!frm.fields_dict["custom_comments_field"]) {
-			// If the HTML field is missing, we cannot render the app.
-			// This might happen if the custom fields fixtures haven't been applied yet.
 			console.warn("custom_comments_field not found. Skipping Comments App render.");
 			return;
 		}
@@ -43,22 +32,12 @@ frappe.ui.form.on("Project", {
 						method: "erpnext_enhancements.project_enhancements.get_project_comments",
 						args: { project_name: frm.doc.name },
 						callback: (r) => {
-							const comments = r.message || [];
-							this.comments = comments.map(comment => {
-								if (comment.content && /<span class="frappe-timestamp/.test(comment.content)) {
-									comment.content = comment.content.replace(
-										/<span class="frappe-timestamp.*?data-timestamp="(.*?)".*?<\/span>/g,
-										(match, timestamp) => frappe.datetime.str_to_user(timestamp)
-									).trim();
-								}
-								return comment;
-							});
+							this.comments = r.message || [];
 							this.isLoading = false;
 						},
 						error: (r) => {
 							this.isLoading = false;
 							console.error("Failed to fetch comments", r);
-							frappe.msgprint(__("Failed to load comments."));
 						}
 					});
 				},
@@ -87,50 +66,11 @@ frappe.ui.form.on("Project", {
 								},
 								callback: (r) => {
 									if (r.message) {
-										// this.fetchComments(); // REAN: This is no longer needed, Doc will auto-refresh
+										this.comments.unshift(r.message);
 										dialog.hide();
-									}
-								},
-							});
-						}
-					});
-					dialog.show();
-				},
-				showEditCommentDialog(comment) {
-					let dialog = new frappe.ui.Dialog({
-						title: 'Edit Note',
-						fields: [
-							{
-								label: 'Note',
-								fieldname: 'comment_text',
-								fieldtype: 'TextEditor',
-								default: comment.content,
-								reqd: 1
-							}
-						],
-						primary_action_label: 'Save',
-						primary_action: (values) => {
-							if (!values.comment_text.trim()) {
-								frappe.msgprint('Comment cannot be empty.');
-								return;
-							}
-							frappe.call({
-								method: "erpnext_enhancements.project_enhancements.update_project_comment",
-								args: {
-									project_name: frm.doc.name,
-									comment_name: comment.name,
-									comment_text: values.comment_text,
-								},
-								callback: (r) => {
-									if (r.message && !r.message.error) {
-										const updatedComment = r.message;
-										const index = this.comments.findIndex(c => c.name === updatedComment.name);
-										if (index !== -1) {
-											this.comments.splice(index, 1, updatedComment);
+										if (frm.timeline && frm.timeline.refresh) {
+											frm.timeline.refresh();
 										}
-										dialog.hide();
-									} else {
-										frappe.msgprint('There was an error updating the comment.');
 									}
 								},
 							});
@@ -140,20 +80,7 @@ frappe.ui.form.on("Project", {
 				},
 				formatDateTime(datetime) {
 					return frappe.datetime.str_to_user(datetime);
-				},
-				deleteComment(comment_name) {
-					frappe.confirm("Are you sure you want to delete this comment?", () => {
-						frappe.call({
-							method: "erpnext_enhancements.project_enhancements.delete_project_comment",
-							args: { project_name: frm.doc.name, comment_name: comment_name },
-							callback: (r) => {
-								if (r.message && r.message.success) {
-									this.comments = this.comments.filter(c => c.name !== comment_name);
-								}
-							}
-						});
-					});
-				},
+				}
 			},
 			template: `
                 <div class="project-comments-container">
@@ -183,14 +110,6 @@ frappe.ui.form.on("Project", {
 								<div class="comment-footer">
 									<span class="comment-time">{{ formatDateTime(comment.creation) }}</span>
 								</div>
-                            </div>
-                            <div class="comment-actions">
-                                <button @click="showEditCommentDialog(comment)" class="btn btn-default btn-xs" title="Edit Note">
-                                    <i class="fa fa-pencil"></i>
-                                </button>
-                                <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs" title="Delete Note">
-                                    <i class="fa fa-trash"></i>
-                                </button>
                             </div>
                         </div>
                     </div>

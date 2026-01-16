@@ -200,7 +200,6 @@ fixtures = [
                 "Project-google_calendar_events",
                 "Project-custom_comments_tab",
                 "Project-custom_comments_field",
-                "Project-custom_project_notes",
                 "ToDo-custom_calendar_datetime_start",
                 "ToDo-custom_calendar_datetime_end",
                 "ToDo-google_calendar_events",
