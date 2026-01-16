@@ -908,3 +908,116 @@ mark {
 .form-footer {
     padding: 15px;
 }
+
+/* ==========================================================================
+   Project Comments Section - Custom Styling
+   ========================================================================== */
+
+.project-comments-container {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: var(--fg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.project-comments-container .comments-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.project-comments-container .comments-header h6 {
+    margin: 0;
+    font-size: 1.1em;
+}
+
+.project-comments-container .comments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.project-comments-container .comment-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.project-comments-container .comment-item:hover {
+    background-color: var(--background-color-ext);
+}
+
+.project-comments-container .comment-avatar {
+    flex-shrink: 0;
+}
+
+.project-comments-container .comment-main {
+    flex-grow: 1;
+}
+
+.project-comments-container .comment-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.project-comments-container .commenter-name {
+    font-weight: 600;
+    margin-right: 8px;
+}
+
+.project-comments-container .comment-content {
+    line-height: 1.6;
+    color: var(--text-color);
+}
+.project-comments-container .comment-content p:last-child {
+    margin-bottom: 0;
+}
+
+
+.project-comments-container .comment-footer {
+    margin-top: 8px;
+}
+
+.project-comments-container .comment-time {
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.project-comments-container .comment-actions {
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+}
+
+.project-comments-container .comment-item:hover .comment-actions {
+    opacity: 1;
+}
+
+/* Make action buttons more subtle */
+.project-comments-container .comment-actions .btn {
+    padding: 2px 5px;
+    line-height: 1;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.project-comments-container .comment-actions .btn:hover {
+    background-color: var(--button-secondary-hover-bg) !important;
+}
+
+.project-comments-container .comment-actions .btn i {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.project-comments-container .text-muted {
+    color: var(--text-muted) !important;
+}

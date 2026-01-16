@@ -7,7 +7,7 @@ frappe.ui.form.on("Project", {
 	},
 
 	render_comments_section: function (frm) {
-		const comments_wrapper = frm.fields_dict["custom_comments_field"].wrapper;
+		const comments_wrapper = frm.fields_dict["custom_project_notes"].wrapper;
 		$(comments_wrapper).html('<div id="project-comments-app"></div>');
 
 		const app = window.Vue.createApp({
@@ -138,7 +138,7 @@ frappe.ui.form.on("Project", {
                 <div class="project-comments-container">
                     <div class="comments-header">
                         <h6 class="text-muted">Notes</h6>
-                        <button class="btn btn-sm btn-secondary-light" @click="showAddCommentDialog">
+                        <button class="btn btn-sm btn-secondary" @click="showAddCommentDialog">
 						    <i class="fa fa-plus" style="margin-right: 4px;"></i> New Note
 						</button>
                     </div>
@@ -150,26 +150,26 @@ frappe.ui.form.on("Project", {
                         <div v-for="comment in comments" :key="comment.name" class="comment-item">
                             <div class="comment-avatar">
                                 <span class="avatar avatar-small" :title="comment.full_name">
-                                    <img :src="comment.user_image" v-if="comment.user_image">
+                                    <img :src="comment.user_image" v-if="comment.user_image" class="avatar-frame">
                                     <span v-else>{{ frappe.avatar.get_abbr(comment.full_name) }}</span>
                                 </span>
                             </div>
                             <div class="comment-main">
                                 <div class="comment-header">
                                     <span class="commenter-name">{{ comment.full_name }}</span>
+                                     <div class="comment-actions">
+										<button @click="showEditCommentDialog(comment)" class="btn btn-default btn-xs" title="Edit Note">
+											<i class="fa fa-pencil"></i>
+										</button>
+										<button @click="deleteComment(comment.name)" class="btn btn-default btn-xs" title="Delete Note">
+											<i class="fa fa-trash"></i>
+										</button>
+									</div>
                                 </div>
                                 <div class="comment-content" v-html="comment.content"></div>
 								<div class="comment-footer">
 									<span class="comment-time">{{ formatDateTime(comment.creation) }}</span>
 								</div>
-                            </div>
-                            <div class="comment-actions">
-                                <button @click="showEditCommentDialog(comment)" class="btn btn-default btn-xs" title="Edit Note">
-                                    <i class="fa fa-pencil"></i>
-                                </button>
-                                <button @click="deleteComment(comment.name)" class="btn btn-default btn-xs" title="Delete Note">
-                                    <i class="fa fa-trash"></i>
-                                </button>
                             </div>
                         </div>
                     </div>
