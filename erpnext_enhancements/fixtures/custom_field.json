@@ -1,5 +1,7 @@
 [
  {
+  "doctype": "Custom Field",
+  "name": "Project-custom_calendar_datetime_start",
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
   "label": "Calendar Start Time",
@@ -8,6 +10,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Project-custom_calendar_datetime_end",
   "fieldname": "custom_calendar_datetime_end",
   "fieldtype": "Datetime",
   "label": "Calendar End Time",
@@ -16,6 +20,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Project-google_calendar_events",
   "fieldname": "google_calendar_events",
   "fieldtype": "Table",
   "label": "Google Calendar Events",
@@ -25,6 +31,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Project-custom_comments_tab",
   "fieldname": "custom_comments_tab",
   "fieldtype": "Tab Break",
   "label": "Comments",
@@ -33,6 +41,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Project-custom_comments_field",
   "fieldname": "custom_comments_field",
   "fieldtype": "HTML",
   "label": "Comments App",
@@ -41,6 +51,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Project-custom_project_notes",
   "fieldname": "custom_project_notes",
   "fieldtype": "Table",
   "label": "Notes",
@@ -51,6 +63,8 @@
   "hidden": 1
  },
  {
+  "doctype": "Custom Field",
+  "name": "ToDo-custom_calendar_datetime_start",
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
   "label": "Calendar Start Time",
@@ -59,6 +73,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "ToDo-custom_calendar_datetime_end",
   "fieldname": "custom_calendar_datetime_end",
   "fieldtype": "Datetime",
   "label": "Calendar End Time",
@@ -67,6 +83,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "ToDo-google_calendar_events",
   "fieldname": "google_calendar_events",
   "fieldtype": "Table",
   "label": "Google Calendar Events",
@@ -76,6 +94,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Task-google_calendar_events",
   "fieldname": "google_calendar_events",
   "fieldtype": "Table",
   "label": "Google Calendar Events",
@@ -85,6 +105,8 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "doctype": "Custom Field",
+  "name": "Event-google_calendar_events",
   "fieldname": "google_calendar_events",
   "fieldtype": "Table",
   "label": "Google Calendar Events",
