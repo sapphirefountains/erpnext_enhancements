@@ -331,113 +331,65 @@ def get_dashboard_data(data):
 @frappe.whitelist()
 def get_project_comments(project_name):
 	"""
-	Retrieves comments for a given project, along with user details.
+	Retrieves standard comments for a given project.
 	"""
 	if not project_name:
 		return []
 
-	project = frappe.get_doc("Project", project_name)
-	notes = project.get("custom_project_notes") or []
+	# Fetch standard comments
+	comments = frappe.get_all(
+		"Comment",
+		filters={"reference_doctype": "Project", "reference_name": project_name},
+		fields=["name", "content", "owner", "creation", "comment_by"],
+		order_by="creation desc"
+	)
 
-	# Get user details in bulk to avoid N+1 queries
-	user_ids = [note.get("owner") for note in notes]
-	if not user_ids:
+	if not comments:
 		return []
 
-	user_details = frappe.get_all(
-		"User",
-		filters={"name": ["in", list(set(user_ids))]},
-		fields=["name", "full_name", "user_image"],
-	)
-	user_map = {u.get("name"): u for u in user_details}
+	# Get user images
+	user_ids = [c.owner for c in comments if c.owner]
+	user_map = {}
+	if user_ids:
+		users = frappe.get_all(
+			"User",
+			filters={"name": ["in", list(set(user_ids))]},
+			fields=["name", "full_name", "user_image"]
+		)
+		user_map = {u.name: u for u in users}
 
-	# Combine comment data with user details
-	for note in notes:
-		user = user_map.get(note.get("owner"))
+	# Format for frontend
+	for comment in comments:
+		user = user_map.get(comment.owner)
 		if user:
-			note.full_name = user.get("full_name")
-			note.user_image = user.get("user_image")
+			comment.full_name = user.full_name
+			comment.user_image = user.user_image
+		else:
+			comment.full_name = comment.comment_by or comment.owner
+			comment.user_image = None
 
-	return notes
+	return comments
 
 
 @frappe.whitelist()
 def add_project_comment(project_name, comment_text):
 	"""
-	Adds a new comment to a project.
+	Adds a standard comment to a project.
 	"""
 	if not project_name or not comment_text:
 		frappe.throw(_("Project name and comment text are required."))
 
-	project = frappe.get_doc("Project", project_name)
-	note = project.append("custom_project_notes", {
-		"content": comment_text,
-		"owner": frappe.session.user,
-		"creation": frappe.utils.now_datetime()
-	})
-	project.save(ignore_permissions=True)
+	doc = frappe.get_doc("Project", project_name)
+	new_comment = doc.add_comment("Comment", comment_text)
 
-	# Refetch the comment to include user details for the frontend
-	user_details = frappe.get_doc("User", note.owner)
-	note.full_name = user_details.full_name
-	note.user_image = user_details.user_image
+	# Fetch user details to return immediately
+	user = frappe.get_doc("User", frappe.session.user)
 
-	return note
-
-
-@frappe.whitelist()
-def delete_project_comment(project_name, comment_name):
-	"""
-	Deletes a comment if the user is the owner.
-	"""
-	if not project_name or not comment_name:
-		frappe.throw(_("Project name and comment name are required."))
-
-	try:
-		project = frappe.get_doc("Project", project_name)
-		notes = project.get("custom_project_notes")
-		note_to_delete = next((note for note in notes if note.name == comment_name), None)
-
-		if not note_to_delete:
-			frappe.throw(_("Note not found."))
-
-		if note_to_delete.owner != frappe.session.user:
-			frappe.throw(_("You are not allowed to delete this comment."))
-
-		project.remove(note_to_delete)
-		project.save(ignore_permissions=True)
-		return {"success": True}
-	except frappe.PermissionError:
-		frappe.throw(_("You are not allowed to delete this comment."))
-	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), "Comment Deletion Failed")
-		return {"success": False, "error": str(e)}
-
-
-@frappe.whitelist()
-def update_project_comment(project_name, comment_name, comment_text):
-	if not project_name or not comment_name or not comment_text:
-		frappe.throw(_("Project name, comment name and comment text are required."))
-
-	try:
-		project = frappe.get_doc("Project", project_name)
-		notes = project.get("custom_project_notes")
-		note_to_update = next((note for note in notes if note.name == comment_name), None)
-
-		if not note_to_update:
-			frappe.throw(_("Note not found."))
-
-		if note_to_update.owner != frappe.session.user:
-			frappe.throw(_("You are not allowed to edit this comment."))
-
-		note_to_update.content = comment_text
-		project.save(ignore_permissions=True)
-
-		user_details = frappe.get_doc("User", note_to_update.owner)
-		note_to_update.full_name = user_details.full_name
-		note_to_update.user_image = user_details.user_image
-
-		return note_to_update
-	except Exception as e:
-		frappe.log_error(frappe.get_traceback(), "Error updating project comment")
-		return {"error": str(e)}
+	return {
+		"name": new_comment.name,
+		"content": new_comment.content,
+		"owner": new_comment.owner,
+		"creation": new_comment.creation,
+		"full_name": user.full_name,
+		"user_image": user.user_image
+	}
