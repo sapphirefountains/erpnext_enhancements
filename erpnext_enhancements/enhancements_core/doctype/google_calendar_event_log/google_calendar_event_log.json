@@ -1,6 +1,6 @@
 {
  "name": "Google Calendar Event Log",
- "module": "ERPNext Enhancements",
+ "module": "Enhancements Core",
  "doctype": "DocType",
  "issingle": 0,
  "istable": 1,
