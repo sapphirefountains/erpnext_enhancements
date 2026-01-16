@@ -1,7 +1,7 @@
 import os
 
 def verify_file_content():
-    file_path = 'erpnext_enhancements/erpnext_enhancements/page/time_kiosk/time_kiosk.js'
+    file_path = 'erpnext_enhancements/page/time_kiosk/time_kiosk.js'
 
     if not os.path.exists(file_path):
         print(f"FAILED: File {file_path} not found.")
@@ -11,12 +11,11 @@ def verify_file_content():
         content = f.read()
 
     checks = [
-        ("vue.global.js", "Dependency loading (vue.global.js)"),
-        ("createApp", "Vue initialization (createApp)"),
-        ("erpnext_enhancements.erpnext_enhancements.api.time_kiosk.log_time", "API Call: log_time"),
-        ("erpnext_enhancements.erpnext_enhancements.api.time_kiosk.get_projects", "API Call: get_projects"),
+        ("init_time_kiosk", "Kiosk initialization function"),
+        ("erpnext_enhancements.api.time_kiosk.log_time", "API Call: log_time"),
+        ("erpnext_enhancements.api.time_kiosk.get_current_status", "API Call: get_current_status"),
         ("navigator.geolocation", "Geolocation Logic"),
-        ("#time-kiosk-app", "Mount point ID")
+        ('id="time-kiosk-app"', "Mount point ID")
     ]
 
     print(f"Verifying {file_path}...\n")

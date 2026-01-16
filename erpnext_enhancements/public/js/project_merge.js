@@ -20,7 +20,7 @@ frappe.ui.form.on("Project", {
 					function (values) {
 						// 1. Dry Run / Simulation
 						frappe.call({
-							method: "erpnext_enhancements.erpnext_enhancements.project_merge.get_merge_stats",
+							method: "erpnext_enhancements.project_merge.get_merge_stats",
 							args: {
 								source_project: frm.doc.name,
 								target_project: values.target_project,
@@ -127,7 +127,7 @@ function show_merge_confirmation(frm, target_project, stats) {
 
 function execute_merge(frm, target_project) {
 	frappe.call({
-		method: "erpnext_enhancements.erpnext_enhancements.project_merge.merge_projects",
+		method: "erpnext_enhancements.project_merge.merge_projects",
 		args: {
 			source_project: frm.doc.name,
 			target_project: target_project,
