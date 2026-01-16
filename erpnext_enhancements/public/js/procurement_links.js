@@ -4,12 +4,7 @@ erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {
     constructor(frm) {
         this.frm = frm;
         this.cache = {};
-        this.init();
-    }
-
-    init() {
-        // Refresh links when the form loads or items change
-        this.frm.fields_dict['items'].grid.wrapper.on('change', () => this.render_links());
+        // Removed init() call that attached the dangerous listener
     }
 
     async load_links() {
@@ -123,15 +118,34 @@ erpnext_enhancements.procurement.edit_link = function(item_code, supplier, curre
         });
     }, 'Update Purchase Link');
 };
+
+const setup_purchase_links = (frm) => {
+    if (!frm.purchase_links) {
+        frm.purchase_links = new erpnext_enhancements.procurement.PurchaseLinks(frm);
+    }
+    frm.purchase_links.render_links();
+};
+
+const trigger_render = (frm) => {
+    if (frm.purchase_links) frm.purchase_links.render_links();
+};
+
 // Attach to forms
 frappe.ui.form.on('Purchase Order', {
-    refresh: function(frm) {
-        new erpnext_enhancements.procurement.PurchaseLinks(frm);
-    }
+    refresh: setup_purchase_links,
+    supplier: trigger_render
+});
+
+frappe.ui.form.on('Purchase Order Item', {
+    item_code: trigger_render,
+    items_remove: trigger_render
 });
 
 frappe.ui.form.on('Material Request', {
-    refresh: function(frm) {
-        new erpnext_enhancements.procurement.PurchaseLinks(frm);
-    }
+    refresh: setup_purchase_links
+});
+
+frappe.ui.form.on('Material Request Item', {
+    item_code: trigger_render,
+    items_remove: trigger_render
 });
