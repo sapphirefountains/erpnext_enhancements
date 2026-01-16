@@ -81,7 +81,9 @@ jobs:
           ln -s $GITHUB_WORKSPACE apps/erpnext_enhancements
 
           # Install the local app in editable mode and register it
-          pip install -e apps/erpnext_enhancements
+          # IMPORTANT: Must use the pip inside the bench virtual environment
+          ./env/bin/pip install -e apps/erpnext_enhancements
+          
           echo "" >> sites/apps.txt
           echo "erpnext_enhancements" >> sites/apps.txt
 
