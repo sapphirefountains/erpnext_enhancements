@@ -1,12 +1,28 @@
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
+			// Automatically hide any child table linked to 'Project Note' (likely custom_project_notes or similar)
+			// This addresses the issue where the table remains visible if the backend config hasn't updated.
+			if (frm.meta.fields) {
+				const notes_field = frm.meta.fields.find(f => f.fieldtype === 'Table' && f.options === 'Project Note');
+				if (notes_field) {
+					frm.set_df_property(notes_field.fieldname, 'hidden', 1);
+				}
+			}
+
 			frm.trigger("render_procurement_tracker");
 			frm.trigger("render_comments_section");
 		}
 	},
 
 	render_comments_section: function (frm) {
+		if (!frm.fields_dict["custom_comments_field"]) {
+			// If the HTML field is missing, we cannot render the app.
+			// This might happen if the custom fields fixtures haven't been applied yet.
+			console.warn("custom_comments_field not found. Skipping Comments App render.");
+			return;
+		}
+
 		const comments_wrapper = frm.fields_dict["custom_comments_field"].wrapper;
 		$(comments_wrapper).html('<div id="project-comments-app"></div>');
 
