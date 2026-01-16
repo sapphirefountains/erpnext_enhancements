@@ -39,6 +39,11 @@ frappe.ui.form.on("Project", {
 							});
 							this.isLoading = false;
 						},
+						error: (r) => {
+							this.isLoading = false;
+							console.error("Failed to fetch comments", r);
+							frappe.msgprint(__("Failed to load comments."));
+						}
 					});
 				},
 				showAddCommentDialog() {

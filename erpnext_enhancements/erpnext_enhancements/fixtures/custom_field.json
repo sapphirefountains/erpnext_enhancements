@@ -25,6 +25,32 @@
   "module": "ERPNext Enhancements"
  },
  {
+  "fieldname": "custom_comments_tab",
+  "fieldtype": "Tab Break",
+  "label": "Comments",
+  "insert_after": "google_calendar_events",
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "custom_comments_field",
+  "fieldtype": "HTML",
+  "label": "Comments App",
+  "insert_after": "custom_comments_tab",
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "fieldname": "custom_project_notes",
+  "fieldtype": "Table",
+  "label": "Notes",
+  "options": "Project Note",
+  "insert_after": "custom_comments_field",
+  "dt": "Project",
+  "module": "ERPNext Enhancements",
+  "hidden": 1
+ },
+ {
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
   "label": "Calendar Start Time",
