@@ -10,7 +10,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Increased to allow time for compiling dependencies from source
+    timeout-minutes: 60  # Kept higher timeout just in case, though removal of Insights should speed this up
 
     services:
       mariadb:
@@ -34,7 +34,7 @@ jobs:
       - name: Setup System Dependencies
         run: |
           sudo apt-get update
-          # Added build dependencies (gfortran, libopenblas, etc.) to help compile numpy/pandas on Python 3.14
+          # Kept build dependencies to ensure smooth installation of other apps on Python 3.14
           sudo apt-get install -y wkhtmltopdf build-essential gfortran libopenblas-dev liblapack-dev pkg-config
 
       - name: Setup Python
@@ -99,7 +99,7 @@ jobs:
           bench get-app https://github.com/sapphirefountains/crm_enhancements
           bench get-app https://github.com/sapphirefountains/global_enhancements
           bench get-app https://github.com/sapphirefountains/project_enhancements
-          bench get-app https://github.com/frappe/insights --branch version-3
+          # Removed Insights as requested
           bench get-app https://github.com/buildswithpaul/Frappe_Assistant_Core
           bench get-app https://github.com/frappe/offsite_backups --branch version-16
           bench get-app https://github.com/frappe/newsletter --branch version-16
@@ -111,7 +111,7 @@ jobs:
           bench --site test_site install-app global_enhancements
           bench --site test_site install-app project_enhancements
           bench --site test_site install-app erpnext_enhancements
-          bench --site test_site install-app insights
+          # Removed Insights as requested
           bench --site test_site install-app frappe_assistant_core
           bench --site test_site install-app offsite_backups
           bench --site test_site install-app newsletter
