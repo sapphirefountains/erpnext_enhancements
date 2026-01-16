@@ -80,6 +80,9 @@ jobs:
           mkdir -p apps
           ln -s $GITHUB_WORKSPACE apps/erpnext_enhancements
 
+          # Install setuptools to fix 'pkg_resources' error in offsite_backups
+          ./env/bin/pip install setuptools
+
           # Install the local app in editable mode and register it
           # IMPORTANT: Must use the pip inside the bench virtual environment
           ./env/bin/pip install -e apps/erpnext_enhancements
