@@ -63,6 +63,7 @@ jobs:
           # We can symlink or move. Bench get-app usually clones, but we want to use the checked out code.
           mkdir -p apps
           ln -s $GITHUB_WORKSPACE apps/erpnext_enhancements
+          echo "" >> sites/apps.txt
           echo "erpnext_enhancements" >> sites/apps.txt
           bench --site test_site install-app erpnext_enhancements
 
