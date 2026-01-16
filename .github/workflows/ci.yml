@@ -49,7 +49,7 @@ jobs:
 
       - name: Initialize Bench
         run: |
-          bench init --skip-redis-config-generation --skip-assets --python python3.10 frappe-bench --version version-15
+          bench init --skip-redis-config-generation --skip-assets --python python3.10 frappe-bench --version version-16
 
       - name: Configure Bench
         working-directory: frappe-bench
@@ -79,13 +79,15 @@ jobs:
           # Get Apps
           # User requested develop/main branch for apps.
           # Note: Mixing frappe v15 with erpnext develop might be unstable, but we follow instructions.
-          bench get-app erpnext --branch develop
+          bench get-app erpnext --branch version-16
           bench get-app https://github.com/sapphirefountains/task_enhancements
           bench get-app https://github.com/sapphirefountains/crm_enhancements
           bench get-app https://github.com/sapphirefountains/global_enhancements
           bench get-app https://github.com/sapphirefountains/project_enhancements
-          bench get-app https://github.com/frappe/insights
+          bench get-app https://github.com/frappe/insights --branch version-3
           bench get-app https://github.com/buildswithpaul/Frappe_Assistant_Core
+          bench get-app https://github.com/frappe/offsite_backups --branch version-16
+          bench get-app https://github.com/frappe/newsletter --branch version-16
 
           # Install Apps
           bench --site test_site install-app erpnext
@@ -96,6 +98,8 @@ jobs:
           bench --site test_site install-app erpnext_enhancements
           bench --site test_site install-app insights
           bench --site test_site install-app frappe_assistant_core
+          bench --site test_site install-app offsite_backups
+          bench --site test_site install-app newsletter
 
       - name: Run Tests
         working-directory: frappe-bench
