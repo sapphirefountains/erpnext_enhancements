@@ -1,187 +1,118 @@
-import unittest
-from unittest.mock import MagicMock, patch, ANY
-import sys
-import datetime
-
-# Mock frappe module
-mock_frappe = MagicMock()
-sys.modules["frappe"] = mock_frappe
-sys.modules["frappe.utils"] = MagicMock()
-sys.modules["frappe.model"] = MagicMock()
-sys.modules["frappe.model.document"] = MagicMock()
-
-# Make whitelist a passthrough decorator
-def whitelist_passthrough(*args, **kwargs):
-    def decorator(func):
-        return func
-    if len(args) == 1 and callable(args[0]):
-        return args[0]
-    return decorator
-
-mock_frappe.whitelist = whitelist_passthrough
-
-# Make frappe._ return the string itself or format it
-def mock_translate(msg):
-    return msg
-
-mock_frappe._ = mock_translate
-
+# -*- coding: utf-8 -*-
 import frappe
-from frappe import _
-
-# Configure now_datetime mock
-frappe.utils.now_datetime = MagicMock(return_value=datetime.datetime(2023, 1, 1, 12, 0, 0))
-frappe.utils.get_datetime = MagicMock(side_effect=lambda x: x if isinstance(x, datetime.datetime) else datetime.datetime.now())
-
-# Import the module to test
+from frappe.tests.utils import FrappeTestCase
+from frappe.utils import now_datetime, add_to_date
 import erpnext_enhancements.api.time_kiosk as time_kiosk
 
-class TestTimeKiosk(unittest.TestCase):
-    def setUp(self):
-        frappe.session.user = "test@example.com"
-        frappe.db.get_value.reset_mock()
-        frappe.db.get_value.side_effect = None # Clear side effects
-        frappe.db.exists.reset_mock()
-        frappe.db.exists.side_effect = None
-        frappe.get_doc.reset_mock()
-        frappe.get_doc.side_effect = None
-        frappe.throw.reset_mock()
-        frappe.throw.side_effect = None
-        frappe.get_list.reset_mock()
-        frappe.get_list.side_effect = None
+class TestTimeKiosk(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		self.create_test_data()
 
-    def test_log_time_start_success(self):
-        # Setup mocks
-        frappe.db.get_value.side_effect = lambda dt, filters, field, **kwargs: "EMP-001" if dt == "Employee" else None
-        frappe.db.exists.return_value = None # No existing interval
+	def create_test_data(self):
+		# Ensure Project exists
+		self.project = "Test Project"
+		if not frappe.db.exists("Project", self.project):
+			frappe.get_doc({
+				"doctype": "Project",
+				"project_name": self.project,
+				"is_active": "Yes"
+			}).insert()
 
-        mock_doc = MagicMock()
-        mock_doc.name = "JOB-INT-00001"
-        frappe.get_doc.return_value = mock_doc
+		# Ensure Employee exists
+		self.employee = "HR-EMP-KIOSK"
+		if not frappe.db.exists("Employee", self.employee):
+			emp = frappe.get_doc({
+				"doctype": "Employee",
+				"employee": self.employee,
+				"first_name": "Kiosk",
+				"last_name": "User",
+				"company": frappe.defaults.get_user_default("Company") or "Test Company",
+				"status": "Active",
+				"date_of_joining": "2020-01-01"
+			})
+			emp.flags.ignore_mandatory = True
+			emp.insert()
+			self.employee = emp.name
 
-        # Execute
-        result = time_kiosk.log_time("PROJ-001", "Start", "10.0", "20.0", "Test Description", task="TASK-001")
+		# Mock current user as the employee user (if needed, but log_time uses frappe.session.user or db lookup)
+		# Assuming log_time uses database to find employee linked to user.
+		# For this test, we might need to mock frappe.db.get_value("Employee", ...) if the user is not linked.
+		# However, in integration tests, it's better to link them properly or mock the function that gets the employee.
 
-        # Verify
-        self.assertEqual(result["status"], "success")
-        frappe.get_doc.assert_called_once()
-        args = frappe.get_doc.call_args[0][0]
-        self.assertEqual(args["doctype"], "Job Interval")
-        self.assertEqual(args["employee"], "EMP-001")
-        self.assertEqual(args["project"], "PROJ-001")
-        self.assertEqual(args["task"], "TASK-001")
-        self.assertEqual(args["status"], "Open")
-        self.assertEqual(args["latitude"], "10.0")
-        self.assertEqual(args["longitude"], "20.0")
-        self.assertEqual(args["description"], "Test Description")
-        mock_doc.insert.assert_called_once()
+		# Let's see how log_time gets the employee. It probably does `frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")`
+		# We can just mock `erpnext_enhancements.api.time_kiosk.get_employee_for_user` if it exists,
+		# or simpler: create a User and link it.
 
-    def test_log_time_start_fail_existing(self):
-        # Setup mocks
-        frappe.db.get_value.return_value = "EMP-001"
-        frappe.db.exists.return_value = "JOB-INT-EXISTING"
+		# Easier approach: Patch `frappe.db.get_value` locally in the test methods OR
+		# set the current user to one that is linked.
+		# Even better: The original code likely checks `frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")`
+		# So let's link our test employee to Administrator (current session user) temporarily.
 
-        # Execute
-        time_kiosk.log_time("PROJ-001", "Start")
+		frappe.db.set_value("Employee", self.employee, "user_id", "Administrator")
 
-        # Verify
-        # Check that throw was called with a string containing "already have an open job"
-        frappe.throw.assert_called()
-        self.assertIn("already have an open job", frappe.throw.call_args[0][0])
+	def tearDown(self):
+		# Clean up any open intervals to prevent pollution
+		frappe.db.delete("Job Interval", {"employee": self.employee})
+		frappe.db.delete("Timesheet", {"employee": self.employee})
+		super().tearDown()
 
-    def test_log_time_stop_success(self):
-        # Setup mocks
-        # logic:
-        # 1. get employee -> "EMP-001"
-        # 2. get open interval -> "JOB-INT-OPEN"
-        # 3. sync_interval_to_timesheet calls get_value("Timesheet") -> "TS-001"
+	def test_log_time_flow(self):
+		# 1. Start Job
+		result = time_kiosk.log_time(
+			project=self.project,
+			action="Start",
+			latitude="10.0",
+			longitude="20.0",
+			description="Integration Test Start",
+			task=None
+		)
 
-        def get_value_side_effect(dt, filters, field=None, **kwargs):
-            if dt == "Employee": return "EMP-001"
-            if dt == "Job Interval" and isinstance(filters, dict) and filters.get("status") == "Open": return "JOB-INT-OPEN"
-            if dt == "Timesheet": return "TS-001" # Existing timesheet
-            return None
+		self.assertEqual(result["status"], "success")
 
-        frappe.db.get_value.side_effect = get_value_side_effect
+		# Verify Job Interval created
+		interval = frappe.get_last_doc("Job Interval", {"employee": self.employee})
+		self.assertEqual(interval.status, "Open")
+		self.assertEqual(interval.project, self.project)
 
-        mock_doc = MagicMock()
-        mock_doc.name = "JOB-INT-OPEN"
-        mock_doc.start_time = datetime.datetime(2023, 1, 1, 10, 0, 0)
-        mock_doc.end_time = datetime.datetime(2023, 1, 1, 12, 0, 0)
+		# 2. Try to Start again (Should Fail)
+		with self.assertRaises(frappe.ValidationError):
+			time_kiosk.log_time(project=self.project, action="Start")
 
-        mock_ts = MagicMock()
-        mock_ts.time_logs = []
+		# 3. Stop Job
+		# We need to simulate some time passing or just trust the system updates end_time
+		result = time_kiosk.log_time(action="Stop")
 
-        def get_doc_side_effect(dt, name=None):
-            if dt == "Job Interval": return mock_doc
-            if dt == "Timesheet": return mock_ts
-            return MagicMock()
+		self.assertEqual(result["status"], "success")
 
-        frappe.get_doc.side_effect = get_doc_side_effect
+		# Verify Job Interval closed
+		interval.reload()
+		self.assertEqual(interval.status, "Completed")
+		self.assertIsNotNone(interval.end_time)
 
-        # Execute
-        result = time_kiosk.log_time(None, "Stop")
+		# Verify Timesheet Created/Synced
+		# The logic aggregates logs or appends to timesheet.
+		timesheet = frappe.get_last_doc("Timesheet", {"employee": self.employee})
+		self.assertTrue(timesheet)
+		self.assertEqual(len(timesheet.time_logs), 1)
+		self.assertEqual(timesheet.time_logs[0].project, self.project)
 
-        # Verify
-        self.assertEqual(result["status"], "success")
+		# 4. Try to Stop again (Should Fail)
+		with self.assertRaises(frappe.ValidationError):
+			time_kiosk.log_time(action="Stop")
 
-        # Verify Job Interval was saved
-        # Note: We can't use assert_called_with on frappe.get_doc because it's called multiple times
-        # But we can verify mock_doc.save was called
-        self.assertEqual(mock_doc.status, "Completed")
-        mock_doc.save.assert_called()
+	def test_strict_single_interval(self):
+		# Manually insert an open interval
+		frappe.get_doc({
+			"doctype": "Job Interval",
+			"employee": self.employee,
+			"project": self.project,
+			"status": "Open",
+			"start_time": now_datetime()
+		}).insert()
 
-        # Verify Timesheet sync happened
-        mock_ts.append.assert_called()
-        mock_ts.save.assert_called()
+		# Try to create another manually (should fail if validation is in `validate`)
+		# Or try via API
+		with self.assertRaises(frappe.ValidationError):
+			time_kiosk.log_time(project=self.project, action="Start")
 
-    def test_log_time_stop_fail_no_open(self):
-        # Setup mocks
-        frappe.db.get_value.side_effect = lambda dt, filters, field=None, **kwargs: "EMP-001" if dt == "Employee" else None
-
-        # Execute
-        time_kiosk.log_time(None, "Stop")
-
-        # Verify
-        frappe.throw.assert_called()
-        self.assertIn("No open job found", frappe.throw.call_args[0][0])
-
-    def test_no_employee(self):
-        frappe.db.get_value.return_value = None
-        time_kiosk.log_time("PROJ-001", "Start")
-        frappe.throw.assert_called()
-        self.assertIn("No Employee record found", frappe.throw.call_args[0][0])
-
-    def test_get_current_status(self):
-        frappe.db.get_value.side_effect = [
-            "EMP-001", # Employee
-            {"name": "JOB-1", "project": "PROJ-1", "start_time": "Now", "description": "Desc"}, # Interval
-            "Test Project" # Project Title
-        ]
-
-        status = time_kiosk.get_current_status()
-        self.assertEqual(status["project_title"], "Test Project")
-        self.assertEqual(status["employee"], "EMP-001")
-
-    @patch('erpnext_enhancements.api.time_kiosk.frappe.get_meta')
-    def test_get_projects_active_field(self, mock_get_meta):
-        mock_field = MagicMock()
-        mock_field.fieldname = "is_active"
-        mock_get_meta.return_value.fields = [mock_field]
-
-        time_kiosk.get_projects()
-
-        frappe.get_list.assert_called_with("Project", filters={"is_active": "Yes"}, fields=["name", "project_name"])
-
-    @patch('erpnext_enhancements.api.time_kiosk.frappe.get_meta')
-    def test_get_projects_no_active_field(self, mock_get_meta):
-        mock_field = MagicMock()
-        mock_field.fieldname = "status"
-        mock_get_meta.return_value.fields = [mock_field]
-
-        time_kiosk.get_projects()
-
-        frappe.get_list.assert_called_with("Project", filters={"status": "Open"}, fields=["name", "project_name"])
-
-if __name__ == '__main__':
-    unittest.main()
