@@ -1,5 +1,6 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils import random_string
 
 from erpnext_enhancements.project_enhancements import get_procurement_status
 
@@ -20,10 +21,11 @@ class TestProcurementStatus(FrappeTestCase):
 			).insert()
 
 		# Create a Project
+		self.project_name = f"Test Procurement Project {random_string(5)}"
 		self.project = frappe.get_doc(
 			{
 				"doctype": "Project",
-				"project_name": "Test Procurement Project",
+				"project_name": self.project_name,
 				"status": "Open",
 				"company": self.company,
 			}
