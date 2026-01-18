@@ -49,9 +49,11 @@ class TestFixOptionsError(unittest.TestCase):
 
 		# Verify error was logged appropriately
 		# The code logs: "Google Calendar Sync Save Error (Insert): {e}"
-		args, _ = mock_log_error.call_args
-		self.assertIn("Google Calendar Sync Save Error (Insert)", args[0])
-		self.assertIn("Something went wrong", args[0])
+		args, kwargs = mock_log_error.call_args
+		# log_error uses keyword arguments: message=..., title=...
+		message = kwargs.get("message")
+		self.assertIn("Google Calendar Sync Save Error (Insert)", message)
+		self.assertIn("Something went wrong", message)
 
 	@patch("frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object")
 	@patch("erpnext_enhancements.calendar_sync.frappe.db.get_all")
