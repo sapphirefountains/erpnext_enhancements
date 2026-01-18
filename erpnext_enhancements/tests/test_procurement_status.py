@@ -202,6 +202,7 @@ class TestProcurementStatus(FrappeTestCase):
 						"t_warehouse": t_warehouse,
 						"material_request": mr.name,
 						"material_request_item": mr.items[0].name,
+						"allow_zero_valuation_rate": 1,
 					}
 				],
 			}
