@@ -10,13 +10,25 @@ class TestTimeKiosk(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Ensure Company exists
+		self.company = frappe.defaults.get_user_default("Company") or "_Test Company_"
+		if not frappe.db.exists("Company", self.company):
+			frappe.get_doc({
+				"doctype": "Company",
+				"company_name": self.company,
+				"abbr": "TC",
+				"default_currency": "USD",
+				"country": "United States"
+			}).insert()
+
 		# Ensure Project exists
 		self.project = "Test Project"
 		if not frappe.db.exists("Project", self.project):
 			frappe.get_doc({
 				"doctype": "Project",
 				"project_name": self.project,
-				"is_active": "Yes"
+				"is_active": "Yes",
+				"company": self.company
 			}).insert()
 
 		# Ensure Employee exists
