@@ -124,7 +124,7 @@ class TestCalendarSync(FrappeTestCase):
 		})
 		self.settings.save()
 
-	@patch('erpnext_enhancements.calendar_sync.get_google_calendar_object')
+	@patch('frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object')
 	def test_sync_to_google_calendar(self, mock_get_gc_object):
 		# Mock Google Service
 		mock_service = MagicMock()
@@ -151,7 +151,7 @@ class TestCalendarSync(FrappeTestCase):
 		log = frappe.db.get_value("Global Calendar Sync Log", {"reference_docname": task.name}, "event_id")
 		self.assertEqual(log, "g_event_123")
 
-	@patch('erpnext_enhancements.calendar_sync.get_google_calendar_object')
+	@patch('frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object')
 	def test_delete_event_from_google(self, mock_get_gc_object):
 		# Mock Service
 		mock_service = MagicMock()
