@@ -6,18 +6,32 @@ from erpnext_enhancements.api import time_kiosk
 class TestGeoTelemetry(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
-		self.employee = "EMP-TEST-GEO"
-		if not frappe.db.exists("Employee", self.employee):
+
+		# Ensure company exists
+		if not frappe.db.exists("Company", "_Test Company_"):
+			frappe.get_doc({
+				"doctype": "Company",
+				"company_name": "_Test Company_",
+				"abbr": "_TC_",
+				"default_currency": "USD",
+				"country": "United States"
+			}).insert()
+
+		existing_emp = frappe.db.get_value("Employee", {"first_name": "Geo", "last_name": "Tester"}, "name")
+		if existing_emp:
+			self.employee = existing_emp
+		else:
 			emp = frappe.get_doc({
 				"doctype": "Employee",
-				"employee": self.employee,
 				"first_name": "Geo",
 				"last_name": "Tester",
 				"status": "Active",
-				"date_of_joining": "2020-01-01"
+				"date_of_joining": "2020-01-01",
+				"company": "_Test Company_"
 			})
 			emp.flags.ignore_mandatory = True
 			emp.insert()
+			self.employee = emp.name
 
 	def tearDown(self):
 		frappe.db.delete("Time Kiosk Log", {"employee": self.employee})
