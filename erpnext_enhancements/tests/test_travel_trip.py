@@ -8,6 +8,9 @@ class TestTravelTrip(FrappeTestCase):
 		self.create_dependencies()
 
 	def create_dependencies(self):
+		from frappe.modules.utils import doctype_python_modules
+		import sys
+
 		# Fix potential issue where Expense Claim Type is incorrectly assigned to Core module
 		if frappe.db.exists("DocType", "Expense Claim Type"):
 			# Always force update to be safe
@@ -16,9 +19,21 @@ class TestTravelTrip(FrappeTestCase):
 				SET custom=1, module='Enhancements Core'
 				WHERE name='Expense Claim Type'
 			""")
+			frappe.db.commit()
 
 			# Clear global cache to ensure fresh fetch of DocType metadata
 			frappe.clear_cache()
+
+			# Clear module cache to prevent using stale controller paths
+			key = (frappe.local.site, "Expense Claim Type", "", "")
+			if key in doctype_python_modules:
+				del doctype_python_modules[key]
+
+			# Clear site_controllers if possible (accessed via sys.modules)
+			if 'frappe.model.base_document' in sys.modules:
+				site_controllers = sys.modules['frappe.model.base_document'].site_controllers
+				if "Expense Claim Type" in site_controllers:
+					del site_controllers["Expense Claim Type"]
 
 			# Also clear local meta cache to ensure get_meta returns fresh data
 			if hasattr(frappe.local, "meta_cache") and "Expense Claim Type" in frappe.local.meta_cache:
