@@ -18,6 +18,10 @@ class TestTravelTrip(FrappeTestCase):
 				from frappe.model.base_document import site_controllers
 				site_controllers.pop("Expense Claim Type", None)
 
+				# Also clear local meta cache to ensure get_meta returns fresh data
+				if hasattr(frappe.local, "meta_cache") and "Expense Claim Type" in frappe.local.meta_cache:
+					del frappe.local.meta_cache["Expense Claim Type"]
+
 		# Create Expense Claim Types if they don't exist
 		if not frappe.db.exists("Expense Claim Type", "Air Travel"):
 			frappe.get_doc({
