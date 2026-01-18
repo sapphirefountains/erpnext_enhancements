@@ -93,6 +93,13 @@ class TestCalendarSync(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Enable Google Settings first
+		google_settings = frappe.get_doc("Google Settings")
+		google_settings.enable = 1
+		google_settings.client_id = "test_client_id"
+		google_settings.client_secret = "test_client_secret"
+		google_settings.save()
+
 		# Create "Test Global Calendar"
 		if not frappe.db.exists("Google Calendar", "Test Global Calendar"):
 			frappe.get_doc({
