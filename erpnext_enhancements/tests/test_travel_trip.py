@@ -11,8 +11,15 @@ class TestTravelTrip(FrappeTestCase):
 		# Fix potential issue where Expense Claim Type is incorrectly assigned to Core module
 		if frappe.db.exists("DocType", "Expense Claim Type"):
 			if frappe.db.get_value("DocType", "Expense Claim Type", "module") == "Core":
-				frappe.db.set_value("DocType", "Expense Claim Type", "custom", 1)
-				frappe.clear_cache(doctype="Expense Claim Type")
+				# Use SQL to forcibly update without hooks and ensure it persists in transaction
+				frappe.db.sql("""
+					UPDATE `tabDocType`
+					SET custom=1, module='Enhancements Core'
+					WHERE name='Expense Claim Type'
+				""")
+
+				# Clear global cache to ensure fresh fetch of DocType metadata
+				frappe.clear_cache()
 
 				# Clear the controller cache to force reloading the DocType with custom=1
 				from frappe.model.base_document import site_controllers
