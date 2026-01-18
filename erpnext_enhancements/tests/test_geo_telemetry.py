@@ -1,114 +1,80 @@
-import sys
-from unittest.mock import MagicMock
-
-# MOCK FRAPPE BEFORE IMPORTING MODULE
-mock_frappe = MagicMock()
-# Configure whitelist decorator to pass through the function
-def passthrough(func=None):
-    if func:
-        return func
-    return lambda f: f
-
-mock_frappe.whitelist.side_effect = passthrough
-
-sys.modules["frappe"] = mock_frappe
-sys.modules["frappe.utils"] = MagicMock()
-sys.modules["frappe.model.document"] = MagicMock()
-
-import unittest
+import frappe
+from frappe.tests.utils import FrappeTestCase
 from unittest.mock import patch
-import importlib
+from erpnext_enhancements.api import time_kiosk
 
-# Now import the module under test
-import erpnext_enhancements.api.time_kiosk
+class TestGeoTelemetry(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		self.employee = "EMP-TEST-GEO"
+		if not frappe.db.exists("Employee", self.employee):
+			emp = frappe.get_doc({
+				"doctype": "Employee",
+				"employee": self.employee,
+				"first_name": "Geo",
+				"last_name": "Tester",
+				"status": "Active",
+				"date_of_joining": "2020-01-01"
+			})
+			emp.flags.ignore_mandatory = True
+			emp.insert()
 
-class TestGeoTelemetry(unittest.TestCase):
+	def tearDown(self):
+		frappe.db.delete("Time Kiosk Log", {"employee": self.employee})
+		super().tearDown()
 
-    def setUp(self):
-        # Reload the module to ensure it binds to the current mock_frappe (essential when running multiple test files)
-        importlib.reload(erpnext_enhancements.api.time_kiosk)
-        self.time_kiosk = erpnext_enhancements.api.time_kiosk
+	def test_log_geolocation_success(self):
+		result = time_kiosk.log_geolocation(
+			employee=self.employee,
+			latitude=37.7749,
+			longitude=-122.4194,
+			device_agent="TestAgent/1.0",
+			log_status="Success",
+			timestamp="2023-10-27 10:00:00"
+		)
 
-        # Reset mock
-        mock_frappe.reset_mock()
-        # Explicitly clear side_effects of critical methods
-        mock_frappe.get_doc.side_effect = None
-        mock_frappe.get_doc.return_value = MagicMock()
-        mock_frappe.throw.side_effect = None
+		self.assertEqual(result['status'], 'success')
 
-        mock_frappe.session = MagicMock()
-        mock_frappe.session.user = "administrator"
-        mock_frappe.whitelist.side_effect = passthrough
+		# Verify db insertion
+		logs = frappe.get_all("Time Kiosk Log", filters={"employee": self.employee}, fields=["latitude", "longitude"])
+		self.assertTrue(len(logs) > 0)
+		self.assertEqual(logs[0].latitude, 37.7749)
 
-    def test_log_geolocation_success(self):
-        # Setup mock return for get_doc
-        mock_doc = MagicMock()
-        mock_frappe.get_doc.return_value = mock_doc
-        # Ensure side_effect is None
-        mock_frappe.get_doc.side_effect = None
+	def test_log_geolocation_missing_employee(self):
+		# Pass None as employee
+		result = time_kiosk.log_geolocation(
+			employee=None,
+			latitude=0,
+			longitude=0,
+			device_agent="Test",
+			log_status="Error",
+			timestamp="2023-10-27 10:00:00"
+		)
 
-        # Execute
-        result = self.time_kiosk.log_geolocation(
-            employee="EMP-001",
-            latitude=37.7749,
-            longitude=-122.4194,
-            device_agent="TestAgent/1.0",
-            log_status="Success",
-            timestamp="2023-10-27 10:00:00"
-        )
+		self.assertEqual(result['status'], 'error')
+		self.assertIn("Employee ID is required", result['message'])
 
-        # DEBUG: Print result if error
-        if result.get('status') == 'error':
-            print(f"DEBUG ERROR: {result.get('message')}")
+	def test_log_geolocation_db_error(self):
+		# We patch frappe.get_doc to raise an exception ONLY when creating "Time Kiosk Log"
+		# This avoids breaking log_error which might use get_doc
 
-        # Verify
-        self.assertEqual(result['status'], 'success')
+		original_get_doc = frappe.get_doc
 
-        # Check get_doc arguments
-        mock_frappe.get_doc.assert_called_once()
-        args = mock_frappe.get_doc.call_args[0][0]
-        self.assertEqual(args['doctype'], 'Time Kiosk Log')
-        self.assertEqual(args['employee'], 'EMP-001')
-        self.assertEqual(args['latitude'], 37.7749)
-        self.assertEqual(args['log_status'], 'Success')
+		def side_effect(*args, **kwargs):
+			# check if first arg is dict and has doctype "Time Kiosk Log"
+			if args and isinstance(args[0], dict) and args[0].get('doctype') == 'Time Kiosk Log':
+				raise Exception("DB Error")
+			return original_get_doc(*args, **kwargs)
 
-        # Check insert called
-        mock_doc.insert.assert_called_once_with(ignore_permissions=True)
+		with patch('frappe.get_doc', side_effect=side_effect):
+			result = time_kiosk.log_geolocation(
+				employee=self.employee,
+				latitude=0,
+				longitude=0,
+				device_agent="Test",
+				log_status="Success",
+				timestamp="2023-10-27 10:00:00"
+			)
 
-    def test_log_geolocation_missing_employee(self):
-        # Mock throw to raise exception (simulate Frappe behavior)
-        mock_frappe.throw.side_effect = Exception("Employee ID is required")
-
-        # Execute
-        result = self.time_kiosk.log_geolocation(
-            employee=None,
-            latitude=0,
-            longitude=0,
-            device_agent="Test",
-            log_status="Error",
-            timestamp="2023-10-27 10:00:00"
-        )
-
-        # Verify
-        self.assertEqual(result['status'], 'error')
-        self.assertIn("Employee ID is required", result['message'])
-
-    def test_log_geolocation_db_error(self):
-        # Mock get_doc to raise DB error
-        mock_frappe.get_doc.side_effect = Exception("DB Error")
-
-        result = self.time_kiosk.log_geolocation(
-            employee="EMP-001",
-            latitude=0,
-            longitude=0,
-            device_agent="Test",
-            log_status="Success",
-            timestamp="2023-10-27 10:00:00"
-        )
-
-        self.assertEqual(result['status'], 'error')
-        self.assertIn("DB Error", result['message'])
-        mock_frappe.log_error.assert_called()
-
-if __name__ == '__main__':
-    unittest.main()
+		self.assertEqual(result['status'], 'error')
+		self.assertIn("DB Error", result['message'])

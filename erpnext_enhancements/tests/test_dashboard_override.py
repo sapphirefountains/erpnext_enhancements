@@ -1,13 +1,4 @@
-import sys
 import unittest
-from unittest.mock import MagicMock
-
-# Mock frappe module
-frappe = MagicMock()
-sys.modules["frappe"] = frappe
-from frappe import _
-
-# Import the module to test
 from erpnext_enhancements.project_enhancements import get_dashboard_data
 
 
