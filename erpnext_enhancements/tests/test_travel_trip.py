@@ -8,6 +8,11 @@ class TestTravelTrip(FrappeTestCase):
 		self.create_dependencies()
 
 	def create_dependencies(self):
+		# Fix potential issue where Expense Claim Type is incorrectly assigned to Core module
+		if frappe.db.exists("DocType", "Expense Claim Type"):
+			if frappe.db.get_value("DocType", "Expense Claim Type", "module") == "Core":
+				frappe.db.set_value("DocType", "Expense Claim Type", "custom", 1)
+
 		# Create Expense Claim Types if they don't exist
 		if not frappe.db.exists("Expense Claim Type", "Air Travel"):
 			frappe.get_doc({
