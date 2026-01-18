@@ -9,6 +9,16 @@ class TestTimeKioskStatus(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Create Company if not exists
+		self.company_name = "_Test Company_"
+		if not frappe.db.exists("Company", self.company_name):
+			frappe.get_doc({
+				"doctype": "Company",
+				"company_name": self.company_name,
+				"default_currency": "USD",
+				"country": "United States"
+			}).insert()
+
 		# Create an Employee linked to the current user (Administrator) if not exists
 		self.employee = "HR-EMP-KIOSK-STATUS"
 		if not frappe.db.exists("Employee", self.employee):
@@ -17,7 +27,7 @@ class TestTimeKioskStatus(FrappeTestCase):
 				"employee": self.employee,
 				"first_name": "KioskStatus",
 				"last_name": "User",
-				"company": frappe.defaults.get_user_default("Company") or "Test Company",
+				"company": self.company_name,
 				"status": "Active",
 				"date_of_joining": "2020-01-01",
 				"user_id": frappe.session.user
