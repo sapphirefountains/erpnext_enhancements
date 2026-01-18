@@ -6,9 +6,27 @@ from erpnext_enhancements.project_enhancements import get_procurement_status
 
 class TestProcurementStatus(FrappeTestCase):
 	def setUp(self):
+		# Ensure Company exists
+		self.company = "_Test Company_"
+		if not frappe.db.exists("Company", self.company):
+			frappe.get_doc(
+				{
+					"doctype": "Company",
+					"company_name": self.company,
+					"abbr": "TC",
+					"default_currency": "USD",
+					"country": "United States",
+				}
+			).insert()
+
 		# Create a Project
 		self.project = frappe.get_doc(
-			{"doctype": "Project", "project_name": "Test Procurement Project", "status": "Open"}
+			{
+				"doctype": "Project",
+				"project_name": "Test Procurement Project",
+				"status": "Open",
+				"company": self.company,
+			}
 		).insert()
 
 		# Create an Item
@@ -34,9 +52,6 @@ class TestProcurementStatus(FrappeTestCase):
 					"supplier_group": "All Supplier Groups",
 				}
 			).insert()
-
-		# Get Company for Warehouses (default usually exists)
-		self.company = frappe.db.get_single_value("Global Defaults", "default_company") or "_Test Company"
 
 	def tearDown(self):
 		frappe.db.rollback()
