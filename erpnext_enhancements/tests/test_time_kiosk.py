@@ -10,6 +10,13 @@ class TestTimeKiosk(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Ensure Warehouse Type 'Transit' exists
+		if not frappe.db.exists("Warehouse Type", "Transit"):
+			frappe.get_doc({
+				"doctype": "Warehouse Type",
+				"name": "Transit"
+			}).insert()
+
 		# Ensure Company exists
 		self.company = frappe.defaults.get_user_default("Company") or "_Test Company_"
 		if not frappe.db.exists("Company", self.company):
@@ -39,7 +46,7 @@ class TestTimeKiosk(FrappeTestCase):
 				"employee": self.employee,
 				"first_name": "Kiosk",
 				"last_name": "User",
-				"company": frappe.defaults.get_user_default("Company") or "Test Company",
+				"company": self.company,
 				"status": "Active",
 				"date_of_joining": "2020-01-01"
 			})
