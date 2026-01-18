@@ -29,14 +29,18 @@ class TestTimeKiosk(FrappeTestCase):
 			}).insert()
 
 		# Ensure Project exists
-		self.project = "Test Project"
-		if not frappe.db.exists("Project", self.project):
-			frappe.get_doc({
+		project_name = "Test Project"
+		existing_project = frappe.db.get_value("Project", {"project_name": project_name}, "name")
+		if existing_project:
+			self.project = existing_project
+		else:
+			p = frappe.get_doc({
 				"doctype": "Project",
-				"project_name": self.project,
+				"project_name": project_name,
 				"is_active": "Yes",
 				"company": self.company
 			}).insert()
+			self.project = p.name
 
 		# Ensure Employee exists
 		self.employee = "HR-EMP-KIOSK"
