@@ -57,6 +57,11 @@ jobs:
         run: |
           pip install frappe-bench==5.28.0
 
+      - name: Configure Yarn
+        run: |
+          yarn config set registry https://registry.npmjs.org/
+          yarn config set network-timeout 300000
+
       - name: Initialize Bench
         run: |
           bench init --skip-redis-config-generation --skip-assets --python python3.14 frappe-bench --version version-16
