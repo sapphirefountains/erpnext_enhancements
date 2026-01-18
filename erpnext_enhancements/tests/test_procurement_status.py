@@ -90,6 +90,7 @@ class TestProcurementStatus(FrappeTestCase):
 				"doctype": "Material Request",
 				"material_request_type": "Material Transfer",
 				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
@@ -114,6 +115,7 @@ class TestProcurementStatus(FrappeTestCase):
 			{
 				"doctype": "Stock Entry",
 				"stock_entry_type": "Material Transfer",
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
@@ -151,6 +153,7 @@ class TestProcurementStatus(FrappeTestCase):
 				"doctype": "Purchase Order",
 				"supplier": "Test Supplier Proc",
 				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
