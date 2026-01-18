@@ -62,8 +62,8 @@ class TestTimeKiosk(FrappeTestCase):
 		result = time_kiosk.log_time(
 			project=self.project,
 			action="Start",
-			latitude="10.0",
-			longitude="20.0",
+			lat="10.0",
+			lng="20.0",
 			description="Integration Test Start",
 			task=None
 		)
