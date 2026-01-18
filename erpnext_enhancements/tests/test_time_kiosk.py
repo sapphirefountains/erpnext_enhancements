@@ -2,6 +2,7 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now_datetime, add_to_date
+from datetime import timedelta
 import erpnext_enhancements.api.time_kiosk as time_kiosk
 
 class TestTimeKiosk(FrappeTestCase):
@@ -41,6 +42,13 @@ class TestTimeKiosk(FrappeTestCase):
 				"company": self.company
 			}).insert()
 			self.project = p.name
+
+		# Ensure Activity Type exists
+		if not frappe.db.exists("Activity Type", "Execution"):
+			frappe.get_doc({
+				"doctype": "Activity Type",
+				"activity_type": "Execution"
+			}).insert()
 
 		# Ensure Employee exists
 		self.employee = "HR-EMP-KIOSK"
@@ -103,7 +111,11 @@ class TestTimeKiosk(FrappeTestCase):
 			time_kiosk.log_time(project=self.project, action="Start")
 
 		# 3. Stop Job
-		# We need to simulate some time passing or just trust the system updates end_time
+		# Simulate work duration to ensure valid Timesheet (1 hour duration)
+		interval = frappe.get_last_doc("Job Interval", {"employee": self.employee})
+		new_start = add_to_date(interval.start_time, hours=-1)
+		frappe.db.set_value("Job Interval", interval.name, "start_time", new_start)
+
 		result = time_kiosk.log_time(action="Stop")
 
 		self.assertEqual(result["status"], "success")
@@ -112,6 +124,7 @@ class TestTimeKiosk(FrappeTestCase):
 		interval.reload()
 		self.assertEqual(interval.status, "Completed")
 		self.assertIsNotNone(interval.end_time)
+		self.assertEqual(interval.sync_status, "Synced")
 
 		# Verify Timesheet Created/Synced
 		# The logic aggregates logs or appends to timesheet.
