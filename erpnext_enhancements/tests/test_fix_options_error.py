@@ -7,7 +7,7 @@ from erpnext_enhancements.calendar_sync import sync_to_google_calendar
 
 
 class TestFixOptionsError(unittest.TestCase):
-	@patch("erpnext_enhancements.calendar_sync.get_google_calendar_object")
+	@patch("frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object")
 	@patch("erpnext_enhancements.calendar_sync.frappe.db.get_all")
 	@patch("erpnext_enhancements.calendar_sync.frappe.log_error")
 	def test_missing_field_save_prevention(self, mock_log_error, mock_get_all, mock_get_gc_obj):
@@ -49,7 +49,7 @@ class TestFixOptionsError(unittest.TestCase):
 			title="Google Calendar Sync Error",
 		)
 
-	@patch("erpnext_enhancements.calendar_sync.get_google_calendar_object")
+	@patch("frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object")
 	@patch("erpnext_enhancements.calendar_sync.frappe.db.get_all")
 	@patch("erpnext_enhancements.calendar_sync.frappe.log_error")
 	def test_attribute_error_catch(self, mock_log_error, mock_get_all, mock_get_gc_obj):
