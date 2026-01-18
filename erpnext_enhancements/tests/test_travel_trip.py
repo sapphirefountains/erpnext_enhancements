@@ -25,9 +25,9 @@ class TestTravelTrip(FrappeTestCase):
 			frappe.clear_cache()
 
 			# Clear module cache to prevent using stale controller paths
-			key = (frappe.local.site, "Expense Claim Type", "", "")
-			if key in doctype_python_modules:
-				del doctype_python_modules[key]
+			keys_to_remove = [k for k in doctype_python_modules if k[1] == "Expense Claim Type"]
+			for k in keys_to_remove:
+				del doctype_python_modules[k]
 
 			# Clear site_controllers if possible (accessed via sys.modules)
 			if 'frappe.model.base_document' in sys.modules:
