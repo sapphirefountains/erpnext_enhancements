@@ -160,5 +160,27 @@
   "translatable": 0,
   "unique": 0,
   "width": null
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Material Request-custom_project",
+  "fieldname": "custom_project",
+  "fieldtype": "Link",
+  "label": "Project",
+  "options": "Project",
+  "insert_after": "transaction_date",
+  "dt": "Material Request",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Request for Quotation-custom_project",
+  "fieldname": "custom_project",
+  "fieldtype": "Link",
+  "label": "Project",
+  "options": "Project",
+  "insert_after": "transaction_date",
+  "dt": "Request for Quotation",
+  "module": "ERPNext Enhancements"
  }
 ]
