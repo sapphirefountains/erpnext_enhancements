@@ -175,7 +175,9 @@ class TestCalendarSync(FrappeTestCase):
 		# Trigger delete (e.g. Cancelled)
 		task.status = "Cancelled"
 		# We manually call delete logic because status change usually triggers it inside `run_google_calendar_sync`
+		frappe.flags.sync_source = "background_worker"
 		calendar_sync.delete_event_from_google(task, "on_update")
+		frappe.flags.sync_source = None
 
 		# Assert delete called
 		mock_service.events().delete.assert_called_with(calendarId="global_cal_id", eventId="existing_event_id")
