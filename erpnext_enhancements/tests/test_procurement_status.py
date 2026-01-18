@@ -162,6 +162,7 @@ class TestProcurementStatus(FrappeTestCase):
 						"schedule_date": frappe.utils.nowdate(),
 						"project": self.project.name,
 						"material_request": None,  # Explicitly None
+						"warehouse": self.warehouse,
 					}
 				],
 			}
