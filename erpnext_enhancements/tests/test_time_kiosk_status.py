@@ -9,6 +9,14 @@ class TestTimeKioskStatus(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Create Warehouse Type "Transit" if not exists
+		if not frappe.db.exists("Warehouse Type", "Transit"):
+			frappe.get_doc({
+				"doctype": "Warehouse Type",
+				"name": "Transit",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
+
 		# Create Company if not exists
 		self.company_name = "_Test Company_"
 		if not frappe.db.exists("Company", self.company_name):
