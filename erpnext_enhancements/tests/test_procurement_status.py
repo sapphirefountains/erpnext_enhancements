@@ -29,6 +29,16 @@ class TestProcurementStatus(FrappeTestCase):
 			}
 		).insert()
 
+		# Ensure Item Group exists
+		if not frappe.db.exists("Item Group", "All Item Groups"):
+			frappe.get_doc(
+				{"doctype": "Item Group", "item_group_name": "All Item Groups", "is_group": 1}
+			).insert()
+
+		# Ensure UOM exists
+		if not frappe.db.exists("UOM", "Nos"):
+			frappe.get_doc({"doctype": "UOM", "uom_name": "Nos"}).insert()
+
 		# Create an Item
 		if not frappe.db.exists("Item", "Test Item Proc"):
 			self.item = frappe.get_doc(
@@ -43,6 +53,12 @@ class TestProcurementStatus(FrappeTestCase):
 		else:
 			self.item = frappe.get_doc("Item", "Test Item Proc")
 
+		# Ensure Supplier Group exists
+		if not frappe.db.exists("Supplier Group", "All Supplier Groups"):
+			frappe.get_doc(
+				{"doctype": "Supplier Group", "supplier_group_name": "All Supplier Groups"}
+			).insert()
+
 		# Create a Supplier
 		if not frappe.db.exists("Supplier", "Test Supplier Proc"):
 			frappe.get_doc(
@@ -50,6 +66,17 @@ class TestProcurementStatus(FrappeTestCase):
 					"doctype": "Supplier",
 					"supplier_name": "Test Supplier Proc",
 					"supplier_group": "All Supplier Groups",
+				}
+			).insert()
+
+		# Ensure Warehouse exists
+		self.warehouse = f"Stores - {frappe.db.get_value('Company', self.company, 'abbr')}"
+		if not frappe.db.exists("Warehouse", self.warehouse):
+			frappe.get_doc(
+				{
+					"doctype": "Warehouse",
+					"warehouse_name": "Stores",
+					"company": self.company,
 				}
 			).insert()
 
