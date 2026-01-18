@@ -82,6 +82,16 @@ class TestProcurementStatus(FrappeTestCase):
 				}
 			).insert()
 
+		# Ensure Stock Entry Type exists
+		if not frappe.db.exists("Stock Entry Type", "Material Transfer"):
+			frappe.get_doc(
+				{
+					"doctype": "Stock Entry Type",
+					"name": "Material Transfer",
+					"purpose": "Material Transfer"
+				}
+			).insert()
+
 		# Ensure Custom Fields exist (needed for the query in get_procurement_status)
 		if not frappe.db.exists("Custom Field", "Material Request-custom_project"):
 			frappe.get_doc(
