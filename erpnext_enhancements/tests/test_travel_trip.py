@@ -20,28 +20,9 @@ class TestTravelTrip(FrappeTestCase):
 			# Clear global cache to ensure fresh fetch of DocType metadata
 			frappe.clear_cache()
 
-			# Clear the controller cache to force reloading the DocType with custom=1
-			from frappe.model.base_document import site_controllers
-			site_controllers.pop("Expense Claim Type", None)
-
 			# Also clear local meta cache to ensure get_meta returns fresh data
 			if hasattr(frappe.local, "meta_cache") and "Expense Claim Type" in frappe.local.meta_cache:
 				del frappe.local.meta_cache["Expense Claim Type"]
-
-		# Manually register the controller to ensure it is found even if module path is incorrect in DB
-		try:
-			from erpnext_enhancements.enhancements_core.doctype.expense_claim_type.expense_claim_type import ExpenseClaimType
-			from frappe.model.base_document import site_controllers
-			site_controllers["Expense Claim Type"] = ExpenseClaimType
-
-			def _cleanup_controller():
-				if "Expense Claim Type" in site_controllers:
-					del site_controllers["Expense Claim Type"]
-			self.addCleanup(_cleanup_controller)
-		except ImportError as e:
-			print(f"DEBUG: Failed to import ExpenseClaimType: {e}")
-			# Do not suppress, let it fail so we know why
-			raise e
 
 		# Create Expense Claim Types if they don't exist
 		if not frappe.db.exists("Expense Claim Type", "Air Travel"):
