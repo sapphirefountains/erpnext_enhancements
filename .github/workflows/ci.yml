@@ -87,7 +87,8 @@ jobs:
           # Install the local app in editable mode and register it
           # IMPORTANT: Must use the pip inside the bench virtual environment
           ./env/bin/pip install -e apps/erpnext_enhancements
-          
+          ./env/bin/pip install -r apps/erpnext_enhancements/testing.txt
+
           echo "" >> sites/apps.txt
           echo "erpnext_enhancements" >> sites/apps.txt
 
