@@ -128,6 +128,7 @@ class TestProcurementStatus(FrappeTestCase):
 						"qty": 5,
 						"schedule_date": frappe.utils.nowdate(),
 						"project": self.project.name,
+						"warehouse": self.warehouse,
 					}
 				],
 			}
