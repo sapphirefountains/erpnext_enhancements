@@ -20,6 +20,42 @@ class TestProcurementStatus(FrappeTestCase):
 				}
 			).insert()
 
+		# Ensure Account Exists for Stock Adjustment
+		company_doc = frappe.get_doc("Company", self.company)
+		abbr = company_doc.abbr
+		expenses_account = f"Expenses - {abbr}"
+		stock_adj_account = f"Stock Adjustment - {abbr}"
+
+		if not frappe.db.exists("Account", expenses_account):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": "Expenses",
+					"company": self.company,
+					"is_group": 1,
+					"root_type": "Expense",
+					"report_type": "Profit and Loss",
+				}
+			).insert()
+
+		if not frappe.db.exists("Account", stock_adj_account):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": "Stock Adjustment",
+					"company": self.company,
+					"parent_account": expenses_account,
+					"is_group": 0,
+					"root_type": "Expense",
+					"report_type": "Profit and Loss",
+				}
+			).insert()
+
+		# Update company default
+		if not company_doc.stock_adjustment_account:
+			company_doc.stock_adjustment_account = stock_adj_account
+			company_doc.save()
+
 		# Create a Project
 		self.project_name = f"Test Procurement Project {random_string(5)}"
 		self.project = frappe.get_doc(
