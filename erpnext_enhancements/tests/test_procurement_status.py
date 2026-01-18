@@ -80,6 +80,35 @@ class TestProcurementStatus(FrappeTestCase):
 				}
 			).insert()
 
+		# Ensure Custom Fields exist (needed for the query in get_procurement_status)
+		if not frappe.db.exists("Custom Field", "Material Request-custom_project"):
+			frappe.get_doc(
+				{
+					"doctype": "Custom Field",
+					"name": "Material Request-custom_project",
+					"dt": "Material Request",
+					"fieldname": "custom_project",
+					"fieldtype": "Link",
+					"options": "Project",
+					"label": "Project",
+					"insert_after": "transaction_date",
+				}
+			).insert()
+
+		if not frappe.db.exists("Custom Field", "Request for Quotation-custom_project"):
+			frappe.get_doc(
+				{
+					"doctype": "Custom Field",
+					"name": "Request for Quotation-custom_project",
+					"dt": "Request for Quotation",
+					"fieldname": "custom_project",
+					"fieldtype": "Link",
+					"options": "Project",
+					"label": "Project",
+					"insert_after": "transaction_date",
+				}
+			).insert()
+
 	def tearDown(self):
 		frappe.db.rollback()
 
