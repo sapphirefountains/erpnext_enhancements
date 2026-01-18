@@ -13,6 +13,20 @@ class TestTritonIntegration(FrappeTestCase):
 		frappe.flags.sync_source = None
 
 		# Define test data
+		if not frappe.db.exists("Customer Group", "All Customer Groups"):
+			frappe.get_doc({
+				"doctype": "Customer Group",
+				"customer_group_name": "All Customer Groups",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
+
+		if not frappe.db.exists("Territory", "All Territories"):
+			frappe.get_doc({
+				"doctype": "Territory",
+				"territory_name": "All Territories",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
+
 		self.test_doc = frappe.get_doc({
 			"doctype": "Customer",
 			"customer_name": "Triton Test Customer",
