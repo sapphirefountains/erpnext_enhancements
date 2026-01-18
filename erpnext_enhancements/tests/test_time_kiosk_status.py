@@ -28,23 +28,31 @@ class TestTimeKioskStatus(FrappeTestCase):
 			}).insert()
 
 		# Create an Employee linked to the current user (Administrator) if not exists
-		self.employee = "HR-EMP-KIOSK-STATUS"
-		if not frappe.db.exists("Employee", self.employee):
-			emp = frappe.get_doc({
-				"doctype": "Employee",
-				"employee": self.employee,
-				"first_name": "KioskStatus",
-				"last_name": "User",
-				"company": self.company_name,
-				"status": "Active",
-				"date_of_joining": "2020-01-01",
-				"user_id": frappe.session.user
-			})
-			emp.flags.ignore_mandatory = True
-			emp.insert()
+		# First check if an employee is already linked to the current user
+		# This ensures we use the same employee that get_current_status will find
+		existing_employee = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
+
+		if existing_employee:
+			self.employee = existing_employee
 		else:
-			# Ensure it is linked to current user
-			frappe.db.set_value("Employee", self.employee, "user_id", frappe.session.user)
+			self.employee = "HR-EMP-KIOSK-STATUS"
+			if not frappe.db.exists("Employee", self.employee):
+				emp = frappe.get_doc({
+					"doctype": "Employee",
+					"employee": self.employee,
+					"first_name": "KioskStatus",
+					"last_name": "User",
+					"company": self.company_name,
+					"status": "Active",
+					"date_of_joining": "2020-01-01",
+					"user_id": frappe.session.user
+				})
+				emp.flags.ignore_mandatory = True
+				emp.insert()
+				self.employee = emp.name
+			else:
+				# Ensure it is linked to current user
+				frappe.db.set_value("Employee", self.employee, "user_id", frappe.session.user)
 
 	def tearDown(self):
 		# Clean up

@@ -52,9 +52,9 @@ class TestProjectMerge(unittest.TestCase):
 		).insert(ignore_permissions=True)
 
 	def tearDown(self):
+		frappe.delete_doc("Task", self.task.name, force=True)
 		frappe.delete_doc("Project", self.source_project.name, force=True)
 		frappe.delete_doc("Project", self.target_project.name, force=True)
-		frappe.delete_doc("Task", self.task.name, force=True)
 
 	def test_merge_projects(self):
 		print(f"DEBUG: Source: {self.source_project.name}, Target: {self.target_project.name}")
