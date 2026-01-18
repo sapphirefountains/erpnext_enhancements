@@ -93,6 +93,16 @@ class TestCalendarSync(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Create "Test Global Calendar"
+		if not frappe.db.exists("Google Calendar", "Test Global Calendar"):
+			frappe.get_doc({
+				"doctype": "Google Calendar",
+				"calendar_name": "Test Global Calendar",
+				"user": "Administrator",
+				"google_calendar_id": "global_cal_id",
+				"enable": 1
+			}).insert()
+
 		# Create Settings
 		if not frappe.db.exists("ERPNext Enhancements Settings"):
 			self.settings = frappe.get_doc({"doctype": "ERPNext Enhancements Settings"})
@@ -106,16 +116,6 @@ class TestCalendarSync(FrappeTestCase):
 			"google_calendar": "Test Global Calendar"
 		})
 		self.settings.save()
-
-		# Create "Test Global Calendar"
-		if not frappe.db.exists("Google Calendar", "Test Global Calendar"):
-			frappe.get_doc({
-				"doctype": "Google Calendar",
-				"calendar_name": "Test Global Calendar",
-				"user": "Administrator",
-				"google_calendar_id": "global_cal_id",
-				"enable": 1
-			}).insert()
 
 	@patch('erpnext_enhancements.calendar_sync.get_google_calendar_object')
 	def test_sync_to_google_calendar(self, mock_get_gc_object):
