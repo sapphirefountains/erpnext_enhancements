@@ -205,7 +205,9 @@ fixtures = [
                 "ToDo-custom_calendar_datetime_end",
                 "ToDo-google_calendar_events",
                 "Task-google_calendar_events",
-                "Event-google_calendar_events"
+                "Event-google_calendar_events",
+                "Material Request-custom_project",
+                "Request for Quotation-custom_project"
             ]]
         ]
     },
