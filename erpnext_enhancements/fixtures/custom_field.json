@@ -52,18 +52,6 @@
  },
  {
   "doctype": "Custom Field",
-  "name": "Project-custom_project_notes",
-  "fieldname": "custom_project_notes",
-  "fieldtype": "Table",
-  "label": "Notes",
-  "options": "Project Note",
-  "insert_after": "custom_comments_field",
-  "dt": "Project",
-  "module": "ERPNext Enhancements",
-  "hidden": 1
- },
- {
-  "doctype": "Custom Field",
   "name": "ToDo-custom_calendar_datetime_start",
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
