@@ -44,6 +44,13 @@ $(document).on("app_ready", function () {
 			return ret;
 		};
 	}
+
+    // Setup Home Buttons
+    try {
+        setup_home_buttons();
+    } catch (e) {
+        console.error("Error setting up home buttons:", e);
+    }
 });
 
 // ==========================================
@@ -258,3 +265,70 @@ document.addEventListener(
 	},
 	true
 ); // Capture phase
+
+// ==========================================
+// Home Button Logic
+// ==========================================
+
+function setup_home_buttons() {
+    // 1. Navbar Button
+    // Check if it exists to avoid duplicates
+    if ($('.navbar-home-link').length === 0) {
+        const home_html = `
+            <li class="nav-item navbar-home-link">
+                <a class="nav-link" onclick="frappe.set_route('home')" title="Home" style="cursor: pointer;">
+                    <span class="home-icon">
+                        <svg class="icon icon-md" style="width: 16px; height: 16px; vertical-align: middle;">
+                            <use href="#icon-home"></use>
+                        </svg>
+                    </span>
+                    <span class="hidden-xs" style="margin-left: 5px;">Home</span>
+                </a>
+            </li>
+        `;
+        // Append to the first navbar-nav (left side)
+        $('.navbar-nav').first().append(home_html);
+    }
+
+    // 2. Desk Grid Button
+    // Listen to route changes to re-inject if needed
+    if (frappe.router) {
+        frappe.router.on('change', () => {
+            render_desk_home_button();
+        });
+    }
+
+    // Initial check
+    render_desk_home_button();
+}
+
+function render_desk_home_button() {
+    // Only on Workspaces view (Desk) or if route is empty (root)
+    const route = frappe.get_route();
+    // Broad check for desk/workspace
+    // In v13/v14, '/desk' usually redirects to '/app/workspace_name' or '/app/home'
+    // But the user says they are at '/desk'
+
+    // We will target the .layout-main-section which contains the workspace widgets
+
+    setTimeout(() => {
+        if ($('.desk-home-button-wrapper').length > 0) return;
+
+        // Try to find the container.
+        const $container = $('.layout-main-section');
+
+        if ($container.length && $container.is(':visible')) {
+             const btn_html = `
+                <div class="desk-home-button-wrapper" style="margin-bottom: 20px; padding-left: 15px;">
+                    <button class="btn btn-default" onclick="frappe.set_route('home')" style="display: inline-flex; align-items: center; gap: 8px; font-size: 14px; padding: 8px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                        <svg class="icon icon-md" style="width: 16px; height: 16px;">
+                            <use href="#icon-home"></use>
+                        </svg>
+                        Go to Home
+                    </button>
+                </div>
+            `;
+            $container.prepend(btn_html);
+        }
+    }, 1000); // Delay to ensure DOM is ready
+}
