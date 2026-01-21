@@ -7,137 +7,164 @@ frappe.ui.form.on("Project", {
 	},
 
 	render_comments_section: function (frm) {
-		if (!frm.fields_dict["custom_comments_field"]) {
-			console.warn("custom_comments_field not found. Skipping Comments App render.");
-			return;
-		}
+		try {
+			if (typeof window.Vue === 'undefined') {
+				console.error("Vue is not defined. Please check if vue.global.js is loaded.");
+				return;
+			}
 
-		const comments_wrapper = frm.fields_dict["custom_comments_field"].wrapper;
-		$(comments_wrapper).html('<div id="project-comments-app"></div>');
+			if (!frm.fields_dict["custom_comments_field"]) {
+				console.warn("custom_comments_field not found. Skipping Comments App render.");
+				return;
+			}
 
-		const app = window.Vue.createApp({
-			data() {
-				return {
-					comments: [],
-					isLoading: true,
-					frappe: frappe
-				};
-			},
-			created() {
-				this.fetchComments();
-			},
-			methods: {
-				fetchComments() {
-					this.isLoading = true;
-					frappe.call({
-						method: "erpnext_enhancements.project_enhancements.get_project_comments",
-						args: { project_name: frm.doc.name },
-						callback: (r) => {
-							const comments = r.message || [];
-							this.comments = comments;
-							this.isLoading = false;
-						},
-						error: (r) => {
-							this.isLoading = false;
-							console.error("Failed to fetch comments", r);
-							frappe.msgprint(__("Failed to load comments."));
+			const comments_wrapper = frm.fields_dict["custom_comments_field"].wrapper;
+			$(comments_wrapper).html('<div id="project-comments-app"></div>');
+
+			const app = window.Vue.createApp({
+				data() {
+					return {
+						comments: [],
+						isLoading: true,
+						frappe: frappe
+					};
+				},
+				created() {
+					this.fetchComments();
+				},
+				methods: {
+					get_palette(name) {
+						if (frappe.get_palette) {
+							return frappe.get_palette(name);
 						}
-					});
-				},
-				showAddCommentDialog() {
-					let dialog = new frappe.ui.Dialog({
-						title: 'New Note',
-						fields: [
-							{
-								label: 'Note',
-								fieldname: 'comment_text',
-								fieldtype: 'Text Editor',
-								reqd: 1
-							}
-						],
-						primary_action_label: 'Submit',
-						primary_action: (values) => {
-							if (!values.comment_text.trim()) {
-								frappe.msgprint('Comment cannot be empty.');
-								return;
-							}
-							frappe.call({
-								method: "erpnext_enhancements.project_enhancements.add_project_comment",
-								args: {
-									project_name: frm.doc.name,
-									comment_text: values.comment_text,
-								},
-								callback: (r) => {
-									if (r.message) {
-										this.comments.unshift(r.message);
-										dialog.hide();
-									}
-								},
-							});
+						// Fallback implementation
+						const colors = [
+							'#ffc4c4', '#ffddc4', '#ffffc4', '#c4ffc4', '#c4ffff', '#c4c4ff', '#e8c4ff', '#ffc4e8',
+							'#e0e0e0', '#d0d0d0'
+						];
+						let hash = 0;
+						for (let i = 0; i < name.length; i++) {
+							hash = name.charCodeAt(i) + ((hash << 5) - hash);
 						}
-					});
-					dialog.show();
-				},
-				showEditCommentDialog(comment) {
-					let dialog = new frappe.ui.Dialog({
-						title: 'Edit Note',
-						fields: [
-							{
-								label: 'Note',
-								fieldname: 'comment_text',
-								fieldtype: 'Text Editor',
-								default: comment.content,
-								reqd: 1
-							}
-						],
-						primary_action_label: 'Save',
-						primary_action: (values) => {
-							if (!values.comment_text.trim()) {
-								frappe.msgprint('Comment cannot be empty.');
-								return;
-							}
-							frappe.call({
-								method: "erpnext_enhancements.project_enhancements.update_project_comment",
-								args: {
-									project_name: frm.doc.name,
-									comment_name: comment.name,
-									comment_text: values.comment_text,
-								},
-								callback: (r) => {
-									if (r.message && !r.message.error) {
-										const updatedComment = r.message;
-										const index = this.comments.findIndex(c => c.name === updatedComment.name);
-										if (index !== -1) {
-											this.comments.splice(index, 1, updatedComment);
-										}
-										dialog.hide();
-									} else {
-										frappe.msgprint('There was an error updating the comment.');
-									}
-								},
-							});
+						return colors[Math.abs(hash) % colors.length];
+					},
+					get_abbr(name) {
+						if (frappe.get_abbr) {
+							return frappe.get_abbr(name);
 						}
-					});
-					dialog.show();
-				},
-				formatDateTime(datetime) {
-					return frappe.datetime.str_to_user(datetime);
-				},
-				deleteComment(comment_name) {
-					frappe.confirm("Are you sure you want to delete this note?", () => {
+						return name.substring(0, 2);
+					},
+					fetchComments() {
+						this.isLoading = true;
 						frappe.call({
-							method: "erpnext_enhancements.project_enhancements.delete_project_comment",
-							args: { project_name: frm.doc.name, comment_name: comment_name },
+							method: "erpnext_enhancements.project_enhancements.get_project_comments",
+							args: { project_name: frm.doc.name },
 							callback: (r) => {
-								if (r.message && r.message.success) {
-									this.comments = this.comments.filter(c => c.name !== comment_name);
-								}
+								const comments = r.message || [];
+								this.comments = comments;
+								this.isLoading = false;
+							},
+							error: (r) => {
+								this.isLoading = false;
+								console.error("Failed to fetch comments", r);
+								frappe.msgprint(__("Failed to load comments."));
 							}
 						});
-					});
+					},
+					showAddCommentDialog() {
+						let dialog = new frappe.ui.Dialog({
+							title: 'New Note',
+							fields: [
+								{
+									label: 'Note',
+									fieldname: 'comment_text',
+									fieldtype: 'Text Editor',
+									reqd: 1
+								}
+							],
+							primary_action_label: 'Submit',
+							primary_action: (values) => {
+								if (!values.comment_text.trim()) {
+									frappe.msgprint('Comment cannot be empty.');
+									return;
+								}
+								frappe.call({
+									method: "erpnext_enhancements.project_enhancements.add_project_comment",
+									args: {
+										project_name: frm.doc.name,
+										comment_text: values.comment_text,
+									},
+									callback: (r) => {
+										if (r.message) {
+											this.comments.unshift(r.message);
+											dialog.hide();
+										}
+									},
+								});
+							}
+						});
+						dialog.show();
+					},
+					showEditCommentDialog(comment) {
+						let dialog = new frappe.ui.Dialog({
+							title: 'Edit Note',
+							fields: [
+								{
+									label: 'Note',
+									fieldname: 'comment_text',
+									fieldtype: 'Text Editor',
+									default: comment.content,
+									reqd: 1
+								}
+							],
+							primary_action_label: 'Save',
+							primary_action: (values) => {
+								if (!values.comment_text.trim()) {
+									frappe.msgprint('Comment cannot be empty.');
+									return;
+								}
+								frappe.call({
+									method: "erpnext_enhancements.project_enhancements.update_project_comment",
+									args: {
+										project_name: frm.doc.name,
+										comment_name: comment.name,
+										comment_text: values.comment_text,
+									},
+									callback: (r) => {
+										if (r.message && !r.message.error) {
+											const updatedComment = r.message;
+											const index = this.comments.findIndex(c => c.name === updatedComment.name);
+											if (index !== -1) {
+												this.comments.splice(index, 1, updatedComment);
+											}
+											dialog.hide();
+										} else {
+											frappe.msgprint('There was an error updating the comment.');
+										}
+									},
+								});
+							}
+						});
+						dialog.show();
+					},
+					formatDateTime(datetime) {
+						return frappe.datetime.str_to_user(datetime);
+					},
+					deleteComment(comment_name) {
+						frappe.confirm("Are you sure you want to delete this note?", () => {
+							frappe.call({
+								method: "erpnext_enhancements.project_enhancements.delete_project_comment",
+								args: { project_name: frm.doc.name, comment_name: comment_name },
+								callback: (r) => {
+									if (r.message && r.message.success) {
+										this.comments = this.comments.filter(c => c.name !== comment_name);
+									}
+								}
+							});
+						});
+					},
 				},
-			},
-			template: `
+				template: `
                 <div class="project-comments-container">
                     <div class="comments-header text-right mb-3" style="display: flex; justify-content: flex-end; padding-bottom: 10px;">
                         <button class="btn btn-default btn-sm" @click="showAddCommentDialog">
@@ -154,8 +181,8 @@ frappe.ui.form.on("Project", {
                                 <div class="d-flex align-items-center mb-2" style="display: flex; align-items: center; margin-bottom: 5px;">
                                     <span class="avatar avatar-medium mr-2" :title="comment.full_name" style="margin-right: 10px;">
                                         <img :src="comment.user_image" v-if="comment.user_image">
-                                        <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: frappe.get_palette(comment.full_name) }">
-                                            {{ frappe.get_abbr(comment.full_name) }}
+                                        <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: get_palette(comment.full_name) }">
+                                            {{ get_abbr(comment.full_name) }}
                                         </div>
                                     </span>
                                     <div class="font-weight-bold text-truncate" :title="comment.full_name" style="font-weight: 600;">{{ comment.full_name }}</div>
@@ -177,8 +204,11 @@ frappe.ui.form.on("Project", {
                     </div>
                 </div>
             `,
-		});
-		app.mount("#project-comments-app");
+			});
+			app.mount("#project-comments-app");
+		} catch (e) {
+			console.error("Error in render_comments_section:", e);
+		}
 	},
 
 	render_procurement_tracker: function (frm) {
