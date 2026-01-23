@@ -49,6 +49,7 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 doctype_js = {
     "Project": ["public/js/vue.global.js", "public/js/comments.js", "public/js/project_merge.js", "public/js/project_enhancements.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
+    "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
     "Material Request": "public/js/procurement_links.js"
@@ -205,7 +206,9 @@ fixtures = [
                 "Task-google_calendar_events",
                 "Event-google_calendar_events",
                 "Material Request-custom_project",
-                "Request for Quotation-custom_project"
+                "Request for Quotation-custom_project",
+                "Customer-custom_comments_tab",
+                "Customer-custom_comments_field"
             ]]
         ]
     },
