@@ -39,7 +39,11 @@ class TestTimeKiosk(FrappeTestCase):
 			p.project_name = project_name
 			p.company = self.company
 			p.status = "Active"
+			p.flags.ignore_validate = True
 			p.insert()
+			if p.status != "Active":
+				frappe.db.set_value("Project", p.name, "status", "Active")
+				p.reload()
 			self.project = p.name
 
 		# Ensure Activity Type exists
