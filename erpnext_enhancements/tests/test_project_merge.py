@@ -22,24 +22,18 @@ class TestProjectMerge(unittest.TestCase):
 			self.company = frappe.get_doc("Company", "_Test Company Merge")
 
 		# Create Source Project
-		self.source_project = frappe.get_doc(
-			{
-				"doctype": "Project",
-				"project_name": "Source Project Test",
-				"status": "Active",
-				"company": "_Test Company Merge",
-			}
-		).insert(ignore_permissions=True)
+		self.source_project = frappe.new_doc("Project")
+		self.source_project.project_name = "Source Project Test"
+		self.source_project.company = "_Test Company Merge"
+		self.source_project.status = "Active"
+		self.source_project.insert(ignore_permissions=True)
 
 		# Create Target Project
-		self.target_project = frappe.get_doc(
-			{
-				"doctype": "Project",
-				"project_name": "Target Project Test",
-				"status": "Active",
-				"company": "_Test Company Merge",
-			}
-		).insert(ignore_permissions=True)
+		self.target_project = frappe.new_doc("Project")
+		self.target_project.project_name = "Target Project Test"
+		self.target_project.company = "_Test Company Merge"
+		self.target_project.status = "Active"
+		self.target_project.insert(ignore_permissions=True)
 
 		# Create a Task linked to Source Project
 		self.task = frappe.get_doc(

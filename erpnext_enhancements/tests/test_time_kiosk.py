@@ -35,13 +35,11 @@ class TestTimeKiosk(FrappeTestCase):
 		if existing_project:
 			self.project = existing_project
 		else:
-			p = frappe.get_doc({
-				"doctype": "Project",
-				"project_name": project_name,
-				"is_active": "Yes",
-				"status": "Active",
-				"company": self.company
-			}).insert()
+			p = frappe.new_doc("Project")
+			p.project_name = project_name
+			p.company = self.company
+			p.status = "Active"
+			p.insert()
 			self.project = p.name
 
 		# Ensure Activity Type exists
