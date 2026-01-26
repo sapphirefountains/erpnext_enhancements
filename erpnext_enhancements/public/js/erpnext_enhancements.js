@@ -51,6 +51,13 @@ $(document).on("app_ready", function () {
     } catch (e) {
         console.error("Error setting up home buttons:", e);
     }
+
+    // Setup Global Navigation Guard
+    try {
+        setup_navigation_guard();
+    } catch (e) {
+        console.error("Error setting up navigation guard:", e);
+    }
 });
 
 // ==========================================
@@ -348,4 +355,117 @@ function render_desk_home_button() {
     }
 
     return false; // Not found yet
+}
+
+// ==========================================
+// Global Navigation Guard
+// ==========================================
+
+function setup_navigation_guard() {
+    // Guard state
+    let last_known_hash = window.location.hash;
+    let is_navigating = false;
+    let skip_next_hash_change = false;
+
+    // Helper to check dirty state
+    function is_dirty() {
+        if (window.cur_frm && window.cur_frm.doc && window.cur_frm.is_dirty()) {
+            return true;
+        }
+        return false;
+    }
+
+    // 1. Intercept frappe.set_route (Proactive: UI Clicks)
+    if (frappe.set_route) {
+        const original_set_route = frappe.set_route;
+        frappe.set_route = function(...args) {
+            // Check dirty
+            if (is_dirty()) {
+                // If already navigating/confirming, ignore?
+                if (is_navigating) return Promise.resolve();
+
+                is_navigating = true;
+                frappe.confirm(
+                    __("You have unsaved changes. Are you sure you want to leave?"),
+                    () => {
+                        // Yes
+                        is_navigating = false;
+                        // Mark clean to allow standard checks to pass
+                        if (window.cur_frm && window.cur_frm.doc) {
+                            window.cur_frm.doc.__unsaved = 0;
+                        }
+                        // Proceed
+                        original_set_route.apply(this, args);
+                    },
+                    () => {
+                        // No
+                        is_navigating = false;
+                        // Stay - do nothing
+                    }
+                );
+                return Promise.resolve();
+            } else {
+                return original_set_route.apply(this, args);
+            }
+        };
+    }
+
+    // 2. Intercept hashchange (Reactive: Back/Forward buttons)
+    window.addEventListener('hashchange', (e) => {
+        // If we are skipping this change (e.g. the revert)
+        if (skip_next_hash_change) {
+            skip_next_hash_change = false;
+            last_known_hash = window.location.hash; // Sync
+            return;
+        }
+
+        // Check dirty
+        if (is_dirty()) {
+            // Determine target
+            const target_hash = window.location.hash;
+
+            // Stop! Revert immediately.
+            // This triggers another hashchange event, which we must skip.
+            skip_next_hash_change = true;
+            window.location.hash = last_known_hash;
+
+            // Now ask
+            if (is_navigating) return;
+            is_navigating = true;
+
+            frappe.confirm(
+                __("You have unsaved changes. Are you sure you want to leave?"),
+                () => {
+                    // Yes
+                    is_navigating = false;
+                     if (window.cur_frm && window.cur_frm.doc) {
+                        window.cur_frm.doc.__unsaved = 0;
+                    }
+                    // Manually go to the target (which triggers hashchange again)
+                    // But since we are now "clean", the next check won't block it.
+                    window.location.hash = target_hash;
+                },
+                () => {
+                    // No
+                    is_navigating = false;
+                    // We already reverted.
+                }
+            );
+        } else {
+            // Not dirty, just update known hash
+            last_known_hash = window.location.hash;
+        }
+    });
+
+    // 3. Keep last_known_hash in sync with successful routes
+    if (frappe.router) {
+        frappe.router.on('change', () => {
+             // If we are not in the middle of a guarded revert
+             if (!skip_next_hash_change) {
+                 last_known_hash = window.location.hash;
+             }
+        });
+    }
+
+    console.log("[ERPNext Enhancements] Navigation Guard Installed");
 }
