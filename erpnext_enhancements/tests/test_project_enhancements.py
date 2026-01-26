@@ -59,8 +59,9 @@ class TestProjectEnhancements(unittest.TestCase):
 		self.assertEqual(mock_comment_doc.reference_name, "test_project")
 
 	@patch('frappe.get_doc')
-	@patch.object(frappe.session, 'user', 'test_user')
-	def test_delete_project_comment_success(self, mock_get_doc):
+	@patch('frappe.session')
+	def test_delete_project_comment_success(self, mock_session, mock_get_doc):
+		mock_session.user = 'test_user'
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"
 		mock_comment_doc.owner = "test_user"
@@ -77,8 +78,9 @@ class TestProjectEnhancements(unittest.TestCase):
 		mock_comment_doc.delete.assert_called_once_with(ignore_permissions=True)
 
 	@patch('frappe.get_doc')
-	@patch.object(frappe.session, 'user', 'test_user')
-	def test_update_project_comment_success(self, mock_get_doc):
+	@patch('frappe.session')
+	def test_update_project_comment_success(self, mock_session, mock_get_doc):
+		mock_session.user = 'test_user'
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"
 		mock_comment_doc.owner = "test_user"

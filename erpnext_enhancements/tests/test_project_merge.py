@@ -26,7 +26,7 @@ class TestProjectMerge(unittest.TestCase):
 			{
 				"doctype": "Project",
 				"project_name": "Source Project Test",
-				"status": "Open",
+				"status": "Active",
 				"company": "_Test Company Merge",
 			}
 		).insert(ignore_permissions=True)
@@ -36,7 +36,7 @@ class TestProjectMerge(unittest.TestCase):
 			{
 				"doctype": "Project",
 				"project_name": "Target Project Test",
-				"status": "Open",
+				"status": "Active",
 				"company": "_Test Company Merge",
 			}
 		).insert(ignore_permissions=True)
@@ -75,4 +75,4 @@ class TestProjectMerge(unittest.TestCase):
 		self.assertEqual(self.task.project, self.target_project.name)
 
 		# Verify Source Project is Cancelled
-		self.assertEqual(self.source_project.status, "Cancelled")
+		self.assertEqual(self.source_project.status, "Canceled")
