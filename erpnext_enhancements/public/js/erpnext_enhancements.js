@@ -294,41 +294,58 @@ function setup_home_buttons() {
     // Listen to route changes to re-inject if needed
     if (frappe.router) {
         frappe.router.on('change', () => {
-            render_desk_home_button();
+            waitForContainerAndRender();
         });
     }
 
     // Initial check
-    render_desk_home_button();
+    waitForContainerAndRender();
+}
+
+function waitForContainerAndRender() {
+    let attempts = 0;
+    const maxAttempts = 20; // 10 seconds
+    const interval = setInterval(() => {
+        attempts++;
+        const added = render_desk_home_button();
+
+        // If successfully added or we've tried long enough, stop polling.
+        // Note: checking 'added' ensures we stop once we've done our job for this view.
+        if (added || attempts >= maxAttempts) {
+            clearInterval(interval);
+        }
+    }, 500);
 }
 
 function render_desk_home_button() {
-    // Only on Workspaces view (Desk) or if route is empty (root)
-    const route = frappe.get_route();
-    // Broad check for desk/workspace
-    // In v13/v14, '/desk' usually redirects to '/app/workspace_name' or '/app/home'
-    // But the user says they are at '/desk'
+    // Target the active/visible container to ensure we don't check hidden previous views
+    // Priority 1: .layout-main-section (Common in Workspaces, Kanban)
+    let $container = $('.layout-main-section:visible');
 
-    // We will target the .layout-main-section which contains the workspace widgets
+    // Priority 2: .page-content (Common in Forms, Lists)
+    if ($container.length === 0) {
+        $container = $('.page-content:visible');
+    }
 
-    setTimeout(() => {
-        if ($('.desk-home-button-wrapper').length > 0) return;
-
-        // Try to find the container.
-        const $container = $('.layout-main-section');
-
-        if ($container.length && $container.is(':visible')) {
-             const btn_html = `
-                <div class="desk-home-button-wrapper" style="margin-bottom: 20px; padding-left: 15px;">
-                    <button class="btn btn-default" onclick="frappe.set_route('home')" style="display: inline-flex; align-items: center; gap: 8px; font-size: 14px; padding: 8px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                        <svg class="icon icon-md" style="width: 16px; height: 16px;">
-                            <use href="#icon-home"></use>
-                        </svg>
-                        Go to Home
-                    </button>
-                </div>
-            `;
-            $container.prepend(btn_html);
+    if ($container.length && $container.is(':visible')) {
+        // Scope the check to the found container
+        if ($container.find('.desk-home-button-wrapper').length > 0) {
+            return true; // Already exists
         }
-    }, 1000); // Delay to ensure DOM is ready
+
+        const btn_html = `
+            <div class="desk-home-button-wrapper" style="margin-bottom: 20px; padding-left: 15px;">
+                <button class="btn btn-default" onclick="frappe.set_route('home')" style="display: inline-flex; align-items: center; gap: 8px; font-size: 14px; padding: 8px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                    <svg class="icon icon-md" style="width: 16px; height: 16px;">
+                        <use href="#icon-home"></use>
+                    </svg>
+                    Go to Home
+                </button>
+            </div>
+        `;
+        $container.prepend(btn_html);
+        return true; // Successfully added
+    }
+
+    return false; // Not found yet
 }
