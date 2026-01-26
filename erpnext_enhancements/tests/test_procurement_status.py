@@ -62,7 +62,7 @@ class TestProcurementStatus(FrappeTestCase):
 			{
 				"doctype": "Project",
 				"project_name": self.project_name,
-				"status": "Open",
+				"status": "Active",
 				"company": self.company,
 			}
 		).insert()

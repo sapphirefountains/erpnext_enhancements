@@ -162,8 +162,8 @@ def merge_projects(source_project, target_project):
 
 	# Cancel the source project
 	source_doc = frappe.get_doc("Project", source_project)
-	if source_doc.status != "Cancelled":
-		source_doc.status = "Cancelled"
+	if source_doc.status != "Canceled":
+		source_doc.status = "Canceled"
 		source_doc.save(ignore_permissions=True)
 		source_doc.add_comment("Info", _("Project merged into {0}").format(target_project))
 

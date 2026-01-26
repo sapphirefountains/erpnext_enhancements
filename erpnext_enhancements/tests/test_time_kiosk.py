@@ -39,6 +39,7 @@ class TestTimeKiosk(FrappeTestCase):
 				"doctype": "Project",
 				"project_name": project_name,
 				"is_active": "Yes",
+				"status": "Active",
 				"company": self.company
 			}).insert()
 			self.project = p.name
