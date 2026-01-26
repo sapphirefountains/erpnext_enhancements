@@ -362,109 +362,136 @@ function render_desk_home_button() {
 // ==========================================
 
 function setup_navigation_guard() {
-    // Guard state
-    let last_known_hash = window.location.hash;
-    let is_navigating = false;
-    let skip_next_hash_change = false;
+    console.log("[ERPNext Enhancements] Initializing Navigation Guard...");
 
-    // Helper to check dirty state
+    let is_navigating = false;
     function is_dirty() {
-        if (window.cur_frm && window.cur_frm.doc && window.cur_frm.is_dirty()) {
-            return true;
+        try {
+            if (window.cur_frm && window.cur_frm.doc && window.cur_frm.is_dirty()) {
+                return true;
+            }
+        } catch (e) {
+            // ignore
         }
         return false;
     }
 
-    // 1. Intercept frappe.set_route (Proactive: UI Clicks)
-    if (frappe.set_route) {
-        const original_set_route = frappe.set_route;
-        frappe.set_route = function(...args) {
-            // Check dirty
-            if (is_dirty()) {
-                // If already navigating/confirming, ignore?
-                if (is_navigating) return Promise.resolve();
-
-                is_navigating = true;
-                frappe.confirm(
-                    __("You have unsaved changes. Are you sure you want to leave?"),
-                    () => {
-                        // Yes
-                        is_navigating = false;
-                        // Mark clean to allow standard checks to pass
-                        if (window.cur_frm && window.cur_frm.doc) {
-                            window.cur_frm.doc.__unsaved = 0;
-                        }
-                        // Proceed
-                        original_set_route.apply(this, args);
-                    },
-                    () => {
-                        // No
-                        is_navigating = false;
-                        // Stay - do nothing
-                    }
-                );
-                return Promise.resolve();
-            } else {
-                return original_set_route.apply(this, args);
-            }
-        };
+    function clear_dirty() {
+        if (window.cur_frm && window.cur_frm.doc) {
+            window.cur_frm.doc.__unsaved = 0;
+        }
     }
 
-    // 2. Intercept hashchange (Reactive: Back/Forward buttons)
-    window.addEventListener('hashchange', (e) => {
-        // If we are skipping this change (e.g. the revert)
-        if (skip_next_hash_change) {
-            skip_next_hash_change = false;
-            last_known_hash = window.location.hash; // Sync
-            return;
-        }
+    // 1. Global Click Interceptor (Capture Phase)
+    // This catches clicks on Sidebar, Breadcrumbs, and Link fields BEFORE Frappe/Browser handles them.
+    document.addEventListener('click', function (e) {
+        // Find closest anchor tag
+        const target = e.target.closest('a');
+        if (!target) return;
 
-        // Check dirty
+        // Check if it's an internal link (hash-based)
+        const href = target.getAttribute('href');
+        if (!href || !href.startsWith('#')) return;
+
+        // Ignore new tabs or modifiers
+        if (e.ctrlKey || e.metaKey || e.shiftKey || target.target === '_blank') return;
+
+        // If dirty, intercept
         if (is_dirty()) {
-            // Determine target
-            const target_hash = window.location.hash;
+            // Prevent the default navigation
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
 
-            // Stop! Revert immediately.
-            // This triggers another hashchange event, which we must skip.
-            skip_next_hash_change = true;
-            window.location.hash = last_known_hash;
-
-            // Now ask
             if (is_navigating) return;
             is_navigating = true;
 
             frappe.confirm(
                 __("You have unsaved changes. Are you sure you want to leave?"),
                 () => {
-                    // Yes
+                    // User chose to leave
                     is_navigating = false;
-                     if (window.cur_frm && window.cur_frm.doc) {
-                        window.cur_frm.doc.__unsaved = 0;
-                    }
-                    // Manually go to the target (which triggers hashchange again)
-                    // But since we are now "clean", the next check won't block it.
-                    window.location.hash = target_hash;
+                    clear_dirty();
+
+                    // Manually proceed with the navigation
+                    // Since we blocked the click, the hash didn't change.
+                    // We can now safely set the hash or click again?
+                    // Setting hash is safest.
+                    window.location.href = href;
                 },
                 () => {
-                    // No
+                    // User chose to stay
                     is_navigating = false;
-                    // We already reverted.
+                    // Do nothing, we already prevented default.
                 }
             );
-        } else {
-            // Not dirty, just update known hash
-            last_known_hash = window.location.hash;
         }
-    });
+    }, true); // true = Capture Phase (runs before bubbling/other listeners)
 
-    // 3. Keep last_known_hash in sync with successful routes
-    if (frappe.router) {
-        frappe.router.on('change', () => {
-             // If we are not in the middle of a guarded revert
-             if (!skip_next_hash_change) {
-                 last_known_hash = window.location.hash;
-             }
-        });
+
+    // 2. Intercept frappe.set_route (Programmatic / Awesomebar)
+    if (frappe.set_route) {
+        const original_set_route = frappe.set_route;
+        frappe.set_route = function (...args) {
+            if (is_dirty()) {
+                if (is_navigating) return Promise.resolve();
+                is_navigating = true;
+
+                return new Promise((resolve, reject) => {
+                    frappe.confirm(
+                        __("You have unsaved changes. Are you sure you want to leave?"),
+                        () => {
+                            is_navigating = false;
+                            clear_dirty();
+                            resolve(original_set_route.apply(this, args));
+                        },
+                        () => {
+                            is_navigating = false;
+                            reject();
+                        }
+                    );
+                });
+            } else {
+                return original_set_route.apply(this, args);
+            }
+        };
+    }
+
+    // 3. Intercept Router Render (Back/Forward Button Fallback)
+    // If a navigation event bypasses the click listener (e.g. Browser Back Button),
+    // the hash changes and Frappe's router picks it up.
+    // We override 'render' to stop the view from actually changing.
+    if (frappe.router && frappe.router.render) {
+        const original_render = frappe.router.render;
+        frappe.router.render = function(...args) {
+            if (is_dirty()) {
+                 // The hash has already changed. We must stop rendering.
+                 if (is_navigating) return; // Prevent double dialogs
+                 is_navigating = true;
+
+                 frappe.confirm(
+                    __("You have unsaved changes. Are you sure you want to leave?"),
+                    () => {
+                        is_navigating = false;
+                        clear_dirty();
+                        // Proceed with rendering the new page
+                        original_render.apply(this, args);
+                    },
+                    () => {
+                        is_navigating = false;
+                        // User chose to stay.
+                        // We do NOT call original_render, so the DOM remains on the old form.
+                        // Note: The URL in the browser bar will show the NEW hash (from the back button).
+                        // This is a known trade-off to avoid infinite hash-revert loops.
+                        // If the user attempts to Save, it will work for the current DOM.
+                    }
+                 );
+                 // We return here to BLOCK the render
+                 return;
+            }
+
+            return original_render.apply(this, args);
+        };
     }
 
     console.log("[ERPNext Enhancements] Navigation Guard Installed");
