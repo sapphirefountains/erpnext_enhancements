@@ -43,6 +43,44 @@ $(document).on("app_ready", function () {
 
 			return ret;
 		};
+
+        // Override save to handle draft cleanup
+        const original_form_save = frappe.ui.form.Controller.prototype.save;
+        frappe.ui.form.Controller.prototype.save = function(...args) {
+            const ret = original_form_save.apply(this, args);
+            // ret is typically a Promise in recent Frappe versions
+            if (ret && ret.then) {
+                ret.then(() => {
+                    const frm = this.frm || this;
+                    cleanup_draft(frm);
+                });
+            }
+            return ret;
+        };
+
+        // Override trigger to check drafts on load
+        const original_form_trigger = frappe.ui.form.Controller.prototype.trigger;
+        frappe.ui.form.Controller.prototype.trigger = function (event, ...args) {
+            let ret;
+            if (original_form_trigger) {
+                 ret = original_form_trigger.apply(this, [event, ...args]);
+            }
+
+            if (event === 'onload') {
+                const frm = this.frm || this;
+                // Delay slightly to ensure dashboard wrapper is rendered
+                setTimeout(() => {
+                    try {
+                         if (frm && !frm.is_new()) {
+                            check_draft_on_load(frm);
+                        }
+                    } catch (e) {
+                        console.error("Error checking drafts on load:", e);
+                    }
+                }, 500);
+            }
+            return ret;
+        };
 	}
 
     // Setup Home Buttons
@@ -57,6 +95,13 @@ $(document).on("app_ready", function () {
         setup_navigation_guard();
     } catch (e) {
         console.error("Error setting up navigation guard:", e);
+    }
+
+    // Initialize Auto-Save Listeners
+    try {
+        init_auto_save_listeners();
+    } catch (e) {
+        console.error("Error initializing auto-save:", e);
     }
 });
 
@@ -495,4 +540,189 @@ function setup_navigation_guard() {
     }
 
     console.log("[ERPNext Enhancements] Navigation Guard Installed");
+}
+
+// ==========================================
+// Safe Auto-Save (User Form Drafts)
+// ==========================================
+
+function init_auto_save_listeners() {
+    console.log("[ERPNext Enhancements] Initializing Auto-Save Listeners...");
+
+    // 1. Listen for changes on all Frappe Control inputs
+    // We delegate to document to capture dynamically created fields
+    $(document).on('change', '.frappe-control input, .frappe-control select, .frappe-control textarea', function(e) {
+        // Find the form
+        if (window.cur_frm) {
+            save_draft_handler(window.cur_frm);
+        }
+    });
+
+    // 2. Listen for Visibility Change (Context Switch)
+    document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === 'hidden') {
+            if (window.cur_frm) {
+                save_draft_handler(window.cur_frm);
+            }
+        }
+    });
+}
+
+function save_draft_handler(frm) {
+    // Basic validations
+    if (!frm || !frm.doc || frm.is_new()) return;
+
+    // Ignore if not dirty? The prompt says "When user finishes editing...".
+    // Usually if I edit, it becomes dirty.
+    // If I just click around, I don't want to save.
+    // But 'change' event implies modification.
+    // However, visibilitychange happens always.
+    if (!frm.is_dirty()) return;
+
+    // 1. Save to LocalStorage (Immediate)
+    save_to_local_storage(frm);
+
+    // 2. Sync to Server (Debounced)
+    // Initialize debounce function for this form instance if needed
+    if (!frm.save_draft_debounced) {
+        frm.save_draft_debounced = frappe.utils.debounce((f) => {
+            sync_draft_to_server(f);
+        }, 2000);
+    }
+    frm.save_draft_debounced(frm);
+}
+
+function save_to_local_storage(frm) {
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    try {
+        localStorage.setItem(key, JSON.stringify(frm.doc));
+    } catch (e) {
+        console.warn("Auto-Save: Failed to save to localStorage", e);
+    }
+}
+
+function sync_draft_to_server(frm) {
+    // Double check state
+    if (!frm || !frm.doc) return;
+
+    frappe.call({
+        method: "erpnext_enhancements.api.user_drafts.save_draft",
+        args: {
+            ref_doctype: frm.doc.doctype,
+            ref_name: frm.doc.name,
+            form_data: JSON.stringify(frm.doc)
+        },
+        callback: function(r) {
+            // Optional: Update status indicator?
+            // console.log("Draft synced");
+        }
+    });
+}
+
+function check_draft_on_load(frm) {
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    const local_data_str = localStorage.getItem(key);
+
+    if (local_data_str) {
+        try {
+            const local_doc = JSON.parse(local_data_str);
+
+            // Compare to see if we really need to restore
+            if (!are_docs_equal(frm.doc, local_doc)) {
+                show_restore_alert(frm, local_doc);
+            }
+        } catch (e) {
+            console.error("Auto-Save: Corrupt draft data", e);
+        }
+    }
+}
+
+function are_docs_equal(doc1, doc2) {
+    // Simple comparison ignoring system fields
+    const ignore = ['modified', 'creation', 'modified_by', 'owner', 'docstatus', 'idx', '__last_sync_on', '__unsaved', '__islocal'];
+
+    const d1 = Object.assign({}, doc1);
+    const d2 = Object.assign({}, doc2);
+
+    ignore.forEach(k => {
+        delete d1[k];
+        delete d2[k];
+    });
+
+    // Also ignore keys starting with _ if they are UI specific?
+    // Using simple JSON stringify comparison for now
+    return JSON.stringify(d1) === JSON.stringify(d2);
+}
+
+function show_restore_alert(frm, local_doc) {
+    if (!frm.dashboard || !frm.dashboard.wrapper) return;
+
+    const msg = __("You have unsaved changes from a previous session.");
+
+    // Check if alert already exists
+    if (frm.dashboard.wrapper.find('.draft-restore-alert').length > 0) return;
+
+    const alert_html = `
+        <div class="alert alert-warning draft-restore-alert" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <i class="fa fa-exclamation-triangle"></i> ${msg}
+            </div>
+            <div>
+                <button class="btn btn-xs btn-primary btn-restore-draft">${__("Restore")}</button>
+                <button class="btn btn-xs btn-default btn-discard-draft" style="margin-left: 5px;">${__("Discard")}</button>
+            </div>
+        </div>
+    `;
+
+    frm.dashboard.wrapper.prepend(alert_html);
+
+    frm.dashboard.wrapper.find('.btn-restore-draft').on('click', function() {
+        restore_draft(frm, local_doc);
+    });
+
+    frm.dashboard.wrapper.find('.btn-discard-draft').on('click', function() {
+        discard_draft(frm);
+    });
+}
+
+function restore_draft(frm, local_doc) {
+    // Extend current doc with local data
+    $.extend(frm.doc, local_doc);
+
+    // Refresh fields to show new data
+    frm.refresh_fields();
+
+    // Mark as dirty so user knows they need to save
+    frm.doc.__unsaved = 1;
+    frm.trigger('save_expected'); // Updates indicator
+
+    // Remove alert
+    frm.dashboard.wrapper.find('.draft-restore-alert').remove();
+
+    frappe.show_alert({message: __("Draft Restored"), indicator: 'green'});
+}
+
+function discard_draft(frm) {
+    cleanup_draft(frm);
+    frm.dashboard.wrapper.find('.draft-restore-alert').remove();
+    frappe.show_alert({message: __("Draft Discarded"), indicator: 'orange'});
+}
+
+function cleanup_draft(frm) {
+    if (!frm || !frm.doc) return;
+
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    localStorage.removeItem(key);
+
+    // Also delete from server
+    frappe.call({
+        method: "erpnext_enhancements.api.user_drafts.delete_draft",
+        args: {
+            ref_doctype: frm.doc.doctype,
+            ref_name: frm.doc.name
+        },
+        callback: function() {
+            // console.log("Server draft deleted");
+        }
+    });
 }
