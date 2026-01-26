@@ -1,0 +1,230 @@
+/*
+ * Kanban Enhancements for ERPNext
+ * - Touch Latency Fix (Drag Delay)
+ * - Swimlane Rendering
+ * - WIP Limits
+ */
+
+frappe.provide("erpnext_enhancements.kanban");
+
+$(document).on('app_ready', function() {
+    // Attempt to patch immediately if available
+    try_patch_kanban();
+
+    // Also retry if route changes to Kanban (JIC it loads lazily)
+    if (frappe.router) {
+        frappe.router.on('change', () => {
+            const route = frappe.get_route();
+            if (route && route[0] === 'kanban') {
+                setTimeout(try_patch_kanban, 500);
+            }
+        });
+    }
+});
+
+function try_patch_kanban() {
+    if (erpnext_enhancements.kanban.patched) return;
+
+    if (frappe.views && frappe.views.KanbanBoard) {
+        apply_kanban_patches();
+    }
+}
+
+function apply_kanban_patches() {
+    console.log("[Enhancements] Applying Kanban Patches...");
+    erpnext_enhancements.kanban.patched = true;
+
+    const KanbanBoard = frappe.views.KanbanBoard;
+
+    // ----------------------------------------------------------------
+    // 1. Drag & Drop Latency (Monkey Patch make_sortable)
+    // ----------------------------------------------------------------
+    const original_make_sortable = KanbanBoard.prototype.make_sortable;
+
+    // We expect make_sortable to exist. If not, we warn.
+    if (original_make_sortable) {
+        KanbanBoard.prototype.make_sortable = function($el, args, options) {
+            if (!options) options = {};
+
+            // Inject 1000ms delay for touch/drag
+            options.delay = 1000;
+            options.touchStartThreshold = 5; // Start drag only after 5px movement (prevents accidental clicks)
+
+            console.log("[Enhancements] Initializing Sortable with delay: 1000ms");
+
+            return original_make_sortable.call(this, $el, args, options);
+        };
+    } else {
+        console.warn("[Enhancements] KanbanBoard.prototype.make_sortable not found. Drag delay patch skipped.");
+    }
+
+    // ----------------------------------------------------------------
+    // 2. Rendering Logic (Swimlanes & WIP Limits)
+    // ----------------------------------------------------------------
+    const original_refresh = KanbanBoard.prototype.refresh;
+
+    KanbanBoard.prototype.refresh = function() {
+        // Retrieve custom configuration
+        const swimlane_field = this.board.custom_swimlane_field;
+
+        if (swimlane_field) {
+            // SWIMLANE MODE
+            console.log("[Enhancements] Swimlane Mode Active. Field:", swimlane_field);
+            this.render_swimlanes(swimlane_field);
+        } else {
+            // STANDARD MODE
+            const res = original_refresh.call(this);
+            // Apply WIP limits as a post-process
+            this.check_wip_limits();
+            return res;
+        }
+    };
+
+    // Helper: Check WIP Limits (Standard & Swimlane)
+    KanbanBoard.prototype.check_wip_limits = function() {
+        if (!this.columns) return;
+
+        // Map column definitions for easy lookup
+        const col_map = {};
+        (this.board.columns || []).forEach(c => {
+             col_map[c.status] = c;
+        });
+
+        this.columns.forEach(col => {
+            const limit = col_map[col.status] ? col_map[col.status].custom_wip_limit : 0;
+            if (limit > 0) {
+                const count = col.cards ? col.cards.length : 0;
+                const $wrapper = col.$wrapper;
+
+                if (count > limit) {
+                    $wrapper.addClass('wip-violation');
+                } else {
+                    $wrapper.removeClass('wip-violation');
+                }
+            }
+        });
+    };
+
+    // Helper: Render Swimlanes
+    KanbanBoard.prototype.render_swimlanes = function(group_by) {
+        const me = this;
+        this.$wrapper.empty().addClass('kanban-swimlane-mode');
+
+        // Reset columns array to track new instances
+        this.columns = [];
+
+        // 1. Group Cards
+        const groups = {};
+        const cards = this.cards || [];
+
+        cards.forEach(card => {
+            let val = card[group_by];
+            if (!val) val = __("Unassigned");
+
+            if (!groups[val]) groups[val] = [];
+            groups[val].push(card);
+        });
+
+        // 2. Render Each Group as a Swimlane
+        for (const [group_name, group_cards] of Object.entries(groups)) {
+            const $row = $(`<div class="kanban-swimlane">
+                <div class="kanban-swimlane-header">
+                    <span class="indicator blue">${group_name}</span>
+                    <span class="badge">${group_cards.length}</span>
+                </div>
+                <div class="kanban-swimlane-body"></div>
+            </div>`).appendTo(this.$wrapper);
+
+            const $body = $row.find('.kanban-swimlane-body');
+
+            // Render Columns inside this Swimlane
+            this.board.columns.forEach(col_def => {
+                const $col_wrapper = $(`<div class="kanban-column"></div>`).appendTo($body);
+
+                // Filter cards for this column (Status) AND this swimlane
+                const col_cards = group_cards.filter(c => c.status === col_def.status);
+
+                // Instantiate KanbanColumn (assuming global availability)
+                if (frappe.views.KanbanColumn) {
+                    const col_inst = new frappe.views.KanbanColumn(col_def, col_cards, $col_wrapper, me);
+
+                    // Register the column instance
+                    me.columns.push(col_inst);
+
+                    // Apply WIP Limit Class immediately
+                    if (col_def.custom_wip_limit > 0 && col_cards.length > col_def.custom_wip_limit) {
+                        $col_wrapper.addClass('wip-violation');
+                    }
+
+                    // Column Folding Logic
+                    const storage_key = `kanban_folding:${me.board.name}:${frappe.session.user}:${col_def.status}`;
+                    const is_collapsed = localStorage.getItem(storage_key) === '1';
+
+                    if (is_collapsed) {
+                        $col_wrapper.addClass('collapsed');
+                    }
+
+                    // Inject Folding Button
+                    const $header = $col_wrapper.find('.kanban-column-header');
+                    // Check if already exists to avoid dupes on re-render
+                    if ($header.find('.kanban-fold-btn').length === 0) {
+                        const $fold_btn = $(`<span class="kanban-fold-btn" style="cursor:pointer; margin-left:auto; font-size: 12px; opacity: 0.7;">
+                            ${is_collapsed ? '►' : '▼'}
+                        </span>`);
+
+                        $fold_btn.on('click', function(e) {
+                            e.stopPropagation();
+                            e.stopImmediatePropagation(); // Prevent sorting trigger
+
+                            const will_collapse = !$col_wrapper.hasClass('collapsed');
+
+                            if (will_collapse) {
+                                $col_wrapper.addClass('collapsed');
+                                localStorage.setItem(storage_key, '1');
+                                $(this).text('►');
+                            } else {
+                                $col_wrapper.removeClass('collapsed');
+                                localStorage.removeItem(storage_key);
+                                $(this).text('▼');
+                            }
+                        });
+
+                        $header.append($fold_btn);
+                    }
+                } else {
+                    console.error("[Enhancements] frappe.views.KanbanColumn is not defined. Cannot render swimlane columns.");
+                }
+            });
+        }
+    };
+
+    // Inject Dynamic Styles for Collapsing
+    $('head').append(`<style>
+        .kanban-column.collapsed {
+            min-width: 50px !important;
+            width: 50px !important;
+            overflow: hidden;
+            transition: all 0.2s ease;
+        }
+        .kanban-column.collapsed .kanban-cards,
+        .kanban-column.collapsed .kanban-column-footer {
+            display: none !important;
+        }
+        .kanban-column.collapsed .kanban-column-header {
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            height: 100%;
+            padding-top: 10px;
+        }
+        .kanban-column.collapsed .kanban-column-title {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            margin-top: 10px;
+        }
+        .kanban-column.collapsed .kanban-fold-btn {
+            margin: 0 !important;
+            margin-bottom: 5px;
+        }
+    </style>`);
+}

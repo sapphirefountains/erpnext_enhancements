@@ -210,5 +210,26 @@
   "insert_after": "custom_comments_tab",
   "dt": "Customer",
   "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Kanban Board-custom_swimlane_field",
+  "fieldname": "custom_swimlane_field",
+  "fieldtype": "Data",
+  "label": "Swimlane Field",
+  "insert_after": "field_name",
+  "dt": "Kanban Board",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Kanban Board Column-custom_wip_limit",
+  "fieldname": "custom_wip_limit",
+  "fieldtype": "Int",
+  "label": "WIP Limit",
+  "default": 0,
+  "insert_after": "status",
+  "dt": "Kanban Board Column",
+  "module": "ERPNext Enhancements"
  }
 ]

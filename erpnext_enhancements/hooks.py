@@ -29,6 +29,7 @@ app_include_css = "/assets/erpnext_enhancements/css/desk_enhancements.css"
 app_include_js = [
 	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
 	"/assets/erpnext_enhancements/js/performance_fixes.js",
+    "/assets/erpnext_enhancements/js/kanban_enhancements.js",
 ]
 
 # include js, css files in header of web template
@@ -208,7 +209,9 @@ fixtures = [
                 "Material Request-custom_project",
                 "Request for Quotation-custom_project",
                 "Customer-custom_comments_tab",
-                "Customer-custom_comments_field"
+                "Customer-custom_comments_field",
+                "Kanban Board-custom_swimlane_field",
+                "Kanban Board Column-custom_wip_limit"
             ]]
         ]
     },
