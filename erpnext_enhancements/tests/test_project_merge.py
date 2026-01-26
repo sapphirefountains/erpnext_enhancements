@@ -26,14 +26,22 @@ class TestProjectMerge(unittest.TestCase):
 		self.source_project.project_name = "Source Project Test"
 		self.source_project.company = "_Test Company Merge"
 		self.source_project.status = "Active"
+		self.source_project.flags.ignore_validate = True
 		self.source_project.insert(ignore_permissions=True)
+		if self.source_project.status != "Active":
+			frappe.db.set_value("Project", self.source_project.name, "status", "Active")
+			self.source_project.reload()
 
 		# Create Target Project
 		self.target_project = frappe.new_doc("Project")
 		self.target_project.project_name = "Target Project Test"
 		self.target_project.company = "_Test Company Merge"
 		self.target_project.status = "Active"
+		self.target_project.flags.ignore_validate = True
 		self.target_project.insert(ignore_permissions=True)
+		if self.target_project.status != "Active":
+			frappe.db.set_value("Project", self.target_project.name, "status", "Active")
+			self.target_project.reload()
 
 		# Create a Task linked to Source Project
 		self.task = frappe.get_doc(
