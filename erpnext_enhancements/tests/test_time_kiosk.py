@@ -87,8 +87,9 @@ class TestTimeKiosk(FrappeTestCase):
 
 	def tearDown(self):
 		# Clean up any open intervals to prevent pollution
-		frappe.db.delete("Job Interval", {"employee": self.employee})
-		frappe.db.delete("Timesheet", {"employee": self.employee})
+		if hasattr(self, "employee"):
+			frappe.db.delete("Job Interval", {"employee": self.employee})
+			frappe.db.delete("Timesheet", {"employee": self.employee})
 		super().tearDown()
 
 	def test_log_time_flow(self):
