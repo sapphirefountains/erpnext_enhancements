@@ -1,48 +1,21 @@
 import unittest
-import sys
-from unittest.mock import MagicMock
-
-# Pre-mock frappe module
-mock_frappe = MagicMock()
-sys.modules["frappe"] = mock_frappe
-
-# Configure whitelist to return a passthrough decorator BEFORE import
-mock_frappe.whitelist.return_value = lambda f: f
-
+from unittest.mock import MagicMock, patch
 import frappe
-
-# Now import the module under test
 from erpnext_enhancements.api import comments
 
 class TestCommentsAPI(unittest.TestCase):
 	def setUp(self):
-		global mock_frappe
-		mock_frappe.reset_mock()
-		mock_frappe.whitelist.return_value = lambda f: f
-		mock_frappe._ = lambda x: x
-		mock_frappe.session.user = "test_user"
+		pass
 
-		# Mock PermissionError
-		class MockPermissionError(Exception):
-			pass
-		mock_frappe.PermissionError = MockPermissionError
-
-		def mock_throw(msg, exc=MockPermissionError):
-			raise exc(msg)
-		mock_frappe.throw.side_effect = mock_throw
-
-		mock_frappe.get_all.side_effect = None
-		mock_frappe.get_doc.side_effect = None
-		mock_frappe.new_doc.side_effect = None
-		mock_frappe.get_doc.return_value = MagicMock()
-		# Default has_permission to True
-		mock_frappe.has_permission.return_value = True
-
-	def test_get_comments_empty(self):
+	@patch('frappe.get_all')
+	@patch('frappe.has_permission', return_value=True)
+	def test_get_comments_empty(self, mock_has_perm, mock_get_all):
 		self.assertEqual(comments.get_comments("Account", None), [])
 		self.assertEqual(comments.get_comments(None, "Acc-001"), [])
 
-	def test_get_comments_success(self):
+	@patch('frappe.get_all')
+	@patch('frappe.has_permission', return_value=True)
+	def test_get_comments_success(self, mock_has_perm, mock_get_all):
 		mock_comment = {"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"}
 
 		def get_all_side_effect(doctype, filters=None, fields=None, order_by=None):
@@ -53,19 +26,22 @@ class TestCommentsAPI(unittest.TestCase):
 			if doctype == "User":
 				return [{"name": "user1", "full_name": "Test User", "user_image": "avatar.png"}]
 			return []
-		mock_frappe.get_all.side_effect = get_all_side_effect
+		mock_get_all.side_effect = get_all_side_effect
 
 		result = comments.get_comments("Account", "Acc-001")
 		self.assertEqual(len(result), 1)
 		self.assertEqual(result[0]['full_name'], "Test User")
 
-	def test_add_comment_success(self):
+	@patch('frappe.get_doc')
+	@patch('frappe.new_doc')
+	@patch('frappe.has_permission', return_value=True)
+	def test_add_comment_success(self, mock_has_perm, mock_new_doc, mock_get_doc):
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "new_comment"
 		mock_comment_doc.owner = "test_user"
 		mock_comment_doc.content = "new account note"
 
-		mock_frappe.new_doc.return_value = mock_comment_doc
+		mock_new_doc.return_value = mock_comment_doc
 
 		mock_user_doc = MagicMock()
 		mock_user_doc.full_name = "Test User"
@@ -75,7 +51,7 @@ class TestCommentsAPI(unittest.TestCase):
 			if doctype == "User":
 				return mock_user_doc
 			return MagicMock()
-		mock_frappe.get_doc.side_effect = get_doc_side_effect
+		mock_get_doc.side_effect = get_doc_side_effect
 
 		result = comments.add_comment("Account", "Acc-001", "new account note")
 
@@ -84,7 +60,9 @@ class TestCommentsAPI(unittest.TestCase):
 		self.assertEqual(mock_comment_doc.reference_doctype, "Account")
 		self.assertEqual(mock_comment_doc.reference_name, "Acc-001")
 
-	def test_delete_comment_success(self):
+	@patch('frappe.get_doc')
+	@patch.object(frappe.session, 'user', 'test_user')
+	def test_delete_comment_success(self, mock_get_doc):
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"
 		mock_comment_doc.owner = "test_user"
@@ -93,13 +71,15 @@ class TestCommentsAPI(unittest.TestCase):
 			if doctype == "Comment" and name == "note1":
 				return mock_comment_doc
 			return MagicMock()
-		mock_frappe.get_doc.side_effect = get_doc_side_effect
+		mock_get_doc.side_effect = get_doc_side_effect
 
 		result = comments.delete_comment("note1")
 		self.assertEqual(result, {"success": True})
 		mock_comment_doc.delete.assert_called_once_with(ignore_permissions=True)
 
-	def test_update_comment_success(self):
+	@patch('frappe.get_doc')
+	@patch.object(frappe.session, 'user', 'test_user')
+	def test_update_comment_success(self, mock_get_doc):
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"
 		mock_comment_doc.owner = "test_user"
@@ -113,18 +93,24 @@ class TestCommentsAPI(unittest.TestCase):
 				user.full_name = "Updated User"
 				return user
 			return MagicMock()
-		mock_frappe.get_doc.side_effect = get_doc_side_effect
+		mock_get_doc.side_effect = get_doc_side_effect
 
 		result = comments.update_comment("note1", "new content")
 		self.assertEqual(mock_comment_doc.content, "new content")
 		self.assertEqual(result['full_name'], "Updated User")
 
-	def test_permission_denied(self):
-		mock_frappe.has_permission.return_value = False
-		with self.assertRaises(mock_frappe.PermissionError):
+	@patch('frappe.has_permission', return_value=False)
+	def test_permission_denied(self, mock_has_perm):
+		# get_comments calls frappe.throw if has_permission is false
+		# We expect frappe.ValidationError (default for throw) or whatever throw raises
+
+		# Since we are using real frappe.throw, it raises frappe.ValidationError
+		# Note: frappe.throw raises frappe.exceptions.ValidationError by default.
+
+		with self.assertRaises(frappe.ValidationError):
 			comments.get_comments("Account", "Acc-001")
 
-		with self.assertRaises(mock_frappe.PermissionError):
+		with self.assertRaises(frappe.ValidationError):
 			comments.add_comment("Account", "Acc-001", "text")
 
 if __name__ == "__main__":
