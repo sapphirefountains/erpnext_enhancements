@@ -331,7 +331,7 @@ def get_dashboard_data(data):
 @frappe.whitelist()
 def get_project_comments(project_name):
 	"""
-	Retrieves comments for a given project, along with user details.
+	Retrieves standard comments for a given project.
 	"""
 	if not project_name:
 		return []
@@ -353,12 +353,16 @@ def get_project_comments(project_name):
 	if not user_ids:
 		return []
 
-	user_details = frappe.get_all(
-		"User",
-		filters={"name": ["in", list(set(user_ids))]},
-		fields=["name", "full_name", "user_image"],
-	)
-	user_map = {u.get("name"): u for u in user_details}
+	# Get user images
+	user_ids = [c.owner for c in comments if c.owner]
+	user_map = {}
+	if user_ids:
+		users = frappe.get_all(
+			"User",
+			filters={"name": ["in", list(set(user_ids))]},
+			fields=["name", "full_name", "user_image"]
+		)
+		user_map = {u.name: u for u in users}
 
 	# Combine comment data with user details
 	for comment in comments:
@@ -376,7 +380,7 @@ def get_project_comments(project_name):
 @frappe.whitelist()
 def add_project_comment(project_name, comment_text):
 	"""
-	Adds a new comment to a project.
+	Adds a standard comment to a project.
 	"""
 	if not project_name or not comment_text:
 		frappe.throw(_("Project name and comment text are required."))
