@@ -1,3 +1,5 @@
+alert("Kanban Script Loaded");
+
 /*
  * Kanban Enhancements for ERPNext
  * - Touch Latency Fix (Drag Delay)
