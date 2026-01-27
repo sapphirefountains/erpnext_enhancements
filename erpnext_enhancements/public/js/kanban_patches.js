@@ -1,13 +1,9 @@
-alert("Kanban Script Loaded");
-
 /*
  * Kanban Enhancements for ERPNext
  * - Touch Latency Fix (Drag Delay)
  * - Swimlane Rendering
  * - WIP Limits
  */
-
-console.log("[Kanban Debug] Loading kanban_enhancements.js...");
 
 frappe.provide("erpnext_enhancements.kanban");
 frappe.provide("erpnext_enhancements.utils");
@@ -24,7 +20,6 @@ frappe.provide("erpnext_enhancements.utils");
  * @returns {Promise<any>} - Resolves with the object or rejects on timeout.
  */
 erpnext_enhancements.utils.waitForObject = function(namespace_string, interval = 100, max_timeout = 5000) {
-    console.log(`[Kanban Debug] waitForObject: Starting wait for ${namespace_string}`);
     return new Promise((resolve, reject) => {
         const check = () => {
             const parts = namespace_string.split('.');
@@ -42,7 +37,6 @@ erpnext_enhancements.utils.waitForObject = function(namespace_string, interval =
         // Check immediately
         const existing = check();
         if (existing) {
-            console.log(`[Kanban Debug] waitForObject: Found ${namespace_string} immediately.`);
             resolve(existing);
             return;
         }
@@ -51,7 +45,6 @@ erpnext_enhancements.utils.waitForObject = function(namespace_string, interval =
         const timer = setInterval(() => {
             const found = check();
             if (found) {
-                console.log(`[Kanban Debug] waitForObject: Found ${namespace_string} after polling.`);
                 clearInterval(timer);
                 resolve(found);
             }
@@ -60,7 +53,6 @@ erpnext_enhancements.utils.waitForObject = function(namespace_string, interval =
         // Set timeout
         setTimeout(() => {
             clearInterval(timer);
-            console.warn(`[Kanban Debug] waitForObject: Timeout waiting for ${namespace_string}`);
             reject(new Error(`Timeout waiting for object: ${namespace_string}`));
         }, max_timeout);
     });
@@ -71,11 +63,8 @@ erpnext_enhancements.utils.waitForObject = function(namespace_string, interval =
 // ============================================================
 
 async function initialize_kanban_logic() {
-    console.log("[Kanban Debug] initialize_kanban_logic called.");
-
     // Step A: Check Route (Must be 'kanban' or List view in Kanban mode)
     const route = frappe.get_route();
-    console.log("[Kanban Debug] Current route:", route);
 
     const is_kanban_route = (route && route.length > 0) && (
         route[0] === 'kanban' ||
@@ -83,30 +72,26 @@ async function initialize_kanban_logic() {
     );
 
     if (!is_kanban_route) {
-        console.log("[Kanban Debug] Not a kanban route. Skipping.");
         return;
     }
 
     // Step B: Idempotency Check (Optimization)
     if (erpnext_enhancements.kanban.patched) {
-        console.log("[Kanban Debug] Already patched. Skipping.");
         return;
     }
 
     // Step C: Await Dependency
     try {
-        console.log("[Kanban Debug] Waiting for frappe.views.KanbanBoard...");
         await erpnext_enhancements.utils.waitForObject("frappe.views.KanbanBoard");
 
         // Check again to prevent race conditions during await
         if (erpnext_enhancements.kanban.patched) {
-             console.log("[Kanban Debug] Patched during wait. Skipping.");
              return;
         }
 
         apply_kanban_patches();
     } catch (error) {
-        console.warn("[Enhancements] KanbanBoard failed to load within timeout.", error);
+        console.warn("KanbanBoard failed to load within timeout.", error);
     }
 }
 
@@ -115,13 +100,11 @@ async function initialize_kanban_logic() {
 // ============================================================
 
 $(document).on('app_ready', function() {
-    console.log("[Kanban Debug] app_ready triggered.");
     initialize_kanban_logic();
 });
 
 if (frappe.router) {
     frappe.router.on('change', () => {
-        console.log("[Kanban Debug] router change triggered.");
         initialize_kanban_logic();
     });
 }
@@ -132,50 +115,41 @@ if (frappe.router) {
 
 function apply_kanban_patches() {
     try {
-        console.log("[Enhancements] Applying Kanban Patches...");
         erpnext_enhancements.kanban.patched = true;
 
         const KanbanBoard = frappe.views.KanbanBoard;
-        console.log("[Kanban Debug] KanbanBoard prototype found:", !!KanbanBoard.prototype);
 
         // ----------------------------------------------------------------
         // 1. Drag & Drop Latency (Monkey Patch make_sortable)
         // ----------------------------------------------------------------
         const original_make_sortable = KanbanBoard.prototype.make_sortable;
-        console.log("[Kanban Debug] original_make_sortable exists:", !!original_make_sortable);
 
         // We expect make_sortable to exist. If not, we warn.
         if (original_make_sortable) {
             KanbanBoard.prototype.make_sortable = function($el, args, options) {
-                console.log("[Kanban Debug] Custom make_sortable called.");
                 if (!options) options = {};
 
                 // Inject 1000ms delay for touch/drag
                 options.delay = 1000;
                 options.touchStartThreshold = 5; // Start drag only after 5px movement (prevents accidental clicks)
 
-                console.log("[Enhancements] Initializing Sortable with delay: 1000ms");
-
                 return original_make_sortable.call(this, $el, args, options);
             };
         } else {
-            console.warn("[Enhancements] KanbanBoard.prototype.make_sortable not found. Drag delay patch skipped.");
+            console.warn("KanbanBoard.prototype.make_sortable not found. Drag delay patch skipped.");
         }
 
         // ----------------------------------------------------------------
         // 2. Rendering Logic (Swimlanes & WIP Limits)
         // ----------------------------------------------------------------
         const original_refresh = KanbanBoard.prototype.refresh;
-        console.log("[Kanban Debug] original_refresh exists:", !!original_refresh);
 
         KanbanBoard.prototype.refresh = function() {
-            console.log("[Kanban Debug] Custom refresh called. Board:", this.board && this.board.name);
             // Retrieve custom configuration
             const swimlane_field = this.board.custom_swimlane_field;
 
             if (swimlane_field) {
                 // SWIMLANE MODE
-                console.log("[Enhancements] Swimlane Mode Active. Field:", swimlane_field);
                 this.render_swimlanes(swimlane_field);
             } else {
                 // STANDARD MODE
@@ -213,7 +187,6 @@ function apply_kanban_patches() {
 
         // Helper: Render Swimlanes
         KanbanBoard.prototype.render_swimlanes = function(group_by) {
-            console.log("[Kanban Debug] render_swimlanes called with group_by:", group_by);
             const me = this;
             this.$wrapper.empty().addClass('kanban-swimlane-mode');
 
@@ -299,7 +272,7 @@ function apply_kanban_patches() {
                             $header.append($fold_btn);
                         }
                     } else {
-                        console.error("[Enhancements] frappe.views.KanbanColumn is not defined. Cannot render swimlane columns.");
+                        console.error("frappe.views.KanbanColumn is not defined. Cannot render swimlane columns.");
                     }
                 });
             }
@@ -336,7 +309,7 @@ function apply_kanban_patches() {
         </style>`);
 
     } catch (e) {
-        console.error("[Enhancements] Error applying Kanban patches:", e);
+        console.error("Error applying Kanban patches:", e);
     }
 }
 
