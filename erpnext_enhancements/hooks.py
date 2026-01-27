@@ -49,6 +49,7 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 # include js in doctype views
 doctype_js = {
     "Project": ["public/js/vue.global.js", "public/js/comments.js", "public/js/project_merge.js", "public/js/project_enhancements.js"],
+    "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
     "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
@@ -211,7 +212,9 @@ fixtures = [
                 "Customer-custom_comments_tab",
                 "Customer-custom_comments_field",
                 "Kanban Board-custom_swimlane_field",
-                "Kanban Board Column-custom_wip_limit"
+                "Kanban Board Column-custom_wip_limit",
+                "Employee-custom_comments_tab",
+                "Employee-custom_comments_field"
             ]]
         ]
     },
