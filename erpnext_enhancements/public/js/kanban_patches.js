@@ -1,338 +1,280 @@
 /*
- * Kanban Enhancements for ERPNext
- * - Touch Latency Fix (Drag Delay)
- * - Swimlane Rendering
+ * Kanban Enhancements for ERPNext (Updated for Frappe v16+)
+ * - Touch Latency Fix (Drag Delay) via Global Sortable Patch
+ * - Swimlane Rendering via Instance Override
  * - WIP Limits
  */
+
+console.log("[Kanban Enhancements] Loading...");
 
 frappe.provide("erpnext_enhancements.kanban");
 frappe.provide("erpnext_enhancements.utils");
 
 // ============================================================
-// 1. Utility Implementation: waitForObject
+// 1. Global Sortable Patch (Drag Delay)
 // ============================================================
+// This runs immediately to catch any Sortable instances created by Frappe.
 
-/**
- * Waits for an object to exist in the global scope (window).
- * @param {string} namespace_string - The dot-separated namespace (e.g., "frappe.views.KanbanBoard").
- * @param {number} interval - Polling interval in ms (default: 100).
- * @param {number} max_timeout - Maximum time to wait in ms (default: 5000).
- * @returns {Promise<any>} - Resolves with the object or rejects on timeout.
- */
-erpnext_enhancements.utils.waitForObject = function(namespace_string, interval = 100, max_timeout = 5000) {
-    return new Promise((resolve, reject) => {
-        const check = () => {
-            const parts = namespace_string.split('.');
-            let obj = window;
-            for (let part of parts) {
-                if (obj && obj[part]) {
-                    obj = obj[part];
-                } else {
-                    return null; // Not found yet
-                }
-            }
-            return obj;
-        };
+(function apply_sortable_patch() {
+    // Poll for Sortable because it might be loaded asynchronously
+    const sortable_interval = setInterval(() => {
+        if (window.Sortable && !window.Sortable._patched) {
+            console.log("[Kanban Enhancements] Patching Sortable for drag delay...");
+            
+            const OriginalSortable = window.Sortable;
+            
+            // Proxy the constructor (or create method depending on implementation)
+            // Sortable usually works via 'new Sortable(el, options)'
+            window.Sortable = function(el, options) {
+                if (!options) options = {};
+                
+                // Enforce 1000ms delay for better touch/mouse experience on busy boards
+                options.delay = 1000;
+                options.touchStartThreshold = 5; 
+                options.animation = 150; // Smooth animation
 
-        // Check immediately
-        const existing = check();
-        if (existing) {
-            resolve(existing);
-            return;
+                // console.log("[Kanban Enhancements] Sortable initialized with 1000ms delay on", el);
+                
+                return new OriginalSortable(el, options);
+            };
+
+            // Copy static properties
+            Object.assign(window.Sortable, OriginalSortable);
+            window.Sortable.prototype = OriginalSortable.prototype;
+            window.Sortable._patched = true; // Prevent double patching
+            
+            clearInterval(sortable_interval);
         }
+    }, 500);
+})();
 
-        // Start polling
-        const timer = setInterval(() => {
-            const found = check();
-            if (found) {
-                clearInterval(timer);
-                resolve(found);
-            }
-        }, interval);
-
-        // Set timeout
-        setTimeout(() => {
-            clearInterval(timer);
-            reject(new Error(`Timeout waiting for object: ${namespace_string}`));
-        }, max_timeout);
-    });
-};
 
 // ============================================================
-// 2. Unified Entry Point
+// 2. Kanban Logic Injection
 // ============================================================
 
 async function initialize_kanban_logic() {
-    // Step A: Check Route (Must be 'kanban' or List view in Kanban mode)
-    const route = frappe.get_route();
-
-    const is_kanban_route = (route && route.length > 0) && (
-        route[0] === 'kanban' ||
-        (route[0] === 'List' && route[2] === 'Kanban')
-    );
-
-    if (!is_kanban_route) {
+    // 1. Validate Context
+    if (!cur_list || !cur_list.kanban) {
+        return; 
+    }
+    
+    // 2. Idempotency Check on the specific instance
+    if (cur_list.kanban._enhanced) {
         return;
     }
 
-    // Step B: Idempotency Check (Optimization)
-    if (erpnext_enhancements.kanban.patched) {
-        return;
-    }
+    console.log("[Kanban Enhancements] Initializing logic for board:", cur_list.kanban.board_name);
+    cur_list.kanban._enhanced = true;
 
-    // Step C: Await Dependency
-    try {
-        await erpnext_enhancements.utils.waitForObject("frappe.views.KanbanBoard");
+    // 3. Get Board Config
+    const board_name = cur_list.kanban.board_name;
+    let board_doc = locals['Kanban Board'] && locals['Kanban Board'][board_name];
 
-        // Check again to prevent race conditions during await
-        if (erpnext_enhancements.kanban.patched) {
-             return;
+    if (!board_doc) {
+        try {
+            board_doc = await frappe.db.get_doc('Kanban Board', board_name);
+        } catch (e) {
+            console.error("[Kanban Enhancements] Failed to load board config", e);
+            return;
         }
+    }
 
-        apply_kanban_patches();
-    } catch (error) {
-        console.warn("KanbanBoard failed to load within timeout.", error);
+    // 4. Override the 'update' method
+    // The 'update' method is called whenever the board needs to re-render (e.g. initial load, filters)
+    // Signature based on investigation: update(cards)
+    const original_update = cur_list.kanban.update;
+
+    cur_list.kanban.update = function(cards) {
+        // console.log("[Kanban Enhancements] Intercepted update with cards:", cards ? cards.length : 0);
+        
+        // Save cards to instance for reference
+        this.cards = cards;
+
+        if (board_doc.custom_swimlane_field) {
+            // --- Swimlane Mode ---
+            render_swimlanes(this, cards, board_doc);
+        } else {
+            // --- Standard Mode ---
+            original_update.call(this, cards);
+            
+            // Apply WIP Limits after standard render
+            // We use setTimeout to ensure DOM is ready
+            setTimeout(() => {
+                check_wip_limits(this, board_doc);
+            }, 200);
+        }
+    };
+
+    // Trigger an immediate update to apply changes if data is already loaded
+    if (cur_list.kanban.cards) {
+        cur_list.kanban.update(cur_list.kanban.cards);
     }
 }
 
 // ============================================================
-// 3. Event Listeners
+// 3. Renderers
 // ============================================================
 
-$(document).on('app_ready', function() {
-    initialize_kanban_logic();
-});
+function check_wip_limits(kanban_inst, board_doc) {
+    if (!kanban_inst.wrapper) return;
 
-if (frappe.router) {
-    frappe.router.on('change', () => {
-        initialize_kanban_logic();
+    // Create a map of status -> limit
+    const limit_map = {};
+    (board_doc.columns || []).forEach(c => {
+        limit_map[c.status] = c.custom_wip_limit || 0;
+    });
+
+    // Find columns in DOM
+    const $columns = kanban_inst.wrapper.find('.kanban-column');
+    
+    $columns.each(function() {
+        const $col = $(this);
+        // Try to identify status. Usually stored in data attribute or header.
+        // Based on standard Frappe markup:
+        const status = $col.find('.kanban-column-title').text().trim(); 
+        const limit = limit_map[status];
+
+        if (limit > 0) {
+            const card_count = $col.find('.kanban-card').length;
+            if (card_count > limit) {
+                $col.addClass('wip-violation');
+                $col.css('border-top', '3px solid red');
+            } else {
+                $col.removeClass('wip-violation');
+                $col.css('border-top', '');
+            }
+        }
     });
 }
 
-// ============================================================
-// 4. Patch Application
-// ============================================================
+function render_swimlanes(kanban_inst, cards, board_doc) {
+    const $wrapper = kanban_inst.wrapper.find('.kanban');
+    const group_by = board_doc.custom_swimlane_field;
+    
+    $wrapper.empty().addClass('kanban-swimlane-mode');
+    
+    // Group Cards
+    const groups = {};
+    (cards || []).forEach(card => {
+        let val = card[group_by];
+        // Handle Link fields that might return [name, title]
+        if (Array.isArray(val)) val = val[0]; 
+        if (!val) val = __("Unassigned");
+        
+        if (!groups[val]) groups[val] = [];
+        groups[val].push(card);
+    });
 
-function apply_kanban_patches() {
-    try {
-        erpnext_enhancements.kanban.patched = true;
+    // Render Each Group
+    for (const [group_name, group_cards] of Object.entries(groups)) {
+        // Create Swimlane Row
+        const $row = $(`
+            <div class="kanban-swimlane" style="margin-bottom: 20px; border: 1px solid #d1d8dd; border-radius: 4px;">
+                <div class="kanban-swimlane-header" style="background-color: #f8f9fa; padding: 10px; font-weight: bold; border-bottom: 1px solid #d1d8dd;">
+                    <span>${group_name}</span>
+                    <span class="badge badge-secondary" style="margin-left: 10px;">${group_cards.length}</span>
+                </div>
+                <div class="kanban-swimlane-body" style="display: flex; overflow-x: auto; padding: 10px; gap: 10px;"></div>
+            </div>
+        `).appendTo($wrapper);
 
-        const KanbanBoard = frappe.views.KanbanBoard;
+        const $body = $row.find('.kanban-swimlane-body');
 
-        // ----------------------------------------------------------------
-        // 1. Drag & Drop Latency (Monkey Patch make_sortable)
-        // ----------------------------------------------------------------
-        const original_make_sortable = KanbanBoard.prototype.make_sortable;
+        // Render Columns inside Swimlane
+        (board_doc.columns || []).forEach(col_def => {
+            const col_status = col_def.status;
+            
+            // Filter cards for this column + swimlane
+            const col_cards = group_cards.filter(c => c.status === col_status);
 
-        // We expect make_sortable to exist. If not, we warn.
-        if (original_make_sortable) {
-            KanbanBoard.prototype.make_sortable = function($el, args, options) {
-                if (!options) options = {};
-
-                // Inject 1000ms delay for touch/drag
-                options.delay = 1000;
-                options.touchStartThreshold = 5; // Start drag only after 5px movement (prevents accidental clicks)
-
-                return original_make_sortable.call(this, $el, args, options);
-            };
-        } else {
-            console.warn("KanbanBoard.prototype.make_sortable not found. Drag delay patch skipped.");
-        }
-
-        // ----------------------------------------------------------------
-        // 2. Rendering Logic (Swimlanes & WIP Limits)
-        // ----------------------------------------------------------------
-        const original_refresh = KanbanBoard.prototype.refresh;
-
-        KanbanBoard.prototype.refresh = function() {
-            // Retrieve custom configuration
-            const swimlane_field = this.board.custom_swimlane_field;
-
-            if (swimlane_field) {
-                // SWIMLANE MODE
-                this.render_swimlanes(swimlane_field);
-            } else {
-                // STANDARD MODE
-                const res = original_refresh.call(this);
-                // Apply WIP limits as a post-process
-                this.check_wip_limits();
-                return res;
-            }
-        };
-
-        // Helper: Check WIP Limits (Standard & Swimlane)
-        KanbanBoard.prototype.check_wip_limits = function() {
-            if (!this.columns) return;
-
-            // Map column definitions for easy lookup
-            const col_map = {};
-            (this.board.columns || []).forEach(c => {
-                 col_map[c.status] = c;
-            });
-
-            this.columns.forEach(col => {
-                const limit = col_map[col.status] ? col_map[col.status].custom_wip_limit : 0;
-                if (limit > 0) {
-                    const count = col.cards ? col.cards.length : 0;
-                    const $wrapper = col.$wrapper;
-
-                    if (count > limit) {
-                        $wrapper.addClass('wip-violation');
-                    } else {
-                        $wrapper.removeClass('wip-violation');
-                    }
-                }
-            });
-        };
-
-        // Helper: Render Swimlanes
-        KanbanBoard.prototype.render_swimlanes = function(group_by) {
-            const me = this;
-            this.$wrapper.empty().addClass('kanban-swimlane-mode');
-
-            // Reset columns array to track new instances
-            this.columns = [];
-
-            // 1. Group Cards
-            const groups = {};
-            const cards = this.cards || [];
-
-            cards.forEach(card => {
-                let val = card[group_by];
-                if (!val) val = __("Unassigned");
-
-                if (!groups[val]) groups[val] = [];
-                groups[val].push(card);
-            });
-
-            // 2. Render Each Group as a Swimlane
-            for (const [group_name, group_cards] of Object.entries(groups)) {
-                const $row = $(`<div class="kanban-swimlane">
-                    <div class="kanban-swimlane-header">
-                        <span class="indicator blue">${group_name}</span>
-                        <span class="badge">${group_cards.length}</span>
+            // Create Column Wrapper
+            const $col = $(`
+                <div class="kanban-column" style="min-width: 250px; width: 250px; background: #fff; border: 1px solid #ebf0f5; border-radius: 3px; display: flex; flex-direction: column;">
+                    <div class="kanban-column-header" style="padding: 10px; border-bottom: 1px solid #ebf0f5; font-size: 12px; color: #8d99a6;">
+                        <span class="kanban-column-title">${col_status}</span>
+                        <span class="flt-right">${col_cards.length}</span>
                     </div>
-                    <div class="kanban-swimlane-body"></div>
-                </div>`).appendTo(this.$wrapper);
+                    <div class="kanban-cards" style="padding: 10px; flex-grow: 1; min-height: 50px;"></div>
+                </div>
+            `).appendTo($body);
 
-                const $body = $row.find('.kanban-swimlane-body');
+            // WIP Check
+            if (col_def.custom_wip_limit > 0 && col_cards.length > col_def.custom_wip_limit) {
+                 $col.css('border-top', '3px solid red');
+            }
 
-                // Render Columns inside this Swimlane
-                this.board.columns.forEach(col_def => {
-                    const $col_wrapper = $(`<div class="kanban-column"></div>`).appendTo($body);
+            const $cards_container = $col.find('.kanban-cards');
 
-                    // Filter cards for this column (Status) AND this swimlane
-                    const col_cards = group_cards.filter(c => c.status === col_def.status);
+            // Render Cards
+            // We reuse the standard card rendering logic if possible, 
+            // but since we don't have access to the internal renderer easily, 
+            // we will construct a basic card or try to invoke a frappe utility.
+            
+            col_cards.forEach(card => {
+                const color = card.color || 'blue'; // fallback
+                const $card = $(`
+                    <div class="kanban-card" data-name="${card.name}" style="background: #fff; border: 1px solid #e2e6ea; border-radius: 3px; padding: 10px; margin-bottom: 10px; cursor: move; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                         <div style="font-weight: 500; margin-bottom: 5px;">
+                            ${frappe.utils.get_avatar ? frappe.utils.get_avatar(card._assign ? JSON.parse(card._assign)[0] : null) : ''}
+                            <a href="/app/${frappe.router.slug(card.doctype)}/${card.name}">${card[kanban_inst.card_meta.title_field || 'name']}</a>
+                         </div>
+                         <div style="font-size: 11px; color: #8d99a6;">
+                            ${card.name}
+                         </div>
+                    </div>
+                `).appendTo($cards_container);
+                
+                // Store data for Sortable/jQuery
+                $card.data('data', card);
+            });
 
-                    // Instantiate KanbanColumn (assuming global availability)
-                    if (frappe.views.KanbanColumn) {
-                        const col_inst = new frappe.views.KanbanColumn(col_def, col_cards, $col_wrapper, me);
-
-                        // Register the column instance
-                        me.columns.push(col_inst);
-
-                        // Apply WIP Limit Class immediately
-                        if (col_def.custom_wip_limit > 0 && col_cards.length > col_def.custom_wip_limit) {
-                            $col_wrapper.addClass('wip-violation');
-                        }
-
-                        // Column Folding Logic
-                        const storage_key = `kanban_folding:${me.board.name}:${frappe.session.user}:${col_def.status}`;
-                        const is_collapsed = localStorage.getItem(storage_key) === '1';
-
-                        if (is_collapsed) {
-                            $col_wrapper.addClass('collapsed');
-                        }
-
-                        // Inject Folding Button
-                        const $header = $col_wrapper.find('.kanban-column-header');
-                        // Check if already exists to avoid dupes on re-render
-                        if ($header.find('.kanban-fold-btn').length === 0) {
-                            const $fold_btn = $(`<span class="kanban-fold-btn" style="cursor:pointer; margin-left:auto; font-size: 12px; opacity: 0.7;">
-                                ${is_collapsed ? '►' : '▼'}
-                            </span>`);
-
-                            $fold_btn.on('click', function(e) {
-                                e.stopPropagation();
-                                e.stopImmediatePropagation(); // Prevent sorting trigger
-
-                                const will_collapse = !$col_wrapper.hasClass('collapsed');
-
-                                if (will_collapse) {
-                                    $col_wrapper.addClass('collapsed');
-                                    localStorage.setItem(storage_key, '1');
-                                    $(this).text('►');
-                                } else {
-                                    $col_wrapper.removeClass('collapsed');
-                                    localStorage.removeItem(storage_key);
-                                    $(this).text('▼');
+            // Initialize Sortable for this column
+            if (window.Sortable) {
+                new window.Sortable($cards_container[0], {
+                    group: 'kanban',
+                    delay: 1000, // Enforced delay
+                    animation: 150,
+                    onEnd: function(evt) {
+                        const item = evt.item;
+                        const card_name = $(item).attr('data-name');
+                        const new_status = col_status;
+                        
+                        // Call standard API to update status
+                        frappe.call({
+                            method: 'frappe.desk.doctype.kanban_board.kanban_board.update_doc_status',
+                            args: {
+                                board_name: board_name,
+                                doc_name: card_name,
+                                status: new_status
+                            },
+                            callback: function(r) {
+                                if (!r.exc) {
+                                    // Optional: Trigger full refresh to sync state
+                                    // cur_list.kanban.update(cur_list.kanban.cards);
+                                    frappe.show_alert({message: __('Saved'), indicator: 'green'});
                                 }
-                            });
-
-                            $header.append($fold_btn);
-                        }
-                    } else {
-                        console.error("frappe.views.KanbanColumn is not defined. Cannot render swimlane columns.");
+                            }
+                        });
                     }
                 });
             }
-        };
-
-        // Inject Dynamic Styles for Collapsing
-        $('head').append(`<style>
-            .kanban-column.collapsed {
-                min-width: 50px !important;
-                width: 50px !important;
-                overflow: hidden;
-                transition: all 0.2s ease;
-            }
-            .kanban-column.collapsed .kanban-cards,
-            .kanban-column.collapsed .kanban-column-footer {
-                display: none !important;
-            }
-            .kanban-column.collapsed .kanban-column-header {
-                flex-direction: column;
-                align-items: center;
-                justify-content: flex-start;
-                height: 100%;
-                padding-top: 10px;
-            }
-            .kanban-column.collapsed .kanban-column-title {
-                writing-mode: vertical-rl;
-                text-orientation: mixed;
-                margin-top: 10px;
-            }
-            .kanban-column.collapsed .kanban-fold-btn {
-                margin: 0 !important;
-                margin-bottom: 5px;
-            }
-        </style>`);
-
-    } catch (e) {
-        console.error("Error applying Kanban patches:", e);
+        });
     }
 }
 
 // ============================================================
-// 5. Diagnostic Tool
+// 4. Event Listeners
 // ============================================================
-erpnext_enhancements.kanban.diagnose = function() {
-    console.group("[Kanban Diagnostics]");
-    console.log("Script Loaded:", true);
-    console.log("Patch Applied Flag (erpnext_enhancements.kanban.patched):", erpnext_enhancements.kanban.patched);
-    console.log("Current Route:", frappe.get_route());
-    console.log("frappe.views.KanbanBoard exists:", !!(frappe.views && frappe.views.KanbanBoard));
 
-    if (frappe.views && frappe.views.KanbanBoard) {
-        const kb = frappe.views.KanbanBoard.prototype;
-        const make_sortable_str = kb.make_sortable.toString();
-        const refresh_str = kb.refresh.toString();
+// Listen for route changes to re-initialize
+if (frappe.router) {
+    frappe.router.on('change', () => {
+        setTimeout(initialize_kanban_logic, 1000);
+    });
+}
 
-        console.log("make_sortable patched (contains '1000ms'):", make_sortable_str.includes("1000"));
-        console.log("refresh patched (contains 'swimlane'):", refresh_str.includes("swimlane"));
-    } else {
-        console.warn("KanbanBoard class not found.");
-    }
-    console.groupEnd();
-    return "Diagnostic Complete";
-};
+// Initial check
+$(document).ready(() => {
+    setTimeout(initialize_kanban_logic, 2000);
+});
