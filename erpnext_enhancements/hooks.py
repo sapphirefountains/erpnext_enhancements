@@ -52,6 +52,7 @@ doctype_js = {
     "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
     "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
+    "Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
     "Material Request": "public/js/procurement_links.js"
