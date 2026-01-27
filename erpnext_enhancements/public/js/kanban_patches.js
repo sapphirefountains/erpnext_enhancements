@@ -16,8 +16,12 @@ frappe.provide("erpnext_enhancements.utils");
 // This runs immediately to catch any Sortable instances created by Frappe.
 
 (function apply_sortable_patch() {
+    let attempts = 0;
+    const max_attempts = 20;
+
     // Poll for Sortable because it might be loaded asynchronously
     const sortable_interval = setInterval(() => {
+        attempts++;
         if (window.Sortable && !window.Sortable._patched) {
             console.log("[Kanban Enhancements] Patching Sortable for drag delay...");
             
@@ -44,6 +48,8 @@ frappe.provide("erpnext_enhancements.utils");
             window.Sortable._patched = true; // Prevent double patching
             
             clearInterval(sortable_interval);
+        } else if (attempts >= max_attempts) {
+            clearInterval(sortable_interval);
         }
     }, 500);
 })();
@@ -54,6 +60,30 @@ frappe.provide("erpnext_enhancements.utils");
 // ============================================================
 
 async function initialize_kanban_logic() {
+    // 0. Only run on Kanban view
+    const route = frappe.get_route();
+    // Typical route: List/DocType/Kanban/BoardName or similar
+    // We check if "Kanban" appears in route
+    if (!route || !route.includes('Kanban')) {
+        return;
+    }
+
+    // 1. Wait for Kanban instance to be ready
+    erpnext_enhancements.utils.waitFor(
+        () => {
+            return window.cur_list &&
+                   window.cur_list.kanban &&
+                   window.cur_list.kanban.board_name;
+        },
+        async () => {
+             await inject_logic();
+        },
+        20, // 20 attempts
+        500 // 500ms interval = 10 seconds max wait
+    );
+}
+
+async function inject_logic() {
     // 1. Validate Context
     if (!cur_list || !cur_list.kanban) {
         return; 
@@ -99,8 +129,8 @@ async function initialize_kanban_logic() {
             original_update.call(this, cards);
             
             // Apply WIP Limits after standard render
-            // We use setTimeout to ensure DOM is ready
-            setTimeout(() => {
+            // We use setTimeout to ensure DOM is ready (or use requestAnimationFrame)
+             setTimeout(() => {
                 check_wip_limits(this, board_doc);
             }, 200);
         }
@@ -270,11 +300,12 @@ function render_swimlanes(kanban_inst, cards, board_doc) {
 // Listen for route changes to re-initialize
 if (frappe.router) {
     frappe.router.on('change', () => {
-        setTimeout(initialize_kanban_logic, 1000);
+        // Use waitFor indirectly via initialize_kanban_logic
+        initialize_kanban_logic();
     });
 }
 
 // Initial check
 $(document).ready(() => {
-    setTimeout(initialize_kanban_logic, 2000);
+    initialize_kanban_logic();
 });
