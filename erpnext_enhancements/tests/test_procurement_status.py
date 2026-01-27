@@ -1,3 +1,4 @@
+import unittest.mock
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import random_string
@@ -7,6 +8,9 @@ from erpnext_enhancements.project_enhancements import get_procurement_status
 
 class TestProcurementStatus(FrappeTestCase):
 	def setUp(self):
+		self.enqueue_patcher = unittest.mock.patch("frappe.enqueue")
+		self.mock_enqueue = self.enqueue_patcher.start()
+
 		# Ensure Company exists
 		self.company = "_Test Company_"
 		if not frappe.db.exists("Company", self.company):
@@ -156,6 +160,7 @@ class TestProcurementStatus(FrappeTestCase):
 			).insert()
 
 	def tearDown(self):
+		self.enqueue_patcher.stop()
 		frappe.db.rollback()
 
 	def test_get_procurement_status_internal_transfer(self):

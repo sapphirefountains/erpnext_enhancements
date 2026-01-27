@@ -14,13 +14,13 @@ class TestProjectEnhancements(unittest.TestCase):
 	@patch('frappe.get_all')
 	def test_get_project_comments_with_data(self, mock_get_all):
 		# Setup mocks
-		mock_comment = {"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"}
+		mock_comment = frappe._dict({"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"})
 
 		def get_all_side_effect(doctype, filters=None, fields=None, order_by=None):
 			if doctype == "Comment":
 				return [mock_comment]
 			if doctype == "User":
-				return [{"name": "user1", "full_name": "Test User", "user_image": "avatar.png"}]
+				return [frappe._dict({"name": "user1", "full_name": "Test User", "user_image": "avatar.png"})]
 			return []
 		mock_get_all.side_effect = get_all_side_effect
 
