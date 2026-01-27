@@ -47,17 +47,25 @@ def get_impacted_documents(source_project):
 	for doctype, fields in linked_doctypes.items():
 		impact_map[doctype] = []
 
+		is_single = frappe.get_meta(doctype).issingle
+
 		for field in fields:
 			if doctype == "Project" and field == "name":
 				continue
 
-			# Find documents where the link field is the source project
-			docs = frappe.db.get_all(doctype, filters={field: source_project}, pluck="name")
+			if is_single:
+				# For Single DocTypes, check if the value matches
+				val = frappe.db.get_single_value(doctype, field)
+				if val == source_project:
+					impact_map[doctype].append(doctype)
+			else:
+				# Find documents where the link field is the source project
+				docs = frappe.db.get_all(doctype, filters={field: source_project}, pluck="name")
 
-			if docs:
-				# Use set to avoid duplicates if multiple fields link to Project in same doc
-				# (Unlikely but possible)
-				impact_map[doctype].extend(docs)
+				if docs:
+					# Use set to avoid duplicates if multiple fields link to Project in same doc
+					# (Unlikely but possible)
+					impact_map[doctype].extend(docs)
 
 		# Deduplicate
 		if impact_map[doctype]:
@@ -106,10 +114,25 @@ def merge_projects(source_project, target_project):
 	# keeping the logic separated for "Stats" (read-only) vs "Merge" (write) is safer for now.
 
 	for doctype, fields in linked_doctypes.items():
-		is_table = frappe.get_meta(doctype).istable
+		meta = frappe.get_meta(doctype)
+		is_table = meta.istable
+		is_single = meta.issingle
 
 		for field in fields:
 			if doctype == "Project" and field == "name":
+				continue
+
+			if is_single:
+				# For Single DocTypes, check and update if necessary
+				try:
+					val = frappe.db.get_single_value(doctype, field)
+					if val == source_project:
+						frappe.db.set_single_value(doctype, field, target_project)
+						updated_count += 1
+				except Exception as e:
+					frappe.log_error(
+						f"Failed to update Single DocType {doctype}: {e!s}", "Project Merge Error"
+					)
 				continue
 
 			docs_to_update = frappe.db.get_all(doctype, filters={field: source_project}, pluck="name")
@@ -128,7 +151,7 @@ def merge_projects(source_project, target_project):
 
 							# Add a comment if possible
 							msg = _("Merged from Project {0}").format(source_project)
-							if not is_table and frappe.get_meta(doctype).issingle == 0:
+							if not is_table and not is_single:
 								doc_to_update.add_comment("Info", msg)
 
 						updated_count += 1
@@ -139,8 +162,8 @@ def merge_projects(source_project, target_project):
 
 	# Cancel the source project
 	source_doc = frappe.get_doc("Project", source_project)
-	if source_doc.status != "Cancelled":
-		source_doc.status = "Cancelled"
+	if source_doc.status != "Canceled":
+		source_doc.status = "Canceled"
 		source_doc.save(ignore_permissions=True)
 		source_doc.add_comment("Info", _("Project merged into {0}").format(target_project))
 

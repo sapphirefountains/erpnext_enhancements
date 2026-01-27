@@ -43,7 +43,66 @@ $(document).on("app_ready", function () {
 
 			return ret;
 		};
+
+        // Override save to handle draft cleanup
+        const original_form_save = frappe.ui.form.Controller.prototype.save;
+        frappe.ui.form.Controller.prototype.save = function(...args) {
+            const ret = original_form_save.apply(this, args);
+            // ret is typically a Promise in recent Frappe versions
+            if (ret && ret.then) {
+                ret.then(() => {
+                    const frm = this.frm || this;
+                    cleanup_draft(frm);
+                });
+            }
+            return ret;
+        };
+
+        // Override trigger to check drafts on load
+        const original_form_trigger = frappe.ui.form.Controller.prototype.trigger;
+        frappe.ui.form.Controller.prototype.trigger = function (event, ...args) {
+            let ret;
+            if (original_form_trigger) {
+                 ret = original_form_trigger.apply(this, [event, ...args]);
+            }
+
+            if (event === 'onload') {
+                const frm = this.frm || this;
+                // Delay slightly to ensure dashboard wrapper is rendered
+                setTimeout(() => {
+                    try {
+                         if (frm && !frm.is_new()) {
+                            check_draft_on_load(frm);
+                        }
+                    } catch (e) {
+                        console.error("Error checking drafts on load:", e);
+                    }
+                }, 500);
+            }
+            return ret;
+        };
 	}
+
+    // Setup Home Buttons
+    try {
+        setup_home_buttons();
+    } catch (e) {
+        console.error("Error setting up home buttons:", e);
+    }
+
+    // Setup Global Navigation Guard
+    try {
+        setup_navigation_guard();
+    } catch (e) {
+        console.error("Error setting up navigation guard:", e);
+    }
+
+    // Initialize Auto-Save Listeners
+    try {
+        init_auto_save_listeners();
+    } catch (e) {
+        console.error("Error initializing auto-save:", e);
+    }
 });
 
 // ==========================================
@@ -258,3 +317,412 @@ document.addEventListener(
 	},
 	true
 ); // Capture phase
+
+// ==========================================
+// Home Button Logic
+// ==========================================
+
+function setup_home_buttons() {
+    // 1. Navbar Button
+    // Check if it exists to avoid duplicates
+    if ($('.navbar-home-link').length === 0) {
+        const home_html = `
+            <li class="nav-item navbar-home-link">
+                <a class="nav-link" onclick="frappe.set_route('home')" title="Home" style="cursor: pointer;">
+                    <span class="home-icon">
+                        <svg class="icon icon-md" style="width: 16px; height: 16px; vertical-align: middle;">
+                            <use href="#icon-home"></use>
+                        </svg>
+                    </span>
+                    <span class="hidden-xs" style="margin-left: 5px;">Home</span>
+                </a>
+            </li>
+        `;
+        // Append to the first navbar-nav (left side)
+        $('.navbar-nav').first().append(home_html);
+    }
+
+    // 2. Desk Grid Button
+    // Listen to route changes to re-inject if needed
+    if (frappe.router) {
+        frappe.router.on('change', () => {
+            waitForContainerAndRender();
+        });
+    }
+
+    // Initial check
+    waitForContainerAndRender();
+}
+
+function waitForContainerAndRender() {
+    let attempts = 0;
+    const maxAttempts = 20; // 10 seconds
+    const interval = setInterval(() => {
+        attempts++;
+        const added = render_desk_home_button();
+
+        // If successfully added or we've tried long enough, stop polling.
+        // Note: checking 'added' ensures we stop once we've done our job for this view.
+        if (added || attempts >= maxAttempts) {
+            clearInterval(interval);
+        }
+    }, 500);
+}
+
+function render_desk_home_button() {
+    // Target the active/visible container to ensure we don't check hidden previous views
+    // Priority 1: .layout-main-section (Common in Workspaces, Kanban)
+    let $container = $('.layout-main-section:visible');
+
+    // Priority 2: .page-content (Common in Forms, Lists)
+    if ($container.length === 0) {
+        $container = $('.page-content:visible');
+    }
+
+    if ($container.length && $container.is(':visible')) {
+        // Scope the check to the found container
+        if ($container.find('.desk-home-button-wrapper').length > 0) {
+            return true; // Already exists
+        }
+
+        const btn_html = `
+            <div class="desk-home-button-wrapper" style="margin-bottom: 20px; padding-left: 15px;">
+                <button class="btn btn-default" onclick="frappe.set_route('home')" style="display: inline-flex; align-items: center; gap: 8px; font-size: 14px; padding: 8px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                    <svg class="icon icon-md" style="width: 16px; height: 16px;">
+                        <use href="#icon-home"></use>
+                    </svg>
+                    Go to Home
+                </button>
+            </div>
+        `;
+        $container.prepend(btn_html);
+        return true; // Successfully added
+    }
+
+    return false; // Not found yet
+}
+
+// ==========================================
+// Global Navigation Guard
+// ==========================================
+
+function setup_navigation_guard() {
+    console.log("[ERPNext Enhancements] Initializing Navigation Guard...");
+
+    let is_navigating = false;
+    function is_dirty() {
+        try {
+            if (window.cur_frm && window.cur_frm.doc && window.cur_frm.is_dirty()) {
+                return true;
+            }
+        } catch (e) {
+            // ignore
+        }
+        return false;
+    }
+
+    function clear_dirty() {
+        if (window.cur_frm && window.cur_frm.doc) {
+            window.cur_frm.doc.__unsaved = 0;
+        }
+    }
+
+    // 1. Global Click Interceptor (Capture Phase)
+    // This catches clicks on Sidebar, Breadcrumbs, and Link fields BEFORE Frappe/Browser handles them.
+    document.addEventListener('click', function (e) {
+        // Find closest anchor tag
+        const target = e.target.closest('a');
+        if (!target) return;
+
+        // Check if it's an internal link (hash-based)
+        const href = target.getAttribute('href');
+        if (!href || !href.startsWith('#')) return;
+
+        // Ignore new tabs or modifiers
+        if (e.ctrlKey || e.metaKey || e.shiftKey || target.target === '_blank') return;
+
+        // If dirty, intercept
+        if (is_dirty()) {
+            // Prevent the default navigation
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            if (is_navigating) return;
+            is_navigating = true;
+
+            frappe.confirm(
+                __("You have unsaved changes. Are you sure you want to leave?"),
+                () => {
+                    // User chose to leave
+                    is_navigating = false;
+                    clear_dirty();
+
+                    // Manually proceed with the navigation
+                    // Since we blocked the click, the hash didn't change.
+                    // We can now safely set the hash or click again?
+                    // Setting hash is safest.
+                    window.location.href = href;
+                },
+                () => {
+                    // User chose to stay
+                    is_navigating = false;
+                    // Do nothing, we already prevented default.
+                }
+            );
+        }
+    }, true); // true = Capture Phase (runs before bubbling/other listeners)
+
+
+    // 2. Intercept frappe.set_route (Programmatic / Awesomebar)
+    if (frappe.set_route) {
+        const original_set_route = frappe.set_route;
+        frappe.set_route = function (...args) {
+            if (is_dirty()) {
+                if (is_navigating) return Promise.resolve();
+                is_navigating = true;
+
+                return new Promise((resolve, reject) => {
+                    frappe.confirm(
+                        __("You have unsaved changes. Are you sure you want to leave?"),
+                        () => {
+                            is_navigating = false;
+                            clear_dirty();
+                            resolve(original_set_route.apply(this, args));
+                        },
+                        () => {
+                            is_navigating = false;
+                            reject();
+                        }
+                    );
+                });
+            } else {
+                return original_set_route.apply(this, args);
+            }
+        };
+    }
+
+    // 3. Intercept Router Render (Back/Forward Button Fallback)
+    // If a navigation event bypasses the click listener (e.g. Browser Back Button),
+    // the hash changes and Frappe's router picks it up.
+    // We override 'render' to stop the view from actually changing.
+    if (frappe.router && frappe.router.render) {
+        const original_render = frappe.router.render;
+        frappe.router.render = function(...args) {
+            if (is_dirty()) {
+                 // The hash has already changed. We must stop rendering.
+                 if (is_navigating) return; // Prevent double dialogs
+                 is_navigating = true;
+
+                 frappe.confirm(
+                    __("You have unsaved changes. Are you sure you want to leave?"),
+                    () => {
+                        is_navigating = false;
+                        clear_dirty();
+                        // Proceed with rendering the new page
+                        original_render.apply(this, args);
+                    },
+                    () => {
+                        is_navigating = false;
+                        // User chose to stay.
+                        // We do NOT call original_render, so the DOM remains on the old form.
+                        // Note: The URL in the browser bar will show the NEW hash (from the back button).
+                        // This is a known trade-off to avoid infinite hash-revert loops.
+                        // If the user attempts to Save, it will work for the current DOM.
+                    }
+                 );
+                 // We return here to BLOCK the render
+                 return;
+            }
+
+            return original_render.apply(this, args);
+        };
+    }
+
+    console.log("[ERPNext Enhancements] Navigation Guard Installed");
+}
+
+// ==========================================
+// Safe Auto-Save (User Form Drafts)
+// ==========================================
+
+function init_auto_save_listeners() {
+    console.log("[ERPNext Enhancements] Initializing Auto-Save Listeners...");
+
+    // 1. Listen for changes on all Frappe Control inputs
+    // We delegate to document to capture dynamically created fields
+    $(document).on('change', '.frappe-control input, .frappe-control select, .frappe-control textarea', function(e) {
+        // Find the form
+        if (window.cur_frm) {
+            save_draft_handler(window.cur_frm);
+        }
+    });
+
+    // 2. Listen for Visibility Change (Context Switch)
+    document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === 'hidden') {
+            if (window.cur_frm) {
+                save_draft_handler(window.cur_frm);
+            }
+        }
+    });
+}
+
+function save_draft_handler(frm) {
+    // Basic validations
+    if (!frm || !frm.doc || frm.is_new()) return;
+
+    // Ignore if not dirty? The prompt says "When user finishes editing...".
+    // Usually if I edit, it becomes dirty.
+    // If I just click around, I don't want to save.
+    // But 'change' event implies modification.
+    // However, visibilitychange happens always.
+    if (!frm.is_dirty()) return;
+
+    // 1. Save to LocalStorage (Immediate)
+    save_to_local_storage(frm);
+
+    // 2. Sync to Server (Debounced)
+    // Initialize debounce function for this form instance if needed
+    if (!frm.save_draft_debounced) {
+        frm.save_draft_debounced = frappe.utils.debounce((f) => {
+            sync_draft_to_server(f);
+        }, 2000);
+    }
+    frm.save_draft_debounced(frm);
+}
+
+function save_to_local_storage(frm) {
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    try {
+        localStorage.setItem(key, JSON.stringify(frm.doc));
+    } catch (e) {
+        console.warn("Auto-Save: Failed to save to localStorage", e);
+    }
+}
+
+function sync_draft_to_server(frm) {
+    // Double check state
+    if (!frm || !frm.doc) return;
+
+    frappe.call({
+        method: "erpnext_enhancements.api.user_drafts.save_draft",
+        args: {
+            ref_doctype: frm.doc.doctype,
+            ref_name: frm.doc.name,
+            form_data: JSON.stringify(frm.doc)
+        },
+        callback: function(r) {
+            // Optional: Update status indicator?
+            // console.log("Draft synced");
+        }
+    });
+}
+
+function check_draft_on_load(frm) {
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    const local_data_str = localStorage.getItem(key);
+
+    if (local_data_str) {
+        try {
+            const local_doc = JSON.parse(local_data_str);
+
+            // Compare to see if we really need to restore
+            if (!are_docs_equal(frm.doc, local_doc)) {
+                show_restore_alert(frm, local_doc);
+            }
+        } catch (e) {
+            console.error("Auto-Save: Corrupt draft data", e);
+        }
+    }
+}
+
+function are_docs_equal(doc1, doc2) {
+    // Simple comparison ignoring system fields
+    const ignore = ['modified', 'creation', 'modified_by', 'owner', 'docstatus', 'idx', '__last_sync_on', '__unsaved', '__islocal'];
+
+    const d1 = Object.assign({}, doc1);
+    const d2 = Object.assign({}, doc2);
+
+    ignore.forEach(k => {
+        delete d1[k];
+        delete d2[k];
+    });
+
+    // Also ignore keys starting with _ if they are UI specific?
+    // Using simple JSON stringify comparison for now
+    return JSON.stringify(d1) === JSON.stringify(d2);
+}
+
+function show_restore_alert(frm, local_doc) {
+    if (!frm.dashboard || !frm.dashboard.wrapper) return;
+
+    const msg = __("You have unsaved changes from a previous session.");
+
+    // Check if alert already exists
+    if (frm.dashboard.wrapper.find('.draft-restore-alert').length > 0) return;
+
+    const alert_html = `
+        <div class="alert alert-warning draft-restore-alert" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <i class="fa fa-exclamation-triangle"></i> ${msg}
+            </div>
+            <div>
+                <button class="btn btn-xs btn-primary btn-restore-draft">${__("Restore")}</button>
+                <button class="btn btn-xs btn-default btn-discard-draft" style="margin-left: 5px;">${__("Discard")}</button>
+            </div>
+        </div>
+    `;
+
+    frm.dashboard.wrapper.prepend(alert_html);
+
+    frm.dashboard.wrapper.find('.btn-restore-draft').on('click', function() {
+        restore_draft(frm, local_doc);
+    });
+
+    frm.dashboard.wrapper.find('.btn-discard-draft').on('click', function() {
+        discard_draft(frm);
+    });
+}
+
+function restore_draft(frm, local_doc) {
+    // Extend current doc with local data
+    $.extend(frm.doc, local_doc);
+
+    // Refresh fields to show new data
+    frm.refresh_fields();
+
+    // Mark as dirty so user knows they need to save
+    frm.doc.__unsaved = 1;
+    frm.trigger('save_expected'); // Updates indicator
+
+    // Remove alert
+    frm.dashboard.wrapper.find('.draft-restore-alert').remove();
+
+    frappe.show_alert({message: __("Draft Restored"), indicator: 'green'});
+}
+
+function discard_draft(frm) {
+    cleanup_draft(frm);
+    frm.dashboard.wrapper.find('.draft-restore-alert').remove();
+    frappe.show_alert({message: __("Draft Discarded"), indicator: 'orange'});
+}
+
+function cleanup_draft(frm) {
+    if (!frm || !frm.doc) return;
+
+    const key = `draft::${frm.doc.doctype}::${frm.doc.name}`;
+    localStorage.removeItem(key);
+
+    // Also delete from server
+    frappe.call({
+        method: "erpnext_enhancements.api.user_drafts.delete_draft",
+        args: {
+            ref_doctype: frm.doc.doctype,
+            ref_name: frm.doc.name
+        },
+        callback: function() {
+            // console.log("Server draft deleted");
+        }
+    });
+}

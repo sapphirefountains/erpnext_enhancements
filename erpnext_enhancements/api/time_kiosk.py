@@ -4,11 +4,14 @@ from frappe.utils import now_datetime, get_datetime
 from datetime import timedelta
 
 @frappe.whitelist()
-def log_time(project, action, lat=None, lng=None, description=None, task=None):
+def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None):
     """
     Logs time for the current employee.
     action: "Start" or "Stop"
     """
+    if not action:
+        frappe.throw(_("Action is required."))
+
     user = frappe.session.user
     employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
 

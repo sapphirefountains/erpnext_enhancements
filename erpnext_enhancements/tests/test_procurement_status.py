@@ -1,15 +1,79 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils import random_string
 
 from erpnext_enhancements.project_enhancements import get_procurement_status
 
 
 class TestProcurementStatus(FrappeTestCase):
 	def setUp(self):
+		# Ensure Company exists
+		self.company = "_Test Company_"
+		if not frappe.db.exists("Company", self.company):
+			frappe.get_doc(
+				{
+					"doctype": "Company",
+					"company_name": self.company,
+					"abbr": "TC",
+					"default_currency": "USD",
+					"country": "United States",
+				}
+			).insert()
+
+		# Ensure Account Exists for Stock Adjustment
+		company_doc = frappe.get_doc("Company", self.company)
+		abbr = company_doc.abbr
+		expenses_account = f"Expenses - {abbr}"
+		stock_adj_account = f"Stock Adjustment - {abbr}"
+
+		if not frappe.db.exists("Account", expenses_account):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": "Expenses",
+					"company": self.company,
+					"is_group": 1,
+					"root_type": "Expense",
+					"report_type": "Profit and Loss",
+				}
+			).insert()
+
+		if not frappe.db.exists("Account", stock_adj_account):
+			frappe.get_doc(
+				{
+					"doctype": "Account",
+					"account_name": "Stock Adjustment",
+					"company": self.company,
+					"parent_account": expenses_account,
+					"is_group": 0,
+					"root_type": "Expense",
+					"report_type": "Profit and Loss",
+				}
+			).insert()
+
+		# Update company default
+		if not company_doc.stock_adjustment_account:
+			company_doc.stock_adjustment_account = stock_adj_account
+			company_doc.save()
+
 		# Create a Project
-		self.project = frappe.get_doc(
-			{"doctype": "Project", "project_name": "Test Procurement Project", "status": "Open"}
-		).insert()
+		self.project_name = f"Test Procurement Project {random_string(5)}"
+		self.project = frappe.new_doc("Project")
+		self.project.project_name = self.project_name
+		self.project.company = self.company
+		self.project.status = "Active"
+		self.project._validate_selects = lambda: None
+		self.project.insert()
+
+		# Ensure Item Group exists
+		if not frappe.db.exists("Item Group", "All Item Groups"):
+			frappe.get_doc(
+				{"doctype": "Item Group", "item_group_name": "All Item Groups", "is_group": 1}
+			).insert()
+
+		# Ensure UOM exists
+		if not frappe.db.exists("UOM", "Nos"):
+			frappe.get_doc({"doctype": "UOM", "uom_name": "Nos"}).insert()
 
 		# Create an Item
 		if not frappe.db.exists("Item", "Test Item Proc"):
@@ -25,6 +89,12 @@ class TestProcurementStatus(FrappeTestCase):
 		else:
 			self.item = frappe.get_doc("Item", "Test Item Proc")
 
+		# Ensure Supplier Group exists
+		if not frappe.db.exists("Supplier Group", "All Supplier Groups"):
+			frappe.get_doc(
+				{"doctype": "Supplier Group", "supplier_group_name": "All Supplier Groups"}
+			).insert()
+
 		# Create a Supplier
 		if not frappe.db.exists("Supplier", "Test Supplier Proc"):
 			frappe.get_doc(
@@ -35,8 +105,55 @@ class TestProcurementStatus(FrappeTestCase):
 				}
 			).insert()
 
-		# Get Company for Warehouses (default usually exists)
-		self.company = frappe.db.get_single_value("Global Defaults", "default_company") or "_Test Company"
+		# Ensure Warehouse exists
+		self.warehouse = f"Stores - {frappe.db.get_value('Company', self.company, 'abbr')}"
+		if not frappe.db.exists("Warehouse", self.warehouse):
+			frappe.get_doc(
+				{
+					"doctype": "Warehouse",
+					"warehouse_name": "Stores",
+					"company": self.company,
+				}
+			).insert()
+
+		# Ensure Stock Entry Type exists
+		if not frappe.db.exists("Stock Entry Type", "Material Transfer"):
+			frappe.get_doc(
+				{
+					"doctype": "Stock Entry Type",
+					"name": "Material Transfer",
+					"purpose": "Material Transfer"
+				}
+			).insert()
+
+		# Ensure Custom Fields exist (needed for the query in get_procurement_status)
+		if not frappe.db.exists("Custom Field", "Material Request-custom_project"):
+			frappe.get_doc(
+				{
+					"doctype": "Custom Field",
+					"name": "Material Request-custom_project",
+					"dt": "Material Request",
+					"fieldname": "custom_project",
+					"fieldtype": "Link",
+					"options": "Project",
+					"label": "Project",
+					"insert_after": "transaction_date",
+				}
+			).insert()
+
+		if not frappe.db.exists("Custom Field", "Request for Quotation-custom_project"):
+			frappe.get_doc(
+				{
+					"doctype": "Custom Field",
+					"name": "Request for Quotation-custom_project",
+					"dt": "Request for Quotation",
+					"fieldname": "custom_project",
+					"fieldtype": "Link",
+					"options": "Project",
+					"label": "Project",
+					"insert_after": "transaction_date",
+				}
+			).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -48,12 +165,14 @@ class TestProcurementStatus(FrappeTestCase):
 				"doctype": "Material Request",
 				"material_request_type": "Material Transfer",
 				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
 						"qty": 5,
 						"schedule_date": frappe.utils.nowdate(),
 						"project": self.project.name,
+						"warehouse": self.warehouse,
 					}
 				],
 			}
@@ -72,6 +191,7 @@ class TestProcurementStatus(FrappeTestCase):
 			{
 				"doctype": "Stock Entry",
 				"stock_entry_type": "Material Transfer",
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
@@ -80,6 +200,7 @@ class TestProcurementStatus(FrappeTestCase):
 						"t_warehouse": t_warehouse,
 						"material_request": mr.name,
 						"material_request_item": mr.items[0].name,
+						"allow_zero_valuation_rate": 1,
 					}
 				],
 			}
@@ -109,6 +230,7 @@ class TestProcurementStatus(FrappeTestCase):
 				"doctype": "Purchase Order",
 				"supplier": "Test Supplier Proc",
 				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
 				"items": [
 					{
 						"item_code": self.item.item_code,
@@ -117,6 +239,7 @@ class TestProcurementStatus(FrappeTestCase):
 						"schedule_date": frappe.utils.nowdate(),
 						"project": self.project.name,
 						"material_request": None,  # Explicitly None
+						"warehouse": self.warehouse,
 					}
 				],
 			}

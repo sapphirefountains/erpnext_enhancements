@@ -2,6 +2,7 @@
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now_datetime, add_to_date
+from datetime import timedelta
 import erpnext_enhancements.api.time_kiosk as time_kiosk
 
 class TestTimeKiosk(FrappeTestCase):
@@ -10,13 +11,46 @@ class TestTimeKiosk(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
-		# Ensure Project exists
-		self.project = "Test Project"
-		if not frappe.db.exists("Project", self.project):
+		# Ensure Warehouse Type 'Transit' exists
+		if not frappe.db.exists("Warehouse Type", "Transit"):
 			frappe.get_doc({
-				"doctype": "Project",
-				"project_name": self.project,
-				"is_active": "Yes"
+				"doctype": "Warehouse Type",
+				"name": "Transit"
+			}).insert()
+
+		# Ensure Company exists
+		self.company = frappe.defaults.get_user_default("Company") or "_Test Company_"
+		if not frappe.db.exists("Company", self.company):
+			frappe.get_doc({
+				"doctype": "Company",
+				"company_name": self.company,
+				"abbr": "TC",
+				"default_currency": "USD",
+				"country": "United States"
+			}).insert()
+
+		# Ensure Project exists
+		project_name = "Test Project"
+		existing_project = frappe.db.get_value("Project", {"project_name": project_name}, "name")
+		if existing_project:
+			self.project = existing_project
+		else:
+			p = frappe.new_doc("Project")
+			p.project_name = project_name
+			p.company = self.company
+			p.status = "Active"
+			p.flags.ignore_validate = True
+			p.insert()
+			if p.status != "Active":
+				frappe.db.set_value("Project", p.name, "status", "Active")
+				p.reload()
+			self.project = p.name
+
+		# Ensure Activity Type exists
+		if not frappe.db.exists("Activity Type", "Execution"):
+			frappe.get_doc({
+				"doctype": "Activity Type",
+				"activity_type": "Execution"
 			}).insert()
 
 		# Ensure Employee exists
@@ -27,7 +61,7 @@ class TestTimeKiosk(FrappeTestCase):
 				"employee": self.employee,
 				"first_name": "Kiosk",
 				"last_name": "User",
-				"company": frappe.defaults.get_user_default("Company") or "Test Company",
+				"company": self.company,
 				"status": "Active",
 				"date_of_joining": "2020-01-01"
 			})
@@ -53,8 +87,9 @@ class TestTimeKiosk(FrappeTestCase):
 
 	def tearDown(self):
 		# Clean up any open intervals to prevent pollution
-		frappe.db.delete("Job Interval", {"employee": self.employee})
-		frappe.db.delete("Timesheet", {"employee": self.employee})
+		if hasattr(self, "employee"):
+			frappe.db.delete("Job Interval", {"employee": self.employee})
+			frappe.db.delete("Timesheet", {"employee": self.employee})
 		super().tearDown()
 
 	def test_log_time_flow(self):
@@ -62,8 +97,8 @@ class TestTimeKiosk(FrappeTestCase):
 		result = time_kiosk.log_time(
 			project=self.project,
 			action="Start",
-			latitude="10.0",
-			longitude="20.0",
+			lat="10.0",
+			lng="20.0",
 			description="Integration Test Start",
 			task=None
 		)
@@ -80,7 +115,11 @@ class TestTimeKiosk(FrappeTestCase):
 			time_kiosk.log_time(project=self.project, action="Start")
 
 		# 3. Stop Job
-		# We need to simulate some time passing or just trust the system updates end_time
+		# Simulate work duration to ensure valid Timesheet (1 hour duration)
+		interval = frappe.get_last_doc("Job Interval", {"employee": self.employee})
+		new_start = add_to_date(interval.start_time, hours=-1)
+		frappe.db.set_value("Job Interval", interval.name, "start_time", new_start)
+
 		result = time_kiosk.log_time(action="Stop")
 
 		self.assertEqual(result["status"], "success")
@@ -89,6 +128,7 @@ class TestTimeKiosk(FrappeTestCase):
 		interval.reload()
 		self.assertEqual(interval.status, "Completed")
 		self.assertIsNotNone(interval.end_time)
+		self.assertEqual(interval.sync_status, "Synced")
 
 		# Verify Timesheet Created/Synced
 		# The logic aggregates logs or appends to timesheet.

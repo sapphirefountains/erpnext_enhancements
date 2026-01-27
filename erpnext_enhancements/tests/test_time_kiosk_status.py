@@ -1,60 +1,85 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import sys
-import os
-
-# Add current directory to path so we can import the package
-sys.path.append(os.getcwd())
-
-# Mock frappe and its submodules before importing the module under test
-frappe_mock = MagicMock()
-# Make whitelist a passthrough decorator
-frappe_mock.whitelist = lambda: lambda f: f
-
-sys.modules['frappe'] = frappe_mock
-sys.modules['frappe.utils'] = MagicMock()
-
-# Now import the module to test
+# -*- coding: utf-8 -*-
+import frappe
+from frappe.tests.utils import FrappeTestCase
 from erpnext_enhancements.api.time_kiosk import get_current_status
 
-class TestTimeKioskStatus(unittest.TestCase):
-    def setUp(self):
-        # Reset mocks before each test
-        frappe_mock.reset_mock()
-        # Restore whitelist behavior just in case (though it's set on module level)
-        frappe_mock.whitelist = lambda: lambda f: f
-        frappe_mock.session.user = "test@example.com"
+class TestTimeKioskStatus(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		self.create_test_data()
 
-    def test_get_current_status_idle(self):
-        """
-        Test that get_current_status returns a dict with just 'employee'
-        when the employee exists but has no open job interval.
-        This confirms the response is 'truthy' which confuses the frontend.
-        """
-        # Setup: Employee exists
-        frappe_mock.db.get_value.side_effect = self.mock_get_value_idle
+	def create_test_data(self):
+		# Create Warehouse Type "Transit" if not exists
+		if not frappe.db.exists("Warehouse Type", "Transit"):
+			frappe.get_doc({
+				"doctype": "Warehouse Type",
+				"name": "Transit",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
 
-        # Execute
-        result = get_current_status()
+		# Create Company if not exists
+		self.company_name = "_Test Company_"
+		if not frappe.db.exists("Company", self.company_name):
+			frappe.get_doc({
+				"doctype": "Company",
+				"company_name": self.company_name,
+				"default_currency": "USD",
+				"country": "United States"
+			}).insert()
 
-        # Verify
-        self.assertIsNotNone(result)
-        self.assertIn("employee", result)
-        self.assertEqual(result["employee"], "EMP-001")
-        # Ensure no interval data is present
-        self.assertNotIn("name", result)
-        self.assertNotIn("project", result)
+		# Create an Employee linked to the current user (Administrator) if not exists
+		# First check if an employee is already linked to the current user
+		# This ensures we use the same employee that get_current_status will find
+		existing_employee = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
 
-        # This confirms that 'if (result)' in JS would be true, leading to the bug
-        self.assertTrue(bool(result))
+		if existing_employee:
+			self.employee = existing_employee
+		else:
+			self.employee = "HR-EMP-KIOSK-STATUS"
+			if not frappe.db.exists("Employee", self.employee):
+				emp = frappe.get_doc({
+					"doctype": "Employee",
+					"employee": self.employee,
+					"first_name": "KioskStatus",
+					"last_name": "User",
+					"company": self.company_name,
+					"status": "Active",
+					"date_of_joining": "2020-01-01",
+					"user_id": frappe.session.user
+				})
+				emp.flags.ignore_mandatory = True
+				emp.insert()
+				self.employee = emp.name
+			else:
+				# Ensure it is linked to current user
+				frappe.db.set_value("Employee", self.employee, "user_id", frappe.session.user)
 
-    def mock_get_value_idle(self, doctype, filters, fieldname=None, as_dict=False):
-        if doctype == "Employee":
-            return "EMP-001"
-        if doctype == "Job Interval":
-            # Simulate no open interval found
-            return None
-        return None
+	def tearDown(self):
+		# Clean up
+		frappe.db.delete("Job Interval", {"employee": self.employee})
+		# We don't delete the employee as it might affect other tests or be complex,
+		# but we ensure no open intervals exist.
+		super().tearDown()
 
-if __name__ == '__main__':
-    unittest.main()
+	def test_get_current_status_idle(self):
+		"""
+		Test that get_current_status returns a dict with just 'employee'
+		when the employee exists but has no open job interval.
+		"""
+		# Ensure no open interval
+		frappe.db.delete("Job Interval", {"employee": self.employee, "status": "Open"})
+
+		# Execute
+		result = get_current_status()
+
+		# Verify
+		self.assertIsNotNone(result)
+		self.assertIn("employee", result)
+		self.assertEqual(result["employee"], self.employee)
+
+		# Ensure no interval data is present
+		self.assertNotIn("name", result)
+		self.assertNotIn("project", result)
+
+		# This confirms that 'if (result)' in JS would be true, leading to the frontend issue mentioned in memory
+		self.assertTrue(bool(result))

@@ -13,6 +13,20 @@ class TestTritonIntegration(FrappeTestCase):
 		frappe.flags.sync_source = None
 
 		# Define test data
+		if not frappe.db.exists("Customer Group", "All Customer Groups"):
+			frappe.get_doc({
+				"doctype": "Customer Group",
+				"customer_group_name": "All Customer Groups",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
+
+		if not frappe.db.exists("Territory", "All Territories"):
+			frappe.get_doc({
+				"doctype": "Territory",
+				"territory_name": "All Territories",
+				"is_group": 0
+			}).insert(ignore_permissions=True)
+
 		self.test_doc = frappe.get_doc({
 			"doctype": "Customer",
 			"customer_name": "Triton Test Customer",
@@ -93,6 +107,23 @@ class TestCalendarSync(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		# Enable Google Settings first
+		google_settings = frappe.get_doc("Google Settings")
+		google_settings.enable = 1
+		google_settings.client_id = "test_client_id"
+		google_settings.client_secret = "test_client_secret"
+		google_settings.save()
+
+		# Create "Test Global Calendar"
+		if not frappe.db.exists("Google Calendar", "Test Global Calendar"):
+			frappe.get_doc({
+				"doctype": "Google Calendar",
+				"calendar_name": "Test Global Calendar",
+				"user": "Administrator",
+				"google_calendar_id": "global_cal_id",
+				"enable": 1
+			}).insert()
+
 		# Create Settings
 		if not frappe.db.exists("ERPNext Enhancements Settings"):
 			self.settings = frappe.get_doc({"doctype": "ERPNext Enhancements Settings"})
@@ -107,17 +138,7 @@ class TestCalendarSync(FrappeTestCase):
 		})
 		self.settings.save()
 
-		# Create "Test Global Calendar"
-		if not frappe.db.exists("Google Calendar", "Test Global Calendar"):
-			frappe.get_doc({
-				"doctype": "Google Calendar",
-				"calendar_name": "Test Global Calendar",
-				"user": "Administrator",
-				"google_calendar_id": "global_cal_id",
-				"enable": 1
-			}).insert()
-
-	@patch('erpnext_enhancements.calendar_sync.get_google_calendar_object')
+	@patch('frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object')
 	def test_sync_to_google_calendar(self, mock_get_gc_object):
 		# Mock Google Service
 		mock_service = MagicMock()
@@ -144,7 +165,7 @@ class TestCalendarSync(FrappeTestCase):
 		log = frappe.db.get_value("Global Calendar Sync Log", {"reference_docname": task.name}, "event_id")
 		self.assertEqual(log, "g_event_123")
 
-	@patch('erpnext_enhancements.calendar_sync.get_google_calendar_object')
+	@patch('frappe.integrations.doctype.google_calendar.google_calendar.get_google_calendar_object')
 	def test_delete_event_from_google(self, mock_get_gc_object):
 		# Mock Service
 		mock_service = MagicMock()
@@ -168,7 +189,9 @@ class TestCalendarSync(FrappeTestCase):
 		# Trigger delete (e.g. Cancelled)
 		task.status = "Cancelled"
 		# We manually call delete logic because status change usually triggers it inside `run_google_calendar_sync`
+		frappe.flags.sync_source = "background_worker"
 		calendar_sync.delete_event_from_google(task, "on_update")
+		frappe.flags.sync_source = None
 
 		# Assert delete called
 		mock_service.events().delete.assert_called_with(calendarId="global_cal_id", eventId="existing_event_id")

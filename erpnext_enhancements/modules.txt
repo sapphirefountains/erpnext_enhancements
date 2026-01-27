@@ -1,2 +1,2 @@
-ERPNext Enhancements
+Enhancements Core
 Travel Management
