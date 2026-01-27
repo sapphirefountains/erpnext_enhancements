@@ -73,11 +73,16 @@ erpnext_enhancements.utils.waitForObject = function(namespace_string, interval =
 async function initialize_kanban_logic() {
     console.log("[Kanban Debug] initialize_kanban_logic called.");
 
-    // Step A: Check Route (Must be 'kanban')
+    // Step A: Check Route (Must be 'kanban' or List view in Kanban mode)
     const route = frappe.get_route();
     console.log("[Kanban Debug] Current route:", route);
 
-    if (!route || route[0] !== 'kanban') {
+    const is_kanban_route = (route && route.length > 0) && (
+        route[0] === 'kanban' ||
+        (route[0] === 'List' && route[2] === 'Kanban')
+    );
+
+    if (!is_kanban_route) {
         console.log("[Kanban Debug] Not a kanban route. Skipping.");
         return;
     }
