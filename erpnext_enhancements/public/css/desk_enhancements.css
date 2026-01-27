@@ -929,3 +929,22 @@ mark {
     min-width: 280px !important;
     max-width: 320px !important;
 }
+
+/* ==========================================================================
+   FIX: List View Sort Dropdown Z-Index
+   ========================================================================== */
+/*
+  The sort dropdown in the list view (top right) was being hidden behind
+  the sticky list header or other elements. This ensures it stays on top.
+*/
+.sort-selector,
+.list-filter-main,
+.filter-section {
+    z-index: 102 !important; /* Higher than typical sticky headers (1-100) */
+    position: relative;
+}
+
+.sort-selector .dropdown-menu,
+.list-sort-dropdown {
+    z-index: 1005 !important;
+}
