@@ -1,6 +1,32 @@
 frappe.provide("frappe.search");
+frappe.provide("erpnext_enhancements.utils");
 
 console.log("[ERPNext Enhancements] Script loaded");
+
+// ==========================================
+// Utilities
+// ==========================================
+
+erpnext_enhancements.utils.waitFor = function(check, callback, max_attempts=20, interval=500) {
+    let attempts = 0;
+
+    // Immediate check
+    if (check()) {
+        callback();
+        return;
+    }
+
+    const i = setInterval(() => {
+        attempts++;
+        if (check()) {
+            clearInterval(i);
+            callback();
+        } else if (attempts >= max_attempts) {
+            clearInterval(i);
+            // console.warn("[ERPNext Enhancements] WaitFor timed out");
+        }
+    }, interval);
+};
 
 $(document).on("app_ready", function () {
 	console.log("[ERPNext Enhancements] app_ready");
@@ -323,6 +349,10 @@ document.addEventListener(
 // ==========================================
 
 function setup_home_buttons() {
+    // 0. Idempotency Check
+    if (window._home_buttons_installed) return;
+    window._home_buttons_installed = true;
+
     // 1. Navbar Button
     // Check if it exists to avoid duplicates
     if ($('.navbar-home-link').length === 0) {
@@ -355,18 +385,12 @@ function setup_home_buttons() {
 }
 
 function waitForContainerAndRender() {
-    let attempts = 0;
-    const maxAttempts = 20; // 10 seconds
-    const interval = setInterval(() => {
-        attempts++;
-        const added = render_desk_home_button();
-
-        // If successfully added or we've tried long enough, stop polling.
-        // Note: checking 'added' ensures we stop once we've done our job for this view.
-        if (added || attempts >= maxAttempts) {
-            clearInterval(interval);
-        }
-    }, 500);
+    erpnext_enhancements.utils.waitFor(
+        () => render_desk_home_button(),
+        () => {}, // Callback does nothing, render checks itself
+        20,
+        500
+    );
 }
 
 function render_desk_home_button() {
@@ -407,6 +431,11 @@ function render_desk_home_button() {
 // ==========================================
 
 function setup_navigation_guard() {
+    if (window._nav_guard_installed) {
+        // console.log("[ERPNext Enhancements] Navigation Guard already installed.");
+        return;
+    }
+
     console.log("[ERPNext Enhancements] Initializing Navigation Guard...");
 
     let is_navigating = false;
@@ -539,6 +568,7 @@ function setup_navigation_guard() {
         };
     }
 
+    window._nav_guard_installed = true;
     console.log("[ERPNext Enhancements] Navigation Guard Installed");
 }
 
@@ -547,6 +577,9 @@ function setup_navigation_guard() {
 // ==========================================
 
 function init_auto_save_listeners() {
+    if (window._auto_save_installed) return;
+    window._auto_save_installed = true;
+
     console.log("[ERPNext Enhancements] Initializing Auto-Save Listeners...");
 
     // 1. Listen for changes on all Frappe Control inputs
