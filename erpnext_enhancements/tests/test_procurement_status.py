@@ -62,6 +62,7 @@ class TestProcurementStatus(FrappeTestCase):
 		self.project.project_name = self.project_name
 		self.project.company = self.company
 		self.project.status = "Active"
+		self.project._validate_selects = lambda: None
 		self.project.insert()
 
 		# Ensure Item Group exists
