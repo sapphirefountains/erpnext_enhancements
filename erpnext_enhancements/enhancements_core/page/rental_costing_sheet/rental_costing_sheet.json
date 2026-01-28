@@ -1,0 +1,32 @@
+{
+ "content": null,
+ "creation": "2025-05-08 11:24:32.404870",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2025-05-08 11:24:32.404870",
+ "modified_by": "Administrator",
+ "module": "ERPNext Enhancements",
+ "name": "rental_costing_sheet",
+ "owner": "Administrator",
+ "page_name": "rental_costing_sheet",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "Project Manager"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Rental Costing Sheet"
+}
