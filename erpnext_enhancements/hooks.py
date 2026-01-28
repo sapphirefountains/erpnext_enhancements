@@ -54,6 +54,7 @@ doctype_js = {
     "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
     "Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
     "Sales Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_order_comments.js"],
+    "Sales Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_invoice_comments.js"],
     "Task": ["public/js/vue.global.js", "public/js/comments.js", "public/js/task_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
