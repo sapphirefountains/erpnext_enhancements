@@ -3,8 +3,6 @@
  * - Touch Latency Fix (Drag Delay) via Global Sortable Patch
  */
 
-console.log("[Kanban Enhancements] Loading...");
-
 frappe.provide("erpnext_enhancements.kanban");
 frappe.provide("erpnext_enhancements.utils");
 
@@ -21,7 +19,6 @@ frappe.provide("erpnext_enhancements.utils");
     const sortable_interval = setInterval(() => {
         attempts++;
         if (window.Sortable && !window.Sortable._patched) {
-            console.log("[Kanban Enhancements] Patching Sortable for drag delay...");
             
             const OriginalSortable = window.Sortable;
             

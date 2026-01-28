@@ -1,8 +1,6 @@
 frappe.provide("frappe.search");
 frappe.provide("erpnext_enhancements.utils");
 
-console.log("[ERPNext Enhancements] Script loaded");
-
 // ==========================================
 // Utilities
 // ==========================================
@@ -29,8 +27,6 @@ erpnext_enhancements.utils.waitFor = function(check, callback, max_attempts=20, 
 };
 
 $(document).on("app_ready", function () {
-	console.log("[ERPNext Enhancements] app_ready");
-
 	if (frappe.search.AwesomeBar) {
 		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
 		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
@@ -436,8 +432,6 @@ function setup_navigation_guard() {
         return;
     }
 
-    console.log("[ERPNext Enhancements] Initializing Navigation Guard...");
-
     let is_navigating = false;
     function is_dirty() {
         try {
@@ -569,7 +563,6 @@ function setup_navigation_guard() {
     }
 
     window._nav_guard_installed = true;
-    console.log("[ERPNext Enhancements] Navigation Guard Installed");
 }
 
 // ==========================================
@@ -579,8 +572,6 @@ function setup_navigation_guard() {
 function init_auto_save_listeners() {
     if (window._auto_save_installed) return;
     window._auto_save_installed = true;
-
-    console.log("[ERPNext Enhancements] Initializing Auto-Save Listeners...");
 
     // 1. Listen for changes on all Frappe Control inputs
     // We delegate to document to capture dynamically created fields
