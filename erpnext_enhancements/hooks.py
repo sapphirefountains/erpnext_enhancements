@@ -62,6 +62,7 @@ doctype_js = {
     "Production Plan": ["public/js/vue.global.js", "public/js/comments.js", "public/js/production_plan_comments.js"],
     "Work Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/work_order_comments.js"],
     "Job Card": ["public/js/vue.global.js", "public/js/comments.js", "public/js/job_card_comments.js"],
+    "Stock Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/stock_entry_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
     "Material Request": "public/js/procurement_links.js"
@@ -226,7 +227,9 @@ fixtures = [
                 "Kanban Board-custom_swimlane_field",
                 "Kanban Board Column-custom_wip_limit",
                 "Employee-custom_comments_tab",
-                "Employee-custom_comments_field"
+                "Employee-custom_comments_field",
+                "Stock Entry-custom_comments_tab",
+                "Stock Entry-custom_comments_field"
             ]]
         ]
     },
