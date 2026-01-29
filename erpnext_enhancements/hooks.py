@@ -59,6 +59,7 @@ doctype_js = {
     "Journal Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/journal_entry_comments.js"],
     "Payment Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/payment_entry_comments.js"],
     "Purchase Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_invoice_comments.js"],
+    "Production Plan": ["public/js/vue.global.js", "public/js/comments.js", "public/js/production_plan_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
     "Material Request": "public/js/procurement_links.js"
