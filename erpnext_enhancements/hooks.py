@@ -66,7 +66,7 @@ doctype_js = {
     "Stock Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/stock_entry_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
-    "Material Request": "public/js/procurement_links.js",
+    "Material Request": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js", "public/js/material_request_comments.js"],
     "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"],
     "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
     "Serial No": ["public/js/vue.global.js", "public/js/comments.js", "public/js/serial_no_comments.js"],
