@@ -49,6 +49,7 @@ web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 # include js in doctype views
 doctype_js = {
     "Project": ["public/js/vue.global.js", "public/js/comments.js", "public/js/project_merge.js", "public/js/project_enhancements.js"],
+    "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item_comments.js"],
     "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
     "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
