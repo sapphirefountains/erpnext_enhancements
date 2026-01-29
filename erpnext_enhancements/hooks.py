@@ -68,7 +68,8 @@ doctype_js = {
     "Purchase Order": "public/js/procurement_links.js",
     "Material Request": "public/js/procurement_links.js",
     "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"],
-    "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"]
+    "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
+    "Serial No": ["public/js/vue.global.js", "public/js/comments.js", "public/js/serial_no_comments.js"]
 }
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
@@ -234,7 +235,9 @@ fixtures = [
                 "Stock Entry-custom_comments_tab",
                 "Stock Entry-custom_comments_field",
                 "Delivery Note-custom_comments_tab",
-                "Delivery Note-custom_comments_field"
+                "Delivery Note-custom_comments_field",
+                "Serial No-custom_comments_tab",
+                "Serial No-custom_comments_field"
             ]]
         ]
     },
