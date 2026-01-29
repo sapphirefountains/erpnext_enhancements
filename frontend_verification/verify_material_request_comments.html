@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mock Material Request</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <h1>Mock Material Request</h1>
+    <div id="comments-app-container"></div>
+
+    <script>
+        // Mock Frappe
+        window.frappe = {
+            ui: {
+                form: {
+                    on: function(doctype, handlers) {
+                        if (doctype === 'Material Request') {
+                            window.mr_handlers = handlers;
+                        }
+                    }
+                }
+            }
+        };
+
+        // Mock erpnext_enhancements global
+        window.erpnext_enhancements = {
+            render_comments_app: function(frm, fieldname) {
+                console.log('render_comments_app called with fieldname:', fieldname);
+                $('#comments-app-container').text('Comments App Rendered in ' + fieldname);
+            }
+        };
+
+        // Mock Form
+        window.cur_frm = {
+            doc: {
+                doctype: 'Material Request',
+                __islocal: 0 // Simulate saved doc
+            },
+            trigger: function(event) {
+                if (window.mr_handlers && window.mr_handlers[event]) {
+                    window.mr_handlers[event](this);
+                } else if (event === 'render_comments_section' && window.mr_handlers.render_comments_section) {
+                     window.mr_handlers.render_comments_section(this);
+                }
+            }
+        };
+    </script>
+
+    <!-- Load the script -->
+    <script src="../erpnext_enhancements/public/js/material_request_comments.js"></script>
+
+    <script>
+        $(document).ready(function() {
+            // Trigger refresh
+            if (window.mr_handlers && window.mr_handlers.refresh) {
+                window.mr_handlers.refresh(window.cur_frm);
+            }
+        });
+    </script>
+</body>
+</html>
