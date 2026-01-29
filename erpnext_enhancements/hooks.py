@@ -65,7 +65,8 @@ doctype_js = {
     "Stock Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/stock_entry_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
     "Purchase Order": "public/js/procurement_links.js",
-    "Material Request": "public/js/procurement_links.js"
+    "Material Request": "public/js/procurement_links.js",
+    "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"]
 }
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
