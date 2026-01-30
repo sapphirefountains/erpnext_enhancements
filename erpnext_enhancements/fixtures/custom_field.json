@@ -431,5 +431,25 @@
   "insert_after": "custom_comments_tab",
   "dt": "Address",
   "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Quotation-custom_comments_tab",
+  "fieldname": "custom_comments_tab",
+  "fieldtype": "Tab Break",
+  "label": "Comments",
+  "insert_after": "terms",
+  "dt": "Quotation",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Quotation-custom_comments_field",
+  "fieldname": "custom_comments_field",
+  "fieldtype": "HTML",
+  "label": "Comments App",
+  "insert_after": "custom_comments_tab",
+  "dt": "Quotation",
+  "module": "ERPNext Enhancements"
  }
 ]
