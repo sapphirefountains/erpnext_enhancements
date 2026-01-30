@@ -76,7 +76,8 @@ doctype_js = {
     "Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/quotation_comments.js"],
     "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js"],
     "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js"],
-    "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"]
+    "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
+    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
