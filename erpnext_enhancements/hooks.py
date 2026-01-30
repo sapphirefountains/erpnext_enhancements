@@ -65,7 +65,7 @@ doctype_js = {
     "Job Card": ["public/js/vue.global.js", "public/js/comments.js", "public/js/job_card_comments.js"],
     "Stock Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/stock_entry_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
-    "Purchase Order": "public/js/procurement_links.js",
+    "Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js", "public/js/purchase_order_comments.js"],
     "Material Request": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js", "public/js/material_request_comments.js"],
     "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"],
     "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
@@ -246,7 +246,9 @@ fixtures = [
                 "Supplier-custom_comments_tab",
                 "Supplier-custom_comments_field",
                 "Supplier Quotation-custom_comments_tab",
-                "Supplier Quotation-custom_comments_field"
+                "Supplier Quotation-custom_comments_field",
+                "Purchase Order-custom_comments_tab",
+                "Purchase Order-custom_comments_field"
             ]]
         ]
     },
