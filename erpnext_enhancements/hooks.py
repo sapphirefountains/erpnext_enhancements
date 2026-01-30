@@ -74,7 +74,8 @@ doctype_js = {
     "Supplier": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_comments.js"],
     "Supplier Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_quotation_comments.js"],
     "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js"],
-    "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js"]
+    "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js"],
+    "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"]
 }
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
@@ -254,7 +255,9 @@ fixtures = [
                 "Lead-custom_comments_tab",
                 "Lead-custom_comments_field",
                 "Contact-custom_comments_tab",
-                "Contact-custom_comments_field"
+                "Contact-custom_comments_field",
+                "Address-custom_comments_tab",
+                "Address-custom_comments_field"
             ]]
         ]
     },
