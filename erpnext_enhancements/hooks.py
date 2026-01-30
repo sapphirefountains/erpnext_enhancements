@@ -73,6 +73,7 @@ doctype_js = {
     "Batch": ["public/js/vue.global.js", "public/js/comments.js", "public/js/batch_comments.js"],
     "Supplier": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_comments.js"],
     "Supplier Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_quotation_comments.js"],
+    "Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/quotation_comments.js"],
     "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js"],
     "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js"],
     "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"]
@@ -250,6 +251,8 @@ fixtures = [
                 "Supplier-custom_comments_field",
                 "Supplier Quotation-custom_comments_tab",
                 "Supplier Quotation-custom_comments_field",
+                "Quotation-custom_comments_tab",
+                "Quotation-custom_comments_field",
                 "Purchase Order-custom_comments_tab",
                 "Purchase Order-custom_comments_field",
                 "Lead-custom_comments_tab",
