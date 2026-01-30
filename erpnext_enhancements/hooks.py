@@ -70,7 +70,8 @@ doctype_js = {
     "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"],
     "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
     "Serial No": ["public/js/vue.global.js", "public/js/comments.js", "public/js/serial_no_comments.js"],
-    "Batch": ["public/js/vue.global.js", "public/js/comments.js", "public/js/batch_comments.js"]
+    "Batch": ["public/js/vue.global.js", "public/js/comments.js", "public/js/batch_comments.js"],
+    "Supplier": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_comments.js"]
 }
 doctype_list_js = {"ToDo": "public/js/todo_list.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
@@ -240,7 +241,9 @@ fixtures = [
                 "Serial No-custom_comments_tab",
                 "Serial No-custom_comments_field",
                 "Batch-custom_comments_tab",
-                "Batch-custom_comments_field"
+                "Batch-custom_comments_field",
+                "Supplier-custom_comments_tab",
+                "Supplier-custom_comments_field"
             ]]
         ]
     },
