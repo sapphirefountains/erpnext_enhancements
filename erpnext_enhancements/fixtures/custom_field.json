@@ -331,5 +331,25 @@
   "insert_after": "custom_comments_tab",
   "dt": "Supplier",
   "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Supplier Quotation-custom_comments_tab",
+  "fieldname": "custom_comments_tab",
+  "fieldtype": "Tab Break",
+  "label": "Comments",
+  "insert_after": "terms",
+  "dt": "Supplier Quotation",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Supplier Quotation-custom_comments_field",
+  "fieldname": "custom_comments_field",
+  "fieldtype": "HTML",
+  "label": "Comments App",
+  "insert_after": "custom_comments_tab",
+  "dt": "Supplier Quotation",
+  "module": "ERPNext Enhancements"
  }
 ]
