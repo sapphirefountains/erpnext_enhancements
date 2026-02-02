@@ -79,7 +79,10 @@ doctype_js = {
     "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
     "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
-doctype_list_js = {"ToDo": "public/js/todo_list.js"}
+doctype_list_js = {
+    "ToDo": "public/js/todo_list.js",
+    "Opportunity": "public/js/opportunity_list.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
