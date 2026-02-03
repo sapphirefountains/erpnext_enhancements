@@ -125,6 +125,13 @@ $(document).on("app_ready", function () {
     } catch (e) {
         console.error("Error initializing auto-save:", e);
     }
+
+    // Sidebar Enforcement
+    try {
+        enforce_sidebar_expanded();
+    } catch (e) {
+        console.error("Error enforcing sidebar:", e);
+    }
 });
 
 // ==========================================
@@ -591,6 +598,28 @@ function init_auto_save_listeners() {
         }
     });
 }
+
+// ==========================================
+// Sidebar Enforcement
+// ==========================================
+
+function enforce_sidebar_expanded() {
+    // Only target desktop
+    if (window.innerWidth >= 992) {
+        // Remove standard Frappe collapsed class
+        $('body').removeClass('sidebar-collapsed');
+
+        // Update runtime preference if available
+        if(frappe && frappe.boot && frappe.boot.user) {
+            frappe.boot.user.sidebar_collapsed = 0;
+        }
+    }
+}
+
+// Handle resize events
+$(window).on('resize', function() {
+    enforce_sidebar_expanded();
+});
 
 function save_draft_handler(frm) {
     // Basic validations
