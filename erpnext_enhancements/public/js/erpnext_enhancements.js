@@ -604,13 +604,33 @@ function init_auto_save_listeners() {
 // ==========================================
 
 function enforce_sidebar_expanded() {
+    // 1. Initial Cleanup (Immediate)
+    check_and_expand_sidebar();
+
+    // 2. Setup Observer (Once)
+    if (window._sidebar_observer_installed) return;
+    window._sidebar_observer_installed = true;
+
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.attributeName === "class") {
+                check_and_expand_sidebar();
+            }
+        });
+    });
+
+    observer.observe(document.body, { attributes: true });
+}
+
+function check_and_expand_sidebar() {
     // Only target desktop
     if (window.innerWidth >= 992) {
-        // Remove standard Frappe collapsed class
-        $('body').removeClass('sidebar-collapsed');
+        if ($('body').hasClass('sidebar-collapsed')) {
+             $('body').removeClass('sidebar-collapsed');
+        }
 
         // Update runtime preference if available
-        if(frappe && frappe.boot && frappe.boot.user) {
+        if(frappe && frappe.boot && frappe.boot.user && frappe.boot.user.sidebar_collapsed !== 0) {
             frappe.boot.user.sidebar_collapsed = 0;
         }
     }
@@ -618,7 +638,7 @@ function enforce_sidebar_expanded() {
 
 // Handle resize events
 $(window).on('resize', function() {
-    enforce_sidebar_expanded();
+    check_and_expand_sidebar();
 });
 
 function save_draft_handler(frm) {
