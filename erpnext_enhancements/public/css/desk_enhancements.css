@@ -54,19 +54,21 @@
 }
 
 /* 1. KANBAN BOARD FIXES */
-.kanban,
-.kanban-board,
-.kanban-container {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: hidden;
-    width: 100%;
-    align-items: stretch;
-}
+@media (min-width: 768px) {
+    .kanban,
+    .kanban-board,
+    .kanban-container {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden;
+        width: 100%;
+        align-items: stretch;
+    }
 
-.kanban-column {
-    flex: 0 0 auto !important;
+    .kanban-column {
+        flex: 0 0 auto !important;
+    }
 }
 
 /* 2. GLASSMORPHISM BUTTONS (Global for Desk) */
@@ -913,21 +915,23 @@ mark {
    KANBAN BOARD EXTENSIONS (Horizontal Scroll)
    ========================================================================== */
 
-/* Force Horizontal Scroll & No Wrap */
-.kanban-board {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: hidden;
-    align-items: stretch;
-    padding-bottom: 10px; /* Space for scrollbar */
-}
+@media (min-width: 768px) {
+    /* Force Horizontal Scroll & No Wrap */
+    .kanban-board {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden;
+        align-items: stretch;
+        padding-bottom: 10px; /* Space for scrollbar */
+    }
 
-/* Column rigidity */
-.kanban-column {
-    flex: 0 0 auto !important;
-    min-width: 280px !important;
-    max-width: 320px !important;
+    /* Column rigidity */
+    .kanban-column {
+        flex: 0 0 auto !important;
+        min-width: 280px !important;
+        max-width: 320px !important;
+    }
 }
 
 /* ==========================================================================
