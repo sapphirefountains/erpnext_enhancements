@@ -21,14 +21,14 @@ frappe.listview_settings['Opportunity'].onload = function(listview) {
 
         let came_from_outside = true;
 
-        if (prev_route && prev_route.length > 0) {
-            // Robust check: If 'opportunity' appears anywhere in the previous route segments.
-            // This handles ['opportunity', ...], ['List', 'Opportunity', ...], ['Form', 'Opportunity', ...].
-            const is_internal = prev_route.some(segment =>
-                typeof segment === 'string' && segment.toLowerCase() === 'opportunity'
-            );
+        if (prev_route && prev_route.length > 1) {
+            // We only want to stay on List view (block redirect) if we came from:
+            // 1. Kanban View of Opportunity (Manual switch)
+            // 2. List View of Opportunity (Filter change/Navigation within list)
 
-            if (is_internal) {
+            // Route for List/Kanban is ['List', 'Opportunity', 'List'|'Kanban', ...]
+            // We check if the first segment is 'List' and the second is 'Opportunity'
+            if (prev_route[0] === 'List' && typeof prev_route[1] === 'string' && prev_route[1].toLowerCase() === 'opportunity') {
                 came_from_outside = false;
             }
         }
