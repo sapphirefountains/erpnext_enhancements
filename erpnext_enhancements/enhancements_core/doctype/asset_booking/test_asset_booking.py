@@ -21,6 +21,23 @@ class TestAssetBooking(unittest.TestCase):
         else:
             self.asset = "Test Asset 1"
 
+        # Create a dummy address for location
+        if not frappe.db.exists("Address", "Test Address 1"):
+            doc = frappe.get_doc({
+                "doctype": "Address",
+                "address_title": "Test Address 1",
+                "address_type": "Billing",
+                "address_line1": "123 Test St",
+                "city": "Test City",
+                "country": "India"
+            })
+            # Insert with ignore_mandatory/permissions if needed, but usually minimal fields are enough
+            # Country 'India' is standard in test seeds usually.
+            doc.insert(ignore_permissions=True)
+            self.address = doc.name
+        else:
+            self.address = "Test Address 1"
+
         # Clean up bookings
         frappe.db.delete("Asset Booking", {"asset": self.asset})
 
@@ -34,7 +51,8 @@ class TestAssetBooking(unittest.TestCase):
             "asset": self.asset,
             "booking_type": "Rental",
             "from_datetime": start,
-            "to_datetime": end
+            "to_datetime": end,
+            "location": self.address
         })
         b1.insert()
 
@@ -54,7 +72,7 @@ class TestAssetBooking(unittest.TestCase):
         end = add_hours(start, 2)
 
         # This calls the API
-        result = create_composite_booking(self.asset, start, end, location="Test Loc")
+        result = create_composite_booking(self.asset, start, end, location=self.address)
 
         self.assertEqual(result["status"], "success")
         self.assertTrue(result["bookings"]["rental"])
@@ -65,6 +83,7 @@ class TestAssetBooking(unittest.TestCase):
         travel = frappe.get_doc("Asset Booking", result["bookings"]["travel"])
         # Travel ends at rental start
         self.assertEqual(travel.to_datetime, start)
+        self.assertEqual(travel.location, self.address)
 
         main = frappe.get_doc("Asset Booking", result["bookings"]["maintenance"])
         # Maintenance starts at rental end
@@ -72,3 +91,6 @@ class TestAssetBooking(unittest.TestCase):
 
     def tearDown(self):
         frappe.db.delete("Asset Booking", {"asset": self.asset})
+        # cleanup address if strictly needed, but might be reused.
+        # usually good practice to clean up what we created if it persists.
+        # But 'Test Address 1' check in setUp handles existence.
