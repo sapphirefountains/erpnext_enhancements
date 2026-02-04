@@ -1,5 +1,7 @@
 import frappe
 from frappe import _
+from frappe.utils import escape_html
+import re
 
 @frappe.whitelist()
 def search_global_docs(txt):
@@ -9,6 +11,9 @@ def search_global_docs(txt):
     """
     if not txt:
         return []
+
+    # Compile regex for highlighting
+    pattern = re.compile(re.escape(txt), re.IGNORECASE)
 
     # Query the Global Search table
     # We use 'content' like %txt%
@@ -47,8 +52,18 @@ def search_global_docs(txt):
 
                 label = f"{_(r.doctype)}: {doc_identifier}"
 
+                # Highlight the matching part in the label safely
+                parts = []
+                last_end = 0
+                for match in pattern.finditer(label):
+                    parts.append(escape_html(label[last_end:match.start()]))
+                    parts.append(f"<b>{escape_html(match.group(0))}</b>")
+                    last_end = match.end()
+                parts.append(escape_html(label[last_end:]))
+                highlighted_label = "".join(parts)
+
                 out.append({
-                    "label": label,
+                    "label": highlighted_label,
                     "value": label, # Value put in input
                     "route": ["Form", r.doctype, r.name],
                     "match": label, # Match against the full label so highlighting works
