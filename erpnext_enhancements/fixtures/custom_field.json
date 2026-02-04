@@ -461,5 +461,37 @@
   "insert_after": "custom_child_tasks",
   "dt": "Task",
   "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Asset-custom_current_event_location",
+  "fieldname": "custom_current_event_location",
+  "fieldtype": "Data",
+  "label": "Current Event Location",
+  "insert_after": "item_code",
+  "dt": "Asset",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Asset-custom_map_placeholder",
+  "fieldname": "custom_map_placeholder",
+  "fieldtype": "HTML",
+  "label": "Map Placeholder",
+  "insert_after": "custom_current_event_location",
+  "dt": "Asset",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Asset-custom_rental_status",
+  "fieldname": "custom_rental_status",
+  "fieldtype": "Select",
+  "label": "Rental Status",
+  "options": "Available\nRented\nMaintenance\nIn Transit",
+  "read_only": 1,
+  "insert_after": "status",
+  "dt": "Asset",
+  "module": "ERPNext Enhancements"
  }
 ]

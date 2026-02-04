@@ -83,6 +83,9 @@ doctype_list_js = {
     "ToDo": "public/js/todo_list.js",
     "Opportunity": "public/js/opportunity_list.js"
 }
+doctype_calendar_js = {
+    "Asset Booking": "public/js/asset_booking_calendar.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -265,7 +268,10 @@ fixtures = [
                 "Contact-custom_comments_field",
                 "Address-custom_comments_tab",
                 "Address-custom_comments_field",
-                "Task-custom_create_child_task_btn"
+                "Task-custom_create_child_task_btn",
+                "Asset-custom_current_event_location",
+                "Asset-custom_map_placeholder",
+                "Asset-custom_rental_status"
             ]]
         ]
     },
