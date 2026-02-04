@@ -51,8 +51,7 @@ def search_global_docs(txt):
                     "label": label,
                     "value": label, # Value put in input
                     "route": ["Form", r.doctype, r.name],
-                    "match": r.name, # text to match against?
-                    "description": f"Open {r.doctype} {r.name}",
+                    "match": label, # Match against the full label so highlighting works
                     "index": 150 # Higher than standard doctypes (usually ~100?)
                 })
         except Exception:
