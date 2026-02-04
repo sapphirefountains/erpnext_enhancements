@@ -3,13 +3,14 @@
  "allow_rename": 1,
  "autoname": "format:AB-{YYYY}-{MM}-{#####}",
  "creation": "2024-05-23 10:00:00.000000",
- "default_view": "List",
+ "default_view": "Calendar",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
   "asset",
   "location",
+  "custom_map_placeholder",
   "booking_type",
   "from_datetime",
   "to_datetime",
@@ -28,9 +29,15 @@
   },
   {
    "fieldname": "location",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Location"
+   "label": "Location",
+   "options": "Address"
+  },
+  {
+   "fieldname": "custom_map_placeholder",
+   "fieldtype": "HTML",
+   "label": "Map"
   },
   {
    "fieldname": "booking_type",
