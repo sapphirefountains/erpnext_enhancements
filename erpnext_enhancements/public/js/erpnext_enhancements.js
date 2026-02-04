@@ -29,6 +29,50 @@ erpnext_enhancements.utils.waitFor = function(check, callback, max_attempts=20, 
 $(document).on("app_ready", function () {
 	if (frappe.search.AwesomeBar) {
 		const original_make_global_search = frappe.search.AwesomeBar.prototype.make_global_search;
+
+		// Add debounced search method to prototype
+		frappe.search.AwesomeBar.prototype.global_search_debounced = frappe.utils.debounce(function (txt) {
+			const me = this;
+			if (!txt || txt.length < 3) return;
+
+			frappe.call({
+				method: "erpnext_enhancements.api.search.search_global_docs",
+				args: { txt: txt },
+				callback: function (r) {
+					if (r.message && r.message.length) {
+						const new_options = r.message.map((d) => ({
+							label: d.label,
+							value: d.value,
+							route: d.route,
+							index: d.index || 50,
+							match: d.match || d.value,
+							description: d.description,
+						}));
+
+						if (!me.options) me.options = [];
+
+						// Deduplicate based on route or value
+						const existing_values = new Set(me.options.map((o) => o.value));
+
+						new_options.forEach((opt) => {
+							if (!existing_values.has(opt.value)) {
+								me.options.push(opt);
+							}
+						});
+
+						// Re-sort (descending index)
+						me.options.sort((a, b) => (b.index || 0) - (a.index || 0));
+
+						// Refresh Awesomplete
+						if (me.awesomplete) {
+							me.awesomplete.list = me.options;
+							me.awesomplete.evaluate();
+						}
+					}
+				},
+			});
+		}, 300);
+
 		frappe.search.AwesomeBar.prototype.make_global_search = function (txt) {
 			// Call the original method to populate options
 			original_make_global_search.call(this, txt);
@@ -41,6 +85,9 @@ $(document).on("app_ready", function () {
 					searchItem.index = 100000;
 				}
 			}
+
+			// Trigger Live Search
+			this.global_search_debounced(txt);
 		};
 	}
 
