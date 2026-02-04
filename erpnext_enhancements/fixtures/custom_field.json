@@ -451,5 +451,15 @@
   "insert_after": "custom_comments_tab",
   "dt": "Quotation",
   "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
+  "name": "Task-custom_create_child_task_btn",
+  "fieldname": "custom_create_child_task_btn",
+  "fieldtype": "Button",
+  "label": "+ Create Child Task",
+  "insert_after": "custom_child_tasks",
+  "dt": "Task",
+  "module": "ERPNext Enhancements"
  }
 ]
