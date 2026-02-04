@@ -952,13 +952,3 @@ mark {
 .list-sort-dropdown {
     z-index: 1005 !important;
 }
-
-/* ==========================================================================
-   8. SIDEBAR ENHANCEMENTS
-   ========================================================================== */
-@media (min-width: 992px) {
-    /* Hide Sidebar Collapse Button on Desktop */
-    a.collapse-sidebar-link {
-        display: none !important;
-    }
-}
