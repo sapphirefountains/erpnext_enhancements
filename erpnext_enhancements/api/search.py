@@ -13,12 +13,12 @@ def search_global_docs(txt):
     # Query the Global Search table
     # We use 'content' like %txt%
     # We limit initial fetch to 20 to ensure responsiveness
-    results = frappe.get_all("Global Search",
-        fields=["doctype", "name", "title", "route"],
-        filters=[["content", "like", f"%{txt}%"]],
-        limit=20,
-        order_by="creation desc"
-    )
+    results = frappe.db.sql("""
+        SELECT doctype, name, title, route
+        FROM `__global_search`
+        WHERE content LIKE %s
+        LIMIT 20
+    """, (f"%{txt}%",), as_dict=True)
 
     out = []
     for r in results:
