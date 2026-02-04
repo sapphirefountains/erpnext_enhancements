@@ -56,7 +56,7 @@ doctype_js = {
     "Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
     "Sales Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_order_comments.js"],
     "Sales Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_invoice_comments.js"],
-    "Task": ["public/js/vue.global.js", "public/js/comments.js", "public/js/task_comments.js"],
+    "Task": ["public/js/vue.global.js", "public/js/comments.js", "public/js/task_comments.js", "public/js/task_enhancements.js"],
     "Journal Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/journal_entry_comments.js"],
     "Payment Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/payment_entry_comments.js"],
     "Purchase Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_invoice_comments.js"],
@@ -264,7 +264,8 @@ fixtures = [
                 "Contact-custom_comments_tab",
                 "Contact-custom_comments_field",
                 "Address-custom_comments_tab",
-                "Address-custom_comments_field"
+                "Address-custom_comments_field",
+                "Task-custom_create_child_task_btn"
             ]]
         ]
     },
