@@ -972,20 +972,25 @@ mark {
 .activity-number {
     position: absolute;
     left: 5px; /* Aligned where the bullet usually sits */
-    top: 0;
+    top: 3px;
     width: auto;
     height: auto;
     line-height: 20px;
     text-align: left;
     background-color: var(--card-bg, #fff); /* Matches background to mask vertical line */
     border-radius: 0;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
     color: #6c757d; /* Muted text */
     border: none;
     z-index: 2;
     box-shadow: none;
     padding-right: 4px;
+}
+
+/* Ensure text is pushed to the right to avoid overlap with larger numbers */
+.activity-numbered .timeline-item {
+    padding-left: 50px !important;
 }
 
 /* Dark Mode Support */
