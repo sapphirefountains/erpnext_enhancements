@@ -49,7 +49,7 @@ erpnext_enhancements.activity.apply_numbering = function() {
     containers.forEach(container => {
         container.classList.add('activity-numbered');
         const items = Array.from(container.querySelectorAll('.timeline-item'))
-            .filter(item => item.hasAttribute('data-name'));
+            .filter(item => item.querySelector('.timeline-content'));
 
         // Calculate Total Base
         let total = items.length; // Fallback
