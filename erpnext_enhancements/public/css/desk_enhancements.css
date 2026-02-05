@@ -959,38 +959,38 @@ mark {
 
 /* Target the container to enable numbering mode */
 .activity-numbered .timeline-dot,
-.activity-numbered .timeline-badge {
+.activity-numbered .timeline-badge,
+.activity-numbered .timeline-item::before,
+.activity-numbered .timeline-content::before {
     display: none !important;
-}
-
-/* Also hide the pseudo-element dot if used by standard Frappe */
-.activity-numbered .timeline-item::before {
     content: none !important;
-    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
 }
 
 /* Style the Number */
 .activity-number {
     position: absolute;
-    left: 9px; /* Centered relative to typical 20px line offset. Dot is usually at ~15px. */
+    left: 5px; /* Aligned where the bullet usually sits */
     top: 0;
-    width: 20px;
-    height: 20px;
-    line-height: 18px;
-    text-align: center;
-    background-color: #f8f9fa;
-    border-radius: 50%;
-    font-size: 10px;
-    font-weight: bold;
-    color: #6c757d;
-    border: 1px solid #d1d8dd;
+    width: auto;
+    height: auto;
+    line-height: 20px;
+    text-align: left;
+    background-color: var(--card-bg, #fff); /* Matches background to mask vertical line */
+    border-radius: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6c757d; /* Muted text */
+    border: none;
     z-index: 2;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: none;
+    padding-right: 4px;
 }
 
 /* Dark Mode Support */
 [data-theme="dark"] .activity-number {
-    background-color: #2c3e50;
+    background-color: var(--card-bg, #1f2733);
     color: #ececec;
-    border-color: #444;
+    border: none;
 }
