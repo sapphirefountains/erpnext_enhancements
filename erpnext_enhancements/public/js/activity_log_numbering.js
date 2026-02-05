@@ -107,8 +107,8 @@ erpnext_enhancements.activity.apply_numbering = function() {
                 numEl.className = 'activity-number';
                 item.prepend(numEl);
              }
-             if (numEl.textContent != number) {
-                numEl.textContent = number;
+             if (numEl.textContent != '#' + number) {
+                numEl.textContent = '#' + number;
              }
         });
     });
