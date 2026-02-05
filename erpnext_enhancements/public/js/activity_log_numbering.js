@@ -49,7 +49,23 @@ erpnext_enhancements.activity.apply_numbering = function() {
     containers.forEach(container => {
         container.classList.add('activity-numbered');
         const items = Array.from(container.querySelectorAll('.timeline-item'))
-            .filter(item => item.querySelector('.timeline-content'));
+            .filter(item => {
+                // Must have content
+                if (!item.querySelector('.timeline-content')) return false;
+
+                // Exclude "New Email" / "New Event" action row
+                // Check if it contains any button with "New Email" or "New Event" text
+                // We check buttons and anchors acting as buttons
+                const actions = Array.from(item.querySelectorAll('.btn, a.btn'));
+                const isActionRow = actions.some(el => {
+                    const text = (el.textContent || "").trim();
+                    return text.includes("New Email") || text.includes("New Event");
+                });
+
+                if (isActionRow) return false;
+
+                return true;
+            });
 
         // Calculate Total Base
         let total = items.length; // Fallback
