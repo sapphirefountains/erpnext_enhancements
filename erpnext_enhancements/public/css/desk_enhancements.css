@@ -64,6 +64,8 @@
         overflow-y: hidden;
         width: 100%;
         align-items: stretch;
+        /* Restore scrollbar visibility */
+        scrollbar-width: auto !important;
     }
 
     .kanban-column {
