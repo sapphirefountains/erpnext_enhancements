@@ -45,8 +45,8 @@ frappe.provide("erpnext_enhancements.filter_help");
                     </button>
                 `);
 
-                // Inject after the filter button
-                $filterBtn.after($helpBtn);
+                // Inject before the filter button
+                $filterBtn.before($helpBtn);
 
                 // Click Handler
                 $helpBtn.on('click', (e) => {
