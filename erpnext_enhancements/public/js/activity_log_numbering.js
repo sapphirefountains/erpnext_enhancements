@@ -5,6 +5,7 @@ erpnext_enhancements.activity.current_key = null;
 
 erpnext_enhancements.activity.fetch_counts = function(frm) {
     if (!frm || !frm.doc) return;
+    if (frm.is_new()) return;
     const key = `${frm.doc.doctype}::${frm.doc.name}`;
 
     // Check if already fetched for this exact document recently?
