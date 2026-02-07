@@ -1,0 +1,28 @@
+{
+ "creation": "2024-05-21 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "User",
+ "email": "testprojectuser@sapphirefountains.com",
+ "enabled": 1,
+ "first_name": "Test",
+ "last_name": "ProjectUser",
+ "full_name": "Test ProjectUser",
+ "idx": 0,
+ "is_admin": 0,
+ "language": "en",
+ "modified": "2024-05-21 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "testprojectuser@sapphirefountains.com",
+ "owner": "Administrator",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Sales Team"
+  }
+ ],
+ "time_zone": "America/Denver",
+ "username": "testprojectuser",
+ "user_type": "System User"
+}
