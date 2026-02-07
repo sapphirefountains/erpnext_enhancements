@@ -1,0 +1,94 @@
+{
+ "doctype": "Workspace",
+ "name": "Projects",
+ "title": "Projects",
+ "icon": "project",
+ "type": "Workspace",
+ "public": 1,
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "shortcuts": [
+  {
+   "label": "Project",
+   "type": "DocType",
+   "link_to": "Project",
+   "color": "Green"
+  },
+  {
+   "label": "Task",
+   "type": "DocType",
+   "link_to": "Task",
+   "color": "Blue"
+  },
+  {
+   "label": "Timesheet",
+   "type": "DocType",
+   "link_to": "Timesheet",
+   "color": "Orange"
+  },
+  {
+   "label": "Project Update",
+   "type": "DocType",
+   "link_to": "Project Update",
+   "color": "Grey"
+  }
+ ],
+ "charts": [],
+ "cards": [
+  {
+   "label": "Setup",
+   "items": [
+    {
+     "label": "Activity Type",
+     "type": "Link",
+     "link_to": "Activity Type"
+    },
+    {
+     "label": "Activity Cost",
+     "type": "Link",
+     "link_to": "Activity Cost"
+    },
+    {
+     "label": "Project Template",
+     "type": "Link",
+     "link_to": "Project Template"
+    },
+    {
+     "label": "Project Type",
+     "type": "Link",
+     "link_to": "Project Type"
+    }
+   ]
+  },
+  {
+   "label": "Reports",
+   "items": [
+    {
+     "label": "Project Summary",
+     "type": "Report",
+     "link_to": "Project Summary"
+    },
+    {
+     "label": "Daily Timesheet Summary",
+     "type": "Report",
+     "link_to": "Daily Timesheet Summary"
+    },
+    {
+     "label": "Timesheet Billing Summary",
+     "type": "Report",
+     "link_to": "Timesheet Billing Summary"
+    },
+    {
+     "label": "Project wise Stock Tracking",
+     "type": "Report",
+     "link_to": "Project wise Stock Tracking"
+    },
+    {
+     "label": "Delayed Tasks Summary",
+     "type": "Report",
+     "link_to": "Delayed Tasks Summary"
+    }
+   ]
+  }
+ ]
+}
