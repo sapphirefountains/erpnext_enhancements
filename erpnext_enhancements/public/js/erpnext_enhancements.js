@@ -240,6 +240,7 @@ function setup_add_to_desk_global() {
     );
 }
 
+
 function add_to_workspace_dialog(doctype, route, type_hint) {
     // Fetch available workspaces for the user
     frappe.call({
@@ -292,71 +293,6 @@ function add_to_workspace_dialog(doctype, route, type_hint) {
                             label: values.label,
                             type: values.type,
                             link_to: values.type === 'DocType' ? doctype : route,
-                            doc_type: doctype 
-                        },
-                        callback: (res) => {
-                            if (!res.exc) {
-                                frappe.msgprint(__('Added to Workspace successfully'));
-                                d.hide();
-                            }
-                        }
-                    });
-                }
-            });
-            d.show();
-        }
-    });
-}
-    // Fetch available workspaces for the user
-    frappe.call({
-        method: "frappe.desk.doctype.workspace.workspace.get_workspaces_for_user",
-        callback: (r) => {
-            const workspaces = r.message || [];
-            const options = workspaces.map(w => ({ label: w.label || w.name, value: w.name }));
-
-            const d = new frappe.ui.Dialog({
-                title: __('Add to Desk'),
-                fields: [
-                    {
-                        label: __('Label'),
-                        fieldname: 'label',
-                        fieldtype: 'Data',
-                        default: doctype,
-                        reqd: 1
-                    },
-                    {
-                        label: __('Workspace'),
-                        fieldname: 'workspace',
-                        fieldtype: 'Link',
-                        options: 'Workspace',
-                        filters: {
-                            'is_hidden': 0
-                        },
-                        reqd: 1
-                    },
-                    {
-                        label: __('Type'),
-                        fieldname: 'type',
-                        fieldtype: 'Select',
-                        options: ['Shortcut', 'Link', 'Card'],
-                        default: 'Shortcut'
-                    }
-                ],
-                primary_action_label: __('Add'),
-                primary_action: (values) => {
-                    frappe.call({
-                        method: "frappe.desk.doctype.workspace.workspace.new_page", // This might be wrong, need to check how to update workspace
-                        // Actually, better to use the specific API to add a shortcut if available.
-                        // Or use 'frappe.desk.doctype.workspace.workspace.update_page'
-                        // But simpler: just use 'save_customization' logic or a custom backend method if needed.
-                        
-                        // Let's try calling a custom method in our app to handle the dirty work
-                        method: "erpnext_enhancements.api.workspace_utils.add_shortcut_to_workspace",
-                        args: {
-                            workspace: values.workspace,
-                            label: values.label,
-                            type: values.type,
-                            link_to: route,
                             doc_type: doctype 
                         },
                         callback: (res) => {
