@@ -1,0 +1,34 @@
+{
+ "name": "Projects",
+ "title": "Projects",
+ "icon": "projects",
+ "type": "Workspace",
+ "content": "[{\"type\":\"Header\",\"data\":{\"text\":\"Projects\",\"col\":12}},{\"type\":\"Shortcut\",\"data\":{\"shortcut_name\":\"Project\",\"col\":4}},{\"type\":\"Shortcut\",\"data\":{\"shortcut_name\":\"Project Dashboard\",\"col\":4}},{\"type\":\"Shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":4}}]",
+ "shortcuts": [
+  {
+   "label": "Project",
+   "type": "DocType",
+   "link_to": "Project",
+   "color": "Green"
+  },
+  {
+   "label": "Project Dashboard",
+   "type": "Page",
+   "link_to": "project-dashboard",
+   "color": "Blue"
+  },
+  {
+   "label": "Task",
+   "type": "DocType",
+   "link_to": "Task",
+   "color": "Green"
+  }
+ ],
+ "charts": [],
+ "cards": [],
+ "onboarding": [],
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "public": 1,
+ "extends": "Projects"
+}
