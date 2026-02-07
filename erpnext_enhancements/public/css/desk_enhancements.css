@@ -946,7 +946,7 @@ mark {
 .sort-selector,
 .list-filter-main,
 .filter-section {
-    z-index: 102 !important; /* Higher than typical sticky headers (1-100) */
+    z-index: 2 !important; /* Higher than typical sticky headers (1-100) */
     position: relative;
 }
 
