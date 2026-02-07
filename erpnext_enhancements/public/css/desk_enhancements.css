@@ -1035,3 +1035,10 @@ mark {
     border-color: rgba(255, 255, 255, 0.2) !important;
     color: #eee !important;
 }
+
+/* ==========================================================================
+   HIDE "GO TO HOME" BUTTON
+   ========================================================================== */
+.desk-home-button-wrapper {
+    display: none !important;
+}
