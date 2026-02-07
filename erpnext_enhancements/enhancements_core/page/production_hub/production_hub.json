@@ -1,0 +1,24 @@
+{
+ "content": "[]",
+ "creation": "2024-05-21 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "2024-05-21 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "production-hub",
+ "owner": "Administrator",
+ "page_name": "production-hub",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Production Hub"
+}

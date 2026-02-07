@@ -1,0 +1,37 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Production",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Production Hub",
+   "type": "Page",
+   "link_to": "production-hub"
+  },
+  {
+   "label": "Projects",
+   "type": "Workspace",
+   "link_to": "Projects"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  },
+  {
+   "label": "ToDo Calendar",
+   "type": "Page",
+   "link_to": "todo-calendar"
+  }
+ ],
+ "title": "Production"
+}

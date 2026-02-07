@@ -1,0 +1,45 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Sales",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Sales Hub",
+   "type": "Page",
+   "link_to": "sales-hub"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  },
+  {
+   "label": "Selling",
+   "type": "Workspace",
+   "link_to": "Selling"
+  },
+  {
+   "label": "Buying",
+   "type": "Workspace",
+   "link_to": "Buying"
+  },
+  {
+   "label": "Stock",
+   "type": "Workspace",
+   "link_to": "Stock"
+  }
+ ],
+ "title": "Sales"
+}

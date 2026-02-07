@@ -1,0 +1,35 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Marketing",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Marketing Hub",
+   "type": "Page",
+   "link_to": "marketing-hub"
+  },
+  {
+   "label": "Selling",
+   "type": "Workspace",
+   "link_to": "Selling"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  }
+ ],
+ "title": "Marketing"
+}

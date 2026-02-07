@@ -1,0 +1,32 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Executive",
+ "public": 1,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Auditor"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Executive Hub",
+   "type": "Page",
+   "link_to": "executive-hub"
+  },
+  {
+   "label": "Accounting",
+   "type": "Workspace",
+   "link_to": "Accounting"
+  },
+  {
+   "label": "HR",
+   "type": "Workspace",
+   "link_to": "HR"
+  }
+ ],
+ "title": "Executive"
+}

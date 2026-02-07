@@ -1,0 +1,60 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Finance",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Finance Hub",
+   "type": "Page",
+   "link_to": "finance-hub"
+  },
+  {
+   "label": "Buying",
+   "type": "Workspace",
+   "link_to": "Buying"
+  },
+  {
+   "label": "Selling",
+   "type": "Workspace",
+   "link_to": "Selling"
+  },
+  {
+   "label": "Assets",
+   "type": "Workspace",
+   "link_to": "Assets"
+  },
+  {
+   "label": "Projects",
+   "type": "Workspace",
+   "link_to": "Projects"
+  },
+  {
+   "label": "Stock",
+   "type": "Workspace",
+   "link_to": "Stock"
+  },
+  {
+   "label": "Invoicing",
+   "type": "Workspace",
+   "link_to": "Invoicing"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  }
+ ],
+ "title": "Finance"
+}

@@ -1,0 +1,40 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "HR",
+ "public": 1,
+ "roles": [
+  {
+   "role": "HR User"
+  },
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "HR Hub",
+   "type": "Page",
+   "link_to": "hr-hub"
+  },
+  {
+   "label": "HR",
+   "type": "Workspace",
+   "link_to": "HR"
+  },
+  {
+   "label": "Payroll",
+   "type": "Workspace",
+   "link_to": "Payroll"
+  },
+  {
+   "label": "Employee Lifecycle",
+   "type": "Workspace",
+   "link_to": "Employee Lifecycle"
+  }
+ ],
+ "title": "HR"
+}

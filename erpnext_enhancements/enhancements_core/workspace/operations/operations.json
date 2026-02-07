@@ -1,0 +1,52 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Operations",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Operations Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Operations Hub",
+   "type": "Page",
+   "link_to": "operations-hub"
+  },
+  {
+   "label": "Helpdesk",
+   "type": "Workspace",
+   "link_to": "Helpdesk"
+  },
+  {
+   "label": "LMS",
+   "type": "Workspace",
+   "link_to": "LMS"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  },
+  {
+   "label": "Projects",
+   "type": "Workspace",
+   "link_to": "Projects"
+  },
+  {
+   "label": "Stock",
+   "type": "Workspace",
+   "link_to": "Stock"
+  },
+  {
+   "label": "Buying",
+   "type": "Workspace",
+   "link_to": "Buying"
+  }
+ ],
+ "title": "Operations"
+}

@@ -1,0 +1,42 @@
+{
+ "is_standard": 1,
+ "module": "Enhancements Core",
+ "name": "Design",
+ "public": 1,
+ "roles": [
+  {
+   "role": "Projects User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "shortcuts": [
+  {
+   "label": "Design Hub",
+   "type": "Page",
+   "link_to": "design-hub"
+  },
+  {
+   "label": "Projects",
+   "type": "Workspace",
+   "link_to": "Projects"
+  },
+  {
+   "label": "Buying",
+   "type": "Workspace",
+   "link_to": "Buying"
+  },
+  {
+   "label": "Selling",
+   "type": "Workspace",
+   "link_to": "Selling"
+  },
+  {
+   "label": "CRM",
+   "type": "Workspace",
+   "link_to": "CRM"
+  }
+ ],
+ "title": "Design"
+}
