@@ -179,6 +179,13 @@ $(document).on("app_ready", function () {
     } catch (e) {
         console.error("Error enforcing sidebar:", e);
     }
+
+    // Remove "Go to Home" button
+    try {
+        remove_go_to_home_button();
+    } catch (e) {
+        console.error("Error removing 'Go to Home' button:", e);
+    }
 });
 
 // ==========================================
@@ -592,6 +599,29 @@ function init_auto_save_listeners() {
             }
         }
     });
+}
+
+// ==========================================
+// Remove "Go to Home" Button
+// ==========================================
+
+function remove_go_to_home_button() {
+    const selector = '.desk-home-button-wrapper';
+
+    // 1. Immediate Removal
+    $(selector).remove();
+
+    // 2. Setup Observer for dynamic injection
+    if (window._home_button_remover_installed) return;
+    window._home_button_remover_installed = true;
+
+    const observer = new MutationObserver((mutations) => {
+        if ($(selector).length > 0) {
+            $(selector).remove();
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
 }
 
 // ==========================================
