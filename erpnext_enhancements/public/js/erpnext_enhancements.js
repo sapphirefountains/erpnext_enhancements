@@ -422,58 +422,6 @@ function setup_home_buttons() {
         $('.navbar-nav').first().append(home_html);
     }
 
-    // 2. Desk Grid Button
-    // Listen to route changes to re-inject if needed
-    if (frappe.router) {
-        frappe.router.on('change', () => {
-            waitForContainerAndRender();
-        });
-    }
-
-    // Initial check
-    waitForContainerAndRender();
-}
-
-function waitForContainerAndRender() {
-    erpnext_enhancements.utils.waitFor(
-        () => render_desk_home_button(),
-        () => {}, // Callback does nothing, render checks itself
-        20,
-        500
-    );
-}
-
-function render_desk_home_button() {
-    // Target the active/visible container to ensure we don't check hidden previous views
-    // Priority 1: .layout-main-section (Common in Workspaces, Kanban)
-    let $container = $('.layout-main-section:visible');
-
-    // Priority 2: .page-content (Common in Forms, Lists)
-    if ($container.length === 0) {
-        $container = $('.page-content:visible');
-    }
-
-    if ($container.length && $container.is(':visible')) {
-        // Scope the check to the found container
-        if ($container.find('.desk-home-button-wrapper').length > 0) {
-            return true; // Already exists
-        }
-
-        const btn_html = `
-            <div class="desk-home-button-wrapper" style="margin-bottom: 20px; padding-left: 15px;">
-                <button class="btn btn-default" onclick="frappe.set_route('home')" style="display: inline-flex; align-items: center; gap: 8px; font-size: 14px; padding: 8px 16px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                    <svg class="icon icon-md" style="width: 16px; height: 16px;">
-                        <use href="#icon-home"></use>
-                    </svg>
-                    Go to Home
-                </button>
-            </div>
-        `;
-        $container.prepend(btn_html);
-        return true; // Successfully added
-    }
-
-    return false; // Not found yet
 }
 
 // ==========================================
