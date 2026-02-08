@@ -9,7 +9,9 @@
     "app": "erpnext_enhancements",
     "color": "blue",
     "icon": "factory",
-    "idx": 1
+    "idx": 1,
+    "doctype": "Desktop Icon",
+    "name": "production"
   },
   {
     "label": "Sales",
@@ -21,7 +23,9 @@
     "app": "erpnext_enhancements",
     "color": "green",
     "icon": "bill",
-    "idx": 2
+    "idx": 2,
+    "doctype": "Desktop Icon",
+    "name": "sales"
   },
   {
     "label": "Operations",
@@ -33,7 +37,9 @@
     "app": "erpnext_enhancements",
     "color": "orange",
     "icon": "cogs",
-    "idx": 3
+    "idx": 3,
+    "doctype": "Desktop Icon",
+    "name": "operations"
   },
   {
     "label": "Finance",
@@ -45,7 +51,9 @@
     "app": "erpnext_enhancements",
     "color": "blue",
     "icon": "bank",
-    "idx": 4
+    "idx": 4,
+    "doctype": "Desktop Icon",
+    "name": "finance"
   },
   {
     "label": "Design",
@@ -57,7 +65,9 @@
     "app": "erpnext_enhancements",
     "color": "purple",
     "icon": "edit",
-    "idx": 5
+    "idx": 5,
+    "doctype": "Desktop Icon",
+    "name": "design"
   },
   {
     "label": "Executive",
@@ -69,7 +79,9 @@
     "app": "erpnext_enhancements",
     "color": "grey",
     "icon": "briefcase",
-    "idx": 6
+    "idx": 6,
+    "doctype": "Desktop Icon",
+    "name": "executive"
   },
   {
     "label": "HR",
@@ -81,7 +93,9 @@
     "app": "erpnext_enhancements",
     "color": "red",
     "icon": "users",
-    "idx": 7
+    "idx": 7,
+    "doctype": "Desktop Icon",
+    "name": "hr"
   },
   {
     "label": "Marketing",
@@ -93,6 +107,8 @@
     "app": "erpnext_enhancements",
     "color": "yellow",
     "icon": "broadcast",
-    "idx": 8
+    "idx": 8,
+    "doctype": "Desktop Icon",
+    "name": "marketing"
   }
 ]

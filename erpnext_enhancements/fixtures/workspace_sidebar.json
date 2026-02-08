@@ -37,7 +37,8 @@
         "icon": "calendar",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Sales",
@@ -85,7 +86,8 @@
         "icon": "box",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Operations",
@@ -149,7 +151,8 @@
         "icon": "shopping-cart",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Finance",
@@ -221,7 +224,8 @@
         "icon": "users",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Design",
@@ -269,7 +273,8 @@
         "icon": "users",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Executive",
@@ -285,7 +290,8 @@
         "icon": "dashboard",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "HR",
@@ -301,7 +307,8 @@
         "icon": "dashboard",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   },
   {
     "name": "Marketing",
@@ -333,6 +340,7 @@
         "icon": "users",
         "onboard": 0
       }
-    ]
+    ],
+    "doctype": "Workspace Sidebar"
   }
 ]
