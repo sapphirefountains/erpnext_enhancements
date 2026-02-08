@@ -279,7 +279,10 @@ fixtures = [
     },
     {"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
     {"dt": "Workflow State", "filters": [["name", "in", ["Draft", "Requested", "Approved", "Booking in Progress", "Ready for Travel", "In Progress", "Expense Review", "Closed"]]]},
-    {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]}
+    {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
+    {"dt": "Desktop Icon", "filters": [["module", "=", "Enhancements Core"]]},
+    {"dt": "Workspace Sidebar", "filters": [["module", "=", "Enhancements Core"]]},
+    {"dt": "Workspace", "filters": [["module", "=", "Enhancements Core"]]}
 ]
 
 # Testing
