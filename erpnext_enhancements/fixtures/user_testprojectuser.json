@@ -1,5 +1,4 @@
 {
- "creation": "2024-05-21 10:00:00.000000",
  "docstatus": 0,
  "doctype": "User",
  "email": "testprojectuser@sapphirefountains.com",
@@ -10,10 +9,7 @@
  "idx": 0,
  "is_admin": 0,
  "language": "en",
- "modified": "2024-05-21 10:00:00.000000",
- "modified_by": "Administrator",
  "name": "testprojectuser@sapphirefountains.com",
- "owner": "Administrator",
  "roles": [
   {
    "role": "System Manager"
