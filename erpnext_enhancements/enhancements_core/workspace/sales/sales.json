@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Selling",
  "name": "Sales",
+ "label": "Sales",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [

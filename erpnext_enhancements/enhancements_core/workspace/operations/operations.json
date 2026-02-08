@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Operations",
+ "label": "Operations",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [

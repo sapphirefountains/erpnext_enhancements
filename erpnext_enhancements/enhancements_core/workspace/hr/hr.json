@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "HR",
  "name": "HR",
+ "label": "HR",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [
