@@ -496,7 +496,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.722275",
+  "creation": "2026-02-08 11:39:52.631337",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "edit",
@@ -563,7 +563,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.722277",
+  "modified": "2026-02-08 11:39:52.631339",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Design",
@@ -573,7 +573,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.707073",
+  "creation": "2026-02-08 11:39:52.616609",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "briefcase",
@@ -604,7 +604,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.707076",
+  "modified": "2026-02-08 11:39:52.616611",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Executive",
@@ -614,7 +614,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.710448",
+  "creation": "2026-02-08 11:39:52.622554",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "bank",
@@ -717,7 +717,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.710451",
+  "modified": "2026-02-08 11:39:52.622556",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Finance",
@@ -727,7 +727,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.717768",
+  "creation": "2026-02-08 11:39:52.627981",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "broadcast",
@@ -770,7 +770,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.717772",
+  "modified": "2026-02-08 11:39:52.627985",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Marketing",
@@ -780,7 +780,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.713756",
+  "creation": "2026-02-08 11:39:52.625107",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "cogs",
@@ -883,7 +883,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.713758",
+  "modified": "2026-02-08 11:39:52.625110",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Operations",
@@ -893,7 +893,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.719908",
+  "creation": "2026-02-08 11:39:52.629597",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "factory",
@@ -948,7 +948,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.719912",
+  "modified": "2026-02-08 11:39:52.629600",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Production",
@@ -958,7 +958,7 @@
  },
  {
   "app": "erpnext",
-  "creation": "2026-02-08 11:03:13.715980",
+  "creation": "2026-02-08 11:39:52.626890",
   "docstatus": 0,
   "doctype": "Workspace Sidebar",
   "header_icon": "bill",
@@ -1025,7 +1025,7 @@
     "type": "Link"
    }
   ],
-  "modified": "2026-02-08 11:03:13.715983",
+  "modified": "2026-02-08 11:39:52.626892",
   "modified_by": "Administrator",
   "module": "Enhancements Core",
   "name": "Sales",

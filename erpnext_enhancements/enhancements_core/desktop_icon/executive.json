@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.702642",
+ "creation": "2026-02-08 11:39:52.615750",
  "docstatus": 0,
  "doctype": "Desktop Icon",
  "hidden": 0,
@@ -8,14 +8,15 @@
  "icon_type": "Folder",
  "idx": 1,
  "label": "Executive",
- "link_to": "",
+ "link_to": "Executive",
  "link_type": "Workspace Sidebar",
- "modified": "2026-02-08 11:03:13.702661",
+ "modified": "2026-02-08 11:39:52.615768",
  "modified_by": "Administrator",
  "name": "Executive",
  "owner": "Administrator",
  "parent_icon": "",
  "restrict_removal": 0,
  "roles": [],
- "standard": 1
+ "standard": 1,
+ "module": "Enhancements Core"
 }

@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.722275",
+ "creation": "2026-02-08 11:39:52.631337",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
  "header_icon": "edit",
@@ -67,7 +67,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-02-08 11:03:13.722277",
+ "modified": "2026-02-08 11:39:52.631339",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Design",

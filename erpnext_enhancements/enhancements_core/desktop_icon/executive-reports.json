@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.706616",
+ "creation": "2026-02-08 11:39:52.616322",
  "docstatus": 0,
  "doctype": "Desktop Icon",
  "hidden": 0,
@@ -10,12 +10,13 @@
  "label": "Reports",
  "link_to": "Reports",
  "link_type": "Workspace",
- "modified": "2026-02-08 11:03:13.706637",
+ "modified": "2026-02-08 11:39:52.616325",
  "modified_by": "Administrator",
  "name": "executive-reports",
  "owner": "Administrator",
  "parent_icon": "Executive",
  "restrict_removal": 0,
  "roles": [],
- "standard": 1
+ "standard": 1,
+ "module": "Enhancements Core"
 }

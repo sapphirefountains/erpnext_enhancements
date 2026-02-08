@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.719908",
+ "creation": "2026-02-08 11:39:52.629597",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
  "header_icon": "factory",
@@ -55,7 +55,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-02-08 11:03:13.719912",
+ "modified": "2026-02-08 11:39:52.629600",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Production",

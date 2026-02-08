@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.714392",
+ "creation": "2026-02-08 11:39:52.625640",
  "docstatus": 0,
  "doctype": "Desktop Icon",
  "hidden": 0,
@@ -10,12 +10,13 @@
  "label": "Sales Hub",
  "link_to": "Sales Hub",
  "link_type": "Workspace",
- "modified": "2026-02-08 11:03:13.714395",
+ "modified": "2026-02-08 11:39:52.625643",
  "modified_by": "Administrator",
  "name": "sales-sales-hub",
  "owner": "Administrator",
  "parent_icon": "Sales",
  "restrict_removal": 0,
  "roles": [],
- "standard": 1
+ "standard": 1,
+ "module": "Enhancements Core"
 }

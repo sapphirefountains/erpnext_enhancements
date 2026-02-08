@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.719478",
+ "creation": "2026-02-08 11:39:52.629318",
  "docstatus": 0,
  "doctype": "Desktop Icon",
  "hidden": 0,
@@ -10,12 +10,13 @@
  "label": "ToDo Calendar",
  "link_to": "/desk/todo/view/calendar/default",
  "link_type": "Url",
- "modified": "2026-02-08 11:03:13.719482",
+ "modified": "2026-02-08 11:39:52.629321",
  "modified_by": "Administrator",
  "name": "production-todo-calendar",
  "owner": "Administrator",
  "parent_icon": "Production",
  "restrict_removal": 0,
  "roles": [],
- "standard": 1
+ "standard": 1,
+ "module": "Enhancements Core"
 }

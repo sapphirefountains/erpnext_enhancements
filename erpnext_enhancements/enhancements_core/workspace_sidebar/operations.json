@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.713756",
+ "creation": "2026-02-08 11:39:52.625107",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
  "header_icon": "cogs",
@@ -103,7 +103,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-02-08 11:03:13.713758",
+ "modified": "2026-02-08 11:39:52.625110",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Operations",

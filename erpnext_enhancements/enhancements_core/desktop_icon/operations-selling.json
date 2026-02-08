@@ -1,6 +1,6 @@
 {
  "app": "erpnext",
- "creation": "2026-02-08 11:03:13.713468",
+ "creation": "2026-02-08 11:39:52.624877",
  "docstatus": 0,
  "doctype": "Desktop Icon",
  "hidden": 0,
@@ -10,12 +10,13 @@
  "label": "Selling",
  "link_to": "Selling",
  "link_type": "Workspace",
- "modified": "2026-02-08 11:03:13.713471",
+ "modified": "2026-02-08 11:39:52.624880",
  "modified_by": "Administrator",
  "name": "operations-selling",
  "owner": "Administrator",
  "parent_icon": "Operations",
  "restrict_removal": 0,
  "roles": [],
- "standard": 1
+ "standard": 1,
+ "module": "Enhancements Core"
 }
