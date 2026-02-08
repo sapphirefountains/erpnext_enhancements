@@ -1,0 +1,74 @@
+[
+  {
+    "name": "Production",
+    "title": "Production",
+    "module": "Enhancements Core",
+    "icon": "factory",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Sales",
+    "title": "Sales",
+    "module": "Enhancements Core",
+    "icon": "bill",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Operations",
+    "title": "Operations",
+    "module": "Enhancements Core",
+    "icon": "cogs",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Finance",
+    "title": "Finance",
+    "module": "Enhancements Core",
+    "icon": "bank",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Design",
+    "title": "Design",
+    "module": "Enhancements Core",
+    "icon": "edit",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Executive",
+    "title": "Executive",
+    "module": "Enhancements Core",
+    "icon": "briefcase",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "HR",
+    "title": "HR",
+    "module": "Enhancements Core",
+    "icon": "users",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  },
+  {
+    "name": "Marketing",
+    "title": "Marketing",
+    "module": "Enhancements Core",
+    "icon": "broadcast",
+    "content": "[]",
+    "shortcuts": [],
+    "links": []
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "label": "Production",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Production",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "blue",
+    "icon": "factory",
+    "idx": 1
+  },
+  {
+    "label": "Sales",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Sales",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "green",
+    "icon": "bill",
+    "idx": 2
+  },
+  {
+    "label": "Operations",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Operations",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "orange",
+    "icon": "cogs",
+    "idx": 3
+  },
+  {
+    "label": "Finance",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Finance",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "blue",
+    "icon": "bank",
+    "idx": 4
+  },
+  {
+    "label": "Design",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Design",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "purple",
+    "icon": "edit",
+    "idx": 5
+  },
+  {
+    "label": "Executive",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Executive",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "grey",
+    "icon": "briefcase",
+    "idx": 6
+  },
+  {
+    "label": "HR",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "HR",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "red",
+    "icon": "users",
+    "idx": 7
+  },
+  {
+    "label": "Marketing",
+    "icon_type": "Link",
+    "link_type": "Workspace",
+    "link_to": "Marketing",
+    "module": "Enhancements Core",
+    "standard": 1,
+    "app": "erpnext_enhancements",
+    "color": "yellow",
+    "icon": "broadcast",
+    "idx": 8
+  }
+]
