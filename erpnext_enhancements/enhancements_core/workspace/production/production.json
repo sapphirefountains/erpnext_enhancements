@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Manufacturing",
  "name": "Production",
+ "label": "Production",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [

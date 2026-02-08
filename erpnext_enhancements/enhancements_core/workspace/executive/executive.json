@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Executive",
+ "label": "Executive",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [

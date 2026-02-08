@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Finance",
+ "label": "Finance",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [

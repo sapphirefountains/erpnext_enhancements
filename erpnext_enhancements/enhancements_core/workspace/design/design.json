@@ -9,6 +9,8 @@
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Design",
+ "label": "Design",
+ "type": "Workspace",
  "owner": "Administrator",
  "public": 1,
  "roles": [
