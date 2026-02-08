@@ -1,0 +1,21 @@
+{
+ "app": "erpnext",
+ "creation": "2026-02-08 11:03:13.718535",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "dashboard",
+ "icon_type": "Link",
+ "idx": 1,
+ "label": "Production Hub",
+ "link_to": "Production Hub",
+ "link_type": "Workspace",
+ "modified": "2026-02-08 11:03:13.718539",
+ "modified_by": "Administrator",
+ "name": "production-production-hub",
+ "owner": "Administrator",
+ "parent_icon": "Production",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}

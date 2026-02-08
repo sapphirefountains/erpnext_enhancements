@@ -1,0 +1,21 @@
+{
+ "app": "erpnext",
+ "creation": "2026-02-08 11:03:13.712658",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "project",
+ "icon_type": "Link",
+ "idx": 5,
+ "label": "Projects",
+ "link_to": "Projects",
+ "link_type": "Workspace",
+ "modified": "2026-02-08 11:03:13.712662",
+ "modified_by": "Administrator",
+ "name": "operations-projects",
+ "owner": "Administrator",
+ "parent_icon": "Operations",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}

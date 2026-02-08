@@ -1,0 +1,21 @@
+{
+ "app": "erpnext",
+ "creation": "2026-02-08 11:03:13.721560",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "bag",
+ "icon_type": "Link",
+ "idx": 4,
+ "label": "Selling",
+ "link_to": "Selling",
+ "link_type": "Workspace",
+ "modified": "2026-02-08 11:03:13.721563",
+ "modified_by": "Administrator",
+ "name": "design-selling",
+ "owner": "Administrator",
+ "parent_icon": "Design",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}

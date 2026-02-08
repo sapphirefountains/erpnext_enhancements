@@ -1,0 +1,53 @@
+{
+ "app": "erpnext",
+ "creation": "2026-02-08 11:03:13.717768",
+ "docstatus": 0,
+ "doctype": "Workspace Sidebar",
+ "header_icon": "broadcast",
+ "idx": 0,
+ "items": [
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Marketing Hub",
+   "link_to": "Marketing Hub",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "bag",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Selling",
+   "link_to": "Selling",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "users",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "CRM",
+   "link_to": "CRM",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-02-08 11:03:13.717772",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Marketing",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Marketing"
+}

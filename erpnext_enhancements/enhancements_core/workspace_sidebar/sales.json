@@ -1,0 +1,77 @@
+{
+ "app": "erpnext",
+ "creation": "2026-02-08 11:03:13.715980",
+ "docstatus": 0,
+ "doctype": "Workspace Sidebar",
+ "header_icon": "bill",
+ "idx": 0,
+ "items": [
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "dashboard",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Sales Hub",
+   "link_to": "Sales Hub",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "users",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "CRM",
+   "link_to": "CRM",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "bag",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Selling",
+   "link_to": "Selling",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "shopping-cart",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Buying",
+   "link_to": "Buying",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "box",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Stock",
+   "link_to": "Stock",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-02-08 11:03:13.715983",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Sales",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Sales"
+}
