@@ -1042,3 +1042,10 @@ mark {
 .desk-home-button-wrapper {
     display: none !important;
 }
+
+/* ==========================================================================
+   LIST ROW CONTAINER Z-INDEX FIX
+   ========================================================================== */
+.list-row-container {
+    z-index: 1;
+}
