@@ -94,5 +94,101 @@
     "shortcuts": [],
     "links": [],
     "doctype": "Workspace"
+  },
+  {
+    "name": "Executive Hub",
+    "title": "Executive Hub",
+    "label": "Executive Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Reports",
+    "title": "Reports",
+    "label": "Reports",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Finance Hub",
+    "title": "Finance Hub",
+    "label": "Finance Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Operations Hub",
+    "title": "Operations Hub",
+    "label": "Operations Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Sales Hub",
+    "title": "Sales Hub",
+    "label": "Sales Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Marketing Hub",
+    "title": "Marketing Hub",
+    "label": "Marketing Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Production Hub",
+    "title": "Production Hub",
+    "label": "Production Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
+  },
+  {
+    "name": "Design Hub",
+    "title": "Design Hub",
+    "label": "Design Hub",
+    "type": "Workspace",
+    "module": "Enhancements Core",
+    "icon": "dashboard",
+    "content": "[]",
+    "shortcuts": [],
+    "links": [],
+    "doctype": "Workspace"
   }
 ]
