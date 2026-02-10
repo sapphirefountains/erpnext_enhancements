@@ -17,9 +17,10 @@ build-backend = "flit_core.buildapi"
 
 
 [tool.bench]
-frappe-dependencies = [
-    { name = "frappe", version = ">=16.0.0" }
-]
+# frappe-dependencies must be a table, not a list.
+# Strict versioning is required (Lower and Upper bound).
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
 
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
