@@ -79,7 +79,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                 label: 'Note',
                                 fieldname: 'comment_text',
                                 fieldtype: 'Text Editor',
-                                reqd: 1
+                                reqd: 1,
+                                enable_mentions: true
                             }
                         ],
                         primary_action_label: 'Submit',
@@ -115,7 +116,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                 fieldname: 'comment_text',
                                 fieldtype: 'Text Editor',
                                 default: comment.content,
-                                reqd: 1
+                                reqd: 1,
+                                enable_mentions: true
                             }
                         ],
                         primary_action_label: 'Save',
