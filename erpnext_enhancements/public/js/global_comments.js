@@ -30,56 +30,46 @@ erpnext_enhancements.timeline_attachments.init = function() {
                 $submit_btn = this.wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
             }
 
-            // If button already exists, just make sure it's positioned correctly and visible
             let $existing_attach_btn = this.wrapper.find('.btn-attach-file');
-            if ($existing_attach_btn.length > 0) {
-                // Ensure it's not hidden
-                $existing_attach_btn.removeClass('hidden').show();
 
-                // If the submit button exists, ensure the attach button is right before it
+            // Re-align and force visibility if button exists
+            if ($existing_attach_btn.length > 0) {
+                $existing_attach_btn.removeClass('hidden').show().css({'display': 'inline-block'});
+
                 if ($submit_btn.length > 0) {
-                    // Check if it's already exactly before the submit button
                     if ($existing_attach_btn.next()[0] !== $submit_btn[0] && $existing_attach_btn.next().next()[0] !== $submit_btn[0]) {
                         $existing_attach_btn.insertBefore($submit_btn);
-                        // Make sure file input is also moved if necessary
-                        let $file_input = $existing_attach_btn.next('input[type="file"]');
+                        let $file_input = this.wrapper.find('input[type="file"].timeline-file-input');
                         if ($file_input.length) {
                             $file_input.insertBefore($submit_btn);
                         }
                     }
                 }
-                return true;
-            }
+                // Do not return true here! We must keep executing to ensure everything stays aligned
+                // but we also don't want to inject *another* button.
+            } else {
+                // Button doesn't exist, we need to inject it
+                let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
 
-            // Try the new layout structure (e.g. Frappe v15/v16) first
-            let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
-
-            if ($comment_wrapper.length > 0) {
-                // In new layout, the submit button might be hidden initially, but we can still insert before it.
-                // Or if it's missing, we append to the wrapper directly.
-                if ($submit_btn.length > 0) {
-                    this.inject_attachment_button($comment_wrapper, $submit_btn, true);
-                    return true;
+                if ($comment_wrapper.length > 0) {
+                    if ($submit_btn.length > 0) {
+                        this.inject_attachment_button($comment_wrapper, $submit_btn, true);
+                    } else {
+                        this.inject_attachment_button($comment_wrapper, null, true);
+                    }
                 } else {
-                    this.inject_attachment_button($comment_wrapper, null, true);
-                    return true;
+                    let $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
+                    if ($timeline_actions.length === 0 && $submit_btn.length > 0) {
+                        $timeline_actions = $submit_btn.parent();
+                    }
+                    if ($timeline_actions.length > 0) {
+                        this.inject_attachment_button($timeline_actions, $submit_btn.length > 0 ? $submit_btn : null, false);
+                    }
                 }
             }
 
-            // Fallback to old structure
-            let $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
-            
-            if ($timeline_actions.length === 0 && $submit_btn.length > 0) {
-                $timeline_actions = $submit_btn.parent();
-            }
-
-            // If the actions container exists, and we haven't injected yet
-            if ($timeline_actions.length > 0) {
-                this.inject_attachment_button($timeline_actions, $submit_btn.length > 0 ? $submit_btn : null, false);
-                return true;
-            }
-
-            return false;
+            // Always return true or nothing since we are continuously observing and patching
+            return true;
         };
 
         // Attempt injection immediately
@@ -102,13 +92,13 @@ erpnext_enhancements.timeline_attachments.init = function() {
     frappe.ui.form.Timeline.prototype.inject_attachment_button = function($container, $target_btn, is_new_layout) {
         // Inject the paperclip button next to the Comment button
         const $attach_btn = $(`
-            <button class="btn btn-default btn-xs btn-attach-file" style="margin-right: 10px;" title="Attach File">
+            <button class="btn btn-default btn-xs btn-attach-file" style="margin-right: 10px; display: inline-block !important;" title="Attach File">
                 <i class="fa fa-paperclip"></i> Attach File
             </button>
         `);
 
         // Inject a hidden file input
-        const $file_input = $(`<input type="file" multiple style="display: none;">`);
+        const $file_input = $(`<input type="file" class="timeline-file-input" multiple style="display: none;">`);
 
         // Container for showing uploaded files before submission
         let $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; width: 100%;"></div>`);
