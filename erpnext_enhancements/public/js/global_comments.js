@@ -26,10 +26,19 @@ erpnext_enhancements.timeline_attachments.init = function() {
         const observer = new MutationObserver((mutations) => {
             if (!this.wrapper) return;
             
+            // Try the new layout structure (e.g. Frappe v15/v16) first
+            let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
+            if ($comment_wrapper.length > 0) {
+                let $submit_btn = $comment_wrapper.find('.btn-comment');
+                if ($submit_btn.length > 0 && $comment_wrapper.find('.btn-attach-file').length === 0) {
+                    this.inject_attachment_button($comment_wrapper, $submit_btn, true);
+                }
+                return; // Stop here if new layout found
+            }
+
+            // Fallback to old structure
             let $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
             
-            // Fallback for newer Frappe versions where the '.actions' class might be missing
-            // We look for the container holding the primary "Comment" button
             if ($timeline_actions.length === 0) {
                 let $submit_btn = this.wrapper.find('.timeline-message-box .btn-primary');
                 if ($submit_btn.length === 0) {
@@ -43,7 +52,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
 
             // If the actions container exists and is visible, and we haven't injected yet
             if ($timeline_actions.length > 0 && $timeline_actions.find('.btn-attach-file').length === 0) {
-                this.inject_attachment_button($timeline_actions);
+                this.inject_attachment_button($timeline_actions, null, false);
             }
         });
 
@@ -55,11 +64,11 @@ erpnext_enhancements.timeline_attachments.init = function() {
         this.intercept_submission();
     };
 
-    frappe.ui.form.Timeline.prototype.inject_attachment_button = function($timeline_actions) {
+    frappe.ui.form.Timeline.prototype.inject_attachment_button = function($container, $target_btn, is_new_layout) {
         // Inject the paperclip button next to the Comment button
         const $attach_btn = $(`
             <button class="btn btn-default btn-xs btn-attach-file" style="margin-right: 10px;" title="Attach File">
-                <i class="fa fa-paperclip"></i>
+                <i class="fa fa-paperclip"></i> Attach File
             </button>
         `);
 
@@ -67,25 +76,46 @@ erpnext_enhancements.timeline_attachments.init = function() {
         const $file_input = $(`<input type="file" multiple style="display: none;">`);
 
         // Container for showing uploaded files before submission
-        const $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px;"></div>`);
+        const $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; width: 100%;"></div>`);
 
-        // Place the elements
-        $timeline_actions.prepend($attach_btn);
-        $timeline_actions.append($file_input);
-
-        let $message_box = this.wrapper.find('.timeline-message-box');
-        if ($message_box.length === 0) {
-            // Fallback for newer Frappe versions or different DOM structure
-            $message_box = $timeline_actions.closest('.timeline-item, .comment-box, .timeline-message-box-wrapper').length > 0 ? 
-                           $timeline_actions.closest('.timeline-item, .comment-box, .timeline-message-box-wrapper') : 
-                           $timeline_actions.parent();
-        }
-
-        if ($message_box.find('.timeline-attachments-preview').length === 0) {
-            $message_box.append($attachments_preview);
+        if (is_new_layout && $target_btn) {
+            // New layout: insert before the comment button
+            $attach_btn.insertBefore($target_btn);
+            $file_input.insertBefore($target_btn);
+            
+            let $input_container = $container.find('.comment-input-container');
+            if ($input_container.length > 0) {
+                if ($input_container.find('.timeline-attachments-preview').length === 0) {
+                    $input_container.append($attachments_preview);
+                } else {
+                    $attachments_preview = $input_container.find('.timeline-attachments-preview');
+                }
+            } else {
+                if ($container.find('.timeline-attachments-preview').length === 0) {
+                    $container.append($attachments_preview);
+                } else {
+                    $attachments_preview = $container.find('.timeline-attachments-preview');
+                }
+            }
         } else {
-            // Already added previously
-            $attachments_preview = $message_box.find('.timeline-attachments-preview');
+            // Place the elements (old layout)
+            $container.prepend($attach_btn);
+            $container.append($file_input);
+
+            let $message_box = this.wrapper.find('.timeline-message-box');
+            if ($message_box.length === 0) {
+                // Fallback for newer Frappe versions or different DOM structure
+                $message_box = $container.closest('.timeline-item, .comment-box, .timeline-message-box-wrapper').length > 0 ? 
+                               $container.closest('.timeline-item, .comment-box, .timeline-message-box-wrapper') : 
+                               $container.parent();
+            }
+
+            if ($message_box.find('.timeline-attachments-preview').length === 0) {
+                $message_box.append($attachments_preview);
+            } else {
+                // Already added previously
+                $attachments_preview = $message_box.find('.timeline-attachments-preview');
+            }
         }
 
         // Bind events
@@ -106,14 +136,19 @@ erpnext_enhancements.timeline_attachments.init = function() {
     };
 
     frappe.ui.form.Timeline.prototype.handle_file_uploads = async function(files, $preview_container) {
-        let $submit_btn = this.wrapper.find('.timeline-message-box .btn-primary');
+        let $submit_btn = this.wrapper.find('.btn-comment');
+        if ($submit_btn.length === 0) {
+            $submit_btn = this.wrapper.find('.timeline-message-box .btn-primary');
+        }
         if ($submit_btn.length === 0) {
             // Fallback for newer Frappe versions
             $submit_btn = this.wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
         }
 
         // Disable submit button while uploading
-        $submit_btn.prop('disabled', true);
+        if ($submit_btn.length > 0) {
+            $submit_btn.prop('disabled', true);
+        }
 
         const upload_promises = files.map(file => this.upload_single_file(file, $preview_container));
 
@@ -127,7 +162,9 @@ erpnext_enhancements.timeline_attachments.init = function() {
             // Remove resolved promises from pending
             this._pending_uploads = [];
             // Re-enable submit button
-            $submit_btn.prop('disabled', false);
+            if ($submit_btn.length > 0) {
+                $submit_btn.prop('disabled', false);
+            }
         }
     };
 
