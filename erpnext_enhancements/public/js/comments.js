@@ -72,6 +72,7 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     });
                 },
                 showAddCommentDialog() {
+                    let uploaded_files = [];
                     let dialog = new frappe.ui.Dialog({
                         title: 'New Note',
                         fields: [
@@ -81,33 +82,95 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                 fieldtype: 'Text Editor',
                                 reqd: 1,
                                 enable_mentions: true
+                            },
+                            {
+                                fieldtype: 'HTML',
+                                fieldname: 'attachment_preview'
                             }
                         ],
                         primary_action_label: 'Submit',
                         primary_action: (values) => {
-                            if (!values.comment_text.trim()) {
+                            if (!values.comment_text.trim() && uploaded_files.length === 0) {
                                 frappe.msgprint('Comment cannot be empty.');
                                 return;
                             }
+
+                            let comment_text = values.comment_text || "";
+                            if (uploaded_files.length > 0) {
+                                let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
+                                attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                                for (let file of uploaded_files) {
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
+                                    attachment_html += `
+                                        <li style="margin-bottom: 5px;">
+                                            <i class="fa fa-paperclip text-muted"></i>
+                                            <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
+                                        </li>
+                                    `;
+                                }
+                                attachment_html += '</ul></div>';
+                                comment_text += attachment_html;
+                            }
+
                             frappe.call({
                                 method: "erpnext_enhancements.api.comments.add_comment",
                                 args: {
                                     reference_doctype: frm.doc.doctype,
                                     reference_name: frm.doc.name,
-                                    comment_text: values.comment_text,
+                                    comment_text: comment_text,
                                 },
                                 callback: (r) => {
                                     if (r.message) {
                                         this.comments.unshift(r.message);
+
+                                        // Link files in background
+                                        if (uploaded_files.length > 0 && r.message.name) {
+                                            frappe.call({
+                                                method: 'erpnext_enhancements.api.comments.link_files_to_comment',
+                                                args: {
+                                                    file_ids: uploaded_files.map(f => f.file_id),
+                                                    comment_id: r.message.name,
+                                                    parent_doctype: frm.doc.doctype,
+                                                    parent_name: frm.doc.name
+                                                }
+                                            });
+                                        }
+
                                         dialog.hide();
                                     }
                                 },
                             });
                         }
                     });
+
+                    dialog.add_custom_action('Attach File', () => {
+                        new frappe.ui.FileUploader({
+                            doctype: 'Comment', // Doesn't matter much yet since it will be linked manually
+                            docname: 'new-comment',
+                            folder: 'Home/Attachments',
+                            on_success: (file_doc) => {
+                                uploaded_files.push({
+                                    file_id: file_doc.name,
+                                    file_url: file_doc.file_url,
+                                    file_name: file_doc.file_name
+                                });
+
+                                // Update preview area
+                                let preview_html = '<div style="margin-top: 10px;"><strong>Attached Files:</strong><ul style="list-style: none; padding-left: 0;">';
+                                uploaded_files.forEach(f => {
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(f.file_name) : $('<div>').text(f.file_name).html();
+                                    preview_html += `<li><i class="fa fa-paperclip"></i> <a href="${f.file_url}" target="_blank">${escaped_filename}</a></li>`;
+                                });
+                                preview_html += '</ul></div>';
+                                dialog.get_field('attachment_preview').$wrapper.html(preview_html);
+                            }
+                        });
+                    }, 'fa fa-paperclip');
+
                     dialog.show();
                 },
                 showEditCommentDialog(comment) {
+                    let uploaded_files = [];
                     let dialog = new frappe.ui.Dialog({
                         title: 'Edit Note',
                         fields: [
@@ -118,19 +181,41 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                 default: comment.content,
                                 reqd: 1,
                                 enable_mentions: true
+                            },
+                            {
+                                fieldtype: 'HTML',
+                                fieldname: 'attachment_preview'
                             }
                         ],
                         primary_action_label: 'Save',
                         primary_action: (values) => {
-                            if (!values.comment_text.trim()) {
+                            if (!values.comment_text.trim() && uploaded_files.length === 0) {
                                 frappe.msgprint('Comment cannot be empty.');
                                 return;
                             }
+
+                            let comment_text = values.comment_text || "";
+                            if (uploaded_files.length > 0) {
+                                let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
+                                attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                                for (let file of uploaded_files) {
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
+                                    attachment_html += `
+                                        <li style="margin-bottom: 5px;">
+                                            <i class="fa fa-paperclip text-muted"></i>
+                                            <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
+                                        </li>
+                                    `;
+                                }
+                                attachment_html += '</ul></div>';
+                                comment_text += attachment_html;
+                            }
+
                             frappe.call({
                                 method: "erpnext_enhancements.api.comments.update_comment",
                                 args: {
                                     comment_name: comment.name,
-                                    comment_text: values.comment_text,
+                                    comment_text: comment_text,
                                 },
                                 callback: (r) => {
                                     if (r.message && !r.message.error) {
@@ -139,6 +224,20 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                         if (index !== -1) {
                                             this.comments.splice(index, 1, updatedComment);
                                         }
+
+                                        // Link files in background
+                                        if (uploaded_files.length > 0) {
+                                            frappe.call({
+                                                method: 'erpnext_enhancements.api.comments.link_files_to_comment',
+                                                args: {
+                                                    file_ids: uploaded_files.map(f => f.file_id),
+                                                    comment_id: comment.name,
+                                                    parent_doctype: frm.doc.doctype,
+                                                    parent_name: frm.doc.name
+                                                }
+                                            });
+                                        }
+
                                         dialog.hide();
                                     } else {
                                         frappe.msgprint('There was an error updating the comment.');
@@ -147,6 +246,31 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                             });
                         }
                     });
+
+                    dialog.add_custom_action('Attach File', () => {
+                        new frappe.ui.FileUploader({
+                            doctype: 'Comment',
+                            docname: comment.name,
+                            folder: 'Home/Attachments',
+                            on_success: (file_doc) => {
+                                uploaded_files.push({
+                                    file_id: file_doc.name,
+                                    file_url: file_doc.file_url,
+                                    file_name: file_doc.file_name
+                                });
+
+                                // Update preview area
+                                let preview_html = '<div style="margin-top: 10px;"><strong>Attached Files:</strong><ul style="list-style: none; padding-left: 0;">';
+                                uploaded_files.forEach(f => {
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(f.file_name) : $('<div>').text(f.file_name).html();
+                                    preview_html += `<li><i class="fa fa-paperclip"></i> <a href="${f.file_url}" target="_blank">${escaped_filename}</a></li>`;
+                                });
+                                preview_html += '</ul></div>';
+                                dialog.get_field('attachment_preview').$wrapper.html(preview_html);
+                            }
+                        });
+                    }, 'fa fa-paperclip');
+
                     dialog.show();
                 },
                 formatDateTime(datetime) {

@@ -21,13 +21,27 @@ erpnext_enhancements.timeline_attachments.init = function() {
         this._pending_uploads = [];
         this._uploaded_files = []; // { file_id, file_url, file_name }
 
-        // Find the timeline-message-box or timeline-actions area
-        const $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
-        if ($timeline_actions.length === 0) return;
+        // We use a MutationObserver because the `.actions` div and text editor are rendered dynamically
+        // when the user clicks/focuses the comment area.
+        const observer = new MutationObserver((mutations) => {
+            if (!this.wrapper) return;
+            const $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
 
-        // Ensure we don't inject multiple times
-        if ($timeline_actions.find('.btn-attach-file').length > 0) return;
+            // If the actions container exists and is visible, and we haven't injected yet
+            if ($timeline_actions.length > 0 && $timeline_actions.find('.btn-attach-file').length === 0) {
+                this.inject_attachment_button($timeline_actions);
+            }
+        });
 
+        if (this.wrapper && this.wrapper[0]) {
+            observer.observe(this.wrapper[0], { childList: true, subtree: true });
+        }
+
+        // Intercept the submission
+        this.intercept_submission();
+    };
+
+    frappe.ui.form.Timeline.prototype.inject_attachment_button = function($timeline_actions) {
         // Inject the paperclip button next to the Comment button
         const $attach_btn = $(`
             <button class="btn btn-default btn-xs btn-attach-file" style="margin-right: 10px;" title="Attach File">
@@ -44,7 +58,14 @@ erpnext_enhancements.timeline_attachments.init = function() {
         // Place the elements
         $timeline_actions.prepend($attach_btn);
         $timeline_actions.append($file_input);
-        this.wrapper.find('.timeline-message-box').append($attachments_preview);
+
+        let $message_box = this.wrapper.find('.timeline-message-box');
+        if ($message_box.find('.timeline-attachments-preview').length === 0) {
+            $message_box.append($attachments_preview);
+        } else {
+            // Already added previously
+            $attachments_preview = $message_box.find('.timeline-attachments-preview');
+        }
 
         // Bind events
         $attach_btn.on('click', (e) => {
@@ -61,9 +82,6 @@ erpnext_enhancements.timeline_attachments.init = function() {
 
             await this.handle_file_uploads(files, $attachments_preview);
         });
-
-        // Intercept the submission
-        this.intercept_submission();
     };
 
     frappe.ui.form.Timeline.prototype.handle_file_uploads = async function(files, $preview_container) {

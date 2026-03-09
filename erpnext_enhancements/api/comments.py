@@ -82,6 +82,27 @@ def add_comment(reference_doctype, reference_name, comment_text):
 
 
 @frappe.whitelist()
+def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
+	import json
+	if isinstance(file_ids, str):
+		file_ids = json.loads(file_ids)
+
+	for file_id in file_ids:
+		try:
+			file_doc = frappe.get_doc("File", file_id)
+			file_doc.attached_to_name = parent_name
+			file_doc.attached_to_doctype = parent_doctype
+			# Link the comment
+			if not hasattr(file_doc, "attached_to_comment"):
+				# Optional if you add a field for it, else just standard attachment
+				pass
+			file_doc.save(ignore_permissions=True)
+		except Exception as e:
+			frappe.log_error(frappe.get_traceback(), "File Link Error")
+
+	return {"success": True}
+
+@frappe.whitelist()
 def delete_comment(comment_name):
 	"""
 	Deletes a comment if the user is the owner.
