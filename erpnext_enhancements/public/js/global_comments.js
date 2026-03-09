@@ -23,14 +23,32 @@ erpnext_enhancements.timeline_attachments.init = function() {
 
         const try_inject = () => {
             if (!this.wrapper) return false;
-            
-            // Prevent multiple injections
-            if (this.wrapper.find('.btn-attach-file').length > 0) return true;
 
             // Find the submit button anywhere in the wrapper
             let $submit_btn = this.wrapper.find('.btn-comment');
             if ($submit_btn.length === 0) {
                 $submit_btn = this.wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
+            }
+
+            // If button already exists, just make sure it's positioned correctly and visible
+            let $existing_attach_btn = this.wrapper.find('.btn-attach-file');
+            if ($existing_attach_btn.length > 0) {
+                // Ensure it's not hidden
+                $existing_attach_btn.removeClass('hidden').show();
+
+                // If the submit button exists, ensure the attach button is right before it
+                if ($submit_btn.length > 0) {
+                    // Check if it's already exactly before the submit button
+                    if ($existing_attach_btn.next()[0] !== $submit_btn[0] && $existing_attach_btn.next().next()[0] !== $submit_btn[0]) {
+                        $existing_attach_btn.insertBefore($submit_btn);
+                        // Make sure file input is also moved if necessary
+                        let $file_input = $existing_attach_btn.next('input[type="file"]');
+                        if ($file_input.length) {
+                            $file_input.insertBefore($submit_btn);
+                        }
+                    }
+                }
+                return true;
             }
 
             // Try the new layout structure (e.g. Frappe v15/v16) first
@@ -102,12 +120,16 @@ erpnext_enhancements.timeline_attachments.init = function() {
                 $attach_btn.insertBefore($target_btn);
                 $file_input.insertBefore($target_btn);
 
-                // Apply left margin explicitly for the attach button
-                $attach_btn.css({'margin-left': '48px'});
+                // Ensure it's never hidden by Frappe logic targeting parent classes
+                $attach_btn.removeClass('hidden').show();
+                $attach_btn.css({'display': 'inline-block'});
 
-                // Wait until target is initialized, it might be hidden until text is input.
-                // It is hidden via .hidden class. The parent or itself shouldn't hide the attach button
-                $attach_btn.removeClass('hidden'); // make sure our button is not hidden by accident
+                // Usually in the new layout we want some margin to separate from other elements
+                if ($target_btn.css('display') === 'none' || $target_btn.hasClass('hidden')) {
+                    // Adjust margin if submit button is hidden initially
+                    $attach_btn.css({'margin-left': '48px'});
+                }
+
             } else {
                 // If the comment button is not found, we append to the comment box wrapper
                 $attach_btn.css({'margin-left': '48px'});
