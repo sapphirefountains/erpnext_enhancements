@@ -21,13 +21,11 @@ erpnext_enhancements.timeline_attachments.init = function() {
         this._pending_uploads = [];
         this._uploaded_files = []; // { file_id, file_url, file_name }
 
-        // We use a MutationObserver because the `.actions` div and text editor are rendered dynamically
-        // when the user clicks/focuses the comment area.
-        const observer = new MutationObserver((mutations) => {
-            if (!this.wrapper) return;
+        const try_inject = () => {
+            if (!this.wrapper) return false;
             
             // Prevent multiple injections
-            if (this.wrapper.find('.btn-attach-file').length > 0) return;
+            if (this.wrapper.find('.btn-attach-file').length > 0) return true;
 
             // Find the submit button anywhere in the wrapper
             let $submit_btn = this.wrapper.find('.btn-comment');
@@ -39,10 +37,15 @@ erpnext_enhancements.timeline_attachments.init = function() {
             let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
 
             if ($comment_wrapper.length > 0) {
+                // In new layout, the submit button might be hidden initially, but we can still insert before it.
+                // Or if it's missing, we append to the wrapper directly.
                 if ($submit_btn.length > 0) {
                     this.inject_attachment_button($comment_wrapper, $submit_btn, true);
+                    return true;
+                } else {
+                    this.inject_attachment_button($comment_wrapper, null, true);
+                    return true;
                 }
-                return; // Stop here if new layout found
             }
 
             // Fallback to old structure
@@ -52,14 +55,26 @@ erpnext_enhancements.timeline_attachments.init = function() {
                 $timeline_actions = $submit_btn.parent();
             }
 
-            // If the actions container exists and is visible, and we haven't injected yet
+            // If the actions container exists, and we haven't injected yet
             if ($timeline_actions.length > 0) {
                 this.inject_attachment_button($timeline_actions, $submit_btn.length > 0 ? $submit_btn : null, false);
+                return true;
             }
+
+            return false;
+        };
+
+        // Attempt injection immediately
+        try_inject();
+
+        // We use a MutationObserver because the `.actions` div and text editor might be rendered dynamically
+        // and also re-rendered when changing tabs or submitting comments.
+        const observer = new MutationObserver((mutations) => {
+            try_inject();
         });
 
         if (this.wrapper && this.wrapper[0]) {
-            observer.observe(this.wrapper[0], { childList: true, subtree: true });
+            observer.observe(this.wrapper[0], { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
         }
 
         // Intercept the submission
@@ -80,10 +95,25 @@ erpnext_enhancements.timeline_attachments.init = function() {
         // Container for showing uploaded files before submission
         let $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; width: 100%;"></div>`);
 
-        if (is_new_layout && $target_btn) {
-            // New layout: insert before the comment button
-            $attach_btn.insertBefore($target_btn);
-            $file_input.insertBefore($target_btn);
+        if (is_new_layout) {
+            // New layout
+            if ($target_btn && $target_btn.length > 0) {
+                // If comment button is found, insert before it
+                $attach_btn.insertBefore($target_btn);
+                $file_input.insertBefore($target_btn);
+
+                // Apply left margin explicitly for the attach button
+                $attach_btn.css({'margin-left': '48px'});
+
+                // Wait until target is initialized, it might be hidden until text is input.
+                // It is hidden via .hidden class. The parent or itself shouldn't hide the attach button
+                $attach_btn.removeClass('hidden'); // make sure our button is not hidden by accident
+            } else {
+                // If the comment button is not found, we append to the comment box wrapper
+                $attach_btn.css({'margin-left': '48px'});
+                $container.append($attach_btn);
+                $container.append($file_input);
+            }
             
             let $input_container = $container.find('.comment-input-container');
             if ($input_container.length > 0) {
