@@ -26,14 +26,20 @@ erpnext_enhancements.timeline_attachments.init = function() {
         const observer = new MutationObserver((mutations) => {
             if (!this.wrapper) return;
             
+            // Prevent multiple injections
+            if (this.wrapper.find('.btn-attach-file').length > 0) return;
+
+            // Find the submit button anywhere in the wrapper
+            let $submit_btn = this.wrapper.find('.btn-comment');
+            if ($submit_btn.length === 0) {
+                $submit_btn = this.wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
+            }
+
             // Try the new layout structure (e.g. Frappe v15/v16) first
             let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
+
             if ($comment_wrapper.length > 0) {
-                let $submit_btn = $comment_wrapper.find('.btn-comment');
-                if ($submit_btn.length === 0) {
-                    $submit_btn = $comment_wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
-                }
-                if ($submit_btn.length > 0 && $comment_wrapper.find('.btn-attach-file').length === 0) {
+                if ($submit_btn.length > 0) {
                     this.inject_attachment_button($comment_wrapper, $submit_btn, true);
                 }
                 return; // Stop here if new layout found
@@ -42,20 +48,13 @@ erpnext_enhancements.timeline_attachments.init = function() {
             // Fallback to old structure
             let $timeline_actions = this.wrapper.find('.timeline-message-box .actions');
             
-            if ($timeline_actions.length === 0) {
-                let $submit_btn = this.wrapper.find('.timeline-message-box .btn-primary');
-                if ($submit_btn.length === 0) {
-                    // Broader search for the comment button if timeline-message-box is also renamed/missing
-                    $submit_btn = this.wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
-                }
-                if ($submit_btn.length > 0) {
-                    $timeline_actions = $submit_btn.parent();
-                }
+            if ($timeline_actions.length === 0 && $submit_btn.length > 0) {
+                $timeline_actions = $submit_btn.parent();
             }
 
             // If the actions container exists and is visible, and we haven't injected yet
-            if ($timeline_actions.length > 0 && $timeline_actions.find('.btn-attach-file').length === 0) {
-                this.inject_attachment_button($timeline_actions, null, false);
+            if ($timeline_actions.length > 0) {
+                this.inject_attachment_button($timeline_actions, $submit_btn.length > 0 ? $submit_btn : null, false);
             }
         });
 
