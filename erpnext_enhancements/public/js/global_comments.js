@@ -30,6 +30,9 @@ erpnext_enhancements.timeline_attachments.init = function() {
             let $comment_wrapper = this.wrapper.find('.comment-input-wrapper');
             if ($comment_wrapper.length > 0) {
                 let $submit_btn = $comment_wrapper.find('.btn-comment');
+                if ($submit_btn.length === 0) {
+                    $submit_btn = $comment_wrapper.find('.btn-primary').filter((i, el) => $(el).text().trim().toLowerCase() === 'comment');
+                }
                 if ($submit_btn.length > 0 && $comment_wrapper.find('.btn-attach-file').length === 0) {
                     this.inject_attachment_button($comment_wrapper, $submit_btn, true);
                 }
