@@ -76,7 +76,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
         const $file_input = $(`<input type="file" multiple style="display: none;">`);
 
         // Container for showing uploaded files before submission
-        const $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; width: 100%;"></div>`);
+        let $attachments_preview = $(`<div class="timeline-attachments-preview" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; width: 100%;"></div>`);
 
         if (is_new_layout && $target_btn) {
             // New layout: insert before the comment button
@@ -230,7 +230,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
             })
             .catch(error => {
                 $preview_item.remove();
-                frappe.show_alert({message: \`Failed to upload \${file.name}\`, indicator: 'red'});
+                frappe.show_alert({message: `Failed to upload ${file.name}`, indicator: 'red'});
                 reject(error);
             });
         });
@@ -279,12 +279,12 @@ erpnext_enhancements.timeline_attachments.init = function() {
                         escaped_filename = $('<div>').text(file.file_name).html();
                     }
 
-                    attachment_html += \`
+                    attachment_html += `
                         <li style="margin-bottom: 5px;">
                             <i class="fa fa-paperclip text-muted"></i>
                             <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
                         </li>
-                    \`;
+                    `;
                 }
                 attachment_html += '</ul></div>';
 
