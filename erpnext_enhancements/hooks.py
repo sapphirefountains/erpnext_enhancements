@@ -30,6 +30,7 @@ app_include_js = [
 	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
     "/assets/erpnext_enhancements/js/kanban_patches.js",
 	"/assets/erpnext_enhancements/js/global_comments.js",
+	"/assets/erpnext_enhancements/js/crm_note_enhancements.js",
 	"/assets/erpnext_enhancements/js/performance_fixes.js",
     "/assets/erpnext_enhancements/js/activity_log_numbering.js",
     "/assets/erpnext_enhancements/js/filter_help.js",
