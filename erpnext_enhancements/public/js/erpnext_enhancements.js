@@ -193,7 +193,30 @@ $(document).on("app_ready", function () {
     } catch (e) {
         console.error("Error setting up 'Add to Desk':", e);
     }
+
+    // Default Full Width
+    try {
+        setup_default_full_width();
+    } catch (e) {
+        console.error("Error setting up default full width:", e);
+    }
 });
+
+// ==========================================
+// Default Full Width
+// ==========================================
+
+function setup_default_full_width() {
+    // If the setting hasn't been configured yet, default to full width
+    if (localStorage.getItem("container_fullwidth") === null) {
+        localStorage.setItem("container_fullwidth", "true");
+
+        // Ensure the class is applied if frappe missed it
+        if (!$('body').hasClass('full-width')) {
+            $('body').addClass('full-width');
+        }
+    }
+}
 
 // ==========================================
 // Add to Desk (Global)
