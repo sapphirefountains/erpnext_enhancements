@@ -97,11 +97,13 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                             let comment_text = values.comment_text || "";
                             if (uploaded_files.length > 0) {
-                                comment_text += "\n\n**Attachments:**\n";
+                                let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
                                 for (let file of uploaded_files) {
                                     let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                    comment_text += `- [${escaped_filename}](${file.file_url})\n`;
+                                    attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                                 }
+                                attachment_html += '</ul>';
+                                comment_text += attachment_html;
                             }
 
                             frappe.call({
@@ -188,11 +190,13 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                             let comment_text = values.comment_text || "";
                             if (uploaded_files.length > 0) {
-                                comment_text += "\n\n**Attachments:**\n";
+                                let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
                                 for (let file of uploaded_files) {
                                     let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                    comment_text += `- [${escaped_filename}](${file.file_url})\n`;
+                                    attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                                 }
+                                attachment_html += '</ul>';
+                                comment_text += attachment_html;
                             }
 
                             frappe.call({
