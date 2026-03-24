@@ -27,21 +27,13 @@ erpnext_enhancements.crm_notes.init = function() {
                         if (this.uploaded_files_for_crm_note && this.uploaded_files_for_crm_note.length > 0) {
                             let note_text = values.note || "";
 
-                            let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
-                            attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
-
+                            let attachment_md = "\n\n**Attachments:**\n";
                             for (let file of this.uploaded_files_for_crm_note) {
                                 let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                attachment_html += `
-                                    <li style="margin-bottom: 5px;">
-                                        <i class="fa fa-paperclip text-muted"></i>
-                                        <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
-                                    </li>
-                                `;
+                                attachment_md += `- [${escaped_filename}](${file.file_url})\n`;
                             }
-                            attachment_html += '</ul></div>';
 
-                            values.note = note_text + attachment_html;
+                            values.note = note_text + attachment_md;
 
                             if (this.fields_dict && this.fields_dict.note && this.fields_dict.note.set_value) {
                                 this.fields_dict.note.set_value(values.note);
@@ -79,8 +71,8 @@ erpnext_enhancements.crm_notes.init = function() {
             if (typeof dialog.add_custom_action === 'function') {
                 dialog.add_custom_action('Attach File', () => {
                     new frappe.ui.FileUploader({
-                        doctype: typeof cur_frm !== 'undefined' && cur_frm ? cur_frm.doc.doctype : 'CRM Note',
-                        docname: typeof cur_frm !== 'undefined' && cur_frm ? cur_frm.doc.name : 'new-crm-note',
+                        doctype: null,
+                        docname: null,
                         folder: 'Home/Attachments',
                         on_success: (file_doc) => {
                             dialog.uploaded_files_for_crm_note.push({
