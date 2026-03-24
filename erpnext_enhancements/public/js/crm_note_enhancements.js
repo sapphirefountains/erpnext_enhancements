@@ -27,13 +27,14 @@ erpnext_enhancements.crm_notes.init = function() {
                         if (this.uploaded_files_for_crm_note && this.uploaded_files_for_crm_note.length > 0) {
                             let note_text = values.note || "";
 
-                            let attachment_md = "\n\n**Attachments:**\n";
+                            let attachment_html = "<br><br><b>Attachments:</b><br><ul>";
                             for (let file of this.uploaded_files_for_crm_note) {
                                 let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                attachment_md += `- [${escaped_filename}](${file.file_url})\n`;
+                                attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                             }
+                            attachment_html += "</ul>";
 
-                            values.note = note_text + attachment_md;
+                            values.note = note_text + attachment_html;
 
                             if (this.fields_dict && this.fields_dict.note && this.fields_dict.note.set_value) {
                                 this.fields_dict.note.set_value(values.note);
