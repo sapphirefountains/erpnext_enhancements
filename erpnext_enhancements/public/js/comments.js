@@ -97,19 +97,11 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                             let comment_text = values.comment_text || "";
                             if (uploaded_files.length > 0) {
-                                let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
-                                attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                                comment_text += "\n\n**Attachments:**\n";
                                 for (let file of uploaded_files) {
                                     let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                    attachment_html += `
-                                        <li style="margin-bottom: 5px;">
-                                            <i class="fa fa-paperclip text-muted"></i>
-                                            <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
-                                        </li>
-                                    `;
+                                    comment_text += `- [${escaped_filename}](${file.file_url})\n`;
                                 }
-                                attachment_html += '</ul></div>';
-                                comment_text += attachment_html;
                             }
 
                             frappe.call({
@@ -145,8 +137,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                     dialog.add_custom_action('Attach File', () => {
                         new frappe.ui.FileUploader({
-                            doctype: 'Comment', // Doesn't matter much yet since it will be linked manually
-                            docname: 'new-comment',
+                            doctype: null, // Avoid locking the current document or user profile
+                            docname: null,
                             folder: 'Home/Attachments',
                             on_success: (file_doc) => {
                                 uploaded_files.push({
@@ -196,19 +188,11 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                             let comment_text = values.comment_text || "";
                             if (uploaded_files.length > 0) {
-                                let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
-                                attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                                comment_text += "\n\n**Attachments:**\n";
                                 for (let file of uploaded_files) {
                                     let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
-                                    attachment_html += `
-                                        <li style="margin-bottom: 5px;">
-                                            <i class="fa fa-paperclip text-muted"></i>
-                                            <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
-                                        </li>
-                                    `;
+                                    comment_text += `- [${escaped_filename}](${file.file_url})\n`;
                                 }
-                                attachment_html += '</ul></div>';
-                                comment_text += attachment_html;
                             }
 
                             frappe.call({
@@ -249,8 +233,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
 
                     dialog.add_custom_action('Attach File', () => {
                         new frappe.ui.FileUploader({
-                            doctype: 'Comment',
-                            docname: comment.name,
+                            doctype: null, // Avoid locking the current document or user profile
+                            docname: null,
                             folder: 'Home/Attachments',
                             on_success: (file_doc) => {
                                 uploaded_files.push({

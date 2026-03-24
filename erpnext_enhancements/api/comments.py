@@ -96,7 +96,17 @@ def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 			if not hasattr(file_doc, "attached_to_comment"):
 				# Optional if you add a field for it, else just standard attachment
 				pass
-			file_doc.save(ignore_permissions=True)
+
+			# Disable updating the parent document's modified timestamp to avoid conflict errors
+			file_doc.flags.ignore_links = True
+			file_doc.flags.ignore_permissions = True
+
+			# Using db_set on the file avoids triggering its on_update which updates the parent's timestamp
+			if file_doc.name:
+				file_doc.db_set("attached_to_doctype", parent_doctype, update_modified=False)
+				file_doc.db_set("attached_to_name", parent_name, update_modified=False)
+			else:
+				file_doc.save(ignore_permissions=True)
 		except Exception as e:
 			frappe.log_error(frappe.get_traceback(), "File Link Error")
 

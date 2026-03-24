@@ -311,8 +311,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
 
             // Append uploaded files to the comment payload if any exist
             if (this._uploaded_files && this._uploaded_files.length > 0) {
-                let attachment_html = '<div class="timeline-attachments" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">';
-                attachment_html += '<strong>Attachments:</strong><ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                let attachment_md = '\n\n**Attachments:**\n';
 
                 for (let file of this._uploaded_files) {
                     // Escape file name to prevent XSS
@@ -323,17 +322,11 @@ erpnext_enhancements.timeline_attachments.init = function() {
                         escaped_filename = $('<div>').text(file.file_name).html();
                     }
 
-                    attachment_html += `
-                        <li style="margin-bottom: 5px;">
-                            <i class="fa fa-paperclip text-muted"></i>
-                            <a href="${file.file_url}" target="_blank">${escaped_filename}</a>
-                        </li>
-                    `;
+                    attachment_md += `- [${escaped_filename}](${file.file_url})\n`;
                 }
-                attachment_html += '</ul></div>';
 
-                // Append the HTML to the comment text
-                comment += attachment_html;
+                // Append the markdown to the comment text
+                comment += attachment_md;
             }
 
             // Capture the currently uploaded files to link them after submission
