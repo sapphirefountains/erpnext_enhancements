@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "gateway_url",
+  "master_system_prompt",
+  "guidelines_section",
+  "design_guidelines",
+  "build_guidelines",
+  "rent_guidelines",
+  "service_guidelines",
+  "models_section",
+  "voice_model_id",
+  "chat_model_id",
+  "email_model_id",
+  "api_keys_section",
+  "maps_api_key",
+  "twilio_api_key_sid",
+  "twilio_api_secret",
+  "twilio_twiml_app_sid",
+  "primary_twilio_number",
+  "webhook_section",
+  "admin_webhook_secret"
+ ],
+ "fields": [
+  {
+   "fieldname": "gateway_url",
+   "fieldtype": "Data",
+   "label": "Gateway URL"
+  },
+  {
+   "fieldname": "master_system_prompt",
+   "fieldtype": "Small Text",
+   "label": "Master System Prompt"
+  },
+  {
+   "fieldname": "guidelines_section",
+   "fieldtype": "Section Break",
+   "label": "Guidelines"
+  },
+  {
+   "fieldname": "design_guidelines",
+   "fieldtype": "Text Editor",
+   "label": "Design Guidelines"
+  },
+  {
+   "fieldname": "build_guidelines",
+   "fieldtype": "Text Editor",
+   "label": "Build Guidelines"
+  },
+  {
+   "fieldname": "rent_guidelines",
+   "fieldtype": "Text Editor",
+   "label": "Rent Guidelines"
+  },
+  {
+   "fieldname": "service_guidelines",
+   "fieldtype": "Text Editor",
+   "label": "Service Guidelines"
+  },
+  {
+   "fieldname": "models_section",
+   "fieldtype": "Section Break",
+   "label": "Models"
+  },
+  {
+   "fieldname": "voice_model_id",
+   "fieldtype": "Data",
+   "label": "Voice Model ID"
+  },
+  {
+   "fieldname": "chat_model_id",
+   "fieldtype": "Data",
+   "label": "Chat Model ID"
+  },
+  {
+   "fieldname": "email_model_id",
+   "fieldtype": "Data",
+   "label": "Email Model ID"
+  },
+  {
+   "fieldname": "api_keys_section",
+   "fieldtype": "Section Break",
+   "label": "API Keys"
+  },
+  {
+   "fieldname": "maps_api_key",
+   "fieldtype": "Password",
+   "label": "Maps API Key"
+  },
+  {
+   "fieldname": "twilio_api_key_sid",
+   "fieldtype": "Data",
+   "label": "Twilio API Key SID"
+  },
+  {
+   "fieldname": "twilio_api_secret",
+   "fieldtype": "Password",
+   "label": "Twilio API Secret"
+  },
+  {
+   "fieldname": "twilio_twiml_app_sid",
+   "fieldtype": "Data",
+   "label": "Twilio TwiML App SID"
+  },
+  {
+   "fieldname": "primary_twilio_number",
+   "fieldtype": "Data",
+   "label": "Primary Twilio Number"
+  },
+  {
+   "fieldname": "webhook_section",
+   "fieldtype": "Section Break",
+   "label": "Webhook configuration"
+  },
+  {
+   "fieldname": "admin_webhook_secret",
+   "fieldtype": "Password",
+   "label": "Admin Webhook Secret"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2024-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Poseidon Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
