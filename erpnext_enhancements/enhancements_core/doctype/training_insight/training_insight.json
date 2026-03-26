@@ -1,0 +1,58 @@
+{
+ "actions": [],
+ "creation": "2024-05-23 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "customer",
+  "original_issue",
+  "human_resolution_path",
+  "suggested_heuristic"
+ ],
+ "fields": [
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "original_issue",
+   "fieldtype": "Text Editor",
+   "label": "Original Issue"
+  },
+  {
+   "fieldname": "human_resolution_path",
+   "fieldtype": "Text Editor",
+   "label": "Human Resolution Path"
+  },
+  {
+   "fieldname": "suggested_heuristic",
+   "fieldtype": "Text Editor",
+   "label": "Suggested Heuristic"
+  }
+ ],
+ "modified": "2024-05-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Training Insight",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
