@@ -6,6 +6,8 @@ import google.generativeai as genai
 from twilio.request_validator import RequestValidator
 from urllib.parse import urlparse
 import os
+from twilio.jwt.access_token import AccessToken
+from twilio.jwt.access_token.grants import VoiceGrant
 
 def get_poseidon_settings(field):
     return frappe.db.get_single_value("Poseidon Settings", field)
@@ -123,6 +125,52 @@ def process_unified_recording():
         )
 
     return {"status": "success", "communication_id": comm.name}
+
+@frappe.whitelist()
+def get_softphone_token():
+    settings = frappe.get_doc("Poseidon Settings")
+    twilio_api_key_sid = settings.twilio_api_key_sid
+    twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
+    twilio_twiml_app_sid = settings.twilio_twiml_app_sid
+
+    if not all([twilio_api_key_sid, twilio_api_secret, twilio_twiml_app_sid]):
+        frappe.throw("Twilio softphone credentials are not fully configured in Poseidon Settings.")
+
+    # AccessToken requires an account_sid, which isn't explicitly in Poseidon Settings.
+    # Twilio Account SIDs and API Key SIDs don't derive from one another, but we will
+    # fetch it from site config, SMS Settings, or fallback to a dummy/env var.
+    account_sid = frappe.conf.get("twilio_account_sid") or os.environ.get("TWILIO_ACCOUNT_SID")
+    if not account_sid:
+        # Check standard SMS Settings if configured
+        try:
+            sms_settings = frappe.get_single("SMS Settings")
+            if sms_settings.sms_gateway_url and "twilio" in sms_settings.sms_gateway_url.lower():
+                # Extract Account SID if it's there? Probably not easily, but let's check custom fields or just fallback
+                pass
+        except Exception:
+            pass
+
+    if not account_sid:
+        frappe.throw("Twilio Account SID is missing. Please set 'twilio_account_sid' in site_config.json or as an environment variable.")
+
+    identity = "client:nikolas_erpnext"
+
+    # Create Access Token with credentials
+    token = AccessToken(
+        account_sid,
+        twilio_api_key_sid,
+        twilio_api_secret,
+        identity=identity
+    )
+
+    # Create a Voice grant and add to token
+    voice_grant = VoiceGrant(
+        outgoing_application_sid=twilio_twiml_app_sid,
+        incoming_allow=True
+    )
+    token.add_grant(voice_grant)
+
+    return token.to_jwt()
 
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
