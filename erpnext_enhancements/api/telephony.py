@@ -176,6 +176,10 @@ def update_caller_info(phone_number, new_name):
     frappe.db.commit()
     return {"status": "success", "customer": customer_name, "contact": contact_name}
 
+def locate_customer(phone_number):
+    info = get_caller_info(phone_number)
+    return info.get("customer")
+
 @frappe.whitelist()
 def log_call_transcript(call_sid, transcript, caller_number=None):
     if not call_sid or not transcript:
@@ -227,12 +231,10 @@ def process_unified_recording():
     contact_name = info.get('contact')
     display_name = info.get('display_name')
 
-    # Look for the immediate AI log created by log_call_transcript
     existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
 
     if existing_comm:
         comm = frappe.get_doc("Communication", existing_comm[0].name)
-        # Append the full Pro transcription to the top of the AI's internal log
         comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
         comm.save(ignore_permissions=True)
     else:
@@ -254,8 +256,10 @@ def process_unified_recording():
             })
         comm.insert(ignore_permissions=True)
 
-    if 'call_audio.wav' in frappe.request.files:
-        file_content = frappe.request.files.get('call_audio.wav').read()
+    # Re-mapped the check to the standard 'file' parameter we passed in the Node FormData
+    if 'file' in frappe.request.files:
+        uploaded_file = frappe.request.files.get('file')
+        file_content = uploaded_file.read()
         file_doc = frappe.get_doc({
             "doctype": "File",
             "file_name": f"call_audio_{frappe.utils.now()}.wav",
