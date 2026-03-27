@@ -4,7 +4,6 @@ import requests
 import json
 import re
 import os
-import base64
 import google.generativeai as genai
 from twilio.request_validator import RequestValidator
 from urllib.parse import urlparse
@@ -77,6 +76,41 @@ def get_caller_info(phone_number):
             customer_name = customers[0].name
             display_name = customers[0].customer_name
 
+    # 3. Create missing records if absolutely no match is found
+    if not customer_name and not contact_name:
+        cust = frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": f"Unknown Caller - {phone_number}",
+            "customer_type": "Residential", # Adheres to your custom schema
+            "customer_group": "All Customer Groups",
+            "territory": "All Territories",
+            "custom_accounts_phone_number": phone_number
+        })
+        cust.insert(ignore_permissions=True)
+        customer_name = cust.name
+        display_name = cust.customer_name
+
+        cont = frappe.get_doc({
+            "doctype": "Contact",
+            "first_name": f"Caller",
+            "last_name": phone_number,
+            "custom_phone_number": phone_number,
+            "is_primary_contact": 1
+        })
+        cont.append("links", {
+            "link_doctype": "Customer",
+            "link_name": customer_name
+        })
+        cont.insert(ignore_permissions=True)
+        contact_name = cont.name
+    else:
+        if not display_name and customer_name:
+            display_name = frappe.db.get_value("Customer", customer_name, "customer_name")
+        elif not display_name and contact_name:
+            first, last = frappe.db.get_value("Contact", contact_name, ["first_name", "last_name"])
+            display_name = f"{first or ''} {last or ''}".strip()
+
+    # 4. GATHER CONTEXT
     context_items = []
     if customer_name:
         opps = frappe.get_all("Opportunity", 
@@ -178,10 +212,8 @@ def process_unified_recording():
 
     comm.insert(ignore_permissions=True)
 
-    # Handle Base64 Audio decoded from GCP JSON Payload
-    audio_base64 = frappe.form_dict.get("audio_base64")
-    if audio_base64:
-        file_content = base64.b64decode(audio_base64)
+    if 'call_audio.wav' in frappe.request.files:
+        file_content = frappe.request.files.get('call_audio.wav').read()
         file_doc = frappe.get_doc({
             "doctype": "File",
             "file_name": f"call_audio_{frappe.utils.now()}.wav",
@@ -192,7 +224,6 @@ def process_unified_recording():
         })
         file_doc.save(ignore_permissions=True)
 
-    # Route Voicemail to Email
     if is_voicemail:
         message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
         frappe.sendmail(
@@ -227,5 +258,4 @@ def get_softphone_token():
 
 @frappe.whitelist()
 def log_call_transcript(call_sid, transcript, caller_number=None):
-    # Retained as a fallback, but primary logic is handled via process_unified_recording
     pass
