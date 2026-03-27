@@ -43,30 +43,38 @@ def validate_webhook_secret(func):
 @frappe.whitelist(allow_guest=True)
 def get_caller_info(phone_number):
     if not phone_number:
-        return {"customer": None, "contact": None, "display_name": "Unknown Caller"}
+        return {"customer": None, "contact": None, "display_name": "Unknown Caller", "context": []}
 
-    # Extract digits and build a highly permissive fuzzy SQL LIKE string
-    digits = re.sub(r'\D', '', phone_number)
-    if len(digits) >= 10 and digits.startswith('1'):
-        digits = digits[1:]
+    # Normalize incoming number to just digits for robust matching
+    clean_number = re.sub(r'\D', '', phone_number)
+    # Match the last 10 digits to catch variations in country codes
+    match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
     
-    like_str = "%" + "%".join(list(digits)) + "%"
+    # Building a regex that allows for common separators like -, ., and spaces
+    fuzzy_regex = ".*".join(list(match_suffix))
 
     contact_name = None
     customer_name = None
     display_name = None
 
-    # 1. Fuzzy Search Contacts
-    contacts = frappe.get_all("Contact", or_filters=[["phone", "like", like_str], ["mobile_no", "like", like_str]], limit=1)
+    # 1. Search Contacts with Regex
+    contacts = frappe.db.sql("""
+        SELECT name FROM `tabContact` 
+        WHERE phone REGEXP %s OR mobile_no REGEXP %s 
+        LIMIT 1""", (fuzzy_regex, fuzzy_regex), as_dict=True)
+    
     if contacts:
         contact_name = contacts[0].name
         links = frappe.get_all("Dynamic Link", filters={"parent": contact_name, "parenttype": "Contact", "link_doctype": "Customer"}, fields=["link_name"])
         if links:
             customer_name = links[0].link_name
 
-    # 2. Fuzzy Search Customers (if not found via contact)
+    # 2. Search Customers with Regex (if not found via contact)
     if not customer_name:
-        customers = frappe.get_all("Customer", or_filters=[["mobile_no", "like", like_str], ["phone", "like", like_str]], fields=["name", "customer_name"], limit=1)
+        customers = frappe.db.sql("""
+            SELECT name, customer_name FROM `tabCustomer` 
+            WHERE mobile_no REGEXP %s OR phone REGEXP %s 
+            LIMIT 1""", (fuzzy_regex, fuzzy_regex), as_dict=True)
         if customers:
             customer_name = customers[0].name
             display_name = customers[0].customer_name
@@ -105,12 +113,30 @@ def get_caller_info(phone_number):
             first, last = frappe.db.get_value("Contact", contact_name, ["first_name", "last_name"])
             display_name = f"{first or ''} {last or ''}".strip()
 
+    # 4. GATHER CONTEXT (Opportunities and Projects)
+    context_items = []
+    if customer_name:
+        # Get Active Opportunities
+        opps = frappe.get_all("Opportunity", 
+            filters={"party_name": customer_name, "status": ["not in", ["Closed", "Lost"]]}, 
+            fields=["name", "opportunity_from", "title"])
+        for o in opps:
+            context_items.append(f"Opportunity: {o.title or o.name}")
+
+        # Get Open Projects
+        projs = frappe.get_all("Project", 
+            filters={"customer": customer_name, "status": ["!=", "Completed"]}, 
+            fields=["name", "project_name"])
+        for p in projs:
+            context_items.append(f"Project: {p.project_name or p.name}")
+
     frappe.db.commit()
 
     return {
         "customer": customer_name,
         "contact": contact_name,
-        "display_name": display_name or "Unknown Caller"
+        "display_name": display_name or "Unknown Caller",
+        "context": context_items
     }
 
 def locate_customer(phone_number):
@@ -289,7 +315,7 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
             "communication_medium": "Phone",
             "sent_or_received": "Received",
             "subject": f"Poseidon Live Transcript ({call_sid})",
-            "content": f"<pre>{transcript}</pre>",
+            "content": f"{transcript}",
             "status": "Linked",
             "reference_doctype": "Customer" if customer_name else None,
             "reference_name": customer_name,
