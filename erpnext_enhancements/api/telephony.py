@@ -43,6 +43,8 @@ def validate_webhook_secret(func):
 
 @frappe.whitelist(allow_guest=True)
 def get_caller_info(phone_number):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
     if not phone_number:
         return {"customer": None, "contact": None, "display_name": "Unknown Caller", "context": []}
 
@@ -136,6 +138,8 @@ def get_caller_info(phone_number):
 
 @frappe.whitelist(allow_guest=True)
 def update_caller_info(phone_number, new_name):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
     info = get_caller_info(phone_number)
     customer_name = info.get("customer")
     contact_name = info.get("contact")
@@ -182,6 +186,8 @@ def locate_customer(phone_number):
 
 @frappe.whitelist()
 def log_call_transcript(call_sid, transcript, caller_number=None):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
     if not call_sid or not transcript:
         frappe.throw("Missing call_sid or transcript")
 
@@ -196,6 +202,8 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
             "doctype": "Communication",
             "communication_medium": "Phone",
             "sent_or_received": "Received",
+            "sender": "poseidon@sapphirefountains.com",
+            "sender_full_name": "Poseidon",
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
@@ -220,6 +228,8 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording():
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
     call_sid = frappe.form_dict.get("call_sid")
     summary = frappe.form_dict.get("summary")
     transcript = frappe.form_dict.get("transcript")
@@ -242,6 +252,8 @@ def process_unified_recording():
             "doctype": "Communication",
             "communication_medium": "Phone",
             "sent_or_received": "Received",
+            "sender": "poseidon@sapphirefountains.com",
+            "sender_full_name": "Poseidon",
             "subject": f"Call from {display_name or customer_phone} ({call_sid})",
             "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
             "reference_doctype": "Customer" if customer_name else None,
@@ -256,7 +268,6 @@ def process_unified_recording():
             })
         comm.insert(ignore_permissions=True)
 
-    # Re-mapped the check to the standard 'file' parameter we passed in the Node FormData
     if 'file' in frappe.request.files:
         uploaded_file = frappe.request.files.get('file')
         file_content = uploaded_file.read()
@@ -302,6 +313,50 @@ def get_softphone_token():
     token.add_grant(voice_grant)
 
     return token.to_jwt()
+
+@frappe.whitelist(allow_guest=True)
+@validate_twilio_request
+def receive_mms():
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
+    sender_number = frappe.form_dict.get("From")
+    media_url = frappe.form_dict.get("MediaUrl0")
+
+    customer_name = locate_customer(sender_number)
+
+    if media_url:
+        response = requests.get(media_url)
+        if response.status_code == 200:
+            parsed_url = urlparse(media_url)
+            filename = os.path.basename(parsed_url.path) or f"mms_image_{frappe.utils.now()}.jpg"
+
+            file_doc = frappe.get_doc({
+                "doctype": "File",
+                "file_name": filename,
+                "attached_to_doctype": "Customer",
+                "attached_to_name": customer_name,
+                "content": response.content,
+                "is_private": 1
+            })
+            file_doc.save(ignore_permissions=True)
+
+    return "OK"
+
+@frappe.whitelist()
+def send_voicemail_email(subject, body, caller_number=None):
+    try:
+        message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
+        
+        frappe.sendmail(
+            recipients=["info@sapphirefountains.com"],
+            subject=f"Poseidon Message: {subject}",
+            message=message_html,
+            now=True
+        )
+        return {"status": "success"}
+    except Exception as e:
+        frappe.log_error(f"Failed to send email: {str(e)}", "Poseidon Email Error")
+        return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
     # Retained for future background jobs
