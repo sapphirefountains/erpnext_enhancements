@@ -2,10 +2,11 @@ import frappe
 from frappe import _
 import requests
 import json
+import re
+import os
 import google.generativeai as genai
 from twilio.request_validator import RequestValidator
 from urllib.parse import urlparse
-import os
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 
@@ -39,58 +40,95 @@ def validate_webhook_secret(func):
         return func(*args, **kwargs)
     return wrapper
 
-def locate_customer(phone_number):
+@frappe.whitelist(allow_guest=True)
+def get_caller_info(phone_number):
     if not phone_number:
-        return None
+        return {"customer": None, "contact": None, "display_name": "Unknown Caller"}
 
-    # Search Customer by mobile_no or phone
-    customer = frappe.get_all("Customer", filters={"mobile_no": phone_number}, limit=1)
-    if not customer:
-        customer = frappe.get_all("Customer", filters={"phone": phone_number}, limit=1)
+    # Extract digits and build a highly permissive fuzzy SQL LIKE string
+    digits = re.sub(r'\D', '', phone_number)
+    if len(digits) >= 10 and digits.startswith('1'):
+        digits = digits[1:]
+    
+    like_str = "%" + "%".join(list(digits)) + "%"
 
-    if customer:
-        return customer[0].name
+    contact_name = None
+    customer_name = None
+    display_name = None
 
-    # Search Contact by phone or mobile_no
-    contact = frappe.get_all("Contact", filters={"phone": phone_number}, limit=1)
-    if not contact:
-        contact = frappe.get_all("Contact", filters={"mobile_no": phone_number}, limit=1)
-
-    if contact:
-        # Find linked customer
-        links = frappe.get_all("Dynamic Link", filters={
-            "parent": contact[0].name,
-            "parenttype": "Contact",
-            "link_doctype": "Customer"
-        }, limit=1, fields=["link_name"])
-
+    # 1. Fuzzy Search Contacts
+    contacts = frappe.get_all("Contact", or_filters=[["phone", "like", like_str], ["mobile_no", "like", like_str]], limit=1)
+    if contacts:
+        contact_name = contacts[0].name
+        links = frappe.get_all("Dynamic Link", filters={"parent": contact_name, "parenttype": "Contact", "link_doctype": "Customer"}, fields=["link_name"])
         if links:
-            return links[0].link_name
+            customer_name = links[0].link_name
 
-    # Fallback: Create a new Unknown Customer
-    new_customer = frappe.get_doc({
-        "doctype": "Customer",
-        "customer_name": f"Unknown - {phone_number}",
-        "customer_type": "Individual",
-        "customer_group": "All Customer Groups",
-        "territory": "All Territories",
-        "mobile_no": phone_number
-    })
-    new_customer.insert(ignore_permissions=True)
-    return new_customer.name
+    # 2. Fuzzy Search Customers (if not found via contact)
+    if not customer_name:
+        customers = frappe.get_all("Customer", or_filters=[["mobile_no", "like", like_str], ["phone", "like", like_str]], fields=["name", "customer_name"], limit=1)
+        if customers:
+            customer_name = customers[0].name
+            display_name = customers[0].customer_name
+
+    # 3. Create missing records if absolutely no match is found
+    if not customer_name and not contact_name:
+        cust = frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": f"Unknown Caller - {phone_number}",
+            "customer_type": "Individual",
+            "customer_group": "All Customer Groups",
+            "territory": "All Territories",
+            "mobile_no": phone_number
+        })
+        cust.insert(ignore_permissions=True)
+        customer_name = cust.name
+        display_name = cust.customer_name
+
+        cont = frappe.get_doc({
+            "doctype": "Contact",
+            "first_name": f"Caller",
+            "last_name": phone_number,
+            "mobile_no": phone_number,
+            "is_primary_contact": 1
+        })
+        cont.append("links", {
+            "link_doctype": "Customer",
+            "link_name": customer_name
+        })
+        cont.insert(ignore_permissions=True)
+        contact_name = cont.name
+    else:
+        if not display_name and customer_name:
+            display_name = frappe.db.get_value("Customer", customer_name, "customer_name")
+        elif not display_name and contact_name:
+            first, last = frappe.db.get_value("Contact", contact_name, ["first_name", "last_name"])
+            display_name = f"{first or ''} {last or ''}".strip()
+
+    frappe.db.commit()
+
+    return {
+        "customer": customer_name,
+        "contact": contact_name,
+        "display_name": display_name or "Unknown Caller"
+    }
+
+def locate_customer(phone_number):
+    info = get_caller_info(phone_number)
+    return info.get("customer")
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording():
-    # Expect Multipart Form-Data POST
     summary = frappe.form_dict.get("summary")
     transcript = frappe.form_dict.get("transcript")
     customer_phone = frappe.form_dict.get("customer_phone")
     call_type = frappe.form_dict.get("call_type")
 
-    customer_name = locate_customer(customer_phone)
+    info = get_caller_info(customer_phone)
+    customer_name = info.get('customer')
+    contact_name = info.get('contact')
 
-    # Save the interaction as a Communication record
     comm = frappe.get_doc({
         "doctype": "Communication",
         "communication_medium": "Phone",
@@ -101,9 +139,15 @@ def process_unified_recording():
         "reference_name": customer_name,
         "communication_date": frappe.utils.now_datetime()
     })
+
+    if contact_name:
+        comm.append("timeline_links", {
+            "link_doctype": "Contact",
+            "link_name": contact_name
+        })
+
     comm.insert(ignore_permissions=True)
 
-    # Process audio file attachment
     if 'call_audio.wav' in frappe.request.files:
         file_content = frappe.request.files.get('call_audio.wav').read()
         file_doc = frappe.get_doc({
@@ -229,11 +273,17 @@ def analyze_transfer_transcript(transcript, customer_name):
         frappe.log_error(f"Failed to analyze transfer transcript: {str(e)}", "Telephony Analysis Error")
 
 @frappe.whitelist()
-def log_call_transcript(call_sid, transcript):
+def log_call_transcript(call_sid, transcript, caller_number=None):
     if not call_sid or not transcript:
         frappe.throw("Missing call_sid or transcript")
 
     try:
+        customer_name, contact_name = None, None
+        if caller_number:
+            info = get_caller_info(caller_number)
+            customer_name = info.get('customer')
+            contact_name = info.get('contact')
+
         comm = frappe.get_doc({
             "doctype": "Communication",
             "communication_medium": "Phone",
@@ -241,8 +291,17 @@ def log_call_transcript(call_sid, transcript):
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
+            "reference_doctype": "Customer" if customer_name else None,
+            "reference_name": customer_name,
             "communication_date": frappe.utils.now_datetime()
         })
+
+        if contact_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+
         comm.insert(ignore_permissions=True)
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
