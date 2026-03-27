@@ -53,11 +53,11 @@ def get_caller_info(phone_number):
     customer_name = None
     display_name = None
 
-    # 1. Search Contacts with Regex
+    # 1. Search Contacts with Regex using custom field
     contacts = frappe.db.sql("""
         SELECT name FROM `tabContact` 
-        WHERE phone REGEXP %s OR mobile_no REGEXP %s 
-        LIMIT 1""", (fuzzy_regex, fuzzy_regex), as_dict=True)
+        WHERE custom_phone_number REGEXP %s 
+        LIMIT 1""", (fuzzy_regex,), as_dict=True)
     
     if contacts:
         contact_name = contacts[0].name
@@ -65,11 +65,11 @@ def get_caller_info(phone_number):
         if links:
             customer_name = links[0].link_name
 
-    # 2. Search Customers with Regex (FIXED: tabCustomer only has mobile_no natively)
+    # 2. Search Customers with Regex using custom field
     if not customer_name:
         customers = frappe.db.sql("""
             SELECT name, customer_name FROM `tabCustomer` 
-            WHERE mobile_no REGEXP %s 
+            WHERE custom_accounts_phone_number REGEXP %s 
             LIMIT 1""", (fuzzy_regex,), as_dict=True)
         if customers:
             customer_name = customers[0].name
@@ -80,10 +80,10 @@ def get_caller_info(phone_number):
         cust = frappe.get_doc({
             "doctype": "Customer",
             "customer_name": f"Unknown Caller - {phone_number}",
-            "customer_type": "Individual",
+            "customer_type": "Residential", # Updated to align with customized schema requirements
             "customer_group": "All Customer Groups",
             "territory": "All Territories",
-            "mobile_no": phone_number
+            "custom_accounts_phone_number": phone_number # Mapped to custom field
         })
         cust.insert(ignore_permissions=True)
         customer_name = cust.name
@@ -93,7 +93,7 @@ def get_caller_info(phone_number):
             "doctype": "Contact",
             "first_name": f"Caller",
             "last_name": phone_number,
-            "mobile_no": phone_number,
+            "custom_phone_number": phone_number, # Mapped to custom field
             "is_primary_contact": 1
         })
         cont.append("links", {
