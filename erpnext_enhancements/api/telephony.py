@@ -45,12 +45,8 @@ def get_caller_info(phone_number):
     if not phone_number:
         return {"customer": None, "contact": None, "display_name": "Unknown Caller", "context": []}
 
-    # Normalize incoming number to just digits for robust matching
     clean_number = re.sub(r'\D', '', phone_number)
-    # Match the last 10 digits to catch variations in country codes
     match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
-    
-    # Building a regex that allows for common separators like -, ., and spaces
     fuzzy_regex = ".*".join(list(match_suffix))
 
     contact_name = None
@@ -69,12 +65,12 @@ def get_caller_info(phone_number):
         if links:
             customer_name = links[0].link_name
 
-    # 2. Search Customers with Regex (if not found via contact)
+    # 2. Search Customers with Regex (FIXED: tabCustomer only has mobile_no natively)
     if not customer_name:
         customers = frappe.db.sql("""
             SELECT name, customer_name FROM `tabCustomer` 
-            WHERE mobile_no REGEXP %s OR phone REGEXP %s 
-            LIMIT 1""", (fuzzy_regex, fuzzy_regex), as_dict=True)
+            WHERE mobile_no REGEXP %s 
+            LIMIT 1""", (fuzzy_regex,), as_dict=True)
         if customers:
             customer_name = customers[0].name
             display_name = customers[0].customer_name
@@ -113,17 +109,15 @@ def get_caller_info(phone_number):
             first, last = frappe.db.get_value("Contact", contact_name, ["first_name", "last_name"])
             display_name = f"{first or ''} {last or ''}".strip()
 
-    # 4. GATHER CONTEXT (Opportunities and Projects)
+    # 4. GATHER CONTEXT
     context_items = []
     if customer_name:
-        # Get Active Opportunities
         opps = frappe.get_all("Opportunity", 
             filters={"party_name": customer_name, "status": ["not in", ["Closed", "Lost"]]}, 
             fields=["name", "opportunity_from", "title"])
         for o in opps:
             context_items.append(f"Opportunity: {o.title or o.name}")
 
-        # Get Open Projects
         projs = frappe.get_all("Project", 
             filters={"customer": customer_name, "status": ["!=", "Completed"]}, 
             fields=["name", "project_name"])
@@ -142,6 +136,22 @@ def get_caller_info(phone_number):
 def locate_customer(phone_number):
     info = get_caller_info(phone_number)
     return info.get("customer")
+
+@frappe.whitelist()
+def send_voicemail_email(subject, body, caller_number=None):
+    try:
+        message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
+        
+        frappe.sendmail(
+            recipients=["info@sapphirefountains.com"],
+            subject=f"Poseidon Message: {subject}",
+            message=message_html,
+            now=True
+        )
+        return {"status": "success"}
+    except Exception as e:
+        frappe.log_error(f"Failed to send email: {str(e)}", "Poseidon Email Error")
+        return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
@@ -315,7 +325,7 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
             "communication_medium": "Phone",
             "sent_or_received": "Received",
             "subject": f"Poseidon Live Transcript ({call_sid})",
-            "content": f"{transcript}",
+            "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
             "reference_doctype": "Customer" if customer_name else None,
             "reference_name": customer_name,
