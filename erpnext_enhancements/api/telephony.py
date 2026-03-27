@@ -4,6 +4,7 @@ import requests
 import json
 import re
 import os
+import base64
 import google.generativeai as genai
 from twilio.request_validator import RequestValidator
 from urllib.parse import urlparse
@@ -81,7 +82,7 @@ def get_caller_info(phone_number):
         cust = frappe.get_doc({
             "doctype": "Customer",
             "customer_name": f"Unknown Caller - {phone_number}",
-            "customer_type": "Residential", # Adheres to your custom schema
+            "customer_type": "Residential",
             "customer_group": "All Customer Groups",
             "territory": "All Territories",
             "custom_accounts_phone_number": phone_number
@@ -110,7 +111,6 @@ def get_caller_info(phone_number):
             first, last = frappe.db.get_value("Contact", contact_name, ["first_name", "last_name"])
             display_name = f"{first or ''} {last or ''}".strip()
 
-    # 4. GATHER CONTEXT
     context_items = []
     if customer_name:
         opps = frappe.get_all("Opportunity", 
@@ -176,13 +176,47 @@ def update_caller_info(phone_number, new_name):
     frappe.db.commit()
     return {"status": "success", "customer": customer_name, "contact": contact_name}
 
-def locate_customer(phone_number):
-    info = get_caller_info(phone_number)
-    return info.get("customer")
+@frappe.whitelist()
+def log_call_transcript(call_sid, transcript, caller_number=None):
+    if not call_sid or not transcript:
+        frappe.throw("Missing call_sid or transcript")
+
+    try:
+        customer_name, contact_name = None, None
+        if caller_number:
+            info = get_caller_info(caller_number)
+            customer_name = info.get('customer')
+            contact_name = info.get('contact')
+
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "Phone",
+            "sent_or_received": "Received",
+            "subject": f"Poseidon Live Transcript ({call_sid})",
+            "content": f"<pre>{transcript}</pre>",
+            "status": "Linked",
+            "reference_doctype": "Customer" if customer_name else None,
+            "reference_name": customer_name,
+            "communication_date": frappe.utils.now_datetime()
+        })
+
+        if contact_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+
+        comm.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return {"status": "success", "communication_id": comm.name}
+    except Exception as e:
+        frappe.log_error(f"Failed to log transcript for {call_sid}: {str(e)}", "Poseidon Transcript Error")
+        return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording():
+    call_sid = frappe.form_dict.get("call_sid")
     summary = frappe.form_dict.get("summary")
     transcript = frappe.form_dict.get("transcript")
     customer_phone = frappe.form_dict.get("customer_phone")
@@ -193,24 +227,32 @@ def process_unified_recording():
     contact_name = info.get('contact')
     display_name = info.get('display_name')
 
-    comm = frappe.get_doc({
-        "doctype": "Communication",
-        "communication_medium": "Phone",
-        "sent_or_received": "Received",
-        "subject": f"Call from {display_name or customer_phone}",
-        "content": f"**Summary:**\n{summary}\n\n**Transcript:**\n{transcript}",
-        "reference_doctype": "Customer" if customer_name else None,
-        "reference_name": customer_name,
-        "communication_date": frappe.utils.now_datetime()
-    })
+    # Look for the immediate AI log created by log_call_transcript
+    existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
 
-    if contact_name:
-        comm.append("timeline_links", {
-            "link_doctype": "Contact",
-            "link_name": contact_name
+    if existing_comm:
+        comm = frappe.get_doc("Communication", existing_comm[0].name)
+        # Append the full Pro transcription to the top of the AI's internal log
+        comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
+        comm.save(ignore_permissions=True)
+    else:
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "Phone",
+            "sent_or_received": "Received",
+            "subject": f"Call from {display_name or customer_phone} ({call_sid})",
+            "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
+            "reference_doctype": "Customer" if customer_name else None,
+            "reference_name": customer_name,
+            "communication_date": frappe.utils.now_datetime()
         })
 
-    comm.insert(ignore_permissions=True)
+        if contact_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+        comm.insert(ignore_permissions=True)
 
     if 'call_audio.wav' in frappe.request.files:
         file_content = frappe.request.files.get('call_audio.wav').read()
@@ -233,6 +275,7 @@ def process_unified_recording():
             now=True
         )
 
+    frappe.db.commit()
     return {"status": "success", "communication_id": comm.name}
 
 @frappe.whitelist()
@@ -256,6 +299,6 @@ def get_softphone_token():
 
     return token.to_jwt()
 
-@frappe.whitelist()
-def log_call_transcript(call_sid, transcript, caller_number=None):
+def analyze_transfer_transcript(transcript, customer_name):
+    # Retained for future background jobs
     pass
