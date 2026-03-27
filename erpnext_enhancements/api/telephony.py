@@ -136,16 +136,11 @@ def get_softphone_token():
     if not all([twilio_api_key_sid, twilio_api_secret, twilio_twiml_app_sid]):
         frappe.throw("Twilio softphone credentials are not fully configured in Poseidon Settings.")
 
-    # AccessToken requires an account_sid, which isn't explicitly in Poseidon Settings.
-    # Twilio Account SIDs and API Key SIDs don't derive from one another, but we will
-    # fetch it from site config, SMS Settings, or fallback to a dummy/env var.
     account_sid = frappe.conf.get("twilio_account_sid") or os.environ.get("TWILIO_ACCOUNT_SID")
     if not account_sid:
-        # Check standard SMS Settings if configured
         try:
             sms_settings = frappe.get_single("SMS Settings")
             if sms_settings.sms_gateway_url and "twilio" in sms_settings.sms_gateway_url.lower():
-                # Extract Account SID if it's there? Probably not easily, but let's check custom fields or just fallback
                 pass
         except Exception:
             pass
@@ -155,7 +150,6 @@ def get_softphone_token():
 
     identity = "client:nikolas_erpnext"
 
-    # Create Access Token with credentials
     token = AccessToken(
         account_sid,
         twilio_api_key_sid,
@@ -163,7 +157,6 @@ def get_softphone_token():
         identity=identity
     )
 
-    # Create a Voice grant and add to token
     voice_grant = VoiceGrant(
         outgoing_application_sid=twilio_twiml_app_sid,
         incoming_allow=True
@@ -234,3 +227,25 @@ def analyze_transfer_transcript(transcript, customer_name):
         insight.insert(ignore_permissions=True)
     except Exception as e:
         frappe.log_error(f"Failed to analyze transfer transcript: {str(e)}", "Telephony Analysis Error")
+
+@frappe.whitelist()
+def log_call_transcript(call_sid, transcript):
+    if not call_sid or not transcript:
+        frappe.throw("Missing call_sid or transcript")
+
+    try:
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "Phone",
+            "sent_or_received": "Received",
+            "subject": f"Poseidon Live Transcript ({call_sid})",
+            "content": f"<pre>{transcript}</pre>",
+            "status": "Linked",
+            "communication_date": frappe.utils.now_datetime()
+        })
+        comm.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return {"status": "success", "communication_id": comm.name}
+    except Exception as e:
+        frappe.log_error(f"Failed to log transcript for {call_sid}: {str(e)}", "Poseidon Transcript Error")
+        return {"status": "error", "message": str(e)}
