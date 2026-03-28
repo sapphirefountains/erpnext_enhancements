@@ -42,6 +42,22 @@ def validate_webhook_secret(func):
     return wrapper
 
 @frappe.whitelist(allow_guest=True)
+def append_call_transcript(call_sid, transcript_chunk):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    key = f"poseidon_transcript_{call_sid}"
+    chunks = frappe.cache().get_value(key) or []
+    chunks.append(transcript_chunk)
+    frappe.cache().set_value(key, chunks, expires_in_sec=86400)
+    return "OK"
+
+@frappe.whitelist(allow_guest=True)
+def get_call_transcript(call_sid):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    key = f"poseidon_transcript_{call_sid}"
+    chunks = frappe.cache().get_value(key) or []
+    return "\n".join(chunks)
+
+@frappe.whitelist(allow_guest=True)
 def get_caller_info(phone_number):
     frappe.set_user("poseidon@sapphirefountains.com")
     
@@ -56,7 +72,6 @@ def get_caller_info(phone_number):
     customer_name = None
     display_name = None
 
-    # 1. Search Contacts via custom_phone_number
     contacts = frappe.db.sql("""
         SELECT name, first_name, last_name FROM `tabContact` 
         WHERE custom_phone_number REGEXP %s 
@@ -69,7 +84,6 @@ def get_caller_info(phone_number):
         if links:
             customer_name = links[0].link_name
 
-    # 2. Search Customers via custom_accounts_phone_number
     if not customer_name:
         customers = frappe.db.sql("""
             SELECT name, customer_name FROM `tabCustomer` 
@@ -79,7 +93,6 @@ def get_caller_info(phone_number):
             customer_name = customers[0].name
             display_name = customers[0].customer_name
 
-    # 3. Create missing records if absolutely no match is found
     if not customer_name and not contact_name:
         cust = frappe.get_doc({
             "doctype": "Customer",
@@ -228,78 +241,90 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording():
-    frappe.set_user("poseidon@sapphirefountains.com")
-    
-    call_sid = frappe.form_dict.get("call_sid")
-    summary = frappe.form_dict.get("summary")
-    transcript = frappe.form_dict.get("transcript")
-    customer_phone = frappe.form_dict.get("customer_phone")
-    is_voicemail = frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
-    
-    info = get_caller_info(customer_phone)
-    customer_name = info.get('customer')
-    contact_name = info.get('contact')
-    display_name = info.get('display_name')
-
-    existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
-
-    if existing_comm:
-        comm = frappe.get_doc("Communication", existing_comm[0].name)
-        comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
+    try:
+        frappe.set_user("poseidon@sapphirefountains.com")
         
-        # Ensure the appended transcript also links to the contact timeline
-        if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
-            comm.append("timeline_links", {
-                "link_doctype": "Contact",
-                "link_name": contact_name
-            })
+        call_sid = frappe.form_dict.get("call_sid")
+        summary = frappe.form_dict.get("summary")
+        transcript = frappe.form_dict.get("transcript")
+        customer_phone = frappe.form_dict.get("customer_phone")
+        is_voicemail = frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
+        
+        info = get_caller_info(customer_phone)
+        customer_name = info.get('customer')
+        contact_name = info.get('contact')
+        display_name = info.get('display_name')
+
+        existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
+
+        if existing_comm:
+            comm = frappe.get_doc("Communication", existing_comm[0].name)
+            comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
             
-        comm.save(ignore_permissions=True)
-    else:
-        comm = frappe.get_doc({
-            "doctype": "Communication",
-            "communication_medium": "Phone",
-            "sent_or_received": "Received",
-            "sender": "poseidon@sapphirefountains.com",
-            "sender_full_name": "Poseidon",
-            "subject": f"Call from {display_name or customer_phone} ({call_sid})",
-            "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
-            "reference_doctype": "Customer" if customer_name else None,
-            "reference_name": customer_name,
-            "communication_date": frappe.utils.now_datetime()
-        })
-
-        if contact_name:
-            comm.append("timeline_links", {
-                "link_doctype": "Contact",
-                "link_name": contact_name
+            if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
+                comm.append("timeline_links", {
+                    "link_doctype": "Contact",
+                    "link_name": contact_name
+                })
+                
+            comm.save(ignore_permissions=True)
+        else:
+            comm = frappe.get_doc({
+                "doctype": "Communication",
+                "communication_medium": "Phone",
+                "sent_or_received": "Received",
+                "sender": "poseidon@sapphirefountains.com",
+                "sender_full_name": "Poseidon",
+                "subject": f"Call from {display_name or customer_phone} ({call_sid})",
+                "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
+                "reference_doctype": "Customer" if customer_name else None,
+                "reference_name": customer_name,
+                "communication_date": frappe.utils.now_datetime()
             })
-        comm.insert(ignore_permissions=True)
 
-    if 'file' in frappe.request.files:
-        uploaded_file = frappe.request.files.get('file')
-        file_content = uploaded_file.read()
-        file_doc = frappe.get_doc({
-            "doctype": "File",
-            "file_name": f"call_audio_{frappe.utils.now()}.wav",
-            "attached_to_doctype": "Communication",
-            "attached_to_name": comm.name,
-            "content": file_content,
-            "is_private": 1
-        })
-        file_doc.save(ignore_permissions=True)
+            if contact_name:
+                comm.append("timeline_links", {
+                    "link_doctype": "Contact",
+                    "link_name": contact_name
+                })
+            comm.insert(ignore_permissions=True)
 
-    if is_voicemail:
-        message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
-        frappe.sendmail(
-            recipients=["info@sapphirefountains.com"],
-            subject=f"New Poseidon Voicemail from {display_name}",
-            message=message_html,
-            now=True
-        )
+        if 'file' in frappe.request.files:
+            try:
+                uploaded_file = frappe.request.files.get('file')
+                file_content = uploaded_file.read()
+                file_doc = frappe.get_doc({
+                    "doctype": "File",
+                    "file_name": f"call_audio_{call_sid}.wav",
+                    "attached_to_doctype": "Communication",
+                    "attached_to_name": comm.name,
+                    "content": file_content,
+                    "is_private": 1
+                })
+                file_doc.save(ignore_permissions=True)
+            except Exception as fe:
+                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
 
-    frappe.db.commit()
-    return {"status": "success", "communication_id": comm.name}
+        if is_voicemail:
+            try:
+                message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
+                frappe.sendmail(
+                    recipients=["info@sapphirefountains.com"],
+                    subject=f"New Poseidon Voicemail from {display_name}",
+                    message=message_html,
+                    now=True
+                )
+            except Exception as ee:
+                frappe.log_error(f"Failed to send voicemail email: {str(ee)}", "Poseidon Email Error")
+
+        frappe.db.commit()
+        return {"status": "success", "communication_id": comm.name}
+
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.log_error(f"Critical sync failure: {str(e)}", "Poseidon Sync Error")
+        frappe.response["http_status_code"] = 500
+        return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
 def get_softphone_token():
@@ -367,5 +392,4 @@ def send_voicemail_email(subject, body, caller_number=None):
         return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
-    # Retained for future background jobs
     pass
