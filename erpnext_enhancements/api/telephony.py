@@ -13,29 +13,26 @@ from twilio.jwt.access_token.grants import VoiceGrant
 
 @frappe.whitelist(allow_guest=True)
 def get_gateway_config():
-    # Bypass strict validation to ensure Node can always boot
     try:
         settings = frappe.get_doc("Poseidon Settings")
         return {
             "master_system_prompt": settings.master_system_prompt,
             "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
-            "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio")
+            "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio"),
+            "gemini_api_key": getattr(settings, "gemini_api_key", None)
         }
     except Exception as e:
         frappe.log_error(f"Failed to fetch Poseidon settings: {str(e)}", "Gateway Config Error")
-        # Return a safe fallback so Node.js doesn't crash on a 417
         return {
             "master_system_prompt": "You are Poseidon.",
             "forwarding_phone_number": "+18018200044",
             "voice_model_id": "gemini-live-2.5-flash-native-audio"
         }
 
-def get_poseidon_settings(field):
-    return frappe.db.get_single_value("Poseidon Settings", field)
-
 def validate_twilio_request(func):
     def wrapper(*args, **kwargs):
-        validator = RequestValidator(get_poseidon_settings("twilio_auth_token") or "")
+        settings = frappe.get_doc("Poseidon Settings")
+        validator = RequestValidator(getattr(settings, "twilio_auth_token", ""))
         url = frappe.request.url
         post_vars = frappe.request.form
         signature = frappe.request.headers.get("X-Twilio-Signature", "")
@@ -47,9 +44,13 @@ def validate_twilio_request(func):
 
 def validate_webhook_secret(func):
     def wrapper(*args, **kwargs):
-        secret = get_poseidon_settings("admin_webhook_secret") or ""
-        auth_header = frappe.request.headers.get("Authorization", "")
+        try:
+            settings = frappe.get_doc("Poseidon Settings")
+            secret = getattr(settings, "admin_webhook_secret", "")
+        except:
+            secret = ""
 
+        auth_header = frappe.request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer ") and not auth_header.startswith("token "):
             frappe.throw(_("Missing or Invalid Authorization Header"), frappe.PermissionError)
             
@@ -260,26 +261,24 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording(**kwargs):
-    # Enqueue the background job so Node.js receives an immediate 200 OK and avoids timeouts
     frappe.enqueue(
         'erpnext_enhancements.api.telephony.background_process_recording',
         call_sid=frappe.form_dict.get("call_sid"),
         recording_sid=frappe.form_dict.get("recording_sid"),
         recording_url=frappe.form_dict.get("recording_url"),
         customer_phone=frappe.form_dict.get("customer_phone"),
+        twilio_sid=frappe.form_dict.get("twilio_sid"),
+        twilio_token=frappe.form_dict.get("twilio_token"),
         queue='long',
         timeout=300
     )
     return {"status": "queued"}
 
-def background_process_recording(call_sid, recording_sid, recording_url, customer_phone):
+def background_process_recording(call_sid, recording_sid, recording_url, customer_phone, twilio_sid, twilio_token):
     frappe.set_user("poseidon@sapphirefountains.com")
     
     try:
         # 1. Fetch Twilio Audio
-        twilio_sid = get_poseidon_settings("twilio_account_sid")
-        twilio_token = get_poseidon_settings("twilio_auth_token")
-        
         audio_req = requests.get(f"{recording_url}.wav", auth=(twilio_sid, twilio_token))
         if audio_req.status_code != 200:
             frappe.throw(f"Failed to fetch Twilio audio: {audio_req.status_code}")
@@ -295,28 +294,29 @@ def background_process_recording(call_sid, recording_sid, recording_url, custome
         summary = "No summary generated."
         is_voicemail = False
         
-        api_key = get_poseidon_settings("gemini_api_key")
-        if api_key:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
-            
-            prompt = f"""
-            Analyze this phone call transcript between an AI assistant named Poseidon and a caller. 
-            Provide a 3-sentence Executive Summary of the call. 
-            Explicitly determine if the caller left a voicemail or requested to leave a message. 
-            Format the response strictly as a JSON object with keys "summary" (string) and "is_voicemail" (boolean). 
-            Do not use markdown blocks.
-            
-            Transcript:
-            {transcript}
-            """
-            try:
+        try:
+            settings = frappe.get_doc("Poseidon Settings")
+            api_key = getattr(settings, "gemini_api_key", None)
+            if api_key:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-2.5-flash')
+                
+                prompt = f"""
+                Analyze this phone call transcript between an AI assistant named Poseidon and a caller. 
+                Provide a 3-sentence Executive Summary of the call. 
+                Explicitly determine if the caller left a voicemail or requested to leave a message. 
+                Format the response strictly as a JSON object with keys "summary" (string) and "is_voicemail" (boolean). 
+                Do not use markdown blocks.
+                
+                Transcript:
+                {transcript}
+                """
                 ai_res = model.generate_content(prompt)
                 res_data = json.loads(ai_res.text.strip('```json\n').strip('```').strip())
                 summary = res_data.get("summary", "Summary failed.")
                 is_voicemail = res_data.get("is_voicemail", False)
-            except Exception as e:
-                frappe.log_error(f"Gemini Summarization Failed: {str(e)}", "Poseidon AI Error")
+        except Exception as e:
+            frappe.log_error(f"Gemini Summarization Failed: {str(e)}", "Poseidon AI Error")
 
         # 4. Save to ERPNext
         info = get_caller_info(customer_phone)
@@ -385,9 +385,9 @@ def background_process_recording(call_sid, recording_sid, recording_url, custome
 @frappe.whitelist()
 def get_softphone_token():
     settings = frappe.get_doc("Poseidon Settings")
-    twilio_api_key_sid = settings.twilio_api_key_sid
+    twilio_api_key_sid = getattr(settings, "twilio_api_key_sid", None)
     twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
-    twilio_twiml_app_sid = settings.twilio_twiml_app_sid
+    twilio_twiml_app_sid = getattr(settings, "twilio_twiml_app_sid", None)
 
     if not all([twilio_api_key_sid, twilio_api_secret, twilio_twiml_app_sid]):
         frappe.throw("Twilio softphone credentials are not fully configured in Poseidon Settings.")
@@ -430,22 +430,3 @@ def receive_mms():
             file_doc.save(ignore_permissions=True)
 
     return "OK"
-
-@frappe.whitelist()
-def send_voicemail_email(subject, body, caller_number=None, **kwargs):
-    try:
-        message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
-        
-        frappe.sendmail(
-            recipients=["info@sapphirefountains.com"],
-            subject=f"Poseidon Message: {subject}",
-            message=message_html,
-            now=True
-        )
-        return {"status": "success"}
-    except Exception as e:
-        frappe.log_error(f"Failed to send email: {str(e)}", "Poseidon Email Error")
-        return {"status": "error", "message": str(e)}
-
-def analyze_transfer_transcript(transcript, customer_name):
-    pass
