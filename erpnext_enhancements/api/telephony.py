@@ -296,6 +296,7 @@ def process_unified_recording(**kwargs):
                 "sender_full_name": "Poseidon",
                 "subject": f"Call from {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
+                "status": "Linked",
                 "reference_doctype": "Customer" if customer_name else None,
                 "reference_name": customer_name,
                 "communication_date": frappe.utils.now_datetime()
