@@ -11,6 +11,25 @@ from urllib.parse import urlparse
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 
+@frappe.whitelist(allow_guest=True)
+def get_gateway_config():
+    # Bypass strict validation to ensure Node can always boot
+    try:
+        settings = frappe.get_doc("Poseidon Settings")
+        return {
+            "master_system_prompt": settings.master_system_prompt,
+            "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
+            "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio")
+        }
+    except Exception as e:
+        frappe.log_error(f"Failed to fetch Poseidon settings: {str(e)}", "Gateway Config Error")
+        # Return a safe fallback so Node.js doesn't crash on a 417
+        return {
+            "master_system_prompt": "You are Poseidon.",
+            "forwarding_phone_number": "+18018200044",
+            "voice_model_id": "gemini-live-2.5-flash-native-audio"
+        }
+
 def get_poseidon_settings(field):
     return frappe.db.get_single_value("Poseidon Settings", field)
 
@@ -241,15 +260,65 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording(**kwargs):
+    # Enqueue the background job so Node.js receives an immediate 200 OK and avoids timeouts
+    frappe.enqueue(
+        'erpnext_enhancements.api.telephony.background_process_recording',
+        call_sid=frappe.form_dict.get("call_sid"),
+        recording_sid=frappe.form_dict.get("recording_sid"),
+        recording_url=frappe.form_dict.get("recording_url"),
+        customer_phone=frappe.form_dict.get("customer_phone"),
+        queue='long',
+        timeout=300
+    )
+    return {"status": "queued"}
+
+def background_process_recording(call_sid, recording_sid, recording_url, customer_phone):
+    frappe.set_user("poseidon@sapphirefountains.com")
+    
     try:
-        frappe.set_user("poseidon@sapphirefountains.com")
+        # 1. Fetch Twilio Audio
+        twilio_sid = get_poseidon_settings("twilio_account_sid")
+        twilio_token = get_poseidon_settings("twilio_auth_token")
         
-        call_sid = frappe.form_dict.get("call_sid")
-        summary = frappe.form_dict.get("summary")
-        transcript = frappe.form_dict.get("transcript")
-        customer_phone = frappe.form_dict.get("customer_phone")
-        is_voicemail = frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
+        audio_req = requests.get(f"{recording_url}.wav", auth=(twilio_sid, twilio_token))
+        if audio_req.status_code != 200:
+            frappe.throw(f"Failed to fetch Twilio audio: {audio_req.status_code}")
         
+        audio_content = audio_req.content
+
+        # 2. Fetch Stitched Transcript from Redis
+        transcript = get_call_transcript(call_sid)
+        if not transcript or transcript.strip() == "":
+            transcript = "Transcript missing or not generated."
+
+        # 3. Summarize via Gemini
+        summary = "No summary generated."
+        is_voicemail = False
+        
+        api_key = get_poseidon_settings("gemini_api_key")
+        if api_key:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            
+            prompt = f"""
+            Analyze this phone call transcript between an AI assistant named Poseidon and a caller. 
+            Provide a 3-sentence Executive Summary of the call. 
+            Explicitly determine if the caller left a voicemail or requested to leave a message. 
+            Format the response strictly as a JSON object with keys "summary" (string) and "is_voicemail" (boolean). 
+            Do not use markdown blocks.
+            
+            Transcript:
+            {transcript}
+            """
+            try:
+                ai_res = model.generate_content(prompt)
+                res_data = json.loads(ai_res.text.strip('```json\n').strip('```').strip())
+                summary = res_data.get("summary", "Summary failed.")
+                is_voicemail = res_data.get("is_voicemail", False)
+            except Exception as e:
+                frappe.log_error(f"Gemini Summarization Failed: {str(e)}", "Poseidon AI Error")
+
+        # 4. Save to ERPNext
         info = get_caller_info(customer_phone)
         customer_name = info.get('customer')
         contact_name = info.get('contact')
@@ -260,13 +329,8 @@ def process_unified_recording(**kwargs):
         if existing_comm:
             comm = frappe.get_doc("Communication", existing_comm[0].name)
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
-            
             if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
-                comm.append("timeline_links", {
-                    "link_doctype": "Contact",
-                    "link_name": contact_name
-                })
-                
+                comm.append("timeline_links", {"link_doctype": "Contact", "link_name": contact_name})
             comm.save(ignore_permissions=True)
         else:
             comm = frappe.get_doc({
@@ -281,30 +345,22 @@ def process_unified_recording(**kwargs):
                 "reference_name": customer_name,
                 "communication_date": frappe.utils.now_datetime()
             })
-
             if contact_name:
-                comm.append("timeline_links", {
-                    "link_doctype": "Contact",
-                    "link_name": contact_name
-                })
+                comm.append("timeline_links", {"link_doctype": "Contact", "link_name": contact_name})
             comm.insert(ignore_permissions=True)
 
-        if 'file' in frappe.request.files:
-            try:
-                uploaded_file = frappe.request.files.get('file')
-                file_content = uploaded_file.read()
-                file_doc = frappe.get_doc({
-                    "doctype": "File",
-                    "file_name": f"call_audio_{call_sid}.wav",
-                    "attached_to_doctype": "Communication",
-                    "attached_to_name": comm.name,
-                    "content": file_content,
-                    "is_private": 1
-                })
-                file_doc.save(ignore_permissions=True)
-            except Exception as fe:
-                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
+        # Attach Audio File
+        file_doc = frappe.get_doc({
+            "doctype": "File",
+            "file_name": f"recording_{call_sid}.wav",
+            "attached_to_doctype": "Communication",
+            "attached_to_name": comm.name,
+            "content": audio_content,
+            "is_private": 1
+        })
+        file_doc.save(ignore_permissions=True)
 
+        # Send Voicemail Email
         if is_voicemail:
             try:
                 message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
@@ -317,14 +373,14 @@ def process_unified_recording(**kwargs):
             except Exception as ee:
                 frappe.log_error(f"Failed to send voicemail email: {str(ee)}", "Poseidon Email Error")
 
+        # 5. Securely Delete Twilio Recording
+        requests.delete(f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Recordings/{recording_sid}.json", auth=(twilio_sid, twilio_token))
+
         frappe.db.commit()
-        return {"status": "success", "communication_id": comm.name}
 
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure: {str(e)}", "Poseidon Sync Error")
-        frappe.response["http_status_code"] = 500
-        return {"status": "error", "message": str(e)}
+        frappe.log_error(f"Background Recording Sync Failure: {str(e)}", "Poseidon Sync Error")
 
 @frappe.whitelist()
 def get_softphone_token():
