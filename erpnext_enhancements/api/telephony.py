@@ -26,7 +26,7 @@ def get_gateway_config():
         return {
             "master_system_prompt": "You are Poseidon.",
             "forwarding_phone_number": "+18018200044",
-            "voice_model_id": "gemini-live-2.5-flash-native-audio"
+            "voice_model_id": "gemini-live-2.5-flash-native-audio" # Restored to the correct, supported model
         }
 
 def validate_twilio_request(func):
@@ -430,3 +430,22 @@ def receive_mms():
             file_doc.save(ignore_permissions=True)
 
     return "OK"
+
+@frappe.whitelist()
+def send_voicemail_email(subject, body, caller_number=None, **kwargs):
+    try:
+        message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
+        
+        frappe.sendmail(
+            recipients=["info@sapphirefountains.com"],
+            subject=f"Poseidon Message: {subject}",
+            message=message_html,
+            now=True
+        )
+        return {"status": "success"}
+    except Exception as e:
+        frappe.log_error(f"Failed to send email: {str(e)}", "Poseidon Email Error")
+        return {"status": "error", "message": str(e)}
+
+def analyze_transfer_transcript(transcript, customer_name):
+    pass
