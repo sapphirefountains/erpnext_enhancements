@@ -246,6 +246,14 @@ def process_unified_recording():
     if existing_comm:
         comm = frappe.get_doc("Communication", existing_comm[0].name)
         comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
+        
+        # Ensure the appended transcript also links to the contact timeline
+        if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
+            comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+            
         comm.save(ignore_permissions=True)
     else:
         comm = frappe.get_doc({
