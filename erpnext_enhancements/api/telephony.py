@@ -198,7 +198,7 @@ def locate_customer(phone_number):
     return info.get("customer")
 
 @frappe.whitelist()
-def log_call_transcript(call_sid, transcript, caller_number=None):
+def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
     frappe.set_user("poseidon@sapphirefountains.com")
     
     if not call_sid or not transcript:
@@ -240,7 +240,7 @@ def log_call_transcript(call_sid, transcript, caller_number=None):
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
-def process_unified_recording():
+def process_unified_recording(**kwargs):
     try:
         frappe.set_user("poseidon@sapphirefountains.com")
         
@@ -376,7 +376,7 @@ def receive_mms():
     return "OK"
 
 @frappe.whitelist()
-def send_voicemail_email(subject, body, caller_number=None):
+def send_voicemail_email(subject, body, caller_number=None, **kwargs):
     try:
         message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
         
