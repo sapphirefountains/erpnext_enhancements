@@ -180,7 +180,6 @@ def update_caller_info(phone_number, new_name):
     is_established = False
     if customer_name:
         current_cust_name = frappe.db.get_value("Customer", customer_name, "customer_name")
-        # If the name doesn't start with "Unknown Caller", it means it's an existing valid customer
         if current_cust_name and not str(current_cust_name).startswith("Unknown Caller"):
             is_established = True
 
@@ -319,6 +318,8 @@ def process_unified_recording(**kwargs):
                 })
             comm.insert(ignore_permissions=True)
 
+        email_attachments = []
+
         if 'file' in frappe.request.files:
             try:
                 uploaded_file = frappe.request.files.get('file')
@@ -332,20 +333,29 @@ def process_unified_recording(**kwargs):
                     "is_private": 1
                 })
                 file_doc.save(ignore_permissions=True)
+                
+                # Bundle the file buffer to send safely via email without permission walls
+                email_attachments.append({
+                    "fname": file_doc.file_name,
+                    "fcontent": file_content
+                })
             except Exception as fe:
                 frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
 
-        if is_voicemail:
-            try:
-                message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
-                frappe.sendmail(
-                    recipients=["info@sapphirefountains.com"],
-                    subject=f"New Poseidon Voicemail from {display_name}",
-                    message=message_html,
-                    now=True
-                )
-            except Exception as ee:
-                frappe.log_error(f"Failed to send voicemail email: {str(ee)}", "Poseidon Email Error")
+        # Send Email notification for the Call / Voicemail
+        try:
+            email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
+            message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
+            
+            frappe.sendmail(
+                recipients=["info@sapphirefountains.com"],
+                subject=f"New Poseidon {email_subject_type} from {display_name}",
+                message=message_html,
+                attachments=email_attachments,
+                now=True
+            )
+        except Exception as ee:
+            frappe.log_error(f"Failed to send email: {str(ee)}", "Poseidon Email Error")
 
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
