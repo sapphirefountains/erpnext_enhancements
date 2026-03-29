@@ -242,9 +242,11 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
         comm = frappe.get_doc({
             "doctype": "Communication",
             "communication_medium": "Phone",
+            "communication_type": "Communication",
             "sent_or_received": "Received",
             "sender": "poseidon@sapphirefountains.com",
             "sender_full_name": "Poseidon",
+            "owner": "poseidon@sapphirefountains.com",
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
@@ -288,6 +290,8 @@ def process_unified_recording(**kwargs):
         if existing_comm:
             comm = frappe.get_doc("Communication", existing_comm[0].name)
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
+            comm.communication_type = "Communication"
+            comm.owner = "poseidon@sapphirefountains.com"
             
             if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
                 comm.append("timeline_links", {
@@ -300,9 +304,11 @@ def process_unified_recording(**kwargs):
             comm = frappe.get_doc({
                 "doctype": "Communication",
                 "communication_medium": "Phone",
+                "communication_type": "Communication",
                 "sent_or_received": "Received",
                 "sender": "poseidon@sapphirefountains.com",
                 "sender_full_name": "Poseidon",
+                "owner": "poseidon@sapphirefountains.com",
                 "subject": f"Call from {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
