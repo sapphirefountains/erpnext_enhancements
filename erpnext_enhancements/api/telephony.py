@@ -77,11 +77,11 @@ def get_call_transcript(call_sid):
     return "\n".join(chunks)
 
 @frappe.whitelist(allow_guest=True)
-def get_caller_info(phone_number):
+def get_caller_info(phone_number, twilio_caller_name=None):
     frappe.set_user("poseidon@sapphirefountains.com")
     
     if not phone_number:
-        return {"customer": None, "contact": None, "display_name": "Unknown Caller", "context": []}
+        return {"customer": None, "contact": None, "display_name": twilio_caller_name or "Unknown Caller", "context": []}
 
     clean_number = re.sub(r'\D', '', phone_number)
     match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
@@ -113,9 +113,12 @@ def get_caller_info(phone_number):
             display_name = customers[0].customer_name
 
     if not customer_name and not contact_name:
+        # Utilize Twilio CNAM if provided to avoid "Unknown Caller" logs
+        fallback_name = twilio_caller_name if twilio_caller_name else f"Unknown Caller - {phone_number}"
+        
         cust = frappe.get_doc({
             "doctype": "Customer",
-            "customer_name": f"Unknown Caller - {phone_number}",
+            "customer_name": fallback_name,
             "customer_type": "Residential",
             "customer_group": "All Customer Groups",
             "territory": "All Territories",
@@ -127,7 +130,7 @@ def get_caller_info(phone_number):
 
         cont = frappe.get_doc({
             "doctype": "Contact",
-            "first_name": f"Caller",
+            "first_name": "Caller",
             "last_name": phone_number,
             "custom_phone_number": phone_number,
             "is_primary_contact": 1
@@ -176,14 +179,12 @@ def update_caller_info(phone_number, new_name):
     customer_name = info.get("customer")
     contact_name = info.get("contact")
 
-    # Check if this is an established customer or our "Unknown Caller" stub
     is_established = False
     if customer_name:
         current_cust_name = frappe.db.get_value("Customer", customer_name, "customer_name")
         if current_cust_name and not str(current_cust_name).startswith("Unknown Caller"):
             is_established = True
 
-    # Only update spelling/names if it is NOT an established customer
     if not is_established:
         if customer_name:
             frappe.db.set_value("Customer", customer_name, "customer_name", new_name)
@@ -266,7 +267,6 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 
         comm.insert(ignore_permissions=True)
 
-        # Immediately intercept and bury any auto-assigned ToDos triggered by reference_doctype
         todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
         for t in todos:
             frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
@@ -338,7 +338,6 @@ def process_unified_recording(**kwargs):
 
             comm.insert(ignore_permissions=True)
 
-            # Immediately intercept and bury any auto-assigned ToDos triggered by reference_doctype
             todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
             for t in todos:
                 frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
