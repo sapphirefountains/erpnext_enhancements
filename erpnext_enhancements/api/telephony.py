@@ -176,41 +176,51 @@ def update_caller_info(phone_number, new_name):
     customer_name = info.get("customer")
     contact_name = info.get("contact")
 
+    # Check if this is an established customer or our "Unknown Caller" stub
+    is_established = False
     if customer_name:
-        frappe.db.set_value("Customer", customer_name, "customer_name", new_name)
-    else:
-        cust = frappe.get_doc({
-            "doctype": "Customer",
-            "customer_name": new_name,
-            "customer_type": "Residential",
-            "customer_group": "All Customer Groups",
-            "territory": "All Territories",
-            "custom_accounts_phone_number": phone_number
-        })
-        cust.insert(ignore_permissions=True)
-        customer_name = cust.name
+        current_cust_name = frappe.db.get_value("Customer", customer_name, "customer_name")
+        # If the name doesn't start with "Unknown Caller", it means it's an existing valid customer
+        if current_cust_name and not str(current_cust_name).startswith("Unknown Caller"):
+            is_established = True
 
-    parts = new_name.split(" ", 1)
-    first = parts[0]
-    last = parts[1] if len(parts) > 1 else ""
+    # Only update spelling/names if it is NOT an established customer
+    if not is_established:
+        if customer_name:
+            frappe.db.set_value("Customer", customer_name, "customer_name", new_name)
+        else:
+            cust = frappe.get_doc({
+                "doctype": "Customer",
+                "customer_name": new_name,
+                "customer_type": "Residential",
+                "customer_group": "All Customer Groups",
+                "territory": "All Territories",
+                "custom_accounts_phone_number": phone_number
+            })
+            cust.insert(ignore_permissions=True)
+            customer_name = cust.name
 
-    if contact_name:
-        frappe.db.set_value("Contact", contact_name, "first_name", first)
-        frappe.db.set_value("Contact", contact_name, "last_name", last)
-    else:
-        cont = frappe.get_doc({
-            "doctype": "Contact",
-            "first_name": first,
-            "last_name": last or phone_number,
-            "custom_phone_number": phone_number,
-            "is_primary_contact": 1
-        })
-        cont.append("links", {"link_doctype": "Customer", "link_name": customer_name})
-        cont.insert(ignore_permissions=True)
-        contact_name = cont.name
+        parts = new_name.split(" ", 1)
+        first = parts[0]
+        last = parts[1] if len(parts) > 1 else ""
+
+        if contact_name:
+            frappe.db.set_value("Contact", contact_name, "first_name", first)
+            frappe.db.set_value("Contact", contact_name, "last_name", last)
+        else:
+            cont = frappe.get_doc({
+                "doctype": "Contact",
+                "first_name": first,
+                "last_name": last or phone_number,
+                "custom_phone_number": phone_number,
+                "is_primary_contact": 1
+            })
+            cont.append("links", {"link_doctype": "Customer", "link_name": customer_name})
+            cont.insert(ignore_permissions=True)
+            contact_name = cont.name
     
     frappe.db.commit()
-    return {"status": "success", "customer": customer_name, "contact": contact_name}
+    return {"status": "success", "customer": customer_name, "contact": contact_name, "updated": not is_established}
 
 def locate_customer(phone_number):
     info = get_caller_info(phone_number)
