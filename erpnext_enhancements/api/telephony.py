@@ -515,14 +515,15 @@ def trigger_outbound_call(doctype, docname, target_number):
             frappe.throw(_("Your Employee record does not have a Cell Number configured. Cannot initiate call."))
 
         settings = frappe.get_doc("Poseidon Settings")
-        poseidon_url = getattr(settings, "poseidon_base_url", None)
-        # Assuming outgoing API secret is stored in Poseidon Settings as 'outgoing_api_secret' (Password type or Data)
-        # Using a fallback if the field doesn't exist to allow simple testing
-        api_secret = settings.get_password("outgoing_api_secret", raise_exception=False) if hasattr(settings, "outgoing_api_secret") else getattr(settings, "admin_webhook_secret", "")
+        
+        # Use the correct field 'gateway_url' instead of 'poseidon_base_url'
+        poseidon_url = getattr(settings, "gateway_url", None)
+        
+        # Use the webhook secret for authentication as there is no specific API key field
+        api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
 
         if not poseidon_url:
-            # Fallback if Poseidon Settings doesn't have a specific url configured
-            poseidon_url = "https://your-poseidon-url.com" # Example fallback
+            frappe.throw(_("Gateway URL is not configured in Poseidon Settings. Please update the Poseidon Settings page."))
 
         if doctype == "Customer":
             target_number = frappe.db.get_value("Customer", docname, "custom_accounts_phone_number") or target_number
@@ -542,8 +543,7 @@ def trigger_outbound_call(doctype, docname, target_number):
             "Content-Type": "application/json"
         }
         if api_secret:
-            # Using token format as described in prompt
-            headers["Authorization"] = f"token {api_secret}"
+            headers["Authorization"] = f"Bearer {api_secret}"
 
         response = requests.post(endpoint, json=payload, headers=headers)
         response.raise_for_status()
