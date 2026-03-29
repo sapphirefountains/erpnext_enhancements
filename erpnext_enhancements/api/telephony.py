@@ -250,10 +250,15 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
-            "reference_doctype": "Customer" if customer_name else None,
-            "reference_name": customer_name,
             "communication_date": frappe.utils.now_datetime()
         })
+
+        # Append to timeline_links to anchor the doc without triggering auto-assignment ToDos
+        if customer_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Customer",
+                "link_name": customer_name
+            })
 
         if contact_name:
             comm.append("timeline_links", {
@@ -292,6 +297,13 @@ def process_unified_recording(**kwargs):
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
             comm.communication_type = "Communication"
             
+            # Ensure links exist without using reference_doctype
+            if customer_name and not any(link.link_name == customer_name for link in comm.timeline_links):
+                comm.append("timeline_links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
+
             if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
                 comm.append("timeline_links", {
                     "link_doctype": "Contact",
@@ -311,16 +323,22 @@ def process_unified_recording(**kwargs):
                 "subject": f"Call from {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
-                "reference_doctype": "Customer" if customer_name else None,
-                "reference_name": customer_name,
                 "communication_date": frappe.utils.now_datetime()
             })
+
+            # Append to timeline_links to anchor the doc without triggering auto-assignment ToDos
+            if customer_name:
+                comm.append("timeline_links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
 
             if contact_name:
                 comm.append("timeline_links", {
                     "link_doctype": "Contact",
                     "link_name": contact_name
                 })
+
             comm.insert(ignore_permissions=True)
 
         email_attachments = []
