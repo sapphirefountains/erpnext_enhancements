@@ -113,7 +113,6 @@ def get_caller_info(phone_number, twilio_caller_name=None):
             display_name = customers[0].customer_name
 
     if not customer_name and not contact_name:
-        # Utilize Twilio CNAM if provided to avoid "Unknown Caller" logs
         fallback_name = twilio_caller_name if twilio_caller_name else f"Unknown Caller - {phone_number}"
         
         cust = frappe.get_doc({
@@ -254,10 +253,14 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
-            "reference_doctype": "Customer" if customer_name else None,
-            "reference_name": customer_name,
             "communication_date": frappe.utils.now_datetime()
         })
+
+        if customer_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Customer",
+                "link_name": customer_name
+            })
 
         if contact_name:
             comm.append("timeline_links", {
@@ -284,11 +287,11 @@ def process_unified_recording(**kwargs):
     try:
         frappe.set_user("poseidon@sapphirefountains.com")
         
-        call_sid = frappe.form_dict.get("call_sid")
-        summary = frappe.form_dict.get("summary")
-        transcript = frappe.form_dict.get("transcript")
-        customer_phone = frappe.form_dict.get("customer_phone")
-        is_voicemail = frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
+        call_sid = kwargs.get("call_sid") or frappe.form_dict.get("call_sid")
+        summary = kwargs.get("summary") or frappe.form_dict.get("summary")
+        transcript = kwargs.get("transcript") or frappe.form_dict.get("transcript")
+        customer_phone = kwargs.get("customer_phone") or frappe.form_dict.get("customer_phone")
+        is_voicemail = kwargs.get("is_voicemail") or frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
         
         info = get_caller_info(customer_phone)
         customer_name = info.get('customer')
@@ -306,6 +309,12 @@ def process_unified_recording(**kwargs):
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
             comm.communication_type = "Communication"
             
+            if customer_name and not any(link.link_name == customer_name for link in comm.timeline_links):
+                comm.append("timeline_links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
+
             if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
                 comm.append("timeline_links", {
                     "link_doctype": "Contact",
@@ -325,10 +334,14 @@ def process_unified_recording(**kwargs):
                 "subject": f"Call from {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
-                "reference_doctype": "Customer" if customer_name else None,
-                "reference_name": customer_name,
                 "communication_date": frappe.utils.now_datetime()
             })
+
+            if customer_name:
+                comm.append("timeline_links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
 
             if contact_name:
                 comm.append("timeline_links", {
@@ -345,7 +358,27 @@ def process_unified_recording(**kwargs):
 
         email_attachments = []
 
-        if 'file' in frappe.request.files:
+        file_content_b64 = kwargs.get("file_content")
+        if file_content_b64:
+            try:
+                file_content = base64.b64decode(file_content_b64)
+                file_doc = frappe.get_doc({
+                    "doctype": "File",
+                    "file_name": kwargs.get("file_name", f"call_audio_{call_sid}.wav"),
+                    "attached_to_doctype": "Communication",
+                    "attached_to_name": comm.name,
+                    "content": file_content,
+                    "is_private": 1
+                })
+                file_doc.save(ignore_permissions=True)
+                
+                email_attachments.append({
+                    "fname": file_doc.file_name,
+                    "fcontent": file_content
+                })
+            except Exception as fe:
+                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
+        elif 'file' in frappe.request.files:
             try:
                 uploaded_file = frappe.request.files.get('file')
                 file_content = uploaded_file.read()
@@ -364,7 +397,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
+                frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Poseidon File Error")
 
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
