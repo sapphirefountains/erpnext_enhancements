@@ -229,7 +229,6 @@ def locate_customer(phone_number):
 def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
     frappe.set_user("poseidon@sapphirefountains.com")
     
-    # SAFEGUARD: Catch "undefined" or empty SIDs from Node.js parsing errors
     if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
         call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
 
@@ -254,15 +253,10 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             "subject": f"Poseidon Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
+            "reference_doctype": "Customer" if customer_name else None,
+            "reference_name": customer_name,
             "communication_date": frappe.utils.now_datetime()
         })
-
-        # Append to timeline_links to anchor the doc without triggering auto-assignment ToDos
-        if customer_name:
-            comm.append("timeline_links", {
-                "link_doctype": "Customer",
-                "link_name": customer_name
-            })
 
         if contact_name:
             comm.append("timeline_links", {
@@ -271,6 +265,13 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             })
 
         comm.insert(ignore_permissions=True)
+
+        # Immediately intercept and bury any auto-assigned ToDos triggered by reference_doctype
+        todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
+        for t in todos:
+            frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
+            frappe.db.set_value("ToDo", t.name, "status", "Closed")
+
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
@@ -294,7 +295,6 @@ def process_unified_recording(**kwargs):
         contact_name = info.get('contact')
         display_name = info.get('display_name')
 
-        # SAFEGUARD: Prevent searching for "%undefined%" wildcard matches which hijack old DB records
         existing_comm = []
         if call_sid and str(call_sid).strip().lower() not in ["undefined", "null", "none", ""]:
             existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
@@ -306,13 +306,6 @@ def process_unified_recording(**kwargs):
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
             comm.communication_type = "Communication"
             
-            # Ensure links exist without using reference_doctype
-            if customer_name and not any(link.link_name == customer_name for link in comm.timeline_links):
-                comm.append("timeline_links", {
-                    "link_doctype": "Customer",
-                    "link_name": customer_name
-                })
-
             if contact_name and not any(link.link_name == contact_name for link in comm.timeline_links):
                 comm.append("timeline_links", {
                     "link_doctype": "Contact",
@@ -332,15 +325,10 @@ def process_unified_recording(**kwargs):
                 "subject": f"Call from {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
+                "reference_doctype": "Customer" if customer_name else None,
+                "reference_name": customer_name,
                 "communication_date": frappe.utils.now_datetime()
             })
-
-            # Append to timeline_links to anchor the doc without triggering auto-assignment ToDos
-            if customer_name:
-                comm.append("timeline_links", {
-                    "link_doctype": "Customer",
-                    "link_name": customer_name
-                })
 
             if contact_name:
                 comm.append("timeline_links", {
@@ -349,6 +337,12 @@ def process_unified_recording(**kwargs):
                 })
 
             comm.insert(ignore_permissions=True)
+
+            # Immediately intercept and bury any auto-assigned ToDos triggered by reference_doctype
+            todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
+            for t in todos:
+                frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
+                frappe.db.set_value("ToDo", t.name, "status", "Closed")
 
         email_attachments = []
 
@@ -366,7 +360,6 @@ def process_unified_recording(**kwargs):
                 })
                 file_doc.save(ignore_permissions=True)
                 
-                # Bundle the file buffer to send safely via email without permission walls
                 email_attachments.append({
                     "fname": file_doc.file_name,
                     "fcontent": file_content
@@ -374,11 +367,9 @@ def process_unified_recording(**kwargs):
             except Exception as fe:
                 frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
 
-        # Send Email notification for the Call / Voicemail
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
             
-            # Construct standard Frappe links
             base_url = frappe.utils.get_url()
             links_html = "<br><br><strong>System Links:</strong><ul>"
             if customer_name:
