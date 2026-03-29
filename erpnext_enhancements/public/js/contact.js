@@ -1,16 +1,7 @@
-frappe.ui.form.on("Customer", {
+frappe.ui.form.on("Contact", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
-			frm.trigger("render_comments_section");
-            frm.trigger("add_poseidon_call_button");
-		}
-	},
-
-	render_comments_section: function (frm) {
-		if (erpnext_enhancements && erpnext_enhancements.render_comments_app) {
-			erpnext_enhancements.render_comments_app(frm, "custom_comments_field");
-		} else {
-			console.error("erpnext_enhancements.render_comments_app is not defined.");
+			frm.trigger("add_poseidon_call_button");
 		}
 	},
 
