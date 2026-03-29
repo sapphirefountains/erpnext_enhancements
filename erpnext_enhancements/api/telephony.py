@@ -292,6 +292,7 @@ def process_unified_recording(**kwargs):
         transcript = kwargs.get("transcript") or frappe.form_dict.get("transcript")
         customer_phone = kwargs.get("customer_phone") or frappe.form_dict.get("customer_phone")
         is_voicemail = kwargs.get("is_voicemail") or frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
+        direction = kwargs.get("direction") or frappe.form_dict.get("direction") or "Inbound"
         
         info = get_caller_info(customer_phone)
         customer_name = info.get('customer')
@@ -323,15 +324,18 @@ def process_unified_recording(**kwargs):
                 
             comm.save(ignore_permissions=True)
         else:
+            sent_status = "Sent" if direction == "Outbound" else "Received"
+            subject_prefix = "Outbound Call to" if direction == "Outbound" else "Call from"
+
             comm = frappe.get_doc({
                 "doctype": "Communication",
                 "communication_medium": "Phone",
                 "communication_type": "Communication",
-                "sent_or_received": "Received",
+                "sent_or_received": sent_status,
                 "sender": "poseidon@sapphirefountains.com",
                 "sender_full_name": "Poseidon",
                 "owner": "poseidon@sapphirefountains.com",
-                "subject": f"Call from {display_name or customer_phone} ({call_sid})",
+                "subject": f"{subject_prefix} {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
                 "communication_date": frappe.utils.now_datetime()
