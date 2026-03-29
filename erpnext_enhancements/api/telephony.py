@@ -500,3 +500,134 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
 
 def analyze_transfer_transcript(transcript, customer_name):
     pass
+
+@frappe.whitelist()
+def trigger_outbound_call(doctype, docname, target_number):
+    try:
+        user = frappe.session.user
+        employee_map = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=["name", "cell_number"])
+
+        if not employee_map:
+            frappe.throw(_("No active Employee record found for your user. Cannot determine your cell phone number."))
+
+        employee_number = employee_map[0].cell_number
+        if not employee_number:
+            frappe.throw(_("Your Employee record does not have a Cell Number configured. Cannot initiate call."))
+
+        settings = frappe.get_doc("Poseidon Settings")
+        poseidon_url = getattr(settings, "poseidon_base_url", None)
+        # Assuming outgoing API secret is stored in Poseidon Settings as 'outgoing_api_secret' (Password type or Data)
+        # Using a fallback if the field doesn't exist to allow simple testing
+        api_secret = settings.get_password("outgoing_api_secret", raise_exception=False) if hasattr(settings, "outgoing_api_secret") else getattr(settings, "admin_webhook_secret", "")
+
+        if not poseidon_url:
+            # Fallback if Poseidon Settings doesn't have a specific url configured
+            poseidon_url = "https://your-poseidon-url.com" # Example fallback
+
+        if doctype == "Customer":
+            target_number = frappe.db.get_value("Customer", docname, "custom_accounts_phone_number") or target_number
+        elif doctype == "Contact":
+            target_number = frappe.db.get_value("Contact", docname, "custom_phone_number") or target_number
+
+        endpoint = f"{poseidon_url.rstrip('/')}/api/outbound-call"
+
+        payload = {
+            "employee_number": employee_number,
+            "target_number": target_number,
+            "reference_doctype": doctype,
+            "reference_docname": docname
+        }
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if api_secret:
+            # Using token format as described in prompt
+            headers["Authorization"] = f"token {api_secret}"
+
+        response = requests.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+
+        return {"status": "success", "message": _("Call initiated via Poseidon")}
+
+    except requests.exceptions.RequestException as e:
+        frappe.log_error(f"Failed to trigger outbound call via Poseidon: {str(e)}", "Poseidon Outbound Call Error")
+        frappe.throw(_("Failed to initiate call via Poseidon. Please check error logs."))
+    except Exception as e:
+        frappe.log_error(f"Unexpected error in trigger_outbound_call: {str(e)}", "Poseidon Outbound Call Error")
+        frappe.throw(str(e))
+
+
+@frappe.whitelist()
+def get_employee_number(employee_name):
+    # Used by Poseidon for inbound routing via fuzzy search on Employee
+    try:
+        if not employee_name:
+            return None
+
+        employees = frappe.db.sql("""
+            SELECT name, cell_number
+            FROM `tabEmployee`
+            WHERE status = 'Active'
+            AND employee_name LIKE %s
+            LIMIT 1
+        """, (f"%{employee_name}%",), as_dict=True)
+
+        if employees and employees[0].cell_number:
+            return employees[0].cell_number
+
+        return None
+    except Exception as e:
+        frappe.log_error(f"Failed to get employee number for '{employee_name}': {str(e)}", "Poseidon Routing Error")
+        return None
+
+
+@frappe.whitelist()
+def log_call_details(call_sid, direction, from_number, to_number, duration, transcript, summary, reference_doctype=None, reference_docname=None):
+    try:
+        if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
+            call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
+
+        display_name = to_number if direction == "Outbound" else from_number
+        if reference_doctype and reference_docname:
+            if reference_doctype == "Customer":
+                display_name = frappe.db.get_value("Customer", reference_docname, "customer_name") or display_name
+            elif reference_doctype == "Contact":
+                first, last = frappe.db.get_value("Contact", reference_docname, ["first_name", "last_name"])
+                display_name = f"{first or ''} {last or ''}".strip() or display_name
+            elif reference_doctype == "Lead":
+                display_name = frappe.db.get_value("Lead", reference_docname, "lead_name") or display_name
+
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "Phone",
+            "communication_type": "Communication",
+            "sent_or_received": "Sent" if direction == "Outbound" else "Received",
+            "sender": "poseidon@sapphirefountains.com" if direction == "Received" else from_number,
+            "sender_full_name": "Poseidon" if direction == "Received" else None,
+            "owner": "poseidon@sapphirefountains.com",
+            "subject": f"{direction} Call with {display_name} ({call_sid})",
+            "content": f"**Duration:** {duration}s\n\n**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
+            "status": "Linked",
+            "communication_date": frappe.utils.now_datetime()
+        })
+
+        # Link to reference document if provided
+        if reference_doctype and reference_docname:
+            if reference_doctype in ["Customer", "Contact", "Lead"]:
+                comm.append("timeline_links", {
+                    "link_doctype": reference_doctype,
+                    "link_name": reference_docname
+                })
+            else:
+                comm.reference_doctype = reference_doctype
+                comm.reference_name = reference_docname
+
+        comm.insert(ignore_permissions=True)
+        frappe.db.commit()
+
+        return {"status": "success", "communication_id": comm.name}
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.log_error(f"Failed to log call details for {call_sid}: {str(e)}", "Poseidon Log Call Error")
+        return {"status": "error", "message": str(e)}

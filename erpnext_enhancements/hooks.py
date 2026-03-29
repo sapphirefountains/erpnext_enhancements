@@ -79,8 +79,8 @@ doctype_js = {
     "Supplier": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_comments.js"],
     "Supplier Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_quotation_comments.js"],
     "Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/quotation_comments.js"],
-    "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js"],
-    "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js"],
+    "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js", "public/js/lead.js"],
+    "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js", "public/js/contact.js"],
     "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
     "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
