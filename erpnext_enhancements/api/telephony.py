@@ -229,8 +229,12 @@ def locate_customer(phone_number):
 def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
     frappe.set_user("poseidon@sapphirefountains.com")
     
-    if not call_sid or not transcript:
-        frappe.throw("Missing call_sid or transcript")
+    # SAFEGUARD: Catch "undefined" or empty SIDs from Node.js parsing errors
+    if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
+        call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
+
+    if not transcript:
+        frappe.throw("Missing transcript")
 
     try:
         customer_name, contact_name = None, None
@@ -290,7 +294,12 @@ def process_unified_recording(**kwargs):
         contact_name = info.get('contact')
         display_name = info.get('display_name')
 
-        existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
+        # SAFEGUARD: Prevent searching for "%undefined%" wildcard matches which hijack old DB records
+        existing_comm = []
+        if call_sid and str(call_sid).strip().lower() not in ["undefined", "null", "none", ""]:
+            existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
+        else:
+            call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
 
         if existing_comm:
             comm = frappe.get_doc("Communication", existing_comm[0].name)
