@@ -6,7 +6,7 @@ import re
 import os
 import base64
 from twilio.request_validator import RequestValidator
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 
@@ -345,7 +345,19 @@ def process_unified_recording(**kwargs):
         # Send Email notification for the Call / Voicemail
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
-            message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>"
+            
+            # Construct standard Frappe links
+            base_url = frappe.utils.get_url()
+            links_html = "<br><br><strong>System Links:</strong><ul>"
+            if customer_name:
+                links_html += f'<li><a href="{base_url}/app/customer/{quote(customer_name)}">View Accounts in ERPNext</a></li>'
+            if contact_name:
+                links_html += f'<li><a href="{base_url}/app/contact/{quote(contact_name)}">View Contact in ERPNext</a></li>'
+            if comm.name:
+                links_html += f'<li><a href="{base_url}/app/communication/{quote(comm.name)}">View Communication in ERPNext</a></li>'
+            links_html += "</ul>"
+
+            message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>{links_html}"
             
             frappe.sendmail(
                 recipients=["info@sapphirefountains.com"],
