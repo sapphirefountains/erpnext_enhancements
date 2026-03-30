@@ -31,7 +31,7 @@ frappe.ui.form.on("Customer", {
         });
 
         btn.removeClass('btn-default').addClass('btn-primary');
-    }
+    },
 
     add_poseidon_call_button: function (frm) {
         let btn = frm.add_custom_button(__('Call via Poseidon'), function () {

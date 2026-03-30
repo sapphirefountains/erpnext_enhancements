@@ -21,7 +21,7 @@ erpnext_enhancements.telephony = {
                 return resolve();
             }
             const script = document.createElement('script');
-            script.src = 'https://sdk.twilio.com/js/voice/v2.x/twilio.min.js';
+            script.src = 'https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2.18.1/dist/twilio.min.js';
             script.onload = resolve;
             script.onerror = () => reject(new Error('Failed to load Twilio SDK'));
             document.head.appendChild(script);
