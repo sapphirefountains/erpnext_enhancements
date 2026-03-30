@@ -2,7 +2,7 @@ frappe.provide('erpnext_enhancements.telephony');
 
 erpnext_enhancements.telephony = {
     device: null,
-    identity: 'client:nikolas_erpnext',
+    identity: 'nikolas_erpnext',
     is_ready: false,
 
     init: function() {
