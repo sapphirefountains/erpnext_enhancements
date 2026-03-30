@@ -1,16 +1,27 @@
 frappe.ui.form.on("Contact", {
-	refresh: function (frm) {
-		if (!frm.doc.__islocal) {
-			frm.trigger("add_poseidon_call_button");
-		}
-	},
+    refresh: function (frm) {
+        if (!frm.doc.__islocal) {
+            frm.trigger("render_comments_section");
+            frm.trigger("add_poseidon_call_button");
+            frm.trigger("add_poseidon_sms_button");
+        }
+    },
+
+    render_comments_section: function (frm) {
+        if (erpnext_enhancements && erpnext_enhancements.render_comments_app) {
+            erpnext_enhancements.render_comments_app(frm, "custom_comments_field");
+        } else {
+            console.error("erpnext_enhancements.render_comments_app is not defined.");
+        }
+    },
+
 
     add_poseidon_call_button: function (frm) {
         let btn = frm.add_custom_button(__('Call via Poseidon'), function () {
-            let target_number = frm.doc.custom_accounts_phone_number || frm.doc.custom_phone_number;
+            let target_number = frm.doc.custom_phone_number || frm.doc.mobile_no || frm.doc.phone;
 
             if (!target_number) {
-                frappe.msgprint(__('No phone number found (checked custom_accounts_phone_number and custom_phone_number).'));
+                frappe.msgprint(__('No phone number found.'));
                 return;
             }
 
@@ -34,5 +45,25 @@ frappe.ui.form.on("Contact", {
 
         btn.removeClass('btn-default').addClass('btn-primary');
         btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-call"></use></svg> ${__('Call via Poseidon')}`);
+    },
+
+    add_poseidon_sms_button: function (frm) {
+        let btn = frm.add_custom_button(__('Send SMS'), function () {
+            let target_number = frm.doc.custom_phone_number || frm.doc.mobile_no || frm.doc.phone;
+
+            if (!target_number) {
+                frappe.msgprint(__('No phone number found.'));
+                return;
+            }
+
+            if (erpnext_enhancements.telephony) {
+                erpnext_enhancements.telephony.show_sms_dialer(target_number, frm.doc.doctype, frm.doc.name);
+            } else {
+                frappe.msgprint(__('Telephony service is not loaded.'));
+            }
+        });
+
+        btn.removeClass('btn-default').addClass('btn-primary');
+        btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-message"></use></svg> ${__('Send SMS')}`);
     }
 });

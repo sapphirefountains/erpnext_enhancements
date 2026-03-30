@@ -635,3 +635,314 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
         frappe.db.rollback()
         frappe.log_error(f"Failed to log call details for {call_sid}: {str(e)}", "Poseidon Log Call Error")
         return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
+def process_unified_sms(**kwargs):
+    try:
+        frappe.set_user("poseidon@sapphirefountains.com")
+
+        from_number = kwargs.get("from_number") or frappe.form_dict.get("from_number")
+        to_number = kwargs.get("to_number") or frappe.form_dict.get("to_number")
+        content = kwargs.get("content") or frappe.form_dict.get("content")
+        media = kwargs.get("media") or frappe.form_dict.get("media") or []
+        sentiment = kwargs.get("sentiment") or frappe.form_dict.get("sentiment")
+        is_urgent = kwargs.get("is_urgent") or frappe.form_dict.get("is_urgent") in [True, "true", "True", 1, "1"]
+        ai_analysis = kwargs.get("ai_analysis") or frappe.form_dict.get("ai_analysis")
+
+        info = get_caller_info(from_number)
+        customer_name = info.get('customer')
+        contact_name = info.get('contact')
+        display_name = info.get('display_name')
+
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "SMS",
+            "communication_type": "Communication",
+            "sent_or_received": "Received",
+            "sender": from_number,
+            "sender_full_name": display_name,
+            "owner": "poseidon@sapphirefountains.com",
+            "subject": f"SMS from {display_name}",
+            "content": content,
+            "status": "Linked",
+            "communication_date": frappe.utils.now_datetime()
+        })
+
+        if customer_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Customer",
+                "link_name": customer_name
+            })
+        elif contact_name:
+            comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+
+        comm.insert(ignore_permissions=True)
+
+        if ai_analysis or sentiment:
+            comment_content = ""
+            if ai_analysis:
+                comment_content += f"<b>AI Analysis:</b><br>{ai_analysis}<br><br>"
+            if sentiment:
+                comment_content += f"<b>Sentiment:</b> {sentiment.title()}"
+
+            if comment_content:
+                frappe.get_doc({
+                    "doctype": "Comment",
+                    "comment_type": "Comment",
+                    "reference_doctype": "Communication",
+                    "reference_name": comm.name,
+                    "content": comment_content
+                }).insert(ignore_permissions=True)
+
+        # Attach media
+        import base64
+        import os
+        from urllib.parse import urlparse
+
+        if isinstance(media, str):
+            import json
+            try:
+                media = json.loads(media)
+            except:
+                media = []
+
+        for m in media:
+            file_name = m.get("file_name", f"media_{frappe.utils.now()}.bin")
+            file_content = m.get("file_content")
+            if file_content:
+                try:
+                    decoded = base64.b64decode(file_content)
+                    file_doc = frappe.get_doc({
+                        "doctype": "File",
+                        "file_name": file_name,
+                        "attached_to_doctype": "Communication",
+                        "attached_to_name": comm.name,
+                        "content": decoded,
+                        "is_private": 1
+                    })
+                    file_doc.db_set('attached_to_doctype', "Communication", update_modified=False)
+                    file_doc.db_set('attached_to_name', comm.name, update_modified=False)
+                    file_doc.insert(ignore_permissions=True)
+                except Exception as ex:
+                    frappe.log_error(f"Failed to attach media to SMS: {str(ex)}")
+
+        # Intelligent Assignment
+        last_assignee = None
+
+        # 1. Check who last SENT an SMS to this number
+        last_sent = frappe.get_all("Communication",
+            filters={
+                "communication_medium": "SMS",
+                "sent_or_received": "Sent",
+                "phone_no": from_number
+            },
+            order_by="creation desc",
+            limit=1,
+            fields=["owner"]
+        )
+
+        if last_sent and last_sent[0].owner != "poseidon@sapphirefountains.com":
+            last_assignee = last_sent[0].owner
+        else:
+            # 2. Check if a past inbound SMS was assigned to someone via ToDo
+            past_inbound = frappe.get_all("Communication",
+                filters={
+                    "communication_medium": "SMS",
+                    "sent_or_received": "Received",
+                    "sender": from_number,
+                    "name": ["!=", comm.name]
+                },
+                order_by="creation desc",
+                limit=1,
+                fields=["name"]
+            )
+            if past_inbound:
+                past_todos = frappe.get_all("ToDo",
+                    filters={
+                        "reference_type": "Communication",
+                        "reference_name": past_inbound[0].name
+                    },
+                    order_by="creation desc",
+                    limit=1,
+                    fields=["allocated_to"]
+                )
+                if past_todos and past_todos[0].allocated_to != "info@sapphirefountains.com":
+                    last_assignee = past_todos[0].allocated_to
+
+        assignee = last_assignee or "info@sapphirefountains.com"
+
+        from frappe.desk.form.assign_to import add as assign_to
+        try:
+            assign_to({
+                "assign_to": [assignee],
+                "doctype": "Communication",
+                "name": comm.name,
+                "description": "New SMS Received",
+                "priority": "High" if not last_assignee else "Medium"
+            })
+        except Exception as e:
+            frappe.log_error(f"Failed to assign SMS {comm.name} to {assignee}: {str(e)}")
+
+        # Urgency Handling
+        if is_urgent:
+            # Trigger System Notification (Notification Log) for assigned user
+            frappe.get_doc({
+                "doctype": "Notification Log",
+                "subject": f"URGENT SMS from {display_name}",
+                "document_type": "Communication",
+                "document_name": comm.name,
+                "for_user": assignee,
+                "type": "Alert"
+            }).insert(ignore_permissions=True)
+
+            # Trigger System Notification (Notification Log) for Production Team
+            prod_users = frappe.get_all("Has Role", filters={"role": "Production Team"}, fields=["parent"])
+            for u in prod_users:
+                if u.parent != assignee:
+                    frappe.get_doc({
+                        "doctype": "Notification Log",
+                        "subject": f"URGENT SMS from {display_name}",
+                        "document_type": "Communication",
+                        "document_name": comm.name,
+                        "for_user": u.parent,
+                        "type": "Alert"
+                    }).insert(ignore_permissions=True)
+
+        frappe.db.commit()
+        return {"status": "success", "communication_id": comm.name}
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.log_error(f"Critical sync failure in process_unified_sms: {str(e)}", "Poseidon Sync Error")
+        frappe.response["http_status_code"] = 500
+        return {"status": "error", "message": str(e)}
+
+
+
+@frappe.whitelist()
+def send_sms(target_number, message, media_urls=None, reference_doctype=None, reference_docname=None):
+    try:
+        if not target_number or not message:
+            frappe.throw(_("Target number and message are required."))
+
+        user = frappe.session.user
+        employee_map = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=["name", "employee_name"])
+
+        if not employee_map:
+            frappe.throw(_("No active Employee record found for your user. Cannot send SMS."))
+
+        employee_name = employee_map[0].employee_name
+
+        # Clean target number for lookup
+        import re
+        clean_number = re.sub(r'\D', '', target_number)
+        match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
+
+        info = get_caller_info(target_number)
+        customer_name = info.get('customer')
+        contact_name = info.get('contact')
+        display_name = info.get('display_name') or target_number
+
+        # Check if an outgoing SMS has been sent to this number in the last 24 hours
+        from frappe.utils import add_days, now_datetime
+        twenty_four_hours_ago = add_days(now_datetime(), -1)
+
+        recent_sms = frappe.get_all("Communication",
+            filters={
+                "communication_medium": "SMS",
+                "sent_or_received": "Sent",
+                "creation": [">=", twenty_four_hours_ago],
+                "phone_no": ["like", f"%{match_suffix}"]
+            },
+            limit=1
+        )
+
+        # Determine if we should append signature
+        if not recent_sms:
+            message = f"{message.strip()} - [{employee_name}]"
+
+        settings = frappe.get_doc("Poseidon Settings")
+        poseidon_url = getattr(settings, "gateway_url", None)
+        api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
+
+        if not poseidon_url:
+            frappe.throw(_("Gateway URL is not configured in Poseidon Settings. Please update the Poseidon Settings page."))
+
+        endpoint = f"{poseidon_url.rstrip('/')}/api/send-sms"
+
+        if isinstance(media_urls, str):
+            import json
+            try:
+                media_urls = json.loads(media_urls)
+            except:
+                media_urls = []
+        elif not media_urls:
+            media_urls = []
+
+        payload = {
+            "to_number": target_number,
+            "content": message,
+            "media_urls": media_urls
+        }
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if api_secret:
+            headers["Authorization"] = f"Bearer {api_secret}"
+
+        import requests
+        response = requests.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+
+        # Create outgoing Communication record
+        comm = frappe.get_doc({
+            "doctype": "Communication",
+            "communication_medium": "SMS",
+            "communication_type": "Communication",
+            "sent_or_received": "Sent",
+            "sender": user,
+            "sender_full_name": employee_name,
+            "owner": user,
+            "phone_no": target_number,
+            "subject": f"Outbound SMS to {display_name}",
+            "content": message,
+            "status": "Linked",
+            "communication_date": now_datetime()
+        })
+
+        if reference_doctype and reference_docname:
+            if reference_doctype in ["Customer", "Contact", "Lead"]:
+                comm.append("timeline_links", {
+                    "link_doctype": reference_doctype,
+                    "link_name": reference_docname
+                })
+            else:
+                comm.reference_doctype = reference_doctype
+                comm.reference_name = reference_docname
+        elif customer_name:
+             comm.append("timeline_links", {
+                "link_doctype": "Customer",
+                "link_name": customer_name
+            })
+        elif contact_name:
+             comm.append("timeline_links", {
+                "link_doctype": "Contact",
+                "link_name": contact_name
+            })
+
+        comm.insert(ignore_permissions=True)
+        frappe.db.commit()
+
+        return {"status": "success", "message": _("SMS sent successfully via Poseidon."), "communication_id": comm.name}
+
+    except requests.exceptions.RequestException as e:
+        frappe.log_error(f"Failed to send SMS via Poseidon: {str(e)}", "Poseidon Outbound SMS Error")
+        frappe.throw(_("Failed to send SMS via Poseidon. Please check error logs."))
+    except Exception as e:
+        frappe.log_error(f"Unexpected error in send_sms: {str(e)}", "Poseidon Outbound SMS Error")
+        frappe.throw(str(e))

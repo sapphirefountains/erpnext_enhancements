@@ -144,6 +144,73 @@ erpnext_enhancements.telephony = {
         });
     },
 
+
+    show_sms_dialer: function(default_number = '', reference_doctype = '', reference_docname = '', prefilled_message = '') {
+        if (!this.is_ready) {
+            frappe.msgprint(__('Telephony service is not ready. Please check your connection and settings.'));
+            return;
+        }
+
+        const dialog = new frappe.ui.Dialog({
+            title: __('Send SMS'),
+            fields: [
+                {
+                    fieldname: 'phone_number',
+                    fieldtype: 'Data',
+                    label: __('Phone Number'),
+                    default: default_number,
+                    reqd: 1
+                },
+                {
+                    fieldname: 'message',
+                    fieldtype: 'Small Text',
+                    label: __('Message'),
+                    reqd: 1,
+                    default: prefilled_message
+                },
+                {
+                    fieldname: 'attachments',
+                    fieldtype: 'Attach',
+                    label: __('Attach Media (Optional)')
+                }
+            ],
+            primary_action_label: __('Send'),
+            primary_action: (values) => {
+                let media_urls = [];
+
+                let process_send = () => {
+                    dialog.get_primary_btn().prop('disabled', true).text(__('Sending...'));
+                    frappe.call({
+                        method: 'erpnext_enhancements.api.telephony.send_sms',
+                        args: {
+                            target_number: values.phone_number,
+                            message: values.message,
+                            media_urls: media_urls,
+                            reference_doctype: reference_doctype,
+                            reference_docname: reference_docname
+                        },
+                        callback: function(r) {
+                            if (!r.exc) {
+                                frappe.show_alert({message: __('SMS Sent'), indicator: 'green'});
+                                dialog.hide();
+                            } else {
+                                dialog.get_primary_btn().prop('disabled', false).text(__('Send'));
+                            }
+                        }
+                    });
+                };
+
+                if (values.attachments) {
+                    let base_url = frappe.urllib.get_base_url();
+                    media_urls.push(`${base_url}${values.attachments}`);
+                }
+                process_send();
+            }
+        });
+
+        dialog.show();
+    },
+
     show_dialer: function(default_number = '') {
         if (!this.is_ready) {
             frappe.msgprint(__('Telephony service is not ready. Please check your connection and settings.'));

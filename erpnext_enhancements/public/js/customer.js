@@ -3,6 +3,7 @@ frappe.ui.form.on("Customer", {
 		if (!frm.doc.__islocal) {
 			frm.trigger("render_comments_section");
             frm.trigger("add_poseidon_call_button");
+            frm.trigger("add_poseidon_sms_button");
 		}
 	},
 
@@ -13,6 +14,24 @@ frappe.ui.form.on("Customer", {
 			console.error("erpnext_enhancements.render_comments_app is not defined.");
 		}
 	},
+
+
+    add_poseidon_sms_button: function (frm) {
+        let btn = frm.add_custom_button(__('Send SMS'), function () {
+            let target_number = frm.doc.custom_accounts_phone_number || frm.doc.custom_phone_number;
+
+            if (!target_number) {
+                frappe.msgprint(__('No phone number found (checked custom_accounts_phone_number and custom_phone_number).'));
+                return;
+            }
+
+            if (erpnext_enhancements.telephony) {
+                erpnext_enhancements.telephony.show_sms_dialer(target_number, frm.doc.doctype, frm.doc.name);
+            }
+        });
+
+        btn.removeClass('btn-default').addClass('btn-primary');
+    }
 
     add_poseidon_call_button: function (frm) {
         let btn = frm.add_custom_button(__('Call via Poseidon'), function () {
