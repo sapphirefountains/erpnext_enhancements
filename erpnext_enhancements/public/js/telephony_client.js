@@ -146,10 +146,8 @@ erpnext_enhancements.telephony = {
 
 
     show_sms_dialer: function(default_number = '', reference_doctype = '', reference_docname = '', prefilled_message = '') {
-        if (!this.is_ready) {
-            frappe.msgprint(__('Telephony service is not ready. Please check your connection and settings.'));
-            return;
-        }
+        // SMS relies entirely on the Frappe backend, so it shouldn't be blocked 
+        // by the WebRTC Voice connection status.
 
         const dialog = new frappe.ui.Dialog({
             title: __('Send SMS'),
