@@ -31,7 +31,7 @@ def get_gateway_config():
 def validate_twilio_request(func):
     def wrapper(*args, **kwargs):
         settings = frappe.get_doc("Poseidon Settings")
-        validator = RequestValidator(getattr(settings, "twilio_auth_token", ""))
+        validator = RequestValidator(settings.get_password("twilio_auth_token", raise_exception=False) or "")
         url = frappe.request.url
         post_vars = frappe.request.form
         signature = frappe.request.headers.get("X-Twilio-Signature", "")
@@ -447,9 +447,9 @@ def get_softphone_token():
     if not all([twilio_api_key_sid, twilio_api_secret, twilio_twiml_app_sid]):
         frappe.throw("Twilio softphone credentials are not fully configured in Poseidon Settings.")
 
-    account_sid = frappe.conf.get("twilio_account_sid") or os.environ.get("TWILIO_ACCOUNT_SID")
+    account_sid = getattr(settings, "twilio_account_sid", None) or frappe.conf.get("twilio_account_sid") or os.environ.get("TWILIO_ACCOUNT_SID")
     if not account_sid:
-        frappe.throw("Twilio Account SID is missing.")
+        frappe.throw("Twilio Account SID is missing. Please configure it in Poseidon Settings.")
 
     identity = "client:nikolas_erpnext"
     token = AccessToken(account_sid, twilio_api_key_sid, twilio_api_secret, identity=identity)

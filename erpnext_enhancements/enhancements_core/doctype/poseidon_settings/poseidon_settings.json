@@ -17,6 +17,8 @@
   "email_model_id",
   "api_keys_section",
   "maps_api_key",
+  "twilio_account_sid",
+  "twilio_auth_token",
   "twilio_api_key_sid",
   "twilio_api_secret",
   "twilio_twiml_app_sid",
@@ -89,6 +91,16 @@
    "fieldname": "maps_api_key",
    "fieldtype": "Password",
    "label": "Maps API Key"
+  },
+  {
+   "fieldname": "twilio_account_sid",
+   "fieldtype": "Data",
+   "label": "Twilio Account SID"
+  },
+  {
+   "fieldname": "twilio_auth_token",
+   "fieldtype": "Password",
+   "label": "Twilio Auth Token"
   },
   {
    "fieldname": "twilio_api_key_sid",
