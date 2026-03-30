@@ -451,7 +451,7 @@ def get_softphone_token():
     if not account_sid:
         frappe.throw("Twilio Account SID is missing. Please configure it in Poseidon Settings.")
 
-    identity = "client:nikolas_erpnext"
+    identity = "nikolas_erpnext"
     token = AccessToken(account_sid, twilio_api_key_sid, twilio_api_secret, identity=identity)
     voice_grant = VoiceGrant(outgoing_application_sid=twilio_twiml_app_sid, incoming_allow=True)
     token.add_grant(voice_grant)
