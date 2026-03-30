@@ -31,6 +31,7 @@ frappe.ui.form.on("Customer", {
         });
 
         btn.removeClass('btn-default').addClass('btn-primary');
+        btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-message"></use></svg> ${__('Send SMS')}`);
     },
 
     add_poseidon_call_button: function (frm) {
