@@ -86,3 +86,60 @@ Email Content:
             "reference_name": new_comm.name,
             "content": f"<b>Thoughts from AI:</b><br>{thoughts}"
         }).insert(ignore_permissions=True)
+
+
+@frappe.whitelist()
+def suggest_sms_reply(communication_name):
+    try:
+        inbound_sms = frappe.get_doc("Communication", communication_name)
+    except frappe.DoesNotExistError:
+        frappe.throw(_("Communication record not found"))
+
+    if inbound_sms.communication_medium != "SMS":
+        frappe.throw(_("Can only suggest replies for SMS communications"))
+
+    try:
+        settings = frappe.get_doc("Poseidon Settings")
+    except frappe.DoesNotExistError:
+        frappe.throw(_("Poseidon Settings not found"))
+
+    master_prompt = settings.master_system_prompt or ""
+    design_guidelines = settings.design_guidelines or ""
+    build_guidelines = settings.build_guidelines or ""
+    rent_guidelines = settings.rent_guidelines or ""
+    service_guidelines = settings.service_guidelines or ""
+
+    system_instruction = f"""{master_prompt}
+
+Value Stream Guidelines:
+Design: {design_guidelines}
+Build: {build_guidelines}
+Rent: {rent_guidelines}
+Service: {service_guidelines}
+"""
+
+    prompt = f"""Using the following company guidelines and value stream context, draft a professional, helpful, and concise SMS response to the message below. Keep it short as it is an SMS.
+
+Sender: {inbound_sms.sender}
+Message Content:
+{inbound_sms.content}
+"""
+
+    try:
+        from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
+        response_text, thoughts = generate_content_with_vertex_ai(prompt, system_instruction, settings)
+    except Exception as e:
+        frappe.log_error(message=str(e), title="Vertex AI SMS Generation Failed")
+        frappe.throw(_("Failed to generate AI response. Please try again."))
+
+    if thoughts:
+        frappe.get_doc({
+            "doctype": "Comment",
+            "comment_type": "Comment",
+            "reference_doctype": "Communication",
+            "reference_name": inbound_sms.name,
+            "content": f"<b>Thoughts from AI:</b><br>{thoughts}"
+        }).insert(ignore_permissions=True)
+        frappe.db.commit()
+
+    return {"status": "success", "suggested_reply": response_text}
