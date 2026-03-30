@@ -456,7 +456,8 @@ def get_softphone_token():
     voice_grant = VoiceGrant(outgoing_application_sid=twilio_twiml_app_sid, incoming_allow=True)
     token.add_grant(voice_grant)
 
-    return token.to_jwt()
+    jwt_token = token.to_jwt()
+    return jwt_token.decode("utf-8") if isinstance(jwt_token, bytes) else str(jwt_token)
 
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
