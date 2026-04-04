@@ -293,7 +293,7 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     <div v-for="comment in comments" :key="comment.name" class="comment-item d-flex border-bottom py-3" style="display: flex; padding: 15px; border-bottom: 1px solid #eee;">
                         <div class="comment-sidebar mr-4" style="width: 250px; min-width: 250px; margin-right: 20px;">
                             <div class="d-flex align-items-center mb-2" style="display: flex; align-items: center; margin-bottom: 5px;">
-                                <span class="avatar avatar-medium mr-2" :title="comment.full_name" style="margin-right: 10px;">
+                                <span class="avatar avatar-medium mr-2 comment-avatar" :title="comment.full_name" style="margin-right: 10px; flex-shrink: 0;">
                                     <img :src="comment.user_image" v-if="comment.user_image">
                                     <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: get_palette(comment.full_name) }">
                                         {{ get_abbr(comment.full_name) }}
