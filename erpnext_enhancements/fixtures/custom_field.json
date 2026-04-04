@@ -1,6 +1,17 @@
 [
  {
   "doctype": "Custom Field",
+  "name": "Project-custom_project_id",
+  "fieldname": "custom_project_id",
+  "fieldtype": "Data",
+  "label": "Project ID",
+  "insert_after": "customer",
+  "read_only": 1,
+  "dt": "Project",
+  "module": "ERPNext Enhancements"
+ },
+ {
+  "doctype": "Custom Field",
   "name": "Project-custom_calendar_datetime_start",
   "fieldname": "custom_calendar_datetime_start",
   "fieldtype": "Datetime",
