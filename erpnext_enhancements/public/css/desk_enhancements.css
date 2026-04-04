@@ -902,7 +902,6 @@ mark {
   the standard comment and attachment functionality.
 */
 .form-footer,
-.comment-box,
 .timeline {
     display: block !important;
     visibility: visible !important;
@@ -911,6 +910,11 @@ mark {
 
 .form-footer {
     padding: 15px;
+}
+
+/* Hide comment box globally as comments are now in their own tab */
+.comment-box {
+    display: none !important;
 }
 
 /* ==========================================================================
