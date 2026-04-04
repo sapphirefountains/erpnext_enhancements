@@ -239,6 +239,7 @@ fixtures = [
         "filters": [
             ["name", "in", [
                 "Expense Claim-custom_travel_trip",
+                "Project-custom_project_id",
                 "Project-custom_calendar_datetime_start",
                 "Project-custom_calendar_datetime_end",
                 "Project-google_calendar_events",
