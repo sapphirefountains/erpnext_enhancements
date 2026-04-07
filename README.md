@@ -123,11 +123,17 @@ To include Google Search Console (GSC) data alongside your GA4 data:
 
 ### Dashboard Features & Access
 
-The GA4 Dashboard provides three comprehensive data visualizations:
+The GA4 Dashboard provides comprehensive data visualizations and metrics:
 
 -   **Traffic Timeline**: A line chart displaying "Active Users" and "Sessions" metrics over the last 30 days.
 -   **Acquisition Channels**: A donut chart breaking down "Sessions" by default channel group.
 -   **Conversions**: A bar chart highlighting "Conversions" per event name.
+-   **Device Breakdown**: A donut chart displaying "Sessions" categorized by device type.
+-   **User Geography**: A bar chart visualizing "Active Users" for the top 10 countries.
+-   **Top Pages**: A data table showing the top 10 pages by "Views".
+-   **Search Performance Timeline**: A line chart showing "Clicks" and "Impressions" from Google Search Console over the last 30 days.
+-   **Top Queries**: A data table showing the top 15 Google Search queries by "Clicks".
+-   **Top Landing Pages**: A data table listing the top 15 URLs from Google Search Console, including Clicks, Impressions, CTR, and Avg. Position.
 
 **Role Permissions**:
 Read access to the dashboard is granted to the following roles:
@@ -137,4 +143,4 @@ Read access to the dashboard is granted to the following roles:
 
 ### API Rate Limits
 
-*Note: This dashboard queries multiple dimensions and metrics simultaneously. GA4 enforces quota limits on API requests (Property Quota Tokens). For standard usage, this real-time fetch is fine. However, if multiple users are refreshing this dashboard frequently, you may exhaust your GA4 API quota. If you encounter rate limit errors, consider refactoring the architecture to run a scheduled background job (e.g., daily) that saves the GA4 data to a custom DocType, and have this dashboard read from the local database instead.*
+*Note: This dashboard runs multiple concurrent requests against both the GA4 and GSC APIs simultaneously (6 GA4 requests and 3 GSC requests per load). GA4 enforces quota limits on API requests (Property Quota Tokens), and GSC has its own rate limits. While concurrent requests improve the Time to First Byte (TTFB) for single loads, if multiple users (like the sales team) are actively refreshing this dashboard frequently throughout the day, you will likely exhaust your Google API quotas. If you encounter rate limit errors, we strongly recommend refactoring the architecture to run a scheduled background job (e.g., daily) that saves the GA4 and GSC data to a custom DocType, and have this dashboard read from the local MariaDB database instead.*

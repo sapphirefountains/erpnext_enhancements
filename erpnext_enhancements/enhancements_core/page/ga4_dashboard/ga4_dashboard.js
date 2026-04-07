@@ -60,6 +60,16 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 					<div class="ga4-chart-box">
 						<div id="ga4-conversions-chart"></div>
 					</div>
+					<div class="ga4-chart-box">
+						<div id="ga4-device-chart"></div>
+					</div>
+					<div class="ga4-chart-box">
+						<div id="ga4-geo-chart"></div>
+					</div>
+					<div class="ga4-grid-item-full ga4-chart-box">
+						<h4>Top Pages (Last 30 Days)</h4>
+						<div id="ga4-top-pages-table-container"></div>
+					</div>
 
 					<div class="ga4-section-title">Search Performance</div>
 					<div class="ga4-grid-item-full ga4-chart-box">
@@ -68,6 +78,10 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 					<div class="ga4-grid-item-full ga4-chart-box">
 						<h4>Top Queries (Last 30 Days)</h4>
 						<div id="gsc-keywords-table-container"></div>
+					</div>
+					<div class="ga4-grid-item-full ga4-chart-box">
+						<h4>Top Landing Pages (Last 30 Days)</h4>
+						<div id="gsc-landing-pages-table-container"></div>
 					</div>
 				</div>
 			</div>
@@ -146,6 +160,50 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 				});
 			}
 
+			if (ga4_data.device_breakdown) {
+				new frappe.Chart(page.main.find('#ga4-device-chart')[0], {
+					data: ga4_data.device_breakdown,
+					title: "Device Breakdown (Last 30 Days)",
+					type: 'donut',
+					height: 300,
+					colors: ['#5e64ff', '#7cd6fd', '#ffa00a']
+				});
+			}
+
+			if (ga4_data.user_geography) {
+				new frappe.Chart(page.main.find('#ga4-geo-chart')[0], {
+					data: ga4_data.user_geography,
+					title: "User Geography (Last 30 Days)",
+					type: 'bar',
+					height: 300,
+					colors: ['#743ee2']
+				});
+			}
+
+			if (ga4_data.top_pages && ga4_data.top_pages.length > 0) {
+				let table_html = `<table class="gsc-table table table-bordered">
+					<thead>
+						<tr>
+							<th>Page Title</th>
+							<th>Views</th>
+						</tr>
+					</thead>
+					<tbody>`;
+				ga4_data.top_pages.forEach(row => {
+					let safe_page = frappe.utils.escape_html(row.pageTitle);
+					table_html += `
+						<tr>
+							<td>${safe_page}</td>
+							<td>${row.screenPageViews}</td>
+						</tr>`;
+				});
+				table_html += `</tbody></table>`;
+				page.main.find('#ga4-top-pages-table-container').html(table_html);
+			} else {
+				page.main.find('#ga4-top-pages-table-container').html("<p>No top pages found for the past 30 days.</p>");
+			}
+
+
 			// Render GSC Charts and Tables
 			if (gsc_data.search_timeline) {
 				new frappe.Chart(page.main.find('#gsc-timeline-chart')[0], {
@@ -184,6 +242,35 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 				page.main.find('#gsc-keywords-table-container').html(table_html);
 			} else {
 				page.main.find('#gsc-keywords-table-container').html("<p>No search queries found for the past 30 days.</p>");
+			}
+
+			if (gsc_data.top_pages && gsc_data.top_pages.length > 0) {
+				let table_html = `<table class="gsc-table table table-bordered">
+					<thead>
+						<tr>
+							<th>URL</th>
+							<th>Clicks</th>
+							<th>Impressions</th>
+							<th>CTR (%)</th>
+							<th>Avg. Position</th>
+						</tr>
+					</thead>
+					<tbody>`;
+				gsc_data.top_pages.forEach(row => {
+					let safe_url = frappe.utils.escape_html(row.page);
+					table_html += `
+						<tr>
+							<td>${safe_url}</td>
+							<td>${row.clicks}</td>
+							<td>${row.impressions}</td>
+							<td>${row.ctr}%</td>
+							<td>${row.position}</td>
+						</tr>`;
+				});
+				table_html += `</tbody></table>`;
+				page.main.find('#gsc-landing-pages-table-container').html(table_html);
+			} else {
+				page.main.find('#gsc-landing-pages-table-container').html("<p>No landing pages found for the past 30 days.</p>");
 			}
 
 		})
