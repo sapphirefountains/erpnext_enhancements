@@ -65,3 +65,39 @@ Pre-commit is configured to use the following tools for checking and formatting 
 ### License
 
 mit
+
+## Google Analytics 4 Dashboard
+
+This application includes a custom dashboard to view Google Analytics 4 (GA4) data directly within ERPNext.
+
+### Installation & Setup Instructions
+
+1. **Install the Custom App**
+   If you haven't already installed `erpnext_enhancements`, run the following bench commands from your frappe-bench directory:
+
+   ```bash
+   cd $PATH_TO_YOUR_BENCH
+   bench get-app erpnext_enhancements https://github.com/your-repo/erpnext_enhancements --branch develop
+   bench install-app erpnext_enhancements
+   ```
+   *Note: Installing this app will automatically install the `google-analytics-data` Python package via `pyproject.toml` into your bench environment.*
+
+2. **Create a Google Cloud Service Account**
+   - Go to the [Google Cloud Console](https://console.cloud.google.com/).
+   - Create a new project or select an existing one.
+   - Navigate to **IAM & Admin** > **Service Accounts**.
+   - Create a new Service Account and generate a new key (JSON format). Download this file securely.
+
+2. **Grant Access in GA4**
+   - Go to your [Google Analytics](https://analytics.google.com/) property.
+   - Navigate to **Admin** > **Property Access Management**.
+   - Add the email address of the Service Account you just created and assign it the **Viewer** role.
+
+3. **Configure ERPNext**
+   - In your ERPNext instance, search for **GA4 Settings** (this is a Single DocType).
+   - In the **GA4 Property ID** field, enter your GA4 Property ID (found in GA4 Admin > Property Settings).
+   - In the **Credentials JSON** field, attach the JSON key file you downloaded from Google Cloud. **Ensure you check the 'Is Private' checkbox** when uploading so it is placed securely in the private files directory.
+   - Save the document.
+
+4. **Access the Dashboard**
+   - Once configured, you can access the dashboard by searching for **ga4-dashboard** in the ERPNext global search bar or navigating directly to `/app/ga4-dashboard`.
