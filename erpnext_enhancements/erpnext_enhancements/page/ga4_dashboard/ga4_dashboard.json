@@ -1,0 +1,18 @@
+{
+ "creation": "2024-05-24 10:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "modified": "2024-05-24 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "ERPNext Enhancements",
+ "name": "ga4-dashboard",
+ "owner": "Administrator",
+ "page_name": "ga4-dashboard",
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "GA4 Dashboard"
+}

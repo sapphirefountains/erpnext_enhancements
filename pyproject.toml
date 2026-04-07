@@ -9,6 +9,7 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     "google-generativeai",
+    "google-analytics-data",
     # "frappe~=16.0.0" # Installed and managed by bench.
 ]
 
