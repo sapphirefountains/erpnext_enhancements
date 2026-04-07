@@ -10,6 +10,8 @@ dynamic = ["version"]
 dependencies = [
     "google-generativeai",
     "google-analytics-data",
+    "google-api-python-client",
+    "google-auth",
     # "frappe~=16.0.0" # Installed and managed by bench.
 ]
 

@@ -9,6 +9,8 @@ from google.analytics.data_v1beta.types import (
 	Metric,
 	RunReportRequest,
 )
+from googleapiclient.discovery import build
+import datetime as dt
 
 @frappe.whitelist()
 def get_ga4_data():
@@ -147,3 +149,118 @@ def get_ga4_data():
 	except Exception as e:
 		frappe.log_error(message=frappe.get_traceback(), title="GA4 API Error")
 		frappe.throw(f"Failed to fetch GA4 data: {str(e)}")
+
+@frappe.whitelist()
+def get_gsc_data():
+	"""
+	Retrieves Google Search Console (GSC) 'clicks' and 'impressions' for Search Performance Timeline,
+	and 'clicks', 'impressions', 'ctr', and 'position' for Top Queries for the past 30 days.
+	It fetches the property URL and credentials file path from the 'GA4 Settings' Single DocType.
+
+	Returns:
+		dict: A dictionary containing 'search_timeline' (formatted for Frappe Charts) and 'top_queries' (formatted for a DataTable).
+
+	Raises:
+		frappe.ValidationError: If GSC settings are not configured or credentials file is missing.
+		Exception: If authentication or the GSC API call fails.
+	"""
+	ga4_settings = frappe.get_doc("GA4 Settings")
+
+	if not ga4_settings.gsc_property_url:
+		frappe.throw("GSC Property URL is missing in GA4 Settings.")
+
+	if not ga4_settings.credentials_json:
+		frappe.throw("Credentials JSON file is missing in GA4 Settings.")
+
+	credentials_url = ga4_settings.credentials_json
+	if not credentials_url.startswith('/private/files/'):
+		frappe.throw("The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked.")
+
+	credentials_file = credentials_url.split('/')[-1]
+	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
+
+	if not os.path.exists(credentials_path):
+		frappe.throw(f"Credentials file not found at: {credentials_path}")
+
+	try:
+		credentials = service_account.Credentials.from_service_account_file(credentials_path)
+		service = build("searchconsole", "v1", credentials=credentials)
+
+		today = dt.date.today()
+		start_date = (today - dt.timedelta(days=30)).strftime("%Y-%m-%d")
+		end_date = today.strftime("%Y-%m-%d")
+
+		# 1. Timeline Data (Clicks and Impressions by Date)
+		request_timeline = {
+			"startDate": start_date,
+			"endDate": end_date,
+			"dimensions": ["date"],
+			"rowLimit": 31
+		}
+
+		response_timeline = service.searchanalytics().query(
+			siteUrl=ga4_settings.gsc_property_url,
+			body=request_timeline
+		).execute()
+
+		timeline_labels = []
+		timeline_clicks = []
+		timeline_impressions = []
+
+		rows = response_timeline.get("rows", [])
+		for row in rows:
+			timeline_labels.append(row["keys"][0])
+			timeline_clicks.append(row["clicks"])
+			timeline_impressions.append(row["impressions"])
+
+		combined_timeline = sorted(zip(timeline_labels, timeline_clicks, timeline_impressions))
+		if combined_timeline:
+			timeline_labels, timeline_clicks, timeline_impressions = zip(*combined_timeline)
+			timeline_labels = list(timeline_labels)
+			timeline_clicks = list(timeline_clicks)
+			timeline_impressions = list(timeline_impressions)
+
+		# 2. Keyword Data (Top 15 Queries)
+		request_keywords = {
+			"startDate": start_date,
+			"endDate": end_date,
+			"dimensions": ["query"],
+			"rowLimit": 15
+		}
+
+		response_keywords = service.searchanalytics().query(
+			siteUrl=ga4_settings.gsc_property_url,
+			body=request_keywords
+		).execute()
+
+		top_queries = []
+		kw_rows = response_keywords.get("rows", [])
+		for row in kw_rows:
+			top_queries.append({
+				"query": row["keys"][0],
+				"clicks": row["clicks"],
+				"impressions": row["impressions"],
+				"ctr": round(row["ctr"] * 100, 2), # Convert to percentage
+				"position": round(row["position"], 1)
+			})
+
+		return {
+			"search_timeline": {
+				"labels": timeline_labels,
+				"datasets": [
+					{
+						"name": "Clicks",
+						"values": timeline_clicks
+					},
+					{
+						"name": "Impressions",
+						"values": timeline_impressions
+					}
+				]
+			},
+			"top_queries": top_queries
+		}
+
+	except Exception as e:
+		frappe.log_error(message=frappe.get_traceback(), title="GSC API Error")
+		frappe.throw(f"Failed to fetch GSC data: {str(e)}")
