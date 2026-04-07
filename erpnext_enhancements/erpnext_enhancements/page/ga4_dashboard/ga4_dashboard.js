@@ -12,32 +12,77 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 			<div id="ga4-loading" class="text-center" style="padding: 20px;">
 				<p>Loading GA4 Data...</p>
 			</div>
-			<div id="ga4-chart-container" style="display: none;"></div>
+			<div id="ga4-dashboard-grid" style="display: none; padding: 15px;">
+				<style>
+					.ga4-grid-container {
+						display: grid;
+						grid-template-columns: 1fr 1fr;
+						grid-gap: 20px;
+					}
+					.ga4-grid-item-full {
+						grid-column: 1 / -1;
+					}
+					.ga4-chart-box {
+						background: var(--card-bg);
+						border: 1px solid var(--border-color);
+						border-radius: var(--border-radius);
+						padding: 15px;
+					}
+				</style>
+				<div class="ga4-grid-container">
+					<div class="ga4-grid-item-full ga4-chart-box">
+						<div id="ga4-traffic-chart"></div>
+					</div>
+					<div class="ga4-chart-box">
+						<div id="ga4-acquisition-chart"></div>
+					</div>
+					<div class="ga4-chart-box">
+						<div id="ga4-conversions-chart"></div>
+					</div>
+				</div>
+			</div>
 		</div>
 	`;
 	$(dashboard_html).appendTo(page.main);
 
 	page.main.find('#ga4-loading').show();
-	page.main.find('#ga4-chart-container').hide();
+	page.main.find('#ga4-dashboard-grid').hide();
 
 	frappe.call({
 		method: 'erpnext_enhancements.api.analytics.get_ga4_data',
 		callback: function(r) {
 			page.main.find('#ga4-loading').hide();
 
-			if (r.message && r.message.labels && r.message.datasets) {
-				page.main.find('#ga4-chart-container').show();
+			if (r.message && r.message.traffic_timeline && r.message.acquisition_channels && r.message.conversions) {
+				page.main.find('#ga4-dashboard-grid').show();
 
-				let chart = new frappe.Chart(page.main.find('#ga4-chart-container')[0], {
-					data: {
-						labels: r.message.labels,
-						datasets: r.message.datasets
-					},
-					title: "Active Users (Last 30 Days)",
+				// Traffic Timeline Chart (Line)
+				new frappe.Chart(page.main.find('#ga4-traffic-chart')[0], {
+					data: r.message.traffic_timeline,
+					title: "Traffic Timeline (Last 30 Days)",
 					type: 'line',
 					height: 300,
-					colors: ['#7cd6fd']
+					colors: ['#7cd6fd', '#743ee2']
 				});
+
+				// Acquisition Channels Chart (Donut/Pie)
+				new frappe.Chart(page.main.find('#ga4-acquisition-chart')[0], {
+					data: r.message.acquisition_channels,
+					title: "Acquisition Channels (Last 30 Days)",
+					type: 'donut',
+					height: 300,
+					colors: ['#7cd6fd', '#743ee2', '#5e64ff', '#28a745', '#ff5858', '#ffa00a']
+				});
+
+				// Conversions Chart (Bar)
+				new frappe.Chart(page.main.find('#ga4-conversions-chart')[0], {
+					data: r.message.conversions,
+					title: "Conversions (Last 30 Days)",
+					type: 'bar',
+					height: 300,
+					colors: ['#28a745']
+				});
+
 			} else {
 				frappe.msgprint(__('No data returned from GA4 API.'));
 			}
