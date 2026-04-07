@@ -99,6 +99,25 @@ This application includes a custom dashboard to view Google Analytics 4 (GA4) da
    - In the **Credentials JSON** field, attach the JSON key file you downloaded from Google Cloud. **Ensure you check the 'Is Private' checkbox** when uploading so it is placed securely in the private files directory.
    - Save the document.
 
+### Google Search Console Integration
+
+To include Google Search Console (GSC) data alongside your GA4 data:
+
+1. **Grant Access in GSC**
+   - Go to your [Google Search Console](https://search.google.com/search-console) dashboard.
+   - Select your property.
+   - Navigate to **Settings** > **Users and permissions**.
+   - Click **Add User**.
+   - Enter the same Service Account email address you created for GA4.
+   - Set the permission level to **Restricted** or **Full**.
+   - Click **Add**.
+
+2. **Configure ERPNext**
+   - In your ERPNext instance, search for **GA4 Settings**.
+   - In the **GSC Property URL** field, enter your exact property URL as it appears in GSC (e.g., `https://www.example.com/` or `sc-domain:example.com`). This must perfectly match the property format in GSC.
+   - Ensure the existing Service Account Credentials JSON is attached.
+   - Save the document.
+
 4. **Access the Dashboard**
    - Once configured, you can access the dashboard by searching for **ga4-dashboard** in the ERPNext global search bar or navigating directly to `/app/ga4-dashboard`.
 

@@ -5,6 +5,7 @@
  "engine": "InnoDB",
  "field_order": [
   "ga4_property_id",
+  "gsc_property_url",
   "credentials_json"
  ],
  "fields": [
@@ -13,6 +14,11 @@
    "fieldtype": "Data",
    "label": "GA4 Property ID",
    "reqd": 1
+  },
+  {
+   "fieldname": "gsc_property_url",
+   "fieldtype": "Data",
+   "label": "GSC Property URL"
   },
   {
    "fieldname": "credentials_json",
