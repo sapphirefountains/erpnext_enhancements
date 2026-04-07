@@ -101,3 +101,21 @@ This application includes a custom dashboard to view Google Analytics 4 (GA4) da
 
 4. **Access the Dashboard**
    - Once configured, you can access the dashboard by searching for **ga4-dashboard** in the ERPNext global search bar or navigating directly to `/app/ga4-dashboard`.
+
+### Dashboard Features & Access
+
+The GA4 Dashboard provides three comprehensive data visualizations:
+
+-   **Traffic Timeline**: A line chart displaying "Active Users" and "Sessions" metrics over the last 30 days.
+-   **Acquisition Channels**: A donut chart breaking down "Sessions" by default channel group.
+-   **Conversions**: A bar chart highlighting "Conversions" per event name.
+
+**Role Permissions**:
+Read access to the dashboard is granted to the following roles:
+- System Manager
+- Sales User
+- Sales Manager
+
+### API Rate Limits
+
+*Note: This dashboard queries multiple dimensions and metrics simultaneously. GA4 enforces quota limits on API requests (Property Quota Tokens). For standard usage, this real-time fetch is fine. However, if multiple users are refreshing this dashboard frequently, you may exhaust your GA4 API quota. If you encounter rate limit errors, consider refactoring the architecture to run a scheduled background job (e.g., daily) that saves the GA4 data to a custom DocType, and have this dashboard read from the local database instead.*
