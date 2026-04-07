@@ -1,5 +1,6 @@
 import frappe
 import os
+import concurrent.futures
 from datetime import datetime
 from google.oauth2 import service_account
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -50,20 +51,86 @@ def get_ga4_data():
 		credentials = service_account.Credentials.from_service_account_file(credentials_path)
 		client = BetaAnalyticsDataClient(credentials=credentials)
 
-		# 1. Traffic Timeline
-		req_traffic = RunReportRequest(
-			property=f"properties/{ga4_settings.ga4_property_id}",
-			dimensions=[Dimension(name="date")],
-			metrics=[Metric(name="activeUsers"), Metric(name="sessions")],
-			date_ranges=[DateRange(start_date="30daysAgo", end_date="today")],
-		)
-		res_traffic = client.run_report(req_traffic)
+		property_id = ga4_settings.ga4_property_id
+		date_range = DateRange(start_date="30daysAgo", end_date="today")
 
+		def fetch_traffic():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="date")],
+				metrics=[Metric(name="activeUsers"), Metric(name="sessions")],
+				date_ranges=[date_range],
+			)
+			return client.run_report(req)
+
+		def fetch_acquisition():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="sessionDefaultChannelGroup")],
+				metrics=[Metric(name="sessions")],
+				date_ranges=[date_range],
+			)
+			return client.run_report(req)
+
+		def fetch_conversions():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="eventName")],
+				metrics=[Metric(name="conversions")],
+				date_ranges=[date_range],
+			)
+			return client.run_report(req)
+
+		def fetch_top_pages():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="pageTitle")],
+				metrics=[Metric(name="screenPageViews")],
+				date_ranges=[date_range],
+				order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="screenPageViews"), desc=True)],
+				limit=10,
+			)
+			return client.run_report(req)
+
+		def fetch_device_breakdown():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="deviceCategory")],
+				metrics=[Metric(name="sessions")],
+				date_ranges=[date_range],
+			)
+			return client.run_report(req)
+
+		def fetch_user_geography():
+			req = RunReportRequest(
+				property=f"properties/{property_id}",
+				dimensions=[Dimension(name="country")],
+				metrics=[Metric(name="activeUsers")],
+				date_ranges=[date_range],
+				order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="activeUsers"), desc=True)],
+				limit=10,
+			)
+			return client.run_report(req)
+
+		with concurrent.futures.ThreadPoolExecutor() as executor:
+			future_traffic = executor.submit(fetch_traffic)
+			future_acq = executor.submit(fetch_acquisition)
+			future_conv = executor.submit(fetch_conversions)
+			future_pages = executor.submit(fetch_top_pages)
+			future_device = executor.submit(fetch_device_breakdown)
+			future_geo = executor.submit(fetch_user_geography)
+
+			res_traffic = future_traffic.result()
+			res_acq = future_acq.result()
+			res_conv = future_conv.result()
+			res_pages = future_pages.result()
+			res_device = future_device.result()
+			res_geo = future_geo.result()
+
+		# Process 1. Traffic Timeline
 		traffic_labels = []
 		traffic_active_users = []
 		traffic_sessions = []
-
-		# GA4 returns dates like '20230520'
 		for row in res_traffic.rows:
 			date_str = row.dimension_values[0].value
 			try:
@@ -74,7 +141,6 @@ def get_ga4_data():
 			traffic_active_users.append(int(row.metric_values[0].value))
 			traffic_sessions.append(int(row.metric_values[1].value))
 
-		# Sort by date
 		combined_traffic = sorted(zip(traffic_labels, traffic_active_users, traffic_sessions))
 		if combined_traffic:
 			traffic_labels, traffic_active_users, traffic_sessions = zip(*combined_traffic)
@@ -82,67 +148,66 @@ def get_ga4_data():
 			traffic_active_users = list(traffic_active_users)
 			traffic_sessions = list(traffic_sessions)
 
-		# 2. Acquisition Channels
-		req_acq = RunReportRequest(
-			property=f"properties/{ga4_settings.ga4_property_id}",
-			dimensions=[Dimension(name="sessionDefaultChannelGroup")],
-			metrics=[Metric(name="sessions")],
-			date_ranges=[DateRange(start_date="30daysAgo", end_date="today")],
-		)
-		res_acq = client.run_report(req_acq)
-
+		# Process 2. Acquisition Channels
 		acq_labels = []
 		acq_sessions = []
 		for row in res_acq.rows:
 			acq_labels.append(row.dimension_values[0].value)
 			acq_sessions.append(int(row.metric_values[0].value))
 
-		# 3. Conversions
-		req_conv = RunReportRequest(
-			property=f"properties/{ga4_settings.ga4_property_id}",
-			dimensions=[Dimension(name="eventName")],
-			metrics=[Metric(name="conversions")],
-			date_ranges=[DateRange(start_date="30daysAgo", end_date="today")],
-		)
-		res_conv = client.run_report(req_conv)
-
+		# Process 3. Conversions
 		conv_labels = []
 		conv_conversions = []
 		for row in res_conv.rows:
 			conv_labels.append(row.dimension_values[0].value)
 			conv_conversions.append(int(row.metric_values[0].value))
 
+		# Process 4. Top Pages
+		top_pages = []
+		for row in res_pages.rows:
+			top_pages.append({
+				"pageTitle": row.dimension_values[0].value,
+				"screenPageViews": int(row.metric_values[0].value)
+			})
+
+		# Process 5. Device Breakdown
+		device_labels = []
+		device_sessions = []
+		for row in res_device.rows:
+			device_labels.append(row.dimension_values[0].value)
+			device_sessions.append(int(row.metric_values[0].value))
+
+		# Process 6. User Geography
+		geo_labels = []
+		geo_users = []
+		for row in res_geo.rows:
+			geo_labels.append(row.dimension_values[0].value)
+			geo_users.append(int(row.metric_values[0].value))
+
 		return {
 			"traffic_timeline": {
 				"labels": traffic_labels,
 				"datasets": [
-					{
-						"name": "Active Users",
-						"values": traffic_active_users
-					},
-					{
-						"name": "Sessions",
-						"values": traffic_sessions
-					}
+					{"name": "Active Users", "values": traffic_active_users},
+					{"name": "Sessions", "values": traffic_sessions}
 				]
 			},
 			"acquisition_channels": {
 				"labels": acq_labels,
-				"datasets": [
-					{
-						"name": "Sessions",
-						"values": acq_sessions
-					}
-				]
+				"datasets": [{"name": "Sessions", "values": acq_sessions}]
 			},
 			"conversions": {
 				"labels": conv_labels,
-				"datasets": [
-					{
-						"name": "Conversions",
-						"values": conv_conversions
-					}
-				]
+				"datasets": [{"name": "Conversions", "values": conv_conversions}]
+			},
+			"top_pages": top_pages,
+			"device_breakdown": {
+				"labels": device_labels,
+				"datasets": [{"name": "Sessions", "values": device_sessions}]
+			},
+			"user_geography": {
+				"labels": geo_labels,
+				"datasets": [{"name": "Active Users", "values": geo_users}]
 			}
 		}
 
@@ -190,19 +255,54 @@ def get_gsc_data():
 		start_date = (today - dt.timedelta(days=30)).strftime("%Y-%m-%d")
 		end_date = today.strftime("%Y-%m-%d")
 
+		def fetch_timeline():
+			request_timeline = {
+				"startDate": start_date,
+				"endDate": end_date,
+				"dimensions": ["date"],
+				"rowLimit": 31
+			}
+			return service.searchanalytics().query(
+				siteUrl=ga4_settings.gsc_property_url,
+				body=request_timeline
+			).execute()
+
+		def fetch_keywords():
+			request_keywords = {
+				"startDate": start_date,
+				"endDate": end_date,
+				"dimensions": ["query"],
+				"rowLimit": 15
+			}
+			return service.searchanalytics().query(
+				siteUrl=ga4_settings.gsc_property_url,
+				body=request_keywords
+			).execute()
+
+		def fetch_landing_pages():
+			request_pages = {
+				"startDate": start_date,
+				"endDate": end_date,
+				"dimensions": ["page"],
+				"rowLimit": 15
+			}
+			# GSC API doesn't have an orderBy parameter for searchanalytics.query directly via API.
+			# By default, rows are grouped by dimensions and ordered by clicks descending.
+			return service.searchanalytics().query(
+				siteUrl=ga4_settings.gsc_property_url,
+				body=request_pages
+			).execute()
+
+		with concurrent.futures.ThreadPoolExecutor() as executor:
+			future_timeline = executor.submit(fetch_timeline)
+			future_keywords = executor.submit(fetch_keywords)
+			future_pages = executor.submit(fetch_landing_pages)
+
+			response_timeline = future_timeline.result()
+			response_keywords = future_keywords.result()
+			response_pages = future_pages.result()
+
 		# 1. Timeline Data (Clicks and Impressions by Date)
-		request_timeline = {
-			"startDate": start_date,
-			"endDate": end_date,
-			"dimensions": ["date"],
-			"rowLimit": 31
-		}
-
-		response_timeline = service.searchanalytics().query(
-			siteUrl=ga4_settings.gsc_property_url,
-			body=request_timeline
-		).execute()
-
 		timeline_labels = []
 		timeline_clicks = []
 		timeline_impressions = []
@@ -221,18 +321,6 @@ def get_gsc_data():
 			timeline_impressions = list(timeline_impressions)
 
 		# 2. Keyword Data (Top 15 Queries)
-		request_keywords = {
-			"startDate": start_date,
-			"endDate": end_date,
-			"dimensions": ["query"],
-			"rowLimit": 15
-		}
-
-		response_keywords = service.searchanalytics().query(
-			siteUrl=ga4_settings.gsc_property_url,
-			body=request_keywords
-		).execute()
-
 		top_queries = []
 		kw_rows = response_keywords.get("rows", [])
 		for row in kw_rows:
@@ -241,6 +329,18 @@ def get_gsc_data():
 				"clicks": row["clicks"],
 				"impressions": row["impressions"],
 				"ctr": round(row["ctr"] * 100, 2), # Convert to percentage
+				"position": round(row["position"], 1)
+			})
+
+		# 3. Landing Pages Data (Top 15 URLs)
+		top_pages = []
+		page_rows = response_pages.get("rows", [])
+		for row in page_rows:
+			top_pages.append({
+				"page": row["keys"][0],
+				"clicks": row["clicks"],
+				"impressions": row["impressions"],
+				"ctr": round(row["ctr"] * 100, 2),
 				"position": round(row["position"], 1)
 			})
 
@@ -258,7 +358,8 @@ def get_gsc_data():
 					}
 				]
 			},
-			"top_queries": top_queries
+			"top_queries": top_queries,
+			"top_pages": top_pages
 		}
 
 	except Exception as e:
