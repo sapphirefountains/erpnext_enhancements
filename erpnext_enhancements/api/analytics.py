@@ -9,6 +9,7 @@ from google.analytics.data_v1beta.types import (
 	Dimension,
 	Metric,
 	RunReportRequest,
+	OrderBy,
 )
 from googleapiclient.discovery import build
 import datetime as dt
@@ -30,21 +31,21 @@ def get_ga4_data():
 	ga4_settings = frappe.get_doc("GA4 Settings")
 
 	if not ga4_settings.ga4_property_id:
-		frappe.throw("GA4 Property ID is missing in GA4 Settings.")
+		return {"error": "GA4 Property ID is missing in GA4 Settings."}
 
 	if not ga4_settings.credentials_json:
-		frappe.throw("Credentials JSON file is missing in GA4 Settings.")
+		return {"error": "Credentials JSON file is missing in GA4 Settings."}
 
 	credentials_url = ga4_settings.credentials_json
 	if not credentials_url.startswith('/private/files/'):
-		frappe.throw("The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked.")
+		return {"error": "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."}
 
 	# Extract filename correctly
 	credentials_file = credentials_url.split('/')[-1]
 	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
 
 	if not os.path.exists(credentials_path):
-		frappe.throw(f"Credentials file not found at: {credentials_path}")
+		return {"error": f"Credentials file not found at: {credentials_path}"}
 
 	try:
 		# Use service account credentials explicitly to avoid modifying os.environ
@@ -213,7 +214,7 @@ def get_ga4_data():
 
 	except Exception as e:
 		frappe.log_error(message=frappe.get_traceback(), title="GA4 API Error")
-		frappe.throw(f"Failed to fetch GA4 data: {str(e)}")
+		return {"error": f"Failed to fetch GA4 data: {str(e)}"}
 
 @frappe.whitelist()
 def get_gsc_data():
@@ -232,20 +233,20 @@ def get_gsc_data():
 	ga4_settings = frappe.get_doc("GA4 Settings")
 
 	if not ga4_settings.gsc_property_url:
-		frappe.throw("GSC Property URL is missing in GA4 Settings.")
+		return {"error": "GSC Property URL is missing in GA4 Settings."}
 
 	if not ga4_settings.credentials_json:
-		frappe.throw("Credentials JSON file is missing in GA4 Settings.")
+		return {"error": "Credentials JSON file is missing in GA4 Settings."}
 
 	credentials_url = ga4_settings.credentials_json
 	if not credentials_url.startswith('/private/files/'):
-		frappe.throw("The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked.")
+		return {"error": "The Credentials JSON file must be uploaded as a Private file. Please re-upload it with 'Is Private' checked."}
 
 	credentials_file = credentials_url.split('/')[-1]
 	credentials_path = frappe.get_site_path('private', 'files', credentials_file)
 
 	if not os.path.exists(credentials_path):
-		frappe.throw(f"Credentials file not found at: {credentials_path}")
+		return {"error": f"Credentials file not found at: {credentials_path}"}
 
 	try:
 		credentials = service_account.Credentials.from_service_account_file(credentials_path)
@@ -364,4 +365,4 @@ def get_gsc_data():
 
 	except Exception as e:
 		frappe.log_error(message=frappe.get_traceback(), title="GSC API Error")
-		frappe.throw(f"Failed to fetch GSC data: {str(e)}")
+		return {"error": f"Failed to fetch GSC data: {str(e)}"}
