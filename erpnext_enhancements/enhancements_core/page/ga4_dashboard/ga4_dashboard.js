@@ -51,35 +51,37 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 				</style>
 				<div class="ga4-grid-container">
 					<div class="ga4-section-title">Google Analytics 4</div>
-					<div class="ga4-grid-item-full ga4-chart-box">
+					<div id="ga4-error-container" class="ga4-grid-item-full text-danger" style="display: none; padding: 15px; border: 1px solid #ffb8b8; background-color: #fff0f0; border-radius: 4px;"></div>
+					<div class="ga4-grid-item-full ga4-chart-box" id="ga4-traffic-chart-box">
 						<div id="ga4-traffic-chart"></div>
 					</div>
-					<div class="ga4-chart-box">
+					<div class="ga4-chart-box" id="ga4-acquisition-chart-box">
 						<div id="ga4-acquisition-chart"></div>
 					</div>
-					<div class="ga4-chart-box">
+					<div class="ga4-chart-box" id="ga4-conversions-chart-box">
 						<div id="ga4-conversions-chart"></div>
 					</div>
-					<div class="ga4-chart-box">
+					<div class="ga4-chart-box" id="ga4-device-chart-box">
 						<div id="ga4-device-chart"></div>
 					</div>
-					<div class="ga4-chart-box">
+					<div class="ga4-chart-box" id="ga4-geo-chart-box">
 						<div id="ga4-geo-chart"></div>
 					</div>
-					<div class="ga4-grid-item-full ga4-chart-box">
+					<div class="ga4-grid-item-full ga4-chart-box" id="ga4-top-pages-box">
 						<h4>Top Pages (Last 30 Days)</h4>
 						<div id="ga4-top-pages-table-container"></div>
 					</div>
 
 					<div class="ga4-section-title">Search Performance</div>
-					<div class="ga4-grid-item-full ga4-chart-box">
+					<div id="gsc-error-container" class="ga4-grid-item-full text-danger" style="display: none; padding: 15px; border: 1px solid #ffb8b8; background-color: #fff0f0; border-radius: 4px;"></div>
+					<div class="ga4-grid-item-full ga4-chart-box" id="gsc-timeline-chart-box">
 						<div id="gsc-timeline-chart"></div>
 					</div>
-					<div class="ga4-grid-item-full ga4-chart-box">
+					<div class="ga4-grid-item-full ga4-chart-box" id="gsc-keywords-box">
 						<h4>Top Queries (Last 30 Days)</h4>
 						<div id="gsc-keywords-table-container"></div>
 					</div>
-					<div class="ga4-grid-item-full ga4-chart-box">
+					<div class="ga4-grid-item-full ga4-chart-box" id="gsc-landing-pages-box">
 						<h4>Top Landing Pages (Last 30 Days)</h4>
 						<div id="gsc-landing-pages-table-container"></div>
 					</div>
@@ -99,11 +101,11 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 				if (r.message && !r.exc) {
 					resolve(r.message);
 				} else {
-					reject(r.exc || "Unknown GA4 error");
+					resolve({error: r.exc || "Unknown GA4 error"});
 				}
 			},
 			error: function(err) {
-				reject(err);
+				resolve({error: err});
 			}
 		});
 	});
@@ -115,11 +117,11 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 				if (r.message && !r.exc) {
 					resolve(r.message);
 				} else {
-					reject(r.exc || "Unknown GSC error");
+					resolve({error: r.exc || "Unknown GSC error"});
 				}
 			},
 			error: function(err) {
-				reject(err);
+				resolve({error: err});
 			}
 		});
 	});
@@ -130,7 +132,10 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 			page.main.find('#ga4-dashboard-grid').show();
 
 			// Render GA4 Charts
-			if (ga4_data.traffic_timeline) {
+			if (ga4_data.error) {
+				page.main.find('#ga4-error-container').html(`<strong>GA4 Error:</strong> ${frappe.utils.escape_html(typeof ga4_data.error === 'string' ? ga4_data.error : JSON.stringify(ga4_data.error))}`).show();
+				page.main.find('#ga4-traffic-chart-box, #ga4-acquisition-chart-box, #ga4-conversions-chart-box, #ga4-device-chart-box, #ga4-geo-chart-box, #ga4-top-pages-box').hide();
+			} else if (ga4_data.traffic_timeline) {
 				new frappe.Chart(page.main.find('#ga4-traffic-chart')[0], {
 					data: ga4_data.traffic_timeline,
 					title: "Traffic Timeline (Last 30 Days)",
@@ -205,7 +210,10 @@ frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 
 
 			// Render GSC Charts and Tables
-			if (gsc_data.search_timeline) {
+			if (gsc_data.error) {
+				page.main.find('#gsc-error-container').html(`<strong>GSC Error:</strong> ${frappe.utils.escape_html(typeof gsc_data.error === 'string' ? gsc_data.error : JSON.stringify(gsc_data.error))}`).show();
+				page.main.find('#gsc-timeline-chart-box, #gsc-keywords-box, #gsc-landing-pages-box').hide();
+			} else if (gsc_data.search_timeline) {
 				new frappe.Chart(page.main.find('#gsc-timeline-chart')[0], {
 					data: gsc_data.search_timeline,
 					title: "Search Performance Timeline (Last 30 Days)",
