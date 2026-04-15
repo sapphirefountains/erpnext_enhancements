@@ -178,24 +178,6 @@ header.navbar {
     box-shadow: 0 4px 10px var(--sapphire-header-shadow) !important;
 }
 
-/* 6. LINK FIELD NAVIGATION (Enhancement) */
-/* Make text inside Link Fields clickable and look like a link */
-/* Using !important to ensure it overrides any standard form-control styles */
-.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]),
-.frappe-control[data-fieldtype="Dynamic Link"] input:not([readonly]):not([disabled]) {
-    cursor: pointer !important;
-}
-
-/* Apply underline and color on hover to indicate clickability */
-.frappe-control[data-fieldtype="Link"] input:not([readonly]):not([disabled]):hover,
-.frappe-control[data-fieldtype="Dynamic Link"] input:not([readonly]):not([disabled]):hover {
-    text-decoration: underline !important;
-    text-decoration-color: #007bff !important;
-    /* Blue underline */
-    color: #007bff !important;
-    /* Blue text */
-}
-
 /* 7. OPEN LINK BUTTON ENHANCEMENTS */
 /* Target both Link and Dynamic Link fields */
 .frappe-control[data-fieldtype="Link"] .btn-open,
