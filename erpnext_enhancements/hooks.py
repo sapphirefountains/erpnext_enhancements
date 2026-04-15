@@ -201,11 +201,6 @@ doc_events = {
 	"Communication": {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
 	},
-    # Triton Integration Hook
-    "*": {
-        "on_update": "erpnext_enhancements.integrations.triton_bridge.hook_on_update",
-        "on_trash": "erpnext_enhancements.integrations.triton_bridge.hook_on_trash"
-    }
 }
 
 # doc_events = {
