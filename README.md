@@ -33,9 +33,6 @@ Enhancements to the standard Project module:
 - **Safe Form Drafts**: Automatically saves unsaved form data to a temporary "User Form Draft" container. If a user navigates away or crashes, they can restore their work upon returning to the form.
 - **Global Navigation Guard**: Warns users if they try to navigate away with unsaved changes.
 
-#### 6. Integrations
-- **Triton Bridge**: A background integration that syncs document updates to an external Triton service for vector embedding and AI indexing.
-
 ### Installation
 
 You can install this app using the [bench](https://github.com/frappe/bench) CLI:
