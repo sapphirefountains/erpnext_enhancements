@@ -192,23 +192,11 @@ doctype_calendar_js = {
 doc_events = {
 	"Task": {
 		"on_update": [
-			"erpnext_enhancements.calendar_sync.sync_doctype_to_event",
 			"erpnext_enhancements.tasks.generate_next_task",
 		],
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
 	},
 	"Project": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
 		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
-	},
-	"Event": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
-	},
-	"ToDo": {
-		"on_update": "erpnext_enhancements.calendar_sync.sync_doctype_to_event",
-		"on_trash": "erpnext_enhancements.calendar_sync.delete_event_from_google",
 	},
 	"Communication": {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",

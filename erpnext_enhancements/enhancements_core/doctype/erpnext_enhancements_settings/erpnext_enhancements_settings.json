@@ -4,33 +4,10 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "google_calendar_section",
-  "google_calendar_sync_map",
-  "default_google_calendar_config",
   "project_reminders_section",
   "project_reminder_emails"
  ],
  "fields": [
-  {
-   "fieldname": "google_calendar_section",
-   "fieldtype": "Section Break",
-   "label": "Google Calendar Sync"
-  },
-  {
-   "fieldname": "google_calendar_sync_map",
-   "fieldtype": "Table",
-   "label": "Sync Configuration",
-   "options": "Google Calendar Sync Map",
-   "description": "Map DocTypes to one or more Google Calendars."
-  },
-  {
-   "fieldname": "default_google_calendar_config",
-   "fieldtype": "Link",
-   "label": "Shared Google Calendar Configuration (Legacy)",
-   "options": "Google Calendar",
-   "description": "Deprecated. Migrated to Sync Configuration.",
-   "hidden": 1
-  },
   {
    "fieldname": "project_reminders_section",
    "fieldtype": "Section Break",

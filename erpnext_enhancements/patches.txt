@@ -4,12 +4,10 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
-erpnext_enhancements.patches.migrate_google_calendar_sync
 erpnext_enhancements.patches.migrate_todo_dates
 erpnext_enhancements.patches.fix_todo_date_props
 erpnext_enhancements.patches.add_project_procurement_buttons
 erpnext_enhancements.patches.reorder_procurement_buttons
-erpnext_enhancements.patches.add_google_calendar_events_table
 erpnext_enhancements.patches.reset_travel_child_table_fields
 erpnext_enhancements.patches.add_item_purchase_links
 erpnext_enhancements.patches.create_home_workspace
