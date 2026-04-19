@@ -1,0 +1,49 @@
+{
+ "creation": "2024-05-22 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "question",
+  "answer",
+  "selection",
+  "other_details"
+ ],
+ "fields": [
+  {
+   "fieldname": "question",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Question",
+   "read_only": 1
+  },
+  {
+   "fieldname": "answer",
+   "fieldtype": "Long Text",
+   "in_list_view": 1,
+   "label": "Answer"
+  },
+  {
+   "fieldname": "selection",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Selection"
+  },
+  {
+   "depends_on": "eval:doc.selection == 'Other'",
+   "fieldname": "other_details",
+   "fieldtype": "Data",
+   "label": "Other Details"
+  }
+ ],
+ "modified": "2024-05-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Sapphire Maintenance Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

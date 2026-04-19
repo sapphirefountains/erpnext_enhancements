@@ -1,0 +1,55 @@
+{
+ "creation": "2024-05-22 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sequence",
+  "question_prompt",
+  "field_type",
+  "options",
+  "is_mandatory"
+ ],
+ "fields": [
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "question_prompt",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Question Prompt"
+  },
+  {
+   "fieldname": "field_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Field Type",
+   "options": "Data\nLong Text\nSelect\nCheck"
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Text",
+   "label": "Options"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "label": "Is Mandatory"
+  }
+ ],
+ "modified": "2024-05-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Sapphire Template Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

@@ -118,3 +118,34 @@ def create_duplicate_task(doc, new_date):
 	frappe.msgprint(
 		f"Scheduled next task for {new_date}: <a href='/app/task/{new_doc.name}'>{new_doc.name}</a>"
 	)
+
+
+def predictive_maintenance_scheduling():
+	"""
+	Phase 4: Predictive Scheduling (Cron).
+	Queries Sales Orders (Maintenance) due for a visit within 7 days.
+	"""
+	from frappe.utils import add_days, nowdate
+
+	due_date = add_days(nowdate(), 7)
+
+	orders = frappe.get_all(
+		"Sales Order",
+		filters={
+			"order_type": "Maintenance",
+			"docstatus": 1,
+			"custom_next_predictive_visit": ["<=", due_date],
+			"status": ["not in", ["Closed", "Completed"]],
+		},
+		fields=["name", "customer", "project"],
+	)
+
+	for order in orders:
+		# Check if a draft record already exists for this order/project to avoid duplicates
+		if not frappe.db.exists("Sapphire Maintenance Record", {"project": order.project, "docstatus": 0}):
+			maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
+			maintenance_record.customer = order.customer
+			maintenance_record.project = order.project
+			maintenance_record.insert(ignore_permissions=True)
+			
+			frappe.logger().info(f"Generated predictive Maintenance Record for {order.name}")

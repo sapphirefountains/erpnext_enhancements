@@ -1,0 +1,47 @@
+{
+ "creation": "2024-05-22 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "visit_date",
+  "record_id",
+  "technician"
+ ],
+ "fields": [
+  {
+   "fieldname": "visit_date",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Visit Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "record_id",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Record ID",
+   "options": "Sapphire Maintenance Record",
+   "read_only": 1
+  },
+  {
+   "fieldname": "technician",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Technician",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "modified": "2024-05-22 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Sapphire Historical Visit",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1,
+ "is_virtual": 1
+}

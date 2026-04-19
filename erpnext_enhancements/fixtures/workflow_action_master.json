@@ -1,0 +1,10 @@
+[
+  {
+    "doctype": "Workflow Action Master",
+    "workflow_action_name": "Request Review"
+  },
+  {
+    "doctype": "Workflow Action Master",
+    "workflow_action_name": "Approve & Submit"
+  }
+]

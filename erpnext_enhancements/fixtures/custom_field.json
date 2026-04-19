@@ -374,5 +374,41 @@
     "insert_after": "status",
     "dt": "Asset",
     "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_safety_instructions",
+    "fieldname": "custom_safety_instructions",
+    "fieldtype": "Small Text",
+    "label": "Safety Instructions",
+    "dt": "Project",
+    "insert_after": "project_name"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_access_codes",
+    "fieldname": "custom_access_codes",
+    "fieldtype": "Data",
+    "label": "Access Codes",
+    "dt": "Project",
+    "insert_after": "custom_safety_instructions"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order-custom_last_visit_date",
+    "fieldname": "custom_last_visit_date",
+    "fieldtype": "Date",
+    "label": "Last Visit Date",
+    "dt": "Sales Order",
+    "insert_after": "transaction_date"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order-custom_next_predictive_visit",
+    "fieldname": "custom_next_predictive_visit",
+    "fieldtype": "Date",
+    "label": "Next Predictive Visit",
+    "dt": "Sales Order",
+    "insert_after": "custom_last_visit_date"
   }
 ]

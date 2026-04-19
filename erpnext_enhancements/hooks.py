@@ -87,7 +87,8 @@ doctype_js = {
     "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js", "public/js/lead.js"],
     "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js", "public/js/contact.js"],
     "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
-    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
+    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"],
+    "Sapphire Maintenance Record": ["enhancements_core/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"]
 }
 doctype_list_js = {
     "Opportunity": "public/js/opportunity_list.js"
@@ -184,6 +185,10 @@ doctype_calendar_js = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
+extend_doctype_class = {
+	"Sales Order": "erpnext_enhancements.enhancements_core.doctype.sapphire_maintenance_record.sapphire_maintenance_record.update_sales_order_metrics"
+}
+
 # Document Events
 # ---------------
 # Hook on document methods and events
@@ -200,6 +205,9 @@ doc_events = {
 	"Communication": {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
 	},
+    "Sapphire Maintenance Record": {
+        "on_submit": "erpnext_enhancements.enhancements_core.doctype.sapphire_maintenance_record.sapphire_maintenance_record.update_sales_order_metrics"
+    }
 }
 
 # doc_events = {
@@ -213,7 +221,12 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-scheduler_events = {"daily": ["erpnext_enhancements.project_enhancements.send_project_start_reminders"]}
+scheduler_events = {
+    "daily": [
+        "erpnext_enhancements.project_enhancements.send_project_start_reminders",
+        "erpnext_enhancements.tasks.predictive_maintenance_scheduling"
+    ]
+}
 
 fixtures = [
     {
@@ -260,7 +273,11 @@ fixtures = [
                 "Task-custom_create_child_task_btn",
                 "Asset-custom_current_event_location",
                 "Asset-custom_map_placeholder",
-                "Asset-custom_rental_status"
+                "Asset-custom_rental_status",
+                "Project-custom_safety_instructions",
+                "Project-custom_access_codes",
+                "Sales Order-custom_last_visit_date",
+                "Sales Order-custom_next_predictive_visit"
             ]]
         ]
     },
@@ -269,7 +286,11 @@ fixtures = [
     {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
     {"dt": "Desktop Icon", "filters": [["module", "=", "Enhancements Core"]]},
     {"dt": "Workspace Sidebar", "filters": [["module", "=", "Enhancements Core"]]},
-    {"dt": "Workspace", "filters": [["module", "=", "Enhancements Core"]]}
+    {"dt": "Workspace", "filters": [["module", "=", "Enhancements Core"]]},
+    {"dt": "Workflow State", "filters": [["name", "in", ["Pending Review", "Final/Submitted"]]]},
+    {"dt": "Workflow Action Master", "filters": [["name", "in", ["Request Review", "Approve & Submit"]]]},
+    {"dt": "Notification", "filters": [["name", "in", ["Maintenance Review Needed", "Maintenance Finalized"]]]},
+    {"dt": "Print Format", "filters": [["name", "=", "Maintenance Record Print"]]}
 ]
 
 # Testing

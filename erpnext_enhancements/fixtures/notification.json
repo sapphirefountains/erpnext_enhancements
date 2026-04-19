@@ -1,0 +1,34 @@
+[
+  {
+    "doctype": "Notification",
+    "name": "Maintenance Review Needed",
+    "subject": "Review required for Maintenance Record {{ doc.name }}",
+    "document_type": "Sapphire Maintenance Record",
+    "event": "Value Change",
+    "value_changed": "workflow_state",
+    "condition": "doc.workflow_state == 'Pending Review'",
+    "send_to_all_assignees": 0,
+    "recipients": [
+      {
+        "receiver_by_role": "Projects Manager"
+      }
+    ]
+  },
+  {
+    "doctype": "Notification",
+    "name": "Maintenance Finalized",
+    "subject": "Maintenance Completed: {{ doc.name }}",
+    "document_type": "Sapphire Maintenance Record",
+    "event": "Value Change",
+    "value_changed": "workflow_state",
+    "condition": "doc.workflow_state == 'Final/Submitted'",
+    "send_to_all_assignees": 0,
+    "attach_print": 1,
+    "print_format": "Maintenance Record Print",
+    "recipients": [
+      {
+        "receiver_by_role": "Accounts Manager"
+      }
+    ]
+  }
+]
