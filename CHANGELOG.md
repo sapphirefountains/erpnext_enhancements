@@ -13,7 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2024-05-22
 
 ### Added
-- **Google Calendar Sync**: robust two-way synchronization for Events, Tasks, Projects, and ToDos. Includes error logging and handling for recurring events.
 - **Time Kiosk**: A simplified, tablet-friendly interface for employees to log time against projects and tasks. Supports geolocation logging and syncing to Timesheets.
 - **Project Enhancements**:
     - **Procurement Status**: Calculated status fields on Projects to track material requests and orders.

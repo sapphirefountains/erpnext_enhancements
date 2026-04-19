@@ -90,7 +90,6 @@ doctype_js = {
     "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
 doctype_list_js = {
-    "ToDo": "public/js/todo_list.js",
     "Opportunity": "public/js/opportunity_list.js"
 }
 doctype_calendar_js = {
@@ -223,18 +222,11 @@ fixtures = [
             ["name", "in", [
                 "Expense Claim-custom_travel_trip",
                 "Project-custom_project_id",
-                "Project-custom_calendar_datetime_start",
-                "Project-custom_calendar_datetime_end",
 
                 "Project-custom_comments_tab",
                 "Project-custom_comments_field",
-                "ToDo-custom_calendar_datetime_start",
-                "ToDo-custom_calendar_datetime_end",
-                "ToDo-google_calendar_events",
-                "Task-google_calendar_events",
                 "Task-custom_comments_tab",
                 "Task-custom_comments_field",
-                "Event-google_calendar_events",
                 "Material Request-custom_project",
                 "Request for Quotation-custom_project",
                 "Customer-custom_comments_tab",
