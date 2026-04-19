@@ -28,6 +28,10 @@ def search_global_docs(txt):
     out = []
     for r in results:
         try:
+            # Check if document still exists to prevent stale cache returns
+            if not frappe.db.exists(r.doctype, r.name):
+                continue
+
             # Verify Read Permission for the user
             if frappe.has_permission(r.doctype, "read", r.name):
 
