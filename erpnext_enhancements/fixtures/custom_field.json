@@ -1,462 +1,451 @@
 [
- {
-  "doctype": "Custom Field",
-  "name": "Project-custom_project_id",
-  "fieldname": "custom_project_id",
-  "fieldtype": "Data",
-  "label": "Project ID",
-  "insert_after": "customer",
-  "read_only": 1,
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Project-custom_calendar_datetime_start",
-  "fieldname": "custom_calendar_datetime_start",
-  "fieldtype": "Datetime",
-  "label": "Calendar Start Time",
-  "insert_after": "project_name",
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Project-custom_calendar_datetime_end",
-  "fieldname": "custom_calendar_datetime_end",
-  "fieldtype": "Datetime",
-  "label": "Calendar End Time",
-  "insert_after": "custom_calendar_datetime_start",
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Project-google_calendar_events",
-  "fieldname": "google_calendar_events",
-  "fieldtype": "Table",
-  "label": "Google Calendar Events",
-  "options": "Google Calendar Event Log",
-  "insert_after": "custom_calendar_datetime_end",
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Project-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "google_calendar_events",
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Project-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Project",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "ToDo-custom_calendar_datetime_start",
-  "fieldname": "custom_calendar_datetime_start",
-  "fieldtype": "Datetime",
-  "label": "Calendar Start Time",
-  "insert_after": "description",
-  "dt": "ToDo",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "ToDo-custom_calendar_datetime_end",
-  "fieldname": "custom_calendar_datetime_end",
-  "fieldtype": "Datetime",
-  "label": "Calendar End Time",
-  "insert_after": "custom_calendar_datetime_start",
-  "dt": "ToDo",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "ToDo-google_calendar_events",
-  "fieldname": "google_calendar_events",
-  "fieldtype": "Table",
-  "label": "Google Calendar Events",
-  "options": "Google Calendar Event Log",
-  "insert_after": "custom_calendar_datetime_end",
-  "dt": "ToDo",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Task-google_calendar_events",
-  "fieldname": "google_calendar_events",
-  "fieldtype": "Table",
-  "label": "Google Calendar Events",
-  "options": "Google Calendar Event Log",
-  "insert_after": "description",
-  "dt": "Task",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Event-google_calendar_events",
-  "fieldname": "google_calendar_events",
-  "fieldtype": "Table",
-  "label": "Google Calendar Events",
-  "options": "Google Calendar Event Log",
-  "insert_after": "description",
-  "dt": "Event",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Material Request-custom_project",
-  "fieldname": "custom_project",
-  "fieldtype": "Link",
-  "label": "Project",
-  "options": "Project",
-  "insert_after": "transaction_date",
-  "dt": "Material Request",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Request for Quotation-custom_project",
-  "fieldname": "custom_project",
-  "fieldtype": "Link",
-  "label": "Project",
-  "options": "Project",
-  "insert_after": "transaction_date",
-  "dt": "Request for Quotation",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Account-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "account_currency",
-  "dt": "Account",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Account-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Account",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Customer-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "mobile_no",
-  "dt": "Customer",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Customer-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Customer",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Kanban Board-custom_swimlane_field",
-  "fieldname": "custom_swimlane_field",
-  "fieldtype": "Data",
-  "label": "Swimlane Field",
-  "insert_after": "field_name",
-  "dt": "Kanban Board",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Kanban Board Column-custom_wip_limit",
-  "fieldname": "custom_wip_limit",
-  "fieldtype": "Int",
-  "label": "WIP Limit",
-  "default": 0,
-  "insert_after": "status",
-  "dt": "Kanban Board Column",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Employee-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "reports_to",
-  "dt": "Employee",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Employee-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Employee",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Task-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "google_calendar_events",
-  "dt": "Task",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Task-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Task",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Stock Entry-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "remarks",
-  "dt": "Stock Entry",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Stock Entry-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Stock Entry",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Delivery Note-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "remarks",
-  "dt": "Delivery Note",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Delivery Note-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Delivery Note",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Supplier-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "website",
-  "dt": "Supplier",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Supplier-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Supplier",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Supplier Quotation-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "terms",
-  "dt": "Supplier Quotation",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Supplier Quotation-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Supplier Quotation",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Purchase Order-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "terms",
-  "dt": "Purchase Order",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Purchase Order-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Purchase Order",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Lead-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "mobile_no",
-  "dt": "Lead",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Lead-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Lead",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Contact-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "mobile_no",
-  "dt": "Contact",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Contact-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Contact",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Address-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "email_id",
-  "dt": "Address",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Address-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Address",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Quotation-custom_comments_tab",
-  "fieldname": "custom_comments_tab",
-  "fieldtype": "Tab Break",
-  "label": "Comments",
-  "insert_after": "terms",
-  "dt": "Quotation",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Quotation-custom_comments_field",
-  "fieldname": "custom_comments_field",
-  "fieldtype": "HTML",
-  "label": "Comments App",
-  "insert_after": "custom_comments_tab",
-  "dt": "Quotation",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Task-custom_create_child_task_btn",
-  "fieldname": "custom_create_child_task_btn",
-  "fieldtype": "Button",
-  "label": "+ Create Child Task",
-  "insert_after": "custom_child_tasks",
-  "dt": "Task",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Asset-custom_current_event_location",
-  "fieldname": "custom_current_event_location",
-  "fieldtype": "Data",
-  "label": "Current Event Location",
-  "insert_after": "item_code",
-  "dt": "Asset",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Asset-custom_map_placeholder",
-  "fieldname": "custom_map_placeholder",
-  "fieldtype": "HTML",
-  "label": "Map Placeholder",
-  "insert_after": "custom_current_event_location",
-  "dt": "Asset",
-  "module": "ERPNext Enhancements"
- },
- {
-  "doctype": "Custom Field",
-  "name": "Asset-custom_rental_status",
-  "fieldname": "custom_rental_status",
-  "fieldtype": "Select",
-  "label": "Rental Status",
-  "options": "Available\nRented\nMaintenance\nIn Transit",
-  "read_only": 1,
-  "insert_after": "status",
-  "dt": "Asset",
-  "module": "ERPNext Enhancements"
- }
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_project_id",
+    "fieldname": "custom_project_id",
+    "fieldtype": "Data",
+    "label": "Project ID",
+    "insert_after": "customer",
+    "read_only": 1,
+    "dt": "Project",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_calendar_datetime_start",
+    "fieldname": "custom_calendar_datetime_start",
+    "fieldtype": "Datetime",
+    "label": "Calendar Start Time",
+    "insert_after": "project_name",
+    "dt": "Project",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_calendar_datetime_end",
+    "fieldname": "custom_calendar_datetime_end",
+    "fieldtype": "Datetime",
+    "label": "Calendar End Time",
+    "insert_after": "custom_calendar_datetime_start",
+    "dt": "Project",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "custom_calendar_datetime_end",
+    "dt": "Project",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Project-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Project",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "ToDo-custom_calendar_datetime_start",
+    "fieldname": "custom_calendar_datetime_start",
+    "fieldtype": "Datetime",
+    "label": "Calendar Start Time",
+    "insert_after": "description",
+    "dt": "ToDo",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "ToDo-custom_calendar_datetime_end",
+    "fieldname": "custom_calendar_datetime_end",
+    "fieldtype": "Datetime",
+    "label": "Calendar End Time",
+    "insert_after": "custom_calendar_datetime_start",
+    "dt": "ToDo",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "ToDo-google_calendar_events",
+    "fieldname": "google_calendar_events",
+    "fieldtype": "Table",
+    "label": "Google Calendar Events",
+    "options": "Google Calendar Event Log",
+    "insert_after": "custom_calendar_datetime_end",
+    "dt": "ToDo",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Task-google_calendar_events",
+    "fieldname": "google_calendar_events",
+    "fieldtype": "Table",
+    "label": "Google Calendar Events",
+    "options": "Google Calendar Event Log",
+    "insert_after": "description",
+    "dt": "Task",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Event-google_calendar_events",
+    "fieldname": "google_calendar_events",
+    "fieldtype": "Table",
+    "label": "Google Calendar Events",
+    "options": "Google Calendar Event Log",
+    "insert_after": "description",
+    "dt": "Event",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Material Request-custom_project",
+    "fieldname": "custom_project",
+    "fieldtype": "Link",
+    "label": "Project",
+    "options": "Project",
+    "insert_after": "transaction_date",
+    "dt": "Material Request",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Request for Quotation-custom_project",
+    "fieldname": "custom_project",
+    "fieldtype": "Link",
+    "label": "Project",
+    "options": "Project",
+    "insert_after": "transaction_date",
+    "dt": "Request for Quotation",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Account-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "account_currency",
+    "dt": "Account",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Account-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Account",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Customer-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "mobile_no",
+    "dt": "Customer",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Customer-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Customer",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Kanban Board-custom_swimlane_field",
+    "fieldname": "custom_swimlane_field",
+    "fieldtype": "Data",
+    "label": "Swimlane Field",
+    "insert_after": "field_name",
+    "dt": "Kanban Board",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Kanban Board Column-custom_wip_limit",
+    "fieldname": "custom_wip_limit",
+    "fieldtype": "Int",
+    "label": "WIP Limit",
+    "default": 0,
+    "insert_after": "status",
+    "dt": "Kanban Board Column",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Employee-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "reports_to",
+    "dt": "Employee",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Employee-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Employee",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Task-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "google_calendar_events",
+    "dt": "Task",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Task-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Task",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Stock Entry-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "remarks",
+    "dt": "Stock Entry",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Stock Entry-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Stock Entry",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Delivery Note-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "remarks",
+    "dt": "Delivery Note",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Delivery Note-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Delivery Note",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Supplier-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "website",
+    "dt": "Supplier",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Supplier-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Supplier",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Supplier Quotation-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "terms",
+    "dt": "Supplier Quotation",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Supplier Quotation-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Supplier Quotation",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Order-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "terms",
+    "dt": "Purchase Order",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Order-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Purchase Order",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Lead-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "mobile_no",
+    "dt": "Lead",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Lead-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Lead",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Contact-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "mobile_no",
+    "dt": "Contact",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Contact-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Contact",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Address-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "email_id",
+    "dt": "Address",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Address-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Address",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Quotation-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "terms",
+    "dt": "Quotation",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Quotation-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Quotation",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Task-custom_create_child_task_btn",
+    "fieldname": "custom_create_child_task_btn",
+    "fieldtype": "Button",
+    "label": "+ Create Child Task",
+    "insert_after": "custom_child_tasks",
+    "dt": "Task",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_current_event_location",
+    "fieldname": "custom_current_event_location",
+    "fieldtype": "Data",
+    "label": "Current Event Location",
+    "insert_after": "item_code",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_map_placeholder",
+    "fieldname": "custom_map_placeholder",
+    "fieldtype": "HTML",
+    "label": "Map Placeholder",
+    "insert_after": "custom_current_event_location",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_rental_status",
+    "fieldname": "custom_rental_status",
+    "fieldtype": "Select",
+    "label": "Rental Status",
+    "options": "Available\nRented\nMaintenance\nIn Transit",
+    "read_only": 1,
+    "insert_after": "status",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  }
 ]
