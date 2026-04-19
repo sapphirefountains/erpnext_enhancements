@@ -185,9 +185,9 @@ doctype_calendar_js = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
-extend_doctype_class = {
-	"Sales Order": "erpnext_enhancements.enhancements_core.doctype.sapphire_maintenance_record.sapphire_maintenance_record.update_sales_order_metrics"
-}
+# extend_doctype_class = {
+# 	"Sales Order": "erpnext_enhancements.enhancements_core.doctype.sapphire_maintenance_record.sapphire_maintenance_record.update_sales_order_metrics"
+# }
 
 # Document Events
 # ---------------
