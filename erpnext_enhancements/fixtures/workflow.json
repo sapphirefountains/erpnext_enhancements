@@ -114,6 +114,7 @@
   },
   {
     "doctype": "Workflow",
+    "name": "Sapphire Maintenance Workflow",
     "workflow_name": "Sapphire Maintenance Workflow",
     "document_type": "Sapphire Maintenance Record",
     "is_active": 1,
