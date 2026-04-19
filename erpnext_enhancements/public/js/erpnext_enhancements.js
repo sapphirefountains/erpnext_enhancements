@@ -35,10 +35,16 @@ $(document).on("app_ready", function () {
 			const me = this;
 			if (!txt || txt.length < 3) return;
 
+            // Record the search string to handle race conditions
+            this._last_search_txt = txt;
+
 			frappe.call({
 				method: "erpnext_enhancements.api.search.search_global_docs",
 				args: { txt: txt },
 				callback: function (r) {
+                    // Abort if user has typed a different string in the meantime
+                    if (me._last_search_txt !== txt) return;
+
 					if (r.message && r.message.length) {
 						const new_options = r.message.map((d) => ({
 							label: d.label,
