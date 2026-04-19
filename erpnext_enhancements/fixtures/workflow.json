@@ -116,6 +116,7 @@
     "doctype": "Workflow",
     "name": "Sapphire Maintenance Workflow",
     "workflow_name": "Sapphire Maintenance Workflow",
+    "workflow_state_field": "workflow_state",
     "document_type": "Sapphire Maintenance Record",
     "is_active": 1,
     "send_email_alert": 0,
