@@ -2,6 +2,7 @@
   {
     "doctype": "Print Format",
     "name": "Maintenance Record Print",
+    "standard": "Yes",
     "doc_type": "Sapphire Maintenance Record",
     "custom_format": 1,
     "html": "<h3>Maintenance Record: {{ doc.name }}</h3><p>Project: {{ doc.project }}</p><p>Technician: {{ doc.technician }}</p><br/><h4>Consumables</h4><table><tr><th>Item</th><th>Qty</th></tr>{% for row in doc.consumables %}<tr><td>{{ row.item }}</td><td>{{ row.qty }}</td></tr>{% endfor %}</table>"
