@@ -2,6 +2,7 @@
   {
     "doctype": "Notification",
     "name": "Maintenance Review Needed",
+    "channel": "Email",
     "subject": "Review required for Maintenance Record {{ doc.name }}",
     "document_type": "Sapphire Maintenance Record",
     "event": "Value Change",
@@ -17,6 +18,7 @@
   {
     "doctype": "Notification",
     "name": "Maintenance Finalized",
+    "channel": "Email",
     "subject": "Maintenance Completed: {{ doc.name }}",
     "document_type": "Sapphire Maintenance Record",
     "event": "Value Change",
