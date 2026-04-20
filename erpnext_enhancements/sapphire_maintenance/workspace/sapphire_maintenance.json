@@ -1,0 +1,54 @@
+{
+ "app": "erpnext_enhancements",
+ "creation": "2024-04-20 10:40:00.000000",
+ "doctype": "Workspace",
+ "icon": "service",
+ "is_standard": 1,
+ "label": "Sapphire Maintenance",
+ "links": [
+  {
+   "dependencies": "",
+   "label": "Maintenance Profile",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Profile"
+  },
+  {
+   "dependencies": "",
+   "label": "Maintenance Template",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Template"
+  },
+  {
+   "dependencies": "",
+   "label": "Maintenance Record",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Record"
+  }
+ ],
+ "modified": "2024-04-20 10:40:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Maintenance",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "sequence_id": 10,
+ "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "Add Maintenance Record",
+   "link_to": "Sapphire Maintenance Record",
+   "type": "DocType"
+  }
+ ],
+ "title": "Sapphire Maintenance"
+}

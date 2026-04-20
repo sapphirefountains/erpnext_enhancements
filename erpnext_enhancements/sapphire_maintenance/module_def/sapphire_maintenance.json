@@ -1,0 +1,12 @@
+{
+ "app_name": "erpnext_enhancements",
+ "creation": "2024-04-20 10:45:00.000000",
+ "doctype": "Module Def",
+ "module_name": "Sapphire Maintenance",
+ "modified": "2024-04-20 10:45:00.000000",
+ "modified_by": "Administrator",
+ "name": "Sapphire Maintenance",
+ "owner": "Administrator",
+ "package": "ERPNext Enhancements",
+ "restrict_to_domain": ""
+}
