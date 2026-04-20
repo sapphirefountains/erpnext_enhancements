@@ -1,10 +1,12 @@
 [
   {
     "doctype": "Workflow Action Master",
+    "name": "Request Review",
     "workflow_action_name": "Request Review"
   },
   {
     "doctype": "Workflow Action Master",
+    "name": "Approve & Submit",
     "workflow_action_name": "Approve & Submit"
   }
 ]

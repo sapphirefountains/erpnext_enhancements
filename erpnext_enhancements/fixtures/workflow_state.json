@@ -100,10 +100,12 @@
   },
   {
     "doctype": "Workflow State",
+    "name": "Pending Review",
     "workflow_state_name": "Pending Review"
   },
   {
     "doctype": "Workflow State",
+    "name": "Final/Submitted",
     "workflow_state_name": "Final/Submitted"
   }
 ]
