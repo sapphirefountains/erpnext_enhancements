@@ -123,29 +123,41 @@ def create_duplicate_task(doc, new_date):
 def predictive_maintenance_scheduling():
 	"""
 	Phase 4: Predictive Scheduling (Cron).
-	Queries Sales Orders (Maintenance) due for a visit within 7 days.
+	Queries active Maintenance Sales Orders. 
+	Identifies those needing a visit by checking the latest Sapphire Maintenance Record.
 	"""
-	from frappe.utils import add_days, nowdate
+	from frappe.utils import add_days, nowdate, getdate
 
-	due_date = add_days(nowdate(), 7)
-
+	# 1. Get all active Maintenance Sales Orders
 	orders = frappe.get_all(
 		"Sales Order",
 		filters={
 			"order_type": "Maintenance",
 			"docstatus": 1,
-			"custom_next_predictive_visit": ["<=", due_date],
 			"status": ["not in", ["Closed", "Completed"]],
 		},
-		fields=["name", "customer", "project"],
+		fields=["name", "customer", "project", "transaction_date"],
 	)
 
 	for order in orders:
-		# Check if a draft record already exists for this order/project to avoid duplicates
-		if not frappe.db.exists("Sapphire Maintenance Record", {"project": order.project, "docstatus": 0}):
-			maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
-			maintenance_record.customer = order.customer
-			maintenance_record.project = order.project
-			maintenance_record.insert(ignore_permissions=True)
-			
-			frappe.logger().info(f"Generated predictive Maintenance Record for {order.name}")
+		# 2. Find the last maintenance record for this project
+		last_record_date = frappe.db.get_value(
+			"Sapphire Maintenance Record",
+			{"project": order.project, "docstatus": 1},
+			"creation",
+			order_by="creation desc"
+		)
+
+		# Use transaction date if no maintenance record exists yet
+		reference_date = getdate(last_record_date) if last_record_date else getdate(order.transaction_date)
+		
+		# If 30 days have passed (or are about to pass), schedule next
+		if add_days(reference_date, 30) <= add_days(nowdate(), 7):
+			# Check if a draft record already exists for this order/project to avoid duplicates
+			if not frappe.db.exists("Sapphire Maintenance Record", {"project": order.project, "docstatus": 0}):
+				maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
+				maintenance_record.customer = order.customer
+				maintenance_record.project = order.project
+				maintenance_record.insert(ignore_permissions=True)
+				
+				frappe.logger().info(f"Generated predictive Maintenance Record for project {order.project}")

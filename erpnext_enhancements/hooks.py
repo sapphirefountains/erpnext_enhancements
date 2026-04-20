@@ -204,10 +204,7 @@ doc_events = {
 	},
 	"Communication": {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
-	},
-    "Sapphire Maintenance Record": {
-        "on_submit": "erpnext_enhancements.enhancements_core.doctype.sapphire_maintenance_record.sapphire_maintenance_record.update_sales_order_metrics"
-    }
+	}
 }
 
 # doc_events = {
@@ -273,11 +270,7 @@ fixtures = [
                 "Task-custom_create_child_task_btn",
                 "Asset-custom_current_event_location",
                 "Asset-custom_map_placeholder",
-                "Asset-custom_rental_status",
-                "Project-custom_safety_instructions",
-                "Project-custom_access_codes",
-                "Sales Order-custom_last_visit_date",
-                "Sales Order-custom_next_predictive_visit"
+                "Asset-custom_rental_status"
             ]]
         ]
     },

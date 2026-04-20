@@ -68,18 +68,4 @@ def get_template_items(project):
 		return frappe.get_all("Sapphire Template Item", filters={"parent": template_name}, fields=["question_prompt"], order_by="sequence")
 	return []
 
-def update_sales_order_metrics(maintenance_record):
-	"""
-	Phase 4: Helper for extend_doctype_class.
-	Updates 'Last Visit Date' and 'Next Predictive Visit' on linked Sales Order.
-	"""
-	# In a real scenario, we'd find the Sales Order linked to the Project or via a custom field
-	so_name = frappe.db.get_value("Project", maintenance_record.project, "sales_order")
-	if so_name:
-		last_visit = getdate(maintenance_record.creation)
-		next_visit = add_days(last_visit, 30) # Example: 30 days logic
-		
-		frappe.db.set_value("Sales Order", so_name, {
-			"custom_last_visit_date": last_visit,
-			"custom_next_predictive_visit": next_visit
-		})
+

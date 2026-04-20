@@ -33,10 +33,10 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			});
 
 			// 2. Contextual Dashboard via Tailwind CSS
-			frappe.db.get_value("Project", frm.doc.project, ["custom_safety_instructions", "custom_access_codes"], (r) => {
+			frappe.db.get_value("Sapphire Maintenance Profile", {"project": frm.doc.project}, ["safety_instructions", "access_codes"], (r) => {
 				if (r) {
-					const safety = r.custom_safety_instructions || "No specific instructions provided.";
-					const codes = r.custom_access_codes || "N/A";
+					const safety = r.safety_instructions || "No specific instructions provided.";
+					const codes = r.access_codes || "N/A";
 
 					const dashboard_html = `
 						<div class="p-4 mb-4 border-l-4 bg-red-50 border-red-400">
