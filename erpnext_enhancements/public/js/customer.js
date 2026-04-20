@@ -1,5 +1,13 @@
 frappe.ui.form.on("Customer", {
 	refresh: function (frm) {
+		// Hide the Connections tab / Dashboard
+		if (frm.fields_dict.connections_tab) {
+			frm.set_df_property("connections_tab", "hidden", 1);
+		}
+		if (frm.dashboard) {
+			frm.dashboard.hide();
+		}
+
 		if (!frm.doc.__islocal) {
 			frm.trigger("render_comments_section");
             frm.trigger("add_poseidon_call_button");
