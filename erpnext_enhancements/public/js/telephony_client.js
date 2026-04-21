@@ -7,7 +7,6 @@ erpnext_enhancements.telephony = {
 
     init: function() {
         this.load_twilio_script()
-            .then(() => this.request_permissions())
             .then(() => this.fetch_token())
             .then((token) => this.setup_device(token))
             .catch(err => {
@@ -108,16 +107,20 @@ erpnext_enhancements.telephony = {
             ],
             primary_action_label: __('Accept'),
             primary_action: () => {
-                call.accept();
-                dialog.set_primary_action(__('End Call'), () => {
-                    call.disconnect();
-                    dialog.hide();
+                this.request_permissions().then(() => {
+                    call.accept();
+                    dialog.set_primary_action(__('End Call'), () => {
+                        call.disconnect();
+                        dialog.hide();
+                    });
+                    dialog.get_primary_btn().removeClass('btn-primary').addClass('btn-danger');
+                    dialog.get_secondary_btn().hide();
+                    dialog.fields_dict.status.$wrapper.html(`<div style="text-align: center; font-size: 18px; margin: 20px 0; color: green;">
+                                    <strong>In Call</strong><br>Connected with ${caller_id}
+                                  </div>`);
+                }).catch(err => {
+                    console.error("Microphone access denied", err);
                 });
-                dialog.get_primary_btn().removeClass('btn-primary').addClass('btn-danger');
-                dialog.get_secondary_btn().hide();
-                dialog.fields_dict.status.$wrapper.html(`<div style="text-align: center; font-size: 18px; margin: 20px 0; color: green;">
-                                <strong>In Call</strong><br>Connected with ${caller_id}
-                              </div>`);
             }
         });
 
@@ -228,19 +231,23 @@ erpnext_enhancements.telephony = {
             ],
             primary_action_label: __('Call'),
             primary_action: (values) => {
-                const params = { To: values.phone_number };
-                const call = this.device.connect({ params: params });
+                this.request_permissions().then(() => {
+                    const params = { To: values.phone_number };
+                    const call = this.device.connect({ params: params });
 
-                dialog.set_primary_action(__('End Call'), () => {
-                    call.disconnect();
-                    dialog.hide();
-                });
+                    dialog.set_primary_action(__('End Call'), () => {
+                        call.disconnect();
+                        dialog.hide();
+                    });
 
-                dialog.get_primary_btn().removeClass('btn-primary').addClass('btn-danger');
+                    dialog.get_primary_btn().removeClass('btn-primary').addClass('btn-danger');
 
-                call.on('disconnect', () => {
-                    dialog.hide();
-                    frappe.show_alert({message: 'Call Ended', indicator: 'orange'});
+                    call.on('disconnect', () => {
+                        dialog.hide();
+                        frappe.show_alert({message: 'Call Ended', indicator: 'orange'});
+                    });
+                }).catch(err => {
+                    console.error("Microphone access denied", err);
                 });
             }
         });
