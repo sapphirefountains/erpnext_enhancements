@@ -1,78 +1,99 @@
+console.log("[ERPNext Enhancements] Loading Sidebar Enhancements...");
+
 frappe.provide('erpnext_enhancements.sidebar');
 
-$(document).on('app_ready', function() {
-    if (frappe.ui && frappe.ui.form && frappe.ui.form.Sidebar) {
-        // Override the attachment rendering in the form sidebar
-        frappe.ui.form.Sidebar.prototype.refresh_attachments = function() {
-            let me = this;
-            let attachments = this.frm.get_docinfo().attachments || [];
-
-            // Identify the attachment wrapper section in the sidebar
-            let $section = this.sidebar.find('.sidebar-section[data-section="attachments"]');
-            if (!$section.length) {
-                // Fallback for different Frappe versions
-                $section = this.sidebar.find('.attachments-actions').closest('.form-sidebar-items, .sidebar-section');
-                if (!$section.length && this.attachments) {
-                    $section = this.attachments.closest('.sidebar-section');
-                }
-            }
-
-            if (!$section.length) return; // Safeguard if standard structure drastically changes
-
-            // Clear existing section but rebuild standard wrapper structure
-            $section.empty();
-
-            // Rebuild header
-            $section.html(`
-                <div class="sidebar-section-header">
-                    <div class="sidebar-label">
-                        <svg class="icon icon-sm"><use href="#icon-attachment"></use></svg>
-                        ${__('Attachments')}
-                    </div>
-                </div>
-                <div class="sidebar-items attachments-items"></div>
-                <div class="sidebar-actions mt-2">
-                    <button class="btn btn-default btn-xs w-100" id="btn-open-file-manager" style="font-weight: 500;">
-                        📂 ${__('Open File Manager')}
-                    </button>
-                </div>
-            `);
-
-            let $items = $section.find('.attachments-items');
+(function() {
+    const patch_sidebar = () => {
+        if (frappe.ui && frappe.ui.form && frappe.ui.form.Sidebar && !frappe.ui.form.Sidebar.prototype._refresh_attachments_patched) {
+            console.log("[ERPNext Enhancements] Patching frappe.ui.form.Sidebar.prototype.refresh_attachments");
             
-            // Get last 5 attachments
-            let recent_attachments = attachments.slice().reverse().slice(0, 5);
+            const original_refresh = frappe.ui.form.Sidebar.prototype.refresh_attachments;
+            
+            frappe.ui.form.Sidebar.prototype.refresh_attachments = function() {
+                // Call original if we want to maintain some base logic, 
+                // but since we are overriding the UI entirely, we'll implement our own.
+                
+                if (!this.frm || !this.frm.doc) return;
 
-            if (recent_attachments.length) {
-                recent_attachments.forEach(attachment => {
-                    let file_name = attachment.file_name;
-                    let file_url = attachment.file_url;
-                    let size_str = attachment.file_size ? frappe.form.formatters.FileSize(attachment.file_size) : '';
-                    let icon = frappe.utils.icon('attachment') || '<i class="fa fa-paperclip"></i>'; 
+                let attachments = (this.frm.get_docinfo ? this.frm.get_docinfo().attachments : this.frm.doc._attachments) || [];
+                
+                // Find or create the attachments section
+                let $section = this.sidebar.find('.sidebar-section[data-section="attachments"]');
+                if (!$section.length) {
+                    $section = this.sidebar.find('.attachments-actions').closest('.sidebar-section');
+                }
 
-                    $items.append(`
-                        <div class="sidebar-item" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0;">
-                            <a href="${file_url}" target="_blank" class="text-muted ellipsis" style="display: flex; align-items: center; max-width: 80%; text-decoration: none;" title="${file_name}">
-                                <span class="m-r-1" style="display: flex; align-items: center;">${icon}</span>
-                                <span class="ellipsis" style="margin-left: 4px;">${file_name}</span>
-                            </a>
-                            ${size_str ? `<span class="text-muted text-xs">${size_str}</span>` : ''}
+                if (!$section.length) {
+                    // If still not found, Frappe might have a different structure or it's not rendered yet
+                    // We can try to call the original to let it create the section, then we override it
+                    original_refresh.apply(this, arguments);
+                    $section = this.sidebar.find('.sidebar-section[data-section="attachments"]');
+                    if (!$section.length) return;
+                }
+
+                // Clear and Rebuild
+                $section.empty();
+                $section.html(`
+                    <div class="sidebar-section-header">
+                        <div class="sidebar-label">
+                            <svg class="icon icon-sm"><use href="#icon-attachment"></use></svg>
+                            ${__('Attachments')}
                         </div>
-                    `);
-                });
-            } else {
-                $items.append(`<div class="text-muted text-small">${__('No attachments')}</div>`);
-            }
+                    </div>
+                    <div class="sidebar-items attachments-items"></div>
+                    <div class="sidebar-actions mt-2">
+                        <button class="btn btn-default btn-xs w-100" id="btn-open-file-manager" style="font-weight: 500; display: flex; align-items: center; justify-content: center;">
+                            <span class="m-r-1">📂</span> ${__('Open File Manager')}
+                        </button>
+                    </div>
+                `);
 
-            // Bind 'Open File Manager' action
-            $section.find('#btn-open-file-manager').on('click', () => {
-                erpnext_enhancements.sidebar.open_file_manager(me.frm);
-            });
-        };
-    }
-});
+                let $items = $section.find('.attachments-items');
+                let recent = attachments.slice().reverse().slice(0, 5);
+
+                if (recent.length) {
+                    recent.forEach(at => {
+                        const file_name = at.file_name || at.name;
+                        const file_url = at.file_url;
+                        const size = at.file_size ? frappe.form.formatters.FileSize(at.file_size) : '';
+                        const icon = frappe.utils.icon('attachment', 'sm') || '📎';
+
+                        $items.append(`
+                            <div class="sidebar-item" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: var(--text-xs);">
+                                <a href="${file_url}" target="_blank" class="text-muted ellipsis" style="display: flex; align-items: center; max-width: 75%; text-decoration: none;" title="${file_name}">
+                                    <span class="m-r-1">${icon}</span>
+                                    <span class="ellipsis">${file_name}</span>
+                                </a>
+                                <span class="text-muted" style="font-size: 10px; flex-shrink: 0;">${size}</span>
+                            </div>
+                        `);
+                    });
+                } else {
+                    $items.append(`<div class="text-muted p-2 text-center" style="font-size: var(--text-xs);">${__('No attachments')}</div>`);
+                }
+
+                $section.find('#btn-open-file-manager').on('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    erpnext_enhancements.sidebar.open_file_manager(this.frm);
+                });
+            };
+
+            frappe.ui.form.Sidebar.prototype._refresh_attachments_patched = true;
+        }
+    };
+
+    // Try patching immediately
+    patch_sidebar();
+
+    // Also hook into app_ready and page change to ensure it stays patched or catches late loads
+    $(document).on('app_ready', patch_sidebar);
+    $(document).on('page-change', patch_sidebar);
+})();
 
 erpnext_enhancements.sidebar.open_file_manager = function(frm) {
+    console.log("[ERPNext Enhancements] Opening File Manager for", frm.doctype, frm.docname);
+    
     if (!frm || !frm.doc) return;
 
     const dialog = new frappe.ui.Dialog({
@@ -88,7 +109,6 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
 
     dialog.show();
 
-    // Ensure Vue 3 is globally available as per context
     if (typeof Vue === 'undefined') {
         dialog.fields_dict.vue_wrapper.$wrapper.html(`<div class="alert alert-danger">${__('Vue 3 is not available.')}</div>`);
         return;
@@ -96,52 +116,59 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
 
     const app = Vue.createApp({
         template: `
-            <div class="file-manager-container" style="min-height: 400px; display: flex; flex-direction: column;">
-                <!-- Toolbar -->
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h5 class="m-0">Attachments for {{ doctype }} ({{ docname }})</h5>
-                    <button class="btn btn-primary btn-sm" @click="trigger_upload">
-                        <i class="fa fa-upload"></i> ${__('Upload File')}
-                    </button>
+            <div class="file-manager-container" style="min-height: 500px; display: flex; flex-direction: column; font-family: var(--font-stack);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
+                    <h4 class="m-0" style="font-weight: 600;">{{ doctype }}: <span class="text-muted">{{ docname }}</span></h4>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-primary btn-sm" @click="trigger_upload">
+                            <i class="fa fa-upload m-r-1"></i> ${__('Upload')}
+                        </button>
+                        <button class="btn btn-default btn-sm" @click="fetch_files">
+                            <i class="fa fa-refresh"></i>
+                        </button>
+                    </div>
                 </div>
 
-                <!-- Loading State -->
-                <div v-if="loading" class="text-muted text-center" style="padding: 50px 0;">
-                    <i class="fa fa-spinner fa-spin mb-2" style="font-size: 3rem;"></i>
-                    <p>${__('Loading files...')}</p>
+                <div v-if="loading" class="text-center" style="padding: 100px 0;">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-3 text-muted">${__('Fetching documents...')}</p>
                 </div>
 
-                <!-- Grid -->
-                <div v-else-if="files.length > 0" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
-                    <div v-for="file in files" :key="file.name" class="file-card border rounded p-2" style="display: flex; flex-direction: column; align-items: center; justify-content: space-between; position: relative; background: #fff;">
-                        <!-- Preview -->
-                        <div class="file-preview" style="height: 120px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; width: 100%; background: var(--bg-light-gray, #f4f5f6); border-radius: 4px;">
-                            <img v-if="is_image(file.file_name)" :src="file.file_url" style="max-height: 100%; max-width: 100%; object-fit: contain; border-radius: 4px;" />
-                            <i v-else class="fa fa-file text-muted" style="font-size: 4rem;"></i>
-                        </div>
+                <div v-else-if="files.length > 0" 
+                     class="file-grid" 
+                     style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; overflow-y: auto; padding: 5px;">
+                    <div v-for="file in files" :key="file.name" 
+                         class="file-card shadow-sm border rounded" 
+                         style="background: #fff; transition: transform 0.2s; display: flex; flex-direction: column; overflow: hidden;">
                         
-                        <!-- File Info -->
-                        <div class="file-info text-center" style="width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px;" :title="file.file_name">
-                            <strong class="text-sm">{{ file.file_name }}</strong>
-                            <div class="text-muted small" style="font-size: 0.8rem;">{{ format_size(file.file_size) }}</div>
+                        <div class="preview-box" style="height: 140px; background: #f8f9fa; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #eee;">
+                            <img v-if="is_image(file.file_name)" :src="file.file_url" style="width: 100%; height: 100%; object-fit: cover;" />
+                            <div v-else class="text-center">
+                                <i :class="get_icon_class(file.file_name)" style="font-size: 3rem; color: #adb5bd;"></i>
+                                <div class="text-uppercase font-weight-bold mt-2" style="font-size: 10px; color: #6c757d;">{{ get_extension(file.file_name) }}</div>
+                            </div>
                         </div>
-                        
-                        <!-- Actions -->
-                        <div class="file-actions" style="display: flex; gap: 5px; justify-content: center; width: 100%;">
-                            <button class="btn btn-xs btn-default w-100" @click="download_file(file)" title="Download">
-                                <i class="fa fa-download"></i>
-                            </button>
-                            <button class="btn btn-xs btn-danger w-100" @click="delete_file(file)" title="Delete">
-                                <i class="fa fa-trash"></i>
-                            </button>
+
+                        <div class="p-2" style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div class="ellipsis font-weight-bold text-sm" :title="file.file_name">{{ file.file_name }}</div>
+                            <div class="text-muted" style="font-size: 11px;">{{ format_size(file.file_size) }}</div>
+                            
+                            <div class="mt-2 d-flex" style="gap: 5px;">
+                                <button class="btn btn-xs btn-default flex-fill" @click="download_file(file)">
+                                    <i class="fa fa-download"></i>
+                                </button>
+                                <button class="btn btn-xs btn-danger flex-fill" @click="delete_file(file)">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Empty State -->
-                <div v-else class="text-muted text-center" style="padding: 50px 0;">
-                    <i class="fa fa-folder-open mb-2" style="font-size: 3rem;"></i>
-                    <p>${__("No files attached yet. Click 'Upload File' or drag and drop here.")}</p>
+                <div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed #ddd; border-radius: 8px;">
+                    <i class="fa fa-cloud-upload" style="font-size: 4rem; opacity: 0.2;"></i>
+                    <h5 class="mt-3">${__('No files found')}</h5>
+                    <p>${__('Drag and drop files anywhere in this window to upload.')}</p>
                 </div>
             </div>
         `,
@@ -168,7 +195,7 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
                             attached_to_doctype: this.doctype,
                             attached_to_name: this.docname
                         },
-                        fields: ['name', 'file_name', 'file_url', 'file_size', 'is_private'],
+                        fields: ['name', 'file_name', 'file_url', 'file_size'],
                         order_by: 'creation desc'
                     },
                     callback: (r) => {
@@ -178,31 +205,34 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
                 });
             },
             is_image(filename) {
-                if (!filename) return false;
-                const ext = filename.split('.').pop().toLowerCase();
-                return ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp'].includes(ext);
+                const exts = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'];
+                return exts.includes(this.get_extension(filename));
+            },
+            get_extension(filename) {
+                return filename ? filename.split('.').pop().toLowerCase() : '';
+            },
+            get_icon_class(filename) {
+                const ext = this.get_extension(filename);
+                if (ext === 'pdf') return 'fa fa-file-pdf-o';
+                if (['doc', 'docx'].includes(ext)) return 'fa fa-file-word-o';
+                if (['xls', 'xlsx', 'csv'].includes(ext)) return 'fa fa-file-excel-o';
+                if (['zip', 'rar', '7z'].includes(ext)) return 'fa fa-file-archive-o';
+                return 'fa fa-file-o';
             },
             format_size(size) {
-                return size ? frappe.form.formatters.FileSize(size) : '0 KB';
+                return frappe.form.formatters.FileSize(size);
             },
             download_file(file) {
-                const url = file.file_url || \`/api/method/frappe.utils.file_manager.download_file?file_name=\${encodeURIComponent(file.name)}\`;
-                window.open(url, '_blank');
+                window.open(file.file_url, '_blank');
             },
             delete_file(file) {
-                frappe.confirm(__('Are you sure you want to delete this file?'), () => {
+                frappe.confirm(__('Delete this file?'), () => {
                     frappe.call({
                         method: 'frappe.client.delete',
-                        args: {
-                            doctype: 'File',
-                            name: file.name
-                        },
-                        callback: (r) => {
-                            if (!r.exc) {
-                                frappe.show_alert({message: __('File Deleted'), indicator: 'green'});
-                                this.fetch_files();
-                                frm.reload_docinfo(); // Refresh sidebar info
-                            }
+                        args: { doctype: 'File', name: file.name },
+                        callback: () => {
+                            this.fetch_files();
+                            frm.reload_docinfo();
                         }
                     });
                 });
@@ -211,39 +241,25 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
                 new frappe.ui.FileUploader({
                     doctype: this.doctype,
                     docname: this.docname,
-                    on_success: (file_doc) => {
+                    on_success: () => {
                         this.fetch_files();
                         frm.reload_docinfo();
                     }
                 });
             },
             setup_drag_drop() {
-                // Hook drag and drop to the whole dialog body
-                const dialog_body = dialog.get_fields_dict().vue_wrapper.$wrapper[0].closest('.modal-content');
-                
-                dialog_body.addEventListener('dragover', (e) => {
+                const el = dialog.get_fields_dict().vue_wrapper.$wrapper[0].closest('.modal-content');
+                el.addEventListener('dragover', (e) => { e.preventDefault(); el.style.boxShadow = '0 0 15px var(--primary-color)'; });
+                el.addEventListener('dragleave', () => { el.style.boxShadow = ''; });
+                el.addEventListener('drop', (e) => {
                     e.preventDefault();
-                    e.stopPropagation();
-                    dialog_body.style.backgroundColor = 'var(--highlight-color, #f4f5f6)';
-                });
-                
-                dialog_body.addEventListener('dragleave', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dialog_body.style.backgroundColor = '';
-                });
-                
-                dialog_body.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dialog_body.style.backgroundColor = '';
-                    
-                    if (e.dataTransfer && e.dataTransfer.files.length) {
+                    el.style.boxShadow = '';
+                    if (e.dataTransfer.files.length) {
                         new frappe.ui.FileUploader({
                             doctype: this.doctype,
                             docname: this.docname,
                             files: e.dataTransfer.files,
-                            on_success: (file_doc) => {
+                            on_success: () => {
                                 this.fetch_files();
                                 frm.reload_docinfo();
                             }
@@ -254,10 +270,6 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
         }
     });
 
-    const wrapper = dialog.fields_dict.vue_wrapper.$wrapper[0];
-    app.mount(wrapper);
-
-    dialog.onhide = () => {
-        app.unmount();
-    };
+    app.mount(dialog.fields_dict.vue_wrapper.$wrapper[0]);
+    dialog.onhide = () => app.unmount();
 };
