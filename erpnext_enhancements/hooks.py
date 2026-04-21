@@ -35,7 +35,6 @@ app_include_js = [
     "/assets/erpnext_enhancements/js/activity_log_numbering.js",
     "/assets/erpnext_enhancements/js/filter_help.js",
     "/assets/erpnext_enhancements/js/telephony_client.js",
-    "/assets/erpnext_enhancements/js/sidebar_enhancements.js",
 ]
 
 # include js, css files in header of web template
