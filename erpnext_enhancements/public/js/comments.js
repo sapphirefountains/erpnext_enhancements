@@ -99,7 +99,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                             if (uploaded_files.length > 0) {
                                 let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
                                 for (let file of uploaded_files) {
-                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
+                                    let fname = file.file_name || file.file_url || "Attachment";
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(fname) : $('<div>').text(fname).html();
                                     attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                                 }
                                 attachment_html += '</ul>';
@@ -192,7 +193,8 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                             if (uploaded_files.length > 0) {
                                 let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
                                 for (let file of uploaded_files) {
-                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
+                                    let fname = file.file_name || file.file_url || "Attachment";
+                                    let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(fname) : $('<div>').text(fname).html();
                                     attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                                 }
                                 attachment_html += '</ul>';

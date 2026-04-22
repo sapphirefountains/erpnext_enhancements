@@ -299,75 +299,94 @@ erpnext_enhancements.timeline_attachments.init = function() {
     };
 
     frappe.ui.form.Timeline.prototype.intercept_submission = function() {
-        const original_insert_comment = this.insert_comment;
-        if (!original_insert_comment) return;
+        const self = this;
+        
+        // We patch the methods on the instance to ensure we capture the correct context
+        // and any instance-specific overrides.
+        const methods_to_patch = ['insert_comment', 'add_comment'];
+        
+        methods_to_patch.forEach(method_name => {
+            const original_method = this[method_name];
+            if (!original_method || original_method._patched_by_erpnext_enhancements) return;
 
-        this.insert_comment = function(comment, check_errors) {
-            // If we have pending uploads, wait (though button should be disabled)
-            if (this._pending_uploads && this._pending_uploads.length > 0) {
-                frappe.msgprint("Please wait for file uploads to finish.");
-                return;
-            }
-
-            // Append uploaded files to the comment payload if any exist
-            if (this._uploaded_files && this._uploaded_files.length > 0) {
-                let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
-
-                for (let file of this._uploaded_files) {
-                    // Escape file name to prevent XSS
-                    let escaped_filename = "";
-                    if (frappe.utils && frappe.utils.escape_html) {
-                        escaped_filename = frappe.utils.escape_html(file.file_name);
-                    } else {
-                        escaped_filename = $('<div>').text(file.file_name).html();
-                    }
-
-                    attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
+            this[method_name] = function(comment, check_errors) {
+                // If we have pending uploads, wait
+                if (self._pending_uploads && self._pending_uploads.length > 0) {
+                    frappe.msgprint(__("Please wait for file uploads to finish."));
+                    return;
                 }
 
-                attachment_html += '</ul>';
+                // If we have uploaded files, inject them
+                if (self._uploaded_files && self._uploaded_files.length > 0) {
+                    let attachment_html = '<br><br><b>Attachments:</b><br><ul>';
 
-                // Append the HTML to the comment text
-                comment += attachment_html;
-            }
-
-            // Capture the currently uploaded files to link them after submission
-            const files_to_link = [...(this._uploaded_files || [])];
-
-            // Call the original insert_comment which returns a Promise
-            const result = original_insert_comment.call(this, comment, check_errors);
-
-            // If the result is a promise, chain our linking logic to it
-            if (result && typeof result.then === 'function') {
-                result.then(comment_doc => {
-                    // 1. Trigger backend linking
-                    if (files_to_link.length > 0 && comment_doc && comment_doc.name) {
-                        const file_ids = files_to_link.map(f => f.file_id);
-                        frappe.call({
-                            method: 'erpnext_enhancements.api.comments.link_files_to_comment',
-                            args: {
-                                file_ids: file_ids,
-                                comment_id: comment_doc.name,
-                                parent_doctype: comment_doc.reference_doctype,
-                                parent_name: comment_doc.reference_name
-                            }
-                        });
+                    for (let file of self._uploaded_files) {
+                        let escaped_filename = frappe.utils.escape_html ? frappe.utils.escape_html(file.file_name) : $('<div>').text(file.file_name).html();
+                        attachment_html += `<li><a href="${file.file_url}" target="_blank">${escaped_filename}</a></li>`;
                     }
-                });
-            } else {
-                // Fallback if not a promise (older frappe versions might not return the promise directly,
-                // though usually timeline.insert_comment returns frappe.call which is a Promise)
-                console.warn("Timeline insert_comment did not return a Promise. Attachments may not link immediately.");
-            }
+                    attachment_html += '</ul>';
 
-            // Clear state and UI after successful submission initiation
-            this._uploaded_files = [];
-            if (this.wrapper) {
-                this.wrapper.find('.timeline-attachments-preview').empty();
-            }
+                    // Handle different argument types (string or object)
+                    if (typeof comment === 'string') {
+                        comment += attachment_html;
+                    } else if (comment && typeof comment === 'object' && comment.content !== undefined) {
+                        comment.content += attachment_html;
+                    } else if (comment === undefined || comment === null) {
+                        // If comment is missing, try to get it from the comment area
+                        if (self.comment_area && self.comment_area.get_value) {
+                            comment = self.comment_area.get_value() + attachment_html;
+                        } else {
+                            comment = attachment_html;
+                        }
+                    }
 
-            return result;
-        };
+                    // If there's a comment area, also update its value to ensure 
+                    // that if the original method reads from it directly, it gets the attachments.
+                    if (self.comment_area && self.comment_area.set_value) {
+                        let current_val = self.comment_area.get_value();
+                        if (current_val.indexOf('<b>Attachments:</b>') === -1) {
+                            self.comment_area.set_value(current_val + attachment_html);
+                        }
+                    }
+                }
+
+                // Capture the currently uploaded files to link them after submission
+                const files_to_link = [...(self._uploaded_files || [])];
+
+                // Call the original method
+                const result = original_method.call(this, comment, check_errors);
+
+                // If the result is a promise, chain our linking logic to it
+                if (result && typeof result.then === 'function') {
+                    result.then(comment_doc => {
+                        if (files_to_link.length > 0 && comment_doc && comment_doc.name) {
+                            const file_ids = files_to_link.map(f => f.file_id);
+                            frappe.call({
+                                method: 'erpnext_enhancements.api.comments.link_files_to_comment',
+                                args: {
+                                    file_ids: file_ids,
+                                    comment_id: comment_doc.name,
+                                    parent_doctype: comment_doc.reference_doctype,
+                                    parent_name: comment_doc.reference_name
+                                }
+                            });
+                        }
+                    });
+                }
+
+                // Clear state and UI
+                if (files_to_link.length > 0) {
+                    self._uploaded_files = [];
+                    if (self.wrapper) {
+                        self.wrapper.find('.timeline-attachments-preview').empty();
+                    }
+                }
+
+                return result;
+            };
+            
+            this[method_name]._patched_by_erpnext_enhancements = true;
+        });
     };
 };
 
