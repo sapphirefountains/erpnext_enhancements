@@ -948,13 +948,13 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
     }
 
     const app = Vue.createApp({
-        template: \`
+        template: `
             <div class="file-manager-container" style="min-height: 500px; display: flex; flex-direction: column; font-family: var(--font-stack);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
                     <h4 class="m-0" style="font-weight: 600;">{{ doctype }}: <span class="text-muted">{{ docname }}</span></h4>
                     <div style="display: flex; gap: 10px;">
                         <button class="btn btn-primary btn-sm" @click="trigger_upload">
-                            <i class="fa fa-upload m-r-1"></i> \${__('Upload')}
+                            <i class="fa fa-upload m-r-1"></i> ${__('Upload')}
                         </button>
                         <button class="btn btn-default btn-sm" @click="fetch_files">
                             <i class="fa fa-refresh"></i>
@@ -964,7 +964,7 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
 
                 <div v-if="loading" class="text-center" style="padding: 100px 0;">
                     <div class="spinner-border text-primary" role="status"></div>
-                    <p class="mt-3 text-muted">\${__('Fetching documents...')}</p>
+                    <p class="mt-3 text-muted">${__('Fetching documents...')}</p>
                 </div>
 
                 <div v-else-if="files.length > 0" 
@@ -1000,11 +1000,11 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
 
                 <div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed #ddd; border-radius: 8px;">
                     <i class="fa fa-cloud-upload" style="font-size: 4rem; opacity: 0.2;"></i>
-                    <h5 class="mt-3">\${__('No files found')}</h5>
-                    <p>\${__('Drag and drop files anywhere in this window to upload.')}</p>
+                    <h5 class="mt-3">${__('No files found')}</h5>
+                    <p>${__('Drag and drop files anywhere in this window to upload.')}</p>
                 </div>
             </div>
-        \`,
+        `,
         data() {
             return {
                 files: [],
