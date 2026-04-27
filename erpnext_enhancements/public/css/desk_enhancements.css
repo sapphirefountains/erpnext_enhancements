@@ -1030,6 +1030,50 @@ mark {
 }
 
 /* ==========================================================================
+   OPPORTUNITY KANBAN CUSTOMIZATION
+   ========================================================================== */
+
+/* High-value card styling */
+.kanban-card.opportunity-high-value {
+    background-color: #00263E !important;
+    color: #ffffff !important;
+}
+
+.kanban-card.opportunity-high-value .kanban-card-title,
+.kanban-card.opportunity-high-value .kanban-card-content,
+.kanban-card.opportunity-high-value .kanban-card-docname,
+.kanban-card.opportunity-high-value .text-muted,
+.kanban-card.opportunity-high-value .small,
+.kanban-card.opportunity-high-value .frappe-timestamp,
+.kanban-card.opportunity-high-value .kanban-card-footer {
+    color: #ffffff !important;
+}
+
+/* Ensure tags and other elements also look good on dark background */
+.kanban-card.opportunity-high-value .tag-label {
+    border-color: rgba(255, 255, 255, 0.4) !important;
+    color: #ffffff !important;
+}
+
+/* Value stream dots container */
+.kanban-card-value-stream {
+    display: flex;
+    gap: 5px;
+    margin-top: 8px;
+    padding-top: 4px;
+    align-items: center;
+}
+
+/* Individual dots */
+.value-stream-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 2px rgba(0,0,0,0.2);
+}
+
+/* ==========================================================================
    LIST ROW CONTAINER Z-INDEX FIX
    ========================================================================== */
 .list-row-container {

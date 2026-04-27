@@ -29,6 +29,7 @@ app_include_css = "/assets/erpnext_enhancements/css/desk_enhancements.css"
 app_include_js = [
 	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
     "/assets/erpnext_enhancements/js/kanban_patches.js",
+    "/assets/erpnext_enhancements/js/kanban_customization.js",
 	"/assets/erpnext_enhancements/js/global_comments.js",
 	"/assets/erpnext_enhancements/js/crm_note_enhancements.js",
 	"/assets/erpnext_enhancements/js/performance_fixes.js",
