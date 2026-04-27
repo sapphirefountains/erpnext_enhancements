@@ -943,68 +943,66 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
     dialog.show();
 
     if (typeof Vue === 'undefined') {
-        dialog.fields_dict.vue_wrapper.$wrapper.html(`<div class="alert alert-danger">${__('Vue 3 is not available.')}</div>`);
+        dialog.fields_dict.vue_wrapper.$wrapper.html('<div class="alert alert-danger">' + __('Vue 3 is not available.') + '</div>');
         return;
     }
 
     const app = Vue.createApp({
-        template: `
-            <div class="file-manager-container" style="min-height: 500px; display: flex; flex-direction: column; font-family: var(--font-stack);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
-                    <h4 class="m-0" style="font-weight: 600;">{{ doctype }}: <span class="text-muted">{{ docname }}</span></h4>
-                    <div style="display: flex; gap: 10px;">
-                        <button class="btn btn-primary btn-sm" @click="trigger_upload">
-                            <i class="fa fa-upload m-r-1"></i> ${__('Upload')}
-                        </button>
-                        <button class="btn btn-default btn-sm" @click="fetch_files">
-                            <i class="fa fa-refresh"></i>
-                        </button>
-                    </div>
-                </div>
+        template: '<div class="file-manager-container" style="min-height: 500px; display: flex; flex-direction: column; font-family: var(--font-stack);">' +
+                '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">' +
+                    '<h4 class="m-0" style="font-weight: 600;">{{ doctype }}: <span class="text-muted">{{ docname }}</span></h4>' +
+                    '<div style="display: flex; gap: 10px;">' +
+                        '<button class="btn btn-primary btn-sm" @click="trigger_upload">' +
+                            '<i class="fa fa-upload m-r-1"></i> ' + __('Upload') +
+                        '</button>' +
+                        '<button class="btn btn-default btn-sm" @click="fetch_files">' +
+                            '<i class="fa fa-refresh"></i>' +
+                        '</button>' +
+                    '</div>' +
+                '</div>' +
 
-                <div v-if="loading" class="text-center" style="padding: 100px 0;">
-                    <div class="spinner-border text-primary" role="status"></div>
-                    <p class="mt-3 text-muted">${__('Fetching documents...')}</p>
-                </div>
+                '<div v-if="loading" class="text-center" style="padding: 100px 0;">' +
+                    '<div class="spinner-border text-primary" role="status"></div>' +
+                    '<p class="mt-3 text-muted">' + __('Fetching documents...') + '</p>' +
+                '</div>' +
 
-                <div v-else-if="files.length > 0" 
-                     class="file-grid" 
-                     style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; overflow-y: auto; padding: 5px;">
-                    <div v-for="file in files" :key="file.name" 
-                         class="file-card shadow-sm border rounded" 
-                         style="background: #fff; transition: transform 0.2s; display: flex; flex-direction: column; overflow: hidden;">
+                '<div v-else-if="files.length > 0" ' +
+                     'class="file-grid" ' +
+                     'style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; overflow-y: auto; padding: 5px;">' +
+                    '<div v-for="file in files" :key="file.name" ' +
+                         'class="file-card shadow-sm border rounded" ' +
+                         'style="background: #fff; transition: transform 0.2s; display: flex; flex-direction: column; overflow: hidden;">' +
                         
-                        <div class="preview-box" style="height: 140px; background: #f8f9fa; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #eee;">
-                            <img v-if="is_image(file.file_name)" :src="file.file_url" style="width: 100%; height: 100%; object-fit: cover;" />
-                            <div v-else class="text-center">
-                                <i :class="get_icon_class(file.file_name)" style="font-size: 3rem; color: #adb5bd;"></i>
-                                <div class="text-uppercase font-weight-bold mt-2" style="font-size: 10px; color: #6c757d;">{{ get_extension(file.file_name) }}</div>
-                            </div>
-                        </div>
+                        '<div class="preview-box" style="height: 140px; background: #f8f9fa; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #eee;">' +
+                            '<img v-if="is_image(file.file_name)" :src="file.file_url" style="width: 100%; height: 100%; object-fit: cover;" />' +
+                            '<div v-else class="text-center">' +
+                                '<i :class="get_icon_class(file.file_name)" style="font-size: 3rem; color: #adb5bd;"></i>' +
+                                '<div class="text-uppercase font-weight-bold mt-2" style="font-size: 10px; color: #6c757d;">{{ get_extension(file.file_name) }}</div>' +
+                            '</div>' +
+                        '</div>' +
 
-                        <div class="p-2" style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between;">
-                            <div class="ellipsis font-weight-bold text-sm" :title="file.file_name">{{ file.file_name }}</div>
-                            <div class="text-muted" style="font-size: 11px;">{{ format_size(file.file_size) }}</div>
+                        '<div class="p-2" style="flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between;">' +
+                            '<div class="ellipsis font-weight-bold text-sm" :title="file.file_name">{{ file.file_name }}</div>' +
+                            '<div class="text-muted" style="font-size: 11px;">{{ format_size(file.file_size) }}</div>' +
                             
-                            <div class="mt-2 d-flex" style="gap: 5px;">
-                                <button class="btn btn-xs btn-default flex-fill" @click="download_file(file)">
-                                    <i class="fa fa-download"></i>
-                                </button>
-                                <button class="btn btn-xs btn-danger flex-fill" @click="delete_file(file)">
-                                    <i class="fa fa-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                            '<div class="mt-2 d-flex" style="gap: 5px;">' +
+                                '<button class="btn btn-xs btn-default flex-fill" @click="download_file(file)">' +
+                                    '<i class="fa fa-download"></i>' +
+                                '</button>' +
+                                '<button class="btn btn-xs btn-danger flex-fill" @click="delete_file(file)">' +
+                                    '<i class="fa fa-trash"></i>' +
+                                '</button>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
 
-                <div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed #ddd; border-radius: 8px;">
-                    <i class="fa fa-cloud-upload" style="font-size: 4rem; opacity: 0.2;"></i>
-                    <h5 class="mt-3">${__('No files found')}</h5>
-                    <p>${__('Drag and drop files anywhere in this window to upload.')}</p>
-                </div>
-            </div>
-        `,
+                '<div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed #ddd; border-radius: 8px;">' +
+                    '<i class="fa fa-cloud-upload" style="font-size: 4rem; opacity: 0.2;"></i>' +
+                    '<h5 class="mt-3">' + __('No files found') + '</h5>' +
+                    '<p>' + __('Drag and drop files anywhere in this window to upload.') + '</p>' +
+                '</div>' +
+            '</div>',
         data() {
             return {
                 files: [],

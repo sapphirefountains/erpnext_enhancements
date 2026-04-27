@@ -20,7 +20,15 @@
             // 1. Conditional Background Styling
             // If opportunity_amount > 4000, set dark background and white text
             if (data.opportunity_amount > 4000) {
-                $card.addClass('opportunity-high-value');
+                // Apply to kanban-card-body as per user feedback
+                const $body = $card.find('.kanban-card-body');
+                if ($body.length > 0) {
+                    $body.addClass('opportunity-high-value');
+                } else {
+                    $card.addClass('opportunity-high-value');
+                }
+                // Also add to parent just in case, for CSS targeting
+                $card.addClass('opportunity-high-value-parent');
             }
 
             // 2. Value Stream Indicator Dots
@@ -39,16 +47,23 @@
      * @param {Array} value_streams Array of child table rows
      */
     function render_value_stream_dots($card, value_streams) {
-        let $footer = $card.find('.kanban-card-footer');
-        if ($footer.length === 0) {
-            // Create footer if it doesn't exist
-            $footer = $('<div class="kanban-card-footer"></div>').appendTo($card);
+        // Use .kanban-card-meta as per user feedback
+        let $meta = $card.find('.kanban-card-meta');
+        
+        if ($meta.length === 0) {
+            // Fallback to finding any footer or body if meta is missing
+            $meta = $card.find('.kanban-card-body');
+        }
+
+        if ($meta.length === 0) {
+            // Final fallback: append to card
+            $meta = $card;
         }
 
         // Create or clear dots container
-        let $dots_container = $footer.find('.kanban-card-value-stream');
+        let $dots_container = $meta.find('.kanban-card-value-stream');
         if ($dots_container.length === 0) {
-            $dots_container = $('<div class="kanban-card-value-stream"></div>').appendTo($footer);
+            $dots_container = $('<div class="kanban-card-value-stream"></div>').appendTo($meta);
         } else {
             $dots_container.empty();
         }
@@ -60,14 +75,18 @@
             "Rent": "#65CBC9"
         };
 
+        // Track seen colors to avoid duplicate dots for the same stream
+        const seen = new Set();
+
         value_streams.forEach(row => {
             const val = row.value_stream;
             const color = color_map[val];
-            if (color) {
+            if (color && !seen.has(color)) {
                 $('<div class="value-stream-dot"></div>')
                     .css('background-color', color)
                     .attr('title', val)
                     .appendTo($dots_container);
+                seen.add(color);
             }
         });
     }
@@ -79,7 +98,8 @@
     const original_get_data = frappe.views.KanbanView.prototype.get_data;
     frappe.views.KanbanView.prototype.get_data = function() {
         const self = this;
-        return original_get_data.apply(this, arguments).then(data => {
+        // Use Promise.resolve to handle both promise-returning and data-returning get_data
+        return Promise.resolve(original_get_data.apply(this, arguments)).then(data => {
             const is_opportunity_board = (self.doctype === 'Opportunity' && (self.board_name === 'Opportunity' || (self.board && self.board.name === 'Opportunity')));
 
             if (is_opportunity_board && data && data.length > 0) {
@@ -88,6 +108,8 @@
                 // Determine the child table doctype name (Standard pattern or from meta)
                 const meta = frappe.get_meta('Opportunity');
                 const field = meta && meta.fields ? meta.fields.find(f => f.fieldname === 'custom_value_stream') : null;
+                
+                // Fallback child DT name if not found in meta
                 const child_dt = field ? field.options : 'Opportunity Value Stream';
 
                 return frappe.call({

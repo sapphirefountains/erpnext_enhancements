@@ -1034,25 +1034,28 @@ mark {
    ========================================================================== */
 
 /* High-value card styling */
-.kanban-card.opportunity-high-value {
+.kanban-card-body.opportunity-high-value {
     background-color: #00263E !important;
     color: #ffffff !important;
+    border-radius: var(--border-radius-md, 8px);
 }
 
-.kanban-card.opportunity-high-value .kanban-card-title,
-.kanban-card.opportunity-high-value .kanban-card-content,
-.kanban-card.opportunity-high-value .kanban-card-docname,
-.kanban-card.opportunity-high-value .text-muted,
-.kanban-card.opportunity-high-value .small,
-.kanban-card.opportunity-high-value .frappe-timestamp,
-.kanban-card.opportunity-high-value .kanban-card-footer {
+.kanban-card-body.opportunity-high-value .kanban-card-title,
+.kanban-card-body.opportunity-high-value .kanban-card-content,
+.kanban-card-body.opportunity-high-value .kanban-card-docname,
+.kanban-card-body.opportunity-high-value .text-muted,
+.kanban-card-body.opportunity-high-value .small,
+.kanban-card-body.opportunity-high-value .frappe-timestamp,
+.kanban-card-body.opportunity-high-value .kanban-card-meta,
+.kanban-card-body.opportunity-high-value .kanban-card-footer {
     color: #ffffff !important;
 }
 
 /* Ensure tags and other elements also look good on dark background */
-.kanban-card.opportunity-high-value .tag-label {
+.kanban-card-body.opportunity-high-value .tag-label {
     border-color: rgba(255, 255, 255, 0.4) !important;
     color: #ffffff !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Value stream dots container */
