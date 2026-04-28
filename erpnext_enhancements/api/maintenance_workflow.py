@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import flt, nowdate, get_datetime, time_diff_in_seconds
+from frappe.utils import flt, nowdate, get_datetime
 
 def process_maintenance_submission(record_name):
     """
@@ -71,15 +71,17 @@ def create_stock_entry(doc):
     stock_entry.insert()
     stock_entry.submit()
     doc.add_comment("Comment", _("Stock Entry {0} created for consumables.").format(
-        frappe.utils.get_link_to_form("Stock Entry", stock_entry.name)
+        frappe.get_link_to_form("Stock Entry", stock_entry.name)
     ))
 
 def create_timesheet(doc):
     if not doc.clock_in_time or not doc.clock_out_time:
         return
 
-    # Calculate Duration
-    total_seconds = time_diff_in_seconds(doc.clock_out_time, doc.clock_in_time)
+    # Calculate Duration manually using datetime objects
+    start_time = get_datetime(doc.clock_in_time)
+    end_time = get_datetime(doc.clock_out_time)
+    total_seconds = (end_time - start_time).total_seconds()
     work_seconds = total_seconds - flt(doc.paused_duration)
     hours = work_seconds / 3600.0
 
@@ -114,7 +116,7 @@ def create_timesheet(doc):
     doc.db_set("total_labor_cost", total_cost)
     
     doc.add_comment("Comment", _("Timesheet {0} created. Total labor hours: {1:.2f}").format(
-        frappe.utils.get_link_to_form("Timesheet", timesheet.name), hours
+        frappe.get_link_to_form("Timesheet", timesheet.name), hours
     ))
 
 def check_warranty_and_rma(doc):
@@ -158,7 +160,7 @@ def check_warranty_and_rma(doc):
             
         mr.insert()
         doc.add_comment("Comment", _("Warranty RMA Triggered. Draft Material Request {0} created.").format(
-            frappe.utils.get_link_to_form("Material Request", mr.name)
+            frappe.get_link_to_form("Material Request", mr.name)
         ))
 
 def create_sales_invoice(doc):
@@ -223,5 +225,5 @@ def create_sales_invoice(doc):
     invoice.insert()
     doc.db_set("sales_invoice", invoice.name)
     doc.add_comment("Comment", _("Draft Sales Invoice {0} created.").format(
-        frappe.utils.get_link_to_form("Sales Invoice", invoice.name)
+        frappe.get_link_to_form("Sales Invoice", invoice.name)
     ))
