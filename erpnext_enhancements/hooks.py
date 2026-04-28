@@ -154,6 +154,7 @@ fixtures = [
     {"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
     {"dt": "Workflow State", "filters": [["name", "in", ["Draft", "Requested", "Approved", "Booking in Progress", "Ready for Travel", "In Progress", "Expense Review", "Closed"]]]},
     {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
+    {"dt": "Workflow State", "filters": [["name", "in", ["Pending Review", "Final/Submitted"]]]},
     {"dt": "Workflow Action Master", "filters": [["name", "in", ["Request Review", "Approve & Submit"]]]},
     {"dt": "Notification", "filters": [["name", "in", ["Maintenance Review Needed", "Maintenance Finalized"]]]},
     {"dt": "Print Format", "filters": [["name", "=", "Maintenance Record Print"]]}
