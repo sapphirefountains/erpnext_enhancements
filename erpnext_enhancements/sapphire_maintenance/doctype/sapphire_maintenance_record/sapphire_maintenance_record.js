@@ -91,9 +91,9 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			callback: function (r) {
 				if (r.message) {
 					const ctx = r.message;
-					const safety = ctx.profile.safety_instructions || "No specific safety instructions provided.";
-					const codes = ctx.profile.access_codes || "N/A";
-					const site_instr = ctx.asset.custom_site_instructions || "No specific site instructions.";
+					const safety = frappe.utils.xss_sanitise(ctx.profile.safety_instructions || "No specific safety instructions provided.");
+					const codes = frappe.utils.xss_sanitise(ctx.profile.access_codes || "N/A");
+					const site_instr = frappe.utils.xss_sanitise(ctx.asset.custom_site_instructions || "No specific site instructions.");
 
 					let visits_html = "";
 					if (ctx.visits && ctx.visits.length > 0) {
@@ -102,7 +102,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 								(v) => `
 							<div class="flex justify-between py-1 border-b border-gray-100 last:border-0">
 								<span class="text-xs font-medium text-gray-600">${frappe.datetime.global_date_format(v.creation)}</span>
-								<span class="text-xs text-gray-500">${v.technician}</span>
+								<span class="text-xs text-gray-500">${frappe.utils.xss_sanitise(v.technician)}</span>
 							</div>
 						`
 							)

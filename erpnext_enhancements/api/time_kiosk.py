@@ -167,21 +167,22 @@ def sync_interval_to_timesheet(interval_doc):
         }
 
         if timesheet_name:
-            ts_doc = frappe.get_doc("Timesheet", timesheet_name)
-
-            # Simple idempotency check: Check if an identical log exists
-            # We compare project and start time
-            exists = False
-            for row in ts_doc.time_logs:
-                # Compare basic fields
-                row_start = get_datetime(row.from_time)
-                if row.project == project and abs(row.hours - hours) < 0.01 and row_start == start_time:
-                    exists = True
-                    break
+            # Optimized idempotency check using database lookup
+            exists = frappe.db.exists("Timesheet Detail", {
+                "parent": timesheet_name,
+                "project": project,
+                "from_time": start_time,
+                "hours": ["between", [hours - 0.001, hours + 0.001]]
+            })
 
             if not exists:
+                ts_doc = frappe.get_doc("Timesheet", timesheet_name)
                 ts_doc.append("time_logs", new_log)
                 ts_doc.save(ignore_permissions=True)
+                # Ensure ts_doc object is available for subsequent note update
+            else:
+                # If it already exists, we still need the name for update_timesheet_note
+                ts_doc = frappe._dict({"name": timesheet_name})
 
         else:
             # Create new Timesheet

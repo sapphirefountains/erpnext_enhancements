@@ -5,7 +5,10 @@
  "engine": "InnoDB",
  "field_order": [
   "project_reminders_section",
-  "project_reminder_emails"
+  "project_reminder_emails",
+  "maintenance_section",
+  "maintenance_fee_item",
+  "maintenance_services_group"
  ],
  "fields": [
   {
@@ -18,6 +21,23 @@
    "fieldtype": "Table",
    "label": "Reminder Emails",
    "options": "Project Reminder Email"
+  },
+  {
+   "fieldname": "maintenance_section",
+   "fieldtype": "Section Break",
+   "label": "Maintenance"
+  },
+  {
+   "fieldname": "maintenance_fee_item",
+   "fieldtype": "Link",
+   "label": "Default Maintenance Fee Item",
+   "options": "Item"
+  },
+  {
+   "fieldname": "maintenance_services_group",
+   "fieldtype": "Link",
+   "label": "Maintenance Services Item Group",
+   "options": "Item Group"
   }
  ],
  "issingle": 1,

@@ -1,7 +1,8 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import nowdate, getdate, add_days, cached_property
+from functools import cached_property
+from frappe.utils import nowdate, getdate, add_days
 
 class SapphireMaintenanceRecord(Document):
 	@cached_property
@@ -38,6 +39,20 @@ class SapphireMaintenanceRecord(Document):
 		# Also trigger the Phase 1 recalulation logic if not already hooked
 		from erpnext_enhancements.api.maintenance_scheduling import update_sales_order_next_visit
 		update_sales_order_next_visit(self, None)
+
+	def get_context(self, context):
+		"""
+		Phase 5: Web View Context.
+		Fetches the visibility flag for labor hours from the parent Sales Order.
+		"""
+		context.show_labor = False
+		if self.project:
+			show_labor = frappe.db.get_value("Sales Order", 
+				{"project": self.project, "order_type": "Maintenance", "docstatus": 1}, 
+				"custom_display_labor_hours")
+			context.show_labor = True if show_labor else False
+
+		context.parents = [{"name": _("Maintenance Records"), "route": "maintenance-records"}]
 
 @frappe.whitelist()
 def get_template_items(project):
@@ -81,19 +96,3 @@ def get_dashboard_context(project, asset):
 	context['visits'] = visits
 
 	return context
-
-	def get_context(self, context):
-		"""
-		Phase 5: Web View Context.
-		Fetches the visibility flag for labor hours from the parent Sales Order.
-		"""
-		context.show_labor = False
-		if self.project:
-			show_labor = frappe.db.get_value("Sales Order", 
-				{"project": self.project, "order_type": "Maintenance", "docstatus": 1}, 
-				"custom_display_labor_hours")
-			context.show_labor = True if show_labor else False
-
-		context.parents = [{"name": _("Maintenance Records"), "route": "maintenance-records"}]
-
-

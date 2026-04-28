@@ -93,8 +93,7 @@ doctype_js = {
     "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js", "public/js/lead.js"],
     "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js", "public/js/contact.js"],
     "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
-    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"],
-    "Sapphire Maintenance Record": ["enhancements_core/doctype/sapphire_maintenance_record/sapphire_maintenance_record.js"]
+    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
 doctype_list_js = {
     "Opportunity": "public/js/opportunity_list.js"

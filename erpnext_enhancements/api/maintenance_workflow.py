@@ -5,10 +5,7 @@ from frappe.utils import flt, nowdate, get_datetime, time_diff_in_seconds
 def process_maintenance_submission(record_name):
     """
     Background job to process Sapphire Maintenance Record submission.
-    1. Generates Stock Entry for consumables.
-    2. Creates Timesheet for technician.
-    3. Handles Warranty/RMA logic.
-    4. Generates Draft Sales Invoice.
+    Ensures each step is independent; a failure in one doesn't halt the others.
     """
     try:
         doc = frappe.get_doc("Sapphire Maintenance Record", record_name)
@@ -17,33 +14,42 @@ def process_maintenance_submission(record_name):
         if doc.docstatus != 1:
             return
 
-        # 1. Stock Entry Generation
-        create_stock_entry(doc)
+        steps = [
+            ("Stock Entry Generation", create_stock_entry),
+            ("Job Costing (Timesheet)", create_timesheet),
+            ("Warranty RMA Hook", check_warranty_and_rma),
+            ("Sales Invoice Generation", create_sales_invoice)
+        ]
 
-        # 2. Job Costing (Timesheet)
-        create_timesheet(doc)
+        failures = []
 
-        # 3. Warranty RMA Hook
-        check_warranty_and_rma(doc)
+        for step_name, step_func in steps:
+            try:
+                step_func(doc)
+            except Exception as e:
+                error_msg = f"{step_name} failed: {str(e)}"
+                frappe.log_error(frappe.get_traceback(), _("Maintenance Submission Step Failed"))
+                doc.add_comment("Comment", _(error_msg))
+                failures.append(error_msg)
 
-        # 4. Sales Invoice Generation
-        create_sales_invoice(doc)
-
-        doc.add_comment("Comment", _("Background processing completed successfully."))
+        if not failures:
+            doc.add_comment("Comment", _("Background processing completed successfully."))
+        else:
+            # Notify owner about partial failures
+            owner = frappe.db.get_value("Sapphire Maintenance Record", record_name, "owner")
+            frappe.publish_realtime("msgprint", {
+                "message": _("Maintenance submission processed with some errors. Please check comments on {0}.").format(record_name),
+                "indicator": "orange"
+            }, user=owner)
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), _("Maintenance Submission Processing Failed"))
-        # Notify Project Manager
+        # Notify Project Manager of critical failure (e.g. could not load doc)
         owner = frappe.db.get_value("Sapphire Maintenance Record", record_name, "owner")
         frappe.publish_realtime("msgprint", {
-            "message": _("Background processing failed for {0}: {1}").format(record_name, str(e)),
+            "message": _("Background processing critically failed for {0}: {1}").format(record_name, str(e)),
             "indicator": "red"
         }, user=owner)
-        
-        # Also add a comment for visibility
-        frappe.get_doc("Sapphire Maintenance Record", record_name).add_comment(
-            "Comment", _("Background processing failed: {0}").format(str(e))
-        )
 
 def create_stock_entry(doc):
     if not doc.consumables:
@@ -62,14 +68,11 @@ def create_stock_entry(doc):
             "project": doc.project
         })
 
-    try:
-        stock_entry.insert()
-        stock_entry.submit()
-        doc.add_comment("Comment", _("Stock Entry {0} created for consumables.").format(
-            frappe.utils.get_link_to_form("Stock Entry", stock_entry.name)
-        ))
-    except frappe.exceptions.ValidationError as e:
-        raise Exception(_("Stock Entry failed: {0}").format(str(e)))
+    stock_entry.insert()
+    stock_entry.submit()
+    doc.add_comment("Comment", _("Stock Entry {0} created for consumables.").format(
+        frappe.utils.get_link_to_form("Stock Entry", stock_entry.name)
+    ))
 
 def create_timesheet(doc):
     if not doc.clock_in_time or not doc.clock_out_time:
@@ -144,7 +147,6 @@ def check_warranty_and_rma(doc):
         
         for part in failed_parts:
             # We might need to map 'part description' to an Item Code
-            # For now, we'll add a generic row or search for an item matching the description
             item_code = frappe.db.get_value("Item", {"item_name": part}, "name") or "WARRANTY-RETURN-PENDING"
             
             mr.append("items", {
@@ -164,6 +166,11 @@ def create_sales_invoice(doc):
     Generates a draft Sales Invoice for the Maintenance Record.
     Includes base maintenance fee and consumables.
     """
+    # Load settings
+    settings = frappe.get_single("ERPNext Enhancements Settings")
+    fee_item = settings.maintenance_fee_item or "MNT-FEE"
+    services_group = settings.maintenance_services_group or "Maintenance Services"
+
     # 1. Get Parent Sales Order
     so_name = frappe.db.get_value("Sales Order Item", {"custom_asset": doc.asset, "docstatus": 1}, "parent")
     if not so_name:
@@ -182,12 +189,11 @@ def create_sales_invoice(doc):
     invoice.custom_maintenance_record = doc.name
     
     # 2. Add Base Maintenance Fee Item
-    # Search SO items for 'Maintenance Services' group
     base_item = frappe.db.sql("""
         SELECT item_code, rate, qty FROM `tabSales Order Item`
-        WHERE parent = %s AND item_group = 'Maintenance Services'
+        WHERE parent = %s AND item_group = %s
         LIMIT 1
-    """, so_name, as_dict=True)
+    """, (so_name, services_group), as_dict=True)
 
     if base_item:
         invoice.append("items", {
@@ -197,10 +203,10 @@ def create_sales_invoice(doc):
             "sales_order": so_name
         })
     else:
-        # Fallback to MNT-FEE
-        rate = frappe.db.get_value("Item Price", {"item_code": "MNT-FEE", "price_list": "Standard Selling"}, "price_list_rate") or 0
+        # Fallback to fee_item from settings
+        rate = frappe.db.get_value("Item Price", {"item_code": fee_item, "price_list": "Standard Selling"}, "price_list_rate") or 0
         invoice.append("items", {
-            "item_code": "MNT-FEE",
+            "item_code": fee_item,
             "qty": 1,
             "rate": rate
         })
@@ -210,16 +216,12 @@ def create_sales_invoice(doc):
         invoice.append("items", {
             "item_code": item.item,
             "qty": item.qty,
-            # Standard price fetching
             "rate": frappe.db.get_value("Item Price", {"item_code": item.item, "price_list": "Standard Selling"}, "price_list_rate") or 0
         })
 
-    try:
-        invoice.set_missing_values()
-        invoice.insert()
-        doc.db_set("sales_invoice", invoice.name)
-        doc.add_comment("Comment", _("Draft Sales Invoice {0} created.").format(
-            frappe.utils.get_link_to_form("Sales Invoice", invoice.name)
-        ))
-    except Exception as e:
-        raise Exception(_("Sales Invoice generation failed: {0}").format(str(e)))
+    invoice.set_missing_values()
+    invoice.insert()
+    doc.db_set("sales_invoice", invoice.name)
+    doc.add_comment("Comment", _("Draft Sales Invoice {0} created.").format(
+        frappe.utils.get_link_to_form("Sales Invoice", invoice.name)
+    ))
