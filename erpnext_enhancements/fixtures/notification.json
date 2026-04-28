@@ -27,6 +27,7 @@
     "send_to_all_assignees": 0,
     "attach_print": 1,
     "print_format": "Maintenance Record Print",
+    "message": "Maintenance Record {{ doc.name }} has been finalized.\n\nA draft Sales Invoice ({{ doc.sales_invoice }}) has been generated for your review and standard GL posting.\n\nPlease check the ERPNext Sales Invoice list for the corresponding draft.",
     "recipients": [
       {
         "receiver_by_role": "Accounts Manager"

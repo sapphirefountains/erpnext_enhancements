@@ -1,13 +1,13 @@
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, get_datetime
+from frappe.utils import now_datetime, get_datetime, flt
 from datetime import timedelta
 
 @frappe.whitelist()
-def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None):
+def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None, time_category="On-Site Labor"):
     """
     Logs time for the current employee.
-    action: "Start" or "Stop"
+    action: "Start", "Stop", "Pause", "Resume", "Switch"
     """
     if not action:
         frappe.throw(_("Action is required."))
@@ -18,55 +18,113 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
     if not employee:
         frappe.throw(_("No Employee record found for this user ({0}).").format(user), frappe.PermissionError)
 
+    now_dt = now_datetime()
+
     if action == "Start":
         if not project:
             frappe.throw(_("Project is required to start work."))
 
-        # Check for existing open interval
         existing = frappe.db.exists("Job Interval", {
             "employee": employee,
-            "status": "Open"
+            "status": ["in", ["Open", "Paused"]]
         })
         if existing:
-            frappe.throw(_("You already have an open job interval. Please stop it first."))
+            frappe.throw(_("You already have an active job interval. Please stop or switch it first."))
 
-        # Create new interval
         doc = frappe.get_doc({
             "doctype": "Job Interval",
             "employee": employee,
             "project": project,
             "task": task,
-            "start_time": now_datetime(),
+            "time_category": time_category,
+            "start_time": now_dt,
             "status": "Open",
             "latitude": lat,
             "longitude": lng,
-            "description": description
+            "description": description,
+            "total_paused_seconds": 0.0
         })
         doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Work started.", "doc": doc.name}
 
-    elif action == "Stop":
-        # Find open interval
-        open_interval = frappe.db.get_value("Job Interval", {
-            "employee": employee,
-            "status": "Open"
-        }, "name")
-
+    elif action == "Pause":
+        open_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Open"}, "name")
         if not open_interval:
-            frappe.throw(_("No open job found to stop."))
-
+            frappe.throw(_("No open job found to pause."))
+        
         doc = frappe.get_doc("Job Interval", open_interval)
-        doc.end_time = now_datetime()
+        doc.status = "Paused"
+        doc.last_pause_time = now_dt
+        doc.save(ignore_permissions=True)
+        return {"status": "success", "message": "Work paused.", "doc": doc.name}
+
+    elif action == "Resume":
+        paused_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Paused"}, "name")
+        if not paused_interval:
+            frappe.throw(_("No paused job found to resume."))
+        
+        doc = frappe.get_doc("Job Interval", paused_interval)
+        if doc.last_pause_time:
+            pause_duration = (now_dt - get_datetime(doc.last_pause_time)).total_seconds()
+            doc.total_paused_seconds = flt(doc.total_paused_seconds) + pause_duration
+            
+        doc.status = "Open"
+        doc.last_pause_time = None
+        doc.save(ignore_permissions=True)
+        return {"status": "success", "message": "Work resumed.", "doc": doc.name}
+
+    elif action == "Switch":
+        if not project:
+            frappe.throw(_("Project is required to switch work."))
+
+        active_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": ["in", ["Open", "Paused"]]}, ["name", "status", "last_pause_time"], as_dict=True)
+        
+        if active_interval:
+            doc = frappe.get_doc("Job Interval", active_interval.name)
+            if doc.status == "Paused" and doc.last_pause_time:
+                doc.end_time = doc.last_pause_time
+            else:
+                doc.end_time = now_dt
+            doc.status = "Completed"
+            doc.save(ignore_permissions=True)
+            sync_interval_to_timesheet(doc)
+
+        new_doc = frappe.get_doc({
+            "doctype": "Job Interval",
+            "employee": employee,
+            "project": project,
+            "task": task,
+            "time_category": time_category,
+            "start_time": now_dt,
+            "status": "Open",
+            "latitude": lat,
+            "longitude": lng,
+            "description": description,
+            "total_paused_seconds": 0.0
+        })
+        new_doc.insert(ignore_permissions=True)
+        return {"status": "success", "message": "Task switched.", "doc": new_doc.name}
+
+    elif action == "Stop":
+        active_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": ["in", ["Open", "Paused"]]}, ["name", "status", "last_pause_time"], as_dict=True)
+
+        if not active_interval:
+            frappe.throw(_("No active job found to stop."))
+
+        doc = frappe.get_doc("Job Interval", active_interval.name)
+        if doc.status == "Paused" and doc.last_pause_time:
+            doc.end_time = doc.last_pause_time
+        else:
+            doc.end_time = now_dt
         doc.status = "Completed"
         doc.save(ignore_permissions=True)
 
-        # Sync to Timesheet
         sync_interval_to_timesheet(doc)
 
         return {"status": "success", "message": "Work stopped.", "doc": doc.name}
 
     else:
-        frappe.throw(_("Invalid action. Must be 'Start' or 'Stop'."))
+        frappe.throw(_("Invalid action. Must be 'Start', 'Stop', 'Pause', 'Resume', or 'Switch'."))
 
 def sync_interval_to_timesheet(interval_doc):
     """
@@ -76,7 +134,6 @@ def sync_interval_to_timesheet(interval_doc):
         employee = interval_doc.employee
         project = interval_doc.project
 
-        # RESCUE MECHANISM: If project is missing (e.g. bad data), allow stop but skip sync
         if not project:
             interval_doc.db_set("sync_status", "Skipped - No Project")
             return
@@ -84,9 +141,8 @@ def sync_interval_to_timesheet(interval_doc):
         start_time = get_datetime(interval_doc.start_time)
         end_time = get_datetime(interval_doc.end_time)
 
-        # Calculate hours
-        duration_seconds = (end_time - start_time).total_seconds()
-        hours = duration_seconds / 3600.0
+        duration_seconds = (end_time - start_time).total_seconds() - flt(interval_doc.total_paused_seconds)
+        hours = max(duration_seconds / 3600.0, 0.0)
 
         date_key = start_time.date()
 
@@ -197,7 +253,7 @@ def update_timesheet_note(timesheet_name, employee, date_obj):
 @frappe.whitelist()
 def get_current_status():
     """
-    Returns the current open interval for the logged in user.
+    Returns the current active interval for the logged in user.
     Also returns employee info even if no interval is open.
     """
     user = frappe.session.user
@@ -211,11 +267,11 @@ def get_current_status():
         # If no employee record, we can't really do anything
         return None
 
-    # Get open interval
+    # Get open or paused interval
     interval = frappe.db.get_value("Job Interval", {
         "employee": employee,
-        "status": "Open"
-    }, ["name", "project", "task", "start_time", "description"], as_dict=True)
+        "status": ["in", ["Open", "Paused"]]
+    }, ["name", "project", "task", "start_time", "description", "status", "time_category", "total_paused_seconds", "last_pause_time"], as_dict=True)
 
     if interval:
         # Use dictionary access for compatibility with plain dicts (in case of custom queries/mocks)

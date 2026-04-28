@@ -48,10 +48,11 @@ class TimeKioskSync:
     async def fetch_pending_intervals(self, limit: int = 100) -> List[Dict[str, Any]]:
         """
         Fetches Job Intervals with status='Completed' and sync_status='Pending'.
+        Includes total_paused_seconds.
         """
         params = {
             "doctype": "Job Interval",
-            "fields": '["name", "employee", "project", "start_time", "end_time"]',
+            "fields": '["name", "employee", "project", "start_time", "end_time", "total_paused_seconds"]',
             "filters": '[["status", "=", "Completed"], ["sync_status", "=", "Pending"]]',
             "limit_page_length": limit,
             "order_by": "creation asc"
@@ -90,9 +91,9 @@ class TimeKioskSync:
                 start_dt = datetime.fromisoformat(start_time_str)
                 end_dt = datetime.fromisoformat(end_time_str)
 
-                # Calculate duration in hours
-                duration_seconds = (end_dt - start_dt).total_seconds()
-                hours = duration_seconds / 3600.0
+                # Calculate duration in hours, subtracting paused time
+                duration_seconds = (end_dt - start_dt).total_seconds() - float(log.get("total_paused_seconds", 0.0))
+                hours = max(duration_seconds / 3600.0, 0.0)
 
                 # Group Key: (Employee, Project, Date)
                 date_key = start_dt.date().isoformat()

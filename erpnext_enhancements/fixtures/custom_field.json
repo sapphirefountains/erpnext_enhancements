@@ -104,6 +104,90 @@
   },
   {
     "doctype": "Custom Field",
+    "name": "Asset-custom_pump_make_model",
+    "fieldname": "custom_pump_make_model",
+    "fieldtype": "Data",
+    "label": "Pump Make/Model",
+    "insert_after": "asset_name",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_filtration_media_type",
+    "fieldname": "custom_filtration_media_type",
+    "fieldtype": "Data",
+    "label": "Filtration Media Type",
+    "insert_after": "custom_pump_make_model",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_water_volume",
+    "fieldname": "custom_water_volume",
+    "fieldtype": "Data",
+    "label": "Water Volume",
+    "insert_after": "custom_filtration_media_type",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_site_instructions",
+    "fieldname": "custom_site_instructions",
+    "fieldtype": "Small Text",
+    "label": "Site Instructions",
+    "insert_after": "custom_water_volume",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order Item-custom_asset",
+    "fieldname": "custom_asset",
+    "fieldtype": "Link",
+    "label": "Asset",
+    "options": "Asset",
+    "insert_after": "item_code",
+    "dt": "Sales Order Item",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order Item-custom_maintenance_frequency",
+    "fieldname": "custom_maintenance_frequency",
+    "fieldtype": "Select",
+    "label": "Maintenance Frequency",
+    "options": "\nDaily\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nYearly",
+    "insert_after": "custom_asset",
+    "dt": "Sales Order Item",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order Item-custom_last_visit_date",
+    "fieldname": "custom_last_visit_date",
+    "fieldtype": "Date",
+    "label": "Last Visit Date",
+    "read_only": 1,
+    "insert_after": "custom_maintenance_frequency",
+    "dt": "Sales Order Item",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order Item-custom_next_predictive_visit",
+    "fieldname": "custom_next_predictive_visit",
+    "fieldtype": "Date",
+    "label": "Next Predictive Visit",
+    "read_only": 1,
+    "insert_after": "custom_last_visit_date",
+    "dt": "Sales Order Item",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
     "name": "Kanban Board Column-custom_wip_limit",
     "fieldname": "custom_wip_limit",
     "fieldtype": "Int",
@@ -373,6 +457,88 @@
     "read_only": 1,
     "insert_after": "status",
     "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_under_warranty",
+    "fieldname": "custom_under_warranty",
+    "fieldtype": "Check",
+    "label": "Under Warranty",
+    "insert_after": "purchase_date",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Asset-custom_warranty_expiry_date",
+    "fieldname": "custom_warranty_expiry_date",
+    "fieldtype": "Date",
+    "label": "Warranty Expiry Date",
+    "insert_after": "custom_under_warranty",
+    "dt": "Asset",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-custom_maintenance_record",
+    "fieldname": "custom_maintenance_record",
+    "fieldtype": "Link",
+    "label": "Maintenance Record",
+    "options": "Sapphire Maintenance Record",
+    "insert_after": "customer",
+    "dt": "Sales Invoice",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Order-custom_display_labor_hours",
+    "fieldname": "custom_display_labor_hours",
+    "fieldtype": "Check",
+    "label": "Display Labor Hours on Portal",
+    "default": "0",
+    "insert_after": "customer",
+    "dt": "Sales Order",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Serial No-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "item_code",
+    "dt": "Serial No",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Serial No-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Serial No",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Batch-custom_comments_tab",
+    "fieldname": "custom_comments_tab",
+    "fieldtype": "Tab Break",
+    "label": "Comments",
+    "insert_after": "item_code",
+    "dt": "Batch",
+    "module": "ERPNext Enhancements"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Batch-custom_comments_field",
+    "fieldname": "custom_comments_field",
+    "fieldtype": "HTML",
+    "label": "Comments App",
+    "insert_after": "custom_comments_tab",
+    "dt": "Batch",
     "module": "ERPNext Enhancements"
   }
 ]

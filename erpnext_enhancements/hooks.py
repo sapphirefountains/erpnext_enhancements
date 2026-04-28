@@ -65,7 +65,12 @@ doctype_js = {
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
     "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
     "Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
-    "Sales Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_order_comments.js"],
+    "Sales Order": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/sales_order_comments.js",
+        "public/js/sales_order_enhancements.js"
+    ],
     "Sales Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_invoice_comments.js"],
     "Task": ["public/js/vue.global.js", "public/js/comments.js", "public/js/task_comments.js", "public/js/task_enhancements.js"],
     "Journal Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/journal_entry_comments.js"],
@@ -97,6 +102,11 @@ doctype_list_js = {
 doctype_calendar_js = {
     "Asset Booking": "public/js/asset_booking_calendar.js"
 }
+
+portal_menu_items = [
+	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}
+]
+
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -205,6 +215,9 @@ doc_events = {
 	},
 	"Communication": {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+	},
+	"Sapphire Maintenance Record": {
+		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit"
 	}
 }
 
@@ -271,7 +284,17 @@ fixtures = [
                 "Task-custom_create_child_task_btn",
                 "Asset-custom_current_event_location",
                 "Asset-custom_map_placeholder",
-                "Asset-custom_rental_status"
+                "Asset-custom_rental_status",
+                "Asset-custom_pump_make_model",
+                "Asset-custom_filtration_media_type",
+                "Asset-custom_water_volume",
+                "Asset-custom_site_instructions",
+                "Sales Order Item-custom_asset",
+                "Sales Order Item-custom_maintenance_frequency",
+                "Sales Order Item-custom_last_visit_date",
+                "Sales Order Item-custom_next_predictive_visit",
+                "Sales Order-custom_display_labor_hours",
+                "Sales Invoice-custom_maintenance_record"
             ]]
         ]
     },

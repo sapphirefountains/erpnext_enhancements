@@ -26,32 +26,18 @@ class SapphireMaintenanceRecord(Document):
 
 	def on_submit(self):
 		"""
-		Phase 4: Automated Stock Entry.
-		Generates and submits a Stock Entry (Material Issue) for consumables.
+		Phase 3: Enqueue background processing.
+		Generates Stock Entry, Timesheet, and handles Warranty logic.
 		"""
-		if not self.consumables:
-			return
-
-		stock_entry = frappe.new_doc("Stock Entry")
-		stock_entry.purpose = "Material Issue"
-		stock_entry.company = frappe.db.get_value("Project", self.project, "company") or frappe.defaults.get_global_default("company")
+		frappe.enqueue(
+			"erpnext_enhancements.api.maintenance_workflow.process_maintenance_submission",
+			record_name=self.name,
+			queue="default"
+		)
 		
-		for item in self.consumables:
-			stock_entry.append("items", {
-				"item_code": item.item,
-				"s_warehouse": item.warehouse,
-				"qty": item.qty,
-				"serial_and_batch_bundle": item.serial_and_batch_bundle,
-				"project": self.project
-			})
-
-		stock_entry.insert()
-		stock_entry.submit()
-		
-		# Link Stock Entry to this record
-		frappe.msgprint(_("Stock Entry {0} created and submitted.").format(
-			frappe.utils.get_link_to_form("Stock Entry", stock_entry.name)
-		))
+		# Also trigger the Phase 1 recalulation logic if not already hooked
+		from erpnext_enhancements.api.maintenance_scheduling import update_sales_order_next_visit
+		update_sales_order_next_visit(self, None)
 
 @frappe.whitelist()
 def get_template_items(project):
@@ -67,5 +53,47 @@ def get_template_items(project):
 	if template_name:
 		return frappe.get_all("Sapphire Template Item", filters={"parent": template_name}, fields=["question_prompt"], order_by="sequence")
 	return []
+
+@frappe.whitelist()
+def get_dashboard_context(project, asset):
+	"""
+	Phase 2: Fetch context for the technician dashboard.
+	Returns Profile data, Asset data, and Last 3 Visits.
+	"""
+	context = {}
+	
+	# 1. Profile Data
+	profile = frappe.db.get_value("Sapphire Maintenance Profile", {"project": project}, ["safety_instructions", "access_codes"], as_dict=True)
+	context['profile'] = profile or {}
+
+	# 2. Asset Data
+	asset_data = frappe.db.get_value("Asset", asset, ["custom_site_instructions", "item_name"], as_dict=True)
+	context['asset'] = asset_data or {}
+
+	# 3. Last 3 Visits
+	visits = frappe.get_all(
+		"Sapphire Maintenance Record",
+		filters={"project": project, "docstatus": 1},
+		fields=["name", "creation", "technician"],
+		order_by="creation desc",
+		limit=3
+	)
+	context['visits'] = visits
+
+	return context
+
+	def get_context(self, context):
+		"""
+		Phase 5: Web View Context.
+		Fetches the visibility flag for labor hours from the parent Sales Order.
+		"""
+		context.show_labor = False
+		if self.project:
+			show_labor = frappe.db.get_value("Sales Order", 
+				{"project": self.project, "order_type": "Maintenance", "docstatus": 1}, 
+				"custom_display_labor_hours")
+			context.show_labor = True if show_labor else False
+
+		context.parents = [{"name": _("Maintenance Records"), "route": "maintenance-records"}]
 
 

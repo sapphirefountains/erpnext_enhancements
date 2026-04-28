@@ -1,1 +1,0 @@
-This is a Frappe ERPNext V15 environment.

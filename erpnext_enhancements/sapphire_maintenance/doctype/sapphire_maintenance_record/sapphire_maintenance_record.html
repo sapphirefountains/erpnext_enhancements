@@ -1,0 +1,117 @@
+{% extends "templates/web.html" %}
+
+{% block page_content %}
+<div class="max-w-4xl mx-auto py-8 px-4">
+    <div class="mb-8 flex justify-between items-start">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Maintenance Visit: {{ doc.name }}</h1>
+            <p class="mt-2 text-sm text-gray-500">
+                <span class="font-medium text-gray-700">Date:</span> {{ frappe.datetime.global_date_format(doc.creation) }} |
+                <span class="font-medium text-gray-700">Asset:</span> {{ doc.asset }} |
+                <span class="font-medium text-gray-700">Project:</span> {{ doc.project }}
+            </p>
+        </div>
+        <div class="px-3 py-1 rounded-full text-xs font-semibold 
+            {% if doc.docstatus == 1 %} bg-green-100 text-green-800 {% else %} bg-yellow-100 text-yellow-800 {% endif %}">
+            {{ _(doc.workflow_state or doc.status) }}
+        </div>
+    </div>
+
+    {% if show_labor and doc.clock_in_time %}
+    <div class="mb-8 p-4 bg-blue-50 border border-blue-100 rounded-lg">
+        <h3 class="text-lg font-bold text-blue-900 mb-2">Service Duration</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <p class="text-xs text-blue-700 uppercase font-bold">Clock In</p>
+                <p class="text-sm text-blue-900">{{ frappe.utils.get_datetime(doc.clock_in_time).strftime('%H:%M %p') }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-blue-700 uppercase font-bold">Clock Out</p>
+                <p class="text-sm text-blue-900">{{ frappe.utils.get_datetime(doc.clock_out_time).strftime('%H:%M %p') if doc.clock_out_time else '--:--' }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-blue-700 uppercase font-bold">Total Duration</p>
+                <p class="text-sm text-blue-900">
+                    {% set total_sec = frappe.utils.time_diff_in_seconds(doc.clock_out_time, doc.clock_in_time) if doc.clock_out_time else 0 %}
+                    {% set work_sec = total_sec - (doc.paused_duration | flt) %}
+                    {{ (work_sec / 3600.0) | round(2) }} Hours
+                </p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Maintenance Results -->
+    <div class="mb-10">
+        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Checklist Results</h2>
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Question</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {% for row in doc.maintenance_results %}
+                    <tr>
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.question }}</td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                {% if row.selection == 'Pass' %} bg-green-100 text-green-800 
+                                {% elif row.selection == 'Fail' %} bg-red-100 text-red-800 
+                                {% else %} bg-gray-100 text-gray-800 {% endif %}">
+                                {{ row.selection }}
+                            </span>
+                        </td>
+                        <td class="px-3 py-4 text-sm text-gray-500">
+                            {{ row.answer or '' }}
+                            {% if row.selection == 'Other' and row.other_details %}
+                                <div class="text-xs italic text-gray-400 mt-1">Details: {{ row.other_details }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Consumables -->
+    <div class="mb-10">
+        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Parts & Consumables</h2>
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Item</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Quantity</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {% for item in doc.consumables %}
+                    <tr>
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ item.item }}</td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ item.qty }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Client Sign-off -->
+    {% if doc.client_sign_off %}
+    <div class="mt-12 pt-8 border-t border-gray-200">
+        <div class="flex flex-col items-center md:items-end">
+            <p class="text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Client Sign-off</p>
+            <div class="border-2 border-gray-300 rounded p-2 bg-white inline-block">
+                <img src="{{ doc.client_sign_off }}" class="max-h-24" alt="Client Signature">
+            </div>
+            <p class="mt-2 text-xs text-gray-400 italic">Digitally captured on site.</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

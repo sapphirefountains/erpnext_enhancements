@@ -1,15 +1,30 @@
 {
+ "allow_import": 1,
+ "allow_submittable": 1,
  "creation": "2024-05-22 12:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "has_web_view": 1,
+ "allow_guest_to_view": 1,
+ "route": "maintenance-records",
  "field_order": [
   "customer",
   "project",
+  "asset",
   "technician",
+  "clock_in_time",
+  "clock_out_time",
+  "paused_duration",
+  "total_labor_cost",
+  "safety_acknowledged",
   "dashboard",
   "maintenance_results",
   "consumables",
-  "historical_visits"
+  "historical_visits",
+  "warranty_rma_flag",
+  "sales_invoice",
+  "workflow_state",
+  "client_sign_off"
  ],
  "fields": [
   {
@@ -27,11 +42,46 @@
    "options": "Project"
   },
   {
+   "fieldname": "asset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Asset",
+   "options": "Asset"
+  },
+  {
    "fieldname": "technician",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Technician",
    "options": "User"
+  },
+  {
+   "fieldname": "clock_in_time",
+   "fieldtype": "Datetime",
+   "label": "Clock In Time"
+  },
+  {
+   "fieldname": "clock_out_time",
+   "fieldtype": "Datetime",
+   "label": "Clock Out Time"
+  },
+  {
+   "default": "0",
+   "fieldname": "paused_duration",
+   "fieldtype": "Float",
+   "label": "Paused Duration (Seconds)"
+  },
+  {
+   "fieldname": "total_labor_cost",
+   "fieldtype": "Currency",
+   "hidden": 1,
+   "label": "Total Labor Cost"
+  },
+  {
+   "default": "0",
+   "fieldname": "safety_acknowledged",
+   "fieldtype": "Check",
+   "label": "Safety Procedures & PPE Acknowledged"
   },
   {
    "fieldname": "dashboard",
@@ -55,6 +105,32 @@
    "fieldtype": "Table",
    "label": "Historical Visits",
    "options": "Sapphire Historical Visit"
+  },
+  {
+   "default": "0",
+   "fieldname": "warranty_rma_flag",
+   "fieldtype": "Check",
+   "label": "Warranty RMA Triggered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "label": "Generated Sales Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "label": "Workflow State",
+   "options": "Workflow State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "client_sign_off",
+   "fieldtype": "Signature",
+   "label": "Client Sign-off"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",

@@ -32,7 +32,8 @@
    "depends_on": "eval:doc.selection == 'Other'",
    "fieldname": "other_details",
    "fieldtype": "Data",
-   "label": "Other Details"
+   "label": "Other Details",
+   "mandatory_depends_on": "eval:doc.selection == 'Other'"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",

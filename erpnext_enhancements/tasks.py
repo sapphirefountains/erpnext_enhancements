@@ -120,44 +120,53 @@ def create_duplicate_task(doc, new_date):
 	)
 
 
-def predictive_maintenance_scheduling():
+def generate_predictive_maintenance_records():
 	"""
-	Phase 4: Predictive Scheduling (Cron).
-	Queries active Maintenance Sales Orders. 
-	Identifies those needing a visit by checking the latest Sapphire Maintenance Record.
+	Cron job to automatically generate Draft Sapphire Maintenance Records.
+	Queries Sales Order Item for active maintenance contracts where the 
+	next predictive visit is within 7 days.
 	"""
 	from frappe.utils import add_days, nowdate, getdate
 
-	# 1. Get all active Maintenance Sales Orders
-	orders = frappe.get_all(
-		"Sales Order",
+	# 1. Get all Sales Order Items for Active Maintenance Orders
+	# Filter by next_predictive_visit <= 7 days from now
+	items = frappe.db.get_all(
+		"Sales Order Item",
 		filters={
-			"order_type": "Maintenance",
 			"docstatus": 1,
-			"status": ["not in", ["Closed", "Completed"]],
+			"custom_next_predictive_visit": ["<=", add_days(nowdate(), 7)],
+			"custom_asset": ["is", "set"]
 		},
-		fields=["name", "customer", "project", "transaction_date"],
+		fields=["name", "parent", "custom_asset", "custom_next_predictive_visit"],
 	)
 
-	for order in orders:
-		# 2. Find the last maintenance record for this project
-		last_record_date = frappe.db.get_value(
-			"Sapphire Maintenance Record",
-			{"project": order.project, "docstatus": 1},
-			"creation",
-			order_by="creation desc"
+	for item in items:
+		# Check if parent is an active maintenance order
+		so_status, so_project, so_customer = frappe.db.get_value(
+			"Sales Order",
+			item.parent,
+			["status", "project", "customer"]
 		)
 
-		# Use transaction date if no maintenance record exists yet
-		reference_date = getdate(last_record_date) if last_record_date else getdate(order.transaction_date)
-		
-		# If 30 days have passed (or are about to pass), schedule next
-		if add_days(reference_date, 30) <= add_days(nowdate(), 7):
-			# Check if a draft record already exists for this order/project to avoid duplicates
-			if not frappe.db.exists("Sapphire Maintenance Record", {"project": order.project, "docstatus": 0}):
+		if so_status not in ["Closed", "Completed"] and so_project:
+			# 2. Check for existing Draft record for this project + asset
+			if not frappe.db.exists("Sapphire Maintenance Record", {
+				"project": so_project,
+				"asset": item.custom_asset,
+				"docstatus": 0
+			}):
+				# 3. Create the Maintenance Record
 				maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
-				maintenance_record.customer = order.customer
-				maintenance_record.project = order.project
+				maintenance_record.customer = so_customer
+				maintenance_record.project = so_project
+				maintenance_record.asset = item.custom_asset
 				maintenance_record.insert(ignore_permissions=True)
 				
-				frappe.logger().info(f"Generated predictive Maintenance Record for project {order.project}")
+				frappe.logger().info(f"Generated predictive Maintenance Record for asset {item.custom_asset} in project {so_project}")
+
+
+def predictive_maintenance_scheduling():
+	"""
+	Wrapper for the daily scheduler event.
+	"""
+	generate_predictive_maintenance_records()

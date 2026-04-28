@@ -28,6 +28,14 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                 </div>
 
                 <div class="form-group">
+                    <label>Category</label>
+                    <select id="tk-category-input" class="form-control">
+                        <option value="On-Site Labor">On-Site Labor</option>
+                        <option value="Travel">Travel</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label>Note (Optional)</label>
                     <textarea id="tk-note-input" class="form-control" rows="3" placeholder="What are you working on?"></textarea>
                 </div>
@@ -36,6 +44,7 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
             <!-- Read-only note if Clocked In -->
             <div id="tk-read-only-note-section" class="form-group text-center" style="display: none;">
                 <p id="tk-read-only-note" class="text-muted font-italic"></p>
+                <p id="tk-read-only-category" class="badge badge-info"></p>
             </div>
 
             <!-- Actions -->
@@ -44,11 +53,28 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                     <i class="fa fa-play"></i> Clock In
                 </button>
 
-                <button id="tk-btn-clock-out" class="btn btn-danger btn-lg btn-block" style="display: none;">
-                    <i class="fa fa-stop"></i> Clock Out
-                </button>
+                <div id="tk-active-actions" style="display: none;">
+                    <div class="row">
+                        <div class="col-6">
+                             <button id="tk-btn-pause" class="btn btn-warning btn-lg btn-block">
+                                <i class="fa fa-pause"></i> Pause Break
+                             </button>
+                             <button id="tk-btn-resume" class="btn btn-info btn-lg btn-block" style="display: none;">
+                                <i class="fa fa-play"></i> Resume Work
+                             </button>
+                        </div>
+                        <div class="col-6">
+                            <button id="tk-btn-switch" class="btn btn-secondary btn-lg btn-block">
+                                <i class="fa fa-exchange"></i> Switch Task
+                            </button>
+                        </div>
+                    </div>
+                    <button id="tk-btn-clock-out" class="btn btn-danger btn-lg btn-block mt-3">
+                        <i class="fa fa-stop"></i> Clock Out
+                    </button>
+                </div>
 
-                <a id="tk-btn-history" href="/app/job-interval" class="btn btn-secondary btn-lg btn-block mt-3">
+                <a id="tk-btn-history" href="/app/job-interval" class="btn btn-outline-secondary btn-lg btn-block mt-3">
                     <i class="fa fa-history"></i> View My History
                 </a>
             </div>
@@ -60,8 +86,6 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
 function debug_log(msg) {
     try {
         console.log("[Time Kiosk] " + msg);
-
-        // Server Log
         if (window.frappe && frappe.call) {
              frappe.call({
                 method: 'erpnext_enhancements.api.logger.log_client_error',
@@ -75,21 +99,16 @@ function debug_log(msg) {
     }
 }
 
-debug_log("Script Loaded. Window URL: " + window.location.href);
-
 const init_time_kiosk = function(wrapper) {
     debug_log("init_time_kiosk execution started");
 
     try {
-        // 1. Setup Page
         var page = frappe.ui.make_app_page({
             parent: wrapper,
             title: 'Time Kiosk',
             single_column: true
         });
-        debug_log("Page structure created via make_app_page");
 
-        // Load CSS manually to avoid frappe.require issues
         const cssId = 'time-kiosk-css';
         if (!document.getElementById(cssId)) {
             const head = document.getElementsByTagName('head')[0];
@@ -100,466 +119,233 @@ const init_time_kiosk = function(wrapper) {
             link.href = '/assets/erpnext_enhancements/css/time-kiosk.css';
             link.media = 'all';
             head.appendChild(link);
-            debug_log("CSS link appended to head");
-        } else {
-             debug_log("CSS already loaded");
         }
 
-        // 2. Inject HTML
         $(page.main).html(TIME_KIOSK_TEMPLATE);
-        debug_log("Template HTML injected into page.main");
 
-        // 3. State & Elements
         const $currentTime = $('#tk-current-time');
         const $timerDisplay = $('#tk-timer-display');
         const $statusText = $('#tk-status-text');
         const $loadingMsg = $('#tk-loading-msg');
-
         const $inputSection = $('#tk-input-section');
         const $readOnlyNoteSection = $('#tk-read-only-note-section');
-
-        // Link Field Wrapper
         const $projectWrapper = $('#tk-project-wrapper');
         const $taskWrapper = $('#tk-task-wrapper');
-        let projectControl = null;
-        let taskControl = null;
-
+        const $categoryInput = $('#tk-category-input');
         const $noteInput = $('#tk-note-input');
         const $readOnlyNote = $('#tk-read-only-note');
-
+        const $readOnlyCategory = $('#tk-read-only-category');
         const $activeProjectDisplay = $('#tk-active-project-display');
         const $activeProjectName = $('#tk-active-project-name');
-
         const $btnClockIn = $('#tk-btn-clock-in');
+        const $activeActions = $('#tk-active-actions');
+        const $btnPause = $('#tk-btn-pause');
+        const $btnResume = $('#tk-btn-resume');
+        const $btnSwitch = $('#tk-btn-switch');
         const $btnClockOut = $('#tk-btn-clock-out');
         const $btnHistory = $('#tk-btn-history');
 
+        let projectControl = null;
+        let taskControl = null;
         let kioskState = {
-            status: null, // 'Open', 'Idle'
+            status: null, // 'Open', 'Paused', 'Idle'
             currentInterval: null,
-            loading: false
+            loading: false,
+            isSwitching: false
         };
 
-        // --- WORKER INTEGRATION ---
         let geoWorker = null;
-
         const initWorker = (employeeId) => {
-            if (!window.Worker) {
-                console.warn("Web Workers not supported");
-                return;
-            }
-
-            if (geoWorker) return; // Already running
-
-            debug_log("Initializing Geo Worker");
+            if (!window.Worker || geoWorker) return;
             geoWorker = new Worker('/assets/erpnext_enhancements/js/geo_worker.js');
-
             geoWorker.onmessage = (e) => {
-                const { type, data } = e.data;
-                if (type === 'permission_denied') {
-                    frappe.show_alert({
-                        message: "Location access is required for time tracking.",
-                        indicator: "orange"
-                    }, 5);
-                } else if (type === 'log_success') {
-                    debug_log("Location logged successfully");
+                if (e.data.type === 'permission_denied') {
+                    frappe.show_alert({message: "Location access required.", indicator: "orange"}, 5);
                 }
             };
-
-            // Start logging
             geoWorker.postMessage({
                 type: 'start',
-                data: {
-                    employee: employeeId,
-                    user: frappe.session.user,
-                    csrf_token: frappe.csrf_token
-                }
+                data: { employee: employeeId, user: frappe.session.user, csrf_token: frappe.csrf_token }
             });
         };
 
         const stopWorker = () => {
             if (geoWorker) {
-                debug_log("Stopping Geo Worker");
                 geoWorker.postMessage({ type: 'stop' });
-                geoWorker.terminate(); // Hard stop
+                geoWorker.terminate();
                 geoWorker = null;
             }
         };
 
-        // 3.5 Initialize Link Field
-        // Use frappe.ui.form.make_control to create a standard Link field
-        try {
-            projectControl = frappe.ui.form.make_control({
-                parent: $projectWrapper,
-                df: {
-                    fieldtype: 'Link',
-                    options: 'Project',
-                    fieldname: 'project',
-                    label: 'Project',
-                    placeholder: 'Select Project...',
-                    reqd: 1,
-                    only_select: 1 // Attempt to render cleaner if possible, though Link ignores it
-                },
-                render_input: true
-            });
+        projectControl = frappe.ui.form.make_control({
+            parent: $projectWrapper,
+            df: { fieldtype: 'Link', options: 'Project', fieldname: 'project', label: 'Project', reqd: 1 },
+            render_input: true
+        });
+        projectControl.get_query = () => ({ filters: { is_active: 'Yes' } });
 
-            // Apply Custom Filter: Active Projects Only
-            projectControl.get_query = function() {
-                return {
-                    filters: {
-                        is_active: 'Yes' // Fallback handled by user preference, but usually 'Yes'
-                    }
-                };
-            };
+        taskControl = frappe.ui.form.make_control({
+            parent: $taskWrapper,
+            df: { fieldtype: 'Link', options: 'Task', fieldname: 'task', label: 'Task', reqd: 0 },
+            render_input: true
+        });
+        taskControl.get_query = () => ({ filters: { project: projectControl.get_value() } });
 
-            // Bind change event to update local state if needed (not strictly needed as we read value on action)
-            debug_log("Link field created successfully");
-        } catch (e) {
-            debug_log("Error creating Link field: " + e.message);
-        }
+        projectControl.$input.on('change', () => {
+            taskControl.set_value('');
+            const cp = projectControl.get_value();
+            taskControl.get_query = () => ({ filters: { project: cp } });
+        });
 
-        // 3.6 Initialize Task Link Field
-        try {
-            taskControl = frappe.ui.form.make_control({
-                parent: $taskWrapper,
-                df: {
-                    fieldtype: 'Link',
-                    options: 'Task',
-                    fieldname: 'task',
-                    label: 'Task',
-                    placeholder: 'Select Task...',
-                    reqd: 0,
-                    only_select: 1
-                },
-                render_input: true
-            });
-
-            // Initial Query (will update on project change)
-            taskControl.get_query = function() {
-                return {
-                    filters: {
-                        project: projectControl ? projectControl.get_value() : ''
-                    }
-                };
-            };
-
-            // Listen to Project Change to filter tasks
-             if (projectControl) {
-                // Use standard jQuery event on input since Link control might not expose simple 'change' callback easily
-                // But frappe controls usually have $input
-                projectControl.$input.on('change', function() {
-                     // Clear task when project changes
-                     taskControl.set_value('');
-
-                     // Update query filter dynamically
-                     const currentProject = projectControl.get_value();
-                     taskControl.get_query = function() {
-                        return {
-                            filters: {
-                                project: currentProject
-                            }
-                        };
-                     };
-                });
-             }
-
-            debug_log("Task Link field created successfully");
-        } catch (e) {
-            debug_log("Error creating Task Link field: " + e.message);
-        }
-
-        // 4. UI Helpers
         const setLoading = (isLoading) => {
             kioskState.loading = isLoading;
             if (isLoading) {
-                $loadingMsg.show();
-                $statusText.hide();
+                $loadingMsg.show(); $statusText.hide();
                 $btnClockIn.prop('disabled', true);
-                $btnClockOut.prop('disabled', true);
-                if (projectControl) {
-                    projectControl.df.read_only = 1;
-                    projectControl.refresh();
-                }
-                if (taskControl) {
-                    taskControl.df.read_only = 1;
-                    taskControl.refresh();
-                }
-                $noteInput.prop('disabled', true);
+                $btnPause.prop('disabled', true); $btnResume.prop('disabled', true);
+                $btnSwitch.prop('disabled', true); $btnClockOut.prop('disabled', true);
             } else {
-                $loadingMsg.hide();
-                $statusText.show();
+                $loadingMsg.hide(); $statusText.show();
                 $btnClockIn.prop('disabled', false);
-                $btnClockOut.prop('disabled', false);
-                if (projectControl) {
-                    projectControl.df.read_only = 0;
-                    projectControl.refresh();
-                }
-                if (taskControl) {
-                    taskControl.df.read_only = 0;
-                    taskControl.refresh();
-                }
-                $noteInput.prop('disabled', false);
+                $btnPause.prop('disabled', false); $btnResume.prop('disabled', false);
+                $btnSwitch.prop('disabled', false); $btnClockOut.prop('disabled', false);
             }
         };
 
         const renderState = () => {
-            if (kioskState.status === 'Open') {
-                // CLOCKED IN
-                $statusText.text('Clocked In');
+            if (kioskState.status === 'Open' || kioskState.status === 'Paused') {
+                $statusText.text(kioskState.status === 'Open' ? 'Clocked In' : 'On Break (Paused)');
+                
+                if (kioskState.isSwitching) {
+                    $inputSection.show();
+                    $readOnlyNoteSection.hide();
+                    $btnClockIn.hide();
+                    $activeActions.show();
+                    $btnSwitch.html('<i class="fa fa-check"></i> Confirm & Switch').addClass('btn-primary').removeClass('btn-secondary');
+                } else {
+                    $inputSection.hide();
+                    $readOnlyNoteSection.show();
+                    $readOnlyNote.text(kioskState.currentInterval.description || 'No description provided.');
+                    $readOnlyCategory.text(kioskState.currentInterval.time_category || 'On-Site Labor');
+                    $btnClockIn.hide();
+                    $activeActions.show();
+                    $btnSwitch.html('<i class="fa fa-exchange"></i> Switch Task').addClass('btn-secondary').removeClass('btn-primary');
+                }
 
-                $inputSection.hide();
-                $btnClockIn.hide();
-
-                $readOnlyNoteSection.show();
-                $readOnlyNote.text(kioskState.currentInterval.description || 'No description provided.');
+                $btnPause.toggle(kioskState.status === 'Open');
+                $btnResume.toggle(kioskState.status === 'Paused');
 
                 $activeProjectDisplay.show();
                 let displayTitle = kioskState.currentInterval.project_title || kioskState.currentInterval.project;
                 if (kioskState.currentInterval.task) {
-                     const taskLabel = kioskState.currentInterval.task_title || kioskState.currentInterval.task;
-                     displayTitle += ' - ' + taskLabel;
+                     displayTitle += ' - ' + (kioskState.currentInterval.task_title || kioskState.currentInterval.task);
                 }
                 $activeProjectName.text(displayTitle);
 
-                $btnClockOut.show();
-
-                // Update clock immediately to avoid flicker
-                updateClock();
-
-                // Worker Check (Idempotent)
-                // If we are open, worker should be running
-                // We rely on localStorage as primary persistent flag for speed,
-                // but server status confirms identity.
-                if (kioskState.currentInterval && kioskState.currentInterval.employee) {
+                if (kioskState.currentInterval.employee) {
                     initWorker(kioskState.currentInterval.employee);
                     localStorage.setItem('tk_is_clocked_in', 'true');
                     localStorage.setItem('tk_employee', kioskState.currentInterval.employee);
                 }
-
             } else {
-                // IDLE / READY
                 $statusText.text('Ready to Work');
-
                 $inputSection.show();
                 $btnClockIn.show();
-
+                $activeActions.hide();
                 $readOnlyNoteSection.hide();
                 $activeProjectDisplay.hide();
-                $btnClockOut.hide();
                 $timerDisplay.text('--:--:--');
-
-                // Stop Worker
                 stopWorker();
                 localStorage.removeItem('tk_is_clocked_in');
                 localStorage.removeItem('tk_employee');
             }
         };
 
-        const updateHistoryLink = (employeeId) => {
-             if (employeeId) {
-                 // Use frappe.utils.get_form_link if possible, or just build URL
-                 const url = `/app/job-interval?employee=${encodeURIComponent(employeeId)}`;
-                 $btnHistory.attr('href', url);
-             }
-        };
-
-        // 5. Timer Logic
         const updateClock = () => {
             $currentTime.text(new Date().toLocaleTimeString());
-
-            if (kioskState.status === 'Open' && kioskState.currentInterval && kioskState.currentInterval.start_time) {
+            if ((kioskState.status === 'Open' || kioskState.status === 'Paused') && kioskState.currentInterval && kioskState.currentInterval.start_time) {
                 const start = new Date(kioskState.currentInterval.start_time).getTime();
-                const now = new Date().getTime();
-                const diff = now - start;
+                const now = (kioskState.status === 'Paused' && kioskState.currentInterval.last_pause_time) 
+                            ? new Date(kioskState.currentInterval.last_pause_time).getTime() 
+                            : new Date().getTime();
+                
+                const paused_ms = (kioskState.currentInterval.total_paused_seconds || 0) * 1000;
+                const diff = now - start - paused_ms;
 
                 if (diff >= 0) {
-                    const hours = Math.floor(diff / (1000 * 60 * 60));
-                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                    $timerDisplay.text(
-                        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-                    );
+                    const hours = Math.floor(diff / 3600000);
+                    const minutes = Math.floor((diff % 3600000) / 60000);
+                    const seconds = Math.floor((diff % 60000) / 1000);
+                    $timerDisplay.text(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
                 }
-            } else if (kioskState.status !== 'Open') {
-                 $timerDisplay.text('--:--:--');
             }
         };
-
-        // Start Timer Interval
         setInterval(updateClock, 1000);
-        updateClock(); // Initial call
-
-        // 6. Data Fetching
-        // Deprecated: fetchProjects (replaced by Link field)
 
         const fetchStatus = () => {
-            // OPTIMISTIC RESTORE: Check localStorage first to start worker ASAP
-            if (localStorage.getItem('tk_is_clocked_in') === 'true') {
-                const storedEmployee = localStorage.getItem('tk_employee');
-                if (storedEmployee) {
-                    debug_log("Optimistic Worker Start from LocalStorage");
-                    initWorker(storedEmployee);
-                }
-            }
-
             setLoading(true);
             frappe.call({
                 method: 'erpnext_enhancements.api.time_kiosk.get_current_status',
                 callback: (r) => {
                     setLoading(false);
                     if (r.message && r.message.name) {
-                        kioskState.status = 'Open';
+                        kioskState.status = r.message.status;
                         kioskState.currentInterval = r.message;
-                        debug_log("Status: Open (Interval ID: " + r.message.name + ")");
-
-                        if (r.message.employee) {
-                            updateHistoryLink(r.message.employee);
-                        }
+                        kioskState.isSwitching = false;
                     } else {
                         kioskState.status = 'Idle';
                         kioskState.currentInterval = null;
-                        debug_log("Status: Idle");
-
-                        if (r.message && r.message.employee) {
-                             updateHistoryLink(r.message.employee);
-                        }
                     }
                     renderState();
-                },
-                error: (r) => {
-                    setLoading(false);
-                    debug_log("Error fetching status: " + JSON.stringify(r));
-                }
-            });
-        };
-
-        const getGeolocation = () => {
-            return new Promise((resolve, reject) => {
-                if (!navigator.geolocation) {
-                    debug_log("Geolocation not supported");
-                    resolve({ lat: null, lng: null });
-                } else {
-                    navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                            resolve({
-                                lat: position.coords.latitude,
-                                lng: position.coords.longitude
-                            });
-                        },
-                        (error) => {
-                            console.warn("Geolocation error", error);
-                            debug_log("Geolocation error: " + error.message);
-                            resolve({ lat: null, lng: null });
-                        },
-                        { timeout: 10000, enableHighAccuracy: true }
-                    );
                 }
             });
         };
 
         const handleAction = async (action) => {
-            // Get value from Link Control
-            let selectedProject = null;
-            if (projectControl) {
-                selectedProject = projectControl.get_value();
-            }
-
-            let selectedTask = null;
-            if (taskControl) {
-                selectedTask = taskControl.get_value();
-            }
-
+            const project = projectControl.get_value();
+            const task = taskControl.get_value();
             const description = $noteInput.val();
+            const category = $categoryInput.val();
 
-            if (action === 'Start' && !selectedProject) {
+            if ((action === 'Start' || action === 'Switch') && !project) {
                 frappe.msgprint('Please select a project.');
                 return;
             }
 
             setLoading(true);
-            frappe.show_alert({message: action === 'Start' ? 'Clocking In...' : 'Clocking Out...', indicator: 'orange'});
-
-            const loc = await getGeolocation();
-            debug_log("Action: " + action + " Location: " + JSON.stringify(loc));
-
             frappe.call({
                 method: 'erpnext_enhancements.api.time_kiosk.log_time',
-                args: {
-                    project: selectedProject,
-                    task: selectedTask,
-                    action: action,
-                    description: description,
-                    lat: loc.lat,
-                    lng: loc.lng
-                },
+                args: { project, task, action, description, time_category: category },
                 callback: (r) => {
                     if (r.message && r.message.status === 'success') {
                         frappe.show_alert({message: r.message.message, indicator: 'green'});
-                        // Clear inputs
                         $noteInput.val('');
-                        if (projectControl) projectControl.set_value('');
-                        if (taskControl) taskControl.set_value('');
-                        fetchStatus(); // Will update UI
-                        debug_log("Action successful: " + r.message.message);
+                        fetchStatus();
                     } else {
                         setLoading(false);
-                        debug_log("Action failed or invalid response: " + JSON.stringify(r));
                     }
-                },
-                error: (r) => {
-                    setLoading(false);
-                    debug_log("Action API Error: " + JSON.stringify(r));
                 }
             });
         };
 
-        // 7. Event Listeners
         $btnClockIn.on('click', () => handleAction('Start'));
         $btnClockOut.on('click', () => handleAction('Stop'));
+        $btnPause.on('click', () => handleAction('Pause'));
+        $btnResume.on('click', () => handleAction('Resume'));
+        $btnSwitch.on('click', () => {
+            if (!kioskState.isSwitching) {
+                kioskState.isSwitching = true;
+                renderState();
+            } else {
+                handleAction('Switch');
+            }
+        });
 
-        // 8. Initial Load
         fetchStatus();
-
     } catch (e) {
-        debug_log("Critical Error in init_time_kiosk: " + e.message);
-        console.error(e);
+        debug_log("Critical Error: " + e.message);
     }
 };
 
-debug_log("Registering page handlers");
-
-// Register for standard route key (slugified)
-if (frappe.pages['time-kiosk']) {
-    debug_log("Hooking into existing frappe.pages['time-kiosk']");
-    frappe.pages['time-kiosk'].on_page_load = init_time_kiosk;
-} else {
-    debug_log("Creating new frappe.pages['time-kiosk'] entry");
-    frappe.pages['time-kiosk'] = { on_page_load: init_time_kiosk };
-}
-
-// Fallback: Register for underscore key just in case
-if (frappe.pages['time_kiosk']) {
-    debug_log("Hooking into existing frappe.pages['time_kiosk']");
-    frappe.pages['time_kiosk'].on_page_load = init_time_kiosk;
-} else {
-    debug_log("Creating new frappe.pages['time_kiosk'] entry");
-    frappe.pages['time_kiosk'] = { on_page_load: init_time_kiosk };
-}
-
-// Fallback: Register for "Time Kiosk" (spaces) as seen in screenshot
-if (frappe.pages['Time Kiosk']) {
-    debug_log("Hooking into existing frappe.pages['Time Kiosk']");
-    frappe.pages['Time Kiosk'].on_page_load = init_time_kiosk;
-} else {
-    debug_log("Creating new frappe.pages['Time Kiosk'] entry");
-    frappe.pages['Time Kiosk'] = { on_page_load: init_time_kiosk };
-}
-
-// Fallback: Register for "Time%20Kiosk" (encoded) just in case
-if (frappe.pages['Time%20Kiosk']) {
-    debug_log("Hooking into existing frappe.pages['Time%20Kiosk']");
-    frappe.pages['Time%20Kiosk'].on_page_load = init_time_kiosk;
-} else {
-    debug_log("Creating new frappe.pages['Time%20Kiosk'] entry");
-    frappe.pages['Time%20Kiosk'] = { on_page_load: init_time_kiosk };
-}
+if (frappe.pages['time-kiosk']) frappe.pages['time-kiosk'].on_page_load = init_time_kiosk;
+else frappe.pages['time-kiosk'] = { on_page_load: init_time_kiosk };
