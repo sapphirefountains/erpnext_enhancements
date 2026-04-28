@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 
 
 def after_insert_communication(doc, method=None):

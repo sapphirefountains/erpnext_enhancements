@@ -4,8 +4,8 @@
  "creation": "2024-05-22 12:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "has_web_view": 1,
- "allow_guest_to_view": 1,
+ "has_web_view": 0,
+ "allow_guest_to_view": 0,
  "route": "maintenance-records",
  "field_order": [
   "customer",

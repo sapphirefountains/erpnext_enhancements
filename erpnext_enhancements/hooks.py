@@ -5,22 +5,22 @@ app_description = "Customizations and enhancements to ERPNext."
 app_email = "info@sapphirefountains.com"
 app_license = "mit"
 
-# include js, css files in header of desk.html
-app_include_css = "/assets/erpnext_enhancements/css/desk_enhancements.css"
+# Desk Includes
+app_include_css = "public/css/desk_enhancements.css"
 app_include_js = [
-	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
-    "/assets/erpnext_enhancements/js/kanban_patches.js",
-    "/assets/erpnext_enhancements/js/kanban_customization.js",
-	"/assets/erpnext_enhancements/js/global_comments.js",
-	"/assets/erpnext_enhancements/js/crm_note_enhancements.js",
-	"/assets/erpnext_enhancements/js/performance_fixes.js",
-    "/assets/erpnext_enhancements/js/activity_log_numbering.js",
-    "/assets/erpnext_enhancements/js/filter_help.js",
-    "/assets/erpnext_enhancements/js/telephony_client.js",
+	"public/js/erpnext_enhancements.js",
+    "public/js/kanban_patches.js",
+    "public/js/kanban_customization.js",
+	"public/js/global_comments.js",
+	"public/js/crm_note_enhancements.js",
+	"public/js/performance_fixes.js",
+    "public/js/activity_log_numbering.js",
+    "public/js/filter_help.js",
+    "public/js/telephony_client.js",
 ]
 
-# include js, css files in header of web template
-web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
+# Website Includes
+web_include_css = "public/css/login_enhancements.css"
 
 doctype_js = {
     "Opportunity": ["public/js/opportunity.js"],
@@ -62,24 +62,15 @@ doctype_js = {
     "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
 }
 
-doctype_list_js = {
-    "Opportunity": "public/js/opportunity_list.js"
-}
-doctype_calendar_js = {
-    "Asset Booking": "public/js/asset_booking_calendar.js"
-}
-
 doc_events = {
 	"Task": {
-		"on_update": [
-			"erpnext_enhancements.tasks.generate_next_task",
-		],
+		"on_update": ["erpnext_enhancements.tasks.generate_next_task"]
 	},
 	"Project": {
-		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
+		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity"
 	},
 	"Communication": {
-		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication"
 	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit"
@@ -169,3 +160,7 @@ override_doctype_dashboards = {
 }
 
 ignore_links_on_delete = ["User Form Draft"]
+
+portal_menu_items = [
+	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}
+]
