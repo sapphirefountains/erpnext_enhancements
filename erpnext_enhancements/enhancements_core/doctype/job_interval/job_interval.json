@@ -10,9 +10,12 @@
   "employee",
   "project",
   "task",
+  "time_category",
   "start_time",
   "end_time",
   "status",
+  "total_paused_seconds",
+  "last_pause_time",
   "naming_series",
   "sync_section",
   "sync_status",
@@ -47,6 +50,12 @@
    "options": "Task"
   },
   {
+   "fieldname": "time_category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "On-Site Labor\nTravel"
+  },
+  {
    "fieldname": "start_time",
    "fieldtype": "Datetime",
    "in_list_view": 1,
@@ -65,8 +74,19 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Open\nCompleted",
+   "options": "Open\nPaused\nCompleted",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "total_paused_seconds",
+   "fieldtype": "Float",
+   "label": "Total Paused Seconds"
+  },
+  {
+   "fieldname": "last_pause_time",
+   "fieldtype": "Datetime",
+   "label": "Last Pause Time"
   },
   {
    "fieldname": "naming_series",

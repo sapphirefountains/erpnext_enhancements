@@ -116,7 +116,7 @@ const init_time_kiosk = function(wrapper) {
             link.id = cssId;
             link.rel = 'stylesheet';
             link.type = 'text/css';
-            link.href = '/assets/erpnext_enhancements/css/time-kiosk.css';
+            link.href = '/assets/erpnext_enhancements/css/time-kiosk.bundle.css';
             link.media = 'all';
             head.appendChild(link);
         }
