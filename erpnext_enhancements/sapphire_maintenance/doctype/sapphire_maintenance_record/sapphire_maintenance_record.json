@@ -10,7 +10,7 @@
  "field_order": [
   "customer",
   "project",
-  "asset",
+  "serial_no",
   "technician",
   "clock_in_time",
   "clock_out_time",
@@ -42,11 +42,11 @@
    "options": "Project"
   },
   {
-   "fieldname": "asset",
+   "fieldname": "serial_no",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Asset",
-   "options": "Asset"
+   "label": "Serial No",
+   "options": "Serial No"
   },
   {
    "fieldname": "technician",

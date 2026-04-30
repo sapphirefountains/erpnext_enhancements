@@ -120,15 +120,15 @@ def create_timesheet(doc):
     ))
 
 def check_warranty_and_rma(doc):
-    if not doc.asset:
+    if not doc.serial_no:
         return
 
-    # Check if asset is under warranty
-    asset = frappe.get_doc("Asset", doc.asset)
-    is_under_warranty = asset.get("custom_under_warranty")
-    expiry_date = asset.get("custom_warranty_expiry_date")
+    # Check if serial_no is under warranty
+    # Note: Standard Serial No uses warranty_expiry_date
+    serial_no_doc = frappe.get_doc("Serial No", doc.serial_no)
+    expiry_date = serial_no_doc.get("warranty_expiry_date")
     
-    if not is_under_warranty or (expiry_date and get_datetime(expiry_date).date() < get_datetime(nowdate()).date()):
+    if not expiry_date or get_datetime(expiry_date).date() < get_datetime(nowdate()).date():
         return
 
     # Check for failures in maintenance results
@@ -155,7 +155,7 @@ def check_warranty_and_rma(doc):
                 "item_code": item_code,
                 "qty": 1,
                 "uom": "Nos",
-                "description": _("Warranty Return for {0} (Asset: {1})").format(part, doc.asset)
+                "description": _("Warranty Return for {0} (Serial No: {1})").format(part, doc.serial_no)
             })
             
         mr.insert()
@@ -174,7 +174,7 @@ def create_sales_invoice(doc):
     services_group = settings.maintenance_services_group or "Maintenance Services"
 
     # 1. Get Parent Sales Order
-    so_name = frappe.db.get_value("Sales Order Item", {"custom_asset": doc.asset, "docstatus": 1}, "parent")
+    so_name = frappe.db.get_value("Sales Order Item", {"custom_serial_no": doc.serial_no, "docstatus": 1}, "parent")
     if not so_name:
         # Fallback to any active maintenance SO for this project
         so_name = frappe.db.get_value("Sales Order", {"project": doc.project, "order_type": "Maintenance", "docstatus": 1}, "name")

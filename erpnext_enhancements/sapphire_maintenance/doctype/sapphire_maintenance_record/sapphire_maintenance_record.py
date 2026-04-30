@@ -70,10 +70,10 @@ def get_template_items(project):
 	return []
 
 @frappe.whitelist()
-def get_dashboard_context(project, asset):
+def get_dashboard_context(project, serial_no):
 	"""
 	Phase 2: Fetch context for the technician dashboard.
-	Returns Profile data, Asset data, and Last 3 Visits.
+	Returns Profile data, Serial No data, and Last 3 Visits.
 	"""
 	context = {}
 	
@@ -81,9 +81,9 @@ def get_dashboard_context(project, asset):
 	profile = frappe.db.get_value("Sapphire Maintenance Profile", {"project": project}, ["safety_instructions", "access_codes"], as_dict=True)
 	context['profile'] = profile or {}
 
-	# 2. Asset Data
-	asset_data = frappe.db.get_value("Asset", asset, ["custom_site_instructions", "item_name"], as_dict=True)
-	context['asset'] = asset_data or {}
+	# 2. Serial No Data
+	serial_no_data = frappe.db.get_value("Serial No", serial_no, ["custom_site_instructions", "item_name"], as_dict=True)
+	context['serial_no'] = serial_no_data or {}
 
 	# 3. Last 3 Visits
 	visits = frappe.get_all(

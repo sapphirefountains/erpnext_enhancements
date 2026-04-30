@@ -10,10 +10,10 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			};
 		});
 
-		frm.set_query("asset", function () {
+		frm.set_query("serial_no", function () {
 			return {
 				filters: {
-					asset_category: "SF Water Feature",
+					// Add filters here if we want to restrict to specific items
 				},
 			};
 		});
@@ -21,7 +21,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 
 	refresh: function (frm) {
 		frm.trigger("toggle_safety_gate");
-		if (frm.doc.project && frm.doc.asset) {
+		if (frm.doc.project && frm.doc.serial_no) {
 			frm.trigger("render_dashboard");
 		}
 	},
@@ -53,7 +53,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		frm.trigger("render_dashboard");
 	},
 
-	asset: function (frm) {
+	serial_no: function (frm) {
 		frm.trigger("populate_checklist");
 		frm.trigger("render_dashboard");
 	},
@@ -80,20 +80,20 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 	},
 
 	render_dashboard: function (frm) {
-		if (!frm.doc.project || !frm.doc.asset) return;
+		if (!frm.doc.project || !frm.doc.serial_no) return;
 
 		frappe.call({
 			method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_dashboard_context",
 			args: {
 				project: frm.doc.project,
-				asset: frm.doc.asset,
+				serial_no: frm.doc.serial_no,
 			},
 			callback: function (r) {
 				if (r.message) {
 					const ctx = r.message;
 					const safety = frappe.utils.xss_sanitise(ctx.profile.safety_instructions || "No specific safety instructions provided.");
 					const codes = frappe.utils.xss_sanitise(ctx.profile.access_codes || "N/A");
-					const site_instr = frappe.utils.xss_sanitise(ctx.asset.custom_site_instructions || "No specific site instructions.");
+					const site_instr = frappe.utils.xss_sanitise(ctx.serial_no.custom_site_instructions || "No specific site instructions.");
 
 					let visits_html = "";
 					if (ctx.visits && ctx.visits.length > 0) {

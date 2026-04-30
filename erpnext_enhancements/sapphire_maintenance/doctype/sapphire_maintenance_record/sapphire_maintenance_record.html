@@ -7,7 +7,7 @@
             <h1 class="text-3xl font-bold text-gray-900">Maintenance Visit: {{ doc.name }}</h1>
             <p class="mt-2 text-sm text-gray-500">
                 <span class="font-medium text-gray-700">Date:</span> {{ frappe.datetime.global_date_format(doc.creation) }} |
-                <span class="font-medium text-gray-700">Asset:</span> {{ doc.asset }} |
+                <span class="font-medium text-gray-700">Serial No:</span> {{ doc.serial_no }} |
                 <span class="font-medium text-gray-700">Project:</span> {{ doc.project }}
             </p>
         </div>

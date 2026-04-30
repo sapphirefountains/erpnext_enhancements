@@ -135,9 +135,9 @@ def generate_predictive_maintenance_records():
 		filters={
 			"docstatus": 1,
 			"custom_next_predictive_visit": ["<=", add_days(nowdate(), 7)],
-			"custom_asset": ["is", "set"]
+			"custom_serial_no": ["is", "set"]
 		},
-		fields=["name", "parent", "custom_asset", "custom_next_predictive_visit"],
+		fields=["name", "parent", "custom_serial_no", "custom_next_predictive_visit"],
 	)
 
 	for item in items:
@@ -149,20 +149,20 @@ def generate_predictive_maintenance_records():
 		)
 
 		if so_status not in ["Closed", "Completed"] and so_project:
-			# 2. Check for existing Draft record for this project + asset
+			# 2. Check for existing Draft record for this project + serial_no
 			if not frappe.db.exists("Sapphire Maintenance Record", {
 				"project": so_project,
-				"asset": item.custom_asset,
+				"serial_no": item.custom_serial_no,
 				"docstatus": 0
 			}):
 				# 3. Create the Maintenance Record
 				maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
 				maintenance_record.customer = so_customer
 				maintenance_record.project = so_project
-				maintenance_record.asset = item.custom_asset
+				maintenance_record.serial_no = item.custom_serial_no
 				maintenance_record.insert(ignore_permissions=True)
 				
-				frappe.logger().info(f"Generated predictive Maintenance Record for asset {item.custom_asset} in project {so_project}")
+				frappe.logger().info(f"Generated predictive Maintenance Record for serial_no {item.custom_serial_no} in project {so_project}")
 
 
 def predictive_maintenance_scheduling():

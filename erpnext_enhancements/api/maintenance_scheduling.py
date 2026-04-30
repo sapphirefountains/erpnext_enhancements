@@ -7,7 +7,7 @@ def update_sales_order_next_visit(doc, method):
     Updates the corresponding Sales Order Item row with last visit date
     and calculates the next predictive visit date.
     """
-    if not doc.asset or not doc.project:
+    if not doc.serial_no or not doc.project:
         return
 
     # 1. Find the Sales Order Item row
@@ -21,11 +21,11 @@ def update_sales_order_next_visit(doc, method):
             `tabSales Order` so ON item.parent = so.name
         WHERE 
             so.project = %s 
-            AND item.custom_asset = %s
+            AND item.custom_serial_no = %s
             AND so.docstatus = 1
             AND so.status NOT IN ('Closed', 'Completed')
         LIMIT 1
-    """, (doc.project, doc.asset), as_dict=True)
+    """, (doc.project, doc.serial_no), as_dict=True)
 
     if not so_item:
         return
