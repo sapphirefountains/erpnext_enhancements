@@ -47,6 +47,26 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                 <p id="tk-read-only-category" class="badge badge-info"></p>
             </div>
 
+            <!-- Attachments (visible when clocked in) -->
+            <div id="tk-attachments-section" style="display: none;">
+                <hr class="mt-2 mb-3">
+                <h6 class="mb-2" style="color: #6c757d;"><i class="fa fa-paperclip"></i> Attachments</h6>
+                <div id="tk-attachment-list" class="mb-2" style="max-height: 130px; overflow-y: auto;"></div>
+                <div class="row">
+                    <div class="col-6">
+                        <button id="tk-btn-add-attachment" class="btn btn-outline-primary btn-block btn-sm">
+                            <i class="fa fa-paperclip"></i> Add Attachments
+                        </button>
+                    </div>
+                    <div class="col-6">
+                        <button id="tk-btn-take-picture" class="btn btn-outline-secondary btn-block btn-sm">
+                            <i class="fa fa-camera"></i> Take Picture
+                        </button>
+                    </div>
+                </div>
+                <input type="file" id="tk-camera-input" accept="image/*" capture="environment" style="display: none;">
+            </div>
+
             <!-- Actions -->
             <div class="mt-4">
                 <button id="tk-btn-clock-in" class="btn btn-success btn-lg btn-block">
@@ -144,6 +164,11 @@ const init_time_kiosk = function(wrapper) {
         const $btnSwitch = $('#tk-btn-switch');
         const $btnClockOut = $('#tk-btn-clock-out');
         const $btnHistory = $('#tk-btn-history');
+        const $attachmentsSection = $('#tk-attachments-section');
+        const $attachmentList = $('#tk-attachment-list');
+        const $btnAddAttachment = $('#tk-btn-add-attachment');
+        const $btnTakePicture = $('#tk-btn-take-picture');
+        const $cameraInput = $('#tk-camera-input');
 
         let projectControl = null;
         let taskControl = null;
@@ -151,7 +176,8 @@ const init_time_kiosk = function(wrapper) {
             status: null, // 'Open', 'Paused', 'Idle'
             currentInterval: null,
             loading: false,
-            isSwitching: false
+            isSwitching: false,
+            attachments: []
         };
 
         let geoWorker = null;
@@ -197,6 +223,72 @@ const init_time_kiosk = function(wrapper) {
             taskControl.get_query = () => ({ filters: { project: cp } });
         });
 
+        const renderAttachmentList = () => {
+            $attachmentList.empty();
+            if (!kioskState.attachments.length) {
+                $attachmentList.html('<p class="text-muted small mb-0">No attachments yet.</p>');
+                return;
+            }
+            kioskState.attachments.forEach(att => {
+                const fname = frappe.utils.escape_html(att.file_name || 'Attachment');
+                const ext = fname.split('.').pop().toLowerCase();
+                const icon = ['jpg','jpeg','png','gif','webp'].includes(ext) ? 'fa-file-image-o'
+                           : ext === 'pdf' ? 'fa-file-pdf-o' : 'fa-file-o';
+                $attachmentList.append(
+                    `<div class="d-flex align-items-center mb-1">
+                        <i class="fa ${icon} mr-2 text-muted"></i>
+                        <small class="text-truncate" style="max-width: 240px;">${fname}</small>
+                    </div>`
+                );
+            });
+        };
+
+        const linkFileToRecords = (fileName) => {
+            frappe.call({
+                method: 'erpnext_enhancements.api.time_kiosk.link_attachment',
+                args: {
+                    file_name: fileName,
+                    project: kioskState.currentInterval.project,
+                    task: kioskState.currentInterval.task || null
+                },
+                callback: (r) => {
+                    if (r.message && r.message.status === 'success') {
+                        kioskState.attachments.push({
+                            file_name: r.message.file_name,
+                            file_url: r.message.file_url
+                        });
+                        renderAttachmentList();
+                        frappe.show_alert({ message: 'Attachment added.', indicator: 'green' });
+                    }
+                }
+            });
+        };
+
+        const uploadCameraFile = (file) => {
+            frappe.show_alert({ message: 'Uploading…', indicator: 'blue' });
+            const formData = new FormData();
+            formData.append('file', file, file.name);
+            formData.append('is_private', '0');
+            formData.append('doctype', 'Job Interval');
+            formData.append('docname', kioskState.currentInterval.name);
+            formData.append('folder', 'Home/Attachments');
+
+            fetch('/api/method/upload_file', {
+                method: 'POST',
+                headers: { 'X-Frappe-CSRF-Token': frappe.csrf_token },
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.message && data.message.name) {
+                    linkFileToRecords(data.message.name);
+                } else {
+                    frappe.show_alert({ message: 'Upload failed.', indicator: 'red' });
+                }
+            })
+            .catch(() => frappe.show_alert({ message: 'Upload failed.', indicator: 'red' }));
+        };
+
         const setLoading = (isLoading) => {
             kioskState.loading = isLoading;
             if (isLoading) {
@@ -235,6 +327,9 @@ const init_time_kiosk = function(wrapper) {
                 $btnPause.toggle(kioskState.status === 'Open');
                 $btnResume.toggle(kioskState.status === 'Paused');
 
+                $attachmentsSection.show();
+                renderAttachmentList();
+
                 $activeProjectDisplay.show();
                 let displayTitle = kioskState.currentInterval.project_title || kioskState.currentInterval.project;
                 if (kioskState.currentInterval.task) {
@@ -254,6 +349,9 @@ const init_time_kiosk = function(wrapper) {
                 $activeActions.hide();
                 $readOnlyNoteSection.hide();
                 $activeProjectDisplay.hide();
+                $attachmentsSection.hide();
+                $attachmentList.empty();
+                kioskState.attachments = [];
                 $timerDisplay.text('--:--:--');
                 stopWorker();
                 localStorage.removeItem('tk_is_clocked_in');
@@ -291,10 +389,12 @@ const init_time_kiosk = function(wrapper) {
                     if (r.message && r.message.name) {
                         kioskState.status = r.message.status;
                         kioskState.currentInterval = r.message;
+                        kioskState.attachments = r.message.attachments || [];
                         kioskState.isSwitching = false;
                     } else {
                         kioskState.status = 'Idle';
                         kioskState.currentInterval = null;
+                        kioskState.attachments = [];
                     }
                     renderState();
                 }
@@ -328,17 +428,61 @@ const init_time_kiosk = function(wrapper) {
             });
         };
 
+        const promptIfNoAttachments = (message, onNoAttachments) => {
+            if (kioskState.attachments.length === 0) {
+                frappe.confirm(
+                    message,
+                    () => frappe.show_alert({ message: 'Add your attachments first.', indicator: 'blue' }),
+                    onNoAttachments
+                );
+            } else {
+                onNoAttachments();
+            }
+        };
+
         $btnClockIn.on('click', () => handleAction('Start'));
-        $btnClockOut.on('click', () => handleAction('Stop'));
+
+        $btnClockOut.on('click', () => {
+            promptIfNoAttachments(
+                'Do you have any attachments to add before clocking out?',
+                () => handleAction('Stop')
+            );
+        });
+
         $btnPause.on('click', () => handleAction('Pause'));
         $btnResume.on('click', () => handleAction('Resume'));
+
         $btnSwitch.on('click', () => {
             if (!kioskState.isSwitching) {
-                kioskState.isSwitching = true;
-                renderState();
+                promptIfNoAttachments(
+                    'Do you have any attachments to add before switching tasks?',
+                    () => { kioskState.isSwitching = true; renderState(); }
+                );
             } else {
                 handleAction('Switch');
             }
+        });
+
+        $btnAddAttachment.on('click', () => {
+            if (!kioskState.currentInterval) return;
+            new frappe.ui.FileUploader({
+                doctype: 'Job Interval',
+                docname: kioskState.currentInterval.name,
+                allow_multiple: true,
+                on_success: (file_doc) => linkFileToRecords(file_doc.name)
+            });
+        });
+
+        $btnTakePicture.on('click', () => {
+            if (!kioskState.currentInterval) return;
+            $cameraInput.trigger('click');
+        });
+
+        $cameraInput.on('change', function() {
+            const files = Array.from(this.files);
+            if (!files.length) return;
+            files.forEach(uploadCameraFile);
+            this.value = '';
         });
 
         fetchStatus();

@@ -283,6 +283,12 @@ def get_current_status():
             task_title = frappe.db.get_value("Task", interval.get("task"), "subject")
             interval["task_title"] = task_title or interval.get("task")
 
+        interval["attachments"] = frappe.get_all(
+            "File",
+            filters={"attached_to_doctype": "Job Interval", "attached_to_name": interval.get("name")},
+            fields=["name", "file_name", "file_url"]
+        )
+
         # Merge interval data into result
         result.update(interval)
         return result
@@ -312,6 +318,49 @@ def get_projects():
         return frappe.get_list("Project",
             filters={"status": "Open"},
             fields=["name", "project_name"])
+
+@frappe.whitelist()
+def link_attachment(file_name, project, task=None):
+    """
+    After a file is uploaded to a Job Interval, duplicate the File record so
+    the same attachment is also visible on the linked Project and Task.
+    """
+    try:
+        original = frappe.get_doc("File", file_name)
+
+        targets = [("Project", project)]
+        if task:
+            targets.append(("Task", task))
+
+        for doctype, docname in targets:
+            if not docname:
+                continue
+            already_linked = frappe.db.exists("File", {
+                "file_url": original.file_url,
+                "attached_to_doctype": doctype,
+                "attached_to_name": docname
+            })
+            if not already_linked:
+                linked = frappe.get_doc({
+                    "doctype": "File",
+                    "file_url": original.file_url,
+                    "file_name": original.file_name,
+                    "attached_to_doctype": doctype,
+                    "attached_to_name": docname,
+                    "folder": original.folder,
+                    "is_private": original.is_private
+                })
+                linked.insert(ignore_permissions=True)
+
+        return {
+            "status": "success",
+            "file_name": original.file_name,
+            "file_url": original.file_url
+        }
+    except Exception as e:
+        frappe.log_error(f"Failed to link attachment {file_name}: {str(e)}", "Time Kiosk Attachment Error")
+        return {"status": "error", "message": str(e)}
+
 
 @frappe.whitelist()
 def log_geolocation(employee, latitude, longitude, device_agent, log_status, timestamp):
