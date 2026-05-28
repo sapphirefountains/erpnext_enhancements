@@ -51,9 +51,9 @@
   },
   {
    "fieldname": "time_category",
-   "fieldtype": "Select",
-   "label": "Category",
-   "options": "On-Site Labor\nTravel"
+   "fieldtype": "Link",
+   "label": "Activity Type",
+   "options": "Activity Type"
   },
   {
    "fieldname": "start_time",
