@@ -4,7 +4,7 @@ from frappe.utils import now_datetime, get_datetime, flt
 from datetime import timedelta
 
 @frappe.whitelist()
-def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None, time_category="On-Site Labor"):
+def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None, time_category=None):
     """
     Logs time for the current employee.
     action: "Start", "Stop", "Pause", "Resume", "Switch"
@@ -160,7 +160,7 @@ def sync_interval_to_timesheet(interval_doc):
             "project": project,
             "task": interval_doc.task,
             "hours": hours,
-            "activity_type": "Execution",
+            "activity_type": interval_doc.time_category or None,
             "from_time": start_time,
             "to_time": end_time,
             "description": interval_doc.description or "Synced from Job Interval"

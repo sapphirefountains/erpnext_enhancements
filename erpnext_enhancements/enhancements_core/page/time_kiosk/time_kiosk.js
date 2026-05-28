@@ -28,11 +28,8 @@ const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-containe
                 </div>
 
                 <div class="form-group">
-                    <label>Category</label>
-                    <select id="tk-category-input" class="form-control">
-                        <option value="On-Site Labor">On-Site Labor</option>
-                        <option value="Travel">Travel</option>
-                    </select>
+                    <label>Activity Type</label>
+                    <div id="tk-activity-type-wrapper"></div>
                 </div>
 
                 <div class="form-group">
@@ -151,7 +148,7 @@ const init_time_kiosk = function(wrapper) {
         const $readOnlyNoteSection = $('#tk-read-only-note-section');
         const $projectWrapper = $('#tk-project-wrapper');
         const $taskWrapper = $('#tk-task-wrapper');
-        const $categoryInput = $('#tk-category-input');
+        const $activityTypeWrapper = $('#tk-activity-type-wrapper');
         const $noteInput = $('#tk-note-input');
         const $readOnlyNote = $('#tk-read-only-note');
         const $readOnlyCategory = $('#tk-read-only-category');
@@ -172,6 +169,7 @@ const init_time_kiosk = function(wrapper) {
 
         let projectControl = null;
         let taskControl = null;
+        let activityTypeControl = null;
         let kioskState = {
             status: null, // 'Open', 'Paused', 'Idle'
             currentInterval: null,
@@ -216,6 +214,12 @@ const init_time_kiosk = function(wrapper) {
             render_input: true
         });
         taskControl.get_query = () => ({ filters: { project: projectControl.get_value() } });
+
+        activityTypeControl = frappe.ui.form.make_control({
+            parent: $activityTypeWrapper,
+            df: { fieldtype: 'Link', options: 'Activity Type', fieldname: 'activity_type', label: 'Activity Type', reqd: 0 },
+            render_input: true
+        });
 
         projectControl.$input.on('change', () => {
             taskControl.set_value('');
@@ -318,7 +322,7 @@ const init_time_kiosk = function(wrapper) {
                     $inputSection.hide();
                     $readOnlyNoteSection.show();
                     $readOnlyNote.text(kioskState.currentInterval.description || 'No description provided.');
-                    $readOnlyCategory.text(kioskState.currentInterval.time_category || 'On-Site Labor');
+                    $readOnlyCategory.text(kioskState.currentInterval.time_category || '');
                     $btnClockIn.hide();
                     $activeActions.show();
                     $btnSwitch.html('<i class="fa fa-exchange"></i> Switch Task').addClass('btn-secondary').removeClass('btn-primary');
@@ -405,7 +409,7 @@ const init_time_kiosk = function(wrapper) {
             const project = projectControl.get_value();
             const task = taskControl.get_value();
             const description = $noteInput.val();
-            const category = $categoryInput.val();
+            const category = activityTypeControl.get_value();
 
             if ((action === 'Start' || action === 'Switch') && !project) {
                 frappe.msgprint('Please select a project.');
@@ -420,6 +424,7 @@ const init_time_kiosk = function(wrapper) {
                     if (r.message && r.message.status === 'success') {
                         frappe.show_alert({message: r.message.message, indicator: 'green'});
                         $noteInput.val('');
+                        activityTypeControl.set_value('');
                         fetchStatus();
                     } else {
                         setLoading(false);
