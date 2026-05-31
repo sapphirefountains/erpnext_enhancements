@@ -2,13 +2,13 @@ import frappe
 import requests
 
 def generate_content_with_vertex_ai(prompt, system_instruction, settings):
-    # Retrieve the API Key from Poseidon Settings
-    # The user mentioned API Key from Poseidon Settings. Usually stored as a password field.
+    # Retrieve the API Key from Triton Settings
+    # The user mentioned API Key from Triton Settings. Usually stored as a password field.
     # We use the maps_api_key field which contains the GCP API key for both Maps and Vertex AI.
     api_key = settings.get_password("maps_api_key", raise_exception=False)
 
     if not api_key:
-        frappe.throw("Vertex AI API Key (maps_api_key) is missing in Poseidon Settings")
+        frappe.throw("Vertex AI API Key (maps_api_key) is missing in Triton Settings")
 
     url = "https://us-central1-aiplatform.googleapis.com/v1/projects/sapphire-fountains-poseidon/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:generateContent"
 

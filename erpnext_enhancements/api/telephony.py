@@ -13,7 +13,7 @@ from twilio.jwt.access_token.grants import VoiceGrant
 @frappe.whitelist(allow_guest=True)
 def get_gateway_config():
     try:
-        settings = frappe.get_doc("Poseidon Settings")
+        settings = frappe.get_doc("Triton Settings")
         return {
             "master_system_prompt": settings.master_system_prompt,
             "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
@@ -21,16 +21,16 @@ def get_gateway_config():
             "gemini_api_key": getattr(settings, "gemini_api_key", None)
         }
     except Exception as e:
-        frappe.log_error(f"Failed to fetch Poseidon settings: {str(e)}", "Gateway Config Error")
+        frappe.log_error(f"Failed to fetch Triton settings: {str(e)}", "Gateway Config Error")
         return {
-            "master_system_prompt": "You are Poseidon.",
+            "master_system_prompt": "You are Triton.",
             "forwarding_phone_number": "+18018200044",
             "voice_model_id": "gemini-live-2.5-flash-native-audio"
         }
 
 def validate_twilio_request(func):
     def wrapper(*args, **kwargs):
-        settings = frappe.get_doc("Poseidon Settings")
+        settings = frappe.get_doc("Triton Settings")
         validator = RequestValidator(settings.get_password("twilio_auth_token", raise_exception=False) or "")
         url = frappe.request.url
         post_vars = frappe.request.form
@@ -44,7 +44,7 @@ def validate_twilio_request(func):
 def validate_webhook_secret(func):
     def wrapper(*args, **kwargs):
         try:
-            settings = frappe.get_doc("Poseidon Settings")
+            settings = frappe.get_doc("Triton Settings")
             secret = getattr(settings, "admin_webhook_secret", "")
         except:
             secret = ""
@@ -62,8 +62,8 @@ def validate_webhook_secret(func):
 
 @frappe.whitelist(allow_guest=True)
 def append_call_transcript(call_sid, transcript_chunk):
-    frappe.set_user("poseidon@sapphirefountains.com")
-    key = f"poseidon_transcript_{call_sid}"
+    frappe.set_user("triton@sapphirefountains.com")
+    key = f"triton_transcript_{call_sid}"
     chunks = frappe.cache().get_value(key) or []
     chunks.append(transcript_chunk)
     frappe.cache().set_value(key, chunks, expires_in_sec=86400)
@@ -71,14 +71,14 @@ def append_call_transcript(call_sid, transcript_chunk):
 
 @frappe.whitelist(allow_guest=True)
 def get_call_transcript(call_sid):
-    frappe.set_user("poseidon@sapphirefountains.com")
-    key = f"poseidon_transcript_{call_sid}"
+    frappe.set_user("triton@sapphirefountains.com")
+    key = f"triton_transcript_{call_sid}"
     chunks = frappe.cache().get_value(key) or []
     return "\n".join(chunks)
 
 @frappe.whitelist(allow_guest=True)
 def get_caller_info(phone_number, twilio_caller_name=None):
-    frappe.set_user("poseidon@sapphirefountains.com")
+    frappe.set_user("triton@sapphirefountains.com")
     
     if not phone_number:
         return {"customer": None, "contact": None, "display_name": twilio_caller_name or "Unknown Caller", "context": []}
@@ -172,7 +172,7 @@ def get_caller_info(phone_number, twilio_caller_name=None):
 
 @frappe.whitelist(allow_guest=True)
 def update_caller_info(phone_number, new_name):
-    frappe.set_user("poseidon@sapphirefountains.com")
+    frappe.set_user("triton@sapphirefountains.com")
     
     info = get_caller_info(phone_number)
     customer_name = info.get("customer")
@@ -227,7 +227,7 @@ def locate_customer(phone_number):
 
 @frappe.whitelist()
 def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
-    frappe.set_user("poseidon@sapphirefountains.com")
+    frappe.set_user("triton@sapphirefountains.com")
     
     if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
         call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
@@ -247,10 +247,10 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
             "communication_medium": "Phone",
             "communication_type": "Communication",
             "sent_or_received": "Received",
-            "sender": "poseidon@sapphirefountains.com",
-            "sender_full_name": "Poseidon",
-            "owner": "poseidon@sapphirefountains.com",
-            "subject": f"Poseidon Live Transcript ({call_sid})",
+            "sender": "triton@sapphirefountains.com",
+            "sender_full_name": "Triton",
+            "owner": "triton@sapphirefountains.com",
+            "subject": f"Triton Live Transcript ({call_sid})",
             "content": f"<pre>{transcript}</pre>",
             "status": "Linked",
             "communication_date": frappe.utils.now_datetime()
@@ -272,20 +272,20 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 
         todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
         for t in todos:
-            frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
+            frappe.db.set_value("ToDo", t.name, "allocated_to", "triton@sapphirefountains.com")
             frappe.db.set_value("ToDo", t.name, "status", "Closed")
 
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
-        frappe.log_error(f"Failed to log transcript for {call_sid}: {str(e)}", "Poseidon Transcript Error")
+        frappe.log_error(f"Failed to log transcript for {call_sid}: {str(e)}", "Triton Transcript Error")
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording(**kwargs):
     try:
-        frappe.set_user("poseidon@sapphirefountains.com")
+        frappe.set_user("triton@sapphirefountains.com")
         
         call_sid = kwargs.get("call_sid") or frappe.form_dict.get("call_sid")
         summary = kwargs.get("summary") or frappe.form_dict.get("summary")
@@ -332,9 +332,9 @@ def process_unified_recording(**kwargs):
                 "communication_medium": "Phone",
                 "communication_type": "Communication",
                 "sent_or_received": sent_status,
-                "sender": "poseidon@sapphirefountains.com",
-                "sender_full_name": "Poseidon",
-                "owner": "poseidon@sapphirefountains.com",
+                "sender": "triton@sapphirefountains.com",
+                "sender_full_name": "Triton",
+                "owner": "triton@sapphirefountains.com",
                 "subject": f"{subject_prefix} {display_name or customer_phone} ({call_sid})",
                 "content": f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
                 "status": "Linked",
@@ -357,7 +357,7 @@ def process_unified_recording(**kwargs):
 
             todos = frappe.get_all("ToDo", filters={"reference_type": "Communication", "reference_name": comm.name})
             for t in todos:
-                frappe.db.set_value("ToDo", t.name, "allocated_to", "poseidon@sapphirefountains.com")
+                frappe.db.set_value("ToDo", t.name, "allocated_to", "triton@sapphirefountains.com")
                 frappe.db.set_value("ToDo", t.name, "status", "Closed")
 
         email_attachments = []
@@ -381,7 +381,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Poseidon File Error")
+                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Triton File Error")
         elif 'file' in frappe.request.files:
             try:
                 uploaded_file = frappe.request.files.get('file')
@@ -401,7 +401,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Poseidon File Error")
+                frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Triton File Error")
 
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
@@ -420,36 +420,36 @@ def process_unified_recording(**kwargs):
             
             frappe.sendmail(
                 recipients=["info@sapphirefountains.com"],
-                subject=f"New Poseidon {email_subject_type} from {display_name}",
+                subject=f"New Triton {email_subject_type} from {display_name}",
                 message=message_html,
                 attachments=email_attachments,
                 now=True
             )
         except Exception as ee:
-            frappe.log_error(f"Failed to send email: {str(ee)}", "Poseidon Email Error")
+            frappe.log_error(f"Failed to send email: {str(ee)}", "Triton Email Error")
 
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
 
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure: {str(e)}", "Poseidon Sync Error")
+        frappe.log_error(f"Critical sync failure: {str(e)}", "Triton Sync Error")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist()
 def get_softphone_token():
-    settings = frappe.get_doc("Poseidon Settings")
+    settings = frappe.get_doc("Triton Settings")
     twilio_api_key_sid = getattr(settings, "twilio_api_key_sid", None)
     twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
     twilio_twiml_app_sid = getattr(settings, "twilio_twiml_app_sid", None)
 
     if not all([twilio_api_key_sid, twilio_api_secret, twilio_twiml_app_sid]):
-        frappe.throw("Twilio softphone credentials are not fully configured in Poseidon Settings.")
+        frappe.throw("Twilio softphone credentials are not fully configured in Triton Settings.")
 
     account_sid = getattr(settings, "twilio_account_sid", None) or frappe.conf.get("twilio_account_sid") or os.environ.get("TWILIO_ACCOUNT_SID")
     if not account_sid:
-        frappe.throw("Twilio Account SID is missing. Please configure it in Poseidon Settings.")
+        frappe.throw("Twilio Account SID is missing. Please configure it in Triton Settings.")
 
     identity = "nikolas_erpnext"
     token = AccessToken(account_sid, twilio_api_key_sid, twilio_api_secret, identity=identity)
@@ -462,7 +462,7 @@ def get_softphone_token():
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
 def receive_mms():
-    frappe.set_user("poseidon@sapphirefountains.com")
+    frappe.set_user("triton@sapphirefountains.com")
     
     sender_number = frappe.form_dict.get("From")
     media_url = frappe.form_dict.get("MediaUrl0")
@@ -494,13 +494,13 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
         
         frappe.sendmail(
             recipients=["info@sapphirefountains.com"],
-            subject=f"Poseidon Message: {subject}",
+            subject=f"Triton Message: {subject}",
             message=message_html,
             now=True
         )
         return {"status": "success"}
     except Exception as e:
-        frappe.log_error(f"Failed to send email: {str(e)}", "Poseidon Email Error")
+        frappe.log_error(f"Failed to send email: {str(e)}", "Triton Email Error")
         return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
@@ -519,23 +519,23 @@ def trigger_outbound_call(doctype, docname, target_number):
         if not employee_number:
             frappe.throw(_("Your Employee record does not have a Cell Number configured. Cannot initiate call."))
 
-        settings = frappe.get_doc("Poseidon Settings")
+        settings = frappe.get_doc("Triton Settings")
         
-        # Use the correct field 'gateway_url' instead of 'poseidon_base_url'
-        poseidon_url = getattr(settings, "gateway_url", None)
+        # Use the correct field 'gateway_url' instead of 'triton_base_url'
+        triton_url = getattr(settings, "gateway_url", None)
         
         # Use the webhook secret for authentication as there is no specific API key field
         api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
 
-        if not poseidon_url:
-            frappe.throw(_("Gateway URL is not configured in Poseidon Settings. Please update the Poseidon Settings page."))
+        if not triton_url:
+            frappe.throw(_("Gateway URL is not configured in Triton Settings. Please update the Triton Settings page."))
 
         if doctype == "Customer":
             target_number = frappe.db.get_value("Customer", docname, "custom_accounts_phone_number") or target_number
         elif doctype == "Contact":
             target_number = frappe.db.get_value("Contact", docname, "custom_phone_number") or target_number
 
-        endpoint = f"{poseidon_url.rstrip('/')}/api/outbound-call"
+        endpoint = f"{triton_url.rstrip('/')}/api/outbound-call"
 
         payload = {
             "employee_number": employee_number,
@@ -565,7 +565,7 @@ def trigger_outbound_call(doctype, docname, target_number):
 
 @frappe.whitelist()
 def get_employee_number(employee_name):
-    # Used by Poseidon for inbound routing via fuzzy search on Employee
+    # Used by Triton for inbound routing via fuzzy search on Employee
     try:
         if not employee_name:
             return None
@@ -583,7 +583,7 @@ def get_employee_number(employee_name):
 
         return None
     except Exception as e:
-        frappe.log_error(f"Failed to get employee number for '{employee_name}': {str(e)}", "Poseidon Routing Error")
+        frappe.log_error(f"Failed to get employee number for '{employee_name}': {str(e)}", "Triton Routing Error")
         return None
 
 
@@ -608,9 +608,9 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
             "communication_medium": "Phone",
             "communication_type": "Communication",
             "sent_or_received": "Sent" if direction == "Outbound" else "Received",
-            "sender": "poseidon@sapphirefountains.com" if direction == "Received" else from_number,
-            "sender_full_name": "Poseidon" if direction == "Received" else None,
-            "owner": "poseidon@sapphirefountains.com",
+            "sender": "triton@sapphirefountains.com" if direction == "Received" else from_number,
+            "sender_full_name": "Triton" if direction == "Received" else None,
+            "owner": "triton@sapphirefountains.com",
             "subject": f"{direction} Call with {display_name} ({call_sid})",
             "content": f"**Duration:** {duration}s\n\n**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>",
             "status": "Linked",
@@ -634,7 +634,7 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Failed to log call details for {call_sid}: {str(e)}", "Poseidon Log Call Error")
+        frappe.log_error(f"Failed to log call details for {call_sid}: {str(e)}", "Triton Log Call Error")
         return {"status": "error", "message": str(e)}
 
 
@@ -642,7 +642,7 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
 @validate_webhook_secret
 def process_unified_sms(**kwargs):
     try:
-        frappe.set_user("poseidon@sapphirefountains.com")
+        frappe.set_user("triton@sapphirefountains.com")
 
         from_number = kwargs.get("from_number") or frappe.form_dict.get("from_number")
         to_number = kwargs.get("to_number") or frappe.form_dict.get("to_number")
@@ -664,7 +664,7 @@ def process_unified_sms(**kwargs):
             "sent_or_received": "Received",
             "sender": from_number,
             "sender_full_name": display_name,
-            "owner": "poseidon@sapphirefountains.com",
+            "owner": "triton@sapphirefountains.com",
             "subject": f"SMS from {display_name}",
             "content": content,
             "status": "Linked",
@@ -747,7 +747,7 @@ def process_unified_sms(**kwargs):
             fields=["owner"]
         )
 
-        if last_sent and last_sent[0].owner != "poseidon@sapphirefountains.com":
+        if last_sent and last_sent[0].owner != "triton@sapphirefountains.com":
             last_assignee = last_sent[0].owner
         else:
             # 2. Check if a past inbound SMS was assigned to someone via ToDo
@@ -818,7 +818,7 @@ def process_unified_sms(**kwargs):
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure in process_unified_sms: {str(e)}", "Poseidon Sync Error")
+        frappe.log_error(f"Critical sync failure in process_unified_sms: {str(e)}", "Triton Sync Error")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
@@ -866,14 +866,14 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         if not recent_sms:
             message = f"{message.strip()} - [{employee_name}]"
 
-        settings = frappe.get_doc("Poseidon Settings")
-        poseidon_url = getattr(settings, "gateway_url", None)
+        settings = frappe.get_doc("Triton Settings")
+        triton_url = getattr(settings, "gateway_url", None)
         api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
 
-        if not poseidon_url:
-            frappe.throw(_("Gateway URL is not configured in Poseidon Settings. Please update the Poseidon Settings page."))
+        if not triton_url:
+            frappe.throw(_("Gateway URL is not configured in Triton Settings. Please update the Triton Settings page."))
 
-        endpoint = f"{poseidon_url.rstrip('/')}/api/send-sms"
+        endpoint = f"{triton_url.rstrip('/')}/api/send-sms"
 
         if isinstance(media_urls, str):
             import json
