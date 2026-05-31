@@ -553,13 +553,13 @@ def trigger_outbound_call(doctype, docname, target_number):
         response = requests.post(endpoint, json=payload, headers=headers)
         response.raise_for_status()
 
-        return {"status": "success", "message": _("Call initiated via Poseidon")}
+        return {"status": "success", "message": _("Call initiated via Triton")}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to trigger outbound call via Poseidon: {str(e)}", "Poseidon Outbound Call Error")
-        frappe.throw(_("Failed to initiate call via Poseidon. Please check error logs."))
+        frappe.log_error(f"Failed to trigger outbound call via Triton: {str(e)}", "Triton Outbound Call Error")
+        frappe.throw(_("Failed to initiate call via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in trigger_outbound_call: {str(e)}", "Poseidon Outbound Call Error")
+        frappe.log_error(f"Unexpected error in trigger_outbound_call: {str(e)}", "Triton Outbound Call Error")
         frappe.throw(str(e))
 
 
@@ -939,11 +939,11 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         comm.insert(ignore_permissions=True)
         frappe.db.commit()
 
-        return {"status": "success", "message": _("SMS sent successfully via Poseidon."), "communication_id": comm.name}
+        return {"status": "success", "message": _("SMS sent successfully via Triton."), "communication_id": comm.name}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to send SMS via Poseidon: {str(e)}", "Poseidon Outbound SMS Error")
-        frappe.throw(_("Failed to send SMS via Poseidon. Please check error logs."))
+        frappe.log_error(f"Failed to send SMS via Triton: {str(e)}", "Triton Outbound SMS Error")
+        frappe.throw(_("Failed to send SMS via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in send_sms: {str(e)}", "Poseidon Outbound SMS Error")
+        frappe.log_error(f"Unexpected error in send_sms: {str(e)}", "Triton Outbound SMS Error")
         frappe.throw(str(e))
