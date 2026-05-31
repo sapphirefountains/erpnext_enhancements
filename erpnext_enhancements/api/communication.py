@@ -18,11 +18,11 @@ def generate_draft_response(communication_name):
     except frappe.DoesNotExistError:
         return
 
-    # Fetch API Key and system prompts from Poseidon Settings
+    # Fetch API Key and system prompts from Triton Settings
     try:
-        settings = frappe.get_doc("Poseidon Settings")
+        settings = frappe.get_doc("Triton Settings")
     except frappe.DoesNotExistError:
-        frappe.log_error(message="Poseidon Settings not found", title="Email Draft Generation Failed")
+        frappe.log_error(message="Triton Settings not found", title="Email Draft Generation Failed")
         return
 
     # Master system prompt and relevant Value Stream Guidelines
@@ -41,7 +41,7 @@ Rent: {rent_guidelines}
 Service: {service_guidelines}
 """
 
-    prompt = f"""Using the following company guidelines and value stream context, draft a professional, helpful, and technically accurate response to the email below. Adhere to our persona as Poseidon.
+    prompt = f"""Using the following company guidelines and value stream context, draft a professional, helpful, and technically accurate response to the email below. Adhere to our persona as Triton.
 
 Email Subject: {inbound_email.subject}
 Email Content:
@@ -100,9 +100,9 @@ def suggest_sms_reply(communication_name):
         frappe.throw(_("Can only suggest replies for SMS communications"))
 
     try:
-        settings = frappe.get_doc("Poseidon Settings")
+        settings = frappe.get_doc("Triton Settings")
     except frappe.DoesNotExistError:
-        frappe.throw(_("Poseidon Settings not found"))
+        frappe.throw(_("Triton Settings not found"))
 
     master_prompt = settings.master_system_prompt or ""
     design_guidelines = settings.design_guidelines or ""

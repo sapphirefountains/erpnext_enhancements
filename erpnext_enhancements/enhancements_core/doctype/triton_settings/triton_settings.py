@@ -2,10 +2,10 @@ import frappe
 from frappe.model.document import Document
 import requests
 
-class PoseidonSettings(Document):
+class TritonSettings(Document):
     def on_update(self):
         frappe.enqueue(
-            "erpnext_enhancements.enhancements_core.doctype.poseidon_settings.poseidon_settings.trigger_refresh_webhook",
+            "erpnext_enhancements.enhancements_core.doctype.triton_settings.triton_settings.trigger_refresh_webhook",
             gateway_url=self.gateway_url,
             admin_webhook_secret=self.get_password("admin_webhook_secret", raise_exception=False),
             timeout=10,
@@ -27,7 +27,7 @@ def trigger_refresh_webhook(gateway_url, admin_webhook_secret):
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
     except Exception as e:
-        frappe.log_error(title="Poseidon Settings Webhook Failed", message=str(e))
+        frappe.log_error(title="Triton Settings Webhook Failed", message=str(e))
 
 
 @frappe.whitelist()
@@ -35,7 +35,7 @@ def get_gateway_config():
     if "System Manager" not in frappe.get_roles(frappe.session.user):
         frappe.throw("Not permitted", frappe.PermissionError)
 
-    doc = frappe.get_doc("Poseidon Settings")
+    doc = frappe.get_doc("Triton Settings")
 
     config = {
         "gateway_url": doc.gateway_url,

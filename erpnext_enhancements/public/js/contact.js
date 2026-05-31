@@ -3,7 +3,7 @@ frappe.ui.form.on("Contact", {
         if (!frm.doc.__islocal) {
             frm.trigger("render_comments_section");
             frm.trigger("add_triton_call_button");
-            frm.trigger("add_poseidon_sms_button");
+            frm.trigger("add_triton_sms_button");
         }
     },
 
@@ -47,7 +47,7 @@ frappe.ui.form.on("Contact", {
         btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-call"></use></svg> ${__('Call via Triton')}`);
     },
 
-    add_poseidon_sms_button: function (frm) {
+    add_triton_sms_button: function (frm) {
         let btn = frm.add_custom_button(__('Send SMS'), function () {
             let target_number = frm.doc.custom_phone_number || frm.doc.mobile_no || frm.doc.phone;
 
