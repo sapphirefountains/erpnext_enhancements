@@ -1335,15 +1335,20 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 	Fetches all active projects (and optionally child tasks) for the Gantt view.
 	Supports status filtering and detailed view expansion.
 	"""
-	if not check_permission():
-		return {"error": "You do not have permission to view the Project Dashboard."}
-
+	# Note: legacy check_permission() gate removed here in favour of native Page
+	# Role permissions, mirroring get_project_data(). The previous gate returned
+	# an error whenever the "Project Dashboard" Custom Role was not configured,
+	# which left the Portfolio Gantt empty even though every other tab (fed by
+	# get_project_data) loaded fine.
 	try:
 		include_tasks = int(include_tasks)
 
 		filters = {
 			"is_active": "Yes",
 			"status": ["!=", "Canceled"],
+			# Restrict to client-facing work so internal/organizational projects
+			# stay off the Portfolio Gantt.
+			"project_type": ["in", ["Build", "Design", "Rent", "Service"]],
 		}
 
 		if statuses:

@@ -142,6 +142,7 @@ doctype_list_js = {
     ],
     "Supplier": "public/js/global_enhancements/supplier_list.js",
     "Task": "public/js/project_enhancements/task_gantt.js",
+    "File": "public/js/global_enhancements/file_list.js",
 }
 doctype_calendar_js = {
     "Asset Booking": "public/js/asset_booking_calendar.js"
@@ -181,6 +182,13 @@ doc_events = {
             "erpnext_enhancements.sync_contact.sync_from_main_doc",
             "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
         ],
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+    },
+    "Master Project": {
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+    },
+    "Address": {
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Communication": {
         "after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
@@ -191,16 +199,20 @@ doc_events = {
     "Opportunity": {
         "before_save": "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
         "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Contact": {
         "on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Supplier": {
         "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
         "validate": "erpnext_enhancements.supplier_query.sync_supplier_groups",
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Customer": {
         "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+        "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "*": {
         "after_save": "erpnext_enhancements.utils.triton_sync.global_triton_sync",

@@ -31,119 +31,132 @@ frappe.ui.form.on("Project", {
 			$(wrapper).html('<div id="procurement-tracker-app">Loading Procurement Tracker...</div>');
 
 			frappe.call({
-				method: "erpnext_enhancements.project_enhancements.get_procurement_status",
+				method: "erpnext_enhancements.project_enhancements.get_procurement_documents",
 				args: {
 					project_name: frm.doc.name,
 				},
 				callback: function (r) {
 					try {
-						if (r.message) {
+						if (r.message && r.message.length) {
 							const app = window.Vue.createApp({
 								data() {
+									const groups = r.message; // [{ doctype, documents: [{ name, date, supplier, status, items: [...] }] }]
 									return {
-										groupedItems: r.message,
+										groups: groups,
 										globalSearchTerm: '',
-										sortKey: '',
-										sortOrder: 'asc',
-										collapsedGroups: Object.keys(r.message).reduce((acc, key) => {
-											acc[key] = true; // Collapsed by default
+										// DocType groups collapsed by default.
+										collapsedGroups: groups.reduce((acc, g) => {
+											acc[g.doctype] = true;
 											return acc;
 										}, {}),
+										// Individual documents collapsed by default (keyed "DocType::name").
+										collapsedDocs: {},
 									};
 								},
 								watch: {
 									globalSearchTerm(newVal) {
-										const term = newVal.toLowerCase();
-										if (!term) return;
+										const tokens = this.tokenize(newVal);
+										if (!tokens.length) return;
 
-                                        const tokens = term.split(/\s+/).filter(t => t);
-
-										// Auto-expand groups with matches
-										this.getGroupKeys().forEach(doctype => {
-											const hasMatch = this.groupedItems[doctype].some(item => {
-                                                const itemStr = Object.values(item).join(' ').toLowerCase();
-                                                return tokens.every(t => itemStr.includes(t));
-                                            });
-											if (hasMatch) {
-                                                this.collapsedGroups[doctype] = false;
-                                            }
+										// Auto-expand groups + documents that contain a match.
+										this.groups.forEach(group => {
+											let groupHasMatch = false;
+											group.documents.forEach(doc => {
+												if (this.docMatches(doc, tokens)) {
+													groupHasMatch = true;
+													this.collapsedDocs[this.docKey(group.doctype, doc.name)] = false;
+												}
+											});
+											if (groupHasMatch) {
+												this.collapsedGroups[group.doctype] = false;
+											}
 										});
 									}
 								},
 								computed: {
 									filteredGroups() {
-										const result = {};
-										const globalTerm = this.globalSearchTerm.toLowerCase();
-                                        const tokens = globalTerm.split(/\s+/).filter(t => t);
+										const tokens = this.tokenize(this.globalSearchTerm);
+										if (!tokens.length) return this.groups;
 
-										for (const doctype in this.groupedItems) {
-											// Filter
-											let items = this.groupedItems[doctype].filter(item => {
-                                                if (!globalTerm) return true;
-                                                const itemStr = Object.values(item).join(' ').toLowerCase();
-                                                return tokens.every(t => itemStr.includes(t));
+										const out = [];
+										this.groups.forEach(group => {
+											const docs = [];
+											group.documents.forEach(doc => {
+												const matchedItems = this.filteredItems(doc, tokens);
+												const docLevel = this.docLevelMatches(doc, tokens);
+												if (matchedItems.length || docLevel) {
+													// If only the header matched, keep all items; otherwise show matches.
+													docs.push(Object.assign({}, doc, {
+														items: matchedItems.length ? matchedItems : doc.items,
+													}));
+												}
 											});
-
-											// Sort
-											if (this.sortKey) {
-												items.sort((a, b) => {
-													let valA = this.getSortValue(a, this.sortKey);
-													let valB = this.getSortValue(b, this.sortKey);
-
-													if (valA < valB) return this.sortOrder === 'asc' ? -1 : 1;
-													if (valA > valB) return this.sortOrder === 'asc' ? 1 : -1;
-													return 0;
-												});
+											if (docs.length) {
+												out.push(Object.assign({}, group, { documents: docs }));
 											}
-
-											result[doctype] = items;
-										}
-										return result;
-									},
+										});
+										return out;
+									}
 								},
 								methods: {
-									sortBy(key) {
-										if (this.sortKey === key) {
-											this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-										} else {
-											this.sortKey = key;
-											this.sortOrder = 'asc';
-										}
+									tokenize(term) {
+										return (term || '').toLowerCase().split(/\s+/).filter(t => t);
 									},
-									getSortValue(item, key) {
-										if (key === 'qty') return item.ordered_qty || 0;
-										if (key === 'status') return item.completion_percentage || 0;
-										// For doc chain, sort by the ID of the main document of that group if possible, or MR
-										if (key === 'doc_chain') return item.mr || item.po || '';
-										return (item[key] || '').toString().toLowerCase();
+									docKey(doctype, name) {
+										return doctype + '::' + name;
 									},
 									toggleGroup(doctype) {
 										this.collapsedGroups[doctype] = !this.collapsedGroups[doctype];
 									},
-									openDoc(doctype, name) {
-										frappe.set_route('Form', doctype, name);
+									toggleDoc(doctype, name) {
+										const key = this.docKey(doctype, name);
+										// Default (key absent) is collapsed; store false to expand, true to collapse.
+										this.collapsedDocs[key] = (this.collapsedDocs[key] === false);
 									},
-									getGroupKeys() {
-										return Object.keys(this.groupedItems);
+									isDocCollapsed(doctype, name) {
+										// Default (key absent) is collapsed.
+										return this.collapsedDocs[this.docKey(doctype, name)] !== false;
+									},
+									openDoc(doctype, name) {
+										if (doctype && name) frappe.set_route('Form', doctype, name);
+									},
+									itemMatches(item, tokens) {
+										const str = Object.values(item).join(' ').toLowerCase();
+										return tokens.every(t => str.includes(t));
+									},
+									filteredItems(doc, tokens) {
+										if (!tokens.length) return doc.items;
+										return (doc.items || []).filter(item => this.itemMatches(item, tokens));
+									},
+									docLevelMatches(doc, tokens) {
+										const str = [doc.name, doc.supplier, doc.status]
+											.filter(Boolean).join(' ').toLowerCase();
+										return tokens.every(t => str.includes(t));
+									},
+									docMatches(doc, tokens) {
+										return this.docLevelMatches(doc, tokens) || this.filteredItems(doc, tokens).length > 0;
+									},
+									formatDate(d) {
+										return d ? frappe.datetime.str_to_user(d) : '-';
 									},
 									highlight(text, term) {
 										if (!term || !text) return text;
-                                        const tokens = term.split(/\s+/).filter(t => t);
-                                        if (tokens.length === 0) return text;
+										const tokens = term.split(/\s+/).filter(t => t);
+										if (tokens.length === 0) return text;
 
 										const escapedTokens = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
 									},
-                                    getStatusColorClass(status) {
-                                        if (!status) return '';
-                                        const s = status.toLowerCase();
-                                        if (s.includes('draft')) return 'status-draft';
-                                        if (s.includes('received') || s.includes('bill') || s === 'completed') return 'status-completed';
-                                        if (s.includes('cancel') || s.includes('closed')) return 'status-cancelled';
-                                        if (s.includes('submit') || s.includes('ordered')) return 'status-submitted';
-                                        return 'status-pending';
-                                    }
+									getStatusColorClass(status) {
+										if (!status) return '';
+										const s = status.toLowerCase();
+										if (s.includes('draft')) return 'status-draft';
+										if (s.includes('received') || s.includes('bill') || s === 'completed') return 'status-completed';
+										if (s.includes('cancel') || s.includes('closed')) return 'status-cancelled';
+										if (s.includes('submit') || s.includes('ordered')) return 'status-submitted';
+										return 'status-pending';
+									}
 								},
 								template: `
 									<div class="procurement-tracker sapphire-theme">
@@ -151,105 +164,106 @@ frappe.ui.form.on("Project", {
 											<input type="text" v-model="globalSearchTerm" placeholder="Search all documents..." class="glass-input">
 										</div>
 
-										<div v-if="getGroupKeys().length === 0" class="text-center text-muted" style="padding: 20px;">
+										<div v-if="filteredGroups.length === 0" class="text-center text-muted" style="padding: 20px;">
 											No procurement records found.
 										</div>
 
-										<div v-for="doctype in getGroupKeys()" :key="doctype">
-											<div class="group-header" @click="toggleGroup(doctype)">
+										<div v-for="group in filteredGroups" :key="group.doctype">
+											<!-- Level 1: DocType group -->
+											<div class="group-header" @click="toggleGroup(group.doctype)">
 												<div class="group-title">
-													<!-- Chevron Icon (SVG) -->
-													<svg class="chevron" :class="{ 'expanded': !collapsedGroups[doctype] }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<svg class="chevron" :class="{ 'expanded': !collapsedGroups[group.doctype] }" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 														<polyline points="9 18 15 12 9 6"></polyline>
 													</svg>
-													<span>{{ doctype }} ({{ groupedItems[doctype].length }})</span>
+													<span>{{ group.doctype }} ({{ group.documents.length }})</span>
 												</div>
 											</div>
 
-											<div v-if="!collapsedGroups[doctype]" class="group-content">
-												<div class="table-responsive">
-													<table class="glass-table">
-														<thead>
-															<tr>
-																<th @click="sortBy('item_code')" style="cursor: pointer;">
-																	Item Details
-																	<span v-if="sortKey === 'item_code'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
-																<th @click="sortBy('warehouse')" style="cursor: pointer;">
-																	Warehouse
-																	<span v-if="sortKey === 'warehouse'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
-																<th @click="sortBy('qty')" style="cursor: pointer;">
-																	Qty (Ord / Rec)
-																	<span v-if="sortKey === 'qty'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
-																<th @click="sortBy('status')" style="cursor: pointer;">
-																	Status
-																	<span v-if="sortKey === 'status'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
-																<th @click="sortBy('doc_chain')" style="cursor: pointer;">
-																	Doc Chain
-																	<span v-if="sortKey === 'doc_chain'">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
-																</th>
-															</tr>
-														</thead>
-														<tbody>
-															<tr v-if="(filteredGroups[doctype] || []).length === 0">
-																<td colspan="5" class="text-center text-muted">No matching records found.</td>
-															</tr>
-															<tr v-for="row in filteredGroups[doctype]" :key="row.item_code + (row.mr || row.po)" class="procurement-item-row">
-																<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
-																	:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
-																	v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + row.item_name + '</small>', globalSearchTerm)">
-																</td>
-																<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
-																<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
-																<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
-																	{{ row.completion_percentage }}% Received
-																</td>
-																<td>
-																	<!-- Doc Chain rendering -->
-                                                                    <div class="doc-chain-container">
-                                                                        <div v-if="row.mr" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">MR:</span>
-                                                                            <span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.mr_status)">{{ row.mr_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.rfq" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">RFQ:</span>
-                                                                            <span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="highlight(row.rfq, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.rfq_status)">{{ row.rfq_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.sq" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">SQ:</span>
-                                                                            <span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="highlight(row.sq, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.sq_status)">{{ row.sq_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.po" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">PO:</span>
-                                                                            <span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="highlight(row.po, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.po_status)">{{ row.po_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.pr" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">PR:</span>
-                                                                            <span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="highlight(row.pr, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.pr_status)">{{ row.pr_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.pi" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">PI:</span>
-                                                                            <span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="highlight(row.pi, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.pi_status)">{{ row.pi_status }}</span>
-                                                                        </div>
-                                                                        <div v-if="row.stock_entry" class="doc-chain-step">
-                                                                            <span class="text-muted" style="margin-right:4px;">SE:</span>
-                                                                            <span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="highlight(row.stock_entry, globalSearchTerm)"></span>
-                                                                            <span class="status-badge" :class="getStatusColorClass(row.stock_entry_status)">{{ row.stock_entry_status }}</span>
-                                                                        </div>
-                                                                    </div>
-																</td>
-															</tr>
-														</tbody>
-													</table>
+											<div v-if="!collapsedGroups[group.doctype]" class="group-content">
+												<!-- Level 2: documents of this DocType -->
+												<div v-for="doc in group.documents" :key="doc.name" class="procurement-doc">
+													<div class="doc-header" @click="toggleDoc(group.doctype, doc.name)">
+														<svg class="chevron doc-chevron" :class="{ 'expanded': !isDocCollapsed(group.doctype, doc.name) }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+															<polyline points="9 18 15 12 9 6"></polyline>
+														</svg>
+														<span class="doc-id doc-link" @click.stop="openDoc(group.doctype, doc.name)" v-html="highlight(doc.name, globalSearchTerm)"></span>
+														<span class="doc-meta doc-date">{{ formatDate(doc.date) }}</span>
+														<span class="doc-meta doc-supplier" v-html="highlight(doc.supplier || '-', globalSearchTerm)"></span>
+														<span class="status-badge" :class="getStatusColorClass(doc.status)">{{ doc.status }}</span>
+														<span class="doc-meta doc-itemcount">{{ doc.items.length }} item(s)</span>
+													</div>
+
+													<!-- Level 3: items inside the document -->
+													<div v-if="!isDocCollapsed(group.doctype, doc.name)" class="doc-items">
+														<div class="table-responsive">
+															<table class="glass-table">
+																<thead>
+																	<tr>
+																		<th>Item Details</th>
+																		<th>Warehouse</th>
+																		<th>Qty (Ord / Rec)</th>
+																		<th>Status</th>
+																		<th>Doc Chain</th>
+																	</tr>
+																</thead>
+																<tbody>
+																	<tr v-if="(doc.items || []).length === 0">
+																		<td colspan="5" class="text-center text-muted">No items.</td>
+																	</tr>
+																	<tr v-for="(row, idx) in doc.items" :key="idx" class="procurement-item-row">
+																		<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
+																			:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
+																			v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + (row.item_name || '') + '</small>', globalSearchTerm)">
+																		</td>
+																		<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
+																		<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
+																		<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
+																			{{ row.completion_percentage }}% Received
+																		</td>
+																		<td>
+																			<div class="doc-chain-container">
+																				<div v-if="row.mr" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">MR:</span>
+																					<span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.mr_status)">{{ row.mr_status }}</span>
+																				</div>
+																				<div v-if="row.rfq" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">RFQ:</span>
+																					<span class="doc-link" @click="openDoc('Request for Quotation', row.rfq)" v-html="highlight(row.rfq, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.rfq_status)">{{ row.rfq_status }}</span>
+																				</div>
+																				<div v-if="row.sq" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">SQ:</span>
+																					<span class="doc-link" @click="openDoc('Supplier Quotation', row.sq)" v-html="highlight(row.sq, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.sq_status)">{{ row.sq_status }}</span>
+																				</div>
+																				<div v-if="row.po" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">PO:</span>
+																					<span class="doc-link" @click="openDoc('Purchase Order', row.po)" v-html="highlight(row.po, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.po_status)">{{ row.po_status }}</span>
+																				</div>
+																				<div v-if="row.pr" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">PR:</span>
+																					<span class="doc-link" @click="openDoc('Purchase Receipt', row.pr)" v-html="highlight(row.pr, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.pr_status)">{{ row.pr_status }}</span>
+																				</div>
+																				<div v-if="row.pi" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">PI:</span>
+																					<span class="doc-link" @click="openDoc('Purchase Invoice', row.pi)" v-html="highlight(row.pi, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.pi_status)">{{ row.pi_status }}</span>
+																				</div>
+																				<div v-if="row.stock_entry" class="doc-chain-step">
+																					<span class="text-muted" style="margin-right:4px;">SE:</span>
+																					<span class="doc-link" @click="openDoc('Stock Entry', row.stock_entry)" v-html="highlight(row.stock_entry, globalSearchTerm)"></span>
+																					<span class="status-badge" :class="getStatusColorClass(row.stock_entry_status)">{{ row.stock_entry_status }}</span>
+																				</div>
+																			</div>
+																		</td>
+																	</tr>
+																</tbody>
+															</table>
+														</div>
+													</div>
 												</div>
 											</div>
 										</div>
@@ -258,7 +272,7 @@ frappe.ui.form.on("Project", {
 							});
 							app.mount('#procurement-tracker-app');
 						} else {
-							$(wrapper).html('<div class="text-center text-muted">No procurement data returned.</div>');
+							$(wrapper).html('<div class="text-center text-muted">No procurement records found.</div>');
 						}
 					} catch (e) {
 						console.error(e);
@@ -267,7 +281,7 @@ frappe.ui.form.on("Project", {
 					}
 				},
 				error: function(r) {
-					frappe.msgprint("Server Error in get_procurement_status");
+					frappe.msgprint("Server Error in get_procurement_documents");
 					 $(wrapper).html('<div class="text-danger">Server Error</div>');
 				}
 			});

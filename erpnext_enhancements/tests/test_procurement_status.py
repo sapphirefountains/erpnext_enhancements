@@ -3,7 +3,11 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import random_string
 
-from erpnext_enhancements.project_enhancements import get_procurement_status
+from erpnext_enhancements.project_enhancements import (
+	PROCUREMENT_DOCTYPE_ORDER,
+	get_procurement_documents,
+	get_procurement_status,
+)
 
 
 class TestProcurementStatus(FrappeTestCase):
@@ -262,3 +266,67 @@ class TestProcurementStatus(FrappeTestCase):
 
 		self.assertIsNotNone(po_entry, "Direct PO not found in Purchase Order group")
 		self.assertEqual(po_entry["ordered_qty"], 10)
+
+	def test_get_procurement_documents_structure_and_order(self):
+		# A direct PO and an MR (linked via item.project) for the same project.
+		mr = frappe.get_doc(
+			{
+				"doctype": "Material Request",
+				"material_request_type": "Purchase",
+				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
+				"items": [
+					{
+						"item_code": self.item.item_code,
+						"qty": 2,
+						"schedule_date": frappe.utils.nowdate(),
+						"project": self.project.name,
+						"warehouse": self.warehouse,
+					}
+				],
+			}
+		).insert()
+
+		po = frappe.get_doc(
+			{
+				"doctype": "Purchase Order",
+				"supplier": "Test Supplier Proc",
+				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
+				"items": [
+					{
+						"item_code": self.item.item_code,
+						"qty": 7,
+						"rate": 100,
+						"schedule_date": frappe.utils.nowdate(),
+						"project": self.project.name,
+						"material_request": None,
+						"warehouse": self.warehouse,
+					}
+				],
+			}
+		).insert()
+
+		result = get_procurement_documents(self.project.name)
+
+		# Top-level shape: ordered list of {doctype, documents}.
+		self.assertIsInstance(result, list)
+		doctypes = [g["doctype"] for g in result]
+
+		# Empty groups are omitted, but the present ones keep the fixed order.
+		indexes = [PROCUREMENT_DOCTYPE_ORDER.index(dt) for dt in doctypes]
+		self.assertEqual(indexes, sorted(indexes), "Groups must follow the fixed procurement order")
+
+		# Material Request group contains the MR (added via item.project link).
+		mr_group = next((g for g in result if g["doctype"] == "Material Request"), None)
+		self.assertIsNotNone(mr_group, "Material Request group missing")
+		self.assertIn(mr.name, [d["name"] for d in mr_group["documents"]])
+
+		# Purchase Order group lists the PO, and expanding it exposes its items.
+		po_group = next((g for g in result if g["doctype"] == "Purchase Order"), None)
+		self.assertIsNotNone(po_group, "Purchase Order group missing")
+		po_doc = next((d for d in po_group["documents"] if d["name"] == po.name), None)
+		self.assertIsNotNone(po_doc, "PO not listed under Purchase Order group")
+		self.assertEqual(po_doc["supplier"], "Test Supplier Proc")
+		self.assertTrue(len(po_doc["items"]) >= 1, "PO document should expose its items")
+		self.assertEqual(po_doc["items"][0]["item_code"], self.item.item_code)
