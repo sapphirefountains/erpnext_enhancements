@@ -13,6 +13,7 @@ import frappe
 
 from erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard import (
 	check_permission,
+	get_all_projects_for_gantt,
 	get_priority_options,
 	get_project_data,
 	get_project_tasks,
@@ -277,6 +278,65 @@ class TestProjectDashboard(unittest.TestCase):
 		result = get_status_options()
 		self.assertEqual(result, {"error": "Could not fetch status options."})
 		mock_log_error.assert_called_once()
+
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
+	)
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
+	)
+	def test_get_all_projects_for_gantt_does_not_filter_type_or_start_date(
+		self, mock_get_all, mock_check_permission
+	):
+		"""Portfolio Gantt should include active projects regardless of type/date completeness."""
+		mock_check_permission.return_value = True
+		mock_get_all.return_value = [
+			frappe._dict(
+				{
+					"name": "PROJ-001",
+					"project_name": "Internal Project",
+					"expected_start_date": None,
+					"expected_end_date": None,
+					"percent_complete": 0,
+					"status": "Active",
+					"custom_master_project": None,
+					"project_type": "Internal",
+				}
+			)
+		]
+
+		result = get_all_projects_for_gantt(include_tasks=0)
+
+		self.assertEqual(len(result["projects"]), 1)
+		args, kwargs = mock_get_all.call_args
+		self.assertEqual(args[0], "Project")
+		self.assertEqual(kwargs["filters"], {"is_active": "Yes", "status": ["!=", "Canceled"]})
+		self.assertIn("project_type", kwargs["fields"])
+
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
+	)
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
+	)
+	def test_get_all_projects_for_gantt_fetches_parent_task_for_detailed_view(
+		self, mock_get_all, mock_check_permission
+	):
+		"""Detailed Gantt data needs parent_task so the client can build the task tree."""
+		mock_check_permission.return_value = True
+		mock_get_all.side_effect = [
+			[frappe._dict({"name": "PROJ-001"})],
+			[frappe._dict({"name": "TASK-001", "parent_task": None})],
+		]
+
+		result = get_all_projects_for_gantt(include_tasks=1, statuses='["Active"]')
+
+		self.assertEqual(len(result["tasks"]), 1)
+		project_call = mock_get_all.call_args_list[0]
+		task_call = mock_get_all.call_args_list[1]
+		self.assertEqual(project_call.kwargs["filters"], {"is_active": "Yes", "status": ["in", ["Active"]]})
+		self.assertIn("parent_task", task_call.kwargs["fields"])
+		self.assertEqual(task_call.kwargs["filters"]["project"], ["in", ["PROJ-001"]])
 
 	@patch(
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.db.set_value"

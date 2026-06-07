@@ -259,6 +259,20 @@
         $root.find('#gantt-select-all-projects').prop('checked', total > 0 && checked === total);
     }
 
+    function get_fallback_gantt_data_from_dashboard_projects() {
+        const selected_statuses = new Set(gantt_status_filters || []);
+        const projects = (project_data || []).filter(p => {
+            if (p.is_active !== "Yes") return false;
+            if (p.status === "Canceled") return false;
+            return selected_statuses.size === 0 || selected_statuses.has(p.status);
+        });
+
+        return {
+            projects,
+            tasks: []
+        };
+    }
+
     async function fetch_and_render_portfolio_gantt() {
         let container = $root.find('#dashboard-content');
         container.empty().html('<p class="text-muted text-center p-4"><i class="fa fa-spinner fa-spin mr-2"></i>Fetching Gantt Data...</p>');
@@ -270,12 +284,21 @@
             });
 
             if (!res.message || res.message.error || res.message.projects.length === 0) {
-                container.html('<div class="alert alert-info">No projects match the current filters.</div>');
-                portfolio_gantt_instance = null;
-                return;
+                const fallback_data = (!res.message || !res.message.error)
+                    ? get_fallback_gantt_data_from_dashboard_projects()
+                    : { projects: [], tasks: [] };
+
+                if (fallback_data.projects.length === 0) {
+                    container.html('<div class="alert alert-info">No projects match the current filters.</div>');
+                    portfolio_gantt_instance = null;
+                    return;
+                }
+
+                gantt_current_data = fallback_data;
+            } else {
+                gantt_current_data = res.message;
             }
 
-            gantt_current_data = res.message;
             populate_projects_dropdown(gantt_current_data.projects);
             build_gantt_chart(false);
 
