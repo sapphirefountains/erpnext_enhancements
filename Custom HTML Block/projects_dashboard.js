@@ -1,9 +1,12 @@
 (function() {
     // The ColumnSelector class lives in a separate asset registered via app_include_js.
-    // Don't assume that bundle has already executed when this block renders — load it
+    // Don't assume that bundle has already executed when this block renders -- load it
     // explicitly so the dashboard works regardless of asset load order / build state.
-    frappe.provide("project_enhancements.dashboard_components");
-    frappe.require("/assets/project_enhancements/js/dashboard_components/column_selector.js", init_dashboard);
+    frappe.provide("erpnext_enhancements.dashboard_components");
+    frappe.require(
+        "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
+        init_dashboard
+    );
 
     function init_dashboard() {
     const $root = $(root_element);
@@ -36,7 +39,7 @@
         'completed-projects': { col: 'project_name', order: 'asc' }
     };
 
-    const ColumnSelector = project_enhancements.dashboard_components.ColumnSelector;
+    const ColumnSelector = erpnext_enhancements.dashboard_components.ColumnSelector;
     const column_selectors = {
         'priority-overview': new ColumnSelector('chb_priority_overview_columns', [
             { key: 'project_name', label: 'Project Name', locked: true },
@@ -77,7 +80,7 @@
     const api_call = (method, args = {}) => {
         return new Promise((resolve, reject) => {
             frappe.call({
-                method: `project_enhancements.project_enhancements.page.project_dashboard.project_dashboard.${method}`,
+                method: `erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.${method}`,
                 args: args,
                 callback: (r) => resolve(r),
                 error: (r) => reject(r)
@@ -495,7 +498,7 @@
         
         container.empty().append($chartWrapper);
 
-        frappe.require(["/assets/project_enhancements/js/lib/frappe-gantt.umd.js"], () => {
+        frappe.require(["/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js"], () => {
             let activeViewMode = $root.find('.view-mode-group button.active').data('view') || "Month";
 
             portfolio_gantt_instance = new Gantt($chartWrapper[0], mappedItems, {
