@@ -1,0 +1,86 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "field:title",
+  "creation": "2024-03-24 10:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": ["title", "description", "projects_html", "tasks_html"],
+  "fields": [
+    {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Title",
+      "reqd": 1,
+      "unique": 1
+    },
+    {
+      "fieldname": "description",
+      "fieldtype": "Small Text",
+      "label": "Description"
+    },
+    {
+      "fieldname": "projects_html",
+      "fieldtype": "HTML",
+      "label": "Projects"
+    },
+    {
+      "fieldname": "tasks_html",
+      "fieldtype": "HTML",
+      "label": "Tasks"
+    }
+  ],
+  "links": [],
+  "modified": "2024-03-24 10:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Project Enhancements",
+  "name": "Master Project",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 0,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Projects User",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "Projects Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "track_changes": 1,
+  "search_fields": "title",
+  "title_field": "title",
+  "custom": 0,
+  "is_submittable": 0
+}

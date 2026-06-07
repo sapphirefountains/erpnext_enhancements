@@ -1,0 +1,100 @@
+.qbo-dashboard {
+	padding: 16px 0;
+}
+
+.qbo-status-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 12px;
+	margin-bottom: 16px;
+}
+
+.qbo-status-item {
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 12px;
+	background: var(--card-bg);
+}
+
+.qbo-label {
+	color: var(--text-muted);
+	font-size: 12px;
+	margin-bottom: 6px;
+}
+
+.qbo-value {
+	font-size: 16px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.qbo-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 20px;
+}
+
+.qbo-section {
+	margin-top: 20px;
+}
+
+.qbo-entity-list,
+.qbo-log-list {
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.qbo-entity-row,
+.qbo-log-row {
+	align-items: center;
+	display: grid;
+	gap: 12px;
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--border-color);
+}
+
+.qbo-entity-row {
+	grid-template-columns: minmax(120px, 1fr) minmax(140px, 240px) auto;
+}
+
+.qbo-log-row {
+	grid-template-columns: minmax(180px, 1fr) minmax(80px, 120px) minmax(120px, 180px);
+}
+
+.qbo-match-list {
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.qbo-match-row {
+	align-items: center;
+	border-bottom: 1px solid var(--border-color);
+	display: grid;
+	gap: 10px;
+	grid-template-columns: minmax(180px, 1.2fr) minmax(140px, 0.8fr) minmax(180px, 1fr) minmax(100px, auto) auto;
+	padding: 10px 12px;
+}
+
+.qbo-match-row:last-child {
+	border-bottom: 0;
+}
+
+.qbo-entity-row:last-child,
+.qbo-log-row:last-child {
+	border-bottom: 0;
+}
+
+.qbo-entity-name {
+	font-weight: 600;
+}
+
+@media (max-width: 640px) {
+	.qbo-entity-row,
+	.qbo-log-row,
+	.qbo-match-row {
+		grid-template-columns: 1fr;
+	}
+}

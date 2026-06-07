@@ -1,0 +1,189 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-06 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_section",
+  "environment",
+  "company",
+  "sync_enabled",
+  "client_id",
+  "client_secret",
+  "webhook_verifier_token",
+  "redirect_uri",
+  "oauth_section",
+  "realm_id",
+  "access_token",
+  "refresh_token",
+  "token_expires_at",
+  "last_cdc_sync",
+  "last_full_import",
+  "last_webhook_at",
+  "status",
+  "status_message",
+  "sync_section",
+  "cdc_poll_minutes",
+  "retry_limit"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "default": "Sandbox",
+   "fieldname": "environment",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Environment",
+   "options": "Sandbox\nProduction",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "ERPNext Company",
+   "options": "Company"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_enabled",
+   "fieldtype": "Check",
+   "label": "Sync Enabled"
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID"
+  },
+  {
+   "fieldname": "client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret"
+  },
+  {
+   "fieldname": "webhook_verifier_token",
+   "fieldtype": "Password",
+   "label": "Webhook Verifier Token"
+  },
+  {
+   "description": "The redirect URI configured in the Intuit developer app.",
+   "fieldname": "redirect_uri",
+   "fieldtype": "Data",
+   "label": "Redirect URI"
+  },
+  {
+   "fieldname": "oauth_section",
+   "fieldtype": "Section Break",
+   "label": "OAuth State"
+  },
+  {
+   "fieldname": "realm_id",
+   "fieldtype": "Data",
+   "label": "Realm ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "refresh_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Refresh Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "token_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Token Expires At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_cdc_sync",
+   "fieldtype": "Datetime",
+   "label": "Last CDC Sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_full_import",
+   "fieldtype": "Datetime",
+   "label": "Last Full Import",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_webhook_at",
+   "fieldtype": "Datetime",
+   "label": "Last Webhook At",
+   "read_only": 1
+  },
+  {
+   "default": "Not Connected",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Not Connected\nConnected\nSyncing\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_section",
+   "fieldtype": "Section Break",
+   "label": "Sync"
+  },
+  {
+   "default": "15",
+   "fieldname": "cdc_poll_minutes",
+   "fieldtype": "Int",
+   "label": "CDC Poll Minutes"
+  },
+  {
+   "default": "3",
+   "fieldname": "retry_limit",
+   "fieldtype": "Int",
+   "label": "Retry Limit"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "QuickBooks Time Integration",
+ "name": "QuickBooks Online Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

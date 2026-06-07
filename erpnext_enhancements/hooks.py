@@ -6,30 +6,73 @@ app_email = "info@sapphirefountains.com"
 app_license = "mit"
 
 # include js, css files in header of desk.html
-app_include_css = "desk_enhancements.bundle.css"
+app_include_css = [
+    "desk_enhancements.bundle.css",
+    # global_enhancements
+    "/assets/erpnext_enhancements/css/global_enhancements/triton_widget.css",
+    # project_enhancements
+    "/assets/erpnext_enhancements/css/project_enhancements/task_tree.css",
+    "/assets/erpnext_enhancements/css/project_enhancements/frappe-gantt.css",
+    # task_enhancements
+    "/assets/erpnext_enhancements/css/task_enhancements/task_enhancements.css",
+    # quickbooks_time_integration
+    "/assets/erpnext_enhancements/css/quickbooks_time_integration/qb_time_integration.css",
+]
 app_include_js = [
-	"/assets/erpnext_enhancements/js/erpnext_enhancements.js",
+    "/assets/erpnext_enhancements/js/erpnext_enhancements.js",
     "/assets/erpnext_enhancements/js/kanban_patches.js",
     "/assets/erpnext_enhancements/js/kanban_customization.js",
-	"/assets/erpnext_enhancements/js/global_comments.js",
-	"/assets/erpnext_enhancements/js/crm_note_enhancements.js",
-	"/assets/erpnext_enhancements/js/performance_fixes.js",
+    "/assets/erpnext_enhancements/js/global_comments.js",
+    "/assets/erpnext_enhancements/js/crm_note_enhancements.js",
+    "/assets/erpnext_enhancements/js/performance_fixes.js",
     "/assets/erpnext_enhancements/js/activity_log_numbering.js",
     "/assets/erpnext_enhancements/js/filter_help.js",
     "/assets/erpnext_enhancements/js/telephony_client.js",
+    # global_enhancements
+    "/assets/erpnext_enhancements/js/global_enhancements/quill_mentions.js",
+    "/assets/erpnext_enhancements/js/global_enhancements/global_sidebar.js",
+    "/assets/erpnext_enhancements/js/global_enhancements/unlink_and_delete.js",
+    "/assets/erpnext_enhancements/js/global_enhancements/triton_widget.js",
+    # project_enhancements
+    "/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js",
+    "/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js",
+    "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
+    "/assets/erpnext_enhancements/js/project_enhancements/gantt_zoom.js",
 ]
 
 # include js, css files in header of web template
 web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
 
 doctype_js = {
-    "Opportunity": ["public/js/opportunity.js"],
+    "Opportunity": [
+        "public/js/opportunity.js",
+        "public/js/crm_enhancements/opportunity.js",
+        "public/js/global_enhancements/unified_tab_controller.js",
+        "public/js/global_enhancements/disable_kanban_drag.js",
+        "project_enhancements/doctype/opportunity/opportunity.js",
+    ],
     "Communication": ["public/js/communication.js"],
-    "Project": ["public/js/vue.global.js", "public/js/comments.js", "public/js/project_merge.js", "public/js/project_enhancements.js", "public/js/project.js"],
+    "Project": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/project_merge.js",
+        "public/js/project_enhancements.js",
+        "public/js/project.js",
+        "public/js/global_enhancements/unified_tab_controller.js",
+        "project_enhancements/doctype/project/project.js",
+        "public/js/project_enhancements/project_form_script.js",
+        "public/js/project_enhancements/project_brief.js",
+    ],
+    "Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
     "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item_comments.js"],
     "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
-    "Customer": ["public/js/vue.global.js", "public/js/comments.js", "public/js/customer.js"],
+    "Customer": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/customer.js",
+        "public/js/global_enhancements/unified_tab_controller.js",
+    ],
     "Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
     "Sales Order": [
         "public/js/vue.global.js",
@@ -38,7 +81,13 @@ doctype_js = {
         "public/js/sales_order_enhancements.js"
     ],
     "Sales Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_invoice_comments.js"],
-    "Task": ["public/js/vue.global.js", "public/js/comments.js", "public/js/task_comments.js", "public/js/task_enhancements.js"],
+    "Task": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/task_comments.js",
+        "public/js/task_enhancements.js",
+        "task_enhancements/doctype/task/task.js",
+    ],
     "Journal Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/journal_entry_comments.js"],
     "Payment Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/payment_entry_comments.js"],
     "Purchase Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_invoice_comments.js"],
@@ -53,43 +102,128 @@ doctype_js = {
     "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
     "Serial No": ["public/js/vue.global.js", "public/js/comments.js", "public/js/serial_no_comments.js"],
     "Batch": ["public/js/vue.global.js", "public/js/comments.js", "public/js/batch_comments.js"],
-    "Supplier": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_comments.js"],
+    "Supplier": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/supplier_comments.js",
+        "public/js/global_enhancements/unified_tab_controller.js",
+    ],
     "Supplier Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_quotation_comments.js"],
     "Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/quotation_comments.js"],
-    "Lead": ["public/js/vue.global.js", "public/js/comments.js", "public/js/lead_comments.js", "public/js/lead.js"],
-    "Contact": ["public/js/vue.global.js", "public/js/comments.js", "public/js/contact_comments.js", "public/js/contact.js"],
-    "Address": ["public/js/vue.global.js", "public/js/comments.js", "public/js/address_comments.js"],
-    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"]
+    "Lead": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/lead_comments.js",
+        "public/js/lead.js",
+        "public/js/global_enhancements/primary_contact.js",
+    ],
+    "Contact": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/contact_comments.js",
+        "public/js/contact.js",
+        "public/js/global_enhancements/unified_tab_controller.js",
+    ],
+    "Address": [
+        "public/js/vue.global.js",
+        "public/js/comments.js",
+        "public/js/address_comments.js",
+        "project_enhancements/doctype/address/address.js",
+    ],
+    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"],
+    # quickbooks_time_integration
+    "QuickBooks Online Settings": "quickbooks_time_integration/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
 }
 
 doctype_list_js = {
-    "Opportunity": "public/js/opportunity_list.js"
+    "Opportunity": [
+        "public/js/opportunity_list.js",
+        "public/js/crm_enhancements/opportunity_list.js",
+    ],
+    "Supplier": "public/js/global_enhancements/supplier_list.js",
+    "Task": "public/js/project_enhancements/task_gantt.js",
 }
 doctype_calendar_js = {
     "Asset Booking": "public/js/asset_booking_calendar.js"
 }
+doctype_css = {
+    "Opportunity": "public/css/global_enhancements/horizontal_scroll.css",
+}
+
+# Custom fields created/synced automatically on migrate (from crm_enhancements)
+custom_fields = {
+    "Project": [
+        {
+            "fieldname": "custom_drive_folder_id",
+            "label": "Drive Folder ID",
+            "fieldtype": "Data",
+            "hidden": 1,
+            "insert_after": "project_name",
+        }
+    ]
+}
+
+# Override standard doctype classes (from task_enhancements)
+override_doctype_class = {
+    "Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task",
+}
 
 doc_events = {
-	"Task": {
-		"on_update": ["erpnext_enhancements.tasks.generate_next_task"]
-	},
-	"Project": {
-		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity"
-	},
-	"Communication": {
-		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication"
-	},
-	"Sapphire Maintenance Record": {
-		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit"
-	}
+    "Task": {
+        "on_update": [
+            "erpnext_enhancements.tasks.generate_next_task",
+            "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+        ],
+    },
+    "Project": {
+        "after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
+        "on_update": [
+            "erpnext_enhancements.sync_contact.sync_from_main_doc",
+            "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+        ],
+    },
+    "Communication": {
+        "after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+    },
+    "Sapphire Maintenance Record": {
+        "on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit",
+    },
+    "Opportunity": {
+        "before_save": "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
+        "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+    },
+    "Contact": {
+        "on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
+    },
+    "Supplier": {
+        "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+        "validate": "erpnext_enhancements.supplier_query.sync_supplier_groups",
+    },
+    "Customer": {
+        "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+    },
+    "*": {
+        "after_save": "erpnext_enhancements.utils.triton_sync.global_triton_sync",
+    },
 }
 
 scheduler_events = {
     "daily": [
         "erpnext_enhancements.project_enhancements.send_project_start_reminders",
-        "erpnext_enhancements.tasks.predictive_maintenance_scheduling"
-    ]
+        "erpnext_enhancements.tasks.predictive_maintenance_scheduling",
+    ],
+    "hourly": [
+        "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
+        "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.cdc_poll",
+        "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
+    ],
 }
+
+# Run after each `bench migrate` (from global_enhancements)
+after_migrate = [
+    "erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
+    "erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
+]
 
 fixtures = [
     {
@@ -150,6 +284,8 @@ fixtures = [
             ]]
         ]
     },
+    # project_enhancements: all Custom Fields on the Project doctype
+    {"dt": "Custom Field", "filters": [["dt", "=", "Project"]]},
     {"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
     {"dt": "Workflow State", "filters": [["name", "in", ["Draft", "Requested", "Approved", "Booking in Progress", "Ready for Travel", "In Progress", "Expense Review", "Closed", "Pending Review", "Final/Submitted"]]]},
     {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
@@ -159,7 +295,7 @@ fixtures = [
 ]
 
 override_whitelisted_methods = {
-	"erpnext.crm.doctype.opportunity.opportunity.make_project": "erpnext_enhancements.opportunity_enhancements.make_project"
+    "erpnext.crm.doctype.opportunity.opportunity.make_project": "erpnext_enhancements.opportunity_enhancements.make_project"
 }
 
 override_doctype_dashboards = {
@@ -170,5 +306,5 @@ override_doctype_dashboards = {
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [
-	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}
+    {"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}
 ]

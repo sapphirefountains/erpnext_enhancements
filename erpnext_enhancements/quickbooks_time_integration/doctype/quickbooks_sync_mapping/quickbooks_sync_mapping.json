@@ -1,0 +1,133 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:QBO-MAP-{qbo_entity_type}-{qbo_id}",
+ "creation": "2026-06-06 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "qbo_entity_type",
+  "qbo_id",
+  "erpnext_doctype",
+  "erpnext_name",
+  "sync_token",
+  "last_qbo_updated_at",
+  "last_synced_at",
+  "deleted",
+  "conflict_status",
+  "match_status",
+  "match_rule",
+  "match_confidence",
+  "owned_fields"
+ ],
+ "fields": [
+  {
+   "fieldname": "qbo_entity_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QBO Entity Type",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qbo_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "QBO ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "erpnext_doctype",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "ERPNext DocType"
+  },
+  {
+   "fieldname": "erpnext_name",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "ERPNext Name",
+   "options": "erpnext_doctype"
+  },
+  {
+   "fieldname": "sync_token",
+   "fieldtype": "Data",
+   "label": "Sync Token"
+  },
+  {
+   "fieldname": "last_qbo_updated_at",
+   "fieldtype": "Datetime",
+   "label": "Last QBO Updated At"
+  },
+  {
+   "fieldname": "last_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Last Synced At"
+  },
+  {
+   "default": "0",
+   "fieldname": "deleted",
+   "fieldtype": "Check",
+   "label": "Deleted"
+  },
+  {
+   "default": "Clean",
+   "fieldname": "conflict_status",
+   "fieldtype": "Select",
+   "label": "Conflict Status",
+   "options": "Clean\nConflict\nIgnored\nPending Review"
+  },
+  {
+   "default": "Not Matched",
+   "fieldname": "match_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Match Status",
+   "options": "Not Matched\nAuto Matched\nManual Matched\nPending Review\nCreated"
+  },
+  {
+   "fieldname": "match_rule",
+   "fieldtype": "Data",
+   "label": "Match Rule"
+  },
+  {
+   "default": "0",
+   "fieldname": "match_confidence",
+   "fieldtype": "Percent",
+   "label": "Match Confidence"
+  },
+  {
+   "description": "JSON object of ERPNext fields owned by the QuickBooks sync.",
+   "fieldname": "owned_fields",
+   "fieldtype": "Long Text",
+   "label": "Owned Fields"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "QuickBooks Time Integration",
+ "name": "QuickBooks Sync Mapping",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

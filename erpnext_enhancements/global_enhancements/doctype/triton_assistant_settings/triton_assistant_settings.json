@@ -1,0 +1,98 @@
+{
+ "actions": [],
+ "creation": "2026-06-07 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "intro_html",
+  "behavior_section",
+  "enabled",
+  "default_model",
+  "request_timeout",
+  "column_break_behavior",
+  "enable_page_context",
+  "enable_write_actions",
+  "debug_logging"
+ ],
+ "fields": [
+  {
+   "fieldname": "intro_html",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted\">The Triton <b>connection</b> (Gateway URL + Admin Webhook Secret) is read from the shared <a href=\"/app/triton-settings\">Triton Settings</a>. This page only controls the embedded assistant widget. Use <b>Test Connection</b> (menu) to verify.</p>"
+  },
+  {
+   "fieldname": "behavior_section",
+   "fieldtype": "Section Break",
+   "label": "Assistant Widget"
+  },
+  {
+   "default": "1",
+   "description": "Master switch. When off, the floating Triton assistant is hidden for everyone.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Triton Assistant"
+  },
+  {
+   "description": "Default model new chats open with. Leave blank to use the Chat Model ID from Triton Settings. Triton may auto-route to a stronger model per request.",
+   "fieldname": "default_model",
+   "fieldtype": "Data",
+   "label": "Default Model"
+  },
+  {
+   "default": "120",
+   "description": "Per-request timeout in seconds for calls to Triton.",
+   "fieldname": "request_timeout",
+   "fieldtype": "Int",
+   "label": "Request Timeout (s)"
+  },
+  {
+   "fieldname": "column_break_behavior",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Allow users to attach the page they are on (document, list, or report) to the chat as context.",
+   "fieldname": "enable_page_context",
+   "fieldtype": "Check",
+   "label": "Enable \"Add page to context\""
+  },
+  {
+   "default": "1",
+   "description": "Allow Triton to propose changes in ERPNext (create/update records, tasks, emails). Each change is shown as a confirmation card the user must approve.",
+   "fieldname": "enable_write_actions",
+   "fieldtype": "Check",
+   "label": "Enable write actions (with confirmation)"
+  },
+  {
+   "default": "0",
+   "description": "Log proxy requests/responses to the Error Log for troubleshooting.",
+   "fieldname": "debug_logging",
+   "fieldtype": "Check",
+   "label": "Debug Logging"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-07 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Global Enhancements",
+ "name": "Triton Assistant Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

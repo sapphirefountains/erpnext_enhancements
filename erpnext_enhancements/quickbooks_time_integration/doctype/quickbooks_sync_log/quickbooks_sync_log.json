@@ -1,0 +1,146 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:QBO-SYNC-{YYYY}-{#####}",
+ "creation": "2026-06-06 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sync_type",
+  "status",
+  "entity_type",
+  "started_at",
+  "finished_at",
+  "created_count",
+  "updated_count",
+  "linked_count",
+  "deleted_count",
+  "conflict_count",
+  "manual_review_count",
+  "failed_count",
+  "retry_count",
+  "preview_payload",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "sync_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Sync Type",
+   "options": "Import All\nPreview Resync\nRun Resync\nEntity Sync\nWebhook\nCDC\nRetry",
+   "reqd": 1
+  },
+  {
+   "default": "Queued",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Queued\nRunning\nCompleted\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "entity_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Entity Type"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "default": "0",
+   "fieldname": "created_count",
+   "fieldtype": "Int",
+   "label": "Created Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "updated_count",
+   "fieldtype": "Int",
+   "label": "Updated Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "linked_count",
+   "fieldtype": "Int",
+   "label": "Linked Existing Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "deleted_count",
+   "fieldtype": "Int",
+   "label": "Deleted Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "conflict_count",
+   "fieldtype": "Int",
+   "label": "Conflict Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "manual_review_count",
+   "fieldtype": "Int",
+   "label": "Manual Review Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "failed_count",
+   "fieldtype": "Int",
+   "label": "Failed Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "retry_count",
+   "fieldtype": "Int",
+   "label": "Retry Count"
+  },
+  {
+   "fieldname": "preview_payload",
+   "fieldtype": "Long Text",
+   "label": "Preview Payload"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "QuickBooks Time Integration",
+ "name": "QuickBooks Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
