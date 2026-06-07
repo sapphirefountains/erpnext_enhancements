@@ -401,7 +401,7 @@ erpnext_enhancements.dashboard_components.TasksView = class TasksView {
 	}
 
 	render_tree_view(projectName, container) {
-		frappe.require("/assets/erpnext_enhancements/js/task_tree_manager.js", () => {
+		frappe.require("/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js", () => {
 			this.treeManagerInstance = new erpnext_enhancements.TaskTreeManager({
 				wrapper: container,
 				projectName: projectName,
