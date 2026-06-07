@@ -38,8 +38,8 @@ def get_project_brief_data(project_name):
 		"start_date": doc.get("expected_start_date"),
 		"completion_date": doc.get("expected_end_date"),
 		"description": (description or "").strip(),
-		"pm": doc.get("custom_project_owner") or "",
-		"tech_lead": doc.get("custom_technical_lead") or "",
+		"pm": _user_fullname(doc.get("custom_project_owner")),
+		"tech_lead": _user_fullname(doc.get("custom_technical_lead")),
 		# No native Project source — left blank to be filled in on the printout.
 		"kickoff_meeting_date": "",
 		"prelim_lien_notice_date": "",
@@ -56,6 +56,13 @@ def get_project_brief_data(project_name):
 		data["owner_contact"] = _customer_primary_contact(customer)
 
 	return data
+
+
+def _user_fullname(user):
+	"""Resolve a User link (stored as email/ID) to their display name."""
+	if not user:
+		return ""
+	return frappe.utils.get_fullname(user)
 
 
 def _customer_address_lines(customer):
