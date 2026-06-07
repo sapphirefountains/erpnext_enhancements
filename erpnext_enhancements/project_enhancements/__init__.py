@@ -1,3 +1,9 @@
+"""Project Enhancements module.
+
+Top-level project helper functions (formerly erpnext_enhancements/project_enhancements.py,
+folded into this package __init__ during the multi-app consolidation). These are referenced
+as erpnext_enhancements.project_enhancements.<fn> from hooks.py and client scripts."""
+
 import frappe
 from frappe import _
 

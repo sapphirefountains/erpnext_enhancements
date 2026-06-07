@@ -13,3 +13,9 @@ erpnext_enhancements.patches.reset_travel_child_table_fields
 erpnext_enhancements.patches.add_item_purchase_links
 erpnext_enhancements.patches.create_home_workspace
 erpnext_enhancements.patches.migrate_assets_to_serial_no
+# global_enhancements
+erpnext_enhancements.patches.migrate_contact_data
+# project_enhancements
+erpnext_enhancements.patches.update_project_statuses
+erpnext_enhancements.patches.delete_master_project
+erpnext_enhancements.patches.rename_master_projects

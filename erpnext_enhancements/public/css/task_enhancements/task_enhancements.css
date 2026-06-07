@@ -1,0 +1,70 @@
+/*
+ * Styles for the Hierarchical Task View
+ *
+ * This file contains the CSS for rendering the nested list of tasks
+ * as a visually intuitive tree structure. It styles the list items,
+ * connectors, and the overall layout of the task tree.
+ */
+
+/* Basic tree styling */
+.task-tree, .task-tree ul {
+    list-style: none;
+    padding-left: 20px;
+}
+
+.task-tree {
+    padding-left: 0;
+}
+
+/* Style for each list item */
+.task-tree li {
+    position: relative;
+}
+
+/* Connector line */
+.task-tree li::before {
+    content: "";
+    position: absolute;
+    left: -15px;
+    top: 15px;
+    border-left: 1px solid #999;
+    border-bottom: 1px solid #999;
+    width: 10px;
+    height: 1px;
+}
+
+.task-tree > li::before {
+    border: none;
+}
+
+/* Task item container */
+.task-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-top: 5px;
+    background-color: #f9f9f9;
+}
+
+.task-item a {
+    text-decoration: none;
+    color: #333;
+}
+
+/* Child tasks table styling */
+#custom_child_tasks_table ul {
+    list-style-type: none;
+    padding-left: 20px;
+}
+
+#custom_child_tasks_table li {
+    margin: 5px 0;
+}
+
+#custom_child_tasks_table .toggle-child-tasks {
+    cursor: pointer;
+    margin-right: 5px;
+}

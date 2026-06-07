@@ -1,0 +1,32 @@
+/*
+    Enhanced Kanban Scrolling for Opportunity Doctype
+*/
+
+/* 1. Horizontal Scrolling for the main Kanban board */
+
+/* Target the container that holds all the Kanban columns */
+.kanban-columns[data-doctype="Opportunity"] {
+    display: flex;
+    overflow-x: auto;
+    /* Add some padding at the bottom to ensure the scrollbar has space and is visible */
+    padding-bottom: 15px;
+}
+
+/* Ensure Kanban columns don't shrink and maintain their specified width */
+.kanban-column[data-doctype="Opportunity"] {
+    flex-shrink: 0;
+}
+
+/* 2. Disable Drag and Drop for Kanban Cards */
+
+/* Target Kanban cards specifically within the "Opportunity" doctype */
+.kanban-columns[data-doctype="Opportunity"] .kanban-card {
+    /* Prevent the card from being targeted by mouse events, disabling dragging */
+    pointer-events: none;
+}
+
+.kanban-columns[data-doctype="Opportunity"] .kanban-card .kanban-card-items .kanban-card-item .add-card,
+.kanban-columns[data-doctype="Opportunity"] .kanban-card .kanban-card-title {
+    /* Re-enable mouse events for the plus icon and title so they can be clicked */
+    pointer-events: auto;
+}
