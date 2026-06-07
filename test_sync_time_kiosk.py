@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import httpx
 
+import sync_time_kiosk
 from sync_time_kiosk import TimeKioskSync
 
 
@@ -65,6 +66,15 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 			timeout=30.0,
 			headers=self.syncer.get_headers(),
 		)
+
+	def test_initializes_logs_warning_without_credentials(self):
+		with patch.dict(os.environ, {"ERPNEXT_URL": "http://public.local"}, clear=True):
+			with self.assertLogs("TimeKioskSync", level="WARNING") as logs:
+				syncer = TimeKioskSync()
+
+		self.assertEqual(syncer.erpnext_url, "http://public.local")
+		self.assertEqual(syncer.get_headers()["Authorization"], "token None:None")
+		self.assertIn("API_KEY or API_SECRET not set", logs.output[0])
 
 	def test_aggregate_logs_groups_by_employee_project_and_start_date(self):
 		logs = [
@@ -229,6 +239,20 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 			},
 		)
 
+	async def test_create_timesheet_returns_none_without_response_data(self):
+		self.client.post.return_value = FakeResponse({})
+		data = {
+			"employee": "EMP-001",
+			"project": "PROJ-A",
+			"date": "2023-10-27",
+			"hours": 3.0,
+			"start_dt": datetime(2023, 10, 27, 9, 0),
+		}
+
+		result = await self.syncer.create_timesheet(data)
+
+		self.assertIsNone(result)
+
 	async def test_update_timesheet_skips_duplicate_time_log(self):
 		self.client.get.return_value = FakeResponse(
 			{
@@ -334,6 +358,18 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		await self.syncer.update_daily_note("TS-001", "EMP-001", "2023-10-27")
 
 		self.client.put.assert_not_awaited()
+
+	async def test_update_daily_note_logs_and_suppresses_update_failures(self):
+		self.syncer.fetch_daily_intervals = AsyncMock(
+			return_value=[{"project": "PROJ-A", "description": "Pump inspection"}]
+		)
+		self.client.put.side_effect = RuntimeError("write failed")
+
+		with self.assertLogs("TimeKioskSync", level="ERROR") as logs:
+			await self.syncer.update_daily_note("TS-001", "EMP-001", "2023-10-27")
+
+		self.client.put.assert_awaited_once()
+		self.assertIn("Failed to update daily note for TS-001", logs.output[0])
 
 	async def test_process_single_sync_creates_timesheet_updates_note_and_sources(self):
 		data = {
@@ -456,6 +492,15 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 			json={"sync_attempts": 3, "sync_status": "Failed"},
 		)
 
+	async def test_handle_sync_failure_logs_and_continues_after_error(self):
+		self.client.get.side_effect = RuntimeError("read failed")
+
+		with self.assertLogs("TimeKioskSync", level="ERROR") as logs:
+			await self.syncer.handle_sync_failure(["JI-1"])
+
+		self.client.put.assert_not_awaited()
+		self.assertIn("Failed to handle sync failure for JI-1", logs.output[0])
+
 	async def test_retry_request_retries_transient_network_errors_with_exponential_backoff(self):
 		request = AsyncMock(side_effect=[httpx.TimeoutException("timeout"), httpx.ConnectError("connect"), "ok"])
 
@@ -502,6 +547,17 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		await self.syncer.close()
 
 		self.client.aclose.assert_awaited_once()
+
+	async def test_main_runs_batch_and_closes_syncer(self):
+		syncer = Mock()
+		syncer.sync_batch = AsyncMock()
+		syncer.close = AsyncMock()
+
+		with patch("sync_time_kiosk.TimeKioskSync", return_value=syncer):
+			await sync_time_kiosk.main()
+
+		syncer.sync_batch.assert_awaited_once()
+		syncer.close.assert_awaited_once()
 
 
 if __name__ == "__main__":
