@@ -1,0 +1,90 @@
+<div class="project-dashboard-container">
+    <div class="dashboard-tabs p-3 pb-0 border-bottom">
+        <ul class="nav nav-tabs" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" href="javascript:void(0)" data-route="priority-overview">Priority Overview</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="javascript:void(0)" data-route="active-internal-projects">Active Internal Projects</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="javascript:void(0)" data-route="completed-projects">Completed Projects</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" href="javascript:void(0)" data-route="portfolio-gantt">Portfolio Gantt</a>
+            </li>
+        </ul>
+    </div>
+
+    <div class="dashboard-controls p-2 border-bottom bg-light">
+        <div class="row align-items-center m-0">
+            
+            <div class="col-12 col-md-4 p-0 mb-2 mb-md-0" id="standard-controls">
+                <div class="input-group input-group-sm" style="max-width: 300px;">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text"><i class="fa fa-search"></i></span>
+                    </div>
+                    <input type="text" class="form-control" id="global-project-search" placeholder="Search projects...">
+                </div>
+            </div>
+
+            <div class="col-12 p-0" id="gantt-controls" style="display: none;">
+                <div class="d-flex align-items-center justify-content-between flex-wrap w-100">
+                    
+                    <div class="d-flex align-items-center flex-wrap mb-2 mb-md-0">
+                        
+                        <div class="dropdown check-dropdown mr-3">
+                            <button class="btn btn-sm btn-white border custom-dropdown-toggle bg-white font-weight-bold" type="button" id="ganttProjectDropdown" style="min-width: 160px; text-align: left;">
+                                All Projects
+                            </button>
+                            <div class="dropdown-menu p-2 shadow-sm" id="gantt-project-menu" style="min-width: 250px; max-height: 400px; overflow-y: auto; margin-top: 5px;">
+                                <input type="text" class="form-control form-control-sm mb-2" id="gantt-project-search" placeholder="Search projects...">
+                                <div class="custom-control custom-checkbox mb-2 border-bottom pb-2">
+                                    <input type="checkbox" class="custom-control-input" id="gantt-select-all-projects" checked>
+                                    <label class="custom-control-label font-weight-bold" for="gantt-select-all-projects" style="cursor: pointer; padding-top: 2px;">Select All</label>
+                                </div>
+                                <div id="gantt-project-checkboxes">
+                                    </div>
+                                <div class="dropdown-divider"></div>
+                                <button class="btn btn-sm btn-primary w-100" id="apply-gantt-project-filters">Apply Filter</button>
+                            </div>
+                        </div>
+
+                        <div class="dropdown check-dropdown mr-3">
+                            <button class="btn btn-sm btn-white border custom-dropdown-toggle bg-white font-weight-bold" type="button" id="ganttStatusDropdown" style="min-width: 140px; text-align: left;">
+                                Selected (3)
+                            </button>
+                            <div class="dropdown-menu p-2 shadow-sm" id="gantt-status-menu" style="min-width: 200px; margin-top: 5px;">
+                                <div id="gantt-status-checkboxes">
+                                    </div>
+                                <div class="dropdown-divider"></div>
+                                <button class="btn btn-sm btn-primary w-100" id="apply-gantt-status-filters">Apply Filters</button>
+                            </div>
+                        </div>
+
+                        <div class="d-flex align-items-center border-left pl-3">
+                            <input type="checkbox" id="gantt-detailed-view" style="margin-right: 8px; width: 16px; height: 16px;">
+                            <label for="gantt-detailed-view" class="mb-0 font-weight-bold" style="cursor: pointer; font-size: 13px;">Show Tasks</label>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center mt-2 mt-md-0">
+                        <div class="btn-group btn-group-sm view-mode-group" role="group">
+                            <button type="button" class="btn btn-outline-secondary" data-view="Quarter Day">Quarter Day</button>
+                            <button type="button" class="btn btn-outline-secondary" data-view="Half Day">Half Day</button>
+                            <button type="button" class="btn btn-outline-secondary" data-view="Day">Day</button>
+                            <button type="button" class="btn btn-outline-secondary" data-view="Week">Week</button>
+                            <button type="button" class="btn btn-secondary active" data-view="Month">Month</button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-primary font-weight-bold ml-2" id="gantt-today-btn">Today</button>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="dashboard-content p-3 bg-white" id="dashboard-content">
+    </div>
+</div>
