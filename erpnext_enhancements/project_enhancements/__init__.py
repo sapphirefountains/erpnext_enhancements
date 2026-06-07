@@ -219,6 +219,210 @@ def get_procurement_status(project_name):
 	return result
 
 
+# ---------------------------------------------------------------------------
+# Document-centric procurement view (custom_material_request_feed)
+#
+# get_procurement_status() above is item/chain centric (grouped by the latest
+# stage of each item's chain). The Project feed instead wants a document-centric
+# tree: DocType -> list of documents -> expand a document -> its items (each item
+# still carrying its full Doc Chain). get_procurement_documents() builds that on
+# top of get_procurement_status(): the chain rows already carry every doc name in
+# the chain, so we just regroup them per document, then add any documents that
+# are linked to the project but never appeared in a chain.
+# ---------------------------------------------------------------------------
+
+# Fixed top-to-bottom order requested for the feed.
+PROCUREMENT_DOCTYPE_ORDER = [
+	"Material Request",
+	"Request for Quotation",
+	"Supplier Quotation",
+	"Purchase Order",
+	"Purchase Receipt",
+	"Purchase Invoice",
+]
+
+# Maps each procurement DocType to the key it occupies on a chain/item row.
+_CHAIN_FIELD = {
+	"Material Request": "mr",
+	"Request for Quotation": "rfq",
+	"Supplier Quotation": "sq",
+	"Purchase Order": "po",
+	"Purchase Receipt": "pr",
+	"Purchase Invoice": "pi",
+}
+
+# Date field shown in the document row, per DocType.
+_DATE_FIELD = {
+	"Material Request": "transaction_date",
+	"Request for Quotation": "transaction_date",
+	"Supplier Quotation": "transaction_date",
+	"Purchase Order": "transaction_date",
+	"Purchase Receipt": "posting_date",
+	"Purchase Invoice": "posting_date",
+}
+
+# DocTypes that carry a single supplier on the header.
+_HAS_SUPPLIER = {"Supplier Quotation", "Purchase Order", "Purchase Receipt", "Purchase Invoice"}
+
+
+def _docstatus_label(docstatus):
+	return {0: "Draft", 1: "Submitted", 2: "Cancelled"}.get(docstatus, "")
+
+
+def _minimal_item_row(doctype, docname, status, item):
+	"""Builds an item row (same shape the feed expects) for a document that was
+	not reached through the chain query. Only the document's own chain node is
+	populated; upstream/downstream nodes are left blank."""
+	row = {
+		"source_doc_type": doctype,
+		"source_doc_name": docname,
+		"item_code": item.get("item_code"),
+		"item_name": item.get("item_name"),
+		"mr": None, "mr_status": None,
+		"rfq": None, "rfq_status": None,
+		"sq": None, "sq_status": None,
+		"po": None, "po_status": None,
+		"pr": None, "pr_status": None,
+		"pi": None, "pi_status": None,
+		"stock_entry": None, "stock_entry_status": None,
+		"warehouse": item.get("warehouse"),
+		"ordered_qty": item.get("qty") or 0,
+		"received_qty": 0,
+		"completion_percentage": 0,
+	}
+	field = _CHAIN_FIELD[doctype]
+	row[field] = docname
+	row[field + "_status"] = status
+	return row
+
+
+def _supplementary_documents(project_name, doctype, existing_names):
+	"""Finds documents of `doctype` linked to the project (via item.project or the
+	parent's project/custom_project field) that are not already present, and
+	returns {docname: [item_row, ...]} for them."""
+	item_doctype = f"{doctype} Item"
+	existing = set(existing_names)
+
+	candidate_names = set()
+
+	item_meta = frappe.get_meta(item_doctype)
+	if item_meta.has_field("project"):
+		for r in frappe.get_all(
+			item_doctype, filters={"project": project_name}, fields=["parent"], distinct=True
+		):
+			candidate_names.add(r.parent)
+
+	parent_meta = frappe.get_meta(doctype)
+	for field in ("custom_project", "project"):
+		if parent_meta.has_field(field):
+			for name in frappe.get_all(doctype, filters={field: project_name}, pluck="name"):
+				candidate_names.add(name)
+
+	candidate_names -= existing
+	if not candidate_names:
+		return {}
+
+	valid = frappe.get_all(
+		doctype,
+		filters={"name": ["in", list(candidate_names)], "docstatus": ["<", 2]},
+		fields=["name", "status", "docstatus"],
+	)
+
+	item_fields = ["parent", "item_code", "item_name", "qty"]
+	if item_meta.has_field("warehouse"):
+		item_fields.append("warehouse")
+
+	result = {}
+	for v in valid:
+		status = v.status or _docstatus_label(v.docstatus)
+		items = frappe.get_all(item_doctype, filters={"parent": v.name}, fields=item_fields)
+		result[v.name] = [_minimal_item_row(doctype, v.name, status, it) for it in items]
+	return result
+
+
+def _fetch_doc_meta(doctype, names):
+	"""Bulk-fetches header metadata (date, supplier, status) for a set of documents."""
+	if not names:
+		return {}
+	date_field = _DATE_FIELD[doctype]
+	fields = ["name", "status", "docstatus", f"{date_field} as doc_date"]
+	if doctype in _HAS_SUPPLIER:
+		fields.append("supplier")
+	rows = frappe.get_all(doctype, filters={"name": ["in", list(names)]}, fields=fields)
+	return {r.name: r for r in rows}
+
+
+@frappe.whitelist()
+def get_procurement_documents(project_name):
+	"""Document-centric procurement feed for a Project.
+
+	Returns an ordered list (Material Request -> ... -> Purchase Invoice, empty
+	groups omitted):
+
+		[
+			{
+				"doctype": "Material Request",
+				"documents": [
+					{"name", "date", "supplier", "status", "items": [<item row>, ...]},
+					...
+				],
+			},
+			...
+		]
+
+	Each item row keeps the full Doc Chain fields (mr/rfq/sq/po/pr/pi + statuses).
+	"""
+	if not project_name:
+		return []
+
+	# 1. Flatten the chain rows (each already carries every doc name in its chain).
+	status = get_procurement_status(project_name)
+	chain_rows = [item for items in status.values() for item in items]
+
+	# 2. Group every chain row under each document it belongs to.
+	doc_items = {dt: {} for dt in PROCUREMENT_DOCTYPE_ORDER}
+	for row in chain_rows:
+		for dt, field in _CHAIN_FIELD.items():
+			docname = row.get(field)
+			if docname:
+				doc_items[dt].setdefault(docname, []).append(row)
+
+	# 3. Add documents linked to the project that never appeared in a chain.
+	for dt in PROCUREMENT_DOCTYPE_ORDER:
+		try:
+			supplementary = _supplementary_documents(project_name, dt, doc_items[dt].keys())
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"Procurement feed: supplementary {dt} failed")
+			supplementary = {}
+		for docname, items in supplementary.items():
+			doc_items[dt].setdefault(docname, []).extend(items)
+
+	# 4. Assemble the ordered output, skipping empty groups.
+	output = []
+	for dt in PROCUREMENT_DOCTYPE_ORDER:
+		names = list(doc_items[dt].keys())
+		if not names:
+			continue
+		meta = _fetch_doc_meta(dt, names)
+		documents = []
+		for name in names:
+			m = meta.get(name) or {}
+			documents.append(
+				{
+					"name": name,
+					"date": str(m.get("doc_date")) if m.get("doc_date") else None,
+					"supplier": m.get("supplier"),
+					"status": m.get("status") or _docstatus_label(m.get("docstatus")),
+					"items": doc_items[dt][name],
+				}
+			)
+		# Newest documents first.
+		documents.sort(key=lambda d: (d["date"] or "", d["name"]), reverse=True)
+		output.append({"doctype": dt, "documents": documents})
+
+	return output
+
+
 def sync_attachments_from_opportunity(doc, method):
 	"""
 	Sync attachments from the linked Opportunity (and its parent Lead) to the Project.

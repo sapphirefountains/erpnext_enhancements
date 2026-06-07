@@ -152,7 +152,11 @@ erpnext_enhancements.unified_controller = {
 
 		frappe.call({
 			method: "erpnext_enhancements.sync_contact.get_contacts_for_context",
-			args: { sources: sources },
+			args: {
+				sources: sources,
+				context_doctype: frm.doctype,
+				context_name: frm.doc.name,
+			},
 			callback: (r) => {
 				wrapper.find(".text-muted").remove();
 				if (!r.message || r.message.length === 0) {
@@ -274,7 +278,11 @@ erpnext_enhancements.unified_controller = {
 
 		frappe.call({
 			method: "erpnext_enhancements.sync_contact.get_addresses_for_context",
-			args: { sources: sources },
+			args: {
+				sources: sources,
+				context_doctype: frm.doctype,
+				context_name: frm.doc.name,
+			},
 			callback: (r) => {
 				wrapper.find(".text-muted").remove();
 				if (!r.message || r.message.length === 0) {

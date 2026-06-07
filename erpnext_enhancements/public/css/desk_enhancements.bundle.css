@@ -530,6 +530,63 @@ mark {
     transition: background-color 0.2s ease;
 }
 
+/* Document-centric feed: middle level (a single document within a DocType group) */
+.procurement-tracker .procurement-doc {
+    margin-bottom: 8px;
+}
+
+.procurement-tracker .doc-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 14px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+}
+
+.procurement-tracker .doc-header:hover {
+    background-color: rgba(0, 123, 255, 0.05);
+    border-color: rgba(0, 123, 255, 0.3);
+}
+
+.procurement-tracker .doc-header .doc-chevron {
+    flex: 0 0 auto;
+}
+
+.procurement-tracker .doc-header .doc-id {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.procurement-tracker .doc-header .doc-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.procurement-tracker .doc-header .doc-supplier {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.procurement-tracker .doc-header .doc-id.doc-link {
+    cursor: pointer;
+}
+
+.procurement-tracker .doc-header .doc-id.doc-link:hover {
+    text-decoration: underline;
+}
+
+.procurement-tracker .doc-items {
+    margin: 6px 0 4px 22px;
+    animation: slideDown 0.25s ease-out;
+}
+
 /* Project Comments Section - Timeline Style */
 .project-comments-container.timeline {
     margin-top: 20px;

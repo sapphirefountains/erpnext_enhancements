@@ -261,9 +261,12 @@
 
     function get_fallback_gantt_data_from_dashboard_projects() {
         const selected_statuses = new Set(gantt_status_filters || []);
+        const gantt_project_types = new Set(["Build", "Design", "Rent", "Service"]);
         const projects = (project_data || []).filter(p => {
             if (p.is_active !== "Yes") return false;
             if (p.status === "Canceled") return false;
+            // Keep the fallback in sync with the backend: client-facing work only.
+            if (!gantt_project_types.has(p.project_type)) return false;
             return selected_statuses.size === 0 || selected_statuses.has(p.status);
         });
 
@@ -284,9 +287,11 @@
             });
 
             if (!res.message || res.message.error || res.message.projects.length === 0) {
-                const fallback_data = (!res.message || !res.message.error)
-                    ? get_fallback_gantt_data_from_dashboard_projects()
-                    : { projects: [], tasks: [] };
+                // Fall back to the project data the dashboard already loaded.
+                // This covers both an empty result and a backend error (e.g. a
+                // permission gate), so the Gantt still renders the active
+                // projects instead of showing nothing.
+                const fallback_data = get_fallback_gantt_data_from_dashboard_projects();
 
                 if (fallback_data.projects.length === 0) {
                     container.html('<div class="alert alert-info">No projects match the current filters.</div>');
