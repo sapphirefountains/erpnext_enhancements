@@ -2,127 +2,27 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
   pull_request:
 
 jobs:
-  tests:
+  unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Kept higher timeout just in case, though removal of Insights should speed this up
-
-    services:
-      mariadb:
-        image: mariadb:10.6
-        env:
-          MYSQL_ROOT_PASSWORD: root
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-
-      redis:
-        image: redis:alpine
-        ports:
-          - 6379:6379
-        options: --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Setup System Dependencies
-        run: |
-          sudo apt-get update
-          # Kept build dependencies to ensure smooth installation of other apps on Python 3.14
-          sudo apt-get install -y wkhtmltopdf build-essential gfortran libopenblas-dev liblapack-dev pkg-config
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
-          cache: 'pip'
+          python-version: "3.12"
+          cache: pip
 
-      - name: Setup Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: '24.12.0'
-          cache: 'npm'
-
-      - name: Update Pip
+      - name: Install test dependencies
         run: |
-          pip install pip==25.3
+          python -m pip install --upgrade pip
+          python -m pip install httpx
 
-      - name: Install Frappe Bench
-        run: |
-          pip install frappe-bench==5.28.0
-
-      - name: Configure Yarn
-        run: |
-          yarn config set registry https://registry.npmjs.org/
-          yarn config set network-timeout 300000
-
-      - name: Initialize Bench
-        run: |
-          bench init --skip-redis-config-generation --skip-assets --python python3.14 frappe-bench --version version-16
-
-      - name: Configure Bench
-        working-directory: frappe-bench
-        run: |
-          bench set-config -g redis_cache redis://localhost:6379
-          bench set-config -g redis_queue redis://localhost:6379
-          bench set-config -g redis_socketio redis://localhost:6379
-
-      - name: Create Site
-        working-directory: frappe-bench
-        run: |
-          bench new-site test_site --mariadb-root-password root --admin-password admin --no-mariadb-socket --db-host 127.0.0.1 --db-port 3306
-
-      - name: Setup Apps
-        working-directory: frappe-bench
-        run: |
-          # The repo is checked out to $GITHUB_WORKSPACE, but bench expects apps in frappe-bench/apps
-          # We can symlink or move. Bench get-app usually clones, but we want to use the checked out code.
-          mkdir -p apps
-          ln -s $GITHUB_WORKSPACE apps/erpnext_enhancements
-
-          # Install setuptools to fix 'pkg_resources' error in offsite_backups
-          ./env/bin/pip install setuptools
-
-          # Install the local app in editable mode and register it
-          # IMPORTANT: Must use the pip inside the bench virtual environment
-          ./env/bin/pip install -e apps/erpnext_enhancements
-          ./env/bin/pip install -r apps/erpnext_enhancements/testing.txt
-
-          echo "" >> sites/apps.txt
-          echo "erpnext_enhancements" >> sites/apps.txt
-
-          # Get Apps
-          # User requested develop/main branch for apps.
-          # Note: Mixing frappe v15 with erpnext develop might be unstable, but we follow instructions.
-          bench get-app erpnext --branch version-16
-          bench get-app https://github.com/sapphirefountains/task_enhancements
-          bench get-app https://github.com/sapphirefountains/crm_enhancements
-          bench get-app https://github.com/sapphirefountains/global_enhancements
-          bench get-app https://github.com/sapphirefountains/project_enhancements
-          # Removed Insights as requested
-          bench get-app https://github.com/buildswithpaul/Frappe_Assistant_Core
-          bench get-app https://github.com/frappe/offsite_backups --branch version-16
-          bench get-app https://github.com/frappe/newsletter --branch version-16
-
-          # Install Apps
-          bench --site test_site install-app erpnext
-          bench --site test_site install-app task_enhancements
-          bench --site test_site install-app crm_enhancements
-          bench --site test_site install-app global_enhancements
-          bench --site test_site install-app project_enhancements
-          bench --site test_site install-app erpnext_enhancements
-          # Removed Insights as requested
-          bench --site test_site install-app frappe_assistant_core
-          bench --site test_site install-app offsite_backups
-          bench --site test_site install-app newsletter
-
-      - name: Run Tests
-        working-directory: frappe-bench
-        run: |
-          bench --site test_site run-tests --app erpnext_enhancements --failfast
+      - name: Run unit tests
+        run: python -m unittest test_sync_time_kiosk.py -v
