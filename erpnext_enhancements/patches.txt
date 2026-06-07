@@ -17,5 +17,9 @@ erpnext_enhancements.patches.migrate_assets_to_serial_no
 erpnext_enhancements.patches.migrate_contact_data
 # project_enhancements
 erpnext_enhancements.patches.update_project_statuses
-erpnext_enhancements.patches.delete_master_project
-erpnext_enhancements.patches.rename_master_projects
+# NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
+# the original project_enhancements app are intentionally NOT carried over. Master
+# Project is now a first-class, actively-used doctype (shipped doctype + Project link
+# field "custom_master_project" + Project Dashboard logic). Those one-time patches
+# already ran on legacy sites; re-running them here under the new module path would
+# delete the active doctype/field and break new installs.
