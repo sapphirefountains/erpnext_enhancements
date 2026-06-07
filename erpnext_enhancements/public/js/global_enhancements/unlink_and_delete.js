@@ -3,7 +3,7 @@
 	let _unlink_dialog_active = false;
 
 	const patch_msgprint = () => {
-		if (frappe.msgprint._patched_v4) return;
+		if (!frappe.msgprint || frappe.msgprint._patched_v4) return;
 
 		const _original_msgprint = frappe.msgprint;
 		frappe.msgprint = function (args, ...rest) {
@@ -25,7 +25,7 @@
 	};
 
 	const patch_request_error = () => {
-		if (frappe.request.error._patched_v4) return;
+		if (!frappe.request || !frappe.request.error || frappe.request.error._patched_v4) return;
 
 		const _original_request_error = frappe.request.error;
 		frappe.request.error = function (request, r, opts) {
@@ -85,7 +85,7 @@
 	}
 
 	const patch_show_alert = () => {
-		if (frappe.show_alert._patched_v4) return;
+		if (!frappe.show_alert || frappe.show_alert._patched_v4) return;
 		const _original_show_alert = frappe.show_alert;
 		frappe.show_alert = function (args, ...rest) {
 			let message = (typeof args === "string") ? args : (args.message || "");
@@ -142,6 +142,9 @@
 					],
 					primary_action_label: __("Unlink and Delete"),
 					primary_action() {
+						if (document.activeElement) {
+							document.activeElement.blur();
+						}
 						d.hide();
 						frappe.call({
 							method: "erpnext_enhancements.delete_utils.unlink_and_delete",
@@ -165,6 +168,9 @@
 					},
 					secondary_action_label: __("Abort"),
 					secondary_action() {
+						if (document.activeElement) {
+							document.activeElement.blur();
+						}
 						d.hide();
 					},
 				});

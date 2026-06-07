@@ -88,7 +88,7 @@ frappe.ui.form.on("Project", {
 							const docName = frm.doc.name;
 
 							frappe
-								.require("/assets/erpnext_enhancements/js/task_tree_manager.js")
+								.require("/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js")
 								.then(() => {
 									if (
 										window.project_enhancements &&
