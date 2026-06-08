@@ -1,0 +1,51 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Time Kiosk{% endblock %}
+
+{% block head_include %}
+<link rel="manifest" href="/kiosk-manifest.json">
+<meta name="theme-color" content="#2490ef">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Time Kiosk">
+<link rel="apple-touch-icon" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/time-kiosk.bundle.css">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/kiosk/kiosk.css">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  body { background: var(--bg-color, #f6f7f9); margin: 0; }
+  main, .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div id="kiosk-root" class="kiosk-shell" aria-busy="true">
+  <div class="kiosk-boot text-center">Loading Time Kiosk…</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  // Server-injected boot payload (employee, current interval, settings, csrf).
+  window.KIOSK_BOOT = {{ boot_json | safe }};
+  window.KIOSK_CSRF = "{{ csrf_token }}";
+</script>
+<script src="/assets/erpnext_enhancements/js/kiosk/geo.js"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/app.js"></script>
+{% endblock %}

@@ -1,7 +1,17 @@
+import json
+
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, get_datetime, flt
-from datetime import timedelta
+from frappe.utils import now_datetime, get_datetime, flt, cint, add_days
+from datetime import datetime, timedelta
+
+from erpnext_enhancements.enhancements_core.doctype.time_kiosk_settings.time_kiosk_settings import (
+    get_settings,
+)
+
+# Roles allowed to view *anyone's* location history. Everyone else can only view
+# their own. Kept here (rather than in Settings) so it can't be widened from the UI.
+TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager"}
 
 @frappe.whitelist()
 def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None, time_category=None):
@@ -319,6 +329,39 @@ def get_projects():
             filters={"status": "Open"},
             fields=["name", "project_name"])
 
+
+@frappe.whitelist()
+def get_kiosk_options():
+    """Picker options for the standalone kiosk PWA (which has no desk Link controls):
+    active projects and activity types as [{value, label}] lists."""
+    projects = [
+        {"value": p["name"], "label": p.get("project_name") or p["name"]}
+        for p in get_projects()
+    ]
+    activity_types = [
+        {"value": a["name"], "label": a["name"]}
+        for a in frappe.get_all("Activity Type", fields=["name"], order_by="name asc")
+    ]
+    return {"projects": projects, "activity_types": activity_types}
+
+
+@frappe.whitelist()
+def get_tasks_for_project(project):
+    """Open tasks under a project as [{value, label}] for the kiosk task picker."""
+    if not project:
+        return []
+    return [
+        {"value": t["name"], "label": t.get("subject") or t["name"]}
+        for t in frappe.get_all(
+            "Task",
+            filters={"project": project},
+            fields=["name", "subject"],
+            order_by="modified desc",
+            limit_page_length=200,
+        )
+    ]
+
+
 @frappe.whitelist()
 def link_attachment(file_name, project, task=None):
     """
@@ -362,27 +405,284 @@ def link_attachment(file_name, project, task=None):
         return {"status": "error", "message": str(e)}
 
 
-@frappe.whitelist()
-def log_geolocation(employee, latitude, longitude, device_agent, log_status, timestamp):
+# ---------------------------------------------------------------------------
+# Geolocation telemetry
+# ---------------------------------------------------------------------------
+
+def _session_employee():
+    """Employee linked to the current session user, or None."""
+    return frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
+
+
+def _resolve_employee(claimed_employee=None):
+    """Decide which employee a location point belongs to.
+
+    Security model: if the session user IS an employee, that always wins and a
+    mismatched ``claimed_employee`` is rejected (so a worker can't post points as
+    a colleague). When there is no session employee (e.g. Administrator / tests),
+    fall back to the explicitly supplied employee for back-compat.
     """
-    Logs a geolocation entry to the Time Kiosk Log.
+    session_emp = _session_employee()
+    if session_emp:
+        if claimed_employee and claimed_employee != session_emp:
+            frappe.throw(_("You can only log location for yourself."), frappe.PermissionError)
+        return session_emp
+    if not claimed_employee:
+        frappe.throw(_("Employee ID is required for logging location."))
+    return claimed_employee
+
+
+def _parse_timestamp(ts):
+    """Accept a Frappe datetime string, an ISO-ish 'YYYY-MM-DD HH:MM:SS' string,
+    or epoch milliseconds (number or numeric string). Returns a datetime."""
+    if ts in (None, ""):
+        return now_datetime()
+    if isinstance(ts, (int, float)):
+        return datetime.fromtimestamp(ts / 1000.0)
+    try:
+        return get_datetime(ts)
+    except Exception:
+        # Possibly epoch-ms delivered as a string.
+        return datetime.fromtimestamp(float(ts) / 1000.0)
+
+
+def _valid_coords(lat, lng):
+    try:
+        lat = flt(lat)
+        lng = flt(lng)
+    except Exception:
+        return False
+    return -90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0
+
+
+@frappe.whitelist()
+def log_geolocation(employee=None, latitude=None, longitude=None, device_agent=None,
+                    log_status=None, timestamp=None, job_interval=None, accuracy=None):
+    """
+    Logs a single geolocation entry to the Time Kiosk Log.
+
+    Legacy single-point endpoint, kept for back-compat (the PWA uses the batched,
+    session-trusted ``log_geolocation_batch`` instead). Trusts the supplied
+    ``employee`` for backward compatibility.
     """
     try:
         if not employee:
-             frappe.throw(_("Employee ID is required for logging location."))
+            frappe.throw(_("Employee ID is required for logging location."))
 
         doc = frappe.get_doc({
             "doctype": "Time Kiosk Log",
             "employee": employee,
             "user": frappe.session.user,
-            "timestamp": timestamp,
+            "job_interval": _validated_interval(job_interval, employee),
+            "timestamp": _parse_timestamp(timestamp),
             "latitude": latitude,
             "longitude": longitude,
+            "accuracy": accuracy,
             "device_agent": device_agent,
-            "log_status": log_status
+            "log_status": log_status or "Success"
         })
         doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Location logged."}
     except Exception as e:
         frappe.log_error(f"Failed to log location: {str(e)}", "Time Kiosk Location Error")
         return {"status": "error", "message": str(e)}
+
+
+def _validated_interval(job_interval, employee, _cache=None):
+    """Return job_interval only if it exists and belongs to ``employee``; else None.
+
+    Pass a dict as ``_cache`` to memoize lookups across a batch.
+    """
+    if not job_interval:
+        return None
+    if _cache is not None and job_interval in _cache:
+        return _cache[job_interval]
+    ok = bool(frappe.db.exists("Job Interval", {"name": job_interval, "employee": employee}))
+    result = job_interval if ok else None
+    if _cache is not None:
+        _cache[job_interval] = result
+    return result
+
+
+@frappe.whitelist()
+def log_geolocation_batch(points):
+    """
+    Bulk-ingest geolocation points captured by the kiosk PWA worker.
+
+    ``points`` is a JSON array (or already-decoded list) of objects, each:
+        {
+          "client_id": <opaque id the client uses to dedupe its queue>,
+          "job_interval": <Job Interval name, optional>,
+          "timestamp": <"YYYY-MM-DD HH:MM:SS" local, or epoch ms>,
+          "latitude": <float>, "longitude": <float>,
+          "accuracy": <m>, "speed": <m/s>, "heading": <deg>, "altitude": <m>,
+          "log_status": "Success" | "Offline Sync" | ...,
+          "device_agent": <ua string>
+        }
+
+    Employee is taken from the session (never trusted from the client); each
+    job_interval is verified to belong to that employee. Returns the list of
+    accepted client_ids so the worker can clear exactly those from IndexedDB.
+    """
+    employee = _resolve_employee()
+    settings = get_settings()
+
+    if isinstance(points, str):
+        points = json.loads(points)
+    if not isinstance(points, list):
+        frappe.throw(_("'points' must be a list."))
+
+    max_batch = cint(settings.get("max_batch_size")) or 50
+    min_accuracy = cint(settings.get("min_accuracy_m"))
+    points = points[:max_batch]
+
+    interval_cache = {}
+    accepted, rejected = [], []
+    user = frappe.session.user
+    now_iso = now_datetime()
+
+    for p in points:
+        cid = p.get("client_id")
+        status = p.get("log_status") or "Success"
+        try:
+            lat, lng = p.get("latitude"), p.get("longitude")
+            if status == "Success":
+                if not _valid_coords(lat, lng):
+                    rejected.append({"client_id": cid, "reason": "invalid_coords"})
+                    continue
+                if min_accuracy and p.get("accuracy") and flt(p.get("accuracy")) > min_accuracy:
+                    rejected.append({"client_id": cid, "reason": "low_accuracy"})
+                    continue
+
+            doc = frappe.get_doc({
+                "doctype": "Time Kiosk Log",
+                "employee": employee,
+                "user": user,
+                "job_interval": _validated_interval(p.get("job_interval"), employee, interval_cache),
+                "timestamp": _parse_timestamp(p.get("timestamp")) or now_iso,
+                "latitude": lat,
+                "longitude": lng,
+                "accuracy": p.get("accuracy"),
+                "speed": p.get("speed"),
+                "heading": p.get("heading"),
+                "altitude": p.get("altitude"),
+                "device_agent": p.get("device_agent"),
+                "log_status": status,
+            })
+            doc.insert(ignore_permissions=True)
+            accepted.append(cid)
+        except Exception as e:
+            frappe.log_error(f"Failed to ingest geo point: {str(e)}", "Time Kiosk Location Error")
+            rejected.append({"client_id": cid, "reason": "server_error"})
+
+    return {"status": "success", "accepted": accepted, "rejected": rejected}
+
+
+@frappe.whitelist()
+def get_kiosk_bootstrap():
+    """Everything the PWA needs on load: the employee, current interval, and the
+    effective tracking settings. Used both by the page context and client refresh."""
+    return {
+        "employee": _session_employee(),
+        "user": frappe.session.user,
+        "status": get_current_status(),
+        "settings": get_settings(),
+        "csrf_token": (frappe.session.data or {}).get("csrf_token"),
+    }
+
+
+def _can_view_employee_logs(employee):
+    """True if the session user may view ``employee``'s location history."""
+    if TIMELINE_MANAGER_ROLES.intersection(frappe.get_roles()):
+        return True
+    return _session_employee() == employee
+
+
+@frappe.whitelist()
+def get_location_history(employee, from_datetime=None, to_datetime=None):
+    """
+    Return successful location points for ``employee`` between the two datetimes,
+    grouped by Job Interval (the clock-in session), ordered oldest-first.
+
+    Powers the manager "Location Timeline" page. Permission: manager roles can
+    view anyone; everyone else only themselves.
+    """
+    if not employee:
+        frappe.throw(_("Employee is required."))
+    if not _can_view_employee_logs(employee):
+        frappe.throw(_("Not permitted to view this employee's location history."),
+                     frappe.PermissionError)
+
+    if not to_datetime:
+        to_datetime = now_datetime()
+    if not from_datetime:
+        from_datetime = add_days(get_datetime(to_datetime), -1)
+
+    rows = frappe.get_all(
+        "Time Kiosk Log",
+        filters={
+            "employee": employee,
+            "log_status": "Success",
+            "timestamp": ["between", [from_datetime, to_datetime]],
+        },
+        fields=["name", "job_interval", "timestamp", "latitude", "longitude",
+                "accuracy", "speed", "heading"],
+        order_by="timestamp asc",
+    )
+
+    # Group by interval, preserving chronological order of first appearance.
+    groups = {}
+    order = []
+    for r in rows:
+        key = r.job_interval or "_unassigned"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append({
+            "timestamp": r.timestamp,
+            "latitude": r.latitude,
+            "longitude": r.longitude,
+            "accuracy": r.accuracy,
+            "speed": r.speed,
+            "heading": r.heading,
+        })
+
+    # Decorate each interval group with project/task labels.
+    interval_meta = {}
+    interval_names = [k for k in order if k != "_unassigned"]
+    if interval_names:
+        for iv in frappe.get_all(
+            "Job Interval",
+            filters={"name": ["in", interval_names]},
+            fields=["name", "project", "task", "start_time", "end_time", "status"],
+        ):
+            interval_meta[iv.name] = iv
+
+    result = []
+    for key in order:
+        meta = interval_meta.get(key, {})
+        project = meta.get("project") if meta else None
+        task = meta.get("task") if meta else None
+        result.append({
+            "job_interval": None if key == "_unassigned" else key,
+            "project": project,
+            "project_title": frappe.db.get_value("Project", project, "project_name") if project else None,
+            "task": task,
+            "task_title": frappe.db.get_value("Task", task, "subject") if task else None,
+            "start_time": meta.get("start_time") if meta else None,
+            "end_time": meta.get("end_time") if meta else None,
+            "points": groups[key],
+        })
+
+    return {"employee": employee, "intervals": result, "point_count": len(rows)}
+
+
+def purge_old_location_logs():
+    """Scheduled daily: delete Time Kiosk Log rows older than the configured
+    retention window. retention_days <= 0 disables purging (keep forever)."""
+    days = cint(get_settings().get("retention_days"))
+    if days <= 0:
+        return
+    cutoff = add_days(now_datetime(), -days)
+    frappe.db.delete("Time Kiosk Log", {"timestamp": ["<", cutoff]})
+    frappe.db.commit()

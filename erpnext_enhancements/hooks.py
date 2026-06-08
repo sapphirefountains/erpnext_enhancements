@@ -234,6 +234,7 @@ scheduler_events = {
         "erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
         "erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
         "erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
+        "erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
     ],
     "hourly": [
         "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",

@@ -1,0 +1,21 @@
+{
+ "content": "",
+ "creation": "2026-06-08 10:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "Enhancements Core",
+ "name": "location-timeline",
+ "owner": "Administrator",
+ "page_name": "location-timeline",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "HR Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Location Timeline"
+}
