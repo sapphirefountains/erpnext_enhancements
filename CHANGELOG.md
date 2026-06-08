@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-06-08
+
+### Fixed
+- **Contact sync "Unknown column 'primary_contact'" on fresh DBs**: `sync_from_contact` looped over `PRIMARY_CONTACT_DOCTYPES` (`Project`, `Opportunity`, `Supplier`, `Customer`) and ran `frappe.get_all(dt, filters={"primary_contact": ...})`. `primary_contact` is a custom field, so on a DB where it isn't installed — e.g. ERPNext's test bootstrap, which creates a `User` → `Contact` and fires this `on_update` hook before the app's custom fields exist — the query raised `OperationalError (1054): Unknown column 'primary_contact' in 'WHERE'`, aborting `bench run-tests` during record generation. The loop now skips any doctype lacking the column via `frappe.db.has_column(dt, "primary_contact")`.
+
 ## [0.2.6] - 2026-06-08
 
 ### Fixed
