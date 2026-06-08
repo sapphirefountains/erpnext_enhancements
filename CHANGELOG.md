@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-08
+
+### Changed
+- **Legacy desk Time Kiosk page now redirects to `/kiosk`**: the in-desk `time-kiosk` Page (`/app/time-kiosk`, legacy `/desk/time-kiosk`) previously rendered an older copy of the kiosk UI (jQuery + `geo_worker.js`). Its `on_page_load`/`on_page_show` now simply `window.location.replace('/kiosk')`, so old bookmarks land on the standalone PWA instead of the retired UI. The Page record is retained purely as the redirect target.
+
+### Added
+- **`/kiosk` requests location permission on visit**: previously the browser permission prompt only fired on clock-in (the first call to `watchPosition`/`getCurrentPosition`), so visiting the page never asked. Added `KioskGeo.warmup()`, called on page load when tracking is enabled, which surfaces the permission prompt up front (skipping it when the Permissions API reports the choice is already made) and reflects the result in the tracking indicator with a new "Location ready" (solid green) state. No location is logged until the user is clocked in.
+
+### Removed
+- **Dead assets from the retired in-desk kiosk**: deleted `public/js/geo_worker.js` (the old desk kiosk's geolocation Web Worker — superseded by `public/js/kiosk/geo.js` + `www/kiosk-sw.js`) and `public/css/time-kiosk.bundle.css` (styled the old desk DOM only: `#tk-current-time`, `#timer-text`, `.btn-lg`, etc. — none of which exist in the new PWA, whose styles live in `css/kiosk/kiosk.css`). Removed the now-stale `time-kiosk.bundle.css` `<link>` from `www/kiosk.html` and its entry from the service-worker precache list.
+
+### Fixed
+- **Time Kiosk not installable as a PWA**: `kiosk-manifest.json` listed only SVG icons (`sizes: "any"`). Chrome/Edge require at least one raster PNG icon at 192×192 and one at 512×512 to satisfy their installability criteria, so the "Install app" prompt never appeared. Added PNG icons (`kiosk-icon-192.png`, `kiosk-icon-512.png`, and a maskable `kiosk-maskable-512.png`, rendered to match the existing clock glyph) and listed them first in the manifest; the SVGs are retained as supplementary entries. The `apple-touch-icon` now points at the 192px PNG (iOS ignores SVG touch icons). Bumped the service-worker cache to `time-kiosk-v2` and precached the new icons so existing installs pick up the change.
+- **Kiosk clock unreadable in dark mode**: `kiosk.css` switched to its dark palette only via `@media (prefers-color-scheme: dark)`, flipping the text to near-white, while the page body background was pinned to Frappe's light `--bg-color`. The result was light text on a light body (the top wall-clock was nearly invisible). The body background now follows the kiosk's own `--tk-bg`, the dark palette also responds to Frappe's `[data-theme="dark"]` attribute, and the clock/timer have explicit `--tk-text` colors — keeping background and text contrast in sync in every light/dark combination.
+
 ## [0.2.7] - 2026-06-08
 
 ### Fixed
