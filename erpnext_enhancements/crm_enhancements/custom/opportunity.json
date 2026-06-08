@@ -1,0 +1,108 @@
+{
+  "custom_fields": [],
+  "custom_perms": [],
+  "doctype": "Opportunity",
+  "links": [],
+  "property_setters": [
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_opportunity_name",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "e.g. Smith Residence – Backyard Pond Build"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_opportunity_summary",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "One-line summary of the opportunity for quick reference"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_description",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Describe the customer's request, goals, and any key details discussed"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_general_scope_description",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Outline the overall scope of work across Design, Build, Service, and Rent"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_notes_for_scheduling",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Site access, timing constraints, or other scheduling considerations"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_delivery_date_time_notes",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Delivery logistics, access instructions, or special requests"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_setup_date_time_notes",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Setup requirements or crew instructions"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_event_date_time_notes",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Event details such as duration, attendee count, or special requests"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_take_down_date_time_notes",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Tear-down and removal logistics"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_time_budget_in_hours",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "e.g. 40"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Opportunity",
+      "field_name": "custom_notes_relating_to_budget",
+      "property": "placeholder",
+      "property_type": "Data",
+      "value": "Assumptions, exclusions, payment terms, or other budget context"
+    }
+  ],
+  "sync_on_migrate": 1
+}

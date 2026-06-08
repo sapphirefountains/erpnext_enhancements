@@ -101,3 +101,37 @@ def calculate_project_elapsed_time(doc, method=None):
 			f"Project '{doc.project}' not found when closing task '{doc.name}'.",
 			"Final Task Completion Script",
 		)
+
+
+def sync_project_dates_from_tasks(doc, method=None):
+	"""Keep Project.expected_start_date / expected_end_date derived from the
+	project's tasks now that those fields are read-only on the Project form:
+	expected_start_date mirrors the earliest task's exp_start_date and
+	expected_end_date mirrors the latest task's exp_end_date.
+	"""
+	if not doc.project:
+		return
+
+	dates = frappe.db.sql(
+		"""
+		SELECT MIN(exp_start_date) AS start_date, MAX(exp_end_date) AS end_date
+		FROM `tabTask`
+		WHERE project = %s
+		""",
+		doc.project,
+		as_dict=True,
+	)[0]
+
+	try:
+		project = frappe.get_doc("Project", doc.project)
+	except frappe.DoesNotExistError:
+		return
+
+	if (
+		project.expected_start_date == dates.start_date
+		and project.expected_end_date == dates.end_date
+	):
+		return
+
+	project.db_set("expected_start_date", dates.start_date, update_modified=False)
+	project.db_set("expected_end_date", dates.end_date, update_modified=False)
