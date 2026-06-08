@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-08
+
+### Fixed
+- **Kanban touch drag — "hold to grab"**: On touch screens a card could be picked up and dropped into another column from an incidental brush, because Frappe starts a drag the instant a touch lands on a card. The old "drag delay" patch proxied the global `window.Sortable`, but Frappe v16's Kanban imports SortableJS as a bundled module, so the proxy never reached the real card-drag instances and the delay was never applied (it also fully *disabled* Kanban drag). The patch now recovers each card container's live SortableJS instance from the DOM after the board renders and sets `delay: 1000`, `delayOnTouchOnly: true`, and `touchStartThreshold: 8` — so a touch must press-and-hold ~1s before a card can move, a swipe still scrolls the column, and mouse dragging on desktop stays instant.
+- **Task tree drag-and-drop intent**: In the Project "Scope" tab task tree, dropping a task onto the middle of a row is meant to nest it as a child while dropping near a row's top/bottom edge reorders it as a sibling. The intent was measured against the whole `.task-node`, whose box spans the entire subtree for an expanded parent, so the "nest" band fell off-screen and nesting only ever worked on leaf tasks. Intent is now measured against the hovered node's own row, so nesting works under expanded parents too.
+- **Project Gantt scroll target**: The Schedule-tab Gantt now opens scrolled to the **first task's start date** (the earliest task), instead of the project's `expected_start_date` — which left the viewport on empty space whenever that field was unset or pointed away from the actual work.
+
 ## [0.2.3] - 2026-06-08
 
 ### Added
