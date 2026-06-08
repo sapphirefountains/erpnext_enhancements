@@ -92,7 +92,11 @@ def get_project_data(is_active=None):
 		projects = frappe.get_all(
 			"Project",
 			fields=[
-				"name", "project_name", "status", "project_type", "project_user",
+				# Note: "project_user" is intentionally NOT selected here. Project has
+				# no scalar `project_user` column (members live in the Project User
+				# child table), so selecting it raises "Unknown column 'project_user'".
+				# The value is derived from assignees and set on each project below.
+				"name", "project_name", "status", "project_type",
 				"custom_project_priority", "custom_company_priority", "is_active",
 				"percent_complete", "expected_start_date", "expected_end_date",
 				"custom_project_dollar_amount", "estimated_costing", "custom_master_project",
