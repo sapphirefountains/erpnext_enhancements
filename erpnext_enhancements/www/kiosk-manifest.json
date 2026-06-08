@@ -12,6 +12,24 @@
   "categories": ["productivity", "business"],
   "icons": [
     {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",

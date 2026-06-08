@@ -24,7 +24,7 @@
 .kiosk-boot { padding: 80px 0; color: var(--tk-muted); }
 
 .tk-header { text-align: center; margin: 8px 0 16px; }
-.tk-clock { font-size: 2.6rem; font-weight: 700; line-height: 1.1; }
+.tk-clock { font-size: 2.6rem; font-weight: 700; line-height: 1.1; color: var(--tk-text); }
 .tk-status { color: var(--tk-muted); font-weight: 600; margin: 4px 0 0; }
 
 .tk-card {
@@ -40,6 +40,7 @@
   font-size: 2.4rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 700;
+  color: var(--tk-text);
   margin-bottom: 4px;
 }
 .tk-active-project {
@@ -144,6 +145,7 @@
   box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.6);
   animation: tk-pulse 2s infinite;
 }
+.tk-track.is-ready .tk-track-dot { background: var(--tk-success); }
 .tk-track.is-error .tk-track-dot { background: var(--tk-danger); }
 @keyframes tk-pulse {
   0%   { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.5); }
@@ -185,6 +187,9 @@
   margin-top: 16px;
 }
 
+/* Dark palette: honour both the OS preference and Frappe's [data-theme="dark"]
+   attribute, so the shell background and text always stay in sync (a mismatch
+   here is what made the clock unreadable — light text on a light body). */
 @media (prefers-color-scheme: dark) {
   :root {
     --tk-bg: #161a1d;
@@ -195,3 +200,13 @@
   }
   .tk-field select, .tk-field textarea, .tk-field input { background: #161a1d; color: var(--tk-text); }
 }
+:root[data-theme="dark"] {
+  --tk-bg: #161a1d;
+  --tk-card: #1f272e;
+  --tk-text: #e9ecef;
+  --tk-muted: #9aa3ab;
+  --tk-border: #2c343b;
+}
+[data-theme="dark"] .tk-field select,
+[data-theme="dark"] .tk-field textarea,
+[data-theme="dark"] .tk-field input { background: #161a1d; color: var(--tk-text); }

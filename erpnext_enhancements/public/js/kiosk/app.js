@@ -361,10 +361,13 @@
   function renderTrack(status) {
     var box = el.track, text = el.trackText;
     if (!box) return;
-    box.classList.remove('is-on', 'is-error');
+    box.classList.remove('is-on', 'is-error', 'is-ready');
     if (status === 'on') {
       box.classList.add('is-on');
       text.textContent = 'Location tracking active';
+    } else if (status === 'ready') {
+      box.classList.add('is-ready');
+      text.textContent = 'Location ready';
     } else if (status === 'denied') {
       box.classList.add('is-error');
       text.textContent = 'Location permission denied';
@@ -499,6 +502,8 @@
     wire();
 
     window.KioskGeo.configure(SETTINGS).onStatus(renderTrack);
+    // Ask for location permission on visit, so it's granted before clock-in.
+    window.KioskGeo.warmup();
     registerServiceWorker();
 
     setInterval(tick, 1000);
