@@ -96,6 +96,24 @@
       "property": "read_only",
       "property_type": "Check",
       "value": "1"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Project",
+      "field_name": "custom_project_owner",
+      "property": "ignore_user_permissions",
+      "property_type": "Check",
+      "value": "1"
+    },
+    {
+      "doctype": "Property Setter",
+      "doctype_or_field": "DocField",
+      "doc_type": "Project",
+      "field_name": "custom_technical_lead",
+      "property": "ignore_user_permissions",
+      "property_type": "Check",
+      "value": "1"
     }
   ],
   "sync_on_migrate": 1

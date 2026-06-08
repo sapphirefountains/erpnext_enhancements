@@ -70,14 +70,26 @@ def _get_assignee_names(doctype, docname):
 
 @frappe.whitelist()
 def get_project_data(is_active=None):
-	"""Fetches and enriches project data for the dashboard using bulk queries."""
+	"""Fetches and enriches project data for the dashboard using bulk queries.
+
+	Access is gated by the Project Dashboard page role via check_permission().
+	Once a user is authorised for the page, projects are fetched with
+	ignore_permissions (frappe.get_all) so the portfolio view is not silently
+	narrowed by per-record User Permissions. In particular, the site restricts
+	each user to their own Employee record (apply-to-all-doctypes), and Project's
+	custom_project_owner / custom_technical_lead Employee links would otherwise
+	limit a non-admin user to only the projects where they are the owner/lead.
+	The dashboard is a shared portfolio overview, so page-role access is the
+	intended gate rather than per-project visibility.
+	"""
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
 	try:
-		# Note: Custom check_permission removed in favor of native Page Role permissions
 		filters = {"status": ["!=", "Canceled"]}
 		if is_active:
 			filters["is_active"] = is_active
 
-		projects = frappe.get_list(
+		projects = frappe.get_all(
 			"Project",
 			fields=[
 				"name", "project_name", "status", "project_type", "project_user",

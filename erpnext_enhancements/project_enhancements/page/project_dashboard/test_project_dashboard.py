@@ -95,20 +95,24 @@ class TestProjectDashboard(unittest.TestCase):
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
 	)
 	@patch(
-		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.db.count"
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.db.sql"
 	)
 	@patch(
-		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_list"
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
 	)
 	def test_get_project_data_success(
-		self, mock_get_list, mock_db_count, mock_check_permission, mock_get_assignee_names
+		self, mock_get_all, mock_db_sql, mock_check_permission, mock_get_assignee_names
 	):
 		"""Test successful retrieval and enrichment of project data."""
 		mock_check_permission.return_value = True
 		mock_projects = [{"name": "PROJ-001", "project_name": "Test Project 1"}]
-		mock_get_list.return_value = mock_projects
-		# Mocking the return values for total_tasks and completed_tasks counts
-		mock_db_count.side_effect = [5, 2]
+		# get_all is called three times: Project, then ToDo, then User.
+		mock_get_all.side_effect = [mock_projects, [], []]
+		# Task counts come from a single bulk GROUP BY query.
+		mock_db_sql.return_value = [
+			{"project": "PROJ-001", "status": "Open", "count": 3},
+			{"project": "PROJ-001", "status": "Completed", "count": 2},
+		]
 		mock_get_assignee_names.return_value = []
 
 		result = get_project_data()
@@ -117,27 +121,13 @@ class TestProjectDashboard(unittest.TestCase):
 		self.assertEqual(result[0]["name"], "PROJ-001")
 		self.assertEqual(result[0]["total_tasks"], 5)
 		self.assertEqual(result[0]["completed_tasks"], 2)
-		mock_get_list.assert_called_once_with(
-			"Project",
-			fields=[
-				"name",
-				"project_name",
-				"status",
-				"project_type",
-				"project_user",
-				"custom_project_priority",
-				"custom_company_priority",
-				"is_active",
-				"percent_complete",
-				"expected_start_date",
-				"expected_end_date",
-			],
-			filters={"status": ["!=", "Canceled"]},
-			order_by="creation desc",
-		)
-		self.assertEqual(mock_db_count.call_count, 2)
-		mock_db_count.assert_any_call("Task", {"project": "PROJ-001"})
-		mock_db_count.assert_any_call("Task", {"project": "PROJ-001", "status": "Completed"})
+		# Projects are fetched with get_all (ignore_permissions) so the shared
+		# dashboard portfolio is gated by page role rather than silently narrowed
+		# by per-user Project permissions.
+		projects_call = mock_get_all.call_args_list[0]
+		self.assertEqual(projects_call.args[0], "Project")
+		self.assertEqual(projects_call.kwargs["filters"], {"status": ["!=", "Canceled"]})
+		self.assertEqual(projects_call.kwargs["order_by"], "creation desc")
 
 	@patch(
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
@@ -155,12 +145,12 @@ class TestProjectDashboard(unittest.TestCase):
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.log_error"
 	)
 	@patch(
-		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_list"
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
 	)
-	def test_get_project_data_exception(self, mock_get_list, mock_log_error, mock_check_permission):
+	def test_get_project_data_exception(self, mock_get_all, mock_log_error, mock_check_permission):
 		"""Test error handling when fetching project data fails."""
 		mock_check_permission.return_value = True
-		mock_get_list.side_effect = Exception("Database connection failed")
+		mock_get_all.side_effect = Exception("Database connection failed")
 		result = get_project_data()
 		self.assertEqual(result, {"error": "Could not fetch project data. Please check the logs."})
 		mock_log_error.assert_called_once()
