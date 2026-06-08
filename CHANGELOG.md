@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-08
+
+### Added
+- **Automated GitHub Releases**: A new `Release` workflow (`.github/workflows/release.yml`) tags and publishes a GitHub Release whenever a new `__version__` lands on `main`. It reads the version from `erpnext_enhancements/__init__.py`, verifies `package.json` is in sync, skips versions already tagged, and uses this changelog's matching section as the release notes. Because Frappe Cloud deploys from `main`, the repo's Releases page is now a 1:1 log of what is deployed and at which version.
+
 ## [0.2.2] - 2026-06-08
 
 ### Fixed
