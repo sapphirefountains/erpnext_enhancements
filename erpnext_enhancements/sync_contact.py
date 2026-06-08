@@ -307,20 +307,20 @@ def sync_from_main_doc(doc, method):
 
     # Sync Title
     title = getattr(doc, "primary_contact_job_title", None)
-    if title is not None and (contact.custom_title or "") != title:
+    if title is not None and (getattr(contact, "custom_title", None) or "") != title:
         contact.custom_title = title
         changed = True
 
     # Sync Phone
     phone = getattr(doc, "primary_contact_phone", None)
-    if phone is not None and (contact.custom_phone_number or "") != phone:
+    if phone is not None and (getattr(contact, "custom_phone_number", None) or "") != phone:
         if phone: # Prevent wiping out contact data during transition
             contact.custom_phone_number = phone
             changed = True
 
     # Sync Email
     email = getattr(doc, "primary_contact_email", None)
-    if email is not None and (contact.custom_email or "") != email:
+    if email is not None and (getattr(contact, "custom_email", None) or "") != email:
         if email: # Prevent wiping out contact data during transition
             contact.custom_email = email
             changed = True
@@ -335,10 +335,10 @@ def sync_from_contact(doc, method):
     if getattr(doc.flags, "is_syncing", False):
         return
 
-    custom_title = doc.custom_title or ""
-    custom_phone = doc.custom_phone_number or ""
-    custom_mobile = doc.custom_mobile_number or ""
-    custom_email = doc.custom_email or ""
+    custom_title = getattr(doc, "custom_title", None) or ""
+    custom_phone = getattr(doc, "custom_phone_number", None) or ""
+    custom_mobile = getattr(doc, "custom_mobile_number", None) or ""
+    custom_email = getattr(doc, "custom_email", None) or ""
     
     phone_to_sync = custom_phone or custom_mobile
 

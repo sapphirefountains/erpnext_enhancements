@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-06-08
+
+### Fixed
+- **Contact sync `AttributeError` on missing custom fields**: `sync_from_contact` read `doc.custom_title` / `custom_phone_number` / `custom_mobile_number` / `custom_email` as direct attributes, and `sync_from_main_doc` did the same for `contact.custom_*`. When a `Contact` lacks those custom fields — e.g. ERPNext's test bootstrap auto-creates a Contact (via `User.create_contact`) before this app's custom fields exist — the `on_update` hook raised `AttributeError: 'Contact' object has no attribute 'custom_title'`, which aborted the whole `bench run-tests` record-generation phase. All custom-field **reads** now use `getattr(obj, "field", None) or ""`, matching the defensive pattern already used for the `primary_contact_*` fields in the same module. Writes are unchanged (assigning a missing field never raised).
+
 ## [0.2.5] - 2026-06-08
 
 ### Fixed
