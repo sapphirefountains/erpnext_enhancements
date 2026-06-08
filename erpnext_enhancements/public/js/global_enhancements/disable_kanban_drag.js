@@ -16,8 +16,15 @@ frappe.views.KanbanView = class extends frappe.views.KanbanView {
                 container.querySelectorAll('.kanban-card').forEach(disableCardDragging);
             };
 
-            // Process any cards that are already in the DOM.
+            // Process any cards already in the DOM (idempotent, fine to run each render).
             processCards(wrapper);
+
+            // Bind the dragstart blocker and MutationObserver ONCE per view instance.
+            // render() runs on every refresh; previously each refresh added a duplicate
+            // listener and a never-disconnected observer (memory + CPU leak). A single
+            // subtree observer already catches every card added by later refreshes.
+            if (this._opp_drag_bound) return;
+            this._opp_drag_bound = true;
 
             // Prevent the dragstart event to disable dragging.
             wrapper.addEventListener('dragstart', (e) => {
@@ -47,6 +54,7 @@ frappe.views.KanbanView = class extends frappe.views.KanbanView {
 
             // Start observing the wrapper for future changes.
             observer.observe(wrapper, { childList: true, subtree: true });
+            this._opp_drag_observer = observer;
         }
     }
 };
