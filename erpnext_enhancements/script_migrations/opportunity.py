@@ -46,15 +46,17 @@ def update_lead_status(doc, method=None):
 	(Opportunity, Before Save).
 
 	When a new Opportunity is created from a Lead, mark the Lead as Converted.
+	The Lead is referenced via ``party_name`` when ``opportunity_from == "Lead"``;
+	the Opportunity doctype has no ``lead`` field.
 	"""
-	if doc.is_new() and doc.lead:
+	if doc.is_new() and doc.opportunity_from == "Lead" and doc.party_name:
 		try:
-			lead_doc = frappe.get_doc("Lead", doc.lead)
+			lead_doc = frappe.get_doc("Lead", doc.party_name)
 			lead_doc.status = "Converted"
 			lead_doc.opportunity = doc.name
 			lead_doc.save(ignore_permissions=True)
 		except frappe.DoesNotExistError:
 			frappe.log_error(
-				f"Lead {doc.lead} not found for Opportunity {doc.name}",
+				f"Lead {doc.party_name} not found for Opportunity {doc.name}",
 				"Update Lead Status Script",
 			)
