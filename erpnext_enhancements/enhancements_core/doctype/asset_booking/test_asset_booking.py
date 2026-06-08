@@ -3,7 +3,7 @@
 
 import frappe
 import unittest
-from frappe.utils import add_hours, now_datetime
+from frappe.utils import add_to_date, now_datetime
 from erpnext_enhancements.api.booking import create_composite_booking
 
 class TestAssetBooking(unittest.TestCase):
@@ -43,7 +43,7 @@ class TestAssetBooking(unittest.TestCase):
 
     def test_overlap_validation(self):
         start = now_datetime()
-        end = add_hours(start, 2)
+        end = add_to_date(start, hours=2)
 
         # Create first booking
         b1 = frappe.get_doc({
@@ -61,15 +61,15 @@ class TestAssetBooking(unittest.TestCase):
             "doctype": "Asset Booking",
             "asset": self.asset,
             "booking_type": "Rental",
-            "from_datetime": add_hours(start, 1),
-            "to_datetime": add_hours(end, 1)
+            "from_datetime": add_to_date(start, hours=1),
+            "to_datetime": add_to_date(end, hours=1)
         })
 
         self.assertRaises(frappe.ValidationError, b2.insert)
 
     def test_composite_booking(self):
         start = now_datetime()
-        end = add_hours(start, 2)
+        end = add_to_date(start, hours=2)
 
         # This calls the API
         result = create_composite_booking(self.asset, start, end, location=self.address)

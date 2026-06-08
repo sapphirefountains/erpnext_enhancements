@@ -3,7 +3,7 @@
 
 import frappe
 from frappe import _
-from frappe.utils import add_hours, get_datetime
+from frappe.utils import add_to_date, get_datetime
 
 @frappe.whitelist()
 def create_composite_booking(asset, rental_start, rental_end, location=None):
@@ -15,12 +15,12 @@ def create_composite_booking(asset, rental_start, rental_end, location=None):
 
     # Calculate offsets
     # Travel: 1 hour before Rental Start
-    travel_start = add_hours(rental_start, -1)
+    travel_start = add_to_date(rental_start, hours=-1)
     travel_end = rental_start
 
     # Maintenance: 1 hour after Rental End
     maintenance_start = rental_end
-    maintenance_end = add_hours(rental_end, 1)
+    maintenance_end = add_to_date(rental_end, hours=1)
 
     bookings = {}
 

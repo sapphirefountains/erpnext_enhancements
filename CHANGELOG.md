@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-06-08
+
+### Fixed
+- **Test discovery `ImportError`**: `bench run-tests` crashed at discovery time with `cannot import name 'add_hours' from 'frappe.utils'`. Frappe has no `add_hours` helper — the correct utility is `add_to_date(date, hours=N)` (already used elsewhere in this app). The bad import lived in two places: `erpnext_enhancements/api/booking.py` (which would have raised at runtime whenever `create_composite_booking` was called) and `enhancements_core/doctype/asset_booking/test_asset_booking.py` (which broke discovery for the whole app). Both now use `add_to_date`, restoring test discovery and the composite-booking API.
+
 ## [0.2.4] - 2026-06-08
 
 ### Fixed
