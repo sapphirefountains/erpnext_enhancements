@@ -12,9 +12,15 @@
     const $root = $(root_element);
 
     let current_tab = "priority-overview";
-    let project_data = []; 
+    let project_data = [];
     let priority_options = { project_priority: [], company_priority: [] };
     let status_options = [];
+
+    // Client-facing value streams shown on Priority Overview and used as the
+    // Portfolio Gantt fallback. Kept in one place so this Custom HTML Block stays
+    // in sync with the page dashboard (priority_overview.js / the backend's
+    // get_all_projects_for_gantt), which filter to exactly these project types.
+    const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service"];
 
     // Gantt State tracking
     let gantt_detailed_view = false;
@@ -261,12 +267,11 @@
 
     function get_fallback_gantt_data_from_dashboard_projects() {
         const selected_statuses = new Set(gantt_status_filters || []);
-        const gantt_project_types = new Set(["Build", "Design", "Rent", "Service"]);
         const projects = (project_data || []).filter(p => {
             if (p.is_active !== "Yes") return false;
             if (p.status === "Canceled") return false;
             // Keep the fallback in sync with the backend: client-facing work only.
-            if (!gantt_project_types.has(p.project_type)) return false;
+            if (!PRIORITY_PROJECT_TYPES.includes(p.project_type)) return false;
             return selected_statuses.size === 0 || selected_statuses.has(p.status);
         });
 
@@ -824,12 +829,17 @@
         render_column_toolbar(container);
 
         let state = sort_state['priority-overview'];
-        let active_projects = project_data.filter(p => p.is_active === "Yes");
-        
-        let projects_to_show = active_projects.filter(p => {
-             let stream = p.project_type || "Uncategorized";
-             return !(stream === "Group Projects" || stream === "Internal" || stream === "Organizational Projects" || stream === "Other");
-        });
+
+        // Match the page dashboard: only client-facing value streams (Build,
+        // Design, Rent, Service) that are still active and in progress. The
+        // is_active flag is unreliable on its own, so we gate on project_type +
+        // is_active + a live status rather than denylisting internal types.
+        let projects_to_show = project_data.filter(p =>
+            PRIORITY_PROJECT_TYPES.includes(p.project_type) &&
+            p.is_active === "Yes" &&
+            p.status !== "Completed" &&
+            p.status !== "Canceled"
+        );
 
         if (state.col === "project_priority") {
             let groups = {};
