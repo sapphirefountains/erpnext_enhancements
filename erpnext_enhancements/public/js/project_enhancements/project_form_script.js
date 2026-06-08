@@ -91,7 +91,7 @@ frappe.ui.form.on("Project", {
 								.require("/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js")
 								.then(() => {
 									if (
-										window.project_enhancements &&
+										window.erpnext_enhancements &&
 										erpnext_enhancements.TaskTreeManager
 									) {
 										console.log(`Rendering Task Tree for Project: ${docName}`);

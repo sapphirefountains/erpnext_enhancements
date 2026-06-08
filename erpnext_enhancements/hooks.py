@@ -31,6 +31,7 @@ app_include_js = [
     # global_enhancements
     "/assets/erpnext_enhancements/js/global_enhancements/quill_mentions.js",
     "/assets/erpnext_enhancements/js/global_enhancements/global_sidebar.js",
+    "/assets/erpnext_enhancements/js/global_enhancements/auto_collapse_sidebar.js",
     "/assets/erpnext_enhancements/js/global_enhancements/unlink_and_delete.js",
     "/assets/erpnext_enhancements/js/global_enhancements/triton_widget.js",
     # project_enhancements
