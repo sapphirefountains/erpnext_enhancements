@@ -1,0 +1,27 @@
+{
+  "name": "Time Kiosk",
+  "short_name": "Time Kiosk",
+  "description": "Clock in and out, track time against projects, and record location while on the clock.",
+  "id": "/kiosk",
+  "start_url": "/kiosk",
+  "scope": "/kiosk",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#2490ef",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

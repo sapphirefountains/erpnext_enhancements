@@ -1,0 +1,197 @@
+/* Standalone Time Kiosk PWA shell — full-screen, touch-friendly. */
+
+:root {
+  --tk-primary: #2490ef;
+  --tk-bg: #f6f7f9;
+  --tk-card: #ffffff;
+  --tk-text: #1f272e;
+  --tk-muted: #6c757d;
+  --tk-border: #e2e6ea;
+  --tk-success: #28a745;
+  --tk-danger: #e03636;
+  --tk-warning: #f39c12;
+}
+
+.kiosk-shell {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  min-height: 100vh;
+  box-sizing: border-box;
+  color: var(--tk-text);
+}
+
+.kiosk-boot { padding: 80px 0; color: var(--tk-muted); }
+
+.tk-header { text-align: center; margin: 8px 0 16px; }
+.tk-clock { font-size: 2.6rem; font-weight: 700; line-height: 1.1; }
+.tk-status { color: var(--tk-muted); font-weight: 600; margin: 4px 0 0; }
+
+.tk-card {
+  background: var(--tk-card);
+  border: 1px solid var(--tk-border);
+  border-radius: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  padding: 20px;
+}
+
+.tk-timer {
+  text-align: center;
+  font-size: 2.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.tk-active-project {
+  text-align: center;
+  color: var(--tk-success);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.tk-field { margin-bottom: 14px; }
+.tk-field label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--tk-muted);
+  margin-bottom: 4px;
+}
+.tk-field select,
+.tk-field textarea,
+.tk-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  font-size: 1rem;
+  border: 1px solid var(--tk-border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--tk-text);
+}
+.tk-field textarea { resize: vertical; min-height: 64px; }
+
+.tk-btn {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #fff;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: filter 0.15s ease;
+}
+.tk-btn:active { filter: brightness(0.92); }
+.tk-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.tk-btn-success { background: var(--tk-success); }
+.tk-btn-danger { background: var(--tk-danger); }
+.tk-btn-warning { background: var(--tk-warning); }
+.tk-btn-info { background: #17a2b8; }
+.tk-btn-secondary { background: #6c757d; }
+.tk-btn-primary { background: var(--tk-primary); }
+.tk-btn-outline {
+  background: #fff;
+  color: var(--tk-primary);
+  border: 1px solid var(--tk-primary);
+}
+
+.tk-row { display: flex; gap: 12px; }
+.tk-row > * { flex: 1; }
+
+.tk-readonly-note {
+  text-align: center;
+  color: var(--tk-muted);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.tk-badge {
+  display: inline-block;
+  background: #e8f1fd;
+  color: var(--tk-primary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Attachments */
+.tk-attachments { margin-top: 16px; border-top: 1px solid var(--tk-border); padding-top: 12px; }
+.tk-attachments h6 { color: var(--tk-muted); margin-bottom: 8px; }
+.tk-attachment-list { max-height: 130px; overflow-y: auto; margin-bottom: 8px; }
+.tk-attachment-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9rem; }
+
+/* GPS / tracking indicator */
+.tk-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--tk-muted);
+}
+.tk-track-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #c4c9ce;
+}
+.tk-track.is-on .tk-track-dot {
+  background: var(--tk-success);
+  box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.6);
+  animation: tk-pulse 2s infinite;
+}
+.tk-track.is-error .tk-track-dot { background: var(--tk-danger); }
+@keyframes tk-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.5); }
+  70%  { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+}
+
+/* Toasts */
+.tk-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: calc(100% - 32px);
+  max-width: 520px;
+}
+.tk-toast {
+  background: #1f272e;
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  animation: tk-toast-in 0.2s ease;
+}
+.tk-toast.is-green { background: var(--tk-success); }
+.tk-toast.is-red { background: var(--tk-danger); }
+.tk-toast.is-orange { background: var(--tk-warning); }
+@keyframes tk-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
+
+.tk-install-hint {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--tk-muted);
+  margin-top: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tk-bg: #161a1d;
+    --tk-card: #1f272e;
+    --tk-text: #e9ecef;
+    --tk-muted: #9aa3ab;
+    --tk-border: #2c343b;
+  }
+  .tk-field select, .tk-field textarea, .tk-field input { background: #161a1d; color: var(--tk-text); }
+}

@@ -1,0 +1,129 @@
+{
+ "actions": [],
+ "creation": "2026-06-08 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "tracking_section",
+  "enable_tracking",
+  "keep_wake_lock",
+  "sampling_section",
+  "distance_filter_m",
+  "heartbeat_seconds",
+  "column_break_sampling",
+  "high_accuracy",
+  "min_accuracy_m",
+  "max_batch_size",
+  "retention_section",
+  "retention_days"
+ ],
+ "fields": [
+  {
+   "fieldname": "tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Location Tracking"
+  },
+  {
+   "default": "1",
+   "description": "Master switch. When off, the kiosk never samples or records location.",
+   "fieldname": "enable_tracking",
+   "fieldtype": "Check",
+   "label": "Enable Location Tracking"
+  },
+  {
+   "default": "0",
+   "description": "Hold a Screen Wake Lock while clocked in and active so the screen stays on (improves tracking reliability on dedicated devices, but uses more battery).",
+   "fieldname": "keep_wake_lock",
+   "fieldtype": "Check",
+   "label": "Keep Screen Awake While Active"
+  },
+  {
+   "fieldname": "sampling_section",
+   "fieldtype": "Section Break",
+   "label": "Sampling (Battery vs. Detail)"
+  },
+  {
+   "default": "25",
+   "description": "Record a new point only after the employee has moved at least this many meters from the last recorded point.",
+   "fieldname": "distance_filter_m",
+   "fieldtype": "Int",
+   "label": "Distance Filter (meters)"
+  },
+  {
+   "default": "300",
+   "description": "Even when stationary, record a heartbeat point at least this often (seconds).",
+   "fieldname": "heartbeat_seconds",
+   "fieldtype": "Int",
+   "label": "Heartbeat Interval (seconds)"
+  },
+  {
+   "fieldname": "column_break_sampling",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Request high-accuracy GPS. More precise but significantly higher battery drain. Off by default.",
+   "fieldname": "high_accuracy",
+   "fieldtype": "Check",
+   "label": "High Accuracy GPS"
+  },
+  {
+   "default": "100",
+   "description": "Discard fixes whose reported accuracy is worse than this many meters (0 = accept all).",
+   "fieldname": "min_accuracy_m",
+   "fieldtype": "Int",
+   "label": "Minimum Accuracy (meters)"
+  },
+  {
+   "default": "50",
+   "description": "Maximum number of points sent per network request (also the server-side cap).",
+   "fieldname": "max_batch_size",
+   "fieldtype": "Int",
+   "label": "Max Batch Size"
+  },
+  {
+   "fieldname": "retention_section",
+   "fieldtype": "Section Break",
+   "label": "Data Retention"
+  },
+  {
+   "default": "90",
+   "description": "Automatically delete location logs older than this many days (0 = keep forever). Runs daily.",
+   "fieldname": "retention_days",
+   "fieldtype": "Int",
+   "label": "Retention (days)"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-08 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Time Kiosk Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

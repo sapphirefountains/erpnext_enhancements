@@ -6,10 +6,15 @@ A collection of customizations and enhancements to ERPNext, focusing on project 
 
 #### 1. Time Kiosk
 A simplified interface designed for tablets and mobile devices for employees to log time.
+- **Standalone PWA**: Installable from `/kiosk` (own manifest, service worker, offline app shell) — separate from the heavy desk app. The legacy desk page at `/app/time-kiosk` remains as a fallback and links to the new app.
 - **Clock In/Out**: Simple buttons to start and stop work intervals.
 - **Project/Task Selection**: Filter active projects and tasks.
-- **Geolocation**: Logs location coordinates when clocking in/out.
+- **Continuous location tracking**: While clocked in **and active** (not on break), the app samples location on the main thread using an adaptive, battery-aware strategy (`watchPosition` + a movement distance-filter + a periodic heartbeat). Points are queued in IndexedDB by the service worker and uploaded in batches, with Background Sync retry when offline. Tracking stops on pause and clock-out.
+- **Location history & timeline**: Points are tied to their clock-in session (`Job Interval`). Managers can replay where an employee was over a shift on the **Location Timeline** desk page (map view).
+- **Configurable**: Distance filter, heartbeat interval, GPS accuracy, screen wake-lock, batch size, and retention period live in **Time Kiosk Settings**. Old logs are auto-purged daily per the retention window.
 - **Timesheet Sync**: Automatically consolidates completed job intervals into standard ERPNext Timesheets.
+
+> **Note:** Reliable location tracking requires the app to be in the foreground (browsers suspend timers and revoke geolocation when an app is backgrounded). The site must be served over **HTTPS** for geolocation, service workers, and PWA install to work (localhost is exempt).
 
 #### 2. Project Management
 Enhancements to the standard Project module:

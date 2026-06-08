@@ -1,4 +1,8 @@
 const TIME_KIOSK_TEMPLATE = `<div id="time-kiosk-app" class="time-kiosk-container" style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div class="alert alert-info d-flex justify-content-between align-items-center" style="gap: 12px;">
+        <span><i class="fa fa-mobile"></i> An installable Time Kiosk app with background location tracking is now available.</span>
+        <a href="/kiosk" class="btn btn-primary btn-sm" style="white-space: nowrap;">Open New Kiosk</a>
+    </div>
     <div class="text-center mb-5">
         <h1 id="tk-current-time" class="display-3 font-weight-bold">--:--:--</h1>
         <p id="tk-loading-msg" class="text-muted" style="display: none;">Loading...</p>

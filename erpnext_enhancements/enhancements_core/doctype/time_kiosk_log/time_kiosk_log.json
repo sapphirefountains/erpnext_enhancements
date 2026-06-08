@@ -8,20 +8,29 @@
  "field_order": [
   "employee",
   "user",
+  "job_interval",
   "timestamp",
+  "log_status",
+  "location_section",
   "latitude",
   "longitude",
-  "device_agent",
-  "log_status"
+  "accuracy",
+  "speed",
+  "heading",
+  "altitude",
+  "device_section",
+  "device_agent"
  ],
  "fields": [
   {
    "fieldname": "employee",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Employee",
    "options": "Employee",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "user",
@@ -32,11 +41,34 @@
    "read_only": 1
   },
   {
+   "description": "The clock-in session (Job Interval) this point was captured during.",
+   "fieldname": "job_interval",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Job Interval",
+   "options": "Job Interval",
+   "search_index": 1
+  },
+  {
    "fieldname": "timestamp",
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "Timestamp",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "log_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Log Status",
+   "options": "Success\nPermission Denied\nError\nOffline Sync"
+  },
+  {
+   "fieldname": "location_section",
+   "fieldtype": "Section Break",
+   "label": "Location"
   },
   {
    "fieldname": "latitude",
@@ -51,21 +83,47 @@
    "precision": "6"
   },
   {
+   "description": "Reported accuracy of the fix, in meters (lower is better).",
+   "fieldname": "accuracy",
+   "fieldtype": "Float",
+   "label": "Accuracy (m)",
+   "precision": "2"
+  },
+  {
+   "description": "Ground speed in meters/second, if reported.",
+   "fieldname": "speed",
+   "fieldtype": "Float",
+   "label": "Speed (m/s)",
+   "precision": "2"
+  },
+  {
+   "description": "Heading in degrees from true north, if reported.",
+   "fieldname": "heading",
+   "fieldtype": "Float",
+   "label": "Heading (deg)",
+   "precision": "2"
+  },
+  {
+   "description": "Altitude in meters, if reported.",
+   "fieldname": "altitude",
+   "fieldtype": "Float",
+   "label": "Altitude (m)",
+   "precision": "2"
+  },
+  {
+   "fieldname": "device_section",
+   "fieldtype": "Section Break",
+   "label": "Device"
+  },
+  {
    "fieldname": "device_agent",
    "fieldtype": "Small Text",
    "label": "Device Agent"
-  },
-  {
-   "fieldname": "log_status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Log Status",
-   "options": "Success\nPermission Denied\nError\nOffline Sync"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2023-10-27 10:00:00.000000",
+ "modified": "2026-06-08 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Time Kiosk Log",
@@ -94,6 +152,11 @@
    "role": "HR Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "if_owner": 1,
+   "read": 1,
+   "role": "Employee"
   }
  ],
  "sort_field": "modified",
