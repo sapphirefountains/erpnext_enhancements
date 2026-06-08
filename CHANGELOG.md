@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-08
+
+### Fixed
+- **Kanban drag-to-scroll stutter**: Dragging the Opportunity Kanban board sideways to reveal more columns stuttered badly. A Chrome performance trace traced it to frappe core's `bind_clickdrag` (`kanban_board.bundle.js`): its `mousemove` handler reads `draggable.offsetLeft` right after writing `draggable.scrollLeft`, forcing a synchronous full-document style/layout recalc on every move — ~34,800 elements at up to ~88ms each on a large board (~5 dropped frames per mousemove). New `kanban_scroll_perf.js` installs a single capture-phase pointer handler that reimplements drag-to-scroll from `e.pageX` alone (no layout read — `offsetLeft` is constant during a horizontal scroll and cancels out) and `stopPropagation()`s the move so frappe's reflow-forcing handler is skipped during a drag. frappe's exact ignore-selectors are mirrored, so which areas start a drag-scroll is unchanged. Remove once frappe core stops reading `offsetLeft` on `mousemove`.
+
 ## [0.2.3] - 2026-06-08
 
 ### Added
