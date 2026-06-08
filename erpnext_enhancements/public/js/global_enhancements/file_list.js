@@ -6,9 +6,15 @@
  *  1. Grid View is the default for the File list. Frappe's `FileView` keeps the
  *     grid/list choice in the static `frappe.views.FileView.grid_view`, seeded
  *     from `frappe.get_user_settings("File").grid_view || false`. We flip that
- *     default to `true` the first time a user lands here (i.e. only when they
- *     have not already made an explicit choice), so toggling back to list view
- *     still sticks.
+ *     default to `true` the first time a user lands here, so toggling back to
+ *     list view still sticks.
+ *
+ *     We cannot use `get_user_settings("File").grid_view === undefined` to
+ *     detect that "first time": `FileView.before_render()` unconditionally
+ *     persists the current `grid_view` value on *every* render, so the first
+ *     (list) render saves `false` and the "undefined" signal is gone forever.
+ *     Instead we record our own one-time marker in `localStorage` and only
+ *     force grid on the user's very first visit.
  *
  *  2. A quick-preview overlay. Clicking a file card opens an in-page preview
  *     (image / video / audio / pdf / text inline; everything else falls back to
@@ -257,16 +263,35 @@ frappe.provide("erpnext_enhancements.file_preview");
 
 	// ---- wiring into the FileView -------------------------------------------
 
-	let grid_default_applied = false;
+	const GRID_DEFAULT_KEY = "ee_file_grid_view_defaulted";
+
+	function grid_default_applied() {
+		try {
+			return localStorage.getItem(GRID_DEFAULT_KEY) === "1";
+		} catch (e) {
+			return false;
+		}
+	}
+
+	function mark_grid_default_applied() {
+		try {
+			localStorage.setItem(GRID_DEFAULT_KEY, "1");
+		} catch (e) {
+			// localStorage unavailable (private mode / disabled) — fall through.
+		}
+	}
 
 	function apply_grid_default(listview) {
-		if (grid_default_applied) return;
-		grid_default_applied = true;
+		// Force grid view the first time this user ever lands on the File list.
+		// We deliberately do NOT consult `get_user_settings("File").grid_view`:
+		// FileView.before_render() persists that value on every render, so it is
+		// `false` after the first visit rather than `undefined`. Our own marker
+		// is the only reliable "has this user seen the File list before?" signal.
+		if (grid_default_applied()) return;
+		mark_grid_default_applied();
 		try {
 			const FV = frappe.views.FileView;
-			const us = frappe.get_user_settings("File") || {};
-			// Only override when the user has never made an explicit choice.
-			if (us.grid_view === undefined && FV.grid_view !== true) {
+			if (FV.grid_view !== true) {
 				FV.grid_view = true;
 				if (listview && !listview.$result.hasClass("file-grid-view")) {
 					listview.refresh();
