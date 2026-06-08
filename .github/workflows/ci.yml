@@ -64,13 +64,19 @@ jobs:
       FRAPPE_BRANCH: version-16
     services:
       mariadb:
-        image: mariadb:10.8
+        image: mariadb:10.6
         env:
           MARIADB_ROOT_PASSWORD: root
         ports:
           - 3306:3306
+        # `mysqladmin ping` is credential-agnostic: it reports success as soon as
+        # the server responds, even when auth is denied. The previous
+        # `healthcheck.sh --connect` connected as root with no password, which
+        # MARIADB_ROOT_PASSWORD makes invalid — so the check never passed and the
+        # container was killed as unhealthy before any test ran. This matches the
+        # healthcheck used by upstream Frappe/ERPNext CI.
         options: >-
-          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-cmd="mysqladmin ping"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=15
