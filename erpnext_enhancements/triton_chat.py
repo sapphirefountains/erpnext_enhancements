@@ -30,6 +30,19 @@ from werkzeug.wrappers import Response
 # never races the expiry.
 _TOKEN_REFRESH_MARGIN_SEC = 120
 
+# Default model new chats open with when nothing is configured.
+_DEFAULT_MODEL = "gemini-3.5-flash"
+
+# Curated model choices shown in the widget's header picker. Values are the
+# Gemini model ids Triton routes to (see backend app/core/model_router.py); an
+# empty value means "let Triton auto-route per message" based on the prompt.
+TRITON_MODELS = [
+    {"value": "", "label": "Auto"},
+    {"value": "gemini-3.5-flash", "label": "Flash"},
+    {"value": "gemini-3.1-pro-preview", "label": "Pro"},
+    {"value": "gemini-3.1-flash-lite", "label": "Lite"},
+]
+
 
 # ---------------------------------------------------------------------------
 # Settings + auth
@@ -58,12 +71,37 @@ def get_settings() -> dict:
         "enabled": bool(behavior.enabled),
         "base_url": base_url,
         "gateway_secret": secret,
-        "default_model": (behavior.default_model or conn_model or "gemini-2.5-flash"),
+        "default_model": (behavior.default_model or conn_model or _DEFAULT_MODEL),
         "timeout": int(behavior.request_timeout or 120),
         "enable_page_context": bool(behavior.enable_page_context),
         "enable_write_actions": bool(behavior.enable_write_actions),
         "debug": bool(behavior.debug_logging),
+        "restrict_to_whitelist": bool(behavior.restrict_to_whitelist),
+        # Set of User names (emails) explicitly allowed when the whitelist is on.
+        "allowed_users": {
+            (row.user or "").strip()
+            for row in (behavior.allowed_users or [])
+            if (row.user or "").strip()
+        },
     }
+
+
+def user_has_widget_access(settings: dict | None = None) -> bool:
+    """Whether the current user may see/use the Triton widget.
+
+    Independent of the master ``enabled`` switch. When the whitelist is off,
+    everyone is allowed. When it is on, only the Administrator and the users
+    listed in "Allowed Users" are allowed — this is the gate used to roll the
+    assistant out to trusted testers before releasing it to everyone.
+    """
+    if settings is None:
+        settings = get_settings()
+    if not settings.get("restrict_to_whitelist"):
+        return True
+    user = frappe.session.user
+    if user == "Administrator":
+        return True
+    return user in settings.get("allowed_users", set())
 
 
 def _user_email() -> str:
@@ -76,6 +114,12 @@ def mint_user_token(force_refresh: bool = False) -> str:
     user = frappe.session.user
     if user in ("Guest", None):
         frappe.throw(_("You must be logged in to use Triton."), frappe.PermissionError)
+
+    # Whitelist gate (server-side enforcement). Every Triton API call mints a
+    # token through here, so a non-whitelisted user cannot reach Triton even by
+    # calling the whitelisted methods directly.
+    if not user_has_widget_access():
+        frappe.throw(_("You do not have access to the Triton assistant."), frappe.PermissionError)
 
     cache_key = f"triton_user_token::{user}"
     if not force_refresh:
@@ -202,11 +246,17 @@ def get_config() -> dict:
         s = get_settings()
     except Exception:
         return {"enabled": False}
+    # The widget only builds when `enabled` is truthy, so fold the per-user
+    # whitelist gate into it: a non-whitelisted user gets enabled=False and
+    # never sees the floating button.
     return {
-        "enabled": s["enabled"],
+        "enabled": s["enabled"] and user_has_widget_access(s),
         "enable_page_context": s["enable_page_context"],
         "enable_write_actions": s["enable_write_actions"],
         "default_model": s["default_model"],
+        # Fallback model list for instant first paint; the widget refreshes this
+        # from Triton's live model endpoint via list_models() once it loads.
+        "models": TRITON_MODELS,
         "user": frappe.session.user,
         "full_name": frappe.utils.get_fullname(frappe.session.user),
     }
@@ -224,6 +274,71 @@ def start_session(title: str | None = None, model: str | None = None) -> dict:
 @frappe.whitelist()
 def list_sessions() -> list:
     return _request("GET", "/api/v1/assistant/sessions")
+
+
+def _pretty_model_label(model_id: str) -> str:
+    """Turn a raw model id into a short picker label.
+
+    "gemini-3.5-flash" -> "Flash 3.5", "gemini-3.1-pro-preview" -> "Pro 3.1",
+    "gemini-3.1-flash-lite" -> "Flash Lite 3.1".
+    """
+    s = (model_id or "").replace("gemini-", "")
+    parts = [p for p in s.split("-") if p]
+    if not parts:
+        return model_id or "Model"
+    version = parts[0]
+    tier_words = [w for w in parts[1:] if w.lower() != "preview"]
+    tier = " ".join(w.capitalize() for w in tier_words)
+    return f"{tier} {version}".strip() if tier else version
+
+
+def _models_from_ids(ids) -> list:
+    """Build the widget's {value,label} option list, with Auto first."""
+    models = [{"value": "", "label": "Auto"}]
+    for mid in (ids or []):
+        if isinstance(mid, str) and mid:
+            models.append({"value": mid, "label": _pretty_model_label(mid)})
+    return models
+
+
+@frappe.whitelist()
+def list_models() -> list:
+    """Live model choices for the widget picker, sourced from Triton so the
+    list reflects backend changes globally without manual upkeep here.
+
+    Cached briefly (per-site) to avoid hitting Triton on every page load; falls
+    back to the curated TRITON_MODELS when Triton is unreachable.
+    """
+    cache = frappe.cache()
+    ckey = "triton_models_list"
+    cached = cache.get_value(ckey)
+    if cached:
+        return cached
+    try:
+        ids = _request("GET", "/api/v1/assistant/models")
+        models = _models_from_ids(ids)
+    except Exception:
+        models = None
+    if not models or len(models) <= 1:
+        # Triton unreachable or returned nothing usable — use the curated list.
+        return TRITON_MODELS
+    cache.set_value(ckey, models, expires_in_sec=300)
+    return models
+
+
+@frappe.whitelist()
+def morning_briefing(force: int | str = 0, cached_only: int | str = 0) -> dict:
+    """Proxy to Triton's Morning Briefing for the current user.
+
+    Served from Triton's per-user/day cache (warmed by Triton's 06:30 MT
+    scheduled job) when available; generates on demand otherwise unless
+    cached_only is set.
+    """
+    path = (
+        "/api/v1/assistant/morning-briefing"
+        f"?force={1 if cint(force) else 0}&cached_only={1 if cint(cached_only) else 0}"
+    )
+    return _request("GET", path)
 
 
 @frappe.whitelist()

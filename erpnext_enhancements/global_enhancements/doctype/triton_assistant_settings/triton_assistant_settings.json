@@ -12,7 +12,10 @@
   "column_break_behavior",
   "enable_page_context",
   "enable_write_actions",
-  "debug_logging"
+  "debug_logging",
+  "access_section",
+  "restrict_to_whitelist",
+  "allowed_users"
  ],
  "fields": [
   {
@@ -69,6 +72,26 @@
    "fieldname": "debug_logging",
    "fieldtype": "Check",
    "label": "Debug Logging"
+  },
+  {
+   "fieldname": "access_section",
+   "fieldtype": "Section Break",
+   "label": "Access Control"
+  },
+  {
+   "default": "0",
+   "description": "When on, the floating Triton assistant is shown only to the users listed below (plus the Administrator). Use this to roll out to trusted testers first; turn it off to release to everyone. Has no effect unless \"Enable Triton Assistant\" above is on.",
+   "fieldname": "restrict_to_whitelist",
+   "fieldtype": "Check",
+   "label": "Restrict to whitelisted users only"
+  },
+  {
+   "depends_on": "eval:doc.restrict_to_whitelist",
+   "description": "Users allowed to see and use the Triton assistant while the whitelist is active.",
+   "fieldname": "allowed_users",
+   "fieldtype": "Table",
+   "label": "Allowed Users",
+   "options": "Triton Allowed User"
   }
  ],
  "index_web_pages_for_search": 1,

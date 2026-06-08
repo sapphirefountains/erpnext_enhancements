@@ -11,10 +11,16 @@
 (function () {
 	const METHOD = "erpnext_enhancements.triton_chat";
 	const LS_SESSION = "triton_session_id";
+	const LS_MODEL = "triton_model";
+	// Local date (YYYY-MM-DD) the morning briefing was last shown, so it appears
+	// once on the first chat of each day.
+	const LS_BRIEF = "triton_briefing_date";
 
 	const state = {
 		config: null,
 		sessionId: null,
+		// Selected model id ("" = let Triton auto-route). Persisted in LS_MODEL.
+		model: "",
 		contextRefs: [],
 		open: false,
 		streaming: false,
@@ -53,8 +59,10 @@
 		panel.className = "triton-panel";
 		panel.innerHTML = `
 			<div class="triton-header">
-				<span style="font-size:18px;">🔱</span>
+				<span class="triton-logo">🔱</span>
 				<span class="triton-title">Triton</span>
+				<select class="triton-model-select" title="Choose model"></select>
+				<button class="triton-icon-btn triton-history" title="Chat history">🕘</button>
 				<button class="triton-icon-btn triton-new" title="New chat">✎</button>
 				<button class="triton-icon-btn triton-close" title="Close">✕</button>
 			</div>
@@ -65,6 +73,13 @@
 			<div class="triton-input-bar">
 				<textarea class="triton-text" rows="1" placeholder="Ask about your data…"></textarea>
 				<button class="triton-send" title="Send">➤</button>
+			</div>
+			<div class="triton-history-panel">
+				<div class="triton-history-head">
+					<button class="triton-icon-btn triton-history-back" title="Back">←</button>
+					<span class="triton-history-heading">Chat history</span>
+				</div>
+				<div class="triton-history-list"></div>
 			</div>`;
 		document.body.appendChild(panel);
 
@@ -76,10 +91,20 @@
 			contextAdd: panel.querySelector(".triton-context-add"),
 			text: panel.querySelector(".triton-text"),
 			send: panel.querySelector(".triton-send"),
+			modelSelect: panel.querySelector(".triton-model-select"),
+			historyBtn: panel.querySelector(".triton-history"),
+			historyPanel: panel.querySelector(".triton-history-panel"),
+			historyList: panel.querySelector(".triton-history-list"),
+			historyBack: panel.querySelector(".triton-history-back"),
 		};
 
+		populateModels();
+		refreshModels(); // replace the fallback list with Triton's live models
 		panel.querySelector(".triton-close").addEventListener("click", () => toggle(false));
 		panel.querySelector(".triton-new").addEventListener("click", newChat);
+		state.els.historyBtn.addEventListener("click", openHistory);
+		state.els.historyBack.addEventListener("click", closeHistory);
+		state.els.modelSelect.addEventListener("change", (e) => setModel(e.target.value));
 		state.els.contextAdd.addEventListener("click", addCurrentPage);
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
@@ -108,14 +133,206 @@
 		t.style.height = Math.min(t.scrollHeight, 120) + "px";
 	}
 
+	// Restart a one-shot CSS animation by toggling a class (force reflow between).
+	function pulse(el, cls) {
+		if (!el) return;
+		el.classList.remove(cls);
+		void el.offsetWidth; // reflow so the animation replays
+		el.classList.add(cls);
+	}
+
+	// ---- model picker ----------------------------------------------------
+	// Render an options list and resolve the active selection, preserving the
+	// user's current pick when it survives a live refresh.
+	function applyModels(models) {
+		const sel = state.els.modelSelect;
+		if (!sel || !models || !models.length) return;
+		state.config.models = models;
+		sel.innerHTML = "";
+		models.forEach((m) => {
+			const o = document.createElement("option");
+			o.value = m.value;
+			o.textContent = m.label;
+			sel.appendChild(o);
+		});
+		// Selection priority: current pick (if still listed) > saved choice >
+		// configured default > Flash (requested default) > first option.
+		const values = models.map((m) => m.value);
+		const saved = localStorage.getItem(LS_MODEL);
+		let initial;
+		if (state.model && values.includes(state.model)) {
+			initial = state.model;
+		} else if (saved !== null && values.includes(saved)) {
+			initial = saved;
+		} else if (values.includes(state.config.default_model)) {
+			initial = state.config.default_model;
+		} else if (values.includes("gemini-3.5-flash")) {
+			initial = "gemini-3.5-flash";
+		} else {
+			initial = models[0].value;
+		}
+		state.model = initial;
+		sel.value = initial;
+	}
+
+	function populateModels() {
+		const models = (state.config.models && state.config.models.length)
+			? state.config.models
+			: [{ value: "", label: "Auto" }];
+		applyModels(models);
+	}
+
+	// Pull the live model list from Triton (via the proxy) so the picker tracks
+	// backend changes globally. Best-effort: the fallback list already shows.
+	async function refreshModels() {
+		try {
+			const live = await xcall("list_models");
+			if (live && live.length) applyModels(live);
+		} catch (e) {
+			/* keep the fallback list */
+		}
+	}
+
+	function setModel(v) {
+		state.model = v || "";
+		localStorage.setItem(LS_MODEL, state.model);
+	}
+
+	// ---- session history -------------------------------------------------
+	function openHistory() {
+		state.els.historyPanel.classList.add("triton-history-open");
+		loadSessions();
+	}
+
+	function closeHistory() {
+		state.els.historyPanel.classList.remove("triton-history-open");
+	}
+
+	async function loadSessions() {
+		const list = state.els.historyList;
+		list.innerHTML = `<div class="triton-history-empty">${__("Loading…")}</div>`;
+		try {
+			const sessions = await xcall("list_sessions");
+			if (!sessions || !sessions.length) {
+				list.innerHTML = `<div class="triton-history-empty">${__("No previous chats yet.")}</div>`;
+				return;
+			}
+			list.innerHTML = "";
+			sessions.forEach((s) => list.appendChild(renderSessionItem(s)));
+		} catch (e) {
+			list.innerHTML = `<div class="triton-history-empty">${__("Couldn't load chat history.")}</div>`;
+		}
+	}
+
+	function renderSessionItem(s) {
+		const item = document.createElement("button");
+		item.className = "triton-history-item";
+		if (s.id === state.sessionId) item.classList.add("active");
+		const title = (s.title || "").trim() || __("Untitled chat");
+		let when = "";
+		try {
+			if (s.created_at && frappe.datetime && frappe.datetime.comment_when) {
+				when = frappe.datetime.comment_when(s.created_at);
+			}
+		} catch (e) {}
+		item.innerHTML =
+			`<span class="triton-history-title">${esc(title)}</span>` +
+			(when ? `<span class="triton-history-when">${esc(when)}</span>` : "");
+		item.addEventListener("click", () => selectSession(s.id));
+		return item;
+	}
+
+	async function selectSession(id) {
+		if (state.streaming) return;
+		state.sessionId = id;
+		localStorage.setItem(LS_SESSION, String(id));
+		state.contextRefs = [];
+		renderChips();
+		closeHistory();
+		state.els.messages.innerHTML = `<div class="triton-empty">${__("Loading chat…")}</div>`;
+		try {
+			const msgs = await xcall("get_messages", { session_id: id, limit: 50 });
+			state.messages_loaded = true;
+			state.els.messages.innerHTML = "";
+			if (!msgs || !msgs.length) {
+				showEmpty();
+			} else {
+				msgs.forEach(renderHistoryMessage);
+				scrollDown();
+			}
+			pulse(state.els.messages, "triton-fresh");
+		} catch (e) {
+			localStorage.removeItem(LS_SESSION);
+			state.sessionId = null;
+			showEmpty();
+		}
+	}
+
+	// ---- morning briefing ------------------------------------------------
+	function todayStr() {
+		const d = new Date();
+		return (
+			d.getFullYear() +
+			"-" +
+			String(d.getMonth() + 1).padStart(2, "0") +
+			"-" +
+			String(d.getDate()).padStart(2, "0")
+		);
+	}
+
+	function briefingShownToday() {
+		return localStorage.getItem(LS_BRIEF) === todayStr();
+	}
+
+	// First open of the day: start a fresh chat and surface the user's Morning
+	// Briefing as the opening assistant message. Prior conversations remain
+	// reachable through the history picker.
+	async function startDailyBriefing() {
+		localStorage.setItem(LS_BRIEF, todayStr());
+		state.sessionId = null;
+		localStorage.removeItem(LS_SESSION);
+		state.messages_loaded = true;
+		state.contextRefs = [];
+		renderChips();
+		state.els.messages.innerHTML = "";
+
+		const live = newAssistantMsg();
+		live.wrap.classList.add("triton-briefing");
+		setStatus(live, __("Preparing your morning briefing…"));
+		try {
+			const r = await xcall("morning_briefing");
+			clearStatus(live);
+			const text = (r && (r.briefing || r.content)) || "";
+			if (text) {
+				appendText(live, text);
+			} else {
+				live.wrap.remove();
+				showEmpty();
+			}
+		} catch (e) {
+			// Couldn't fetch — don't burn today's slot; let it retry next open.
+			live.wrap.remove();
+			showEmpty();
+			localStorage.removeItem(LS_BRIEF);
+		}
+	}
+
 	// ---- open / close ----------------------------------------------------
 	function toggle(force) {
 		state.open = typeof force === "boolean" ? force : !state.open;
 		state.els.panel.classList.toggle("triton-visible", state.open);
+		state.els.fab.classList.toggle("triton-fab-open", state.open);
 		if (state.open) {
 			suggestCurrentPage();
 			state.els.text.focus();
-			if (!state.sessionId && state.messages_loaded !== true) loadHistory();
+			if (!briefingShownToday()) {
+				// New day → fresh chat opening with the morning briefing.
+				startDailyBriefing();
+			} else if (!state.sessionId && state.messages_loaded !== true) {
+				loadHistory();
+			}
+		} else {
+			closeHistory();
 		}
 	}
 
@@ -404,13 +621,16 @@
 		localStorage.removeItem(LS_SESSION);
 		state.contextRefs = [];
 		renderChips();
+		closeHistory();
 		state.els.messages.innerHTML = "";
 		showEmpty();
+		// Animate the freshly cleared canvas so the reset feels deliberate.
+		pulse(state.els.messages, "triton-fresh");
 	}
 
 	async function ensureSession() {
 		if (state.sessionId) return state.sessionId;
-		const s = await xcall("start_session", { model: state.config.default_model });
+		const s = await xcall("start_session", { model: state.model || state.config.default_model });
 		state.sessionId = s.id;
 		localStorage.setItem(LS_SESSION, String(s.id));
 		return state.sessionId;
@@ -466,6 +686,8 @@
 				prompt: text,
 				context: opts.hidden ? "[]" : JSON.stringify(state.contextRefs),
 				hidden: opts.hidden ? 1 : 0,
+				// Per-message model override; "" lets Triton auto-route.
+				model: state.model || "",
 			}),
 		});
 
