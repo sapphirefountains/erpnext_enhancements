@@ -12,6 +12,15 @@ from datetime import timedelta
 import frappe
 from frappe.utils import getdate, nowdate
 
+# Fields the dashboard is allowed to inline-edit on a Project via
+# update_project_details(). Kept deliberately narrow: this is a whitelisted
+# endpoint, so accepting an arbitrary `field` would let any caller overwrite any
+# Project column (owner, naming_series, internal flags, etc.). Only the columns
+# the dashboard actually exposes for inline editing belong here.
+EDITABLE_PROJECT_FIELDS = frozenset(
+	{"status", "custom_project_priority", "custom_company_priority"}
+)
+
 @frappe.whitelist()
 def check_permission():
 	"""Checks if the current user has permission to view the Project Dashboard.
@@ -272,6 +281,18 @@ def update_project_details(project_name, field, value):
 	        Example: `{'status': 'success'}` or
 	        `{'status': 'error', 'message': '...'}`.
 	"""
+	if not project_name or not field:
+		return {"status": "error", "message": "Project and field are required."}
+
+	# Only allow editing the explicitly whitelisted columns.
+	if field not in EDITABLE_PROJECT_FIELDS:
+		return {"status": "error", "message": f"Field '{field}' is not editable from the dashboard."}
+
+	# Enforce per-document write permission (the page-role gate alone is not a
+	# substitute for object-level permission on the specific Project).
+	if not frappe.has_permission("Project", ptype="write", doc=project_name):
+		return {"status": "error", "message": "You do not have permission to modify this project."}
+
 	try:
 		frappe.db.set_value("Project", project_name, field, value)
 		return {"status": "success"}
@@ -285,6 +306,9 @@ def update_task_status(task_name, status):
 	"""Updates the status of a single task."""
 	if not check_permission():
 		return {"status": "error", "message": "You do not have permission to perform this action."}
+	project = frappe.db.get_value("Task", task_name, "project")
+	if not project or not frappe.has_permission("Project", ptype="write", doc=project):
+		return {"status": "error", "message": "You do not have permission to modify this task."}
 	try:
 		frappe.db.set_value("Task", task_name, "status", status)
 		return {"status": "success"}
@@ -298,6 +322,9 @@ def update_task_priority(task_name, priority):
 	"""Updates the priority of a single task."""
 	if not check_permission():
 		return {"status": "error", "message": "You do not have permission to perform this action."}
+	project = frappe.db.get_value("Task", task_name, "project")
+	if not project or not frappe.has_permission("Project", ptype="write", doc=project):
+		return {"status": "error", "message": "You do not have permission to modify this task."}
 	try:
 		frappe.db.set_value("Task", task_name, "priority", priority)
 		return {"status": "success"}
