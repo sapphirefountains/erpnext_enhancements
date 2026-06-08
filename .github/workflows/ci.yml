@@ -142,6 +142,13 @@ jobs:
             frappe-bench
           cd frappe-bench
           bench get-app erpnext --branch "$FRAPPE_BRANCH" --resolve-deps
+          # ERPNext ships doctypes that Link to "Payment Gateway" (e.g. Payment
+          # Gateway Account), but that doctype now lives in the separate
+          # `payments` app and is NOT in ERPNext's required_apps, so
+          # `--resolve-deps` above doesn't fetch it. Without it, Frappe's
+          # test-record dependency walker hits "DocType Payment Gateway not
+          # found" and aborts `run-tests`. Fetch payments on the matching branch.
+          bench get-app payments --branch "$FRAPPE_BRANCH"
           bench get-app erpnext_enhancements "${GITHUB_WORKSPACE}/apps/erpnext_enhancements"
 
       - name: Create test site
@@ -161,6 +168,7 @@ jobs:
             --admin-password admin \
             --no-mariadb-socket \
             --install-app erpnext \
+            --install-app payments \
             --install-app erpnext_enhancements \
             --set-default
 
