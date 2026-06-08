@@ -12,17 +12,19 @@
  * (geo.js). This worker only persists + ships what the page hands it.
  */
 
-const CACHE = 'time-kiosk-v1';
+const CACHE = 'time-kiosk-v2';
 const SYNC_TAG = 'flush-geo';
 const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';
 
 const PRECACHE = [
-  '/assets/erpnext_enhancements/css/time-kiosk.bundle.css',
   '/assets/erpnext_enhancements/css/kiosk/kiosk.css',
   '/assets/erpnext_enhancements/js/kiosk/geo.js',
   '/assets/erpnext_enhancements/js/kiosk/app.js',
   '/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg',
+  '/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png',
+  '/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-512.png',
+  '/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable-512.png',
   '/kiosk-manifest.json',
 ];
 

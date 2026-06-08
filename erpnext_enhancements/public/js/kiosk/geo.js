@@ -169,6 +169,34 @@
 
     getStatus: function () { return state.status; },
 
+    // Surface the browser's location permission prompt up front, on page visit,
+    // so access is granted before the first clock-in. We do NOT log anything here
+    // (points are only recorded while clocked in) — this just primes the
+    // permission and reflects the result in the tracking indicator.
+    warmup: function () {
+      if (!state.settings.enable_tracking) return;
+      if (!navigator.geolocation) { setStatus('error'); return; }
+
+      function ask() {
+        navigator.geolocation.getCurrentPosition(
+          function () { if (!state.running) setStatus('ready'); },
+          function (err) { if (err && err.code === 1) setStatus('denied'); },
+          { enableHighAccuracy: false, maximumAge: 600000, timeout: 20000 }
+        );
+      }
+
+      // Avoid a redundant prompt when the permission is already decided.
+      if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: 'geolocation' }).then(function (perm) {
+          if (perm.state === 'granted') { if (!state.running) setStatus('ready'); }
+          else if (perm.state === 'denied') { setStatus('denied'); }
+          else { ask(); }
+        }).catch(ask);
+      } else {
+        ask();
+      }
+    },
+
     start: function (intervalName) {
       if (!state.settings.enable_tracking) { setStatus('off'); return; }
       if (!navigator.geolocation) { setStatus('error'); return; }
