@@ -16,12 +16,19 @@
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 	z-index: 1040;
 	border: none;
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
+	transition: transform 0.18s cubic-bezier(0.18, 0.89, 0.32, 1.28), box-shadow 0.15s ease;
 	user-select: none;
 }
 .triton-fab:hover {
 	transform: translateY(-2px) scale(1.05);
 	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
+}
+/* Press feedback + a settled "open" state (slightly shrunk, rotated trident). */
+.triton-fab:active {
+	transform: scale(0.88);
+}
+.triton-fab.triton-fab-open {
+	transform: rotate(8deg) scale(0.94);
 }
 .triton-fab.triton-hidden {
 	display: none;
@@ -41,27 +48,91 @@
 	border-radius: 12px;
 	box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
 	z-index: 1041;
-	display: none;
+	/* Always rendered so enter AND exit can animate; hidden via opacity +
+	   visibility (visibility flips after the transform so it stays clickable
+	   until the close animation finishes). Springs out from the FAB corner. */
+	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+	transform-origin: bottom right;
+	opacity: 0;
+	visibility: hidden;
+	transform: translateY(16px) scale(0.96);
+	pointer-events: none;
+	transition: opacity 0.2s ease,
+		transform 0.26s cubic-bezier(0.18, 0.89, 0.32, 1.28),
+		visibility 0s linear 0.26s;
 }
 .triton-panel.triton-visible {
-	display: flex;
+	opacity: 1;
+	visibility: visible;
+	transform: translateY(0) scale(1);
+	pointer-events: auto;
+	transition: opacity 0.2s ease,
+		transform 0.34s cubic-bezier(0.18, 0.89, 0.32, 1.28),
+		visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+	/* Keep the functional transforms (they place the panels) but remove the
+	   spring/slide motion by snapping transitions and one-shot animations. */
+	.triton-fab,
+	.triton-panel,
+	.triton-history-panel {
+		transition-duration: 0.01ms;
+		transition-timing-function: linear;
+	}
+	.triton-messages.triton-fresh > * {
+		animation-duration: 0.01ms;
+	}
 }
 
 .triton-header {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 12px 14px;
+	gap: 6px;
+	padding: 10px 12px;
 	background: linear-gradient(135deg, #1f6feb, #0a3d91);
 	color: #fff;
+	flex: 0 0 auto;
+}
+.triton-header .triton-logo {
+	font-size: 18px;
 	flex: 0 0 auto;
 }
 .triton-header .triton-title {
 	font-weight: 600;
 	font-size: 14px;
 	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* Compact model picker living on the gradient header. Keeps the native
+   control (and its native dropdown) for the best mobile experience. */
+.triton-header .triton-model-select {
+	flex: 0 0 auto;
+	max-width: 104px;
+	background: rgba(255, 255, 255, 0.16);
+	color: #fff;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 6px;
+	font-size: 12px;
+	font-family: inherit;
+	padding: 4px 6px;
+	cursor: pointer;
+	transition: background 0.15s ease;
+}
+.triton-header .triton-model-select:hover {
+	background: rgba(255, 255, 255, 0.28);
+}
+.triton-header .triton-model-select:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+/* The dropdown list renders on the OS surface — keep its text readable. */
+.triton-header .triton-model-select option {
+	color: #1f272e;
 }
 .triton-header .triton-icon-btn {
 	background: rgba(255, 255, 255, 0.15);
@@ -74,9 +145,14 @@
 	font-size: 14px;
 	line-height: 28px;
 	text-align: center;
+	flex: 0 0 auto;
+	transition: background 0.15s ease, transform 0.12s ease;
 }
 .triton-header .triton-icon-btn:hover {
 	background: rgba(255, 255, 255, 0.3);
+}
+.triton-header .triton-icon-btn:active {
+	transform: scale(0.86);
 }
 
 .triton-context-bar {
@@ -158,6 +234,17 @@
 }
 .triton-msg.triton-assistant .triton-bubble p:last-child {
 	margin-bottom: 0;
+}
+/* Morning briefing: a wider, accented card so the daily summary reads as a
+   distinct briefing rather than an ordinary reply. */
+.triton-msg.triton-briefing {
+	max-width: 100%;
+	width: 100%;
+}
+.triton-msg.triton-briefing .triton-bubble {
+	background: linear-gradient(180deg, rgba(31, 111, 235, 0.06), var(--subtle-fg, #f1f3f5));
+	border-left: 3px solid var(--primary, #1f6feb);
+	border-radius: 10px;
 }
 .triton-msg.triton-assistant .triton-bubble pre {
 	white-space: pre-wrap;
@@ -312,4 +399,115 @@
 	font-size: 34px;
 	display: block;
 	margin-bottom: 8px;
+}
+
+/* ---- new-chat / session-switch entrance ---------------------------------- */
+@keyframes tritonFresh {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.triton-messages.triton-fresh > * {
+	animation: tritonFresh 0.32s cubic-bezier(0.18, 0.89, 0.32, 1.28) both;
+}
+
+/* ---- session history overlay -------------------------------------------- */
+.triton-history-panel {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	background: var(--card-bg, #fff);
+	display: flex;
+	flex-direction: column;
+	transform: translateX(100%);
+	transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.triton-history-panel.triton-history-open {
+	transform: translateX(0);
+}
+.triton-history-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px;
+	background: linear-gradient(135deg, #1f6feb, #0a3d91);
+	color: #fff;
+	font-weight: 600;
+	font-size: 14px;
+	flex: 0 0 auto;
+}
+.triton-history-list {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.triton-history-item {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	border: none;
+	border-radius: 8px;
+	padding: 10px 12px;
+	cursor: pointer;
+	transition: background 0.12s ease;
+}
+.triton-history-item:hover {
+	background: var(--subtle-fg, #f1f3f5);
+}
+.triton-history-item.active {
+	background: rgba(31, 111, 235, 0.1);
+}
+.triton-history-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-color, #1f272e);
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.triton-history-when {
+	font-size: 11px;
+	color: var(--text-muted, #8d99a6);
+}
+.triton-history-empty {
+	margin: auto;
+	text-align: center;
+	color: var(--text-muted, #8d99a6);
+	font-size: 13px;
+	padding: 24px;
+}
+
+/* ---- mobile ------------------------------------------------------------- */
+@media (max-width: 480px) {
+	.triton-fab {
+		right: 16px;
+		bottom: 16px;
+	}
+	.triton-panel {
+		right: 8px;
+		left: 8px;
+		top: 8px;
+		bottom: 8px;
+		width: auto;
+		max-width: none;
+		height: auto;
+		max-height: none;
+	}
+	/* Free up header width for the model picker on narrow screens. */
+	.triton-header .triton-title {
+		display: none;
+	}
 }
