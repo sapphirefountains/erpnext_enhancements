@@ -252,7 +252,18 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 			}
 
 			if (projectsRes.message && !projectsRes.message.error) {
-				this.projects = projectsRes.message.filter((p) => p.is_active === "Yes");
+				// Priority Overview covers client-facing work: only the Build,
+				// Design, Rent and Service value streams, and only projects that
+				// are still in progress. The is_active flag is unreliable (often
+				// out of sync with status), so we key off project_type + status
+				// rather than is_active. Canceled is already excluded server-side.
+				const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service"];
+				this.projects = projectsRes.message.filter(
+					(p) =>
+						PRIORITY_PROJECT_TYPES.includes(p.project_type) &&
+						p.status !== "Completed" &&
+						p.status !== "Canceled"
+				);
 				this.render_list_view(this.projects);
 			} else {
 				throw new Error(
