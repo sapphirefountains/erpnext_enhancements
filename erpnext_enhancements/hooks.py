@@ -23,6 +23,13 @@ app_include_js = [
     "/assets/erpnext_enhancements/js/kanban_patches.js",
     "/assets/erpnext_enhancements/js/kanban_customization.js",
     "/assets/erpnext_enhancements/js/global_comments.js",
+    # Custom "Comments App" — loaded once globally. vue.global.js + comments.js
+    # define erpnext_enhancements.render_comments_app; comments_auto.js mounts it
+    # on every doctype listed in COMMENT_APP_DOCTYPES (replacing the old per-
+    # doctype *_comments.js files).
+    "/assets/erpnext_enhancements/js/vue.global.js",
+    "/assets/erpnext_enhancements/js/comments.js",
+    "/assets/erpnext_enhancements/js/comments_auto.js",
     "/assets/erpnext_enhancements/js/crm_note_enhancements.js",
     "/assets/erpnext_enhancements/js/performance_fixes.js",
     "/assets/erpnext_enhancements/js/activity_log_numbering.js",
@@ -67,7 +74,11 @@ doctype_js = {
         "public/js/project_migrated_scripts.js",
     ],
     "Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
-    "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item_comments.js", "public/js/item.js"],
+    # NOTE: the custom Comments App is now mounted globally by comments_auto.js
+    # (see app_include_js + COMMENT_APP_DOCTYPES). Doctypes that only needed the
+    # comments tab no longer require a doctype_js entry; the entries below keep
+    # only their non-comments form scripts.
+    "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item.js"],
     "Process Document": ["public/js/process_document.js"],
     "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
@@ -81,60 +92,39 @@ doctype_js = {
     "Sales Order": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/sales_order_comments.js",
         "public/js/sales_order_enhancements.js"
     ],
-    "Sales Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/sales_invoice_comments.js"],
     "Task": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/task_comments.js",
         "public/js/task_enhancements.js",
         "task_enhancements/doctype/task/task.js",
     ],
-    "Journal Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/journal_entry_comments.js"],
-    "Payment Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/payment_entry_comments.js"],
-    "Purchase Invoice": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_invoice_comments.js"],
-    "Production Plan": ["public/js/vue.global.js", "public/js/comments.js", "public/js/production_plan_comments.js"],
-    "Work Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/work_order_comments.js"],
-    "Job Card": ["public/js/vue.global.js", "public/js/comments.js", "public/js/job_card_comments.js"],
-    "Stock Entry": ["public/js/vue.global.js", "public/js/comments.js", "public/js/stock_entry_comments.js"],
     "Travel Trip": ["public/js/travel_trip.js"],
-    "Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js", "public/js/purchase_order_comments.js"],
-    "Material Request": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js", "public/js/material_request_comments.js"],
-    "Purchase Receipt": ["public/js/vue.global.js", "public/js/comments.js", "public/js/purchase_receipt_comments.js"],
-    "Delivery Note": ["public/js/vue.global.js", "public/js/comments.js", "public/js/delivery_note_comments.js"],
-    "Serial No": ["public/js/vue.global.js", "public/js/comments.js", "public/js/serial_no_comments.js"],
-    "Batch": ["public/js/vue.global.js", "public/js/comments.js", "public/js/batch_comments.js"],
+    "Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
+    "Material Request": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
     "Supplier": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/supplier_comments.js",
         "public/js/global_enhancements/unified_tab_controller.js",
     ],
-    "Supplier Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/supplier_quotation_comments.js"],
-    "Quotation": ["public/js/vue.global.js", "public/js/comments.js", "public/js/quotation_comments.js"],
     "Lead": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/lead_comments.js",
         "public/js/lead.js",
         "public/js/global_enhancements/primary_contact.js",
     ],
     "Contact": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/contact_comments.js",
         "public/js/contact.js",
         "public/js/global_enhancements/unified_tab_controller.js",
     ],
     "Address": [
         "public/js/vue.global.js",
         "public/js/comments.js",
-        "public/js/address_comments.js",
         "project_enhancements/doctype/address/address.js",
     ],
-    "Prospect": ["public/js/vue.global.js", "public/js/comments.js", "public/js/prospect_comments.js"],
     # quickbooks_time_integration
     "QuickBooks Online Settings": "quickbooks_time_integration/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
 }
@@ -243,6 +233,7 @@ scheduler_events = {
         "erpnext_enhancements.tasks.predictive_maintenance_scheduling",
         "erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
         "erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
+        "erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
     ],
     "hourly": [
         "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",

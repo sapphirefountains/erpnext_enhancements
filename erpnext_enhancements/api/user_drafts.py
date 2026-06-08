@@ -58,3 +58,30 @@ def delete_draft(ref_doctype, ref_name):
 
 	if existing_draft:
 		frappe.delete_doc("User Form Draft", existing_draft, ignore_permissions=True)
+
+
+# Drafts untouched for this many days are treated as stale and purged by the
+# daily scheduled job below. They are an autosave safety net, not a record of
+# intent — once a form has been left alone for a month the draft is almost
+# certainly obsolete (saved, abandoned, or its parent deleted).
+DRAFT_RETENTION_DAYS = 30
+
+
+def cleanup_stale_drafts():
+	"""Scheduled (daily): delete User Form Drafts not modified in DRAFT_RETENTION_DAYS.
+
+	Without this the "User Form Draft" table grows without bound — autosave keeps
+	inserting/refreshing rows that nothing ever removes once the work is finished.
+	"""
+	cutoff = frappe.utils.add_days(frappe.utils.nowdate(), -DRAFT_RETENTION_DAYS)
+	stale = frappe.get_all(
+		"User Form Draft", filters={"modified": ["<", cutoff]}, pluck="name"
+	)
+	if not stale:
+		return
+
+	# User Form Draft is a flat container (no child tables, no on_trash hooks), so a
+	# bulk delete is safe and far cheaper than deleting documents one at a time.
+	frappe.db.delete("User Form Draft", {"name": ["in", stale]})
+	frappe.db.commit()
+	frappe.logger().info(f"cleanup_stale_drafts: removed {len(stale)} stale User Form Draft(s)")

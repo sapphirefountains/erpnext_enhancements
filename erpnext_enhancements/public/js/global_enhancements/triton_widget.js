@@ -46,6 +46,150 @@
 		if (m) m.scrollTop = m.scrollHeight;
 	}
 
+	// Honour the OS "reduce motion" setting: when on, we snap text in instead of
+	// running the typewriter pump and let CSS drop the spin/shimmer/cursor.
+	const reducedMotion =
+		!!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+	// ---- mermaid diagrams ------------------------------------------------
+	// Lazy-load Mermaid once per session from the same CDN the Process Document
+	// form uses, then turn ```mermaid fenced code blocks in a finished message
+	// into rendered diagrams. Loading/rendering failures degrade to the raw code.
+	let _mermaidPromise = null;
+	function ensureMermaid() {
+		if (window.mermaid) return Promise.resolve(window.mermaid);
+		if (_mermaidPromise) return _mermaidPromise;
+		_mermaidPromise = new Promise((resolve, reject) => {
+			const s = document.createElement("script");
+			s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js";
+			s.onload = () => {
+				try {
+					window.mermaid.initialize({ startOnLoad: false, theme: "default" });
+				} catch (e) {}
+				resolve(window.mermaid);
+			};
+			s.onerror = () => reject(new Error("mermaid load failed"));
+			document.head.appendChild(s);
+		});
+		return _mermaidPromise;
+	}
+
+	async function renderMermaidIn(container) {
+		if (!container) return;
+		const codes = container.querySelectorAll("code.language-mermaid");
+		if (!codes.length) return;
+		let mermaid;
+		try {
+			mermaid = await ensureMermaid();
+		} catch (e) {
+			return; // library unavailable — leave the fenced code visible
+		}
+		codes.forEach((code) => {
+			const pre = code.closest("pre") || code;
+			if (pre.dataset.tritonMermaid) return; // already processed
+			pre.dataset.tritonMermaid = "1";
+			const src = code.textContent || "";
+			const holder = document.createElement("div");
+			holder.className = "triton-mermaid";
+			const node = document.createElement("pre");
+			node.className = "mermaid";
+			node.textContent = src;
+			holder.appendChild(node);
+			pre.replaceWith(holder);
+			Promise.resolve()
+				.then(() => mermaid.run({ nodes: [node] }))
+				.then(() => scrollDown())
+				.catch(() => {
+					const fb = document.createElement("pre");
+					fb.textContent = src;
+					holder.replaceWith(fb);
+				});
+		});
+	}
+
+	// ---- inline charts (Triton render_chart ui_command) ------------------
+	// render_chart ships a self-contained Chart.js-shaped config; the Desk bundles
+	// frappe-charts (frappe.Chart), so we map between the two and render inline.
+	function renderChart(wrap, params) {
+		if (!wrap || !params) return;
+		const src = params.data || {};
+		const labels = src.labels || [];
+		const datasets = (src.datasets || []).map((ds) => ({
+			name: ds.label || ds.name || "",
+			values: (ds.data || ds.values || []).map((v) =>
+				typeof v === "number" ? v : Number(v) || 0
+			),
+		}));
+		if (!labels.length && !datasets.length) return;
+
+		const typeMap = { doughnut: "donut", donut: "donut", pie: "pie", line: "line", bar: "bar" };
+		const type = typeMap[String(params.chart_type || "bar").toLowerCase()] || "bar";
+
+		const box = document.createElement("div");
+		box.className = "triton-chart";
+		if (params.title) {
+			const t = document.createElement("div");
+			t.className = "triton-chart-title";
+			t.textContent = params.title;
+			box.appendChild(t);
+		}
+		const host = document.createElement("div");
+		host.className = "triton-chart-host";
+		box.appendChild(host);
+		wrap.appendChild(box);
+
+		try {
+			if (window.frappe && frappe.Chart) {
+				new frappe.Chart(host, {
+					type,
+					height: 220,
+					animate: !reducedMotion,
+					colors: ["#1f6feb", "#2da44e", "#bf8700", "#cf222e", "#8250df", "#0969da"],
+					axisOptions: { xIsSeries: type === "line" },
+					data: { labels, datasets },
+				});
+			} else {
+				host.appendChild(chartFallbackTable(labels, datasets));
+			}
+		} catch (e) {
+			host.appendChild(chartFallbackTable(labels, datasets));
+		}
+		scrollDown();
+	}
+
+	function chartFallbackTable(labels, datasets) {
+		const tbl = document.createElement("table");
+		tbl.className = "triton-chart-table";
+		const ds0 = datasets[0] || { values: [] };
+		labels.forEach((lab, i) => {
+			const tr = document.createElement("tr");
+			const k = document.createElement("td");
+			k.textContent = lab;
+			const v = document.createElement("td");
+			v.textContent = ds0.values[i] != null ? String(ds0.values[i]) : "";
+			tr.appendChild(k);
+			tr.appendChild(v);
+			tbl.appendChild(tr);
+		});
+		return tbl;
+	}
+
+	// Gantt/Kanban/3D visualizations are doctype query specs (no inline data) and
+	// need Triton's full viz engine — show a compact pointer rather than break.
+	function renderVizFallback(wrap, cmd, params) {
+		if (!wrap) return;
+		let kind = __("visualization");
+		if (cmd === "render_3d_simulation") kind = __("3D simulation");
+		else if (params && (params.viz_type || params.chart_kind)) {
+			kind = (params.viz_type || params.chart_kind) + " " + __("visualization");
+		}
+		const note = document.createElement("div");
+		note.className = "triton-viz-note";
+		note.textContent = "📊 " + kind + " — " + __("open the Triton app to view");
+		wrap.appendChild(note);
+		scrollDown();
+	}
+
 	// ---- DOM construction ------------------------------------------------
 	function build() {
 		const fab = document.createElement("button");
@@ -440,7 +584,7 @@
 		scrollDown();
 	}
 
-	function newAssistantMsg() {
+	function newAssistantMsg(streaming) {
 		clearEmpty();
 		const wrap = document.createElement("div");
 		wrap.className = "triton-msg triton-assistant";
@@ -450,19 +594,36 @@
 			wrap,
 			bubble: wrap.querySelector(".triton-bubble"),
 			text: "",
+			shownLen: 0, // chars currently revealed by the typewriter pump
 			thoughts: "",
+			streaming: !!streaming,
 			statusEl: null,
+			// tool/agent activity timeline
+			stepsEl: null,
+			lastStep: "",
+			// live "thinking" disclosure
+			thinkingDetails: null,
 			thinkingEl: null,
+			thinkingLabel: null,
+			thinkingTimer: null,
+			thinkStart: 0,
+			thinkInterval: null,
+			thinkingCollapsed: false,
+			// raf handles
+			pumpRaf: null,
+			thoughtRaf: null,
 		};
 		scrollDown();
 		return live;
 	}
 
+	// Transient one-liner ("Connecting to Triton…") shown above the bubble until
+	// the first real event arrives. Tool activity uses the step timeline instead.
 	function setStatus(live, content) {
 		if (!live.statusEl) {
 			live.statusEl = document.createElement("div");
 			live.statusEl.className = "triton-status";
-			live.wrap.appendChild(live.statusEl);
+			live.wrap.insertBefore(live.statusEl, live.bubble);
 		}
 		live.statusEl.textContent = content;
 		scrollDown();
@@ -475,23 +636,169 @@
 		}
 	}
 
-	function appendText(live, content) {
-		live.text += content;
-		live.bubble.innerHTML = md(live.text);
+	// ---- tool / agent step timeline -------------------------------------
+	function ensureSteps(live) {
+		if (!live.stepsEl) {
+			live.stepsEl = document.createElement("div");
+			live.stepsEl.className = "triton-steps";
+			live.wrap.insertBefore(live.stepsEl, live.bubble);
+		}
+		return live.stepsEl;
+	}
+
+	function markActiveStepsDone(live) {
+		if (!live.stepsEl) return;
+		live.stepsEl.querySelectorAll(".triton-step.is-active").forEach((s) => {
+			s.classList.remove("is-active");
+			s.classList.add("is-done");
+		});
+	}
+
+	// A live, ordered timeline of tool/agent activity. Each new status settles the
+	// previous step (✓) and animates in a new active row, replacing the single
+	// overwritten status line so multi-step runs stay legible.
+	function pushStep(live, content) {
+		content = (content || "").trim();
+		if (!content || content === live.lastStep) return;
+		markActiveStepsDone(live);
+		live.lastStep = content;
+		const row = document.createElement("div");
+		row.className = "triton-step is-active";
+		const dot = document.createElement("span");
+		dot.className = "triton-step-dot";
+		const txt = document.createElement("span");
+		txt.className = "triton-step-text";
+		txt.textContent = content;
+		row.appendChild(dot);
+		row.appendChild(txt);
+		ensureSteps(live).appendChild(row);
 		scrollDown();
 	}
 
-	function appendThought(live, content) {
-		live.thoughts += content;
-		if (!live.thinkingEl) {
-			const d = document.createElement("details");
-			d.className = "triton-thinking";
-			d.innerHTML = `<summary>${__("Thinking…")}</summary><div class="triton-thinking-body"></div>`;
-			live.wrap.appendChild(d);
-			live.thinkingEl = d.querySelector(".triton-thinking-body");
-		}
-		live.thinkingEl.textContent = live.thoughts;
+	// ---- streamed answer text (typewriter smoothing) --------------------
+	function renderBubble(live) {
+		live.bubble.innerHTML = md(live.text.slice(0, live.shownLen));
 		scrollDown();
+	}
+
+	function schedulePump(live) {
+		if (live.pumpRaf == null) {
+			live.pumpRaf = requestAnimationFrame(() => pumpText(live));
+		}
+	}
+
+	// Reveal buffered characters at a steady, backlog-adaptive cadence so text
+	// flows smoothly no matter how bursty the SSE chunks are.
+	function pumpText(live) {
+		live.pumpRaf = null;
+		const remaining = live.text.length - live.shownLen;
+		if (remaining > 0) {
+			const step = Math.max(2, Math.min(60, Math.ceil(remaining / 3)));
+			live.shownLen = Math.min(live.text.length, live.shownLen + step);
+			renderBubble(live);
+		}
+		if (live.shownLen < live.text.length) schedulePump(live);
+	}
+
+	function appendText(live, content) {
+		if (!content) return;
+		// The answer has started — settle the reasoning + tool timeline.
+		if (live.streaming) {
+			collapseThinking(live);
+			markActiveStepsDone(live);
+		}
+		live.text += content;
+		if (live.streaming && !reducedMotion) {
+			live.wrap.classList.add("triton-streaming");
+			schedulePump(live);
+		} else {
+			live.shownLen = live.text.length;
+			renderBubble(live);
+			renderMermaidIn(live.bubble);
+		}
+	}
+
+	// Called on done/error: flush remaining text instantly and drop the cursor.
+	function finishStreaming(live) {
+		if (live.pumpRaf != null) {
+			cancelAnimationFrame(live.pumpRaf);
+			live.pumpRaf = null;
+		}
+		if (live.thoughtRaf != null) {
+			cancelAnimationFrame(live.thoughtRaf);
+			live.thoughtRaf = null;
+		}
+		live.shownLen = live.text.length;
+		if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
+		collapseThinking(live);
+		markActiveStepsDone(live);
+		renderBubble(live);
+		renderMermaidIn(live.bubble);
+		live.wrap.classList.remove("triton-streaming");
+		live.streaming = false;
+	}
+
+	// ---- live "thinking" disclosure -------------------------------------
+	function ensureThinking(live) {
+		if (live.thinkingDetails) return live.thinkingDetails;
+		const d = document.createElement("details");
+		d.className = "triton-thinking";
+		d.open = !!live.streaming; // auto-expand while the model is actively thinking
+		d.innerHTML =
+			'<summary><span class="triton-think-label"></span>' +
+			'<span class="triton-think-timer"></span></summary>' +
+			'<div class="triton-thinking-body"></div>';
+		live.wrap.insertBefore(d, live.bubble);
+		live.thinkingDetails = d;
+		live.thinkingEl = d.querySelector(".triton-thinking-body");
+		live.thinkingLabel = d.querySelector(".triton-think-label");
+		live.thinkingTimer = d.querySelector(".triton-think-timer");
+		live.thinkingLabel.textContent = live.streaming ? __("Thinking") : __("Thoughts");
+		if (live.streaming) {
+			live.thinkStart = Date.now();
+			live.thinkInterval = setInterval(() => {
+				if (!live.thinkingTimer) return;
+				const s = Math.round((Date.now() - live.thinkStart) / 1000);
+				live.thinkingTimer.textContent = s > 0 ? " " + s + "s" : "";
+			}, 500);
+		}
+		return d;
+	}
+
+	function appendThought(live, content) {
+		if (!content) return;
+		live.thoughts += content;
+		ensureThinking(live);
+		// Coalesce the markdown re-render of the growing thought text to one/frame.
+		if (live.thoughtRaf == null) {
+			live.thoughtRaf = requestAnimationFrame(() => {
+				live.thoughtRaf = null;
+				if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
+				scrollDown();
+			});
+		}
+	}
+
+	// Collapse the disclosure once the answer begins (or on stream end) and swap
+	// the live "Thinking 3s" header for a settled "Thought for 5s".
+	function collapseThinking(live) {
+		if (!live.thinkingDetails || live.thinkingCollapsed) return;
+		live.thinkingCollapsed = true;
+		live.thinkingDetails.open = false;
+		live.thinkingDetails.classList.add("triton-thinking-done");
+		if (live.thinkInterval) {
+			clearInterval(live.thinkInterval);
+			live.thinkInterval = null;
+		}
+		const secs = live.thinkStart
+			? Math.max(1, Math.round((Date.now() - live.thinkStart) / 1000))
+			: 0;
+		if (live.thinkingLabel) {
+			live.thinkingLabel.textContent = secs
+				? __("Thought for") + " " + secs + "s"
+				: __("Thoughts");
+		}
+		if (live.thinkingTimer) live.thinkingTimer.textContent = "";
 	}
 
 	function renderSources(container, sources) {
@@ -610,6 +917,7 @@
 			appendThought(live, meta.thinking);
 		}
 		if (meta.sources) renderSources(live.wrap, meta.sources);
+		if (meta.direct_chart) renderChart(live.wrap, meta.direct_chart);
 		(meta.pending_actions || []).forEach((p) =>
 			renderActionCard(live.wrap, p, { liveStatus: p.live_status || "pending" })
 		);
@@ -651,7 +959,7 @@
 		state.els.send.disabled = true;
 
 		if (!opts.hidden) addUserMsg(text);
-		const live = newAssistantMsg();
+		const live = newAssistantMsg(true);
 		state.live = live;
 		setStatus(live, __("Connecting to Triton…"));
 
@@ -666,7 +974,8 @@
 			}
 		} catch (e) {
 			clearStatus(live);
-			appendText(live, `\n\n*${__("Error")}: ${esc(e.message || e)}*`);
+			live.text += `\n\n*${__("Error")}: ${esc(e.message || e)}*`;
+			finishStreaming(live);
 		} finally {
 			state.streaming = false;
 			state.els.send.disabled = false;
@@ -729,9 +1038,15 @@
 	function handleEvent(ev, live) {
 		switch (ev.type) {
 			case "tool_status":
-				setStatus(live, ev.content || "");
+				clearStatus(live);
+				pushStep(live, ev.content || "");
+				break;
+			case "agent_spawn":
+				clearStatus(live);
+				pushStep(live, (ev.label || ev.agent || __("Agent")) + " " + __("working…"));
 				break;
 			case "thought":
+				clearStatus(live);
 				appendThought(live, ev.content || "");
 				break;
 			case "text":
@@ -744,20 +1059,34 @@
 			case "pending_action":
 				if (ev.params) renderActionCard(live.wrap, ev.params, { liveStatus: "pending" });
 				break;
+			case "ui_command":
+				if (ev.command === "render_chart") {
+					renderChart(live.wrap, ev.params);
+				} else if (ev.command === "render_visualization" || ev.command === "render_3d_simulation") {
+					renderVizFallback(live.wrap, ev.command, ev.params);
+				}
+				// voice_dial / show_native_plan_approval are Desk-side actions and
+				// are intentionally not surfaced in the embedded widget.
+				break;
 			case "done": {
 				clearStatus(live);
 				const meta = ev.ui_metadata || {};
 				if (typeof ev.content === "string" && ev.content && !live.text) {
-					appendText(live, ev.content);
+					live.text = ev.content;
 				}
 				if (meta.sources && !live.wrap.querySelector(".triton-sources")) {
 					renderSources(live.wrap, meta.sources);
 				}
+				if (meta.direct_chart && !live.wrap.querySelector(".triton-chart")) {
+					renderChart(live.wrap, meta.direct_chart);
+				}
+				finishStreaming(live);
 				break;
 			}
 			case "error":
 				clearStatus(live);
-				appendText(live, `\n\n*${esc(ev.content || "Error")}*`);
+				live.text += `\n\n*${esc(ev.content || "Error")}*`;
+				finishStreaming(live);
 				break;
 			default:
 				break;

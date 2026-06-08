@@ -15,10 +15,11 @@ def get_gateway_config():
     try:
         settings = frappe.get_doc("Triton Settings")
         return {
+            # NOTE: never return secrets (API keys / tokens) from this guest-
+            # accessible endpoint. It exposes non-sensitive call-routing config only.
             "master_system_prompt": settings.master_system_prompt,
             "forwarding_phone_number": getattr(settings, "forwarding_phone_number", "+18018200044"),
             "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio"),
-            "gemini_api_key": getattr(settings, "gemini_api_key", None)
         }
     except Exception as e:
         frappe.log_error(f"Failed to fetch Triton settings: {str(e)}", "Gateway Config Error")
@@ -61,6 +62,7 @@ def validate_webhook_secret(func):
     return wrapper
 
 @frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
 def append_call_transcript(call_sid, transcript_chunk):
     frappe.set_user("triton@sapphirefountains.com")
     key = f"triton_transcript_{call_sid}"
@@ -70,6 +72,7 @@ def append_call_transcript(call_sid, transcript_chunk):
     return "OK"
 
 @frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
 def get_call_transcript(call_sid):
     frappe.set_user("triton@sapphirefountains.com")
     key = f"triton_transcript_{call_sid}"
@@ -77,6 +80,7 @@ def get_call_transcript(call_sid):
     return "\n".join(chunks)
 
 @frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
 def get_caller_info(phone_number, twilio_caller_name=None):
     frappe.set_user("triton@sapphirefountains.com")
     
@@ -171,6 +175,7 @@ def get_caller_info(phone_number, twilio_caller_name=None):
     }
 
 @frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
 def update_caller_info(phone_number, new_name):
     frappe.set_user("triton@sapphirefountains.com")
     

@@ -269,12 +269,17 @@
 	color: var(--text-muted, #8d99a6);
 }
 .triton-thinking .triton-thinking-body {
-	white-space: pre-wrap;
 	color: var(--text-muted, #8d99a6);
 	padding: 6px 0 0 4px;
 	border-left: 2px solid var(--border-color, #e2e6e9);
 	padding-left: 8px;
 	margin-top: 4px;
+}
+.triton-thinking .triton-thinking-body p {
+	margin: 0 0 6px;
+}
+.triton-thinking .triton-thinking-body p:last-child {
+	margin-bottom: 0;
 }
 
 .triton-sources {
@@ -510,4 +515,185 @@
 	.triton-header .triton-title {
 		display: none;
 	}
+}
+
+/* ===================================================================
+   Fluid streaming: typewriter cursor, live "thinking" header, and the
+   tool/agent step timeline. (Consumes Triton's existing SSE events.)
+   =================================================================== */
+
+/* Blinking caret at the end of the answer while it streams in. */
+.triton-streaming .triton-bubble::after {
+	content: "▍";
+	display: inline-block;
+	margin-left: 1px;
+	color: var(--primary, #1f6feb);
+	animation: tritonCursor 1s steps(1, end) infinite;
+}
+@keyframes tritonCursor {
+	0%, 49% { opacity: 1; }
+	50%, 100% { opacity: 0; }
+}
+
+/* Thinking disclosure: shimmer the label while active, calm once settled. */
+.triton-thinking summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	list-style: none;
+}
+.triton-thinking summary::-webkit-details-marker {
+	display: none;
+}
+.triton-think-label {
+	font-weight: 500;
+}
+.triton-thinking:not(.triton-thinking-done) .triton-think-label {
+	background: linear-gradient(
+		90deg,
+		var(--text-muted, #8d99a6) 25%,
+		var(--primary, #1f6feb) 50%,
+		var(--text-muted, #8d99a6) 75%
+	);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+	color: transparent;
+	animation: tritonShimmer 1.6s linear infinite;
+}
+.triton-think-timer {
+	color: var(--text-muted, #8d99a6);
+	font-variant-numeric: tabular-nums;
+}
+@keyframes tritonShimmer {
+	0% { background-position: 200% 0; }
+	100% { background-position: -200% 0; }
+}
+
+/* Tool / agent step timeline: a settling checklist instead of one status line. */
+.triton-steps {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	margin: 2px 0 6px;
+}
+.triton-step {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 11px;
+	color: var(--text-muted, #8d99a6);
+	animation: tritonStepIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.triton-step-dot {
+	width: 11px;
+	height: 11px;
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	border-radius: 50%;
+	border: 2px solid var(--border-color, #e2e6e9);
+	border-top-color: var(--primary, #1f6feb);
+}
+.triton-step.is-active .triton-step-dot {
+	animation: tritonSpin 0.7s linear infinite;
+}
+.triton-step.is-done {
+	opacity: 0.75;
+}
+.triton-step.is-done .triton-step-dot {
+	position: relative;
+	border-color: var(--primary, #1f6feb);
+	background: var(--primary, #1f6feb);
+	animation: none;
+}
+.triton-step.is-done .triton-step-dot::after {
+	content: "";
+	position: absolute;
+	left: 2px;
+	top: 0;
+	width: 3px;
+	height: 6px;
+	border: solid #fff;
+	border-width: 0 1.5px 1.5px 0;
+	transform: rotate(45deg);
+}
+@keyframes tritonSpin {
+	to { transform: rotate(360deg); }
+}
+@keyframes tritonStepIn {
+	from { opacity: 0; transform: translateY(3px); }
+	to { opacity: 1; transform: none; }
+}
+
+/* Respect reduced-motion: keep everything legible but static. */
+@media (prefers-reduced-motion: reduce) {
+	.triton-streaming .triton-bubble::after,
+	.triton-thinking:not(.triton-thinking-done) .triton-think-label,
+	.triton-step.is-active .triton-step-dot,
+	.triton-step {
+		animation: none;
+	}
+	.triton-thinking:not(.triton-thinking-done) .triton-think-label {
+		-webkit-text-fill-color: var(--text-muted, #8d99a6);
+		color: var(--text-muted, #8d99a6);
+	}
+}
+
+/* ===================================================================
+   Inline widgets: charts (frappe-charts), mermaid diagrams, and the
+   pointer note for visualizations that need the full Triton app.
+   =================================================================== */
+.triton-chart {
+	margin-top: 8px;
+	padding: 8px;
+	background: var(--subtle-fg, #f1f3f5);
+	border: 1px solid var(--border-color, #e2e6e9);
+	border-radius: 8px;
+}
+.triton-chart-title {
+	font-size: 12px;
+	font-weight: 600;
+	margin-bottom: 4px;
+	color: var(--text-color, #1f272e);
+}
+.triton-chart-host {
+	min-height: 220px;
+}
+.triton-chart-table {
+	width: 100%;
+	font-size: 12px;
+	border-collapse: collapse;
+}
+.triton-chart-table td {
+	padding: 2px 6px;
+	border-bottom: 1px solid var(--border-color, #e2e6e9);
+}
+.triton-chart-table td:last-child {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.triton-mermaid {
+	margin: 8px 0;
+	padding: 10px;
+	background: #fff;
+	border: 1px solid var(--border-color, #e2e6e9);
+	border-radius: 8px;
+	overflow-x: auto;
+	text-align: center;
+}
+.triton-mermaid svg {
+	max-width: 100%;
+	height: auto;
+}
+
+.triton-viz-note {
+	margin-top: 8px;
+	font-size: 11px;
+	color: var(--text-muted, #8d99a6);
+	background: var(--subtle-fg, #f1f3f5);
+	border: 1px dashed var(--border-color, #e2e6e9);
+	border-radius: 8px;
+	padding: 6px 10px;
 }
