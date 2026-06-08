@@ -5,16 +5,16 @@
  *
  *  1. Grid View is the default for the File list. Frappe's `FileView` keeps the
  *     grid/list choice in the static `frappe.views.FileView.grid_view`, seeded
- *     from `frappe.get_user_settings("File").grid_view || false`. We flip that
- *     default to `true` the first time a user lands here, so toggling back to
- *     list view still sticks.
+ *     from `frappe.get_user_settings("File").grid_view || false`. We force that
+ *     to `true` from the patched `setup_view()`, which runs once per FileView
+ *     instantiation — so each time the File list is opened it defaults to grid,
+ *     while an in-session toggle back to list still sticks (toggling re-renders
+ *     but does not re-run `setup_view()`).
  *
- *     We cannot use `get_user_settings("File").grid_view === undefined` to
- *     detect that "first time": `FileView.before_render()` unconditionally
- *     persists the current `grid_view` value on *every* render, so the first
- *     (list) render saves `false` and the "undefined" signal is gone forever.
- *     Instead we record our own one-time marker in `localStorage` and only
- *     force grid on the user's very first visit.
+ *     We deliberately ignore `get_user_settings("File").grid_view`:
+ *     `FileView.before_render()` unconditionally persists the current
+ *     `grid_view` value on *every* render, so a list render saves `false` and
+ *     the stored setting can no longer tell us what the default should be.
  *
  *  2. A quick-preview overlay. Clicking a file card opens an in-page preview
  *     (image / video / audio / pdf / text inline; everything else falls back to
@@ -98,6 +98,11 @@ frappe.provide("erpnext_enhancements.file_preview");
 				cursor: pointer; font-size: 15px; text-decoration: none;
 			}
 			.ee-fp-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+			/* Frappe icons default to fill:none + stroke:var(--icon-stroke) at the
+			   tiny "sm" 12px size, so the toolbar icons render dark and small.
+			   Force them white (these selectors out-specify svg.icon / .icon-sm). */
+			.ee-file-preview-overlay svg.icon { stroke: #fff; --icon-stroke: #fff; }
+			.ee-fp-actions .ee-fp-btn svg.icon { width: 20px; height: 20px; }
 			.ee-fp-body {
 				flex: 1 1 auto; position: relative;
 				display: flex; align-items: center; justify-content: center;
@@ -263,32 +268,15 @@ frappe.provide("erpnext_enhancements.file_preview");
 
 	// ---- wiring into the FileView -------------------------------------------
 
-	const GRID_DEFAULT_KEY = "ee_file_grid_view_defaulted";
-
-	function grid_default_applied() {
-		try {
-			return localStorage.getItem(GRID_DEFAULT_KEY) === "1";
-		} catch (e) {
-			return false;
-		}
-	}
-
-	function mark_grid_default_applied() {
-		try {
-			localStorage.setItem(GRID_DEFAULT_KEY, "1");
-		} catch (e) {
-			// localStorage unavailable (private mode / disabled) — fall through.
-		}
-	}
-
 	function apply_grid_default(listview) {
-		// Force grid view the first time this user ever lands on the File list.
-		// We deliberately do NOT consult `get_user_settings("File").grid_view`:
-		// FileView.before_render() persists that value on every render, so it is
-		// `false` after the first visit rather than `undefined`. Our own marker
-		// is the only reliable "has this user seen the File list before?" signal.
-		if (grid_default_applied()) return;
-		mark_grid_default_applied();
+		// Default the File list to grid view every time it is opened. This runs
+		// from the patched `setup_view()`, which fires once per FileView
+		// instantiation — so it sets the *initial* view without fighting the
+		// user's in-session toggle back to list (that toggle re-renders but does
+		// not re-run setup_view). We intentionally ignore
+		// `get_user_settings("File").grid_view`: FileView.before_render()
+		// persists `false` to it after any list render, so it is not a reliable
+		// "what should the default be?" signal.
 		try {
 			const FV = frappe.views.FileView;
 			if (FV.grid_view !== true) {

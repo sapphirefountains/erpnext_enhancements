@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-08
+
+### Fixed
+- **File preview toolbar icons**: The Download / Open-in-new-tab / Close icons in the file-preview overlay rendered tiny and dark. Frappe icons default to `fill: none; stroke: var(--icon-stroke)` at the 12px `sm` size, so the button's white text colour never reached them. Added overlay-scoped CSS that forces `--icon-stroke`/`stroke` to white and bumps the toolbar icons to 20px.
+- **File list grid view default**: The File list now defaults to grid view every time it is opened, not just on a user's first-ever visit. The previous one-time `localStorage` marker meant returning users always landed in list view (since `FileView.before_render()` persists `grid_view=false` after any list render). Grid is now forced from the patched `setup_view()`, which runs once per FileView instantiation, so an in-session toggle back to list still sticks.
+
 ## [0.2.3] - 2026-06-08
 
 ### Added
