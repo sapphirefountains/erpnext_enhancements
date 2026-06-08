@@ -182,7 +182,9 @@ doc_events = {
         "on_update": [
             "erpnext_enhancements.tasks.generate_next_task",
             "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+            "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
         ],
+        "on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
     },
     "Project": {
         "before_save": "erpnext_enhancements.script_migrations.project.remove_open_status",
