@@ -81,6 +81,25 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
+      # Installing ERPNext enqueues background jobs (e.g. delete_dynamic_links
+      # via enqueue_after_commit) during `bench new-site`, which forces a
+      # connection to Redis Queue. `bench init --skip-redis-config-generation`
+      # writes no redis config and never starts redis, so Frappe falls back to
+      # its default 127.0.0.1:11000 and the connection is refused. Run a real
+      # redis as a service container and point all three Frappe redis URLs at
+      # it (see the "Create test site" step). One instance is fine for CI:
+      # there's no worker consuming the queue, the enqueue only needs the
+      # connection to succeed.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
@@ -106,7 +125,10 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y redis-server libmysqlclient-dev
+          # redis runs as a service container (see services.redis); installing
+          # the apt redis-server here would try to bind host port 6379 and
+          # collide with the container's port mapping.
+          sudo apt-get install -y libmysqlclient-dev
           npm install -g yarn
 
       - name: Install bench
@@ -127,6 +149,12 @@ jobs:
         run: |
           bench set-config -g db_host 127.0.0.1
           bench set-config -g db_port 3306
+          # Override Frappe's default redis ports (cache 13000 / queue 11000 /
+          # socketio 12000) — none of those are running — with the single redis
+          # service container on 6379.
+          bench set-config -g redis_cache "redis://127.0.0.1:6379"
+          bench set-config -g redis_queue "redis://127.0.0.1:6379"
+          bench set-config -g redis_socketio "redis://127.0.0.1:6379"
           bench new-site test_site \
             --db-root-username root \
             --mariadb-root-password root \
