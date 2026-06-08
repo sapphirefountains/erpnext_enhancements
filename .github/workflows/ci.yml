@@ -98,7 +98,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Must track Frappe's minimum: version-16's package.json sets
+          # engines.node ">=24", and `yarn install` aborts during `bench init`
+          # if the running Node is older. Bump in lockstep with FRAPPE_BRANCH.
+          node-version: "24"
 
       - name: Install system dependencies
         run: |
