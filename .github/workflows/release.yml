@@ -1,0 +1,112 @@
+name: Release
+
+# ---------------------------------------------------------------------------
+# Cut a GitHub Release whenever a new version lands on main.
+#
+# The version source of truth is `__version__` in
+# erpnext_enhancements/__init__.py, bumped in each PR (see CHANGELOG.md and
+# the team convention: bump the version on every PR that will be deployed).
+# When that file changes on main, this workflow:
+#   1. reads the version,
+#   2. checks package.json is in sync (catches a half-finished bump),
+#   3. skips if a matching tag already exists  -> safe to re-run,
+#   4. pulls the matching CHANGELOG.md section as the release notes,
+#   5. creates the tag vX.Y.Z and a GitHub Release pointing at the merge commit.
+#
+# Frappe Cloud deploys from this branch, so the repo's Releases page becomes a
+# 1:1 log of what is deployed and at which version.
+#
+# Trigger it by hand (workflow_dispatch) to cut a release for whatever version
+# is currently on main -- handy for the first/baseline release or a backfill.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "erpnext_enhancements/__init__.py"
+  workflow_dispatch:
+
+# Needed for `gh release create` to push the tag and publish the release.
+permissions:
+  contents: write
+
+# Never cancel a release mid-flight; let concurrent pushes queue instead.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history + tags so the "already released?" check below
+          # can see existing vX.Y.Z tags.
+          fetch-depth: 0
+
+      - name: Read version from __init__.py
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' erpnext_enhancements/__init__.py)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not parse __version__ from erpnext_enhancements/__init__.py"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Verify package.json is in sync
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PKG=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' package.json | head -1)
+          if [ "$PKG" != "$VERSION" ]; then
+            echo "::error::Version drift -- __init__.py is $VERSION but package.json is '$PKG'. Bump both together."
+            exit 1
+          fi
+
+      - name: Check whether this version is already released
+        id: check
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already tagged -- nothing to release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract changelog notes
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Print every line under the `## [VERSION]` heading up to (but not
+          # including) the next `## [` heading, then strip leading blank lines.
+          # Uses literal-prefix matching (index, not regex) so the `[` in the
+          # heading is matched literally and portably across awk variants.
+          awk -v prefix="## [$VERSION]" '
+            index($0, prefix) == 1 { flag=1; next }
+            flag && index($0, "## [") == 1 { exit }
+            flag { print }
+          ' CHANGELOG.md | sed '/./,$!d' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "Release v$VERSION. See CHANGELOG.md for details." > notes.md
+          fi
+          echo "----- release notes -----"
+          cat notes.md
+
+      - name: Create tag and GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            --latest
+          echo "Published release v$VERSION"
