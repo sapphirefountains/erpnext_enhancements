@@ -1,32 +1,25 @@
 /*
-    Enhanced Kanban Scrolling for Opportunity Doctype
+    Enhanced Kanban Scrolling for the Opportunity board.
+
+    Card dragging is now gated behind a 1-second press-and-hold (see
+    kanban_patches.js — SortableJS delay applied to mouse and touch alike), so the
+    old "disable dragging" rules that used to live here (pointer-events: none on
+    .kanban-card, re-enabled only for the title / add-card) have been REMOVED: they
+    blocked the card entirely and only ever stopped the mouse, while touch dragging
+    slipped through on mobile. Only the horizontal-scroll layout remains.
 */
 
-/* 1. Horizontal Scrolling for the main Kanban board */
+/* Horizontal scrolling for the main Kanban board */
 
-/* Target the container that holds all the Kanban columns */
+/* The flex container that holds all the Kanban columns */
 .kanban-columns[data-doctype="Opportunity"] {
     display: flex;
     overflow-x: auto;
-    /* Add some padding at the bottom to ensure the scrollbar has space and is visible */
+    /* Padding at the bottom so the horizontal scrollbar has room and stays visible */
     padding-bottom: 15px;
 }
 
-/* Ensure Kanban columns don't shrink and maintain their specified width */
+/* Keep columns from shrinking so they hold their width and the board scrolls */
 .kanban-column[data-doctype="Opportunity"] {
     flex-shrink: 0;
-}
-
-/* 2. Disable Drag and Drop for Kanban Cards */
-
-/* Target Kanban cards specifically within the "Opportunity" doctype */
-.kanban-columns[data-doctype="Opportunity"] .kanban-card {
-    /* Prevent the card from being targeted by mouse events, disabling dragging */
-    pointer-events: none;
-}
-
-.kanban-columns[data-doctype="Opportunity"] .kanban-card .kanban-card-items .kanban-card-item .add-card,
-.kanban-columns[data-doctype="Opportunity"] .kanban-card .kanban-card-title {
-    /* Re-enable mouse events for the plus icon and title so they can be clicked */
-    pointer-events: auto;
 }

@@ -63,7 +63,6 @@ doctype_js = {
         "public/js/opportunity.js",
         "public/js/crm_enhancements/opportunity.js",
         "public/js/global_enhancements/unified_tab_controller.js",
-        "public/js/global_enhancements/disable_kanban_drag.js",
         "project_enhancements/doctype/opportunity/opportunity.js",
         "public/js/crm_enhancements/opportunity_migrated_scripts.js",
     ],
