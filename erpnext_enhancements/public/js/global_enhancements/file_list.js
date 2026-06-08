@@ -293,8 +293,15 @@ frappe.provide("erpnext_enhancements.file_preview");
 			const FV = frappe.views.FileView;
 			if (FV.grid_view !== true) {
 				FV.grid_view = true;
+				// `refresh()` re-fetches and is throttled by `no_change()` (it
+				// silently skips re-rendering when the args match the last call
+				// within the last 3 seconds) — on a fresh page load that throttle
+				// swallows this call, leaving the list stuck in list view despite
+				// `grid_view` now being `true`. `render()` redraws the
+				// already-fetched `this.data` in place, so it always reflects the
+				// flag we just flipped.
 				if (listview && !listview.$result.hasClass("file-grid-view")) {
-					listview.refresh();
+					listview.render();
 				}
 			}
 		} catch (e) {
