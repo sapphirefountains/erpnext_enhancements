@@ -36,3 +36,30 @@ frappe.ui.form.on("Lead", {
         btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-call"></use></svg> ${__('Call via Triton')}`);
     }
 });
+
+// Migrated from Client Script "Lead Create Opportunity Button".
+// Adds a "Create Opportunity" button on saved, non-converted leads.
+frappe.ui.form.on("Lead", {
+    refresh: function (frm) {
+        if (frm.is_new() || frm.doc.opportunity) {
+            return;
+        }
+
+        frm.add_custom_button(__("Create Opportunity"), () => {
+            const lead = frm.doc;
+            frappe.new_doc("Opportunity", {
+                opportunity_from: "Lead",
+                lead: lead.name,
+                party_name: lead.party_name,
+                contact_person: lead.contact_person,
+                company: lead.company,
+                campaign: lead.campaign,
+                source: lead.source,
+                territory: lead.territory,
+                custom_opportunity_name: lead.lead_name,
+                opportunity_owner: lead.owner,
+                custom_description: lead.custom_lead_details,
+            });
+        }).addClass("btn-primary");
+    },
+});

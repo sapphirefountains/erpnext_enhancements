@@ -67,3 +67,16 @@ frappe.ui.form.on("Contact", {
         btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-message"></use></svg> ${__('Send SMS')}`);
     }
 });
+
+// Migrated from Client Script "Contact - Show Account Linked to Contact".
+// Mirror the first linked Customer into the custom_account field.
+frappe.ui.form.on("Contact", {
+    refresh: function (frm) {
+        let customer_link = (frm.doc.links || []).find((l) => l.link_doctype === "Customer");
+        if (customer_link) {
+            frm.set_value("custom_account", customer_link.link_name);
+        } else {
+            frm.set_value("custom_account", "");
+        }
+    },
+});
