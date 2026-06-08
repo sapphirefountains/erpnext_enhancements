@@ -30,10 +30,11 @@
  *   This is behaviour-preserving for filtering: both paths rebuild the card DOM
  *   via KanbanBoardColumn.make_cards(); columns (which depend on the board, not
  *   the filters) simply stay mounted instead of being destroyed and rebuilt.
- *   It composes with our other Kanban patches (render_card / get_data /
- *   opportunity_kanban_totals refresh / disable_kanban_drag) because they hook
- *   render_card, get_data, refresh and a MutationObserver -- none of which depend
- *   on the board being torn down on each filter change.
+ *   It composes with our other Kanban patches (kanban_patches hold-to-drag /
+ *   render_card / get_data / opportunity_kanban_totals refresh): the hold-to-drag
+ *   patch reaches every SortableJS instance through a document MutationObserver, and
+ *   the others hook render_card, get_data and refresh -- none of which depend on the
+ *   board being torn down on each filter change.
  *
  * REMOVE THIS FILE once the upstream fix (frappe/frappe#24156) ships in our
  * deployed frappe version. Tracking branches: develop + version-16.

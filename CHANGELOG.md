@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-08
+
+### Changed
+- **Kanban "press-and-hold to move a card" now applies to mouse *and* touch — and reliably.** A card only starts dragging after a deliberate **1-second press-and-hold** (finger or mouse); a quick swipe scrolls the board sideways or a column up/down, and a quick tap still opens the card. This stops accidental card moves while scrolling, especially on mobile. (`erpnext_enhancements/public/js/kanban_patches.js`)
+  - Set SortableJS `delayOnTouchOnly: false` so the 1-second hold gates the **mouse** too. Previously it was touch-only, so a mouse dragged a card instantly.
+  - Rebuilt **how** the delay is applied. The old version scanned for SortableJS instances on a fixed `[0, 150, 400, 1000]ms` timeline after `KanbanView.render()`. On the heavy Opportunity board, Vue/SortableJS finish mounting *after* that 1-second window closes, so the scan found nothing — and `kanban_leak_fix.js` short-circuits `render()` on filter refreshes, so the scan was never re-scheduled. Net effect on the live board: the delay never applied and cards grabbed instantly. The patch is now **decoupled from `render()`**: a document-level `MutationObserver` watches for Kanban *container* insertions (board / columns / card-lists, not individual cards) and, debounced, recovers every live SortableJS instance to set `delay` / `delayOnTouchOnly` / `touchStartThreshold`, with a short bounded startup poll as a fallback. Idempotent per instance, and board-agnostic (Task, Opportunity, …).
+
+### Removed
+- **Opportunity-board drag lock.** Card dragging on the Opportunity board was fully disabled by `disable_kanban_drag.js` (blocked native `dragstart`) and a `pointer-events: none` rule on `.kanban-card` in `horizontal_scroll.css`. Both only blocked the **mouse** — SortableJS handles touch separately, so on mobile Opportunity cards still moved by accident. Replaced with the unified 1-second hold-to-move above, so cards are movable again but guarded. Deleted `erpnext_enhancements/public/js/global_enhancements/disable_kanban_drag.js`, removed its `doctype_js` hook entry, and dropped the `pointer-events` rules from `horizontal_scroll.css` (the horizontal-scroll layout rules are kept).
+
 ## [0.2.9] - 2026-06-08
 
 ### Removed
