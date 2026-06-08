@@ -50,6 +50,7 @@ doctype_js = {
         "public/js/global_enhancements/unified_tab_controller.js",
         "public/js/global_enhancements/disable_kanban_drag.js",
         "project_enhancements/doctype/opportunity/opportunity.js",
+        "public/js/crm_enhancements/opportunity_migrated_scripts.js",
     ],
     "Communication": ["public/js/communication.js"],
     "Project": [
@@ -62,9 +63,11 @@ doctype_js = {
         "project_enhancements/doctype/project/project.js",
         "public/js/project_enhancements/project_form_script.js",
         "public/js/project_enhancements/project_brief.js",
+        "public/js/project_migrated_scripts.js",
     ],
     "Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
-    "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item_comments.js"],
+    "Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item_comments.js", "public/js/item.js"],
+    "Process Document": ["public/js/process_document.js"],
     "Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
     "Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
     "Customer": [
@@ -139,10 +142,12 @@ doctype_list_js = {
     "Opportunity": [
         "public/js/opportunity_list.js",
         "public/js/crm_enhancements/opportunity_list.js",
+        "public/js/crm_enhancements/opportunity_kanban_totals.js",
     ],
     "Supplier": "public/js/global_enhancements/supplier_list.js",
     "Task": "public/js/project_enhancements/task_gantt.js",
     "File": "public/js/global_enhancements/file_list.js",
+    "Item": "public/js/item_list.js",
 }
 doctype_calendar_js = {
     "Asset Booking": "public/js/asset_booking_calendar.js"
@@ -171,12 +176,15 @@ override_doctype_class = {
 
 doc_events = {
     "Task": {
+        "before_save": "erpnext_enhancements.script_migrations.task.calculate_project_elapsed_time",
+        "after_insert": "erpnext_enhancements.script_migrations.task.sync_task_to_google_calendar",
         "on_update": [
             "erpnext_enhancements.tasks.generate_next_task",
             "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
         ],
     },
     "Project": {
+        "before_save": "erpnext_enhancements.script_migrations.project.remove_open_status",
         "after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
         "on_update": [
             "erpnext_enhancements.sync_contact.sync_from_main_doc",
@@ -188,6 +196,7 @@ doc_events = {
         "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Address": {
+        "before_save": "erpnext_enhancements.script_migrations.address.set_full_address",
         "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Communication": {
@@ -197,7 +206,12 @@ doc_events = {
         "on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit",
     },
     "Opportunity": {
-        "before_save": "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
+        "before_save": [
+            "erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
+            "erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
+            "erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
+            "erpnext_enhancements.script_migrations.opportunity.update_lead_status",
+        ],
         "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
         "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
@@ -211,6 +225,7 @@ doc_events = {
         "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
     "Customer": {
+        "before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
         "on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
         "on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
     },
@@ -223,6 +238,8 @@ scheduler_events = {
     "daily": [
         "erpnext_enhancements.project_enhancements.send_project_start_reminders",
         "erpnext_enhancements.tasks.predictive_maintenance_scheduling",
+        "erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
+        "erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
     ],
     "hourly": [
         "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
