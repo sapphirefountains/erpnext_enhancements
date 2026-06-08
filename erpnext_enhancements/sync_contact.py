@@ -343,6 +343,10 @@ def sync_from_contact(doc, method):
     phone_to_sync = custom_phone or custom_mobile
 
     for dt in PRIMARY_CONTACT_DOCTYPES:
+        # `primary_contact` is a custom field; skip doctypes where it isn't
+        # installed (e.g. a fresh test DB) to avoid "Unknown column" errors.
+        if not frappe.db.has_column(dt, "primary_contact"):
+            continue
         linked_docs = frappe.get_all(dt, filters={"primary_contact": doc.name})
         for linked in linked_docs:
             main_doc = frappe.get_doc(dt, linked.name)
