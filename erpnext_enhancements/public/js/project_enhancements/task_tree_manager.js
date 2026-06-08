@@ -584,7 +584,13 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			return false;
 		}
 
-		const rect = related.getBoundingClientRect();
+		// Measure intent against the hovered node's OWN row, not the whole
+		// .task-node. An expanded parent's .task-node spans its entire subtree, so
+		// using its bounding box would stretch the "nest" band far below the parent
+		// row and nesting under an expanded parent would never trigger (only leaves
+		// would nest). The first .task-grid-row is the node's own row.
+		const rowEl = related.querySelector(".task-grid-row");
+		const rect = (rowEl || related).getBoundingClientRect();
 		const clientY = originalEvent.clientY != null
 			? originalEvent.clientY
 			: (originalEvent.touches && originalEvent.touches[0] ? originalEvent.touches[0].clientY : rect.top);

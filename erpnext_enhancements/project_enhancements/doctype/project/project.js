@@ -99,18 +99,20 @@ frappe.ui.form.on("Project", {
 										wrapperField.__zoom_index = ZOOM.DEFAULT_INDEX.Day;
 									}
 									const zoom_level = ZOOM.level(wrapperField.__zoom_index);
-									// Auto-scroll target: open the timeline on the project's expected
-									// start date so the planned project start is immediately visible.
-									// The frappe-gantt library accepts a "YYYY-MM-DD" string for
-									// scroll_to and positions the viewport at that date. Falls back to
-									// "start" (earliest task) when no expected start date is set.
-									const expected_start = frm.doc.expected_start_date || null;
-									const scroll_target = expected_start || "start";
+									// Auto-scroll target: open the timeline on the FIRST task's start
+									// date so the earliest scheduled work is immediately visible. The
+									// frappe-gantt library accepts a "YYYY-MM-DD" string for scroll_to
+									// and positions the viewport at that date. Task "start" values are
+									// "YYYY-MM-DD" strings, so a lexicographic min is the earliest date.
+									// Falls back to "start" (gantt's earliest position) when no task has
+									// a date.
+									const first_task_start = tasks.reduce((min, t) => (t.start && (!min || t.start < min) ? t.start : min), null);
+									const scroll_target = first_task_start || "start";
 									const options = {
 										// On a preserve refresh, suppress the library's auto-scroll
 										// so our manual restore (below) is the only thing that moves the
-										// viewport. On a normal render, scroll to the project's expected
-										// start date (or the earliest task if it's unset).
+										// viewport. On a normal render, scroll to the first task's start
+										// date (or gantt's earliest position when no task has a date).
 										view_mode: zoom_level.view_mode, column_width: zoom_level.column_width, scroll_to: preserveScroll ? null : scroll_target,
 										custom_popup_html: (task) => { let b_info = task.baseline_start ? `<p><span class="popup-label">Baseline:</span> ${moment(task.baseline_start).format('MMM D')} - ${moment(task.baseline_end).format('MMM D')}</p>` : ""; return `<div class="custom-gantt-popup"><h5>${task.name} ${task.is_milestone ? '<span class="badge badge-warning">Milestone</span>' : ''}</h5><p><span class="popup-label">Assignee:</span> ${task.assigned_to || 'Unassigned'}</p><p><span class="popup-label">Status:</span> ${task.status || 'N/A'}</p><p><span class="popup-label">Start:</span> ${moment(task.start).format('MMM D, YYYY')}</p><p><span class="popup-label">End:</span> ${moment(task.end).format('MMM D, YYYY')}</p>${b_info}<p><span class="popup-label">Progress:</span> ${task.progress}%</p><p style="font-size: 11px; margin-top: 8px; color: #777;"><em>Double-click bar to open task</em></p></div>`; },
 										on_click: (task) => { if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; frappe.set_route("Form", "Task", task.id); } else { clickTimer = setTimeout(() => { clickTimer = null; }, 250); } },
@@ -318,7 +320,7 @@ frappe.ui.form.on("Project", {
 
 										// Backup scroll: find the earliest task bar and scroll so it
 										// appears near the left edge with a small margin. Used when the
-										// project has no expected start date set.
+										// first task's date can't be resolved via the library API.
 										const scroll_to_first_task = () => {
 											const real_container = g_cont[0];
 											if (!real_container) return;
@@ -332,18 +334,18 @@ frappe.ui.form.on("Project", {
 											if (!isFinite(min_x)) return;
 											real_container.scrollTo({ left: Math.max(0, min_x - 80), behavior: "smooth" });
 										};
-										// Re-run the auto-scroll to the project's expected start date. The
+										// Re-run the auto-scroll to the first task's start date. The
 										// library scrolls once during construction, but that can happen
 										// before the Schedule tab is fully laid out (zero width), leaving
 										// the viewport unmoved. Re-invoking the library's own
 										// set_scroll_position with the date string lands the viewport on
-										// expected_start_date reliably; we call it a few times to win over
+										// the first task's date reliably; we call it a few times to win over
 										// any late asynchronous layout/scroll. Falls back to the earliest
-										// task bar when no expected start date is set.
+										// task bar when the date can't be resolved via the library API.
 										const scroll_to_target = () => {
-											if (expected_start && gantt && typeof gantt.set_scroll_position === "function") {
+											if (first_task_start && gantt && typeof gantt.set_scroll_position === "function") {
 												try {
-													gantt.set_scroll_position(expected_start);
+													gantt.set_scroll_position(first_task_start);
 													return;
 												} catch (e) {
 													// Library internals unavailable — fall back below.
@@ -358,7 +360,7 @@ frappe.ui.form.on("Project", {
 											setTimeout(restore, 50);
 											setTimeout(restore, 200);
 										} else {
-											// scroll_to in the options already aims at expected_start_date;
+											// scroll_to in the options already aims at the first task's date;
 											// these backups guarantee it lands once the tab is laid out.
 											setTimeout(scroll_to_target, 350);
 											setTimeout(scroll_to_target, 700);
