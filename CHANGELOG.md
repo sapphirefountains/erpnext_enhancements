@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Opportunity save crash `AttributeError: 'Opportunity' object has no attribute 'lead'`**: the migrated `update_lead_status` `before_save` hook (`script_migrations/opportunity.py`) guarded on `doc.lead`, but the Opportunity doctype has no `lead` field — the Lead is referenced via `party_name` when `opportunity_from == "Lead"`. Saving *any* Opportunity (including ones created from a Customer, as in the report) raised the error and blocked the save. The guard now checks `doc.opportunity_from == "Lead" and doc.party_name`, and resolves the Lead via `party_name`.
+- **CI: install the `payments` app so test-record generation resolves `Payment Gateway`**: `bench run-tests` aborted with `DoesNotExistError: DocType Payment Gateway not found` during Frappe's test-record dependency walk. ERPNext ships doctypes that Link to `Payment Gateway` (e.g. `Payment Gateway Account`), but in version-16 that doctype lives in the separate `frappe/payments` app and is **not** listed in ERPNext's `required_apps`, so `bench get-app erpnext --resolve-deps` never fetched it. The integration-test job now `bench get-app payments --branch "$FRAPPE_BRANCH"` and `--install-app payments` (between erpnext and erpnext_enhancements), providing the missing doctype so the dependency walker completes.
 
 ## [0.2.7] - 2026-06-08
 
