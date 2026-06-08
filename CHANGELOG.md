@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-06-08
+
+### Fixed
+- **Opportunity save crash `AttributeError: 'Opportunity' object has no attribute 'lead'`**: the migrated `update_lead_status` `before_save` hook (`script_migrations/opportunity.py`) guarded on `doc.lead`, but the Opportunity doctype has no `lead` field — the Lead is referenced via `party_name` when `opportunity_from == "Lead"`. Saving *any* Opportunity (including ones created from a Customer, as in the report) raised the error and blocked the save. The guard now checks `doc.opportunity_from == "Lead" and doc.party_name`, and resolves the Lead via `party_name`.
+
 ## [0.2.7] - 2026-06-08
 
 ### Fixed
