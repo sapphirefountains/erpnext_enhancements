@@ -27,13 +27,13 @@
  *   - sync:     the SYNC_TAG Background Sync event re-runs flushQueue() once the
  *               browser regains connectivity.
  *
- * Cache versioning: CACHE = 'time-kiosk-v2'. Bump the version suffix (…-v3, …-v4)
+ * Cache versioning: CACHE = 'time-kiosk-v3'. Bump the version suffix (…-v4, …-v5)
  * whenever the precached app shell / assets change so installed clients fetch the
  * new files. On activate the old cache is deleted, so the bump is the cache-bust.
  * (The IndexedDB schema is versioned separately via DB_VERSION below.)
  */
 
-const CACHE = 'time-kiosk-v2';
+const CACHE = 'time-kiosk-v3';
 const SYNC_TAG = 'flush-geo';
 const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';

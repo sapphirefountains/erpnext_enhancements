@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Server-rendered HTML** now emits theme variables: the Opportunity→Project notes block ([`crm_enhancements/api.py`](erpnext_enhancements/crm_enhancements/api.py)) and the Task hierarchy `<style>` block ([`task.py`](erpnext_enhancements/task_enhancements/doctype/task/task.py)).
 - **The Projects Dashboard shell** ([`projects_dashboard.html`](Custom%20HTML%20Block/projects_dashboard.html)) dropped fixed-light Bootstrap utilities (`bg-white`/`bg-light`/`btn-white`) that glared in dark mode, in favour of theme-aware surfaces and `btn-default`.
 - **Dark-mode contrast bugs in already-themed files.** The Triton assistant's mermaid diagram box (a white panel inside the dark chat), the high-value Opportunity kanban card (deep-navy card with no edge against the dark desk), and three Time-Kiosk surfaces (outline button, badge, inactive tracking dot) now have proper dark-theme treatments.
+## [0.3.4] - 2026-06-09
+
+### Changed
+- **Time Kiosk PWA icon/favicon is now the Sapphire Swirl.** Replaced the placeholder clock glyph with the Sapphire Swirl brand mark — the `#00a0dd` swirl on a transparent field — for the standard icon and favicon, and regenerated the 192/512 PNG raster versions. The maskable icon keeps the swirl on a solid white field, since launchers clip maskable icons to a circle/squircle and require an opaque full-bleed background. Updated the PWA `theme_color` to `#00a0dd` and added explicit `<link rel="icon">` favicon tags (SVG + PNG) to the kiosk shell. Bumped the service-worker cache to `time-kiosk-v3` so installed clients fetch the new icons. (`erpnext_enhancements/public/kiosk/icons/*`, `www/kiosk-manifest.json`, `www/kiosk.html`, `www/kiosk-sw.js`)
 
 ## [0.3.3] - 2026-06-09
 
