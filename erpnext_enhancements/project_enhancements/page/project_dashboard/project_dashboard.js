@@ -131,7 +131,7 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 		});
 
 		const controlsContainer = $(`
-            <div class="dashboard-controls p-2 border-bottom bg-light">
+            <div class="dashboard-controls p-2 border-bottom" style="background: var(--subtle-fg);">
                 <div class="row align-items-center">
                     <div class="col-md-8 mb-2 mb-md-0 d-flex align-items-center">
                         <div class="input-group input-group-sm mr-2" style="max-width: 300px;">
@@ -160,7 +160,7 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
             </div>
         `).appendTo(container);
 
-		const contentContainer = $('<div class="dashboard-content p-3 bg-white"></div>').appendTo(
+		const contentContainer = $('<div class="dashboard-content p-3" style="background: var(--card-bg);"></div>').appendTo(
 			container
 		);
 

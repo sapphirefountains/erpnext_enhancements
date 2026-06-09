@@ -85,8 +85,8 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 				right: 0;
 				top: calc(100% + 4px);
 				z-index: 1050;
-				background: #fff;
-				border: 1px solid #dee2e6;
+				background: var(--popover-bg, var(--card-bg));
+				border: 1px solid var(--border-color);
 				border-radius: 6px;
 				padding: 6px 0;
 				min-width: 160px;
@@ -102,7 +102,7 @@ erpnext_enhancements.dashboard_components.ColumnSelector = class ColumnSelector 
 				cursor: pointer;
 				white-space: nowrap;
 			}
-			.column-selector-item:hover { background-color: #f8f9fa; }
+			.column-selector-item:hover { background-color: var(--fg-hover-color); }
 			.column-selector-item input { margin: 0; }
 			.hidden-column { display: none !important; }
 		`).appendTo("head");

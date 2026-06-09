@@ -997,13 +997,13 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
                      'style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; overflow-y: auto; padding: 5px;">' +
                     '<div v-for="file in files" :key="file.name" ' +
                          'class="file-card shadow-sm border rounded" ' +
-                         'style="background: #fff; transition: transform 0.2s; display: flex; flex-direction: column; overflow: hidden;">' +
-                        
-                        '<div class="preview-box" style="height: 140px; background: #f8f9fa; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #eee;">' +
+                         'style="background: var(--card-bg); transition: transform 0.2s; display: flex; flex-direction: column; overflow: hidden;">' +
+
+                        '<div class="preview-box" style="height: 140px; background: var(--control-bg); display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid var(--border-color);">' +
                             '<img v-if="is_image(file.file_name)" :src="file.file_url" style="width: 100%; height: 100%; object-fit: cover;" />' +
                             '<div v-else class="text-center">' +
-                                '<i :class="get_icon_class(file.file_name)" style="font-size: 3rem; color: #adb5bd;"></i>' +
-                                '<div class="text-uppercase font-weight-bold mt-2" style="font-size: 10px; color: #6c757d;">{{ get_extension(file.file_name) }}</div>' +
+                                '<i :class="get_icon_class(file.file_name)" style="font-size: 3rem; color: var(--text-muted);"></i>' +
+                                '<div class="text-uppercase font-weight-bold mt-2" style="font-size: 10px; color: var(--text-muted);">{{ get_extension(file.file_name) }}</div>' +
                             '</div>' +
                         '</div>' +
 
@@ -1023,7 +1023,7 @@ erpnext_enhancements.sidebar.open_file_manager = function(frm) {
                     '</div>' +
                 '</div>' +
 
-                '<div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed #ddd; border-radius: 8px;">' +
+                '<div v-else class="text-center text-muted" style="padding: 100px 0; border: 2px dashed var(--border-color); border-radius: 8px;">' +
                     '<i class="fa fa-cloud-upload" style="font-size: 4rem; opacity: 0.2;"></i>' +
                     '<h5 class="mt-3">' + __('No files found') + '</h5>' +
                     '<p>' + __('Drag and drop files anywhere in this window to upload.') + '</p>' +

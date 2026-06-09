@@ -83,15 +83,15 @@ frappe.provide("erpnext_enhancements.filter_help");
                         <div class="filter-help-content" style="padding: 10px;">
                             <p>${__("The filter system allows you to narrow down your list to find specific records.")}</p>
 
-                            <div class="filter-example-visual" style="background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #d1d8dd; margin-bottom: 20px;">
+                            <div class="filter-example-visual" style="background: var(--control-bg); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
                                 <div style="display: flex; align-items: center; gap: 10px; font-family: monospace; font-size: 13px;">
 
                                     <!-- Field Column -->
                                     <div style="flex: 1; text-align: center;">
-                                        <div style="background: white; border: 1px solid #d1d8dd; padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                                        <div style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                             <strong>ID</strong>
                                         </div>
-                                        <div style="margin-top: 8px; color: #666; font-size: 11px;">
+                                        <div style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">
                                             <span style="display: block;">Column 1</span>
                                             <strong>What to filter</strong>
                                         </div>
@@ -99,10 +99,10 @@ frappe.provide("erpnext_enhancements.filter_help");
 
                                     <!-- Condition Column -->
                                     <div style="flex: 1; text-align: center;">
-                                        <div style="background: white; border: 1px solid #d1d8dd; padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                                        <div style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                             <strong>Equals</strong>
                                         </div>
-                                        <div style="margin-top: 8px; color: #666; font-size: 11px;">
+                                        <div style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">
                                             <span style="display: block;">Column 2</span>
                                             <strong>How to filter</strong>
                                             <a href="#" class="filter-condition-help-link" style="margin-left: 5px; text-decoration: none;" title="${__('Click to see filter options')}">❓</a>
@@ -111,10 +111,10 @@ frappe.provide("erpnext_enhancements.filter_help");
 
                                     <!-- Value Column -->
                                     <div style="flex: 1; text-align: center;">
-                                        <div style="background: white; border: 1px solid #d1d8dd; padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                                        <div style="background: var(--card-bg); border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                             <strong>12345</strong>
                                         </div>
-                                        <div style="margin-top: 8px; color: #666; font-size: 11px;">
+                                        <div style="margin-top: 8px; color: var(--text-muted); font-size: 11px;">
                                             <span style="display: block;">Column 3</span>
                                             <strong>Value</strong>
                                         </div>
@@ -130,12 +130,12 @@ frappe.provide("erpnext_enhancements.filter_help");
                                 <p class="text-muted"><small><em>Tip: You can add multiple filters to further narrow down your results.</em></small></p>
                             </div>
 
-                            <div class="filter-condition-details" style="display: none; margin-top: 15px; border-top: 1px solid #d1d8dd; padding-top: 15px;">
+                            <div class="filter-condition-details" style="display: none; margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
                                 <h5>${__("Filter Conditions Explained")}</h5>
                                 <div style="display: flex; gap: 20px; flex-wrap: wrap;">
                                     <div style="flex: 1; min-width: 250px;">
                                         <h6>${__("Standard Filters")}</h6>
-                                        <ul style="padding-left: 20px; font-size: 12px; color: #36414c; line-height: 1.6;">
+                                        <ul style="padding-left: 20px; font-size: 12px; color: var(--text-color); line-height: 1.6;">
                                             <li><strong>Equals:</strong> ${__("The field value must exactly match the value you enter.")}</li>
                                             <li><strong>Not Equals:</strong> ${__("The field value must not be the same as the value you enter.")}</li>
                                             <li><strong>Like:</strong> ${__("Partial match. Finds records where the field contains the text you enter.")}</li>
@@ -147,7 +147,7 @@ frappe.provide("erpnext_enhancements.filter_help");
                                     </div>
                                     <div style="flex: 1; min-width: 250px;">
                                         <h6>${__("Time-based Filters (for Dates)")}</h6>
-                                        <ul style="padding-left: 20px; font-size: 12px; color: #36414c; line-height: 1.6;">
+                                        <ul style="padding-left: 20px; font-size: 12px; color: var(--text-color); line-height: 1.6;">
                                             <li><strong>Is:</strong> ${__("Matches a specific date.")}</li>
                                             <li><strong>After / Before:</strong> ${__("Matches dates after or before a specific date.")}</li>
                                             <li><strong>On or After / On or Before:</strong> ${__("Inclusive comparison.")}</li>

@@ -687,7 +687,7 @@
 .triton-mermaid {
 	margin: 8px 0;
 	padding: 10px;
-	background: #fff;
+	background: var(--card-bg, #fff);
 	border: 1px solid var(--border-color, #e2e6e9);
 	border-radius: 8px;
 	overflow-x: auto;

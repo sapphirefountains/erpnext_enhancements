@@ -1119,6 +1119,13 @@ mark {
     color: #ffffff !important;
 }
 
+/* Timeless Night: the deep-navy high-value card sits too close to the near-black
+   desk background, so lift the navy slightly and add an edge to keep it distinct. */
+[data-theme="dark"] .kanban-card-body.opportunity-high-value {
+    background-color: #013a5e !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
 /* Ensure tags and other elements also look good on dark background */
 .kanban-card-body.opportunity-high-value .tag-label {
     border-color: rgba(255, 255, 255, 0.4) !important;

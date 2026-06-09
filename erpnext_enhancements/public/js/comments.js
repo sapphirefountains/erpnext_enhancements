@@ -312,7 +312,7 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     No notes yet.
                 </div>
                 <div v-else class="comments-list">
-                    <div v-for="comment in comments" :key="comment.name" class="comment-item d-flex border-bottom py-3" style="display: flex; padding: 15px; border-bottom: 1px solid #eee;">
+                    <div v-for="comment in comments" :key="comment.name" class="comment-item d-flex border-bottom py-3" style="display: flex; padding: 15px; border-bottom: 1px solid var(--border-color);">
                         <div class="comment-sidebar mr-4" style="width: 250px; min-width: 250px; margin-right: 20px;">
                             <div class="d-flex align-items-center mb-2" style="display: flex; align-items: center; margin-bottom: 5px;">
                                 <span class="avatar avatar-medium mr-2 comment-avatar" :title="comment.full_name" style="margin-right: 10px; flex-shrink: 0;">
@@ -323,7 +323,7 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                 </span>
                                 <div class="font-weight-bold text-truncate" :title="comment.full_name" style="font-weight: 600;">{{ comment.full_name }}</div>
                             </div>
-                            <div class="text-muted small" style="color: #888; font-size: 12px; margin-left: 45px;">
+                            <div class="text-muted small" style="color: var(--text-muted); font-size: 12px; margin-left: 45px;">
                                 {{ formatDateTime(comment.creation) }}
                             </div>
                         </div>

@@ -94,7 +94,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	renderStructure() {
 		this.wrapper.html(`
-            <div class="task-tree-manager p-3 bg-white border rounded">
+            <div class="task-tree-manager p-3 border rounded" style="background: var(--card-bg);">
                 <div class="task-tree-header mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <div class="d-flex align-items-center">
@@ -164,7 +164,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                 </div>
 
                 <div class="task-grid">
-                    <div class="task-grid-header d-flex bg-light font-weight-bold border-bottom py-2">
+                    <div class="task-grid-header d-flex font-weight-bold border-bottom py-2" style="background: var(--subtle-fg);">
                         <div class="task-grid-cell" style="flex: 5;">Task</div>
                         <div class="task-grid-cell assignee-cell ${this.columnVisibility.owner ? "" : "hidden-column"}" data-column="owner" style="flex: 1.5;">Assigned To</div>
                         <div class="task-grid-cell status-cell ${this.columnVisibility.status ? "" : "hidden-column"}" data-column="status" style="flex: 1.5;">Status</div>
@@ -288,7 +288,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 		if (!$("#task-tree-styles").length) {
 			$("<style id='task-tree-styles'>").html(`
-				.task-search-match { background-color: #fff9c4 !important; }
+				.task-search-match { background-color: var(--fg-hover-color) !important; }
 				.task-ghost-node { opacity: 0.5; }
 				.task-ghost-node:hover { opacity: 0.8; }
 			`).appendTo("head");
@@ -330,7 +330,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	createQuickAddRow(parentTask, level) {
 		const indent = level * 20;
 		const row = $(`
-			<div class="task-grid-row quick-add-row" style="background-color: #f9fafb;">
+			<div class="task-grid-row quick-add-row" style="background-color: var(--control-bg);">
 				<div class="task-grid-cell" style="flex: 5;">
 					<div style="padding-left: ${indent}px; display: flex; align-items: center; width: 100%;">
 						<i class="fa fa-plus-circle text-muted mr-2" style="flex-shrink: 0;"></i>

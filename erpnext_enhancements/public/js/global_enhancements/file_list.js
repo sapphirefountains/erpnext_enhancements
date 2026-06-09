@@ -118,7 +118,7 @@ frappe.provide("erpnext_enhancements.file_preview");
 			.ee-fp-stage img, .ee-fp-stage video { max-width: 100%; max-height: 82vh; border-radius: 4px; }
 			.ee-fp-stage iframe {
 				width: min(1100px, 90vw); height: 82vh; border: 0;
-				background: #fff; border-radius: 4px;
+				background: var(--card-bg); border-radius: 4px;
 			}
 			.ee-fp-fallback {
 				text-align: center; color: #dadce0;
