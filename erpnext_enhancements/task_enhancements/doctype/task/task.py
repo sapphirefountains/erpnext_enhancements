@@ -127,9 +127,9 @@ def get_child_tasks_html(task_name):
                 display: flex;
                 align-items: center;
                 padding: 8px;
-                border-bottom: 1px solid #d1d8dd;
+                border-bottom: 1px solid var(--border-color);
             }
-            .task-tree-header { font-weight: bold; background-color: #f7fafc; }
+            .task-tree-header { font-weight: bold; background-color: var(--subtle-fg); }
             .task-tree-col {
                 flex-grow: 1; flex-basis: 0; padding: 0 8px;
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

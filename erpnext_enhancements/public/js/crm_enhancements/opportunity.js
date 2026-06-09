@@ -199,7 +199,7 @@ frappe.ui.form.on("Opportunity", {
 							<p>Project created, but folder provisioning failed.</p>
 							<details>
 								<summary>Technical Error Details</summary>
-								<pre style="margin-top: 10px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd;">${data.drive_error}</pre>
+								<pre style="margin-top: 10px; padding: 10px; background-color: var(--subtle-fg); border: 1px solid var(--border-color);">${data.drive_error}</pre>
 							</details>
 							<p><a href="/app/error-log">Check Error Log</a></p>
 						`;

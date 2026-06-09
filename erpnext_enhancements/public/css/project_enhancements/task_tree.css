@@ -12,29 +12,29 @@
 	display: flex;
 	flex-direction: column;
 	width: 100%;
-	border: 1px solid #d1d8dd;
+	border: 1px solid var(--border-color);
 	border-radius: 4px;
-	background-color: #fff;
+	background-color: var(--card-bg);
 	overflow: hidden;
 }
 
 .task-grid-header {
 	display: flex;
-	background-color: #f8f9fa;
-	border-bottom: 1px solid #d1d8dd;
+	background-color: var(--subtle-fg);
+	border-bottom: 1px solid var(--border-color);
 	font-weight: 600;
-	color: #4d4d4d;
+	color: var(--text-muted);
 }
 
 .task-grid-row {
 	display: flex;
 	align-items: center;
-	border-bottom: 1px solid #e2e8f0;
+	border-bottom: 1px solid var(--border-color);
 	padding: 8px 0;
 }
 
 .task-grid-row:hover {
-	background-color: #f8f9fa;
+	background-color: var(--fg-hover-color);
 }
 
 .task-grid-body .task-node:last-child > .task-grid-row {
@@ -124,12 +124,14 @@
 }
 
 .unsaved-change {
-	background-color: #fff3cd;
+	/* Theme-safe amber wash: readable on both Frappe Light and Timeless Night
+	   (a solid #fff3cd would glare against the dark desk). */
+	background-color: rgba(255, 193, 7, 0.18);
 }
 
 .task-drag-handle {
 	cursor: grab;
-	color: #a0aec0;
+	color: var(--text-muted);
 }
 
 .task-drag-handle:active {
@@ -139,14 +141,15 @@
 /* --- Drag & drop feedback --- */
 /* Hovering the middle of a row: the dragged task will nest as its child. */
 .task-grid-row.drop-as-child {
-	background-color: #e8f0fe !important;
-	box-shadow: inset 3px 0 0 #2563eb;
+	/* Translucent primary wash so the nest target reads on light and dark. */
+	background-color: rgba(37, 99, 235, 0.12) !important;
+	box-shadow: inset 3px 0 0 var(--primary);
 }
 
 /* SortableJS placeholder shown when reordering as a sibling. */
 .task-node.sortable-ghost > .task-grid-row {
-	background-color: #f1f5f9;
-	outline: 2px dashed #2563eb;
+	background-color: var(--subtle-accent);
+	outline: 2px dashed var(--primary);
 	outline-offset: -2px;
 	opacity: 0.7;
 }
@@ -167,7 +170,7 @@
 }
 
 .task-recurring-icon {
-	color: #2563eb;
+	color: var(--primary);
 	font-size: 9px;
 	flex-shrink: 0;
 }
@@ -205,8 +208,8 @@
 	overflow-y: auto;
 	margin-top: 4px;
 	padding: 6px 0;
-	background-color: #fff;
-	border: 1px solid #d1d8dd;
+	background-color: var(--popover-bg, var(--card-bg));
+	border: 1px solid var(--border-color);
 	border-radius: 6px;
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
@@ -223,7 +226,7 @@
 }
 
 .column-selector-item:hover {
-	background-color: #f8f9fa;
+	background-color: var(--fg-hover-color);
 }
 
 .column-selector-item input {

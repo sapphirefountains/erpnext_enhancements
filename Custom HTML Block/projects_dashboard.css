@@ -10,22 +10,28 @@
  * frappe-gantt overrides for the Portfolio Gantt tab. NOTE: per-bar fill colours are
  * NOT set here — projects_dashboard.js injects them dynamically (see the comment by
  * "PORTFOLIO GANTT TYPOGRAPHY & OVERRIDES").
+ *
+ * THEME: all chrome colours use Frappe desk variables so the block tracks the
+ * active theme automatically — Frappe Light (data-theme="light") and Timeless
+ * Night (data-theme="dark"). The gantt sub-palette (--g-*) ships a light default
+ * plus an html[data-theme="dark"] override mirroring the vendored frappe-gantt.css.
  */
 .project-dashboard-container {
-    background: #fff;
+    background: var(--card-bg);
     border-radius: 4px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
-.dashboard-tabs .nav-link { font-weight: 600; color: #4d4d4d; }
-.dashboard-tabs .nav-link.active { color: #007bff; border-bottom: 2px solid #007bff; }
+.dashboard-tabs .nav-link { font-weight: 600; color: var(--text-muted); }
+.dashboard-tabs .nav-link.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
 
 /* Skeleton Loader */
 .skeleton-list { animation: pulse-bg 1.5s infinite; }
-.skeleton-line { background-color: #e2e8f0; border-radius: 4px; }
+.skeleton-line { background-color: var(--skeleton-bg, var(--control-bg)); border-radius: 4px; }
 @keyframes pulse-bg { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 
-/* Status Badges */
+/* Status Badges — saturated brand colours read on both themes; text colour is
+   chosen for contrast against each fill, so these stay literal. */
 .badge-primary { background-color: #007bff; color: #fff; }
 .badge-success { background-color: #28a745; color: #fff; }
 .badge-danger { background-color: #dc3545; color: #fff; }
@@ -35,13 +41,13 @@
 
 /* Editable Cells & Hover Effects */
 .editable-cell { position: relative; min-width: 140px; transition: background-color 0.2s; }
-.editable-cell:hover { background-color: #f1f8ff; }
+.editable-cell:hover { background-color: var(--fg-hover-color); }
 .editable-cell .static-view { padding: 4px; display: block; }
 
 /* Clickable Table Headers */
 .sortable-header { cursor: pointer; user-select: none; transition: background-color 0.2s; }
-.sortable-header:hover { background-color: #d1d8dd !important; }
-.sortable-header.active-sort { background-color: #e2e8f0 !important; color: #007bff; }
+.sortable-header:hover { background-color: var(--fg-hover-color) !important; }
+.sortable-header.active-sort { background-color: var(--control-bg) !important; color: var(--primary); }
 .sortable-header.active-sort.sort-asc::after { content: " \f0de"; font-family: "FontAwesome"; margin-left: 6px; }
 .sortable-header.active-sort.sort-desc::after { content: " \f0dd"; font-family: "FontAwesome"; margin-left: 6px; }
 
@@ -51,24 +57,26 @@
 /* Note: We DO NOT define bar fill colors here. The JS observer injects them */
 /* ========================================================================= */
 
+/* Master/Project bars are always saturated fills, so white labels read on both
+   themes. Task bars use the themed --g-text-dark (flips light in dark mode). */
 .gantt .gantt-master-project .bar-label { font-weight: bold !important; fill: #fff !important; }
 .gantt .gantt-project .bar-label { font-weight: bold !important; fill: #fff !important; }
 
 /* FIX: Align text vertically with shrunk task bars */
 .gantt .gantt-task .bar, .gantt .gantt-task .bar-progress, .gantt .gantt-task .bar-label { transform: translateY(3px) !important; }
 .gantt .gantt-task .bar, .gantt .gantt-task .bar-progress { height: 14px !important; }
-.gantt .gantt-task .bar-label { font-size: 11px !important; fill: #333 !important; }
+.gantt .gantt-task .bar-label { font-size: 11px !important; fill: var(--g-text-dark) !important; }
 
 /* Fix overlapping labels */
 .gantt .gantt-master-project .bar-label.big,
 .gantt .gantt-project .bar-label.big,
-.gantt .gantt-task .bar-label.big { fill: #333 !important; font-weight: bold; }
+.gantt .gantt-task .bar-label.big { fill: var(--g-text-dark) !important; font-weight: bold; }
 
 /* SVG Labels Toggle styling */
 .gantt .bar-label { cursor: pointer; pointer-events: auto; transition: fill 0.2s; user-select: none; }
-.gantt .bar-label:hover { fill: #007bff !important; text-decoration: underline; }
-.gantt .gantt-toggle-btn { fill: #007bff !important; font-weight: bold; cursor: pointer; font-size: 14px; }
-.gantt .gantt-toggle-btn:hover { fill: #0056b3 !important; }
+.gantt .bar-label:hover { fill: var(--primary) !important; text-decoration: underline; }
+.gantt .gantt-toggle-btn { fill: var(--primary) !important; font-weight: bold; cursor: pointer; font-size: 14px; }
+.gantt .gantt-toggle-btn:hover { fill: var(--primary) !important; filter: brightness(0.85); }
 
 .check-dropdown .dropdown-menu.show { display: block !important; }
 
@@ -81,8 +89,8 @@
     right: 0;
     top: calc(100% + 4px);
     z-index: 1050;
-    background: #fff;
-    border: 1px solid #dee2e6;
+    background: var(--popover-bg, var(--card-bg));
+    border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 6px 0;
     min-width: 160px;
@@ -98,13 +106,15 @@
     cursor: pointer;
     white-space: nowrap;
 }
-.column-selector-item:hover { background-color: #f8f9fa; }
+.column-selector-item:hover { background-color: var(--fg-hover-color); }
 .column-selector-item input { margin: 0; }
 .hidden-column { display: none !important; }
 
 
 /* ========================================================================= */
 /* BASE SVG RULES TO PREVENT BLACK BOX RENDERING & FIX STICKY HEADERS        */
+/* Light defaults + a dark override (mirrors frappe-gantt.css) so the gantt   */
+/* tracks Frappe Light / Timeless Night automatically.                       */
 /* ========================================================================= */
 :root {
   --g-arrow-color: #1f2937; --g-bar-color: #fff; --g-bar-border: #fff;
@@ -115,12 +125,21 @@
   --g-header-background: #fff; --g-row-color: #fdfdfd; --g-row-border-color: #c7c7c7;
   --g-today-highlight: #37352f; --g-popup-actions: #ebeff2; --g-weekend-highlight-color: #f7f7f7;
 }
+html[data-theme="dark"] {
+  --g-arrow-color: #e5e5e5; --g-bar-color: #2a2a2a; --g-bar-border: #3a3a3a;
+  --g-tick-color-thick: #1a1a1a; --g-tick-color: #0a0a0a; --g-actions-background: #1a1a1a;
+  --g-border-color: #2a2a2a; --g-text-muted: #999999; --g-text-light: #ffffff;
+  --g-text-dark: #f5f5f5; --g-progress-color: #4a4a4a; --g-handle-color: #d0d0d0;
+  --g-weekend-label-color: #3a3a3a; --g-expected-progress: #5a5a5a;
+  --g-header-background: #0a0a0a; --g-row-color: #141414; --g-row-border-color: #2a2a2a;
+  --g-today-highlight: #999999; --g-popup-actions: #1a1a1a; --g-weekend-highlight-color: #0f0f0f;
+}
 
 #gantt-chart-target { height: 600px; width: 100%; }
 
 .gantt-container {
   line-height: 14.5px; position: relative; overflow-y: auto !important; overflow-x: auto !important;
-  font-size: 12px; height: 100% !important; width: 100%; border-radius: 8px; isolation: isolate; background: white;
+  font-size: 12px; height: 100% !important; width: 100%; border-radius: 8px; isolation: isolate; background: var(--card-bg);
 }
 .gantt-container .popup-wrapper { position: absolute; top: 0; left: 0; background: var(--g-header-background); box-shadow: 0 10px 24px -3px #0003; padding: 10px; border-radius: 5px; width: max-content; z-index: 1000; }
 .gantt-container .popup-wrapper .title { margin-bottom: 2px; color: var(--g-text-dark); font-size: .85rem; font-weight: 650; line-height: 15px; }
@@ -130,29 +149,29 @@
 .gantt-container .lower-text, .gantt-container .upper-text { text-anchor: middle; }
 .gantt-container .upper-header { height: var(--gv-upper-header-height); }
 .gantt-container .lower-header { height: var(--gv-lower-header-height); }
-.gantt-container .lower-text { font-size: 12px; position: absolute; width: calc(var(--gv-column-width) * .8); height: calc(var(--gv-lower-header-height) * .8); margin: 0 calc(var(--gv-column-width) * .1); align-content: center; text-align: center; color: #333 !important; fill: #333 !important; }
-.gantt-container .upper-text { position: absolute; width: fit-content; font-weight: 500; font-size: 14px; height: calc(var(--gv-lower-header-height) * .66); color: #333 !important; fill: #333 !important; }
+.gantt-container .lower-text { font-size: 12px; position: absolute; width: calc(var(--gv-column-width) * .8); height: calc(var(--gv-lower-header-height) * .8); margin: 0 calc(var(--gv-column-width) * .1); align-content: center; text-align: center; color: var(--g-text-muted) !important; fill: var(--g-text-muted) !important; }
+.gantt-container .upper-text { position: absolute; width: fit-content; font-weight: 500; font-size: 14px; height: calc(var(--gv-lower-header-height) * .66); color: var(--g-text-dark) !important; fill: var(--g-text-dark) !important; }
 .gantt-container .current-upper { position: sticky; left: 0 !important; padding-left: 17px; background: var(--g-header-background); }
 .gantt-container .date-range-highlight { background-color: var(--g-progress-color); border-radius: 12px; height: calc(var(--gv-lower-header-height) - 6px); top: calc(var(--gv-upper-header-height) + 5px); position: absolute; }
 .gantt-container .current-highlight { position: absolute; background: var(--g-today-highlight); width: 1px; z-index: 99; }
 .gantt-container .current-ball-highlight { position: absolute; background: var(--g-today-highlight); z-index: 101; border-radius: 50%; }
-.gantt-container .current-date-highlight { background: var(--g-today-highlight); color: #ffffff !important; fill: #ffffff !important; border-radius: 5px; }
+.gantt-container .current-date-highlight { background: var(--g-today-highlight); color: var(--g-text-light) !important; fill: var(--g-text-light) !important; border-radius: 5px; }
 
 .gantt { user-select: none; -webkit-user-select: none; position: absolute; }
 .gantt .grid-background { fill: none; }
-.gantt .grid-row { fill: #ffffff; }
-.gantt .grid-row:nth-child(even) { fill: #f8f9fa; }
-.gantt .row-line { stroke: #ebeff2; }
-.gantt .tick { stroke: #e0e0e0; stroke-width: 0.2; }
-.gantt .tick.thick { stroke: #e0e0e0; stroke-width: 0.4; }
-.gantt .today-highlight { fill: #fcf8e3; opacity: 0.5; }
-.gantt .arrow { fill: none; stroke: #666; stroke-width: 1.4; }
-.gantt .bar { fill: #b8c2cc; stroke: #8D99A6; stroke-width: 0; rx: 3; ry: 3; transition: stroke-width .3s ease;}
-.gantt .bar-progress { fill: #a3a3ff; border-radius: 4px; }
-.gantt .bar-invalid { fill: transparent; stroke: #8D99A6; stroke-width: 1; stroke-dasharray: 5; }
-.gantt .bar-label { fill: #333; dominant-baseline: central; font-family: Helvetica; font-size: 13px; font-weight: 400; }
-.gantt .bar-label.big { fill: #555; text-anchor: start; }
-.gantt .handle { fill: #ddd; cursor: ew-resize; opacity: 0; transition: opacity 0.3s ease; }
+.gantt .grid-row { fill: var(--g-row-color); }
+.gantt .grid-row:nth-child(even) { fill: var(--g-actions-background); }
+.gantt .row-line { stroke: var(--g-border-color); }
+.gantt .tick { stroke: var(--g-tick-color); stroke-width: 0.2; }
+.gantt .tick.thick { stroke: var(--g-tick-color-thick); stroke-width: 0.4; }
+.gantt .today-highlight { fill: var(--g-weekend-highlight-color); opacity: 0.5; }
+.gantt .arrow { fill: none; stroke: var(--g-arrow-color); stroke-width: 1.4; }
+.gantt .bar { fill: var(--g-bar-color); stroke: var(--g-bar-border); stroke-width: 0; rx: 3; ry: 3; transition: stroke-width .3s ease;}
+.gantt .bar-progress { fill: var(--g-progress-color); border-radius: 4px; }
+.gantt .bar-invalid { fill: transparent; stroke: var(--g-bar-border); stroke-width: 1; stroke-dasharray: 5; }
+.gantt .bar-label { fill: var(--g-text-dark); dominant-baseline: central; font-family: Helvetica; font-size: 13px; font-weight: 400; }
+.gantt .bar-label.big { fill: var(--g-text-muted); text-anchor: start; }
+.gantt .handle { fill: var(--g-handle-color); cursor: ew-resize; opacity: 0; transition: opacity 0.3s ease; }
 .gantt .bar-wrapper { cursor: pointer; }
 .gantt .bar-wrapper .bar { outline: 1px solid var(--g-row-border-color); border-radius: 3px; }
 .gantt .bar-wrapper:hover .bar { transition: transform .3s ease; }

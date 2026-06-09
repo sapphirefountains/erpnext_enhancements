@@ -582,7 +582,7 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 		}
 		if (p.toLowerCase() === "maintenance") {
 			return (
-				'<span class="badge" style="background-color: #007bff; color: white;">' +
+				'<span class="badge" style="background-color: var(--primary); color: white;">' +
 				safe_p +
 				"</span>"
 			);

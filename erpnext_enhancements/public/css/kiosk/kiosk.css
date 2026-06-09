@@ -199,6 +199,10 @@
     --tk-border: #2c343b;
   }
   .tk-field select, .tk-field textarea, .tk-field input { background: #161a1d; color: var(--tk-text); }
+  /* Surfaces with no theme variable need explicit dark values (see [data-theme] block below). */
+  .tk-btn-outline { background: transparent; }
+  .tk-badge { background: rgba(36, 144, 239, 0.2); }
+  .tk-track-dot { background: #4a5568; }
 }
 :root[data-theme="dark"] {
   --tk-bg: #161a1d;
@@ -210,3 +214,6 @@
 [data-theme="dark"] .tk-field select,
 [data-theme="dark"] .tk-field textarea,
 [data-theme="dark"] .tk-field input { background: #161a1d; color: var(--tk-text); }
+[data-theme="dark"] .tk-btn-outline { background: transparent; }
+[data-theme="dark"] .tk-badge { background: rgba(36, 144, 239, 0.2); }
+[data-theme="dark"] .tk-track-dot { background: #4a5568; }

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-09
+
+### Added
+- **Full dark-mode ("Timeless Night") support across all customizations.** Every customization now tracks the active Frappe v16 desk theme — **Frappe Light** and **Timeless Night** — instead of assuming a light background. Detection follows Frappe's own mechanism: the *resolved* theme published on `<html data-theme="light|dark">`, so the user's "Automatic" preference is handled for free. CSS keys off `[data-theme="dark"]`; JavaScript reads `document.documentElement.getAttribute('data-theme')` only where a resolved colour string is actually required. Hardcoded colours were replaced with Frappe desk variables (`--card-bg`, `--bg-color`, `--control-bg`, `--subtle-fg`, `--fg-hover-color`, `--text-color`, `--text-muted`, `--border-color`, `--primary`, `--popover-bg`) that auto-switch between themes. Saturated semantic/status colours (success/danger/warning, value-stream and gantt data-viz palettes) and the print/portal templates were intentionally left literal.
+
+### Fixed
+- **Stylesheets converted to theme variables.** [`task_enhancements.css`](erpnext_enhancements/public/css/task_enhancements/task_enhancements.css), [`task_tree.css`](erpnext_enhancements/public/css/project_enhancements/task_tree.css), and the Custom HTML Block [`projects_dashboard.css`](Custom%20HTML%20Block/projects_dashboard.css) were fully converted from hardcoded `#fff`/`#333`/`#ddd` surfaces, text and borders to Frappe desk variables. The dashboard's local frappe-gantt palette (`--g-*`) gained an `html[data-theme="dark"]` override mirroring the vendored gantt stylesheet, and its hardcoded SVG text fills now use the themed `--g-*` variables.
+- **JavaScript-injected styles** in 15 desk scripts now use theme variables — Portfolio Gantt popups, Project gantt/heatmap/dependency-link styles, the file-manager/file-preview tiles, filter-help mock inputs, the comments UI, contacts/addresses tables, and the column-selector dropdown. The Project Brief follows the theme on screen but keeps an `@media print` block so printed briefs stay dark-on-white. Canvas/image exports (`domtoimage`) resolve `--card-bg` via `getComputedStyle`, which cannot parse `var()`.
+- **Server-rendered HTML** now emits theme variables: the Opportunity→Project notes block ([`crm_enhancements/api.py`](erpnext_enhancements/crm_enhancements/api.py)) and the Task hierarchy `<style>` block ([`task.py`](erpnext_enhancements/task_enhancements/doctype/task/task.py)).
+- **The Projects Dashboard shell** ([`projects_dashboard.html`](Custom%20HTML%20Block/projects_dashboard.html)) dropped fixed-light Bootstrap utilities (`bg-white`/`bg-light`/`btn-white`) that glared in dark mode, in favour of theme-aware surfaces and `btn-default`.
+- **Dark-mode contrast bugs in already-themed files.** The Triton assistant's mermaid diagram box (a white panel inside the dark chat), the high-value Opportunity kanban card (deep-navy card with no edge against the dark desk), and three Time-Kiosk surfaces (outline button, badge, inactive tracking dot) now have proper dark-theme treatments.
+
 ## [0.3.3] - 2026-06-09
 
 ### Fixed

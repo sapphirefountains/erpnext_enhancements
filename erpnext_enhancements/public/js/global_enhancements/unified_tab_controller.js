@@ -187,7 +187,7 @@ erpnext_enhancements.unified_controller = {
 
 				let table = `
 					<div class="table-responsive">
-					<table class="table table-bordered table-hover" style="background: white;">
+					<table class="table table-bordered table-hover" style="background: var(--card-bg);">
 						<thead>
 							<tr>
 								<th>Name</th>
@@ -313,7 +313,7 @@ erpnext_enhancements.unified_controller = {
 
 				let table = `
 					<div class="table-responsive">
-					<table class="table table-bordered table-hover" style="background: white;">
+					<table class="table table-bordered table-hover" style="background: var(--card-bg);">
 						<thead>
 							<tr>
 								<th>Address</th>

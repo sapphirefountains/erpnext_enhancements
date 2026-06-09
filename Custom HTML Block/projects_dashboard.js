@@ -587,7 +587,7 @@
                 custom_popup_html: function (item) {
                     const cleanName = item.name.replace(/<[^>]*>?/gm, '').replace(/[↳•▼▶]/g, '').trim();
                     if (item.isMaster) {
-                        return `<div class="gantt-popup" style="padding: 10px; background: white; border: 1px solid #ccc; border-radius: 4px;">
+                        return `<div class="gantt-popup" style="padding: 10px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px;">
                                     <h5 class="mb-1">${cleanName}</h5>
                                     <p class="mb-0 text-muted"><strong>Overall Progress:</strong> ${Math.round(item.progress)}%</p>
                                 </div>`;
@@ -597,8 +597,8 @@
                     const titlePrefix = item.isTask ? "Task" : "Project";
 
                     return `
-                        <div class="gantt-popup" style="padding: 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000; position: absolute; min-width: 200px;">
-                            <h6 style="margin: 0 0 8px 0; color: #333;">${titlePrefix}: ${cleanName}</h6>
+                        <div class="gantt-popup" style="padding: 12px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000; position: absolute; min-width: 200px;">
+                            <h6 style="margin: 0 0 8px 0; color: var(--text-color);">${titlePrefix}: ${cleanName}</h6>
                             <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Start:</strong> ${startDate}</p>
                             <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>End:</strong> ${endDate}</p>
                             <p style="margin: 0; font-size: 12px;"><strong>Progress:</strong> ${Math.round(item.progress)}%</p>

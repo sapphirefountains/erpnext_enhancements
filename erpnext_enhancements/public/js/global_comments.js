@@ -235,7 +235,7 @@ erpnext_enhancements.timeline_attachments.init = function() {
 
             // Show loading UI for this file
             const $preview_item = $(`
-                <div class="attachment-preview-item" data-temp-id="${file_id_temp}" style="padding: 5px; border: 1px solid #ddd; border-radius: 4px; display: flex; align-items: center; background: #f9f9f9;">
+                <div class="attachment-preview-item" data-temp-id="${file_id_temp}" style="padding: 5px; border: 1px solid var(--border-color); border-radius: 4px; display: flex; align-items: center; background: var(--control-bg);">
                     <i class="fa fa-spinner fa-spin text-muted" style="margin-right: 5px;"></i>
                     <span class="text-muted" style="font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${file.name}</span>
                 </div>

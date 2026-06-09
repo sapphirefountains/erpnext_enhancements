@@ -285,10 +285,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 					# Build HTML for custom_opportunity_notes
 					notes_html_parts.append(
-						f"""<div style="margin-bottom: 10px; padding: 10px; border: 1px solid #d1d8dd; border-radius: 4px; background-color: #f9f9f9;">
+						f"""<div style="margin-bottom: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; background-color: var(--control-bg);">
 							<div style="margin-bottom: 5px;">
 								<strong>{frappe.utils.escape_html(str(note_row.added_by))}</strong>
-								<span style="color: #6c757d; font-size: 0.9em; margin-left: 5px;">on {frappe.utils.escape_html(str(note_row.added_on))}</span>
+								<span style="color: var(--text-muted); font-size: 0.9em; margin-left: 5px;">on {frappe.utils.escape_html(str(note_row.added_on))}</span>
 							</div>
 							<div>{frappe.utils.escape_html(str(note_row.note))}</div>
 						</div>"""
