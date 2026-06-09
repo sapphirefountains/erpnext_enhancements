@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-09
+
+### Added
+- **Version-controlled snapshot of all manual Customize Form customizations** (`customizations_snapshot/`). All 425 manually created Custom Fields and 349 Property Setters were exported from the live site (read-only, via MCP) and committed as record-keeping JSON — Phase 1 of moving customizations into version control. The directory sits outside the app package's `fixtures/`, so **nothing is imported or applied on migrate**; promoting it to enforced fixtures is a deliberate Phase 2 change. Six records flagged "manual" on the site but actually owned by installed apps (3× `lms` User fields, 1× `frappe_assistant_core` User field, the LMS Certificate default print format, and the workflow engine's auto-created `workflow_state` field) are deliberately excluded — see `customizations_snapshot/README.md` for the audit trail.
+
+### Fixed (documented, not yet applied)
+- The audit found `erpnext_enhancements/fixtures/custom_field.json` has drifted from the live site (7 records, mostly comments-tab `insert_after` positions) and wrongly includes the HRMS-owned `Project-total_expense_claim` via its broad `dt = Project` filter. Both are documented in the snapshot README as Phase 2 work; no fixture behavior changes in this release.
+
 ## [0.4.0] - 2026-06-09
 
 ### Added
