@@ -528,6 +528,117 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			});
 		});
 		this.wrapper.on("click", ".save-order-btn", () => me.saveTaskOrder());
+
+		this.wrapper.on("click", ".assignee-link", function (e) {
+			e.preventDefault();
+			if (me.readonly) return;
+			const taskId = $(this).closest(".task-node").data("task-id");
+			me.showAssigneePicker(taskId);
+		});
+	}
+
+	showAssigneePicker(taskName) {
+		const me = this;
+		const d = new frappe.ui.Dialog({
+			title: __("Assign Task"),
+			fields: [
+				{
+					fieldname: "current_assignees_html",
+					fieldtype: "HTML",
+				},
+				{
+					label: __("Assign To"),
+					fieldname: "user",
+					fieldtype: "Link",
+					options: "User",
+				},
+			],
+			primary_action_label: __("Add"),
+			primary_action(values) {
+				if (!values.user) return;
+				frappe.call({
+					method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.add_task_assignee",
+					args: { task_name: taskName, user_id: values.user },
+					callback: (r) => {
+						if (r.message && r.message.status === "success") {
+							frappe.show_alert({ message: __("User assigned"), indicator: "green" });
+							d.set_value("user", "");
+							renderCurrentAssignees(r.message.assignees);
+							me.fetchData();
+						} else {
+							frappe.show_alert({
+								message: __((r.message && r.message.message) || "Failed to assign user"),
+								indicator: "red",
+							});
+						}
+					},
+				});
+			},
+		});
+
+		const renderCurrentAssignees = (assignees) => {
+			const $field = d.fields_dict.current_assignees_html.$wrapper;
+			if (!assignees || assignees.length === 0) {
+				$field.html('<p class="text-muted small mb-2">No users assigned yet.</p>');
+				return;
+			}
+			const rows = assignees
+				.map(
+					(a) => `
+				<div class="d-flex justify-content-between align-items-center py-1 assignee-row">
+					<span>${frappe.utils.escape_html(a.full_name || a.email)}</span>
+					<button class="btn btn-xs btn-default remove-assignee-btn" data-user="${a.email}" title="${__("Remove")}">
+						<i class="fa fa-times"></i>
+					</button>
+				</div>`
+				)
+				.join("");
+			$field.html(`<div class="mb-2">${rows}</div>`);
+			$field.find(".remove-assignee-btn").on("click", function () {
+				const userId = $(this).data("user");
+				frappe.call({
+					method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.remove_task_assignee",
+					args: { task_name: taskName, user_id: userId },
+					callback: (r) => {
+						if (r.message && r.message.status === "success") {
+							frappe.show_alert({ message: __("Assignment removed"), indicator: "green" });
+							renderCurrentAssignees(r.message.assignees);
+							me.fetchData();
+						} else {
+							frappe.show_alert({
+								message: __((r.message && r.message.message) || "Failed to remove assignment"),
+								indicator: "red",
+							});
+						}
+					},
+				});
+			});
+		};
+
+		renderCurrentAssignees([]);
+		// Load current assignees from open ToDos for this task.
+		frappe.db
+			.get_list("ToDo", {
+				filters: { reference_type: "Task", reference_name: taskName, status: "Open" },
+				fields: ["allocated_to"],
+				limit: 0,
+			})
+			.then((todos) => {
+				const emails = [...new Set((todos || []).map((t) => t.allocated_to).filter(Boolean))];
+				if (emails.length === 0) {
+					renderCurrentAssignees([]);
+					return;
+				}
+				frappe.db
+					.get_list("User", {
+						filters: { email: ["in", emails] },
+						fields: ["email", "full_name"],
+						limit: 0,
+					})
+					.then((users) => renderCurrentAssignees(users));
+			});
+
+		d.show();
 	}
 
 	updatePendingChange(taskId, field, value) { if (!this.pendingChanges[taskId]) this.pendingChanges[taskId] = {}; this.pendingChanges[taskId][field] = value; }

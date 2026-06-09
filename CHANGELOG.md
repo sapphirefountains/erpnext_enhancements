@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-09
+
+### Fixed
+- **Task tree "Assigned To" column is now clickable.** Clicking the assignee link on a task row in the Project form's Scope tab (and the Project Dashboard Tasks tree view) previously did nothing. It now opens an assignment dialog listing current assignees with remove buttons and a User picker to add new ones, wired to the existing `add_task_assignee` / `remove_task_assignee` backend methods. Disabled in read-only mode. (`erpnext_enhancements/public/js/project_enhancements/task_tree_manager.js`)
+
 ## [0.3.2] - 2026-06-09
 
 ### Added
