@@ -24,11 +24,13 @@
 {# PWA declaration: manifest, theme/standalone meta, app icons, and kiosk styles. #}
 {% block head_include %}
 <link rel="manifest" href="/kiosk-manifest.json">
-<meta name="theme-color" content="#2490ef">
+<meta name="theme-color" content="#00a0dd">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Time Kiosk">
+<link rel="icon" type="image/svg+xml" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
 <link rel="apple-touch-icon" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
 <link rel="stylesheet" href="/assets/erpnext_enhancements/css/kiosk/kiosk.css">
 {% endblock %}
