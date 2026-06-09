@@ -1,3 +1,12 @@
+"""Integration tests for time-kiosk geolocation telemetry (``api.time_kiosk``).
+
+Uses ``FrappeTestCase`` against a real test DB. The fixtures set up two
+employees — one unlinked (used by the legacy single-point ``log_geolocation``
+endpoint, run as Administrator) and one linked to a User with an open Job
+Interval (used by the session-trusted batch ingest). Coverage spans: single-point
+logging, batched ingest with coordinate validation and interval-ownership checks,
+grouped history reads with self-only permission enforcement, and retention purge.
+"""
 import json
 
 import frappe
@@ -99,6 +108,7 @@ class TestGeoTelemetry(FrappeTestCase):
 	# ----- Legacy single-point endpoint (runs as Administrator) -------------
 
 	def test_log_geolocation_success(self):
+		"""A valid single-point log is persisted with its coordinates."""
 		result = time_kiosk.log_geolocation(
 			employee=self.employee,
 			latitude=37.7749,
@@ -113,6 +123,7 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertEqual(logs[0].latitude, 37.7749)
 
 	def test_log_geolocation_missing_employee(self):
+		"""Logging with no employee returns an error citing the missing id."""
 		result = time_kiosk.log_geolocation(
 			employee=None,
 			latitude=0,
@@ -125,6 +136,7 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertIn("Employee ID is required", result['message'])
 
 	def test_log_geolocation_db_error(self):
+		"""A DB failure while saving the log is caught and reported, not raised."""
 		original_get_doc = frappe.get_doc
 
 		def side_effect(*args, **kwargs):
@@ -147,6 +159,7 @@ class TestGeoTelemetry(FrappeTestCase):
 	# ----- Batched, session-trusted ingest ---------------------------------
 
 	def test_batch_happy_path_ties_to_interval(self):
+		"""A batched point for the user's own interval is accepted and tied to it."""
 		frappe.set_user(self.user)
 		points = [{
 			"client_id": "c1",
@@ -164,6 +177,7 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertEqual(rows[0].job_interval, self.interval)
 
 	def test_batch_rejects_invalid_coords(self):
+		"""Out-of-range coordinates are rejected with reason 'invalid_coords'."""
 		frappe.set_user(self.user)
 		points = [{"client_id": "bad", "latitude": 200, "longitude": 0, "log_status": "Success"}]
 		result = time_kiosk.log_geolocation_batch(points)
@@ -171,6 +185,7 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertEqual(result["rejected"][0]["reason"], "invalid_coords")
 
 	def test_batch_foreign_interval_not_tied(self):
+		"""A point referencing another employee's interval is accepted but left untied."""
 		# An interval owned by a *different* employee must not be attached.
 		foreign = frappe.get_doc({
 			"doctype": "Job Interval",
@@ -199,6 +214,7 @@ class TestGeoTelemetry(FrappeTestCase):
 	# ----- History read + permissions --------------------------------------
 
 	def test_history_grouping_and_self_view(self):
+		"""An employee can read their own history, grouped by interval with point counts."""
 		frappe.set_user(self.user)
 		time_kiosk.log_geolocation_batch([
 			{"client_id": "h1", "job_interval": self.interval, "timestamp": "2026-01-01 10:00:00",
@@ -215,6 +231,7 @@ class TestGeoTelemetry(FrappeTestCase):
 		self.assertEqual(len(history["intervals"][0]["points"]), 2)
 
 	def test_history_permission_denied_for_other_employee(self):
+		"""Reading another employee's location history raises PermissionError."""
 		frappe.set_user(self.user)
 		with self.assertRaises(frappe.PermissionError):
 			time_kiosk.get_location_history(
@@ -223,6 +240,7 @@ class TestGeoTelemetry(FrappeTestCase):
 	# ----- Retention purge --------------------------------------------------
 
 	def test_purge_old_location_logs(self):
+		"""The retention purge deletes logs older than retention_days, keeping recent ones."""
 		frappe.set_user("Administrator")
 		# One ancient log, one fresh log.
 		for cid, ts in [("old", "2000-01-01 00:00:00"), ("new", frappe.utils.now_datetime())]:

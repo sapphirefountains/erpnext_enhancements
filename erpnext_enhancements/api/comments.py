@@ -1,3 +1,18 @@
+"""Custom comment CRUD endpoints for the enhanced timeline / notes UI.
+
+Whitelisted API consumed by ``public/js/comments.js``,
+``public/js/global_comments.js``, and ``public/js/crm_note_enhancements.js``
+to render, add, edit, delete, and attach files to comments on any document.
+
+Security model:
+        - Read/add require an explicit ``frappe.has_permission(..., "read")``
+          check on the referenced document; the Comment itself is then written
+          with ``ignore_permissions=True`` (so users who can read a doc may
+          comment without needing write access to Comment).
+        - Edit/delete are gated by an owner check (``comment.owner ==
+          frappe.session.user``) rather than DocType permissions.
+"""
+
 import frappe
 from frappe import _
 
@@ -83,6 +98,25 @@ def add_comment(reference_doctype, reference_name, comment_text):
 
 @frappe.whitelist()
 def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
+	"""Attach already-uploaded File documents to the comment's parent document.
+
+	Args:
+		file_ids (list|str): File names, or a JSON-encoded list of them.
+		comment_id: Comment the files belong to (currently informational; no
+			dedicated File field stores it).
+		parent_doctype, parent_name (str): Document the files should appear on.
+
+	Side effects: for each file, sets ``attached_to_doctype`` /
+	``attached_to_name`` via ``db_set(..., update_modified=False)``. The
+	``update_modified=False`` and ``ignore_links``/``ignore_permissions`` flags
+	deliberately avoid running the File ``on_update`` hook, which would bump the
+	parent document's modified timestamp and cause TimestampMismatch conflicts
+	while the user is editing. Per-file errors are swallowed and logged.
+
+	Returns:
+		dict: ``{"success": True}`` (always, even if some links failed — see
+		Error Log "File Link Error" entries).
+	"""
 	import json
 	if isinstance(file_ids, str):
 		file_ids = json.loads(file_ids)

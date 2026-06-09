@@ -1,3 +1,32 @@
+"""Time-tracking kiosk + geolocation backend.
+
+Whitelisted API powering the standalone Time Kiosk PWA (``public/js/kiosk/app.js``
+and the offline service worker ``www/kiosk-sw.js``), plus the manager
+"Location Timeline" Desk page
+(``enhancements_core/page/location_timeline/location_timeline.js``). The page
+context ``www/kiosk.py`` calls ``get_kiosk_bootstrap``.
+
+Core flow: ``log_time`` opens/pauses/resumes/switches/stops "Job Interval"
+documents; on completion an interval is synced into a Draft Timesheet
+(``sync_interval_to_timesheet``). Geolocation points are streamed in batches
+into "Time Kiosk Log" and visualised per interval.
+
+Security:
+        - The employee is derived from the SESSION user, never trusted from the
+          client, for ``log_time``/``log_geolocation_batch``/``get_kiosk_bootstrap``
+          (``_resolve_employee`` rejects a mismatched claimed employee).
+        - The legacy ``log_geolocation`` single-point endpoint trusts the
+          supplied ``employee`` for back-compat.
+        - ``get_location_history`` is role-gated: only ``TIMELINE_MANAGER_ROLES``
+          (System Manager / HR Manager) may view another employee's history;
+          everyone else sees only their own.
+        - Writes use ``ignore_permissions=True`` after the session-based checks.
+
+Scheduler: ``purge_old_location_logs`` runs daily (hooks.py) to enforce the
+configured retention window. Settings come from the "Time Kiosk Settings"
+Single DocType.
+"""
+
 import json
 
 import frappe

@@ -1,3 +1,26 @@
+/**
+ * Client controller for the "QuickBooks Online" desk dashboard page.
+ *
+ * Renders the operator console for the QBO accounting integration and wires its
+ * controls to the whitelisted RPC endpoints under
+ * erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api:
+ *
+ *  - Status tiles (connection, environment, realm id, failed-log count) and a
+ *    recent-sync-logs list, populated from `get_dashboard_status` (refresh()).
+ *  - Per-entity panel: enter a QuickBooks ID and "Sync" a single entity via
+ *    `sync_entity` (syncEntity()).
+ *  - Toolbar/page actions:
+ *      * Connect QuickBooks  -> `start_oauth` then redirect to Intuit (connectQuickBooks()).
+ *      * Import All          -> confirm, then `import_all` (runImportAll()).
+ *      * Preview Resync      -> `preview_resync`, show a summary, then optionally
+ *                               `run_resync` to overwrite QBO-owned fields (previewResync()).
+ *      * Retry Failed        -> `retry_failed` (retryFailed()).
+ *      * Link Existing Records -> `preview_existing_matches`, then a dialog whose
+ *                               "Link" button calls `link_existing_record`
+ *                               (previewExistingMatches() / showMatchDialog()).
+ *
+ * The page is otherwise stateless; all data comes from the RPCs above.
+ */
 frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
 		parent: wrapper,

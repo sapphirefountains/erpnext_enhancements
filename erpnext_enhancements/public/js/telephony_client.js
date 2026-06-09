@@ -1,3 +1,18 @@
+/**
+ * Telephony client — Twilio softphone + SMS dialer.
+ *
+ * Targets: the whole desk (provides a shared service used by form scripts) —
+ *   global.
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Defines erpnext_enhancements.telephony, which lazy-loads the Twilio Voice SDK
+ * from a CDN, registers a WebRTC Device using a server-issued token
+ * (erpnext_enhancements.api.telephony.get_softphone_token), and handles incoming
+ * calls with an accept/reject dialog. Also exposes show_sms_dialer() (sends via
+ * erpnext_enhancements.api.telephony.send_sms — backend only, no WebRTC needed)
+ * and show_dialer() for outbound calls. The Contact/Customer/Lead/Communication
+ * form scripts call into show_sms_dialer / trigger_outbound_call.
+ */
 frappe.provide('erpnext_enhancements.telephony');
 
 erpnext_enhancements.telephony = {

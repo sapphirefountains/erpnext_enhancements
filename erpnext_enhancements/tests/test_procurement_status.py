@@ -1,3 +1,12 @@
+"""Integration tests for the project procurement roll-up (``project_enhancements``).
+
+Uses ``FrappeTestCase`` with a fully built-out fixture (company, accounts, item,
+supplier, warehouse, custom ``custom_project`` fields) and patches
+``frappe.enqueue``. Verifies ``get_procurement_status`` correctly "graduates"
+items to their furthest procurement stage (MR -> Stock Entry, direct PO) and that
+``get_procurement_documents`` returns groups in the fixed
+``PROCUREMENT_DOCTYPE_ORDER`` with expandable per-document items.
+"""
 import unittest.mock
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -168,6 +177,7 @@ class TestProcurementStatus(FrappeTestCase):
 		frappe.db.rollback()
 
 	def test_get_procurement_status_internal_transfer(self):
+		"""An MR fulfilled by a Stock Entry surfaces under the 'Stock Entry' stage."""
 		# Scenario: Material Request (Transfer) -> Stock Entry
 		mr = frappe.get_doc(
 			{
@@ -233,6 +243,7 @@ class TestProcurementStatus(FrappeTestCase):
 		self.assertEqual(mr_entry["stock_entry_status"], "Draft")  # docstatus 0
 
 	def test_get_procurement_status_direct_po(self):
+		"""A direct PO (no MR) surfaces under 'Purchase Order' with its ordered qty."""
 		# Scenario: Direct Purchase Order (No MR)
 		po = frappe.get_doc(
 			{
@@ -268,6 +279,7 @@ class TestProcurementStatus(FrappeTestCase):
 		self.assertEqual(po_entry["ordered_qty"], 10)
 
 	def test_get_procurement_documents_structure_and_order(self):
+		"""get_procurement_documents returns ordered, non-empty groups exposing doc items."""
 		# A direct PO and an MR (linked via item.project) for the same project.
 		mr = frappe.get_doc(
 			{

@@ -1,5 +1,8 @@
-/*
+/**
  * Time Kiosk service worker (served at /kiosk-sw.js → root scope, controls /kiosk).
+ *
+ * Registered by the page (app.js) at the site root so its scope covers /kiosk and
+ * the precached /assets/erpnext_enhancements/... files.
  *
  * Two jobs:
  *   1. Offline app shell — cache static assets + last good /kiosk navigation so the
@@ -10,6 +13,24 @@
  *
  * NOTE: a service worker cannot read GPS either — acquisition happens on the page
  * (geo.js). This worker only persists + ships what the page hands it.
+ *
+ * Lifecycle:
+ *   - install:  open the CACHE and precache the app-shell assets (PRECACHE), then
+ *               skipWaiting() so a new worker activates immediately.
+ *   - activate: delete every cache whose name !== CACHE (drops stale versions), then
+ *               clients.claim() so this worker controls already-open tabs.
+ *   - fetch:    /kiosk navigations → network-first with a cached-shell fallback;
+ *               our /assets (+ /kiosk-manifest.json) → cache-first with background
+ *               refresh. Non-GET and cross-origin requests are passed through.
+ *   - message:  'config' stores csrf_token / max_batch_size in IndexedDB; 'enqueue'
+ *               persists a point and tries to flush; 'flush' flushes on demand.
+ *   - sync:     the SYNC_TAG Background Sync event re-runs flushQueue() once the
+ *               browser regains connectivity.
+ *
+ * Cache versioning: CACHE = 'time-kiosk-v2'. Bump the version suffix (…-v3, …-v4)
+ * whenever the precached app shell / assets change so installed clients fetch the
+ * new files. On activate the old cache is deleted, so the bump is the cache-bust.
+ * (The IndexedDB schema is versioned separately via DB_VERSION below.)
  */
 
 const CACHE = 'time-kiosk-v2';
@@ -29,6 +50,11 @@ const PRECACHE = [
 ];
 
 // --- IndexedDB -------------------------------------------------------------
+// Two object stores, created/upgraded in openDB().onupgradeneeded:
+//   GeoQueue — pending geolocation points, keyed by the page-assigned client_id
+//              (the dedupe key the server echoes back as accepted/rejected).
+//   Meta     — small config kv: csrf_token + max_batch_size, keyed by `key`.
+// Bump DB_VERSION (independently of the Cache version) when the schema changes.
 const DB_NAME = 'TimeKioskDB';
 const DB_VERSION = 2;
 const QUEUE_STORE = 'GeoQueue';
@@ -132,12 +158,16 @@ async function flushQueue() {
       if (!res.ok) throw new Error('HTTP ' + res.status);
 
       const data = await res.json();
+      // Frappe wraps whitelisted return values under `message`. The endpoint
+      // reports which client_ids it accepted and which it rejected (with a reason).
       const msg = (data && data.message) || {};
       const accepted = msg.accepted || [];
+      // Only permanently-rejected points are dropped; transient rejects stay queued.
       const dropped = (msg.rejected || [])
         .filter((r) => PERMANENT_REJECTS.has(r.reason))
         .map((r) => r.client_id);
 
+      // Remove everything the server is done with (accepted + permanently dropped).
       await deletePoints([...accepted, ...dropped]);
 
       // Stop if the server made no progress (avoid infinite loop on stuck batch).
@@ -219,6 +249,11 @@ self.addEventListener('fetch', (event) => {
 });
 
 // --- Messaging from the page ----------------------------------------------
+// The page (geo.js) drives the worker via postMessage({ type, data }):
+//   config  → persist csrf_token / max_batch_size for later uploads
+//   enqueue → store one point, then attempt an immediate flush
+//   flush   → flush the queue on demand (e.g. on reconnect / app resume)
+// 'enqueue' and 'flush' register a Background Sync as a fallback if the flush fails.
 self.addEventListener('message', (event) => {
   const { type, data } = event.data || {};
   if (type === 'config') {

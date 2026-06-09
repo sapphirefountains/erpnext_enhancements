@@ -1,3 +1,19 @@
+/**
+ * Project form script — Comments App + Procurement Tracker.
+ *
+ * Targets: the "Project" doctype form.
+ * Loaded via: hooks.py `doctype_js["Project"]` (with vue.global.js + comments.js;
+ *   one of several Project form scripts — see project.js).
+ *
+ * On saved Projects: mounts the custom Comments App into `custom_comments_field`
+ * (see comments.js) and renders a self-contained Vue 3 "Procurement Tracker" into
+ * `custom_material_request_feed`. The tracker fetches the full procurement chain
+ * (erpnext_enhancements.project_enhancements.get_procurement_documents) and shows
+ * a collapsible, searchable DocType -> document -> item tree with MR/RFQ/SQ/PO/PR/
+ * PI/Stock-Entry status badges. Also wires the `custom_btn_*` buttons that create
+ * project-linked procurement docs. Tracker styling lives in
+ * desk_enhancements.bundle.css (`.procurement-tracker`, `.sapphire-theme`).
+ */
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {

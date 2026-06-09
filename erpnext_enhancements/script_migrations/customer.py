@@ -1,3 +1,13 @@
+"""Migrated Customer Server Scripts, wired via ``hooks.py``.
+
+Hook wiring (see ``hooks.py``):
+  * doc_events["Customer"]["before_save"] -> :func:`set_last_activity`
+  * scheduler_events["daily"] -> :func:`customer_inactivity_reminder`
+
+Originally Frappe "Server Script" records stored only in the site DB; now
+versioned with the app.
+"""
+
 import frappe
 
 # Customer Server Scripts migrated to native doc_events / scheduler_events.
@@ -7,7 +17,9 @@ def set_last_activity(doc, method=None):
 	"""Source Server Script: "Update Last Activity on Customer Save"
 	(Customer, Before Save).
 
-	Stamp the last activity date every time a Customer is saved.
+	Stamp the last activity date every time a Customer is saved. Wired as a
+	Customer ``before_save`` doc_event. Mutates ``doc`` in place (the enclosing
+	save persists it); no DB write of its own.
 	"""
 	doc.custom_last_activity_date = frappe.utils.today()
 
@@ -15,7 +27,14 @@ def set_last_activity(doc, method=None):
 def customer_inactivity_reminder():
 	"""Source Server Script: "Customer Inactivity Reminder" (Scheduler Event, Daily).
 
-	Create follow-up ToDos for customers whose reminder period has elapsed.
+	Create follow-up ToDos for customers whose reminder period has elapsed. Wired
+	as a daily ``scheduler_event``. For each enabled Customer with a positive
+	``custom_reminder_days`` and a set ``custom_last_activity_date`` whose
+	(last activity + reminder days) is now due, inserts an Open ToDo assigned to
+	the Customer's owner — unless an Open ToDo for that Customer already exists.
+
+	Side effects:
+		Inserts ToDo documents and commits the DB.
 	"""
 	customers = frappe.get_all(
 		"Customer",

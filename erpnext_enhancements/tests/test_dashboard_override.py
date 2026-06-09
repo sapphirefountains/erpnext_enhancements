@@ -1,3 +1,9 @@
+"""Unit tests for the Project dashboard override (``get_dashboard_data``).
+
+Verifies that the override registers the custom non-standard fieldnames
+(Material Request / Request for Quotation both link to Project via
+``custom_project``) without clobbering any pre-existing dashboard config.
+"""
 import unittest
 from erpnext_enhancements.project_enhancements import get_dashboard_data
 

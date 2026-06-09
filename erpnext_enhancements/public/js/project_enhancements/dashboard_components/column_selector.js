@@ -4,6 +4,12 @@ frappe.provide("erpnext_enhancements.dashboard_components");
 /**
  * Reusable column visibility selector for the dashboard list tables.
  *
+ * Targets: the Project Dashboard list tabs (active internal, completed, priority).
+ * Loaded via: hooks.py `app_include_js` (global) — it is one of the few dashboard
+ * components preloaded globally so the other lazily-required tab components can
+ * instantiate `erpnext_enhancements.dashboard_components.ColumnSelector`
+ * immediately.
+ *
  * Each table cell (`<th>`/`<td>`) is tagged with `dashcol dashcol-<key>` classes.
  * This helper renders a "Columns" dropdown of checkboxes and toggles the
  * `hidden-column` class on the matching cells. The user's choice is persisted

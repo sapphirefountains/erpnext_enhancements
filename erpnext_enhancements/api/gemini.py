@@ -1,7 +1,42 @@
+"""Thin Vertex AI (Gemini) client used by the AI drafting endpoints.
+
+Not whitelisted — internal helper imported by
+``erpnext_enhancements.api.communication`` (email/SMS draft generation). Posts
+a single ``generateContent`` request to the Vertex AI REST endpoint for the
+``gemini-3.1-pro-preview`` model in the ``sapphire-fountains-poseidon`` GCP
+project (``us-central1``) and splits the response into final answer text vs.
+the model's "thoughts".
+
+Security: the GCP API key is read from the ``Triton Settings`` Single DocType
+(stored in the ``maps_api_key`` password field, shared with Maps) and sent as
+the ``x-goog-api-key`` header. Errors are logged to the Error Log and re-raised
+as plain ``Exception`` so callers can fall back gracefully.
+"""
+
 import frappe
 import requests
 
 def generate_content_with_vertex_ai(prompt, system_instruction, settings):
+    """Call Vertex AI ``generateContent`` and return ``(text, thoughts)``.
+
+    Args:
+        prompt (str): The user-role prompt content.
+        system_instruction (str): System instruction / persona text.
+        settings: A loaded ``Triton Settings`` doc, used to read the GCP API
+            key via ``settings.get_password("maps_api_key")``.
+
+    Returns:
+        tuple[str, str]: ``(final_text, final_thoughts)`` — the generated answer
+        and any reasoning text the model emitted (thinking is enabled at HIGH
+        level). Both are stripped; ``final_thoughts`` may be empty.
+
+    Raises:
+        Exception: if the API key is missing, the HTTP request fails (non-2xx;
+        full response body logged), or no candidates are returned.
+
+    Side effects: outbound HTTPS POST to Vertex AI (120s timeout); failures
+    logged to the Error Log.
+    """
     # Retrieve the API Key from Triton Settings
     # The user mentioned API Key from Triton Settings. Usually stored as a password field.
     # We use the maps_api_key field which contains the GCP API key for both Maps and Vertex AI.

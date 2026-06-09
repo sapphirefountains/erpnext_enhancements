@@ -1,3 +1,16 @@
+/**
+ * Primary contact auto-fill.
+ *
+ * Targets: the Project, Opportunity, Lead, Supplier and Customer forms.
+ * Loaded via: hooks.py `doctype_js` for those doctypes (e.g. it is listed under
+ * the "Lead" entry; the loop below binds the shared behaviour to all five).
+ *
+ * When the `primary_contact` link changes, fetches that Contact's title / phone /
+ * email and copies them into the read-through fields
+ * primary_contact_job_title / primary_contact_phone / primary_contact_email
+ * (clearing them when the contact is removed). Also wires up Frappe's standard
+ * `frappe.contacts` sidebar widget on refresh.
+ */
 const primary_contact_doctypes = ['Project', 'Opportunity', 'Lead', 'Supplier', 'Customer'];
 
 primary_contact_doctypes.forEach(doctype => {

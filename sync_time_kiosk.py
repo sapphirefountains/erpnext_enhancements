@@ -1,3 +1,35 @@
+"""Standalone Job Interval → Timesheet consolidation tool for the Time Kiosk.
+
+This is a self-contained script (NOT wired into hooks.py / the Frappe scheduler)
+that consolidates Time Kiosk "Job Interval" records into ERPNext Timesheets over the
+REST API. It is meant to be run manually or from an external cron/CI job — the only
+in-repo reference is its unit tests (test_sync_time_kiosk.py) and the CI job that
+runs them.
+
+What it does, per run (one batch):
+  1. Fetch up to `limit` Job Intervals with status="Completed" and
+     sync_status="Pending" (oldest first).
+  2. Aggregate them by (employee, project, date), summing worked time
+     (end - start - total_paused_seconds, clamped at >= 0) into hours.
+  3. For each group, find that employee's existing *Draft* Timesheet covering the
+     date and append a time_log to it (idempotently), or create a new Timesheet.
+  4. Rebuild the Timesheet's note from all of the day's interval descriptions.
+  5. Mark the source Job Intervals "Synced"; on failure, bump sync_attempts and set
+     them "Failed" after 3 attempts (otherwise leave "Pending" for a later retry).
+
+Concurrency: per-group syncs run concurrently, bounded by an asyncio.Semaphore(5).
+Transient errors (timeouts, connection errors, HTTP 503) are retried with
+exponential backoff; non-503 HTTP errors are not retried.
+
+Configuration (environment variables):
+  ERPNEXT_URL  — base URL of the ERPNext site (default http://localhost:8000)
+  API_KEY      — ERPNext API key   (used as "token KEY:SECRET" auth header)
+  API_SECRET   — ERPNext API secret
+
+Run:  API_KEY=... API_SECRET=... ERPNEXT_URL=https://site python sync_time_kiosk.py
+(processes a single batch and exits; schedule it externally to run repeatedly).
+"""
+
 import asyncio
 import os
 import sys
@@ -20,6 +52,12 @@ logger = logging.getLogger("TimeKioskSync")
 
 class TimeKioskSync:
     def __init__(self):
+        """Read config from the environment and build the shared HTTP client.
+
+        Pulls ERPNEXT_URL / API_KEY / API_SECRET from the environment (warning if
+        credentials are missing), sets up the concurrency limiter (Semaphore(5)),
+        and creates a token-authenticated httpx.AsyncClient bound to the site URL.
+        """
         # Configuration from Environment Variables
         self.erpnext_url = os.getenv('ERPNEXT_URL', 'http://localhost:8000')
         self.api_key = os.getenv('API_KEY')
@@ -39,6 +77,7 @@ class TimeKioskSync:
         )
 
     def get_headers(self) -> Dict[str, str]:
+        """Build the ERPNext REST auth headers (``token KEY:SECRET`` + JSON)."""
         return {
             "Authorization": f"token {self.api_key}:{self.api_secret}",
             "Content-Type": "application/json",
@@ -368,9 +407,11 @@ class TimeKioskSync:
                 raise e
 
     async def close(self):
+        """Close the underlying httpx.AsyncClient (call once when done)."""
         await self.client.aclose()
 
 async def main():
+    """Entry point: run one consolidation batch, then close the HTTP client."""
     syncer = TimeKioskSync()
     try:
         await syncer.sync_batch()

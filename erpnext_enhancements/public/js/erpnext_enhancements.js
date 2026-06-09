@@ -1,3 +1,29 @@
+/**
+ * erpnext_enhancements.js — primary global desk enhancements bundle.
+ *
+ * Targets: the whole desk (list views, form views, navbar, sidebar) — global.
+ * Loaded via: hooks.py `app_include_js` (first entry; runs on every desk page).
+ *
+ * Bundles several independent desk-wide behaviours, mostly wired up under an
+ * `app_ready` handler and via prototype monkey-patches:
+ *   - Awesomebar live global search: augments frappe.search.AwesomeBar with a
+ *     debounced server search (erpnext_enhancements.api.search.search_global_docs)
+ *     and pins the "Search for…" item to the top.
+ *   - Map placeholder: renders a Google Maps iframe in a `custom_map_placeholder`
+ *     field from the form's single Address link (patches Controller.refresh).
+ *   - Safe auto-save / "User Form Drafts": persists dirty form state to
+ *     localStorage + server (erpnext_enhancements.api.user_drafts.*) and offers a
+ *     restore banner on reload.
+ *   - Navigation guard: intercepts clicks, frappe.set_route and router.render to
+ *     confirm before leaving a form with unsaved changes.
+ *   - "Add to Desk": adds list/form menu items to pin a shortcut to a Workspace
+ *     (erpnext_enhancements.api.workspace_utils.*).
+ *   - UI tweaks: Home navbar button, remove "Go to Home" button, force-expand the
+ *     sidebar on desktop, default full-width container, and a rebuilt attachments
+ *     section in the form sidebar with a Vue-based File Manager dialog.
+ *
+ * Most CSS for these lives in desk_enhancements.bundle.css.
+ */
 frappe.provide("frappe.search");
 frappe.provide("erpnext_enhancements.utils");
 

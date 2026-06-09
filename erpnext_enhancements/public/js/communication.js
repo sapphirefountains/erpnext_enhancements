@@ -1,3 +1,15 @@
+/**
+ * Communication form script — AI SMS reply.
+ *
+ * Targets: the "Communication" doctype form.
+ * Loaded via: hooks.py `doctype_js["Communication"]`.
+ *
+ * On a saved, *received* SMS Communication, adds a "Suggest Reply" button that
+ * calls erpnext_enhancements.api.communication.suggest_sms_reply for an
+ * AI-drafted response, then opens the telephony SMS dialer
+ * (erpnext_enhancements.telephony.show_sms_dialer from telephony_client.js)
+ * pre-filled with that reply and the resolved reference doctype/name.
+ */
 frappe.ui.form.on("Communication", {
     refresh: function (frm) {
         if (!frm.doc.__islocal && frm.doc.communication_medium === "SMS" && frm.doc.sent_or_received === "Received") {

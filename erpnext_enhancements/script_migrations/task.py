@@ -1,3 +1,15 @@
+"""Migrated Task Client/Server Scripts, wired via ``hooks.py`` doc_events["Task"].
+
+Hook wiring (see ``hooks.py``):
+  * ``before_save`` -> :func:`calculate_project_elapsed_time`
+  * ``after_insert`` -> :func:`sync_task_to_google_calendar`
+  * ``on_update`` (one of several) -> :func:`sync_project_dates_from_tasks`
+  * ``on_trash`` -> :func:`sync_project_dates_from_tasks`
+
+These were originally Frappe "Server Script" records stored only in the site DB;
+they now ship with the app for version control.
+"""
+
 import frappe
 
 # Task Server Scripts migrated to native doc_events.
@@ -108,6 +120,13 @@ def sync_project_dates_from_tasks(doc, method=None):
 	project's tasks now that those fields are read-only on the Project form:
 	expected_start_date mirrors the earliest task's exp_start_date and
 	expected_end_date mirrors the latest task's exp_end_date.
+
+	Wired in ``hooks.py`` as a Task ``on_update`` and ``on_trash`` doc_event.
+
+	Side effects:
+		Writes Project.expected_start_date / expected_end_date via ``db_set``
+		(with ``update_modified=False``) only when they differ from the computed
+		min/max. No-op if ``doc.project`` is unset or the Project is missing.
 	"""
 	if not doc.project:
 		return

@@ -1,3 +1,20 @@
+/**
+ * Desk page: GA4 Dashboard (route /app/ga4-dashboard).
+ *
+ * Loaded by Frappe's page framework on page load (the page is registered by
+ * ga4_dashboard.json; visible to System Manager / Sales User / Sales Manager).
+ * Builds its own markup via make_app_page rather than a server template, then
+ * fetches two server methods in parallel:
+ *   - api.analytics.get_ga4_data  -> Google Analytics 4 widgets
+ *   - api.analytics.get_gsc_data  -> Google Search Console widgets
+ * Both calls resolve even on error (the error is surfaced inline per-section so
+ * one failing source doesn't blank the whole dashboard). Renders frappe.Chart
+ * charts (traffic, acquisition, conversions, device, geography, search timeline)
+ * plus HTML tables for top pages/queries/landing pages. All server-supplied
+ * strings are escaped with frappe.utils.escape_html before injection.
+ *
+ * Backed by the GA4 Settings Single doctype (property IDs + credentials).
+ */
 frappe.pages['ga4-dashboard'].on_page_load = function(wrapper) {
 	var page = frappe.ui.make_app_page({
 		parent: wrapper,

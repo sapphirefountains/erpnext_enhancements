@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""Integration tests for the time-kiosk clock-in/out flow (``api.time_kiosk``).
+
+Builds a Project, Activity Type and an Employee linked to the Administrator
+session user, then drives ``log_time`` through a full Start -> Stop cycle:
+asserts a Job Interval opens, that a second Start is rejected, that Stop closes
+the interval and produces a synced Timesheet line, that a second Stop is
+rejected, and that the single-open-interval invariant is enforced.
+"""
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import now_datetime, add_to_date
@@ -11,6 +19,7 @@ class TestTimeKiosk(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		"""Provision Company/Project/Activity Type/Employee and link the employee to the session user."""
 		# Ensure Warehouse Type 'Transit' exists
 		if not frappe.db.exists("Warehouse Type", "Transit"):
 			frappe.get_doc({
@@ -93,6 +102,7 @@ class TestTimeKiosk(FrappeTestCase):
 		super().tearDown()
 
 	def test_log_time_flow(self):
+		"""Full Start->Stop cycle: opens an interval, produces a synced Timesheet, rejects double Start/Stop."""
 		# 1. Start Job
 		result = time_kiosk.log_time(
 			project=self.project,
@@ -142,6 +152,7 @@ class TestTimeKiosk(FrappeTestCase):
 			time_kiosk.log_time(action="Stop")
 
 	def test_strict_single_interval(self):
+		"""Starting a job while an interval is already open raises ValidationError."""
 		# Manually insert an open interval
 		frappe.get_doc({
 			"doctype": "Job Interval",

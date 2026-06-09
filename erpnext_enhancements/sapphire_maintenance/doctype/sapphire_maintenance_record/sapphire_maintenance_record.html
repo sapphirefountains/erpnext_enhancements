@@ -1,3 +1,17 @@
+{#
+  Web/portal + print template for a Sapphire Maintenance Record (the
+  "Maintenance Record Print" format; also the web view served at
+  /maintenance-records/<name>). Extends Frappe's standard web layout and is
+  rendered with the `doc` plus the context built by
+  SapphireMaintenanceRecord.get_context (notably `show_labor`).
+
+  Renders, top to bottom: the visit header (name, date, serial no, project) with
+  a workflow-state badge; an optional Service Duration block (clock in/out and
+  net worked hours = total minus paused_duration) shown only when `show_labor`
+  and a clock-in exist; the Checklist Results table (maintenance_results, with
+  Pass/Fail/Other styling); the Parts & Consumables table; and the captured
+  client sign-off signature image when present.
+#}
 {% extends "templates/web.html" %}
 
 {% block page_content %}

@@ -1,3 +1,17 @@
+/**
+ * CRM "Note" dialog attachments — global Dialog monkey-patch.
+ *
+ * Targets: the standard ERPNext CRM "Add a Note" / "Edit Note" dialogs
+ *   (used on Lead/Opportunity/etc. CRM sidebars), globally.
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Wraps the frappe.ui.Dialog constructor: when the dialog being built is a CRM
+ * note dialog (title contains "Add a Note"/"Edit Note" and has a `note` field),
+ * it injects an "Attach File" custom action + attachment-preview HTML field,
+ * appends uploaded-file links to the note body on submit, and links the files to
+ * the parent doc via erpnext_enhancements.api.comments.link_files_to_comment.
+ * The prototype chain is preserved so all other dialogs are unaffected.
+ */
 frappe.provide('erpnext_enhancements.crm_notes');
 
 erpnext_enhancements.crm_notes.init = function() {

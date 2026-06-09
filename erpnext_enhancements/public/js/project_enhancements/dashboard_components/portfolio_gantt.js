@@ -1,6 +1,25 @@
 /* global erpnext_enhancements, Gantt, moment */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
+/**
+ * Project Dashboard tab — Portfolio Gantt.
+ *
+ * Targets: the "Portfolio Gantt" tab of the Project Dashboard page.
+ * Loaded via: lazy `frappe.require` from project_dashboard.js (constructed by
+ * name; render()/unmount() on tab show/hide). The Gantt library itself
+ * (lib/frappe-gantt.umd.js) and the shared zoom ladder (gantt_zoom.js) are loaded
+ * globally via app_include_js.
+ *
+ * Draws a single Frappe Gantt across the whole portfolio: rows are grouped by
+ * Master Project, and an optional "Detailed View" expands each project into its
+ * task hierarchy. Master/project/task nodes are collapsible (the ▶/▼ prefixes in
+ * the bar labels are clickable, tracked in `collapsedNodes`), filterable by
+ * status, and zoomable via the shared ladder. Dragging a project/task bar writes
+ * new dates back through the dashboard API (master bars are aggregates and snap
+ * back). A fair amount of the code preserves the horizontal scroll position across
+ * re-renders (toggles, filters, date saves) instead of jumping to "today" — see
+ * capture_scroll_for_next_render and the do_preserve logic in render_gantt.
+ */
 erpnext_enhancements.dashboard_components.PortfolioGantt = class PortfolioGantt {
 	constructor(wrapper) {
 		this.wrapper = $(wrapper);

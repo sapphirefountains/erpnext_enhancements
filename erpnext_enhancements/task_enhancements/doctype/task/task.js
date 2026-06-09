@@ -1,3 +1,18 @@
+/**
+ * Task form client script (Task Enhancements).
+ *
+ * Loaded onto the Task form via hooks.py `doctype_js["Task"]`
+ * (entry: "task_enhancements/doctype/task/task.js").
+ *
+ * Behaviour: on refresh, if the task is a group (`is_group`) and already
+ * saved, it calls the whitelisted backend method `get_child_tasks_html`
+ * and renders the returned descendant-task tree into the form's
+ * `custom_child_tasks_table` HTML field. For non-group or new tasks the
+ * field is cleared. `add_toggle_functionality` delegates a click handler so
+ * the expand/collapse toggle icons in the rendered tree fold their children.
+ *
+ * The verbose console.log lines are left-in debugging aids.
+ */
 frappe.ui.form.on("Task", {
     refresh: function(frm) {
         // --- Start of Debugging ---

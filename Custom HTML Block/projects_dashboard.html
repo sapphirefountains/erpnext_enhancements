@@ -1,3 +1,19 @@
+<!--
+  Projects Dashboard — markup for the "Projects Dashboard" Custom HTML Block.
+
+  This is the exported source of a Frappe "Custom HTML Block": a dashboard widget
+  whose HTML / CSS / JS are authored and stored in the Frappe UI (Custom HTML Block
+  doctype) and embedded on a Workspace/dashboard. The three projects_dashboard.*
+  files in this directory are a checked-in copy kept as the source of truth / backup
+  — edit them here and paste back into the Custom HTML Block in the UI to deploy.
+
+  This file is the static shell: a tabbed container (Priority Overview, Active
+  Internal Projects, Completed Projects, Portfolio Gantt), a search box, the
+  Gantt-only filter controls (project / status dropdowns, "Show Tasks", view-mode
+  buttons, Today), and an empty #dashboard-content target. projects_dashboard.js
+  fetches data via the project_dashboard page's whitelisted methods and renders the
+  tables / Gantt into #dashboard-content; projects_dashboard.css styles it.
+-->
 <div class="project-dashboard-container">
     <div class="dashboard-tabs p-3 pb-0 border-bottom">
         <ul class="nav nav-tabs" role="tablist">

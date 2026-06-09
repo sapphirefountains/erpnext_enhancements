@@ -1,10 +1,28 @@
 /*
  * Time Kiosk — main-thread geolocation acquisition.
  *
+ * Targets: the Time Kiosk PWA front-end (used by app.js).
+ * Loaded via: www/kiosk.html alongside app.js — NOT through hooks.py.
+ *
  * Geolocation is ONLY available on the main thread (not in Web/Service Workers),
  * so this module owns watchPosition + a heartbeat timer, applies a movement
  * distance-filter, and hands accepted points to the service worker for durable
  * queueing + upload. Tracking runs only while started (i.e. clocked in AND active).
+ *
+ * Sampling model:
+ *  - warmup(): on page visit, prime the browser location permission (and reflect
+ *    it in the indicator) WITHOUT recording anything, so it's granted before the
+ *    first clock-in.
+ *  - start(intervalName): take one immediate fix, then run BOTH a continuous
+ *    watchPosition stream AND a heartbeat setInterval. Each candidate fix goes
+ *    through consider(): it is dropped if accuracy is worse than min_accuracy_m,
+ *    and otherwise recorded only if the device moved >= distance_filter_m from the
+ *    last recorded point OR the heartbeat interval has elapsed (heartbeat ticks and
+ *    the foreground catch-up fix pass force=true to bypass that gate). Accepted
+ *    points are posted to the service worker ('enqueue') which owns batching/upload.
+ *  - On returning to the foreground (visibilitychange) or regaining connectivity
+ *    (online), it re-acquires the wake lock, grabs a catch-up fix, and flushes the
+ *    SW queue. stop() clears the watch + heartbeat and flushes any remainder.
  *
  * Exposes window.KioskGeo.
  */

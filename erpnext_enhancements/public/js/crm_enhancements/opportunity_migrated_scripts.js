@@ -1,4 +1,16 @@
 // Opportunity form scripts migrated from Client Scripts for version control.
+//
+// Targets: the Opportunity DocType form.
+// Loaded via: hooks.py `doctype_js["Opportunity"]`.
+//
+// Bundles four behaviours that previously lived as database Client Scripts:
+//   1. Make the Scope/Schedule/Budget rank fields mandatory once status is
+//      "Closed Won".
+//   2. Enforce that those three ranks are unique among the ones that are filled.
+//   3. Show/hide the per-value-stream scope fields based on the selected streams.
+//   4. A simpler "Create Project" button variant (see opportunity.js for the
+//      richer dialog; both enqueue the same background project-creation API).
+//
 // Sources:
 //   - "Opportunity Status for Rankings Mandatory" (Opportunity, Form)
 //   - "Opportunity Scope Schedule Budget Ranking" (Opportunity, Form)

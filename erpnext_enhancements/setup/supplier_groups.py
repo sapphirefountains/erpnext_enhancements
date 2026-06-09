@@ -1,12 +1,24 @@
+"""Idempotent provisioning for the Supplier multi-group feature.
+
+Entry point :func:`create_supplier_group_customizations` is registered in
+``after_migrate`` (hooks.py). It creates the "Additional Supplier Group" child
+doctype, relabels the standard ``supplier_group`` field to "Primary Supplier
+Group", and adds the additional-groups Table MultiSelect plus the two
+denormalized text fields populated at runtime by
+``supplier_query.sync_supplier_groups``. Each step is guarded by an existence
+check, so re-running on migrate is a no-op.
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 def create_supplier_group_customizations():
+	"""``after_migrate`` entry point: build the supplier multi-group customizations."""
 	create_additional_supplier_group_doctype()
 	update_standard_supplier_group_label()
 	add_additional_supplier_groups_field()
 
 def create_additional_supplier_group_doctype():
+	"""Create the custom child (table) DocType "Additional Supplier Group"."""
 	if not frappe.db.exists("DocType", "Additional Supplier Group"):
 		doc = frappe.get_doc({
 			"doctype": "DocType",
@@ -29,6 +41,7 @@ def create_additional_supplier_group_doctype():
 		doc.insert()
 
 def update_standard_supplier_group_label():
+	"""Relabel Supplier's standard ``supplier_group`` to "Primary Supplier Group"."""
 	# Rename standard field to "Primary Supplier Group" via Property Setter
 	if not frappe.db.exists("Property Setter", {"doc_type": "Supplier", "field_name": "supplier_group", "property": "label"}):
 		frappe.get_doc({
@@ -42,6 +55,12 @@ def update_standard_supplier_group_label():
 		}).insert()
 
 def add_additional_supplier_groups_field():
+	"""Add the additional-groups MultiSelect + the two denormalized text fields.
+
+	``custom_supplier_groups_search`` is hidden (search-only) and
+	``custom_additional_supplier_groups_list`` is shown in list view; both are
+	read-only and kept current by ``supplier_query.sync_supplier_groups``.
+	"""
 	custom_fields = {
 		"Supplier": [
 			{

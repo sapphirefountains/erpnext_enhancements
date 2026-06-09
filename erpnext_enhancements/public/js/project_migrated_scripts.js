@@ -1,4 +1,8 @@
 // Project form scripts migrated from Client Scripts for version control.
+//
+// Targets: the "Project" doctype form (and the Project Stakeholder child table).
+// Loaded via: hooks.py `doctype_js["Project"]` (one of several Project scripts).
+//
 // Sources:
 //   - "Project - Hide Activity and Connections" (Project, Form)
 //   - "Project Stakeholders - Filtering Logic" / "Project - Filter Address and Contacts"

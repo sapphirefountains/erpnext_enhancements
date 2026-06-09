@@ -3,6 +3,9 @@
 /**
  * Project Brief
  * -------------
+ * Targets: the Project DocType form.
+ * Loaded via: hooks.py `doctype_js["Project"]`.
+ *
  * Adds a "Project Brief" button to the Project form. Clicking it opens a
  * read-only interface laid out like Sapphire's printed Project Brief template
  * (project info, description, contacts, contract terms, payment process),

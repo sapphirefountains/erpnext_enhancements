@@ -1,3 +1,13 @@
+"""Pure-Python (no Frappe site) unit tests for the QuickBooks Online sync.
+
+These are plain pytest functions, not ``FrappeTestCase``. Because the QBO module
+must be importable without a running bench, :func:`install_frappe_stub` installs
+a fake ``frappe`` / ``frappe.utils`` / ``requests`` into ``sys.modules`` with just
+enough behavior (canned ``get_value`` / ``get_all`` / ``get_meta``) for the
+mapping, ordering, signature, datetime, preflight-validation and result-tracking
+logic to run deterministically. ``monkeypatch`` is used where a test needs to
+stub a module-level function (e.g. ``sync.query_all``).
+"""
 import base64
 from datetime import datetime
 import hashlib
@@ -7,6 +17,11 @@ import types
 
 
 def install_frappe_stub():
+	"""Install a minimal fake ``frappe``/``requests`` into sys.modules for import.
+
+	Returns the stub ``frappe`` module so individual tests can further override
+	attributes (e.g. ``get_meta``) before importing the code under test.
+	"""
 	frappe = sys.modules.get("frappe") or types.ModuleType("frappe")
 	frappe_utils = sys.modules.get("frappe.utils") or types.ModuleType("frappe.utils")
 	frappe_utils.now_datetime = lambda: None
@@ -57,6 +72,7 @@ def install_frappe_stub():
 
 
 def test_ordered_entities_imports_masters_before_transactions():
+	"""ordered_entities sorts master records (Account/Customer/Item) before transactions."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import ordered_entities
 
@@ -69,6 +85,7 @@ def test_ordered_entities_imports_masters_before_transactions():
 
 
 def test_verify_intuit_signature_accepts_valid_hmac():
+	"""verify_intuit_signature accepts a correct HMAC-SHA256 and rejects a wrong one."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import (
 		verify_intuit_signature,
@@ -83,6 +100,7 @@ def test_verify_intuit_signature_accepts_valid_hmac():
 
 
 def test_parse_qbo_datetime_converts_offset_to_naive_utc():
+	"""parse_qbo_datetime converts an offset timestamp to naive UTC."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import parse_qbo_datetime
 
@@ -90,6 +108,7 @@ def test_parse_qbo_datetime_converts_offset_to_naive_utc():
 
 
 def test_customer_mapping_uses_native_erpnext_fields():
+	"""A QBO Customer maps onto native ERPNext Customer fields (name/type/group)."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
 
@@ -106,6 +125,7 @@ def test_customer_mapping_uses_native_erpnext_fields():
 
 
 def test_account_mapping_uses_existing_root_as_parent():
+	"""A QBO Account maps under the matching ERPNext root account as a leaf."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
 
@@ -122,6 +142,7 @@ def test_account_mapping_uses_existing_root_as_parent():
 
 
 def test_account_parent_with_qbo_children_is_group():
+	"""A QBO Account flagged as having children maps to an ERPNext group account."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
 
@@ -143,6 +164,7 @@ def test_account_parent_with_qbo_children_is_group():
 
 
 def test_account_payload_query_marks_parents_without_polluting_raw_payload(monkeypatch):
+	"""query_entity_payloads tags parents with _qbo_has_children but strips it from clean payloads."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online import sync
 
@@ -165,6 +187,7 @@ def test_account_payload_query_marks_parents_without_polluting_raw_payload(monke
 
 
 def test_payment_mapping_sets_customer_party():
+	"""A QBO Payment maps to a Payment Entry with the resolved Customer party."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
 
@@ -180,6 +203,7 @@ def test_payment_mapping_sets_customer_party():
 
 
 def test_payment_without_mapped_party_is_skipped():
+	"""A QBO Payment with no resolvable party is skipped (returns None / empty values)."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
 
@@ -194,6 +218,7 @@ def test_payment_without_mapped_party_is_skipped():
 
 
 def test_preflight_flags_site_required_customer_fields_without_defaults():
+	"""validate_mapped_values flags site-mandatory fields lacking defaults, unless opted out."""
 	frappe = install_frappe_stub()
 	frappe.get_meta = lambda doctype: types.SimpleNamespace(
 		fields=[
@@ -219,6 +244,7 @@ def test_preflight_flags_site_required_customer_fields_without_defaults():
 
 
 def test_preflight_flags_transactions_with_missing_links_and_rows():
+	"""validate_mapped_values reports each missing required link/child-row on a transaction."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import validate_mapped_values
 
@@ -229,6 +255,7 @@ def test_preflight_flags_transactions_with_missing_links_and_rows():
 
 
 def test_customer_auto_match_uses_existing_customer_name():
+	"""find_existing_match auto-matches a QBO customer to an existing one by name."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import find_existing_match
 
@@ -244,6 +271,7 @@ def test_customer_auto_match_uses_existing_customer_name():
 
 
 def test_failed_result_updates_sync_log_error_message():
+	"""_track_result increments failed_count and appends a concise entity error line."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import _track_result
 
@@ -264,6 +292,7 @@ def test_failed_result_updates_sync_log_error_message():
 
 
 def test_failed_result_error_message_is_capped():
+	"""_track_result caps the accumulated error message, omitting overflow entries."""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import _track_result
 

@@ -1,5 +1,27 @@
 /* global erpnext_enhancements */
 
+/**
+ * Project form script.
+ *
+ * Targets: the Project DocType form.
+ * Loaded via: hooks.py `doctype_js["Project"]`.
+ *
+ * Drives the custom Project UI:
+ *  - Hides the `custom_master_project` link for external project types
+ *    (Service/Rent/Build/Design).
+ *  - Relocates the native Activity and Connections sections into the Details tab.
+ *  - Renders the interactive task tree into the `custom_tasks_html` field on the
+ *    Scope tab by lazily `frappe.require`-ing task_tree_manager.js, and renders the
+ *    Gantt into `custom_gantt_chart_html` on the Schedule tab. Because Frappe can
+ *    build a tab's fields only when that tab is first shown, this carefully (a)
+ *    overrides the HTML field's `refresh` to (re)build the tree, (b) polls for the
+ *    field wrapper and, if needed, briefly force-activates the Scope tab to make
+ *    Frappe build it, and (c) re-renders on Bootstrap's `shown.bs.tab` event so the
+ *    chart/tree get correct width/height. Old tree state is torn down on each
+ *    refresh to avoid detached-node leaks during SPA navigation.
+ *  - Supports deep-linking to the Scope tab via the `#custom_scope` URL hash.
+ *  - Hides the standard "View"/"View Tasks" button (CSS + API).
+ */
 const EXTERNAL_PROJECT_TYPES = ["Service", "Rent", "Build", "Design"];
 
 function toggle_master_project(frm) {

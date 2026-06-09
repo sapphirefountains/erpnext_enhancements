@@ -1,8 +1,28 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Backfills the new Contact/Address directory model from the various legacy
+representations so existing data shows up in the unified widgets created by
+``setup/custom_fields.py``. It:
+
+* copies Contact standard ``phone``/``mobile_no`` into the ``custom_*`` fields,
+* promotes scalar ``primary_contact`` links (Customer/Project) into Contact
+  Dynamic Links + ``is_primary_contact``,
+* migrates the legacy ``Project Stakeholder`` child table into Contact/Address
+  links (honoring the "Primary Contact" role),
+* migrates assorted legacy address fields (custom billing/shipping, party
+  ``*_primary_address``, Contact ``address``) into the Address Directory with
+  proper Dynamic Links and address types, and
+* sweeps any party convenience fields (phone/email/title) that were never copied
+  onto their primary Contact.
+
+Every step guards on field/table/record existence and wraps writes in
+try/except, so it is safe on partially-migrated or differently-shaped sites.
+"""
 import frappe
 
 def execute():
     """
-    Migrates contact data, preserves primary contact links, 
+    Migrates contact data, preserves primary contact links,
     and migrates data from legacy child tables.
     """
     # 1. Migrate Contact DocType standard fields to custom fields
@@ -130,6 +150,7 @@ def migrate_customer_specific_address_fields():
             ensure_address_link_and_type(shipping_addr_val, "Customer", doc.name, address_type="Shipping")
 
 def migrate_scalar_links(doctype):
+    """Promote each record's scalar ``primary_contact`` into a Contact link."""
     records = frappe.get_all(doctype, filters={"primary_contact": ["is", "set"]}, fields=["name", "primary_contact"])
     for doc in records:
         ensure_dynamic_link_and_primary(doc.primary_contact, doctype, doc.name)
@@ -199,6 +220,7 @@ def migrate_project_stakeholders():
                     pass
 
 def ensure_dynamic_link_and_primary(contact_name, link_doctype, link_name, is_primary=True):
+    """Append a Dynamic Link (and optionally set primary) on a Contact, idempotently."""
     if not frappe.db.exists("Contact", contact_name):
         return
 
@@ -229,6 +251,7 @@ def ensure_dynamic_link_and_primary(contact_name, link_doctype, link_name, is_pr
         pass
 
 def ensure_address_link_and_type(address_name, link_doctype, link_name, address_type=None, is_primary=False):
+    """Append a Dynamic Link on an Address, optionally setting its type/primary flag."""
     if not frappe.db.exists("Address", address_name):
         return
 
@@ -263,6 +286,7 @@ def ensure_address_link_and_type(address_name, link_doctype, link_name, address_
         pass
 
 def ensure_address_link(address_name, link_doctype, link_name):
+    """Append a Dynamic Link on an Address, idempotently (no type/primary change)."""
     if not frappe.db.exists("Address", address_name):
         return
 
@@ -285,6 +309,12 @@ def ensure_address_link(address_name, link_doctype, link_name):
         pass
 
 def sweep_orphaned_data():
+    """Copy any party primary-contact convenience fields onto their Contact.
+
+    Final cleanup pass: for each party with a ``primary_contact``, move
+    ``primary_contact_phone``/``_email``/``_job_title`` into the Contact's
+    ``custom_*`` fields when the Contact does not already have them.
+    """
     main_doctypes = ["Project", "Opportunity", "Supplier", "Customer"]
     for dt in main_doctypes:
         if not frappe.db.exists("DocType", dt):

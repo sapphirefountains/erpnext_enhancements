@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""Integration test for the time-kiosk idle-status response (``get_current_status``).
+
+Regression guard (see project memory): when an employee exists but has no open
+Job Interval, ``get_current_status`` returns a non-empty dict containing only
+``employee`` (no interval fields). Because that dict is truthy, naive ``if
+(result)`` checks in the JS frontend misread "idle" as "clocked in"; this test
+pins the exact shape the frontend must distinguish.
+"""
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from erpnext_enhancements.api.time_kiosk import get_current_status
@@ -9,6 +17,7 @@ class TestTimeKioskStatus(FrappeTestCase):
 		self.create_test_data()
 
 	def create_test_data(self):
+		"""Provision Company/Employee and link the employee to the current session user."""
 		# Create Warehouse Type "Transit" if not exists
 		if not frappe.db.exists("Warehouse Type", "Transit"):
 			frappe.get_doc({

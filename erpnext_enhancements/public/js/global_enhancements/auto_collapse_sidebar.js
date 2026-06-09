@@ -1,3 +1,8 @@
+// Auto-collapse sidebar.
+//
+// Targets: every Desk form (any "Form" route).
+// Loaded via: hooks.py `app_include_js` (global, all desk pages).
+//
 // Collapses the form's right sidebar by default on small/zoomed-in screens,
 // where it otherwise squeezes the main form content. Acts only on initial
 // load of each form route so the user's manual toggle afterwards is respected.

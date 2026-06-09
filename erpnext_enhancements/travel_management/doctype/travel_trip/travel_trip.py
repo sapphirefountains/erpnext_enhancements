@@ -2,15 +2,51 @@
 # Copyright (c) 2024, Frappe Technologies and contributors
 # For license information, please see license.txt
 
+"""Server-side controller for the **Travel Trip** doctype.
+
+A Travel Trip is the submittable parent document of the Travel Management
+module. It groups an employee's travel logistics into child tables:
+
+	- ``flights``         -> Trip Flight
+	- ``accommodation``   -> Trip Accommodation
+	- ``ground_transport``-> Trip Ground Transport
+	- ``itinerary``       -> Trip Agenda
+
+The trip is driven by the **Travel Trip Workflow** (states:
+Draft -> Requested -> Approved -> Booking in Progress -> Ready for Travel ->
+In Progress -> Expense Review -> Closed). When the workflow reaches the
+expense-settlement states this controller automatically rolls up costed
+flight/accommodation rows into a single ERPNext **Expense Claim** and links
+it back via the ``custom_expense_claim`` custom field.
+
+Form behaviour is layered on by ``public/js/travel_trip.js`` (registered in
+hooks.py ``doctype_js``).
+"""
+
 import frappe
 from frappe.model.document import Document
 from frappe.utils import flt
 
 class TravelTrip(Document):
+	"""Controller for Travel Trip; auto-generates an Expense Claim on workflow transition."""
+
 	def on_update(self):
+		"""Document lifecycle hook: run on every save (and workflow transition)."""
 		self.create_expense_claim_on_workflow_transition()
 
 	def create_expense_claim_on_workflow_transition(self):
+		"""Roll trip costs into a single Expense Claim once the trip reaches settlement.
+
+		Idempotent and guarded: creates the Expense Claim only when all hold true:
+		  * the workflow has advanced to "Expense Review" or "Closed";
+		  * no Expense Claim has been linked yet (``custom_expense_claim`` empty);
+		  * at least one flight or accommodation row exists.
+
+		Each costed flight and accommodation row (cost > 0) becomes an expense
+		line; the resulting claim is saved (left as a draft) and its name is
+		written back to ``custom_expense_claim`` via ``db_set`` so this method
+		does not re-fire on the next save.
+		"""
 		# Define target states
 		target_states = ["Expense Review", "Closed"]
 
@@ -35,7 +71,8 @@ class TravelTrip(Document):
 		ec.remark = f"Expense Claim for Trip {self.name}: {self.purpose}"
 		ec.posting_date = self.end_date
 
-		# Helper to get expense type
+		# Helper to resolve an Expense Claim Type, degrading to a generic
+		# fallback ("Travel") if the preferred type is not configured.
 		def get_expense_type(preferred, fallback="Travel"):
 			if frappe.db.exists("Expense Claim Type", preferred):
 				return preferred

@@ -1,3 +1,23 @@
+/**
+ * Desk form script for the Sapphire Maintenance Record doctype.
+ *
+ * Loaded automatically by Frappe when the Maintenance Record form opens
+ * (co-located with the doctype). Drives the technician's on-site workflow:
+ *
+ *  - setup:    restricts the consumables Item link to stock items in the
+ *              "Consumables" item group.
+ *  - project / serial_no change: (a) populate_checklist seeds the
+ *              `maintenance_results` table from the active template via the
+ *              whitelisted `get_template_items`; (b) render_dashboard fetches
+ *              `get_dashboard_context` and renders an in-form HTML briefing
+ *              (safety instructions, access codes/site notes, recent visits).
+ *  - safety gate: the `maintenance_results` and `consumables` tables stay
+ *              hidden behind an orange warning banner until the technician
+ *              ticks `safety_acknowledged` (toggle_safety_gate).
+ *
+ * All server-supplied strings are passed through `frappe.utils.xss_sanitise`
+ * before being injected into the dashboard HTML.
+ */
 frappe.ui.form.on("Sapphire Maintenance Record", {
 	setup: function (frm) {
 		// Filter items in consumables to only Stock Items and Consumables group

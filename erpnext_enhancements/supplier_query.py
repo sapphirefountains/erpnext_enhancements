@@ -1,8 +1,20 @@
+"""Supplier multi-group denormalization.
+
+A Supplier has one standard ``supplier_group`` (relabeled "Primary Supplier
+Group") plus a custom ``custom_additional_supplier_groups`` child table. To make
+all of a supplier's groups searchable/visible from list view, this module
+flattens them into two read-only text fields. The custom fields and the child
+doctype are created by ``setup/supplier_groups.py`` at ``after_migrate``.
+"""
 import frappe
 
 def sync_supplier_groups(doc, method=None):
-	"""
-	Combines primary supplier group and additional supplier groups into search and list fields.
+	"""Flatten primary + additional supplier groups into the denormalized fields.
+
+	Wired to the Supplier ``validate`` doc_event (see hooks.py). Writes a
+	comma-wrapped ``custom_supplier_groups_search`` (hidden, all groups, padded
+	with leading/trailing commas for whole-token matching) and a human-readable
+	``custom_additional_supplier_groups_list`` (additional groups only).
 	"""
 	primary = getattr(doc, "supplier_group", None)
 	additional_list = []
@@ -30,6 +42,12 @@ def sync_supplier_groups(doc, method=None):
 	doc.custom_additional_supplier_groups_list = ", ".join(additional_list)
 		
 def sync_all_suppliers():
+	"""Backfill the denormalized group fields on every existing Supplier.
+
+	One-shot maintenance helper (run manually, e.g. from ``bench execute``) for
+	suppliers saved before this feature existed. Writes directly with
+	``update_modified=False`` so it does not touch each doc's modified timestamp.
+	"""
 	suppliers = frappe.get_all("Supplier")
 	for s in suppliers:
 		doc = frappe.get_doc("Supplier", s.name)

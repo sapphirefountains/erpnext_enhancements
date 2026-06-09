@@ -1,3 +1,13 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Data migration moving the "SF Water Feature" tracking model from the Asset
+doctype onto Serial No. For each such Asset it: ensures a generic "Customer Water
+Feature" Item exists, creates a Serial No (named after the Asset) carrying the
+copied custom fields, repoints historical Sapphire Maintenance Records and Sales
+Order Items from the old ``asset``/``custom_asset`` columns to ``serial_no`` /
+``custom_serial_no``, and finally marks each migrated Asset as Scrapped.
+Idempotent at the Serial No level (skips assets already migrated).
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 

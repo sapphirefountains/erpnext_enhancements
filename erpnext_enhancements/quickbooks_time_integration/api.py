@@ -1,7 +1,26 @@
+"""Module-level API for the QuickBooks Time Integration app.
+
+Two distinct integrations live under this module and this file is the seam
+between them:
+
+  * QuickBooks **Online** (QBO) -- the accounting sync. Its whitelisted RPC
+    endpoints are defined in ``quickbooks_online/api.py`` and re-exported here
+    (the imports below) so existing ``...quickbooks_time_integration.api.*``
+    references and hooks keep resolving.
+  * QuickBooks **Time** -- a separate, lightweight timesheet webhook
+    (``qb_timesheet_webhook``) that turns inbound QB Time entries into ERPNext
+    Time Log documents, resolving Employee/Project via custom QuickBooks-id fields.
+
+The helpers below (``get_erpnext_employee``/``get_erpnext_project``) and the QB
+Time webhook are unrelated to the QBO OAuth->sync->webhook pipeline.
+"""
+
 import json
 
 import frappe
 
+# Re-export the QuickBooks Online whitelisted endpoints so they remain callable
+# at the ...quickbooks_time_integration.api.* path used by JS/hooks.
 from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api import (
 	get_dashboard_status,
 	import_all,
@@ -44,11 +63,20 @@ def get_erpnext_project(qb_jobcode_id):
 
 @frappe.whitelist(allow_guest=True)
 def qb_timesheet_webhook(*args, **kwargs):
+    """Guest webhook: create an ERPNext Time Log from a QuickBooks Time timesheet.
+
+    Parses the raw request body, resolves the ERPNext Employee/Project from the
+    QB user/jobcode ids, converts the duration (seconds) to hours, and inserts a
+    Time Log with ``ignore_permissions`` (the request runs as guest). On any
+    error it logs the traceback and returns HTTP 500.
+
+    NOTE: this is the QuickBooks *Time* path and is independent of the QBO
+    accounting pipeline. Unlike the QBO webhook it does NOT yet verify an Intuit
+    signature -- see the inline note below.
     """
-    Webhook endpoint to receive timesheet data from QuickBooks Time.
-    """
-    # It's highly recommended to add a signature verification step here
-    # to ensure the request is genuinely from QuickBooks Time.
+    # SECURITY: no signature verification here yet. A signature/HMAC check should
+    # be added to ensure the request genuinely originates from QuickBooks Time
+    # (the QBO webhook in quickbooks_online/webhooks.py does verify its signature).
 
     try:
         webhook_data = frappe.request.get_data()

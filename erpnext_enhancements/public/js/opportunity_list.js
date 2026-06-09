@@ -1,3 +1,15 @@
+/**
+ * Opportunity list view — redirect to the Kanban board.
+ *
+ * Targets: the "Opportunity" doctype list view.
+ * Loaded via: hooks.py `doctype_list_js["Opportunity"]` (one of several; CRM
+ *   kanban-totals etc. live in the crm_enhancements list scripts).
+ *
+ * On a fresh load of the plain List view, redirects to the "Opportunity" Kanban
+ * board — unless the user arrived from within the Opportunity module (its own
+ * List or Kanban), inferred from frappe.get_prev_route, so in-module navigation
+ * and filter changes are not hijacked. Preserves any pre-existing `onload`.
+ */
 frappe.provide("frappe.listview_settings");
 
 frappe.listview_settings['Opportunity'] = frappe.listview_settings['Opportunity'] || {};

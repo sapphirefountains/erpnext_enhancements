@@ -1,3 +1,17 @@
+/**
+ * Activity log numbering — global form-timeline enhancement.
+ *
+ * Targets: every doctype form (operates on the standard `.timeline-items` DOM).
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Adds a relative "#N" badge to each activity/timeline item on a form so users
+ * can reference a specific comment/communication by number. Counts are fetched
+ * from the backend (erpnext_enhancements.api.activity_log.get_activity_counts)
+ * and merged with the live DOM; the numbering is recomputed (debounced) by a
+ * global MutationObserver that watches the timeline, plus a `form-refresh` hook
+ * that invalidates the per-document count cache. The "#N" styling lives in
+ * desk_enhancements.bundle.css (`.activity-number` / `.activity-numbered`).
+ */
 frappe.provide("erpnext_enhancements.activity");
 
 erpnext_enhancements.activity.counts = {};

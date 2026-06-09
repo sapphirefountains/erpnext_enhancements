@@ -1,11 +1,28 @@
 # Copyright (c) 2026, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
+"""Controller for the **Triton Assistant Settings** single doctype.
+
+Triton is the embedded "Triton" AI assistant. This Single doctype controls
+the behaviour of the in-app assistant *widget* (master enable switch, default
+model, request timeout, page-context and write-action toggles, debug logging,
+and a whitelist of allowed users via the ``allowed_users`` child table of
+Triton Allowed User).
+
+It does NOT store the Triton *connection* details: the Gateway URL and Admin
+Webhook Secret live in the separate shared **Triton Settings** doctype. The
+``test_connection`` method below verifies that shared connection.
+
+The form's "Test Connection" button is added by
+``triton_assistant_settings.js``.
+"""
+
 import frappe
 from frappe.model.document import Document
 
 
 class TritonAssistantSettings(Document):
+    """Plain Single-doctype controller for Triton Assistant Settings; no custom behaviour."""
     pass
 
 

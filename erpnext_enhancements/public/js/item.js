@@ -1,4 +1,9 @@
 // Item form scripts migrated from Client Scripts for version control.
+//
+// Targets: the "Item" doctype form.
+// Loaded via: hooks.py `doctype_js["Item"]` (with vue.global.js + comments.js;
+//   the Comments App itself is auto-mounted for Item by comments_auto.js).
+//
 // Sources:
 //   - "Item - Empty Description Field" (Item, Form)
 //   - "Item - Show Item Code After Save" (Item, Form)

@@ -1,3 +1,10 @@
+"""Unit tests for the Project-scoped comment endpoints in ``project_enhancements``.
+
+Mock-based (no DB): patches ``frappe.get_all`` / ``get_doc`` / ``new_doc`` /
+``session`` to exercise the get/add/delete/update project-comment helpers, which
+wrap the Comment doctype with ``reference_doctype="Project"`` and author
+enrichment. Parallels ``test_comments_api`` for the generic variant.
+"""
 import unittest
 from unittest.mock import MagicMock, patch
 import frappe
@@ -9,10 +16,12 @@ class TestProjectEnhancements(unittest.TestCase):
 
 	@patch('frappe.get_all')
 	def test_get_project_comments_no_project_name(self, mock_get_all):
+		"""get_project_comments returns [] when no project name is supplied."""
 		self.assertEqual(project_enhancements.get_project_comments(None), [])
 
 	@patch('frappe.get_all')
 	def test_get_project_comments_with_data(self, mock_get_all):
+		"""get_project_comments returns the project's comments enriched with author full_name."""
 		# Setup mocks
 		mock_comment = frappe._dict({"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"})
 
@@ -34,6 +43,7 @@ class TestProjectEnhancements(unittest.TestCase):
 	@patch('frappe.get_doc')
 	@patch('frappe.new_doc')
 	def test_add_project_comment_success(self, mock_new_doc, mock_get_doc):
+		"""add_project_comment inserts a Comment referencing the Project and returns the author."""
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "new_comment"
 		mock_comment_doc.owner = "test_user"
@@ -61,6 +71,7 @@ class TestProjectEnhancements(unittest.TestCase):
 	@patch('frappe.get_doc')
 	@patch('frappe.session')
 	def test_delete_project_comment_success(self, mock_session, mock_get_doc):
+		"""delete_project_comment deletes the Comment when the session user owns it."""
 		mock_session.user = 'test_user'
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"
@@ -80,6 +91,7 @@ class TestProjectEnhancements(unittest.TestCase):
 	@patch('frappe.get_doc')
 	@patch('frappe.session')
 	def test_update_project_comment_success(self, mock_session, mock_get_doc):
+		"""update_project_comment overwrites content for the owner and saves the Comment."""
 		mock_session.user = 'test_user'
 		mock_comment_doc = MagicMock()
 		mock_comment_doc.name = "note1"

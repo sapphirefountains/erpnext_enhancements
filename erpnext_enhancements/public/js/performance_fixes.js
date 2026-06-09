@@ -1,3 +1,14 @@
+/**
+ * performance_fixes.js — strip redundant icon-sprite preloads.
+ *
+ * Targets: the desk page <head>, globally.
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * A MutationObserver on document.head removes the `<link rel="preload">` tags
+ * Frappe injects for the timeless/espresso icon sprites. These preloads warn in
+ * the console (preloaded-but-unused) and waste a request; removing them as they
+ * are added is a lightweight cleanup.
+ */
 (function() {
   const selectors = [
     'link[rel="preload"][href*="timeless/icons.svg"]',

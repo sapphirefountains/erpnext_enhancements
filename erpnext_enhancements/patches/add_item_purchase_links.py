@@ -1,7 +1,15 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Adds purchase-link custom fields: a ``purchase_url`` Data field on Item Supplier,
+and a read-only ``purchase_links`` HTML "Buy" column on Purchase Order Item and
+Material Request Item (rendered client-side from the supplier purchase URLs).
+Idempotent via ``create_custom_fields(..., update=True)``.
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 def execute():
+    """Create the Item Supplier / PO Item / MR Item purchase-link custom fields."""
     custom_fields = {
         "Item Supplier": [
             {

@@ -1,4 +1,24 @@
 /* global erpnext_enhancements */
+
+/**
+ * TaskTreeManager — interactive, hierarchical task grid.
+ *
+ * Targets: rendered into a host element on the Project form's Scope tab
+ * (`custom_tasks_html`) and into the Project Dashboard "Tasks" tab tree view.
+ * Loaded via: hooks.py `app_include_js` (global), so the class is always defined;
+ * callers (project_form_script.js, dashboard tasks_view.js) also `frappe.require`
+ * it defensively before constructing.
+ *
+ * Renders an Asana-style tree of Tasks for one Project with: expand/collapse with
+ * lazy child loading, inline editing of dates / expected time / status / priority,
+ * quick-add rows, name/owner/status filtering, per-user column visibility, and
+ * SortableJS drag-and-drop that both reorders siblings AND re-parents (nest) tasks
+ * — drop intent is decided by where in the target row you release (see
+ * handleDragMove). All mutations round-trip through the project_dashboard.py
+ * whitelisted methods. Expanded-state and column choices persist in localStorage.
+ *
+ * Assets (task_tree.css, SortableJS from CDN) are loaded on demand in loadAssets().
+ */
 frappe.provide("erpnext_enhancements");
 
 erpnext_enhancements.TaskTreeManager = class TaskTreeManager {

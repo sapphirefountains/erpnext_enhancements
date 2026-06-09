@@ -1,6 +1,9 @@
 /**
  * File list enhancements.
  *
+ * Targets: the File DocType list view.
+ * Loaded via: hooks.py `doctype_list_js["File"]`.
+ *
  * Two things, both Google-Drive flavoured:
  *
  *  1. Grid View is the default for the File list. Frappe's `FileView` keeps the

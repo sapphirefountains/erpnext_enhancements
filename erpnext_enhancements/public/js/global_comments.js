@@ -1,4 +1,21 @@
 // global_comments.js
+//
+/**
+ * File attachments for Frappe's native form Timeline / comment box.
+ *
+ * Targets: the standard form "Activity / Comment" timeline on EVERY doctype
+ *   (this is the built-in Frappe timeline, NOT the custom Vue Comments App in
+ *   comments.js).
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Monkey-patches frappe.ui.form.Timeline.prototype to inject an "Attach File"
+ * button (plus hidden file input and an upload-preview area) next to the native
+ * "Comment" button, and intercepts insert_comment/add_comment so that uploaded
+ * files are appended to the comment HTML and linked to the resulting Comment doc
+ * via erpnext_enhancements.api.comments.link_files_to_comment. A MutationObserver
+ * keeps the button present/aligned as Frappe re-renders the timeline. Uploads go
+ * through /api/method/upload_file into Home/Attachments.
+ */
 
 // 1. Monkey-patch the Timeline to inject the attachment button
 frappe.provide('erpnext_enhancements.timeline_attachments');

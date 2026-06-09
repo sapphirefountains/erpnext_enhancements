@@ -1,6 +1,16 @@
 // Copyright (c) 2024, Sapphire Fountains and contributors
 // For license information, please see license.txt
 
+/**
+ * Desk form script for the Asset Booking doctype.
+ *
+ * Loaded automatically when the Asset Booking form opens. Whenever the asset or
+ * either datetime changes, it calls the whitelisted `check_availability` server
+ * method and shows a red msgprint if the chosen window clashes with an existing
+ * booking for that asset (excluding the current record). This is an early-warning
+ * UX check; the authoritative overlap guard is the server-side `check_overlap`
+ * validate hook.
+ */
 frappe.ui.form.on('Asset Booking', {
     asset: function(frm) {
         frm.trigger('check_availability');

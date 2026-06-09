@@ -1,10 +1,47 @@
 # File: erpnext_enhancements/erpnext_enhancements/task/task.py
 
+"""Custom **Task** controller that overrides ERPNext's core Task class.
+
+This module replaces ``erpnext.projects.doctype.task.task.Task`` via the
+``override_doctype_class`` entry in hooks.py::
+
+    override_doctype_class = {
+        "Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task",
+    }
+
+The override subclasses the core controller (``BaseTask``) so all stock Task
+behaviour is preserved, adding only one rule: whenever a task is given a
+parent, that parent is automatically promoted to a "group" (``is_group = 1``).
+This keeps ERPNext's NestedSet tree consistent so tasks can be browsed as a
+hierarchy (see the Hierarchical Task View desk page and the in-form child-task
+table rendered by ``get_child_tasks_html``).
+
+NOTE: recurring-task generation lives elsewhere (``tasks.py`` at the app root,
+wired through ``doc_events``), not in this controller.
+"""
+
 import frappe
 from erpnext.projects.doctype.task.task import Task as BaseTask
 
 class Task(BaseTask):
+    """ERPNext Task controller override (installed via override_doctype_class).
+
+    Extends the stock controller; only the lifecycle hooks below are
+    customised, everything else is inherited from ``BaseTask``.
+    """
+
     def before_save(self):
+        """Promote the parent task to a group before saving.
+
+        Overrides the core hook. If this task points at a ``parent_task`` that
+        is not yet flagged ``is_group``, load the parent and set ``is_group = 1``
+        (saved with ``ignore_permissions`` so the cascade succeeds regardless
+        of the editing user's rights on the parent). This guarantees parents of
+        sub-tasks are valid tree groups.
+
+        Note: the core ``before_save`` does not do meaningful work, so it is not
+        chained here; ``on_update`` is where the parent ``super()`` call lives.
+        """
         if self.parent_task:
             if not frappe.db.get_value("Task", self.parent_task, "is_group"):
                 parent_task_doc = frappe.get_doc("Task", self.parent_task)
@@ -12,10 +49,27 @@ class Task(BaseTask):
                 parent_task_doc.save(ignore_permissions=True)
 
     def on_update(self):
+        """Defer entirely to the core Task ``on_update`` (NestedSet upkeep, etc.).
+
+        Overridden only to make the override explicit; it adds no behaviour and
+        simply calls ``super().on_update()``.
+        """
         super(Task, self).on_update()
 
 @frappe.whitelist()
 def get_child_tasks_html(task_name):
+    """Render the full descendant tree of a task as an HTML table.
+
+    Whitelisted endpoint called from ``task.js`` on form refresh (only when the
+    task ``is_group`` and is not new). It walks every descendant of
+    ``task_name``, attaches each descendant's assignee (resolved from ToDo
+    rows in one batched query), rebuilds the parent/child hierarchy in memory,
+    and returns a styled, collapsible HTML tree injected into the form's
+    ``custom_child_tasks_table`` HTML field.
+
+    Returns an empty string when there are no descendants; on error it logs the
+    traceback and returns a short error ``<div>`` rather than raising.
+    """
     # Use a dedicated logger for debugging
     logger = frappe.logger("erpnext_enhancements")
     logger.debug(f"Executing get_child_tasks_html for task: {task_name}")
@@ -111,6 +165,14 @@ def get_child_tasks_html(task_name):
 
 
 def _get_all_descendants(doctype, parent):
+    """Recursively collect every descendant task under ``parent``.
+
+    Performs a depth-first walk over ``parent_task`` links, returning a flat
+    list of ``frappe._dict`` rows (each carrying the fields needed to render
+    the tree). The dict wrapper enables dot-notation access by the
+    tree-building logic. Note: one query is issued per node, so very deep/wide
+    trees fan out into many small queries.
+    """
     descendants = []
     fields = [
         "name", "subject", "parent_task", "status",
@@ -129,6 +191,13 @@ def _get_all_descendants(doctype, parent):
 
 
 def _build_task_tree_html(tasks, level=0):
+    """Recursively render a list of task nodes (and their children) as nested <ul>/<li>.
+
+    Each node becomes a flex row (subject link, status, assignee, dates,
+    expected time); ``level`` drives the subject indentation. Nodes that have
+    children get a clickable toggle icon (wired up client-side in task.js) and
+    recurse one level deeper. Returns an empty string for an empty list.
+    """
     if not tasks:
         return ""
 

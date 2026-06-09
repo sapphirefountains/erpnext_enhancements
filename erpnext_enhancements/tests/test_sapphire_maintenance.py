@@ -1,3 +1,11 @@
+"""Integration tests for the Sapphire Maintenance Record + predictive scheduling.
+
+Builds a generic water-feature Item, a Serial No and a Project, then verifies
+(1) a Maintenance Record links to the Serial No and its dashboard-context API
+surfaces the serial's site instructions, and (2) ``tasks.py``'s predictive
+generator drafts a Maintenance Record from a maintenance Sales Order Item whose
+next visit is due.
+"""
 import frappe
 import unittest
 from frappe.utils import nowdate, add_days

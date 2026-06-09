@@ -2,6 +2,14 @@
  * Opportunity Kanban Customization (Frappe v16+)
  * - Conditional Background for high value opportunities (> 4000)
  * - Value Stream Indicator Dots in card footer from 'custom_value_stream' child table
+ *
+ * Targets: the "Opportunity" Kanban board (board name "Opportunity") only.
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Patches frappe.views.KanbanView.prototype.render_card (to style high-value
+ * cards and append coloured value-stream dots) and .get_data (to bulk-fetch the
+ * `custom_value_stream` child-table rows that Frappe's standard Kanban list query
+ * omits). The high-value / dot styling lives in desk_enhancements.bundle.css.
  */
 
 (function() {

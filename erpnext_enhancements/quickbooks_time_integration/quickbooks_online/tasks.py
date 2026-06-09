@@ -1,3 +1,12 @@
+"""Scheduler entry points for the QuickBooks Online integration.
+
+These three functions are wired to the hourly scheduler via ``hooks.py``:
+``refresh_token_if_needed`` (keep OAuth alive), ``cdc_poll`` (pull QBO changes)
+and ``retry_failed_syncs`` (re-run failed sync logs). They are intentionally
+thin -- guard clauses and cursor checks here, real work in ``client.py`` and
+``sync.py``.
+"""
+
 from __future__ import annotations
 
 import frappe
@@ -9,6 +18,14 @@ from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils im
 
 
 def refresh_token_if_needed():
+	"""Hourly scheduler hook: refresh the OAuth access token before it expires.
+
+	No-op when the integration is not connected (no realm id). Forces a refresh
+	if no expiry is recorded, otherwise refreshes when the token expires within
+	the next 10 minutes (a wider window than the 5-min margin baked into
+	``token_expires_at`` so the hourly job never lets a token lapse between runs).
+	Side effect: HTTP token POST + Settings write via ``client.refresh_access_token``.
+	"""
 	settings = get_settings()
 	if not settings.realm_id:
 		return
@@ -20,8 +37,16 @@ def refresh_token_if_needed():
 
 
 def cdc_poll():
+	"""Hourly scheduler hook: poll QBO Change Data Capture, throttled by cursor.
+
+	Skips the poll if the configured ``cdc_poll_minutes`` interval (default 15)
+	has not elapsed since the last successful ``last_cdc_sync``, so the effective
+	cadence is set in Settings rather than by how often the scheduler fires.
+	Delegates the actual fetch/upsert to ``sync.run_cdc``.
+	"""
 	settings = get_settings()
 	if settings.last_cdc_sync:
+		# Throttle: only run once per cdc_poll_minutes window since last sync.
 		next_run_at = add_to_date(
 			get_datetime(settings.last_cdc_sync),
 			minutes=settings.cdc_poll_minutes or 15,
@@ -33,4 +58,8 @@ def cdc_poll():
 
 
 def retry_failed_syncs():
+	"""Hourly scheduler hook: re-run sync logs left in the Failed state.
+
+	Delegates to ``sync.retry_failed`` (which respects Settings.retry_limit).
+	"""
 	retry_failed()

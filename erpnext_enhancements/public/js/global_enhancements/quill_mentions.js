@@ -1,3 +1,14 @@
+/**
+ * Quill @-mentions in rich-text editors.
+ *
+ * Targets: every Frappe `ControlTextEditor` (rich-text field) across the desk.
+ * Loaded via: hooks.py `app_include_js` (global).
+ *
+ * Enables the Quill "mention" module on each text editor as it finishes
+ * rendering, so typing "@" opens a User picker backed by `search_link`. The
+ * module is only attached once per editor (guarded on `modules.mention`), and the
+ * search maps results to {id: user, value: full name} entries.
+ */
 frappe.ui.form.on("ControlTextEditor", {
 	render_complete: function (frm) {
 		var quill = this.quill;

@@ -1,3 +1,12 @@
+"""Unit tests for sync_time_kiosk.TimeKioskSync (the standalone consolidation tool).
+
+These tests run with no Frappe/ERPNext bench: the httpx.AsyncClient is replaced with
+a Mock whose get/post/put are AsyncMocks, and responses are stubbed via FakeResponse.
+They exercise config/auth, the pure aggregation logic, the Timesheet
+create/update/note flows, source-status bookkeeping, and the retry/backoff helper —
+all without real network I/O. Run with: ``python -m unittest test_sync_time_kiosk``.
+"""
+
 import os
 import unittest
 from datetime import datetime
@@ -10,6 +19,8 @@ from sync_time_kiosk import TimeKioskSync
 
 
 class FakeResponse:
+	"""Minimal stand-in for an httpx.Response: .json(), .status_code, .raise_for_status()."""
+
 	def __init__(self, data=None, status_code=200):
 		self._data = data if data is not None else {}
 		self.status_code = status_code
@@ -52,6 +63,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.env_patcher.stop()
 
 	def test_initializes_http_client_from_environment(self):
+		"""__init__ reads ERPNEXT_URL/keys from env and builds the token-auth AsyncClient."""
 		self.assertEqual(self.syncer.erpnext_url, "http://test.local")
 		self.assertEqual(
 			self.syncer.get_headers(),
@@ -68,6 +80,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	def test_initializes_logs_warning_without_credentials(self):
+		"""__init__ logs a WARNING (and still builds None:None auth) when API creds are absent."""
 		with patch.dict(os.environ, {"ERPNEXT_URL": "http://public.local"}, clear=True):
 			with self.assertLogs("TimeKioskSync", level="WARNING") as logs:
 				syncer = TimeKioskSync()
@@ -77,6 +90,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn("API_KEY or API_SECRET not set", logs.output[0])
 
 	def test_aggregate_logs_groups_by_employee_project_and_start_date(self):
+		"""aggregate_logs keys by (employee, project, start-date), sums paused-adjusted hours, keeps earliest start."""
 		logs = [
 			{
 				"name": "JI-1",
@@ -122,6 +136,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(main_entry["start_dt"], datetime(2023, 10, 27, 8, 30))
 
 	def test_aggregate_logs_skips_incomplete_or_invalid_rows_and_clamps_negative_duration(self):
+		"""aggregate_logs drops rows missing fields or with unparseable dates, and clamps negative durations to 0 hours."""
 		logs = [
 			{"name": "MISSING", "employee": "EMP-001", "project": "PROJ-A"},
 			{
@@ -149,6 +164,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(entry["source_ids"], ["NEGATIVE"])
 
 	def test_get_time_log_entry_uses_start_time_and_aggregated_hours(self):
+		"""_get_time_log_entry builds a time_log whose to_time = start + aggregated hours, type Execution."""
 		entry = self.syncer._get_time_log_entry(
 			{
 				"project": "PROJ-A",
@@ -169,6 +185,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	async def test_fetch_pending_intervals_returns_data_and_expected_filters(self):
+		"""fetch_pending_intervals queries Job Interval with the Completed/Pending filters and honours the limit."""
 		self.client.get.return_value = FakeResponse({"data": [{"name": "JI-1"}]})
 
 		result = await self.syncer.fetch_pending_intervals(limit=25)
@@ -182,6 +199,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn('"sync_status", "=", "Pending"', params["filters"])
 
 	async def test_fetch_pending_intervals_returns_empty_list_on_http_error(self):
+		"""fetch_pending_intervals swallows HTTP/connection errors and returns an empty list."""
 		self.client.get.side_effect = httpx.ConnectError("connection failed")
 
 		result = await self.syncer.fetch_pending_intervals()
@@ -189,6 +207,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(result, [])
 
 	async def test_find_existing_timesheet_returns_first_draft_match(self):
+		"""find_existing_timesheet returns the first Draft Timesheet covering the date (employee/Draft filters set)."""
 		self.client.get.return_value = FakeResponse({"data": [{"name": "TS-001"}, {"name": "TS-002"}]})
 
 		result = await self.syncer.find_existing_timesheet("EMP-001", "2023-10-27")
@@ -200,6 +219,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn('"status", "=", "Draft"', params["filters"])
 
 	async def test_find_existing_timesheet_returns_none_without_matches(self):
+		"""find_existing_timesheet returns None when no Draft Timesheet matches."""
 		self.client.get.return_value = FakeResponse({"data": []})
 
 		result = await self.syncer.find_existing_timesheet("EMP-001", "2023-10-27")
@@ -207,6 +227,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIsNone(result)
 
 	async def test_create_timesheet_posts_employee_dates_and_time_logs(self):
+		"""create_timesheet POSTs a new Timesheet (employee, date, one time_log) and returns its name."""
 		self.client.post.return_value = FakeResponse({"data": {"name": "TS-001"}})
 		data = {
 			"employee": "EMP-001",
@@ -240,6 +261,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	async def test_create_timesheet_returns_none_without_response_data(self):
+		"""create_timesheet returns None when the response carries no data."""
 		self.client.post.return_value = FakeResponse({})
 		data = {
 			"employee": "EMP-001",
@@ -254,6 +276,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIsNone(result)
 
 	async def test_update_timesheet_skips_duplicate_time_log(self):
+		"""update_timesheet is idempotent: it skips the PUT when a matching time_log already exists."""
 		self.client.get.return_value = FakeResponse(
 			{
 				"data": {
@@ -283,6 +306,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.client.put.assert_not_awaited()
 
 	async def test_update_timesheet_appends_new_time_log(self):
+		"""update_timesheet appends a non-duplicate time_log and PUTs the updated Timesheet back."""
 		self.client.get.return_value = FakeResponse({"data": {"name": "TS-001", "time_logs": []}})
 		self.client.put.return_value = FakeResponse()
 		data = {
@@ -302,6 +326,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(updated_doc["time_logs"][0]["hours"], 1.5)
 
 	async def test_update_timesheet_initializes_missing_time_logs_list(self):
+		"""update_timesheet creates the time_logs list when the fetched Timesheet lacks one."""
 		self.client.get.return_value = FakeResponse({"data": {"name": "TS-001"}})
 		self.client.put.return_value = FakeResponse()
 
@@ -319,6 +344,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(len(self.client.put.call_args.kwargs["json"]["time_logs"]), 1)
 
 	async def test_fetch_daily_intervals_limits_query_to_requested_day(self):
+		"""fetch_daily_intervals scopes the start_time filter to the full requested calendar day."""
 		self.client.get.return_value = FakeResponse({"data": [{"project": "PROJ-A", "description": "Install"}]})
 
 		result = await self.syncer.fetch_daily_intervals("EMP-001", "2023-10-27")
@@ -329,6 +355,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn("2023-10-27 23:59:59.999999", params["filters"])
 
 	async def test_fetch_daily_intervals_returns_empty_list_on_failure(self):
+		"""fetch_daily_intervals returns an empty list when the request fails (HTTP 500)."""
 		self.client.get.return_value = FakeResponse(status_code=500)
 
 		result = await self.syncer.fetch_daily_intervals("EMP-001", "2023-10-27")
@@ -336,6 +363,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(result, [])
 
 	async def test_update_daily_note_combines_descriptions_in_start_time_order(self):
+		"""update_daily_note joins each interval's "project - description" (skipping blanks) into the Timesheet note."""
 		self.syncer.fetch_daily_intervals = AsyncMock(
 			return_value=[
 				{"project": "PROJ-A", "description": "Pump inspection"},
@@ -353,6 +381,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	async def test_update_daily_note_does_not_write_when_no_descriptions_exist(self):
+		"""update_daily_note skips the PUT entirely when no interval has a description."""
 		self.syncer.fetch_daily_intervals = AsyncMock(return_value=[{"project": "PROJ-A", "description": None}])
 
 		await self.syncer.update_daily_note("TS-001", "EMP-001", "2023-10-27")
@@ -360,6 +389,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.client.put.assert_not_awaited()
 
 	async def test_update_daily_note_logs_and_suppresses_update_failures(self):
+		"""update_daily_note logs (does not raise) when the note PUT fails."""
 		self.syncer.fetch_daily_intervals = AsyncMock(
 			return_value=[{"project": "PROJ-A", "description": "Pump inspection"}]
 		)
@@ -372,6 +402,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn("Failed to update daily note for TS-001", logs.output[0])
 
 	async def test_process_single_sync_creates_timesheet_updates_note_and_sources(self):
+		"""process_single_sync creates a Timesheet (no Draft found), updates the note, and marks sources Synced."""
 		data = {
 			"employee": "EMP-001",
 			"project": "PROJ-A",
@@ -397,6 +428,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.syncer.handle_sync_failure.assert_not_awaited()
 
 	async def test_process_single_sync_updates_existing_timesheet(self):
+		"""process_single_sync updates the existing Draft Timesheet (no create) when one is found."""
 		data = {
 			"employee": "EMP-001",
 			"project": "PROJ-A",
@@ -419,6 +451,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.syncer.create_timesheet.assert_not_awaited()
 
 	async def test_process_single_sync_marks_sources_failed_on_exception(self):
+		"""process_single_sync returns False and routes sources to handle_sync_failure when a step raises."""
 		data = {
 			"employee": "EMP-001",
 			"project": "PROJ-A",
@@ -438,6 +471,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.syncer.update_source_status.assert_not_awaited()
 
 	async def test_sync_batch_noops_without_pending_intervals(self):
+		"""sync_batch does nothing (no aggregation) when there are no pending intervals."""
 		self.syncer.fetch_pending_intervals = AsyncMock(return_value=[])
 		self.syncer.aggregate_logs = Mock()
 
@@ -446,6 +480,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.syncer.aggregate_logs.assert_not_called()
 
 	async def test_sync_batch_processes_each_aggregated_entry(self):
+		"""sync_batch runs process_single_sync once per aggregated (employee, project, date) group."""
 		aggregated = {
 			("EMP-001", "PROJ-A", "2023-10-27"): {"employee": "EMP-001"},
 			("EMP-002", "PROJ-B", "2023-10-27"): {"employee": "EMP-002"},
@@ -459,6 +494,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(self.syncer.process_single_sync.await_count, 2)
 
 	async def test_update_source_status_updates_each_source_and_continues_after_failure(self):
+		"""update_source_status PUTs the new sync_status to every source, continuing past a mid-list failure."""
 		self.client.put.side_effect = [FakeResponse(), RuntimeError("failed"), FakeResponse()]
 
 		await self.syncer.update_source_status(["JI-1", "JI-2", "JI-3"], "Synced")
@@ -471,6 +507,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(self.client.put.call_args_list[0].kwargs["json"], {"sync_status": "Synced"})
 
 	async def test_handle_sync_failure_keeps_source_pending_before_third_attempt(self):
+		"""handle_sync_failure increments sync_attempts and keeps the source Pending below the 3-attempt threshold."""
 		self.client.get.return_value = FakeResponse({"data": {"sync_attempts": 1}})
 		self.client.put.return_value = FakeResponse()
 
@@ -482,6 +519,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	async def test_handle_sync_failure_marks_source_failed_on_third_attempt(self):
+		"""handle_sync_failure sets the source to Failed once sync_attempts reaches 3."""
 		self.client.get.return_value = FakeResponse({"data": {"sync_attempts": 2}})
 		self.client.put.return_value = FakeResponse()
 
@@ -493,6 +531,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		)
 
 	async def test_handle_sync_failure_logs_and_continues_after_error(self):
+		"""handle_sync_failure logs and swallows errors (no PUT) when reading the source fails."""
 		self.client.get.side_effect = RuntimeError("read failed")
 
 		with self.assertLogs("TimeKioskSync", level="ERROR") as logs:
@@ -502,6 +541,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertIn("Failed to handle sync failure for JI-1", logs.output[0])
 
 	async def test_retry_request_retries_transient_network_errors_with_exponential_backoff(self):
+		"""retry_request retries timeout/connect errors and sleeps 1s then 2s (exponential backoff) before succeeding."""
 		request = AsyncMock(side_effect=[httpx.TimeoutException("timeout"), httpx.ConnectError("connect"), "ok"])
 
 		with patch("sync_time_kiosk.asyncio.sleep", new=AsyncMock()) as sleep:
@@ -512,6 +552,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		sleep.assert_has_awaits([call(1), call(2)])
 
 	async def test_retry_request_retries_http_503(self):
+		"""retry_request retries an HTTP 503 (sleeping once) and returns the eventual success."""
 		request = httpx.Request("GET", "http://test.local")
 		response = httpx.Response(503, request=request)
 		http_503 = httpx.HTTPStatusError("service unavailable", request=request, response=response)
@@ -524,6 +565,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		sleep.assert_awaited_once_with(1)
 
 	async def test_retry_request_does_not_retry_non_503_http_errors(self):
+		"""retry_request re-raises a non-503 HTTP error (e.g. 404) immediately without retrying."""
 		request = httpx.Request("GET", "http://test.local")
 		response = httpx.Response(404, request=request)
 		http_404 = httpx.HTTPStatusError("not found", request=request, response=response)
@@ -535,6 +577,7 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(func.await_count, 1)
 
 	async def test_retry_request_raises_after_final_retry(self):
+		"""retry_request gives up and re-raises after exhausting all 3 attempts."""
 		func = AsyncMock(side_effect=httpx.ConnectError("no route"))
 
 		with patch("sync_time_kiosk.asyncio.sleep", new=AsyncMock()):
@@ -544,11 +587,13 @@ class TestTimeKioskSync(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(func.await_count, 3)
 
 	async def test_close_closes_http_client(self):
+		"""close awaits the underlying AsyncClient.aclose()."""
 		await self.syncer.close()
 
 		self.client.aclose.assert_awaited_once()
 
 	async def test_main_runs_batch_and_closes_syncer(self):
+		"""main() runs one sync_batch and then closes the syncer (even via the finally block)."""
 		syncer = Mock()
 		syncer.sync_batch = AsyncMock()
 		syncer.close = AsyncMock()

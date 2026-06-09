@@ -1,3 +1,20 @@
+/**
+ * Customer form script.
+ *
+ * Targets: the "Customer" doctype form.
+ * Loaded via: hooks.py `doctype_js["Customer"]` (with vue.global.js +
+ *   comments.js + the unified tab controller).
+ *
+ * First form.on block: hides the Connections tab / dashboard, mounts the custom
+ * Comments App into `custom_comments_field` (see comments.js), and adds
+ * "Call via Triton" / "Send SMS" telephony buttons.
+ *
+ * Second form.on block (migrated from the "Create Contact from Accounts",
+ * "Auto Reminder for Accounts" and "Accounts (Customer) Tables" Client Scripts):
+ * adds a "Create" dropdown for related docs (Contact/Address/Lead/Prospect/
+ * Opportunity/Project), defaults `custom_reminder_days` from the account status,
+ * and populates the related Projects/Opportunities/Leads child tables on load.
+ */
 frappe.ui.form.on("Customer", {
 	refresh: function (frm) {
 		// Hide the Connections tab / Dashboard

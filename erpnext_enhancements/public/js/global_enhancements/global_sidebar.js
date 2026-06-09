@@ -1,3 +1,17 @@
+/**
+ * Global sidebar "Home" item.
+ *
+ * Targets: the Desk workspace sidebar (every desk page).
+ * Loaded via: hooks.py `app_include_js` (global).
+ *
+ * Injects a custom "Home" entry just above the "Workspaces" group in the left
+ * sidebar that routes to /app/home. The item is built by cloning the existing
+ * "Workspaces" sidebar item (to inherit Frappe's markup/styles), then relabelled
+ * and re-iconed. Because Frappe re-renders the sidebar on navigation, injection
+ * is re-run on every route change plus a 1s polling fallback (both idempotent,
+ * guarded by the HOME_ITEM_CLASS marker). `updateSelectionState` keeps the Home
+ * item highlighted only while actually on the home route.
+ */
 $(document).ready(function () {
 	const HOME_ITEM_CLASS = "custom-home-sidebar-item";
 

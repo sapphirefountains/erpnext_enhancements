@@ -1,6 +1,19 @@
 # Copyright (c) 2024, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
+"""Unit tests for the Asset Booking doctype.
+
+Covers the two core behaviours: (1) ``test_overlap_validation`` asserts that a
+second booking overlapping an existing one for the same Asset raises
+``frappe.ValidationError`` (via ``AssetBooking.check_overlap``); and
+(2) ``test_composite_booking`` exercises ``api.booking.create_composite_booking``,
+verifying it creates linked Rental/Travel/Maintenance bookings with the travel
+leg ending at, and the maintenance leg starting at, the rental window edges.
+
+setUp seeds a reusable test Asset + Address and clears prior bookings; tearDown
+removes the bookings.
+"""
+
 import frappe
 import unittest
 from frappe.utils import add_to_date, now_datetime

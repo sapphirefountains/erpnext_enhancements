@@ -1,3 +1,11 @@
+"""Integration test for ``project_merge.merge_projects``.
+
+Uses ``FrappeTestCase`` to build a source and target Project with a Task linked
+to the source, then asserts that merging reparents the Task onto the target and
+cancels the source project. (Note: the fixtures bypass ``_validate_selects`` and
+force ``status = 'Active'`` because the framework otherwise forces the
+now-removed "Open" status.)
+"""
 import unittest
 
 import frappe
@@ -70,6 +78,7 @@ class TestProjectMerge(FrappeTestCase):
 		super().tearDown()
 
 	def test_merge_projects(self):
+		"""Merging moves the source's Task to the target and cancels the source project."""
 		print(f"DEBUG: Source: {self.source_project.name}, Target: {self.target_project.name}")
 
 		# Verify initial state

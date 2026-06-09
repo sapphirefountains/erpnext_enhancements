@@ -2,6 +2,11 @@
  * @file Shared zoom ladder for every Frappe Gantt chart in this app
  * (the Project form "Schedule" tab and the Project Dashboard portfolio Gantt).
  *
+ * Targets: shared helper (no DOM of its own); consumed by the Project form Gantt
+ * and the dashboard portfolio_gantt.js.
+ * Loaded via: hooks.py `app_include_js` (global), so
+ * `erpnext_enhancements.gantt_zoom` is always available before any Gantt renders.
+ *
  * @description The +/- zoom buttons step through a single ordered ladder of
  * (view_mode, column_width) pairs. The ladder runs from most zoomed-OUT (widest
  * time span, least detail) to most zoomed-IN, and pixels-per-day rises

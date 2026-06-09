@@ -1,5 +1,26 @@
+/**
+ * Address form customization — live map preview.
+ *
+ * Customizes: the Address doctype form (loaded via `doctype_js["Address"]` in
+ * hooks.py).
+ *
+ * Behavior:
+ *  - Keeps the read-only `custom_full_address` Data field in sync by joining the
+ *    individual address components (line1/line2/city/state/pincode/country)
+ *    whenever any of them changes.
+ *  - Renders a Google Maps embed of that address into the `custom_map_placeholder`
+ *    HTML field, refreshing it whenever the full address changes.
+ *
+ * The two custom fields used here are created by
+ * project_enhancements/setup_address.py. Note the server side also sets
+ * `custom_full_address` on save via the `Address` `before_save` hook
+ * (script_migrations.address.set_full_address); this script keeps the field and
+ * the map live in the browser before a save round-trip.
+ */
 frappe.ui.form.on("Address", {
 	refresh: function (frm) {
+		// Render the map immediately if we already have a full address; otherwise
+		// build the full address first (which then triggers the map render).
 		if (frm.doc.custom_full_address) {
 			frm.trigger("render_map");
 		} else {
