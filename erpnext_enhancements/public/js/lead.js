@@ -1,3 +1,16 @@
+/**
+ * Lead form script.
+ *
+ * Targets: the "Lead" doctype form.
+ * Loaded via: hooks.py `doctype_js["Lead"]` (with vue.global.js + comments.js +
+ *   the primary-contact helper; the Comments App is auto-mounted for Lead by
+ *   comments_auto.js).
+ *
+ * First block: adds a "Call via Triton" button on saved leads
+ * (erpnext_enhancements.api.telephony.trigger_outbound_call). Second block
+ * (migrated from the "Lead Create Opportunity Button" Client Script): on saved,
+ * non-converted leads adds a "Create Opportunity" button pre-filled from the lead.
+ */
 frappe.ui.form.on("Lead", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {

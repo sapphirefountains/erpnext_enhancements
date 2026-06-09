@@ -1,3 +1,16 @@
+/*
+ * Projects Dashboard — styles for the "Projects Dashboard" Custom HTML Block.
+ *
+ * Exported source of a Frappe Custom HTML Block (authored/stored in the Frappe UI);
+ * this repo copy is the source of truth / backup — edit here, paste back into the
+ * UI to deploy. Pairs with projects_dashboard.html (shell) + projects_dashboard.js.
+ *
+ * Covers: the tab bar, skeleton-loader pulse, status badges, inline-editable cells,
+ * sortable table headers, the column-selector dropdown, and a large block of
+ * frappe-gantt overrides for the Portfolio Gantt tab. NOTE: per-bar fill colours are
+ * NOT set here — projects_dashboard.js injects them dynamically (see the comment by
+ * "PORTFOLIO GANTT TYPOGRAPHY & OVERRIDES").
+ */
 .project-dashboard-container {
     background: #fff;
     border-radius: 4px;

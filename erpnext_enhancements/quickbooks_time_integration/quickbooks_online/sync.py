@@ -1,3 +1,23 @@
+"""Sync orchestration for the QuickBooks Online integration.
+
+This is the engine that drives data from QBO into ERPNext. It coordinates the
+``client`` (fetch), ``mapping`` (transform/upsert) and the logging/audit
+doctypes, exposing the high-level operations the UI and scheduler call:
+
+  * ``import_all``     -- full one-way import of every selected entity (UI/Retry).
+  * ``preview_resync`` -- dry run that records what an overwrite resync *would* do.
+  * ``run_resync``     -- replay a preview, overwriting QBO-owned fields.
+  * ``sync_entity``    -- fetch + upsert one entity (webhook/manual single sync).
+  * ``run_cdc``        -- poll Change Data Capture for incremental updates/deletes.
+  * ``retry_failed``   -- re-run logs left Failed (scheduler), honouring retry_limit.
+
+Every operation opens a ``QuickBooks Sync Log`` (run lifecycle + per-action
+counters), archives each fetched record as a ``QuickBooks Raw Payload``, and
+funnels writes through ``mapping.upsert_entity`` (wrapped by ``safe_upsert`` so
+one bad record cannot abort an entire batch). Master entities are imported
+before transactions so reference links resolve.
+"""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +40,17 @@ from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils im
 
 
 def import_all(entity_types=None):
+	"""Full one-way import of all (or selected) QBO entities into ERPNext.
+
+	For each entity (master types first), pages through every QBO record, stores
+	the raw payload and upserts it via ``safe_upsert``. Wrapped in a single
+	"Import All" sync log; on success stamps ``last_full_import`` and sets
+	Settings status to Connected/Failed based on whether any record failed.
+
+	Triggered from the Settings form / dashboard "Import All" action and from the
+	scheduler ``retry_failed`` path. Side effects: many QBO GETs, DB writes, two
+	commits. Returns the sync log name. Re-raises after logging on hard failure.
+	"""
 	settings = get_settings()
 	ensure_connected(settings)
 	log = start_log("Import All")
@@ -50,6 +81,15 @@ def import_all(entity_types=None):
 
 
 def preview_resync(entity_types=None):
+	"""Dry-run resync: fetch QBO data and compute changes without writing.
+
+	Mirrors ``import_all`` but calls ``safe_upsert(..., preview=True)`` so no
+	ERPNext records are created/updated; the per-record planned actions are
+	collected and stored on the log's ``preview_payload``. The returned
+	``preview_id`` is then passed to ``run_resync`` to actually apply the
+	overwrite. Raw payloads ARE stored (so ``run_resync`` can replay them).
+	Returns ``{preview_id, summary, changes}``.
+	"""
 	settings = get_settings()
 	ensure_connected(settings)
 	log = start_log("Preview Resync")
@@ -77,6 +117,14 @@ def preview_resync(entity_types=None):
 
 
 def run_resync(preview_id):
+	"""Apply a previously generated preview, overwriting QBO-owned fields.
+
+	Replays the raw payloads captured under the given preview log (in creation
+	order) through ``safe_upsert(..., overwrite=True)`` so conflicts are resolved
+	in QBO's favour rather than flagged. Re-fetches nothing from QBO -- it works
+	purely from the stored payloads. Raises if ``preview_id`` is not a valid log.
+	Returns ``{sync_log, summary}``.
+	"""
 	if not preview_id or not frappe.db.exists("QuickBooks Sync Log", preview_id):
 		frappe.throw("A valid Preview Resync log is required before running overwrite resync.")
 	settings = get_settings()
@@ -101,11 +149,20 @@ def run_resync(preview_id):
 
 
 def sync_entity(entity_type, qbo_id, source="Manual"):
+	"""Fetch a single QBO entity by id and upsert it into ERPNext.
+
+	The fine-grained sync used by webhooks (enqueued with ``source="Webhook"``)
+	and the dashboard's per-entity "Sync" button. GETs the entity, unwraps the
+	type-keyed response envelope, stores the raw payload and runs ``upsert_entity``
+	directly (not ``safe_upsert``) so failures fail the log and re-raise.
+	Returns ``{sync_log, result}``.
+	"""
 	settings = get_settings()
 	ensure_connected(settings)
 	log = start_log("Entity Sync", entity_type=entity_type)
 	try:
 		response = QuickBooksClient(settings).get_entity(entity_type, qbo_id)
+		# QBO wraps single-entity GETs under a type-named key (e.g. {"Invoice": {...}}).
 		payload = response.get(entity_type) or response.get(entity_type.lower()) or response
 		store_raw_payload(source, entity_type, payload, sync_log=log.name, realm_id=settings.realm_id)
 		result = upsert_entity(entity_type, payload, settings)
@@ -119,17 +176,29 @@ def sync_entity(entity_type, qbo_id, source="Manual"):
 
 
 def run_cdc():
+	"""Poll QBO Change Data Capture and apply incremental changes/deletions.
+
+	Driven by the ``tasks.cdc_poll`` scheduler hook (and ``retry_failed``). No-op
+	unless sync is enabled and connected. Uses ``last_cdc_sync`` as the
+	"changedSince" cursor (defaulting to 24h ago on first run), walks the nested
+	CDCResponse->QueryResponse structure, archives each payload, and either marks
+	the mapping deleted (status == "Deleted") or upserts it. The cursor is only
+	advanced to "now" if the run completed without failures, so a failed batch is
+	retried against the same window next time. Returns the sync log name.
+	"""
 	settings = get_settings()
 	if not settings.sync_enabled or not settings.realm_id:
 		return None
 	ensure_connected(settings)
 	log = start_log("CDC")
+	# Cursor: changes since the last successful CDC; first run looks back 24h.
 	changed_since = settings.last_cdc_sync or add_to_date(now_datetime(), days=-1, as_datetime=True)
 	try:
 		response = QuickBooksClient(settings).cdc(CDC_ENTITIES, changed_since)
 		for cdc_response in response.get("CDCResponse", []):
 			for query_response in cdc_response.get("QueryResponse", []):
 				for entity_type, payloads in query_response.items():
+					# QueryResponse mixes entity-name keys (lists) with metadata; skip non-lists.
 					if not isinstance(payloads, list):
 						continue
 					for payload in payloads:
@@ -142,6 +211,7 @@ def run_cdc():
 							result = safe_upsert(entity_type, payload, settings)
 						_track_result(log, result)
 		finish_log(log)
+		# Only advance the cursor on a clean run so failures get reprocessed.
 		if log.status == "Completed":
 			settings.last_cdc_sync = now_datetime()
 		settings.status = "Failed" if log.status == "Failed" else "Connected"
@@ -155,12 +225,22 @@ def run_cdc():
 
 
 def retry_failed(log_name=None):
+	"""Re-run sync logs left in the Failed state, capped by ``retry_limit``.
+
+	Called by the ``tasks.retry_failed_syncs`` scheduler hook (all failed logs)
+	or with a specific ``log_name`` from the dashboard "Retry Failed" action.
+	Each eligible log has its ``retry_count`` incremented (skipped once it hits
+	Settings.retry_limit, default 3), then the originating operation is re-run:
+	CDC logs re-run ``run_cdc``; Import All / Run Resync logs re-run ``import_all``.
+	Always returns True.
+	"""
 	filters = {"status": "Failed"}
 	if log_name:
 		filters["name"] = log_name
 	for log in frappe.get_all(
 		"QuickBooks Sync Log", filters=filters, fields=["name", "sync_type", "retry_count"]
 	):
+		# Stop retrying a log once it has hit the configured attempt ceiling.
 		if (log.retry_count or 0) >= (get_settings().retry_limit or 3):
 			continue
 		doc = frappe.get_doc("QuickBooks Sync Log", log.name)
@@ -174,6 +254,12 @@ def retry_failed(log_name=None):
 
 
 def query_all(entity_type, settings=None):
+	"""Yield every QBO record of a type, paging through the query endpoint.
+
+	Generator that walks QBO's ``startposition``/``maxresults`` pagination (100
+	per page) until a short page signals the end. Each page is a separate HTTP
+	call via ``client.query``.
+	"""
 	settings = settings or get_settings()
 	client = QuickBooksClient(settings)
 	start_position = 1
@@ -185,17 +271,27 @@ def query_all(entity_type, settings=None):
 		query_response = response.get("QueryResponse") or {}
 		records = query_response.get(entity_type) or []
 		yield from records
+		# A page smaller than the page size means we've reached the last page.
 		if len(records) < max_results:
 			break
 		start_position += max_results
 
 
 def query_entity_payloads(entity_type, settings=None):
+	"""Yield payloads for an entity, enriching Accounts with a children flag.
+
+	For most entities this is a passthrough to ``query_all``. For "Account" it
+	first materializes the full list to detect which accounts are parents of
+	others, tagging each with a transient ``_qbo_has_children`` flag so the
+	mapper can correctly mark group (parent) accounts as ``is_group``. The flag
+	is stripped before persistence by ``_clean_payload``.
+	"""
 	if entity_type != "Account":
 		yield from query_all(entity_type, settings=settings)
 		return
 
 	payloads = list(query_all(entity_type, settings=settings))
+	# Collect every account id referenced as a parent so children imply a group.
 	parent_ids = {
 		str(parent_id)
 		for parent_id in ((payload.get("ParentRef") or {}).get("value") for payload in payloads)
@@ -208,12 +304,19 @@ def query_entity_payloads(entity_type, settings=None):
 
 
 def _clean_payload(payload):
+	"""Strip transient ``_qbo_*`` helper keys before a payload is stored."""
 	if not isinstance(payload, dict):
 		return payload
 	return {key: value for key, value in payload.items() if not key.startswith("_qbo_")}
 
 
 def safe_upsert(entity_type, payload, settings, **kwargs):
+	"""Run ``mapping.upsert_entity``, converting exceptions into a failed result.
+
+	Used by batch operations (import/resync/CDC) so one malformed record logs an
+	Error and returns ``{"action": "failed", ...}`` instead of aborting the whole
+	run. ``kwargs`` forward flags like ``preview`` / ``overwrite``.
+	"""
 	try:
 		return upsert_entity(entity_type, payload, settings, **kwargs)
 	except Exception:
@@ -230,12 +333,25 @@ def safe_upsert(entity_type, payload, settings, **kwargs):
 
 
 def ordered_entities(entity_types=None):
+	"""Order a selection so master data is imported before transactions.
+
+	Ensures dependencies (Accounts/Customers/Items, etc.) exist and are mapped
+	before the transactions that reference them; any selected entity not in the
+	known master/transaction lists is appended at the end.
+	"""
 	selected = list(entity_types or ACCOUNTING_ENTITIES)
 	ordered = [entity for entity in MASTER_ENTITIES + TRANSACTION_ENTITIES if entity in selected]
 	return ordered + [entity for entity in selected if entity not in ordered]
 
 
 def store_raw_payload(source, entity_type, payload, *, sync_log=None, realm_id=None, operation=None):
+	"""Persist a fetched/received QBO payload as a ``QuickBooks Raw Payload``.
+
+	The integration's audit trail and the data source ``run_resync`` /
+	``link_existing_record`` replay from. ``source`` is the origin
+	(Import/Resync/Webhook/CDC/Manual); the QBO id/operation are extracted from
+	the payload when it is a dict. Inserts (ignore_permissions) and returns the doc.
+	"""
 	doc = frappe.new_doc("QuickBooks Raw Payload")
 	doc.source = source
 	doc.qbo_entity_type = entity_type
@@ -250,6 +366,7 @@ def store_raw_payload(source, entity_type, payload, *, sync_log=None, realm_id=N
 
 
 def start_log(sync_type, entity_type=None):
+	"""Open and insert a new ``QuickBooks Sync Log`` in the Running state."""
 	log = frappe.new_doc("QuickBooks Sync Log")
 	log.sync_type = sync_type
 	log.entity_type = entity_type
@@ -260,6 +377,13 @@ def start_log(sync_type, entity_type=None):
 
 
 def fail_log(log, exc):
+	"""Mark a run as hard-failed: record the traceback on the log and Settings.
+
+	Called from each operation's except-block for unexpected errors (as opposed
+	to per-record failures tracked via counters). Saves the log with the full
+	traceback, sets Settings status to Failed with the exception text, and commits
+	so the failure survives the re-raise that follows.
+	"""
 	log.status = "Failed"
 	log.error_message = frappe.get_traceback()
 	log.finished_at = now_datetime()
@@ -273,18 +397,21 @@ def fail_log(log, exc):
 
 
 def finish_log(log):
+	"""Close a run: status is Failed if any per-record failures, else Completed."""
 	log.status = "Failed" if (log.failed_count or 0) else "Completed"
 	log.finished_at = now_datetime()
 	log.save(ignore_permissions=True)
 
 
 def _status_message(log, completed_message):
+	"""Pick the Settings status message: failure summary or the success text."""
 	if log.status == "Failed":
 		return f"Sync finished with {log.failed_count or 0} failed record(s). See QuickBooks Sync Log {log.name}."
 	return completed_message
 
 
 def summarize_log(log):
+	"""Return the log's per-action counters as a plain dict (for UI responses)."""
 	return {
 		"created": log.created_count or 0,
 		"updated": log.updated_count or 0,
@@ -297,11 +424,19 @@ def summarize_log(log):
 
 
 def ensure_connected(settings):
+	"""Guard: raise unless a realm id (connected company) is present on Settings."""
 	if not settings.realm_id:
 		frappe.throw("Connect QuickBooks Online before syncing.")
 
 
 def _track_result(log, result):
+	"""Increment the matching per-action counter on the log from an upsert result.
+
+	Maps both preview verbs (create/update/link/delete) and applied verbs
+	(created/updated/...) to the same counter so previews and real runs summarize
+	identically. Failures additionally append a human-readable line via
+	``_append_failure_message``.
+	"""
 	action = result.get("action")
 	if action == "created" or action == "create":
 		log.created_count = (log.created_count or 0) + 1
@@ -321,6 +456,12 @@ def _track_result(log, result):
 
 
 def _append_failure_message(log, result):
+	"""Append a numbered one-line failure note to the log's error_message.
+
+	Keeps the log readable by capping at 20 inline failures and adding a single
+	"additional failures omitted" note at the 21st; full tracebacks remain in the
+	Frappe Error Log (written by ``safe_upsert``).
+	"""
 	failure_number = log.failed_count or 1
 	if failure_number > 20:
 		if failure_number == 21:
@@ -338,6 +479,7 @@ def _append_failure_message(log, result):
 
 
 def _last_non_empty_line(text):
+	"""Return the last non-blank line of ``text`` (the salient bit of a traceback)."""
 	if not text:
 		return None
 	lines = [line.strip() for line in str(text).splitlines() if line.strip()]

@@ -1,6 +1,18 @@
 /* global erpnext_enhancements */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
+/**
+ * Project Dashboard tab — Completed Projects.
+ *
+ * Targets: the "Completed Projects" tab of the Project Dashboard page.
+ * Loaded via: lazy `frappe.require` from project_dashboard.js (constructed by
+ * name; render()/unmount() called on tab show/hide).
+ *
+ * Fetches inactive projects (`is_active = "No"`) and renders a read-only table
+ * with a column selector. Notable for its exponential-backoff retry on timeout /
+ * fetch errors (up to 3 attempts) before surfacing an error card. AbortController
+ * cancels in-flight work on tab switch.
+ */
 erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedProjects {
 	constructor(wrapper) {
 		this.wrapper = $(wrapper);

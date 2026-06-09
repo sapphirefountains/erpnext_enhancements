@@ -1,6 +1,18 @@
+"""Monkey-patch Frappe's delete endpoints to make link conflicts recoverable.
+
+By default ``frappe.client.delete`` and the report-view bulk delete raise
+``LinkExistsError`` when a document is still referenced. This module wraps both
+so that — on an HTTP POST — they instead return a JSON ``{"link_exists": True,
+...}`` signal. The frontend reads that signal and offers the user the
+"unlink and delete" flow backed by ``delete_utils.py``. Non-HTTP callers still
+get the original exception. The patch is idempotent (guarded by a
+``_delete_doc_patched_v4`` sentinel) and applied once at boot.
+"""
+
+
 def patch_delete_doc():
 	"""
-	Monkey patch frappe.delete_doc to catch LinkExistsError 
+	Monkey patch frappe.delete_doc to catch LinkExistsError
 	and return a special signal that the frontend can use to offer unlinking.
 	"""
 	import frappe

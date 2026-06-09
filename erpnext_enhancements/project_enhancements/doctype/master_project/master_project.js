@@ -1,6 +1,20 @@
 // Copyright (c) 2024, Sapphire Fountains and contributors
 // For license information, please see license.txt
 
+/**
+ * Master Project form customization — read-only rollup tables.
+ *
+ * Customizes: the Master Project doctype form (this is the doctype's standard
+ * controller JS, auto-loaded by Frappe for its own doctype).
+ *
+ * Behavior: on refresh of a saved doc, calls the server method
+ * `get_projects_and_tasks` (MasterProject controller in master_project.py) and
+ * renders two HTML fields — `projects_html` (member Projects: status / priority /
+ * progress / due date) and `tasks_html` (Tasks grouped under each Project, with
+ * collapsible project rows). For an unsaved (`__islocal`) doc it shows
+ * "Save to view..." placeholders instead. Both tables are display-only; rows link
+ * out to the underlying Project / Task forms.
+ */
 frappe.ui.form.on("Master Project", {
 	refresh: function (frm) {
 		if (frm.doc.__islocal) {

@@ -1,3 +1,22 @@
+/**
+ * Unified party tab controller (Contacts / Addresses / Map directory widget).
+ *
+ * Targets: the Customer, Supplier, Opportunity, Project, Master Project and
+ * Contact forms.
+ * Loaded via: hooks.py `doctype_js` for each of those doctypes.
+ *
+ * Renders aggregated Contact and Address directories into custom HTML fields
+ * (contact_list_html / address_list_html) plus an embedded Google Map of the
+ * primary address (location_map_html), and wires the custom comments field
+ * (custom_comments_field) to ERPNext's CRMNotes widget.
+ *
+ * The key idea is `get_all_party_sources`: it gathers every related party for the
+ * current doc — the doc itself, its customer/supplier/party_name links, and any
+ * child-table rows referencing parties or Dynamic Links — then asks the backend
+ * (`sync_contact.*`) for all contacts/addresses linked to ANY of them. This is
+ * why, e.g., a Project shows contacts attached to its Customer. Add / Set Primary
+ * / Unlink actions all round-trip through the same sync_contact API and re-render.
+ */
 frappe.provide("erpnext_enhancements.unified_controller");
 
 frappe.ui.form.on("Customer", {

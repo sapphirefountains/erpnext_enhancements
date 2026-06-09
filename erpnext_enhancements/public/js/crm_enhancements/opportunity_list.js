@@ -1,3 +1,16 @@
+/**
+ * Opportunity list-view enhancements (Kanban colouring).
+ *
+ * Targets: the Opportunity list, specifically its Kanban view.
+ * Loaded via: hooks.py `doctype_list_js["Opportunity"]`.
+ *
+ * Tints Kanban cards by their expected-closing date: red for overdue, yellow for
+ * "due within 7 days", and neutral for closed/lost ("excluded") opportunities.
+ * The colour is driven by `data-date-status` / `data-doc-status` attributes set
+ * on each `.kanban-card-wrapper`; a MutationObserver re-applies them as the board
+ * re-renders (and disconnects on route change). `add_fields` force-fetches
+ * expected_closing/status so the data is present even if not shown on the card.
+ */
 frappe.provide("frappe.listview_settings");
 
 frappe.listview_settings['Opportunity'] = {

@@ -1,3 +1,14 @@
+"""Supplier purchase-link endpoints for procurement screens.
+
+Whitelisted API consumed by ``public/js/procurement_links.js`` to show and edit
+the "purchase URL" stored on Item Supplier child rows (e.g. quick links to a
+vendor's product page from a Purchase Order).
+
+Security: standard authenticated whitelist. ``save_item_link`` writes the Item
+with ``ignore_permissions=True`` so a buyer can record a supplier URL without
+needing full Item write access. No external services.
+"""
+
 import frappe
 
 @frappe.whitelist()

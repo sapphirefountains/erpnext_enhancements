@@ -1,6 +1,10 @@
 /**
  * Triton embedded assistant widget.
  *
+ * Targets: every ERPNext desk page (a global floating widget, not tied to any
+ * doctype). Loaded via: hooks.py `app_include_js` (global). Self-disables unless
+ * the server `get_config` reports it enabled and the user is not Guest.
+ *
  * A floating trident button on every ERPNext desk page that opens a chat panel
  * wired to Triton. All traffic goes through same-origin whitelisted methods on
  * `erpnext_enhancements.triton_chat` (no CORS, no client-side secrets). The chat

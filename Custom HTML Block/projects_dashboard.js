@@ -1,3 +1,23 @@
+/*
+ * Projects Dashboard — behaviour for the "Projects Dashboard" Custom HTML Block.
+ *
+ * Exported source of a Frappe Custom HTML Block (authored/stored in the Frappe UI);
+ * this repo copy is the source of truth / backup — edit here, paste back into the
+ * UI to deploy. Pairs with projects_dashboard.html (shell) + projects_dashboard.css.
+ *
+ * Runs inside the Custom HTML Block sandbox, where `root_element` is the block's
+ * root node. It loads the shared ColumnSelector asset, then fetches data through
+ * the project_dashboard page's whitelisted methods
+ * (erpnext_enhancements.project_enhancements.page.project_dashboard.*) and renders:
+ *   - Priority Overview   — client-facing value streams (Build/Design/Rent/Service),
+ *                           with inline-editable company/project priority cells;
+ *   - Active Internal Projects — grouped by master project, inline status/priority;
+ *   - Completed Projects  — read-only list of inactive projects;
+ *   - Portfolio Gantt     — frappe-gantt of projects (and optionally tasks), with
+ *                           project/status filters, collapsible master/project/task
+ *                           nodes, drag-to-reschedule, and scroll preservation.
+ * Table edits and Gantt date drags persist back via the same whitelisted methods.
+ */
 (function() {
     // The ColumnSelector class lives in a separate asset registered via app_include_js.
     // Don't assume that bundle has already executed when this block renders -- load it

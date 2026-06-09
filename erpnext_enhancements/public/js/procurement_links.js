@@ -1,3 +1,18 @@
+/**
+ * Procurement purchase-links — supplier purchase URLs per item row.
+ *
+ * Targets: the "Purchase Order" and "Material Request" doctype forms (and their
+ *   item child tables).
+ * Loaded via: hooks.py `doctype_js["Purchase Order"]` and
+ *   `doctype_js["Material Request"]` (both with vue.global.js + comments.js).
+ *
+ * For each item row, renders the stored per-supplier purchase links (fetched in
+ * bulk via erpnext_enhancements.api.procurement.get_item_links to avoid N+1) into
+ * the row's virtual `purchase_links` HTML field, plus an add/edit affordance that
+ * saves through erpnext_enhancements.api.procurement.save_item_link. On a PO the
+ * links are filtered to the PO's supplier; on a Material Request all suppliers
+ * are shown. edit_link is exposed globally for the inline onclick handlers.
+ */
 frappe.provide('erpnext_enhancements.procurement');
 
 erpnext_enhancements.procurement.PurchaseLinks = class PurchaseLinks {

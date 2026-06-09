@@ -1,8 +1,36 @@
+"""AI-assisted email/SMS reply drafting for Communication records.
+
+Wires the "Triton" AI persona into inbound communications:
+        - ``after_insert_communication`` is a Communication ``after_insert``
+          doc-event hook (registered in hooks.py). For inbound emails it
+          enqueues background draft generation.
+        - ``generate_draft_response`` is the background worker (run on the
+          "long" queue) that drafts a reply email.
+        - ``suggest_sms_reply`` is a whitelisted endpoint called from
+          ``public/js/communication.js`` to draft an SMS reply on demand.
+
+Prompts/persona are read from the ``Triton Settings`` Single DocType and sent
+to Vertex AI via ``erpnext_enhancements.api.gemini.generate_content_with_vertex_ai``.
+Generated drafts are written as new Communication docs (and the model's
+"thoughts" as a Comment) with ``ignore_permissions=True``, since the work runs
+either in a background job or on behalf of an interactive user.
+"""
+
 import frappe
 from frappe import _
 
 
 def after_insert_communication(doc, method=None):
+    """Communication ``after_insert`` hook: queue an AI draft for inbound email.
+
+    Args:
+        doc: The newly inserted Communication document.
+        method: Frappe doc-event hook arg (unused).
+
+    Side effects: when the communication is a *received* Email, enqueues
+    ``generate_draft_response`` on the "long" queue (after commit). No-op for
+    any other medium/direction.
+    """
     if doc.communication_medium == 'Email' and doc.sent_or_received == 'Received':
         frappe.enqueue(
             "erpnext_enhancements.api.communication.generate_draft_response",
@@ -13,6 +41,22 @@ def after_insert_communication(doc, method=None):
 
 
 def generate_draft_response(communication_name):
+    """Background worker: draft an AI reply to an inbound email Communication.
+
+    Args:
+        communication_name (str): Name of the received-email Communication.
+
+    Behaviour: loads Triton Settings (master prompt + per-value-stream
+    guidelines), builds a system instruction + prompt, and calls Vertex AI. On
+    success it inserts a new *Draft* outbound Communication (HTML, ``in_reply_to``
+    the original) and, if the model returned reasoning, a Comment containing the
+    AI "thoughts".
+
+    Side effects: external Vertex AI call; inserts Communication + optional
+    Comment with ``ignore_permissions=True``. Silently returns (logging to the
+    Error Log) if the source doc, Triton Settings, or the AI call is missing/fails.
+    Not whitelisted — invoked only via the enqueue in ``after_insert_communication``.
+    """
     try:
         inbound_email = frappe.get_doc("Communication", communication_name)
     except frappe.DoesNotExistError:
@@ -91,6 +135,21 @@ Email Content:
 
 @frappe.whitelist()
 def suggest_sms_reply(communication_name):
+    """Whitelisted: draft a short AI SMS reply for an inbound SMS Communication.
+
+    Args:
+        communication_name (str): Name of the SMS Communication to reply to.
+
+    Validates the record exists and has ``communication_medium == "SMS"``
+    (else ``frappe.throw``). Builds the Triton prompt and calls Vertex AI.
+
+    Returns:
+        dict: ``{"status": "success", "suggested_reply": <text>}``.
+
+    Side effects: external Vertex AI call; if the model returned reasoning,
+    inserts a Comment with the AI "thoughts" on the SMS and commits. Called
+    from ``public/js/communication.js``.
+    """
     try:
         inbound_sms = frappe.get_doc("Communication", communication_name)
     except frappe.DoesNotExistError:

@@ -1,9 +1,24 @@
 /*
- * Time Kiosk — standalone PWA application.
+ * Time Kiosk — standalone PWA application (UI / clock state machine).
+ *
+ * Targets: the Time Kiosk PWA front-end (mounts into #kiosk-root).
+ * Loaded via: the web page www/kiosk.html — NOT through hooks.py. The page injects
+ * a boot payload on `window.KIOSK_BOOT` (employee, settings, current status,
+ * csrf_token); this script is loaded together with geo.js and a service worker
+ * (/kiosk-sw.js) that handles durable queueing/upload of location points.
  *
  * Self-contained: does NOT depend on the Frappe desk bundle. Talks to whitelisted
- * endpoints via fetch (+ injected CSRF token) and drives KioskGeo (geo.js) for
- * location tracking, which runs only while clocked in AND active (status "Open").
+ * `erpnext_enhancements.api.time_kiosk.*` endpoints via fetch (+ injected CSRF
+ * token) and drives KioskGeo (geo.js) for location tracking, which runs only while
+ * clocked in AND active (status "Open").
+ *
+ * Flow: init() injects the template, caches DOM refs, wires events, configures
+ * KioskGeo + warms up the location permission, registers the service worker, seeds
+ * the UI from the boot status then confirms via get_current_status. renderState()
+ * is the central state machine that switches the card between the idle/clock-in
+ * form, the active (Open) view, and the paused (break) view, and starts/stops
+ * KioskGeo accordingly. Clock-in/pause/resume/switch/clock-out all post to the
+ * log_time endpoint; attachments upload via /api/method/upload_file then link.
  */
 (function () {
   'use strict';

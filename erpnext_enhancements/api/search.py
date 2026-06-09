@@ -1,3 +1,16 @@
+"""AwesomeBar global-search augmentation endpoint.
+
+Whitelisted API called from ``public/js/erpnext_enhancements.js`` to inject
+``__global_search`` matches into the Desk AwesomeBar dropdown.
+
+Security: standard authenticated whitelist, but results are individually
+permission-filtered — every candidate is re-checked with ``frappe.get_all(...,
+ignore_permissions=False)`` (and ``has_permission`` per doctype) so users only
+see documents they may read; rows for deleted docs are dropped. The search
+term is regex-escaped and matched text is HTML-escaped before being wrapped in
+``<b>`` highlight tags to avoid injection in the dropdown label.
+"""
+
 import frappe
 from frappe import _
 from frappe.utils import escape_html

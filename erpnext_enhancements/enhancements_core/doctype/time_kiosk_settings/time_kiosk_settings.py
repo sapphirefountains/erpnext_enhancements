@@ -1,3 +1,16 @@
+"""Controller for the Time Kiosk Settings Single doctype.
+
+App-wide tuning for the Time Kiosk PWA's location tracking (``issingle``):
+the master ``enable_tracking`` switch, sampling trade-offs (distance filter,
+heartbeat interval, high-accuracy GPS, min accuracy, max batch size), an optional
+screen wake-lock, and the ``retention_days`` window for purging old Time Kiosk
+Logs.
+
+Exposes ``get_settings()``, a defensive reader used by the kiosk bootstrap
+(``api.time_kiosk.get_kiosk_bootstrap``) that falls back to ``DEFAULTS`` for any
+unset field, so it is safe even before the Single has ever been saved.
+"""
+
 import frappe
 from frappe.model.document import Document
 

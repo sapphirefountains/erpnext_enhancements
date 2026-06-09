@@ -1,6 +1,11 @@
 /* ==========================================================================
    LOGIN PAGE ENHANCEMENTS
    Scoped strictly to login elements to avoid affecting public website.
+
+   What this styles: the login / forgot-password / signup page cards, buttons and
+   inputs (Sapphire glassmorphism), with [data-theme] light/dark variables.
+   Loaded via: hooks.py `web_include_css` ("login_enhancements.css", compiled
+   from this .bundle.css), so it applies to the web/login pages, not the desk.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------

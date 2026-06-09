@@ -1,3 +1,24 @@
+"""Marketing analytics endpoints (Google Analytics 4 + Google Search Console).
+
+Whitelisted API that powers the GA4 Dashboard Desk page
+(``enhancements_core/page/ga4_dashboard/ga4_dashboard.js``), which calls
+``get_ga4_data`` and ``get_gsc_data``.
+
+External services:
+        - Google Analytics 4 Data API (``BetaAnalyticsDataClient``).
+        - Google Search Console Search Analytics API (``searchconsole`` v1).
+
+Configuration & credentials: read from the ``GA4 Settings`` Single DocType
+(property id / property url plus a service-account JSON file). The credentials
+JSON MUST be uploaded as a Private file (``/private/files/...``); a public path
+is rejected to avoid leaking the service account key. Each endpoint fans out
+its independent report queries across a thread pool to reduce latency, and
+returns Frappe-Charts-shaped dicts (or an ``{"error": ...}`` dict on failure).
+
+Security: requires an authenticated session (default whitelist). Errors are
+logged to the Error Log and returned as a plain ``{"error": ...}`` message.
+"""
+
 import frappe
 import os
 import concurrent.futures

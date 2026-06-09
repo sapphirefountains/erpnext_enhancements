@@ -264,6 +264,7 @@ def get_config() -> dict:
 
 @frappe.whitelist()
 def start_session(title: str | None = None, model: str | None = None) -> dict:
+    """Create a new Triton chat session for the current user."""
     settings = get_settings()
     return _request("POST", "/api/v1/assistant/sessions", {
         "title": title or "ERPNext Chat",
@@ -273,6 +274,7 @@ def start_session(title: str | None = None, model: str | None = None) -> dict:
 
 @frappe.whitelist()
 def list_sessions() -> list:
+    """Return the current user's Triton chat sessions (history list)."""
     return _request("GET", "/api/v1/assistant/sessions")
 
 
@@ -343,6 +345,7 @@ def morning_briefing(force: int | str = 0, cached_only: int | str = 0) -> dict:
 
 @frappe.whitelist()
 def get_messages(session_id: str, limit: int | None = 50) -> list:
+    """Return the most recent messages for a session (for reopening a chat)."""
     path = f"/api/v1/assistant/sessions/{cint(session_id)}/messages"
     if limit:
         path += f"?limit={cint(limit)}"
@@ -351,11 +354,13 @@ def get_messages(session_id: str, limit: int | None = 50) -> list:
 
 @frappe.whitelist()
 def delete_session(session_id: str) -> dict:
+    """Delete a Triton chat session and its history."""
     return _request("DELETE", f"/api/v1/assistant/sessions/{cint(session_id)}")
 
 
 @frappe.whitelist()
 def confirm_action(action_id: str, session_id: str | None = None) -> dict:
+    """Approve a Triton-proposed write action (human-in-the-loop confirm)."""
     return _request("POST", f"/api/v1/integrations/actions/{action_id}/confirm", {
         "session_id": cint(session_id) or None,
     })
@@ -363,6 +368,7 @@ def confirm_action(action_id: str, session_id: str | None = None) -> dict:
 
 @frappe.whitelist()
 def cancel_action(action_id: str, session_id: str | None = None) -> dict:
+    """Reject a Triton-proposed write action."""
     return _request("POST", f"/api/v1/integrations/actions/{action_id}/cancel", {
         "session_id": cint(session_id) or None,
     })

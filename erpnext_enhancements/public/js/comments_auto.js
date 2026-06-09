@@ -1,6 +1,10 @@
 // Auto-mounts the custom "Comments App" on every doctype that exposes a
 // `custom_comments_field` HTML field.
 //
+// Targets: every doctype listed in COMMENT_APP_DOCTYPES (below).
+// Loaded via: hooks.py `app_include_js` (global), after vue.global.js +
+//   comments.js so erpnext_enhancements.render_comments_app is defined.
+//
 // This replaces ~two dozen near-identical per-doctype `*_comments.js` files,
 // each of which did nothing but call render_comments_app on refresh. To give a
 // new doctype the comments tab, add its name to the list below — no new file

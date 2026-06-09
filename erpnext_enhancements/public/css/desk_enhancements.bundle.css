@@ -1,5 +1,16 @@
 /* ==========================================================================
    DESK ENHANCEMENTS (Internal System Only)
+
+   What this styles: the whole Frappe desk — Sapphire glassmorphism theme
+   (buttons, modals, navbar/headers, dropdowns) plus styles for several of this
+   app's JS features: the Vue Procurement Tracker (project_enhancements.js), the
+   custom Comments App (comments.js), Kanban horizontal scroll + Opportunity
+   high-value card / value-stream dots (kanban_customization.js), activity-log
+   numbering (activity_log_numbering.js) and the filter-help button
+   (filter_help.js).
+
+   Loaded via: hooks.py `app_include_css` (global; bundled file name
+   "desk_enhancements.bundle.css"). Light/dark handled with [data-theme] vars.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------

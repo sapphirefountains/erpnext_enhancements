@@ -1,3 +1,16 @@
+/**
+ * Supplier list-view enhancements.
+ *
+ * Targets: the Supplier DocType list view.
+ * Loaded via: hooks.py `doctype_list_js["Supplier"]`.
+ *
+ * Adds an "On Hold" red indicator, and supports the custom "additional supplier
+ * groups" model: the `custom_additional_supplier_groups_list` column is only
+ * shown when a supplier-group filter is active, and an overridden `get_args`
+ * rewrites any `supplier_group =` filter into a `LIKE` against the searchable
+ * `custom_supplier_groups_search` field so suppliers belonging to a group via the
+ * additional-groups list also match.
+ */
 // Extend standard listview settings for Supplier
 frappe.listview_settings['Supplier'] = frappe.listview_settings['Supplier'] || {};
 

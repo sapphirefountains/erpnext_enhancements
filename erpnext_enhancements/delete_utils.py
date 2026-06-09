@@ -1,3 +1,19 @@
+"""Force-delete helper: enumerate and clear links blocking a deletion.
+
+Frappe refuses to delete a document still referenced by other documents
+(``LinkExistsError``). This module backs a UI flow that lets a user see exactly
+what is blocking the delete and then unlink-and-delete in one shot:
+
+* :func:`get_blocking_links` walks both standard Link fields and Dynamic Links
+  (single, normal, and child-table parents) pointing at the target, skipping
+  cancelled docs, self-references, and doctypes in the ``ignore_links_on_delete``
+  hook, and returns a structured list the frontend renders.
+* :func:`unlink_and_delete` clears each of those references low-level (bypassing
+  validation so it works on submitted docs) and then force-deletes the target.
+
+Companion to ``utils/patch_delete.py``, which monkey-patches Frappe's delete
+endpoints to surface ``LinkExistsError`` as a signal that triggers this flow.
+"""
 import frappe
 from frappe import _
 from frappe.model.docstatus import DocStatus
@@ -148,6 +164,15 @@ def get_blocking_links(doctype, name):
 
 @frappe.whitelist()
 def unlink_and_delete(doctype, name):
+	"""Clear every reference returned by :func:`get_blocking_links`, then delete.
+
+	Requires delete permission on the target. Child-table references are removed
+	row-by-row; scalar/dynamic links are nulled via ``db.set_value`` /
+	``set_single_value`` (with ``update_modified=False``) to bypass mandatory and
+	validation checks on submitted documents. Per-link failures are logged but do
+	not abort the others. Finally force-deletes the target with permissions
+	ignored. Returns ``{"success": True}``.
+	"""
 	if not frappe.has_permission(doctype, "delete", name):
 		frappe.throw(_("You do not have permission to delete {0} {1}").format(doctype, name))
 

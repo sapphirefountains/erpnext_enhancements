@@ -1,3 +1,18 @@
+"""Per-user form autosave drafts.
+
+Whitelisted API behind the Desk form autosave in
+``public/js/erpnext_enhancements.js`` (``save_draft`` / ``delete_draft``),
+which persists unsaved edits into the "User Form Draft" DocType so they survive
+reloads/crashes.
+
+Security: drafts are keyed by ``frappe.session.user``; Guest sessions are
+ignored. Writes use ``ignore_permissions=True`` (the draft store is the user's
+own scratch space, not the underlying document).
+
+Scheduler: ``cleanup_stale_drafts`` runs daily (hooks.py) to bulk-purge drafts
+older than ``DRAFT_RETENTION_DAYS`` so the table doesn't grow unbounded.
+"""
+
 import frappe
 import json
 

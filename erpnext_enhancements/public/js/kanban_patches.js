@@ -1,6 +1,9 @@
 /*
  * Kanban "press-and-hold to grab" — drag delay for mouse AND touch.
  *
+ * Targets: every Kanban board (board-agnostic). Loaded via hooks.py
+ *   `app_include_js`. See CHANGELOG for the full history of this fix.
+ *
  * THE PROBLEM:
  *   Frappe's Kanban starts a drag the instant a pointer lands on a card. On a touch
  *   screen that means brushing a card while trying to scroll the board sideways or a

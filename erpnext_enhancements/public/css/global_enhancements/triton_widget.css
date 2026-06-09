@@ -1,4 +1,14 @@
-/* Triton embedded assistant — floating widget */
+/* Triton embedded assistant — floating widget.
+ *
+ * What this styles: the global floating Triton chat assistant — the FAB, the
+ * slide-out chat panel (header, model picker, context chips, message bubbles,
+ * streaming cursor / "thinking" disclosure / tool-step timeline), the session
+ * history overlay, inline chart/mermaid widgets, and the mobile layout. Driven by
+ * the global_enhancements/triton_widget.js script.
+ *
+ * Loaded via: hooks.py `app_include_css`
+ *   ("/assets/erpnext_enhancements/css/global_enhancements/triton_widget.css").
+ */
 
 .triton-fab {
 	position: fixed;

@@ -1,4 +1,17 @@
 // v4 - Foolproof interceptor for Link Conflict errors in Frappe.
+//
+// Targets: every desk page (intercepts global delete errors).
+// Loaded via: hooks.py `app_include_js` (global).
+//
+// When Frappe blocks a delete because the document "is linked with" others
+// (LinkExistsError), the stock UI just shows an error. This script monkey-patches
+// frappe.msgprint / frappe.show_alert / frappe.request.error to catch those link
+// conflicts, parse out the offending doctype+name, and offer an "Unlink and
+// Delete" dialog. It lists the blocking links (via delete_utils.get_blocking_links)
+// and, on confirm, calls delete_utils.unlink_and_delete then navigates away or
+// refreshes the list. Patches are applied on load, on app_ready, and re-checked
+// every 2s (each guarded by a `_patched_v4` flag) since frappe may reassign these
+// functions during SPA navigation.
 (function () {
 	let _unlink_dialog_active = false;
 

@@ -1,3 +1,12 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Adds the "Procurement" section and its six create-document buttons (Material
+Request, Purchase Order, Request Quote, Purchase Receipt, Supplier Quotation,
+Purchase Invoice) to the Project doctype, laid out across 3 columns. See the
+sibling ``reorder_procurement_buttons`` patch, which re-applies the same layout
+to correct ordering on sites where the fields were created out of order.
+Idempotent via ``create_custom_fields(..., update=True)``.
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 

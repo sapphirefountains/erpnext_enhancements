@@ -1,3 +1,15 @@
+/**
+ * Project merge tool.
+ *
+ * Targets: the "Project" doctype form.
+ * Loaded via: hooks.py `doctype_js["Project"]` (one of several Project scripts).
+ *
+ * Adds a "Merge Project" button that prompts for a target Project, runs a dry-run
+ * impact analysis (erpnext_enhancements.project_merge.get_merge_stats), shows a
+ * per-doctype confirmation dialog of what will be relinked, then executes the
+ * merge (erpnext_enhancements.project_merge.merge_projects), which relinks
+ * documents and cancels the source project.
+ */
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.is_new()) {

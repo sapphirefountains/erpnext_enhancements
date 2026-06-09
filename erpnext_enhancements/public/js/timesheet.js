@@ -1,3 +1,14 @@
+/**
+ * Timesheet form script.
+ *
+ * Targets: the "Timesheet" doctype form.
+ * Loaded via: hooks.py `doctype_js["Timesheet"]` (with vue.global.js +
+ *   comments.js).
+ *
+ * Mounts the custom Comments App into `custom_comments_field` on saved Timesheets
+ * (see comments.js). Timesheet is excluded from comments_auto.js to avoid a
+ * double mount.
+ */
 frappe.ui.form.on("Timesheet", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {

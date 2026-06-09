@@ -1,27 +1,53 @@
 # Copyright (c) 2024, Sapphire Fountains and contributors
 # For license information, please see license.txt
 
+"""Controller for the Asset Booking submittable doctype.
+
+An Asset Booking reserves an Asset for a time window (``from_datetime`` ->
+``to_datetime``) with a ``booking_type`` of Rental / Travel / Maintenance and an
+optional ``location`` (Address). Bookings default to a Calendar view and feed the
+``get_events`` calendar/feed below; the API helper
+``api.booking.create_composite_booking`` chains Travel + Rental + Maintenance
+bookings together (see test_asset_booking.py).
+
+Every mutation re-derives the parent Asset's denormalised status fields via the
+background worker ``update_asset_status`` (module function below), and bookings
+are prevented from overlapping the same Asset (``check_overlap`` /
+``check_availability``).
+"""
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
 
 class AssetBooking(Document):
     def validate(self):
+        """Lifecycle hook: block overlapping bookings for the same Asset."""
         self.check_overlap()
 
     def on_update(self):
+        """Lifecycle hook: refresh the Asset's status in the background after save."""
         frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def on_submit(self):
+        """Lifecycle hook: refresh the Asset's status in the background on submit."""
         frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def on_cancel(self):
+        """Lifecycle hook: refresh the Asset's status in the background on cancel."""
         frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def after_delete(self):
+        """Lifecycle hook: refresh the Asset's status in the background after delete."""
         frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def check_overlap(self):
+        """Throw a ValidationError if this booking overlaps another for the Asset.
+
+        No-op unless asset and both datetimes are set. Considers any non-cancelled
+        (``docstatus < 2``) booking for the same Asset whose window intersects this
+        one, excluding the current record.
+        """
         if not self.asset or not self.from_datetime or not self.to_datetime:
             return
 
@@ -40,6 +66,19 @@ class AssetBooking(Document):
             frappe.throw(_("Asset is already booked during this period by {0}").format(overlap), frappe.ValidationError)
 
 def update_asset_status(asset_name):
+    """Recompute and write an Asset's denormalised rental status + location.
+
+    Background worker enqueued by every Asset Booking lifecycle hook. Finds the
+    Asset's currently-active (non-cancelled) booking, if any, and maps its
+    ``booking_type`` to a status (Rental->Rented, Travel->In Transit,
+    Maintenance->Maintenance; otherwise "Available"). Writes ``custom_rental_status``
+    and ``custom_current_event_location`` back onto the Asset via
+    ``frappe.db.set_value`` (bypasses Asset write permissions by design — a user
+    may be able to book but not manage Assets).
+
+    Args:
+        asset_name (str): Asset docname; no-op if falsy.
+    """
     if not asset_name:
         return
 
@@ -87,6 +126,19 @@ def update_asset_status(asset_name):
 
 @frappe.whitelist()
 def check_availability(asset, from_datetime, to_datetime, ignore_booking=None):
+    """Whitelisted: report whether an Asset is free for a time window.
+
+    Called from the Asset Booking form JS as the user fills in asset/dates.
+
+    Args:
+        asset (str): Asset docname.
+        from_datetime, to_datetime (str): Requested window.
+        ignore_booking (str|None): Booking docname to exclude (the current record).
+
+    Returns:
+        dict: {"available": bool, "message": str} — ``message`` names the
+        conflicting booking when unavailable.
+    """
     if not asset or not from_datetime or not to_datetime:
         return {"available": False, "message": "Missing arguments"}
 
@@ -109,6 +161,19 @@ def check_availability(asset, from_datetime, to_datetime, ignore_booking=None):
 
 @frappe.whitelist()
 def get_events(start, end, filters=None):
+    """Whitelisted: calendar feed of Asset Bookings overlapping [start, end].
+
+    Wired as the doctype's calendar data source (default Calendar view). Applies
+    any standard desk-calendar ``filters`` and colour-codes events by booking type
+    (Travel=yellow, Maintenance=red, otherwise blue).
+
+    Args:
+        start, end (str): Calendar viewport bounds.
+        filters: Optional desk-calendar filters (JSON string or list).
+
+    Returns:
+        list[dict]: Event dicts (name, from/to datetimes, title, color, allDay).
+    """
     from frappe.desk.calendar import get_event_conditions
 
     if isinstance(filters, str):

@@ -1,5 +1,37 @@
+"""Contact/Address directory + primary-contact denormalization.
+
+This module powers two related features for the party doctypes (Project,
+Opportunity, Supplier, Customer — plus Master Project for the directory only):
+
+1. **Primary-contact denormalization** — each party carries a ``primary_contact``
+   Link plus convenience fields (``primary_contact_phone`` / ``_email`` /
+   ``_job_title``). These are kept in two-way sync with the linked Contact's own
+   ``custom_*`` fields so editing either side updates the other:
+
+   * :func:`sync_from_main_doc` is wired to the ``on_update`` doc_event of
+     Project / Opportunity / Supplier / Customer and pushes the party's
+     convenience fields *down* onto the Contact.
+   * :func:`sync_from_contact` is wired to Contact ``on_update`` and pushes the
+     Contact's ``custom_*`` fields *up* onto every party that names it as
+     primary. An ``is_syncing`` flag set by the former breaks the feedback loop.
+
+2. **Directory + per-document exclusions** — a document's "Contact/Address
+   Directory" aggregates every Contact/Address Dynamic-Link-ed to it (and, for a
+   party, to its related records). Because a Contact may be surfaced *indirectly*
+   (e.g. inherited from a linked Customer), a user "unlinking" it from one
+   document cannot simply delete a link without orphaning it elsewhere. Instead
+   a ``Directory Link Exclusion`` row records "hide ref X from source Y", scoped
+   to a single source document. :func:`cleanup_directory_exclusions` is wired to
+   the ``on_trash`` event of both the parties and Contact/Address to garbage
+   collect exclusion rows referencing deleted documents (references are stored as
+   plain Data, so there is no automatic cascade).
+
+The whitelisted functions below back the in-form directory widget (list, link,
+unlink, set-primary).
+"""
 import frappe
 
+# Party doctypes that carry the denormalized primary-contact fields.
 PRIMARY_CONTACT_DOCTYPES = ["Project", "Opportunity", "Supplier", "Customer"]
 
 EXCLUSION_DOCTYPE = "Directory Link Exclusion"
@@ -94,6 +126,12 @@ def _remove_exclusion(source_doctype, source_name, ref_doctype, ref_name):
 
 @frappe.whitelist()
 def set_primary_contact(account_doctype, account_name, contact_name):
+    """Mark one Contact as primary for an account, unsetting the others.
+
+    Clears ``is_primary_contact`` on every Contact dynamically linked to the
+    given account (``account_doctype`` / ``account_name``), then sets it on
+    ``contact_name``. Called from the directory widget.
+    """
     # Find all contacts linked to this account context
     linked_contacts = frappe.get_all(
         "Dynamic Link", 
@@ -114,6 +152,10 @@ def set_primary_contact(account_doctype, account_name, contact_name):
 
 @frappe.whitelist()
 def set_primary_address(account_doctype, account_name, address_name):
+    """Mark one Address as primary for an account, unsetting the others.
+
+    Address counterpart of :func:`set_primary_contact`.
+    """
     # Find all addresses linked to this account context
     linked_addresses = frappe.get_all(
         "Dynamic Link", 
@@ -206,6 +248,14 @@ def unlink_record(doctype, docname, link_doctype, link_name):
 
 @frappe.whitelist()
 def get_contacts_for_context(sources, context_doctype=None, context_name=None):
+    """Aggregate the de-duplicated Contact list for a document's directory.
+
+    ``sources`` is a list of ``{doctype, name}`` records whose linked Contacts
+    should be pooled (e.g. the document itself plus its related party).
+    ``context_doctype`` / ``context_name`` identify the document being viewed so
+    its per-document exclusions can be applied. Each returned Contact is
+    annotated with its full set of Dynamic Links.
+    """
     import json
     if isinstance(sources, str):
         sources = json.loads(sources)
@@ -248,6 +298,10 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
 
 @frappe.whitelist()
 def get_addresses_for_context(sources, context_doctype=None, context_name=None):
+    """Aggregate the de-duplicated Address list for a document's directory.
+
+    Address counterpart of :func:`get_contacts_for_context`.
+    """
     import json
     if isinstance(sources, str):
         sources = json.loads(sources)
@@ -289,9 +343,21 @@ def get_addresses_for_context(sources, context_doctype=None, context_name=None):
     return address_list
 
 def sync_from_main_doc(doc, method):
+    """Push a party's primary-contact convenience fields down onto the Contact.
+
+    Wired to ``doc_events`` ``on_update`` of Project / Opportunity / Supplier /
+    Customer (see hooks.py). Copies the party's ``primary_contact_phone`` /
+    ``_email`` / ``_job_title`` onto the linked Contact's ``custom_*`` fields,
+    setting ``flags.is_syncing`` so the reverse hook (:func:`sync_from_contact`)
+    does not bounce the change back.
+    """
     if not getattr(doc, "primary_contact", None):
         return
 
+    # Skip on existing docs where the primary_contact link itself just changed:
+    # in that case the party's convenience fields have not yet been re-fetched
+    # for the new contact, so syncing them down would clobber the Contact with
+    # stale values. New docs (and edits that keep the same contact) sync through.
     is_new = getattr(doc, "is_new", None)
     if not (callable(is_new) and is_new()) and not (isinstance(is_new, bool) and is_new):
         old_doc = doc.get_doc_before_save()
@@ -332,6 +398,14 @@ def sync_from_main_doc(doc, method):
         contact.save()
 
 def sync_from_contact(doc, method):
+    """Push a Contact's ``custom_*`` fields up onto every party it leads.
+
+    Wired to Contact ``on_update`` (see hooks.py). Finds every Project /
+    Opportunity / Supplier / Customer whose ``primary_contact`` is this Contact
+    and copies the title / phone / email onto their convenience fields. Skips
+    when ``flags.is_syncing`` is set (the change originated from
+    :func:`sync_from_main_doc`), preventing an infinite save loop.
+    """
     if getattr(doc.flags, "is_syncing", False):
         return
 

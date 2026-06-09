@@ -1,3 +1,35 @@
+/**
+ * Project form customization — interactive Gantt, health banner, and reminders.
+ *
+ * Customizes: the Project doctype form. Loaded via `doctype_js["Project"]` in
+ * hooks.py (one of several Project form scripts). Depends on the frappe-gantt UMD
+ * library and the `erpnext_enhancements.gantt_zoom` helper, both pulled in
+ * globally through `app_include_js` in hooks.py.
+ *
+ * This file registers two `frappe.ui.form.on("Project", { refresh })` handlers:
+ *
+ * 1) Gantt + health banner (first handler): augments the
+ *    `custom_gantt_chart_html` HTML field by monkey-patching its `.refresh()` to
+ *    render a full interactive Gantt chart for the project's Tasks, plus a
+ *    resource-allocation heatmap and a health-metrics banner prepended to the
+ *    form body. Data and writes go through whitelisted methods on
+ *    page/project_dashboard/project_dashboard.py:
+ *      - get_project_health_metrics      -> the health banner
+ *      - get_gantt_tasks_for_project     -> the Gantt bars
+ *      - get_resource_allocation_data    -> the hrs/day heatmap
+ *      - update_task_dates_from_gantt    -> drag a bar to reschedule (+ shift successors)
+ *      - update_task_progress_from_gantt -> drag the progress handle
+ *      - add_task_dependency             -> drag the round link handle between bars
+ *    It also listens on `frappe.realtime` for "project_dashboard_updated" (published
+ *    server-side by publish_realtime_update on Project/Task on_update) to refresh
+ *    the banner/Gantt in place, deliberately preserving scroll position on these
+ *    background refreshes. Idempotency flags (`__health_bound`, `__custom_gantt_bound`)
+ *    guard against rebinding across repeated refreshes.
+ *
+ * 2) Reminder button (second handler): replaces the `custom_reminder_action` field
+ *    with a "Set Reminder" button that opens a dialog and inserts a ToDo linked to
+ *    the Project at the chosen time.
+ */
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		console.log("Project form refreshed - initializing Gantt check");

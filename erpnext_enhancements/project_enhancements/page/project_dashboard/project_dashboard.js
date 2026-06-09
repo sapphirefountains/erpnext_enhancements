@@ -1,7 +1,30 @@
 /**
- * @file This file contains the client-side logic for the Project Dashboard page.
- * @description Refactored to utilize native UI primitives, modular component architecture,
- * and robust client-side routing.
+ * @file Client-side controller for the custom "Project Dashboard" desk page.
+ * @description
+ * This is the page script for the Frappe Page `project-dashboard` (defined by
+ * page/project_dashboard/project_dashboard.json). Frappe auto-loads it and calls
+ * `frappe.pages["project-dashboard"].on_page_load` when the page is opened.
+ *
+ * Responsibilities:
+ *  - Gate access: calls the whitelisted `check_permission`
+ *    (page/project_dashboard/project_dashboard.py) and renders an "Access Denied"
+ *    panel for users whose roles are not permitted. Page access — not per-record
+ *    Project permission — is the intended gate (see the server docstring).
+ *  - Tabbed shell + routing: builds the tab bar (Priority Overview, Active Internal
+ *    Projects, Completed Projects, Portfolio Gantt, Tasks View) and maps the sub-route
+ *    (e.g. `project-dashboard/portfolio-gantt`) to a lazily `frappe.require`-loaded
+ *    component class under `erpnext_enhancements.dashboard_components.*`. Each tab's
+ *    actual rendering lives in a separate component file in
+ *    public/js/project_enhancements/dashboard_components/ (not in this file).
+ *  - Shared controls: global search box, dynamic field filters, and an auto-save
+ *    handler that listens for the `dashboard_project_change` jQuery event and persists
+ *    inline edits via the whitelisted `update_project_details`.
+ *  - All server calls funnel through the `erpnext_enhancements.dashboard_api` helper,
+ *    loaded first from public/js/.../dashboard_components/dashboard_api.js.
+ *
+ * Realtime: individual components subscribe to the "project_dashboard_updated"
+ * realtime event (published by publish_realtime_update on Project/Task on_update)
+ * to refresh themselves; this shell file handles navigation and shared state.
  */
 /* global erpnext_enhancements */
 

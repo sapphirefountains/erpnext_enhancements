@@ -1,3 +1,23 @@
+/**
+ * Custom "Comments App" — Vue 3 notes/comments UI for forms.
+ *
+ * Targets: any doctype form that has a `custom_comments_field` HTML field
+ *   (a custom "Comments" tab). Mounted by the various form scripts and by
+ *   comments_auto.js (see COMMENT_APP_DOCTYPES).
+ * Loaded via: hooks.py `app_include_js` (global) AND per-doctype `doctype_js`
+ *   entries — always paired with vue.global.js (the vendored Vue 3 build that
+ *   defines window.Vue).
+ *
+ * Defines erpnext_enhancements.render_comments_app(frm, field_name), which
+ * mounts a Vue app into the named HTML field. The app fetches/creates/edits/
+ * deletes comments through the erpnext_enhancements.api.comments.* whitelisted
+ * methods, supports file attachments (uploaded as standalone File docs then
+ * linked via link_files_to_comment), and renders an avatar + content + actions
+ * list. Styling lives in desk_enhancements.bundle.css (.project-comments-*).
+ *
+ * Related files: comments_auto.js (auto-mounts this on many doctypes),
+ * global_comments.js (patches the *native* timeline to add an attach button).
+ */
 frappe.provide("erpnext_enhancements");
 
 erpnext_enhancements.render_comments_app = function(frm, field_name) {

@@ -1,7 +1,27 @@
+{#
+  Time Kiosk PWA app shell (served at /kiosk; controller: kiosk.py).
+
+  This is the installable Progressive Web App's HTML shell, not the app itself.
+  It is a thin chrome-free page whose only jobs are to:
+    * declare the PWA (web manifest, theme-color, Apple/standalone meta tags,
+      touch icon) so the browser offers "Install app";
+    * load the kiosk styles (css/kiosk/kiosk.css) and front-end scripts
+      (js/kiosk/geo.js for geolocation, js/kiosk/app.js for the UI);
+    * hand the server-computed boot payload to the front-end as window.KIOSK_BOOT
+      / window.KIOSK_CSRF (see kiosk.py::get_context).
+
+  The actual clock-in/out UI is rendered client-side by app.js into #kiosk-root.
+
+  Offline strategy: the root-scope service worker (kiosk-sw.js, registered by
+  app.js) precaches this shell and these assets, so the app launches and runs
+  without a network. Geolocation points are queued in IndexedDB and uploaded in
+  batches with Background Sync retry. See kiosk-sw.js for the full lifecycle.
+#}
 {% extends "templates/web.html" %}
 
 {% block title %}Time Kiosk{% endblock %}
 
+{# PWA declaration: manifest, theme/standalone meta, app icons, and kiosk styles. #}
 {% block head_include %}
 <link rel="manifest" href="/kiosk-manifest.json">
 <meta name="theme-color" content="#2490ef">
@@ -33,12 +53,14 @@
 </style>
 {% endblock %}
 
+{# Mount point: app.js renders the live clock-in/out UI into #kiosk-root. #}
 {% block page_content %}
 <div id="kiosk-root" class="kiosk-shell" aria-busy="true">
   <div class="kiosk-boot text-center">Loading Time Kiosk…</div>
 </div>
 {% endblock %}
 
+{# Boot payload + front-end scripts (geo.js must load before app.js uses it). #}
 {% block script %}
 <script>
   // Server-injected boot payload (employee, current interval, settings, csrf).

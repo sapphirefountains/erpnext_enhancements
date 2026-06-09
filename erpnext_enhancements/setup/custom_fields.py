@@ -1,8 +1,27 @@
+"""Idempotent custom-field provisioning for the contact/address directory UI.
+
+Entry point :func:`create_primary_contact_fields` is registered in
+``after_migrate`` (hooks.py), so it runs on every ``bench migrate``. It injects
+the "Contacts & Addresses" tab — Primary Contact link, contact/address directory
+HTML widgets, primary address + location map — onto the relevant party doctypes,
+plus a "Comments" tab for Project / Master Project.
+
+All creation goes through ``create_custom_fields(..., update=True)`` and existing
+fields are skipped (only their ``insert_after`` ordering is reconciled), so the
+functions are safe to re-run.
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
 def create_unified_tabs():
+	"""Inject the shared Contacts/Addresses tab + widgets per the field matrix.
+
+	The ``matrix`` decides, per doctype, whether the Contacts widgets and/or
+	Address widgets are added; ``tab_map`` picks the host Tab Break (created if
+	missing). Fields that already exist are left in place — only their
+	``insert_after`` is corrected — making this re-runnable on every migrate.
+	"""
 	# Matrix for field injection:
 	# Customer: Contacts (Y), Addresses (Y)
 	# Supplier: Contacts (Y), Addresses (Y)
@@ -143,6 +162,7 @@ def create_unified_tabs():
 
 
 def get_last_tab_fieldname(doctype):
+	"""Return the fieldname of the doctype's last Tab Break (or None)."""
 	meta = frappe.get_meta(doctype)
 	tabs = [f.fieldname for f in meta.fields if f.fieldtype == "Tab Break"]
 	if tabs:
@@ -151,12 +171,14 @@ def get_last_tab_fieldname(doctype):
 
 
 def create_primary_contact_fields():
+	"""``after_migrate`` entry point: provision the directory + comments tabs."""
 	create_unified_tabs()
 	create_comments_tab("Project")
 	create_comments_tab("Master Project")
 
 
 def create_comments_tab(doctype):
+	"""Add a "Comments" tab hosting the Comments-app HTML widget to a doctype."""
 	if not frappe.db.exists("DocType", doctype):
 		return
 
@@ -179,6 +201,7 @@ def create_comments_tab(doctype):
 
 
 def get_last_field_before_tabs(doctype):
+	"""Pick the field to insert the Comments tab after (last non-tab field)."""
 	if doctype == "Master Project":
 		return "address_list_html"
 

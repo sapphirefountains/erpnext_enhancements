@@ -1,3 +1,10 @@
+"""Unit test for the global search API's permission filtering (``api.search``).
+
+Mocks the raw SQL hit list plus ``has_permission`` / ``get_all`` / ``get_meta``
+to confirm ``search_global_docs`` returns only results the user may read: doctype-
+level denial (Role) hides all of a type, while doctype-level allow still defers to
+per-document ``get_all`` so only individually-permitted records (test1) appear.
+"""
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from unittest.mock import patch, MagicMock
@@ -10,6 +17,7 @@ class TestSearchAPI(FrappeTestCase):
     @patch('frappe.get_all')
     @patch('frappe.db.exists')
     def test_search_global_docs_permissions(self, mock_exists, mock_get_all, mock_get_meta, mock_has_permission, mock_sql):
+        """search_global_docs returns only doctype- and document-permitted hits."""
         mock_sql.return_value = [
             MagicMock(doctype="User", name="test1@example.com", title="Test 1", route=None),
             MagicMock(doctype="User", name="test2@example.com", title="Test 2", route=None),

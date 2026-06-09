@@ -1,9 +1,28 @@
+"""Controller for the Triton Settings Single doctype.
+
+Central configuration for "Triton", an external AI gateway/voice-and-chat
+service (``issingle``). Stores the ``gateway_url``, master + per-domain prompt
+guidelines (design/build/rent/service), model IDs (voice/chat/email), and a set
+of secrets stored as Password fields (Maps API key, Twilio credentials, and an
+``admin_webhook_secret``).
+
+On every save (``on_update``) it pushes a "refresh" webhook to the gateway so the
+external service re-pulls its config. ``get_gateway_config`` is the whitelisted
+endpoint the gateway calls to fetch the full config (including decrypted
+secrets), guarded to System Managers only.
+"""
+
 import frappe
 from frappe.model.document import Document
 import requests
 
 class TritonSettings(Document):
     def on_update(self):
+        """Lifecycle hook: notify the Triton gateway to refresh its settings.
+
+        Enqueues ``trigger_refresh_webhook`` (after commit) with the gateway URL
+        and decrypted admin webhook secret so the external service re-pulls config.
+        """
         frappe.enqueue(
             "erpnext_enhancements.enhancements_core.doctype.triton_settings.triton_settings.trigger_refresh_webhook",
             gateway_url=self.gateway_url,
@@ -13,6 +32,16 @@ class TritonSettings(Document):
         )
 
 def trigger_refresh_webhook(gateway_url, admin_webhook_secret):
+    """Background worker: POST a refresh signal to the Triton gateway.
+
+    No-op if either argument is missing. Sends ``{"signal": "refresh"}`` to
+    ``<gateway_url>/refresh-settings`` with a Bearer auth header. Failures are
+    swallowed and logged via ``frappe.log_error`` (best-effort notification).
+
+    Args:
+        gateway_url (str): Base URL of the Triton gateway.
+        admin_webhook_secret (str): Decrypted bearer secret for the webhook.
+    """
     if not gateway_url or not admin_webhook_secret:
         return
 
@@ -32,6 +61,15 @@ def trigger_refresh_webhook(gateway_url, admin_webhook_secret):
 
 @frappe.whitelist()
 def get_gateway_config():
+    """Whitelisted: return the full Triton gateway config including secrets.
+
+    System Manager only (throws ``PermissionError`` otherwise). Returns gateway
+    URL, prompts/guidelines, model IDs and decrypted credentials (Maps key, Twilio
+    API key/secret, admin webhook secret) for the external gateway to consume.
+
+    Returns:
+        dict: The complete gateway configuration.
+    """
     if "System Manager" not in frappe.get_roles(frappe.session.user):
         frappe.throw("Not permitted", frappe.PermissionError)
 

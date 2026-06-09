@@ -1,5 +1,11 @@
 // Item list view styling migrated from Client Script "Adjust List Sizes" (Item, List).
 // Widens Item Name / Item Code columns and compacts the ID column.
+//
+// Targets: the "Item" doctype list view.
+// Loaded via: hooks.py `doctype_list_js["Item"]`.
+//
+// Wraps frappe.listview_settings["Item"].refresh to inject a <style> block (kept
+// idempotent by removing the prior #custom-item-list-css before re-appending).
 
 frappe.listview_settings["Item"] = frappe.listview_settings["Item"] || {};
 

@@ -1,3 +1,10 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Renames the telephony service User poseidon@ -> triton@ (or creates it fresh on a
+new install) and repoints residual free-text references that ``rename_doc`` does
+not rewrite — see :func:`execute` and the ``REFERENCE_COLUMNS`` table below.
+Companion to the pre-sync ``rename_poseidon_settings_doctype`` patch. Idempotent.
+"""
 import frappe
 
 OLD = "poseidon@sapphirefountains.com"

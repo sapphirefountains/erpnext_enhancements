@@ -1,3 +1,10 @@
+"""One-time migration patch (PRE_model_sync; listed in patches.txt).
+
+Renames the single DocType "Poseidon Settings" -> "Triton Settings" before the
+new ``triton_settings`` JSON is synced, so the stored configuration (gateway
+URL, secrets, prompts, Twilio creds) carries across instead of being orphaned.
+Idempotent: see :func:`execute`.
+"""
 import frappe
 
 OLD = "Poseidon Settings"

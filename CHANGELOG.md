@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-09
+
+### Added
+- **Project-wide documentation.** Added module/function docstrings, JSDoc header blocks, and inline comments across the codebase (200 source files: Python, JavaScript, CSS, HTML) — comments only, no executable code changed. Verified every changed `.py` compiles (`py_compile`) and every changed `.js` passes `node --check`.
+- **README files for every subsystem.** Rewrote the top-level [`README.md`](README.md) (architecture overview, 8-module map, annotated `hooks.py` reference, external-integration matrix, dev workflow, conventions, documentation index) and added a `README.md` to each module and cross-cutting folder: `api/`, `project_enhancements/`, `crm_enhancements/`, `quickbooks_time_integration/`, `sapphire_maintenance/`, `enhancements_core/`, `travel_management/`, `task_enhancements/`, `global_enhancements/`, `script_migrations/`, `patches/`, `public/`, `www/`, `tests/`, and `Custom HTML Block/`. Detailed GA4 dashboard setup moved into the Enhancements Core README.
+
 ## [0.3.1] - 2026-06-08
 
 ### Changed

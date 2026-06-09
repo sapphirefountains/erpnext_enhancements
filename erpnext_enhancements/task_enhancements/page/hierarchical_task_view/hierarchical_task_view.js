@@ -1,3 +1,18 @@
+/**
+ * Hierarchical Task View desk page.
+ *
+ * Registered as the standard Frappe Page "hierarchical-task-view"
+ * (hierarchical_task_view.json); this script runs on page load.
+ *
+ * Renders a Project Link field at the top of the page. When a project is
+ * selected it builds a `frappe.views.TreeView` rooted on the "Task" doctype,
+ * whose nodes are fed by the whitelisted backend method
+ * `get_project_tasks_hierarchy`. Each rendered node's label link is rewritten
+ * to point at the underlying Task form (/app/task/<name>). The default
+ * add-node and search affordances are disabled because the tree is read-only
+ * and scoped to the chosen project; clearing the project resets the page to a
+ * prompt.
+ */
 frappe.pages['hierarchical-task-view'].on_page_load = function(wrapper) {
     const page = frappe.ui.make_app_page({
         parent: wrapper,

@@ -1,3 +1,22 @@
+"""Post-submission automation for Sapphire Maintenance Record.
+
+Not whitelisted. ``process_maintenance_submission`` is the background worker
+enqueued from the Sapphire Maintenance Record controller's ``on_submit`` (see
+``sapphire_maintenance/doctype/sapphire_maintenance_record``). It chains four
+independent downstream actions, each isolated so one failure does not abort the
+others:
+        1. Stock Entry (Material Issue) for consumables.
+        2. Timesheet for labour (job costing).
+        3. Warranty / RMA check -> draft Material Request for failed parts.
+        4. Draft Sales Invoice (maintenance fee + consumables).
+
+Side effects: inserts/submits Stock Entry, Timesheet, Material Request, and
+Sales Invoice documents; adds Comments to the record; uses
+``frappe.publish_realtime`` to notify the record owner of partial/critical
+failures. Reads item/fee config from "ERPNext Enhancements Settings". No
+external services.
+"""
+
 import frappe
 from frappe import _
 from frappe.utils import flt, nowdate, get_datetime
@@ -52,6 +71,16 @@ def process_maintenance_submission(record_name):
         }, user=owner)
 
 def create_stock_entry(doc):
+    """Issue the record's consumables via a submitted "Material Issue" Stock Entry.
+
+    Args:
+        doc: The Sapphire Maintenance Record document.
+
+    No-op if there are no ``consumables``. Company is taken from the linked
+    Project (falling back to the global default). Inserts and submits a Stock
+    Entry and adds a Comment linking to it. May raise on stock errors (e.g.
+    insufficient quantity) — caught by the per-step handler in the caller.
+    """
     if not doc.consumables:
         return
 
@@ -75,6 +104,18 @@ def create_stock_entry(doc):
     ))
 
 def create_timesheet(doc):
+    """Create and submit a Timesheet for the technician's logged labour.
+
+    Args:
+        doc: The Sapphire Maintenance Record document.
+
+    No-op if clock-in/out times are absent. Worked hours = (clock_out -
+    clock_in) minus ``paused_duration``; no timesheet is created if that is
+    <= 0. Resolves the technician to an Employee via ``user_id`` (falling back
+    to treating ``technician`` as an Employee id). Inserts + submits a
+    Timesheet, writes ``total_labor_cost`` back onto the record via ``db_set``,
+    and adds a linking Comment.
+    """
     if not doc.clock_in_time or not doc.clock_out_time:
         return
 
@@ -120,6 +161,18 @@ def create_timesheet(doc):
     ))
 
 def check_warranty_and_rma(doc):
+    """Flag warranty RMA and draft a return request for failed in-warranty parts.
+
+    Args:
+        doc: The Sapphire Maintenance Record document.
+
+    No-op if there is no serial no, or the Serial No has no
+    ``warranty_expiry_date`` / is out of warranty. Scans ``maintenance_results``
+    for rows marked "Fail"/"Replace"; if any, sets ``warranty_rma_flag`` and
+    inserts a *draft* Material Request (type "Material Transfer") with one line
+    per failed part. Parts that can't be matched to an Item map to the
+    placeholder item code "WARRANTY-RETURN-PENDING". Adds a linking Comment.
+    """
     if not doc.serial_no:
         return
 

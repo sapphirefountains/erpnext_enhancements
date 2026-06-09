@@ -1,3 +1,10 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Cleans up leftover metadata from the removed Google Calendar sync feature:
+deletes the related Custom Fields (by fieldname and by ``options`` pointing at
+the dead doctypes), drops the orphaned Google Calendar log/map DocTypes, and
+clears the cache. Idempotent — deletes match nothing once cleaned.
+"""
 import frappe
 
 def execute():

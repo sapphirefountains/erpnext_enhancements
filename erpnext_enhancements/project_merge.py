@@ -1,3 +1,19 @@
+"""Project merge tooling.
+
+Lets a user consolidate one Project into another: every document anywhere in the
+site that links to the *source* Project is re-pointed at the *target* Project, and
+the source Project is then Canceled.
+
+The set of "linked" documents is discovered dynamically by scanning DocField and
+Custom Field metadata for Link fields whose ``options`` is "Project" (see
+``get_linked_doctypes``), so no hardcoded list of doctypes is maintained.
+
+These whitelisted endpoints are called from the client form script
+``public/js/project_merge.js`` (loaded for the Project form via ``doctype_js`` in
+hooks.py): ``get_merge_stats`` powers the pre-merge confirmation preview and
+``merge_projects`` performs the merge. There is no doc_events/scheduler hook here.
+"""
+
 import frappe
 from frappe import _
 

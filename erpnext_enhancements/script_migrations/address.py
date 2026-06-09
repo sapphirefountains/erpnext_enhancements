@@ -1,3 +1,11 @@
+"""Migrated Address Server Script, wired via ``hooks.py`` doc_events["Address"].
+
+Hook wiring (see ``hooks.py``):
+  * ``before_save`` -> :func:`set_full_address`
+
+Originally a Frappe "Server Script" stored only in the site DB; now versioned
+with the app.
+"""
 
 # Address Server Script migrated to native doc_events.
 

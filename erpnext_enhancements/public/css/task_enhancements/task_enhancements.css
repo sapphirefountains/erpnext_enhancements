@@ -3,7 +3,12 @@
  *
  * This file contains the CSS for rendering the nested list of tasks
  * as a visually intuitive tree structure. It styles the list items,
- * connectors, and the overall layout of the task tree.
+ * connectors, and the overall layout of the task tree (including the
+ * `#custom_child_tasks_table` rendered on the Task form by the task
+ * enhancements scripts).
+ *
+ * Loaded via: hooks.py `app_include_css`
+ *   ("/assets/erpnext_enhancements/css/task_enhancements/task_enhancements.css").
  */
 
 /* Basic tree styling */

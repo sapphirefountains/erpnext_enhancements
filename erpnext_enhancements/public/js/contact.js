@@ -1,3 +1,17 @@
+/**
+ * Contact form script.
+ *
+ * Targets: the "Contact" doctype form.
+ * Loaded via: hooks.py `doctype_js["Contact"]` (with vue.global.js +
+ *   comments.js + the unified tab controller).
+ *
+ * On saved Contacts: mounts the custom Comments App into `custom_comments_field`
+ * (see comments.js) and adds "Call via Triton" / "Send SMS" buttons that drive
+ * the telephony client (erpnext_enhancements.api.telephony.trigger_outbound_call
+ * and erpnext_enhancements.telephony.show_sms_dialer). A second form.on block,
+ * migrated from the "Contact - Show Account Linked to Contact" Client Script,
+ * mirrors the first linked Customer into the `custom_account` field.
+ */
 frappe.ui.form.on("Contact", {
     refresh: function (frm) {
         if (!frm.doc.__islocal) {

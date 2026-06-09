@@ -1,6 +1,11 @@
 /*
     Enhanced Kanban Scrolling for the Opportunity board.
 
+    What this styles: horizontal scrolling layout for the Opportunity Kanban
+    board (columns don't shrink, the board scrolls sideways).
+    Loaded via: hooks.py `doctype_css["Opportunity"]` (applies on the Opportunity
+    doctype's views only).
+
     Card dragging is now gated behind a 1-second press-and-hold (see
     kanban_patches.js — SortableJS delay applied to mouse and touch alike), so the
     old "disable dragging" rules that used to live here (pointer-events: none on

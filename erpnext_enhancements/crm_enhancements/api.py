@@ -1,11 +1,49 @@
+"""Server-side API for the CRM Enhancements module (Opportunity customizations).
+
+This module backs the custom Opportunity workflow used by Sapphire Fountains:
+
+* ``sync_opportunity_tags`` is wired in ``hooks.py`` under
+  ``doc_events["Opportunity"]["before_save"]`` and keeps the Opportunity's
+  ``_user_tags`` in sync with the ``custom_value_stream`` child table.
+* The "convert Opportunity to Project" flow: the client calls
+  :func:`enqueue_project_creation` (whitelisted), which enqueues
+  :func:`create_project_from_opportunity_background` on the ``long`` queue. That
+  background worker creates a Project from the Opportunity, copies its
+  attachments, and (via :mod:`erpnext_enhancements.crm_enhancements.drive_utils`)
+  provisions a Google Drive folder tree, then notifies the requesting users in
+  real time and by email.
+
+No code here is changed by this docstring pass; comments only.
+"""
+
 import frappe
 
 
 # The enqueue function now accepts 'project_template' and passes it on.
 @frappe.whitelist()
 def enqueue_project_creation(opportunity_name, users=None, project_template=None):
-	"""
-	Called by the client to quickly add the main task to the background queue.
+	"""Queue background creation of a Project from an Opportunity.
+
+	Whitelisted entry point called from the Opportunity form (client side) so the
+	UI returns immediately while the heavy work runs on the ``long`` worker queue.
+
+	Args:
+		opportunity_name: Name (ID) of the source Opportunity.
+		users: Comma-separated string / list of users to notify when the job
+			finishes (realtime + email). Required.
+		project_template: Name of the Project Template to apply to the new
+			Project. Required.
+
+	Returns:
+		dict: ``{"status": "queued"}`` once the job is enqueued.
+
+	Raises:
+		frappe.ValidationError: via ``frappe.throw`` if ``users`` or
+			``project_template`` is missing.
+
+	Side effects:
+		Enqueues :func:`create_project_from_opportunity_background` (queue
+		``long``, 1800s timeout).
 	"""
 	if not users:
 		frappe.throw("Please select at least one user to notify.")
@@ -25,8 +63,20 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 
 
 def sync_opportunity_tags(doc, method=None):
-	"""
-	Synchronizes the Opportunity tags with the values in the custom_value_stream child table.
+	"""Synchronize Opportunity ``_user_tags`` with the ``custom_value_stream`` table.
+
+	Wired in ``hooks.py`` as an Opportunity ``before_save`` doc_event. Mutates
+	``doc`` in place (no DB write of its own) so the tag set always reflects the
+	selected value streams (Build/Design/Rent/Service) while preserving any other
+	user tags.
+
+	Args:
+		doc: The Opportunity document being saved.
+		method: Frappe doc-event hook name (unused).
+
+	Side effects:
+		Sets ``doc._user_tags`` to a ``",Tag1,Tag2,"`` formatted string (or
+		``None`` when empty).
 	"""
 	# 1. Define the possible value stream options
 	value_stream_options = {"Build", "Design", "Rent", "Service"}
@@ -59,9 +109,21 @@ def sync_opportunity_tags(doc, method=None):
 
 @frappe.whitelist()
 def sync_opportunity_tags_for_existing(opportunity_name):
-	"""
-	Syncs tags for an existing Opportunity without triggering a full save.
-	Called from the client side when opening an existing record missing tags.
+	"""Sync tags for an existing Opportunity without triggering a full save.
+
+	Whitelisted helper called from the client when opening a record whose tags
+	are missing/stale. Recomputes tags via :func:`sync_opportunity_tags` and
+	writes only ``_user_tags`` back via ``frappe.db.set_value`` (no full save,
+	so other ``before_save`` hooks do not re-run).
+
+	Args:
+		opportunity_name: Name (ID) of the Opportunity to refresh.
+
+	Returns:
+		str | None: The recomputed ``_user_tags`` value.
+
+	Side effects:
+		DB write to ``Opportunity._user_tags``.
 	"""
 	doc = frappe.get_doc("Opportunity", opportunity_name)
 	sync_opportunity_tags(doc)
@@ -71,8 +133,44 @@ def sync_opportunity_tags_for_existing(opportunity_name):
 
 # The background worker now accepts 'project_template' and uses it.
 def create_project_from_opportunity_background(opportunity_name, users, project_template):
-	"""
-	This function does the heavy lifting in the background.
+	"""Create a Project from an Opportunity (runs on the ``long`` worker queue).
+
+	Enqueued by :func:`enqueue_project_creation`. Runs the whole flow as
+	Administrator (restoring the original session user in a ``finally`` block)
+	and is idempotent: it returns early if the Opportunity already has
+	``custom_created_project`` set.
+
+	Steps:
+		1. Create a new Project, optionally applying ``project_template`` (with a
+		   guard that skips the template if the Task doctype's module is
+		   misconfigured, logging instead of crashing).
+		2. Copy direct field mappings, child tables, value-stream-derived
+		   ``project_type``, and Opportunity notes (both as a Project Comments
+		   child table and as rendered HTML in ``custom_opportunity_notes``).
+		3. Insert with ``ignore_validate`` to dodge Workflow "Status cannot be
+		   Open" errors, then force ``status = "Active"`` if a Workflow overrode it.
+		4. Re-attach the Opportunity's File attachments to the Project.
+		5. Stamp ``Opportunity.custom_created_project`` and commit.
+		6. Provision Google Drive folders via
+		   :func:`~erpnext_enhancements.crm_enhancements.drive_utils.provision_project_folders`,
+		   store the returned folder id on ``Project.custom_drive_folder_id`` and
+		   attach the web view link as a File. Drive failures are caught/logged so
+		   they never abort Project creation.
+
+	Args:
+		opportunity_name: Name (ID) of the source Opportunity.
+		users: Users to notify (comma-separated string or list).
+		project_template: Project Template name to apply (may be falsy).
+
+	Returns:
+		None. Results are delivered via realtime event and email (see below).
+
+	Side effects:
+		Inserts a Project, File records, optional ToDo-like comments; writes back
+		to the Opportunity; calls the Google Drive API; commits the DB; publishes a
+		``project_creation_status`` realtime event and sends a notification email
+		to each user. All exceptions are logged via ``frappe.log_error`` rather
+		than raised.
 	"""
 	project_doc = None
 	try:
@@ -136,6 +234,8 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			for source_field, target_field in direct_mappings.items():
 				project.set(target_field, opp.get(source_field))
 
+			# Derive a single Project.project_type from the (possibly multiple)
+			# selected value streams, picking the highest-priority one present.
 			priority_order = ["Design", "Build", "Service", "Rent"]
 			project_type_value = None
 

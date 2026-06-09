@@ -1,3 +1,13 @@
+/*
+ * Task tree / project-dashboard task grid styles.
+ *
+ * What this styles: the hierarchical Task grid (rows, indentation, drag handles,
+ * drag-and-drop nest/reorder feedback, milestone/recurring icons) rendered by the
+ * project_enhancements task tree manager, plus the project-dashboard list column
+ * selector and Project Name / Project ID cells.
+ * Loaded via: hooks.py `app_include_css`
+ *   ("/assets/erpnext_enhancements/css/project_enhancements/task_tree.css").
+ */
 .task-grid {
 	display: flex;
 	flex-direction: column;

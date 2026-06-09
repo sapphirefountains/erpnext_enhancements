@@ -1,6 +1,22 @@
 /* global erpnext_enhancements */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
+/**
+ * Project Dashboard tab — Tasks View.
+ *
+ * Targets: the "Tasks" tab of the Project Dashboard page.
+ * Loaded via: lazy `frappe.require` from project_dashboard.js (constructed by
+ * name; render(projectName)/unmount() on tab show/hide).
+ *
+ * Two modes: with no project it shows a selectable list of active projects; with
+ * a project it loads that project's tasks once and offers four sub-views via a
+ * switcher. Two sub-views render in-page ("dom" type): Gantt (Frappe Gantt over
+ * the flattened task tree, with drag-to-reschedule writing back via
+ * frappe.client.set_value and auto-scroll-to-today) and Tree (reuses
+ * TaskTreeManager with the pre-fetched data). The other two ("route" type),
+ * Kanban and Calendar, just navigate to the Task list in that view filtered to the
+ * project. cleanupSubView() tears down the previous instance before switching.
+ */
 erpnext_enhancements.dashboard_components.TasksView = class TasksView {
 	constructor(wrapper) {
 		this.wrapper = $(wrapper);

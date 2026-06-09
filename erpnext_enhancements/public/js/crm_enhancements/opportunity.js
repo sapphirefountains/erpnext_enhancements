@@ -1,3 +1,20 @@
+/**
+ * Opportunity form script (CRM enhancements).
+ *
+ * Targets: the Opportunity DocType form.
+ * Loaded via: hooks.py `doctype_js["Opportunity"]`.
+ *
+ * Responsibilities:
+ *  - Mirror the `custom_value_stream` child-table rows into the document's
+ *    `_user_tags` so each value stream (Build/Design/Rent/Service) shows up as a
+ *    tag; for already-saved docs missing those tags it persists them directly via
+ *    the `sync_opportunity_tags_for_existing` API instead of waiting for a save.
+ *  - Add a "Create Project" button (Closed Won opportunities only, for Employees /
+ *    System Managers) that prompts for a Project Template + users to notify and
+ *    enqueues background project creation, then listens on the
+ *    `project_creation_status` realtime channel to report success/failure
+ *    (including Google Drive folder provisioning results).
+ */
 function sync_tags_from_child_table(frm) {
 	let value_streams = (frm.doc.custom_value_stream || []).map(row => row.value_stream).filter(Boolean);
 	let current_tags_str = frm.doc._user_tags || "";

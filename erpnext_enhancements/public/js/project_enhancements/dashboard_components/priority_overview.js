@@ -1,6 +1,26 @@
 /* global erpnext_enhancements */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
+/**
+ * Project Dashboard tab — Priority Overview (+ BufferManager).
+ *
+ * Targets: the "Priority Overview" tab of the Project Dashboard page.
+ * Loaded via: lazy `frappe.require` from project_dashboard.js (constructed by
+ * name; render()/unmount() on tab show/hide). `set_view("company_priority" |
+ * "value_stream")` is driven by the dashboard's sub-view toggle.
+ *
+ * Shows client-facing projects (Build/Design/Rent/Service, still in progress)
+ * either ranked by company priority or grouped by value stream, with inline,
+ * click-to-edit Company/Project priority cells and computed completion / spend-%
+ * columns. Priorities are weighted by `get_priority_weight` for sorting and
+ * colour-coded by `get_priority_badge` (numeric ranks map to a red→green hue).
+ *
+ * BufferManager (defined first, below) is the optimistic-edit engine: it buffers
+ * pending cell edits keyed by project, auto-commits them through
+ * `update_multiple_docs` with exponential-backoff retry, locks rows while saving,
+ * and supports rollback — wiring itself to the dashboard's global
+ * save/discard-changes buttons.
+ */
 erpnext_enhancements.dashboard_components.BufferManager = class BufferManager {
 	constructor(parentComponent) {
 		this.parent = parentComponent;

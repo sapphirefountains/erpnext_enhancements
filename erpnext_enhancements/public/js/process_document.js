@@ -1,5 +1,11 @@
 // Process Document form script migrated from Client Script "Mermaid.js Render".
 // Renders the `mermaid_code` field as a diagram and offers a Mermaid Live Editor link.
+//
+// Targets: the "Process Document" doctype form.
+// Loaded via: hooks.py `doctype_js["Process Document"]`.
+//
+// Lazy-loads Mermaid.js from a CDN (once per session), renders the diagram into
+// the `diagram` HTML field, and builds a deep link to mermaid.live for editing.
 
 frappe.ui.form.on("Process Document", {
     refresh: function (frm) {

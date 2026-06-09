@@ -1,3 +1,14 @@
+"""Predictive maintenance scheduling on maintenance-record submission.
+
+Not whitelisted. ``update_sales_order_next_visit`` is registered in hooks.py as
+the ``on_submit`` doc-event for "Sapphire Maintenance Record"; it back-fills the
+servicing dates on the originating Sales Order so the next visit can be
+predicted from the configured maintenance frequency.
+
+Side effects: writes to Sales Order Item rows and shows a ``msgprint`` to the
+submitting user. No external services.
+"""
+
 import frappe
 from frappe.utils import add_days, add_months, getdate, nowdate
 
@@ -46,6 +57,17 @@ def update_sales_order_next_visit(doc, method):
         frappe.msgprint(f"Updated Sales Order {so_item.parent} with next visit date: {next_visit}")
 
 def calculate_next_date(base_date, frequency):
+    """Add one maintenance interval to ``base_date`` based on ``frequency``.
+
+    Args:
+        base_date: Date to offset from (typically the last visit date).
+        frequency (str): One of "Daily", "Weekly", "Bi-Weekly", "Monthly",
+            "Quarterly", "Yearly".
+
+    Returns:
+        The computed next date, or ``None`` if ``frequency`` is empty or
+        unrecognised. Pure function — no DB or side effects.
+    """
     if not frequency:
         return None
         

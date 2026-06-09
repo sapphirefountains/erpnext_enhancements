@@ -1,6 +1,19 @@
 /* global erpnext_enhancements */
 frappe.provide("erpnext_enhancements.dashboard_components");
 
+/**
+ * Project Dashboard tab — Active Internal Projects.
+ *
+ * Targets: the "Active Internal Projects" tab of the Project Dashboard page.
+ * Loaded via: lazy `frappe.require` from project_dashboard.js, which constructs
+ * this class (by name) and calls render()/unmount() as the tab is shown/hidden.
+ *
+ * Fetches all projects, keeps the active internal ones, groups them by Master
+ * Project (Independent Projects sorted last), and renders an editable table where
+ * inline status/priority edits emit a `dashboard_project_change` document event
+ * for the parent dashboard to persist. Uses an AbortController so an in-flight
+ * request is cancelled when the user switches tabs (unmount).
+ */
 erpnext_enhancements.dashboard_components.ActiveInternalProjects = class ActiveInternalProjects {
 	constructor(wrapper) {
 		this.wrapper = $(wrapper);

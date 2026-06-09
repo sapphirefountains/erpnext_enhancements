@@ -1,12 +1,25 @@
+"""Recurring-task generation and predictive maintenance scheduling.
+
+Two unrelated scheduling features live here, both registered in hooks.py:
+
+* :func:`generate_next_task` — Task ``on_update`` doc_event. When a recurring
+  Task is completed, spawns the next occurrence per its recurrence rules.
+* :func:`predictive_maintenance_scheduling` — ``daily`` scheduler_event. Wraps
+  :func:`generate_predictive_maintenance_records`, which drafts upcoming Sapphire
+  Maintenance Records from maintenance Sales Orders.
+"""
 import frappe
 from frappe.utils import add_days, add_months, add_years, get_weekday, getdate
 
 
 def generate_next_task(doc, method):
 	"""
-	Triggered on Task update.
+	Triggered on Task update (``on_update`` doc_event in hooks.py).
 	Calculates the next valid date based on complex recurrence rules
 	(e.g., Weekly on M-F, Bi-weekly, etc.) and generates a new Task.
+
+	Guards against re-firing: only acts when the Task is Completed, flagged
+	``custom_is_recurring``, and has not already stamped ``custom_next_task_created``.
 	"""
 	# 1. Validation: Only run if completed, recurring, and not already processed
 	if doc.status != "Completed" or not doc.get("custom_is_recurring"):
@@ -101,6 +114,12 @@ def get_next_weekly_date(doc, last_date, repeat_every):
 
 
 def create_duplicate_task(doc, new_date):
+	"""Clone a completed recurring Task as a fresh Open task on ``new_date``.
+
+	Resets status/docstatus and the recurrence bookkeeping field, inserts the
+	copy, then back-links the original via ``custom_next_task_created`` (which
+	also marks the original as already-processed) and notifies the user.
+	"""
 	new_doc = frappe.copy_doc(doc)
 	new_doc.status = "Open"
 	new_doc.exp_start_date = new_date
@@ -167,6 +186,7 @@ def generate_predictive_maintenance_records():
 
 def predictive_maintenance_scheduling():
 	"""
-	Wrapper for the daily scheduler event.
+	Wrapper for the daily scheduler event (``scheduler_events["daily"]`` in
+	hooks.py). Delegates to :func:`generate_predictive_maintenance_records`.
 	"""
 	generate_predictive_maintenance_records()

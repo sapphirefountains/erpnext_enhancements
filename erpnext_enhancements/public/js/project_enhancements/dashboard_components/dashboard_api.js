@@ -2,6 +2,13 @@
 frappe.provide("erpnext_enhancements.dashboard_api");
 
 /**
+ * Project Dashboard — shared API helper.
+ *
+ * Targets: the Project Dashboard page (project_enhancements/page/project_dashboard).
+ * Loaded via: lazy `frappe.require` from project_dashboard.js — it is required
+ * first, before any per-tab component, and every component funnels its server
+ * calls through `erpnext_enhancements.dashboard_api.call`.
+ *
  * A wrapper around frappe.call to support abort controllers and timeouts.
  *
  * @param {Object} options Options passed to frappe.call

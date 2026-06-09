@@ -1,3 +1,23 @@
+"""Entity mapping, matching and idempotent upsert between QBO and ERPNext.
+
+The transform-and-persist heart of the integration, called by ``sync.py`` for
+every fetched/received QBO record. Responsibilities:
+
+  * Translate a QBO payload into an ERPNext DocType + field values
+    (``map_qbo_to_erpnext`` and the ``_map_*`` functions).
+  * Decide what to do with it idempotently via the ``QuickBooks Sync Mapping``
+    ledger (``upsert_entity``): update an already-linked record, auto-link an
+    existing ERPNext record by fuzzy match (``find_existing_match`` / ``_match_*``),
+    create a new one, or defer to manual review on missing-required-field or
+    ambiguous-match conditions.
+  * Track ownership of QBO-sourced fields so subsequent syncs can detect
+    user-made conflicts (``detect_conflicts``, ``owned_fields``) and respect them
+    unless an overwrite resync is requested.
+
+The mapping ledger keyed on (qbo_entity_type, qbo_id) is what makes repeated
+imports/webhooks/CDC safe to re-run.
+"""
+
 from __future__ import annotations
 
 import frappe
@@ -12,10 +32,18 @@ from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils im
 
 
 def get_erpnext_doctype(entity_type: str) -> str | None:
+	"""Return the ERPNext DocType a QBO entity maps to, or None if unmapped."""
 	return ENTITY_DOCTYPE_MAP.get(entity_type)
 
 
 def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str | None, dict]:
+	"""Dispatch a QBO payload to its per-entity mapper.
+
+	Returns ``(erpnext_doctype, values)`` -- the target DocType and a dict of
+	ERPNext field values -- or ``(None, {})`` when the entity type has no mapper.
+	Pure transform; performs no writes (though some mappers read existing
+	mappings/defaults from the DB to resolve references).
+	"""
 	mappers = {
 		"Account": _map_account,
 		"Customer": _map_customer,
@@ -37,6 +65,23 @@ def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str |
 
 
 def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False, preview=False):
+	"""Idempotently create/update/link an ERPNext record from a QBO payload.
+
+	The core decision tree, driven by the (entity_type, qbo_id) mapping ledger:
+
+	  1. No mapper / no Id          -> ``skipped``.
+	  2. Preflight validation fails -> ``manual_review`` (records a pending mapping).
+	  3. Already mapped & exists    -> update it, unless user edits collide with
+	     QBO-owned values and ``overwrite`` is False -> ``conflict``.
+	  4. Unmapped but a fuzzy match exists -> auto-link (fill only blank fields);
+	     multiple candidates -> ``manual_review``.
+	  5. Otherwise                  -> create a new record (after required-field check).
+
+	``preview=True`` computes the would-be action without writing (verbs become
+	create/update/link/delete). ``overwrite=True`` lets QBO win conflicts.
+	Side effects (non-preview): ERPNext doc insert/save and Sync Mapping writes.
+	Returns an action dict consumed by ``sync._track_result``.
+	"""
 	erpnext_doctype, values = map_qbo_to_erpnext(entity_type, payload, settings)
 	if not erpnext_doctype:
 		return {"action": "skipped", "reason": "No native ERPNext mapping"}
@@ -45,6 +90,8 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	if not qbo_id:
 		return {"action": "skipped", "reason": "QBO payload has no Id"}
 
+	# Preflight: only the fields we actually mapped (don't yet enforce all
+	# DocType-required fields -- a later create-time check does that).
 	preflight_issues = validate_mapped_values(entity_type, erpnext_doctype, values, include_doc_required=False)
 	if preflight_issues:
 		if not preview:
@@ -57,10 +104,12 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			"issues": preflight_issues,
 		}
 
+	# Already-linked path: update the previously synced ERPNext record in place.
 	mapping = get_mapping(entity_type, qbo_id)
 	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
 		doc = frappe.get_doc(erpnext_doctype, mapping.erpnext_name)
 		conflicts = detect_conflicts(doc, values, mapping)
+		# A conflict = a user changed a QBO-owned field; respect it unless overwriting.
 		if conflicts and not overwrite:
 			if not preview:
 				mapping.conflict_status = "Conflict"
@@ -73,6 +122,7 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
 
+	# Not yet linked: try to attach to a pre-existing ERPNext record by fuzzy match.
 	existing_match = find_existing_match(entity_type, payload, settings)
 	if existing_match:
 		if existing_match["status"] == "ambiguous":
@@ -156,6 +206,15 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 def link_existing_record(
 	entity_type: str, qbo_id: str, erpnext_doctype: str, erpnext_name: str, *, apply_qbo_data=False
 ):
+	"""Manually link a QBO entity to a chosen ERPNext record (dashboard action).
+
+	Backs the "Link Existing Records" dialog. Reads the latest stored raw payload
+	for the entity (sync/preview must have run first), validates the chosen
+	DocType matches the entity's expected mapping, and writes a "Manual Matched"
+	Sync Mapping. With ``apply_qbo_data`` it also fills the record's blank fields
+	from QBO data. Side effects: optional doc save, mapping write, commit. Returns
+	the mapping name. Raises if the record or a raw payload is missing.
+	"""
 	settings = frappe.get_single("QuickBooks Online Settings")
 	if not frappe.db.exists(erpnext_doctype, erpnext_name):
 		frappe.throw(f"{erpnext_doctype} {erpnext_name} does not exist.")
@@ -192,6 +251,13 @@ def link_existing_record(
 
 
 def preview_existing_matches(entity_types=None, limit=100):
+	"""Suggest ERPNext records to link for as-yet-unmapped QBO master entities.
+
+	Scans recent ``QuickBooks Raw Payload`` rows (master entities by default),
+	skips any already mapped, and for each runs ``find_existing_match`` to propose
+	a candidate. Read-only; returns a list the dashboard renders in the "Link
+	Existing Records" dialog.
+	"""
 	settings = frappe.get_single("QuickBooks Online Settings")
 	results = []
 	for raw in frappe.get_all(
@@ -222,6 +288,11 @@ def preview_existing_matches(entity_types=None, limit=100):
 
 
 def mark_deleted(entity_type: str, qbo_id: str, *, preview=False):
+	"""Flag a mapping as deleted when QBO reports the entity removed (via CDC).
+
+	Soft delete: sets the mapping's ``deleted`` flag rather than touching the
+	linked ERPNext document. Called from ``sync.run_cdc`` for "Deleted" payloads.
+	"""
 	mapping = get_mapping(entity_type, qbo_id)
 	if preview:
 		return {"action": "delete", "mapping": mapping.name if mapping else None}
@@ -233,6 +304,7 @@ def mark_deleted(entity_type: str, qbo_id: str, *, preview=False):
 
 
 def get_mapping(entity_type: str, qbo_id: str):
+	"""Fetch the ``QuickBooks Sync Mapping`` for (entity_type, qbo_id), or None."""
 	name = frappe.db.get_value(
 		"QuickBooks Sync Mapping",
 		{"qbo_entity_type": entity_type, "qbo_id": str(qbo_id)},
@@ -250,6 +322,13 @@ def save_mapping(
 	values: dict,
 	**extra,
 ):
+	"""Create or update the ledger row linking a QBO entity to an ERPNext record.
+
+	Records the QBO ``SyncToken`` and ``LastUpdatedTime`` (concurrency/cursor
+	metadata), the sync timestamp, and ``owned_fields`` -- the JSON snapshot of
+	QBO-sourced values used later by ``detect_conflicts``. ``**extra`` sets
+	match_status/match_rule/conflict_status etc. Upserts by (entity_type, qbo_id).
+	"""
 	mapping = get_mapping(entity_type, qbo_id) or frappe.new_doc("QuickBooks Sync Mapping")
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
@@ -270,6 +349,11 @@ def save_mapping(
 
 
 def save_pending_mapping(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, match: dict):
+	"""Persist a "Pending Review" mapping for an ambiguous fuzzy match.
+
+	Stores the competing candidate records (in ``owned_fields``) so a human can
+	resolve the link from the dashboard rather than the sync guessing wrong.
+	"""
 	mapping = get_mapping(entity_type, qbo_id) or frappe.new_doc("QuickBooks Sync Mapping")
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
@@ -291,6 +375,12 @@ def save_pending_mapping(entity_type: str, qbo_id: str, payload: dict, erpnext_d
 
 
 def save_manual_review_mapping(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, issues: list[str]):
+	"""Persist a "Pending Review" mapping for a record that failed validation.
+
+	Used when required fields are missing (or a stock-account rule is violated);
+	the failing ``issues`` are stored so the record can be triaged instead of
+	silently dropped.
+	"""
 	mapping = get_mapping(entity_type, qbo_id) or frappe.new_doc("QuickBooks Sync Mapping")
 	mapping.qbo_entity_type = entity_type
 	mapping.qbo_id = str(qbo_id)
@@ -314,6 +404,13 @@ def save_manual_review_mapping(entity_type: str, qbo_id: str, payload: dict, erp
 def validate_mapped_values(
 	entity_type: str, erpnext_doctype: str, values: dict, *, include_doc_required: bool = True
 ) -> list[str]:
+	"""Return a list of blocking issues, or empty if the mapped values are insertable.
+
+	Checks required fields (entity-specific plus, when ``include_doc_required``,
+	the DocType's own reqd fields) and the QBO->ERPNext quirk that journal lines
+	posting to Stock accounts can't be booked via a plain Journal Entry. A
+	non-empty list routes the record to manual review.
+	"""
 	issues = []
 	for fieldname in sorted(_required_mapped_fields(entity_type, erpnext_doctype, values, include_doc_required)):
 		if _is_empty_required_value(values.get(fieldname)):
@@ -326,6 +423,12 @@ def validate_mapped_values(
 def _required_mapped_fields(
 	entity_type: str, erpnext_doctype: str, values: dict, include_doc_required: bool = True
 ) -> set[str]:
+	"""Compute the set of field names that must be non-empty for this entity.
+
+	Combines a hardcoded per-entity baseline with the DocType's own required
+	fields (when ``include_doc_required``), but only those we can meaningfully
+	check pre-insert (see ``_can_validate_required_field``).
+	"""
 	fields = {
 		"Invoice": {"company", "customer", "items"},
 		"Bill": {"company", "supplier", "items"},
@@ -348,6 +451,12 @@ def _required_mapped_fields(
 
 
 def _can_validate_required_field(df, values: dict) -> bool:
+	"""Whether a DocType required field is one we can pre-validate.
+
+	True if we mapped it, False if it has a default (ERPNext will fill it).
+	Otherwise only data-bearing field types are checked -- layout/virtual types
+	are ignored so we don't flag fields ERPNext populates itself.
+	"""
 	if df.fieldname in values:
 		return True
 	if getattr(df, "default", None):
@@ -374,10 +483,17 @@ def _can_validate_required_field(df, values: dict) -> bool:
 
 
 def _is_empty_required_value(value):
+	"""True for None, empty string, or empty list (e.g. an items/accounts table)."""
 	return value in (None, "") or (isinstance(value, list) and not value)
 
 
 def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
+	"""List Stock accounts referenced by a Journal Entry's lines.
+
+	ERPNext forbids posting to a Stock-type account through a Journal Entry
+	(stock value must come from a stock transaction), so any such account is a
+	validation blocker.
+	"""
 	if entity_type != "JournalEntry":
 		return []
 	stock_accounts = []
@@ -389,6 +505,13 @@ def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
 
 
 def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
+	"""Return field names a user changed away from their last QBO-synced value.
+
+	Compares the current ERPNext value against the last value QBO owned
+	(``mapping.owned_fields``). A field conflicts only if it differs from BOTH
+	the previously-synced value (proving a local edit) AND the incoming QBO value
+	(proving the edit isn't just QBO catching up) -- so a true three-way divergence.
+	"""
 	owned = json_loads(mapping.owned_fields, default={}) or {}
 	conflicts = []
 	for fieldname, previous_value in owned.items():
@@ -403,12 +526,19 @@ def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
 
 
 def apply_values(doc, values: dict):
+	"""Set every non-None mapped value on the doc (full overwrite of mapped fields)."""
 	for fieldname, value in values.items():
 		if value is not None:
 			doc.set(fieldname, value)
 
 
 def apply_blank_values(doc, values: dict) -> dict:
+	"""Fill only currently-empty scalar fields on the doc; return what was set.
+
+	Non-destructive merge used when auto/manual-linking an existing record: child
+	tables (lists) and already-populated fields are left untouched so existing
+	ERPNext data wins.
+	"""
 	applied = {}
 	for fieldname, value in values.items():
 		if value is None:
@@ -422,6 +552,12 @@ def apply_blank_values(doc, values: dict) -> dict:
 
 
 def find_existing_match(entity_type: str, payload: dict, settings):
+	"""Find a pre-existing ERPNext record to link a master entity to.
+
+	Dispatches to a per-entity matcher (only master types: Account/Customer/
+	Vendor/Item/TaxCode). Returns a match dict (matched/ambiguous) or None.
+	Transactions are never auto-matched -- they are always created fresh.
+	"""
 	matchers = {
 		"Account": _match_account,
 		"Customer": _match_customer,
@@ -434,10 +570,12 @@ def find_existing_match(entity_type: str, payload: dict, settings):
 
 
 def _normalize(value):
+	"""Coerce a value to a string for tolerant equality comparison (None -> "")."""
 	return "" if value is None else str(value)
 
 
 def _display_name(payload):
+	"""Best human-readable label for a QBO record (DisplayName/Name/.../Id)."""
 	return (
 		payload.get("DisplayName")
 		or payload.get("FullyQualifiedName")
@@ -447,6 +585,7 @@ def _display_name(payload):
 
 
 def _latest_raw_payload(entity_type, qbo_id):
+	"""Return the most recent stored raw payload doc for an entity, or None."""
 	name = frappe.db.get_value(
 		"QuickBooks Raw Payload",
 		{"qbo_entity_type": entity_type, "qbo_id": str(qbo_id)},
@@ -457,6 +596,12 @@ def _latest_raw_payload(entity_type, qbo_id):
 
 
 def _matching_owned_values(doc, incoming_values: dict):
+	"""Subset of mapped values that already equal the doc's current values.
+
+	When linking without filling blanks, this is recorded as the mapping's
+	``owned_fields`` so future conflict detection only guards fields QBO and
+	ERPNext already agree on.
+	"""
 	return {
 		fieldname: value
 		for fieldname, value in incoming_values.items()
@@ -464,7 +609,17 @@ def _matching_owned_values(doc, incoming_values: dict):
 	}
 
 
+# ---------------------------------------------------------------------------
+# Per-entity mappers: QBO payload -> (ERPNext DocType, field-value dict).
+# Each returns the tuple consumed by map_qbo_to_erpnext. References to other
+# QBO entities (CustomerRef, ItemRef, AccountRef, ...) are resolved to ERPNext
+# names via _linked_name, i.e. they require the referenced entity to be mapped
+# already (hence the master-before-transaction import order).
+# ---------------------------------------------------------------------------
+
+
 def _map_account(payload, settings):
+	"""Map a QBO Account to an ERPNext Account (root/type derived from AccountType)."""
 	parent_account = _qbo_parent_account(payload, settings)
 	return "Account", {
 		"account_name": payload.get("Name"),
@@ -479,6 +634,7 @@ def _map_account(payload, settings):
 
 
 def _map_customer(payload, settings):
+	"""Map a QBO Customer to an ERPNext Customer (Company vs Individual by CompanyName)."""
 	return "Customer", {
 		"customer_name": _display_name(payload),
 		"customer_type": "Company" if payload.get("CompanyName") else "Individual",
@@ -488,6 +644,7 @@ def _map_customer(payload, settings):
 
 
 def _map_supplier(payload, settings):
+	"""Map a QBO Vendor to an ERPNext Supplier."""
 	return "Supplier", {
 		"supplier_name": _display_name(payload),
 		"supplier_type": "Company" if payload.get("CompanyName") else "Individual",
@@ -496,6 +653,7 @@ def _map_supplier(payload, settings):
 
 
 def _map_item(payload, settings):
+	"""Map a QBO Item to an ERPNext Item (non-stock; item_code from SKU/Name/Id)."""
 	return "Item", {
 		"item_code": payload.get("Sku") or payload.get("Name") or payload.get("Id"),
 		"item_name": payload.get("Name"),
@@ -507,6 +665,7 @@ def _map_item(payload, settings):
 
 
 def _map_sales_invoice(payload, settings):
+	"""Map a QBO Invoice to an ERPNext Sales Invoice (customer + line items)."""
 	return "Sales Invoice", {
 		"company": settings.company,
 		"customer": _linked_name("Customer", "Customer", payload.get("CustomerRef", {}).get("value")),
@@ -518,6 +677,7 @@ def _map_sales_invoice(payload, settings):
 
 
 def _map_purchase_invoice(payload, settings):
+	"""Map a QBO Bill to an ERPNext Purchase Invoice (supplier + line items)."""
 	return "Purchase Invoice", {
 		"company": settings.company,
 		"supplier": _linked_name("Vendor", "Supplier", payload.get("VendorRef", {}).get("value")),
@@ -529,6 +689,11 @@ def _map_purchase_invoice(payload, settings):
 
 
 def _map_payment_entry(payload, settings):
+	"""Map a QBO Payment or Deposit to an ERPNext Payment Entry.
+
+	Returns ``(None, {})`` if the referenced party (Customer or Vendor) is not yet
+	mapped, since a Payment Entry requires a party.
+	"""
 	party_type, party = _payment_party(payload)
 	if not party_type or not party:
 		return None, {}
@@ -543,6 +708,7 @@ def _map_payment_entry(payload, settings):
 
 
 def _map_journal_entry(payload, settings):
+	"""Map a QBO JournalEntry to an ERPNext Journal Entry (debit/credit lines)."""
 	return "Journal Entry", {
 		"company": settings.company,
 		"posting_date": payload.get("TxnDate"),
@@ -552,6 +718,7 @@ def _map_journal_entry(payload, settings):
 
 
 def _map_quotation(payload, settings):
+	"""Map a QBO Estimate to an ERPNext Quotation (to a Customer)."""
 	return "Quotation", {
 		"company": settings.company,
 		"quotation_to": "Customer",
@@ -562,6 +729,7 @@ def _map_quotation(payload, settings):
 
 
 def _map_purchase_order(payload, settings):
+	"""Map a QBO PurchaseOrder to an ERPNext Purchase Order (supplier + items)."""
 	return "Purchase Order", {
 		"company": settings.company,
 		"supplier": _linked_name("Vendor", "Supplier", payload.get("VendorRef", {}).get("value")),
@@ -571,6 +739,7 @@ def _map_purchase_order(payload, settings):
 
 
 def _map_tax_code(payload, settings):
+	"""Map a QBO TaxCode to an ERPNext Tax-type Account under Liability."""
 	return "Account", {
 		"account_name": payload.get("Name") or f"QBO TaxCode {payload.get('Id')}",
 		"company": settings.company,
@@ -582,6 +751,12 @@ def _map_tax_code(payload, settings):
 
 
 def _linked_name(qbo_entity_type: str, erpnext_doctype: str, qbo_id: str | None):
+	"""Resolve a QBO reference id to the ERPNext record name it was mapped to.
+
+	The bridge that lets transaction mappers point at already-imported masters
+	(e.g. an Invoice's CustomerRef -> the ERPNext Customer). Returns None if the
+	referenced entity has not been mapped yet.
+	"""
 	if not qbo_id:
 		return None
 	return frappe.db.get_value(
@@ -592,10 +767,12 @@ def _linked_name(qbo_entity_type: str, erpnext_doctype: str, qbo_id: str | None)
 
 
 def _default_or_none(doctype: str, name: str):
+	"""Return ``name`` if that record exists in ``doctype``, else None."""
 	return name if frappe.db.exists(doctype, name) else None
 
 
 def _default_group(doctype: str, fallback_name: str):
+	"""Return any non-group record of ``doctype`` (a safe default leaf group)."""
 	name = frappe.db.get_value(doctype, {"is_group": 0}, "name")
 	if name:
 		return name
@@ -603,6 +780,7 @@ def _default_group(doctype: str, fallback_name: str):
 
 
 def _qbo_parent_account(payload, settings):
+	"""Resolve an Account's parent: the mapped QBO ParentRef, else the root for its type."""
 	parent_ref = payload.get("ParentRef") or {}
 	parent_qbo_id = parent_ref.get("value")
 	if parent_qbo_id:
@@ -613,6 +791,7 @@ def _qbo_parent_account(payload, settings):
 
 
 def _root_account_for_type(root_type, settings):
+	"""Return the company's group account for a root type (Asset/Liability/...)."""
 	if not root_type:
 		return None
 	accounts = frappe.get_all(
@@ -625,6 +804,7 @@ def _root_account_for_type(root_type, settings):
 
 
 def _payment_party(payload):
+	"""Resolve a payment's party: a mapped Customer, else a mapped Vendor, else (None, None)."""
 	customer = _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value"))
 	if customer:
 		return "Customer", customer
@@ -635,6 +815,7 @@ def _payment_party(payload):
 
 
 def _account_root_type(qbo_account_type):
+	"""Translate a QBO AccountType to an ERPNext root_type (Asset/Liability/...)."""
 	root_type_map = {
 		"Bank": "Asset",
 		"Accounts Receivable": "Asset",
@@ -656,6 +837,7 @@ def _account_root_type(qbo_account_type):
 
 
 def _account_type(qbo_account_type):
+	"""Translate a QBO AccountType to an ERPNext account_type (Bank/Receivable/...)."""
 	account_type_map = {
 		"Bank": "Bank",
 		"Accounts Receivable": "Receivable",
@@ -670,7 +852,16 @@ def _account_type(qbo_account_type):
 	return account_type_map.get(qbo_account_type)
 
 
+# ---------------------------------------------------------------------------
+# Per-entity matchers: locate a pre-existing ERPNext record to link a QBO
+# master entity to, returning a {status: matched|ambiguous, ...} dict (with a
+# confidence score) or None. Used by find_existing_match during upsert and by
+# the dashboard "Link Existing Records" preview.
+# ---------------------------------------------------------------------------
+
+
 def _match_account(payload, settings):
+	"""Match a QBO Account by name + company."""
 	return _single_or_ambiguous(
 		"Account",
 		{"account_name": payload.get("Name"), "company": settings.company},
@@ -681,6 +872,7 @@ def _match_account(payload, settings):
 
 
 def _match_tax_code(payload, settings):
+	"""Match a QBO TaxCode to an Account by tax-account name + company."""
 	return _single_or_ambiguous(
 		"Account",
 		{
@@ -694,6 +886,7 @@ def _match_tax_code(payload, settings):
 
 
 def _match_customer(payload, settings):
+	"""Match a QBO Customer by display name, then company name, then email (descending confidence)."""
 	name = _display_name(payload)
 	email = (payload.get("PrimaryEmailAddr") or {}).get("Address")
 	for filters, rule, confidence in [
@@ -709,6 +902,7 @@ def _match_customer(payload, settings):
 
 
 def _match_supplier(payload, settings):
+	"""Match a QBO Vendor by supplier name, then company name, then email."""
 	name = _display_name(payload)
 	email = (payload.get("PrimaryEmailAddr") or {}).get("Address")
 	for filters, rule, confidence in [
@@ -724,6 +918,7 @@ def _match_supplier(payload, settings):
 
 
 def _match_item(payload, settings):
+	"""Match a QBO Item by SKU (item_code), then item name."""
 	sku = payload.get("Sku")
 	name = payload.get("Name")
 	for filters, rule, confidence in [
@@ -737,6 +932,12 @@ def _match_item(payload, settings):
 
 
 def _single_or_ambiguous(doctype, filters, rule, payload, confidence):
+	"""Resolve a candidate query to matched (exactly one), ambiguous (>1), or None.
+
+	Drops empty filter values; returns a "matched" dict only on a single hit so
+	the sync never auto-links when the lookup is non-unique (those become
+	"ambiguous" -> manual review).
+	"""
 	filters = {key: value for key, value in filters.items() if value not in (None, "")}
 	if not filters:
 		return None
@@ -759,6 +960,7 @@ def _single_or_ambiguous(doctype, filters, rule, payload, confidence):
 
 
 def _has_field(doctype, fieldname):
+	"""Safely report whether a DocType has a given field (False on any error)."""
 	try:
 		return frappe.get_meta(doctype).has_field(fieldname)
 	except Exception:
@@ -766,6 +968,10 @@ def _has_field(doctype, fieldname):
 
 
 def _sales_items(payload):
+	"""Build ERPNext sales line items from a QBO transaction's SalesItemLineDetail lines.
+
+	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet.
+	"""
 	items = []
 	for line in payload.get("Line", []) or []:
 		detail = line.get("SalesItemLineDetail") or {}
@@ -786,6 +992,10 @@ def _sales_items(payload):
 
 
 def _purchase_items(payload):
+	"""Build ERPNext purchase line items from QBO ItemBasedExpenseLineDetail lines.
+
+	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet.
+	"""
 	items = []
 	for line in payload.get("Line", []) or []:
 		detail = line.get("ItemBasedExpenseLineDetail") or {}
@@ -806,6 +1016,11 @@ def _purchase_items(payload):
 
 
 def _journal_accounts(payload):
+	"""Build ERPNext journal lines from QBO JournalEntryLineDetail lines.
+
+	Maps each line's AccountRef to an ERPNext Account (skipping unmapped ones) and
+	splits the amount into debit/credit columns based on QBO's PostingType.
+	"""
 	accounts = []
 	for line in payload.get("Line", []) or []:
 		detail = line.get("JournalEntryLineDetail") or {}

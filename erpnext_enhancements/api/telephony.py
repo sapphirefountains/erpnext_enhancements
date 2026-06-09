@@ -1,3 +1,36 @@
+"""Triton telephony integration (Twilio voice/SMS + the external Triton gateway).
+
+This module bridges ERPNext with the "Triton" AI phone/SMS gateway and Twilio.
+It is the trust boundary for inbound webhooks and the caller for outbound
+voice/SMS.
+
+Callers:
+        - External Triton gateway / Twilio webhooks: ``append_call_transcript``,
+          ``get_call_transcript``, ``get_caller_info``, ``update_caller_info``,
+          ``process_unified_recording``, ``process_unified_sms``, ``receive_mms``,
+          ``get_gateway_config`` (all ``allow_guest=True``).
+        - Desk JS: ``get_softphone_token`` and ``trigger_outbound_call``
+          (contact.js / customer.js / lead.js / telephony_client.js),
+          ``send_sms`` (telephony_client.js).
+
+External services: Twilio (request-signature validation, Voice access-token JWT
+minting) and the Triton gateway HTTP API (``gateway_url`` in Triton Settings)
+for outbound calls/SMS; it also fetches Twilio MMS media over HTTP.
+
+SECURITY — read carefully:
+        - Several endpoints are ``allow_guest=True`` because they are hit by
+          server-to-server webhooks with no Frappe session. They are protected
+          either by ``@validate_twilio_request`` (Twilio HMAC signature) or
+          ``@validate_webhook_secret`` (Bearer/``token`` shared secret from
+          ``admin_webhook_secret``). ``get_gateway_config`` is unauthenticated by
+          design and therefore returns ONLY non-sensitive routing config.
+        - Webhook handlers call ``frappe.set_user("triton@sapphirefountains.com")``
+          to act as the Triton service user and write with ``ignore_permissions=True``.
+        - Outbound endpoints (``send_sms``, ``trigger_outbound_call``) are normal
+          authenticated whitelists and resolve the caller's own Employee /
+          cell number from the session user.
+"""
+
 import frappe
 from frappe import _
 import requests
@@ -12,6 +45,13 @@ from twilio.jwt.access_token.grants import VoiceGrant
 
 @frappe.whitelist(allow_guest=True)
 def get_gateway_config():
+    """Return non-sensitive call-routing config to the Triton gateway.
+
+    Guest-accessible (``allow_guest=True``) and intentionally unauthenticated.
+    Returns only the master system prompt, forwarding phone number, and voice
+    model id from Triton Settings — NEVER secrets/API keys. On any error,
+    returns hard-coded safe defaults (and logs the failure).
+    """
     try:
         settings = frappe.get_doc("Triton Settings")
         return {
@@ -30,6 +70,13 @@ def get_gateway_config():
         }
 
 def validate_twilio_request(func):
+    """Decorator: reject requests whose Twilio HMAC signature is invalid.
+
+    Validates the ``X-Twilio-Signature`` header against the request URL + POST
+    body using the Twilio auth token from Triton Settings. ``frappe.throw(...
+    PermissionError)`` on mismatch. Used to authenticate Twilio's own webhooks
+    (e.g. ``receive_mms``) since they arrive with no Frappe session.
+    """
     def wrapper(*args, **kwargs):
         settings = frappe.get_doc("Triton Settings")
         validator = RequestValidator(settings.get_password("twilio_auth_token", raise_exception=False) or "")
@@ -43,6 +90,15 @@ def validate_twilio_request(func):
     return wrapper
 
 def validate_webhook_secret(func):
+    """Decorator: require the Triton shared-secret Bearer token.
+
+    Reads the expected secret from Triton Settings ``admin_webhook_secret`` and
+    checks the ``Authorization`` header. Accepts ``Bearer <secret>``; also
+    permits a ``token ...`` scheme (Frappe API key/secret auth) to pass through.
+    ``frappe.throw(... PermissionError)`` if the header is missing or the
+    Bearer secret does not match. Authenticates the guest-accessible Triton
+    gateway endpoints.
+    """
     def wrapper(*args, **kwargs):
         try:
             settings = frappe.get_doc("Triton Settings")
@@ -64,6 +120,12 @@ def validate_webhook_secret(func):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def append_call_transcript(call_sid, transcript_chunk):
+    """Append a live transcript chunk to a per-call Redis cache buffer.
+
+    Guest endpoint guarded by ``@validate_webhook_secret`` (Triton gateway).
+    Buffers chunks under ``triton_transcript_<call_sid>`` in the Frappe cache
+    with a 24h TTL, for later assembly. Acts as the Triton service user.
+    """
     frappe.set_user("triton@sapphirefountains.com")
     key = f"triton_transcript_{call_sid}"
     chunks = frappe.cache().get_value(key) or []
@@ -74,6 +136,11 @@ def append_call_transcript(call_sid, transcript_chunk):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def get_call_transcript(call_sid):
+    """Return the buffered live transcript for a call as one newline-joined string.
+
+    Guest endpoint guarded by ``@validate_webhook_secret``. Reads the chunks
+    cached by ``append_call_transcript``.
+    """
     frappe.set_user("triton@sapphirefountains.com")
     key = f"triton_transcript_{call_sid}"
     chunks = frappe.cache().get_value(key) or []
@@ -82,8 +149,26 @@ def get_call_transcript(call_sid):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def get_caller_info(phone_number, twilio_caller_name=None):
+    """Resolve a phone number to a Customer/Contact, creating them if unknown.
+
+    Guest endpoint guarded by ``@validate_webhook_secret``; also used as an
+    internal helper by other functions in this module.
+
+    Matching: normalises to digits and fuzzy-matches the last 10 digits via a
+    REGEXP over ``Contact.custom_phone_number`` then
+    ``Customer.custom_accounts_phone_number`` (the ``.*``-joined regex tolerates
+    formatting differences). If neither is found, AUTO-CREATES a Residential
+    Customer + primary Contact (with ``ignore_permissions``) named from the
+    Twilio caller id or "Unknown Caller".
+
+    Returns:
+        dict: ``{"customer", "contact", "display_name", "context"}`` where
+        ``context`` is a list of open Opportunity/Project labels for the customer.
+
+    Side effects: may insert Customer + Contact docs and commits the transaction.
+    """
     frappe.set_user("triton@sapphirefountains.com")
-    
+
     if not phone_number:
         return {"customer": None, "contact": None, "display_name": twilio_caller_name or "Unknown Caller", "context": []}
 
@@ -177,8 +262,16 @@ def get_caller_info(phone_number, twilio_caller_name=None):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def update_caller_info(phone_number, new_name):
+    """Rename the Customer/Contact for a number, unless it's already established.
+
+    Guest endpoint guarded by ``@validate_webhook_secret``. Looks up (or
+    creates, via ``get_caller_info``) the records for ``phone_number``. If the
+    Customer name does NOT start with "Unknown Caller" it is treated as
+    established and left untouched (``updated: False``). Otherwise the Customer
+    name and Contact first/last name are set from ``new_name``. Commits.
+    """
     frappe.set_user("triton@sapphirefountains.com")
-    
+
     info = get_caller_info(phone_number)
     customer_name = info.get("customer")
     contact_name = info.get("contact")
@@ -227,13 +320,27 @@ def update_caller_info(phone_number, new_name):
     return {"status": "success", "customer": customer_name, "contact": contact_name, "updated": not is_established}
 
 def locate_customer(phone_number):
+    """Internal helper: return just the Customer name for a phone number.
+
+    Thin wrapper over ``get_caller_info`` (so it may also create records as a
+    side effect). Not whitelisted.
+    """
     info = get_caller_info(phone_number)
     return info.get("customer")
 
 @frappe.whitelist()
 def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
+    """Persist a finished call's transcript as a Phone Communication record.
+
+    Authenticated whitelist (no ``allow_guest``), but immediately switches to
+    the Triton service user. Generates a fallback ``call_sid`` if missing.
+    Resolves the caller (via ``get_caller_info``) and links the Communication to
+    the Customer/Contact through ``timeline_links``. Also closes/reassigns any
+    auto-created ToDos to the Triton user. Commits; returns
+    ``{"status", "communication_id"}`` (or an error dict).
+    """
     frappe.set_user("triton@sapphirefountains.com")
-    
+
     if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
         call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
 
@@ -289,9 +396,24 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_recording(**kwargs):
+    """Ingest a completed call recording: summary, transcript, audio, and email.
+
+    Guest endpoint guarded by ``@validate_webhook_secret`` (Triton gateway).
+    Accepts params via kwargs or ``frappe.form_dict``. If a Communication for
+    the ``call_sid`` already exists it is enriched (summary + transcript
+    prepended); otherwise a new Phone Communication is created and linked to the
+    resolved Customer/Contact, and related ToDos are closed.
+
+    Audio handling: accepts a base64 ``file_content`` field OR a multipart
+    ``file`` upload, saved as a private File attached to the Communication.
+
+    Side effects: writes Communication + File docs (``ignore_permissions``);
+    emails a summary (with audio attachment) to info@sapphirefountains.com;
+    commits. On any error rolls back, logs, and returns HTTP 500.
+    """
     try:
         frappe.set_user("triton@sapphirefountains.com")
-        
+
         call_sid = kwargs.get("call_sid") or frappe.form_dict.get("call_sid")
         summary = kwargs.get("summary") or frappe.form_dict.get("summary")
         transcript = kwargs.get("transcript") or frappe.form_dict.get("transcript")
@@ -444,6 +566,15 @@ def process_unified_recording(**kwargs):
 
 @frappe.whitelist()
 def get_softphone_token():
+    """Mint a short-lived Twilio Voice access-token JWT for the browser softphone.
+
+    Authenticated whitelist, called from ``public/js/telephony_client.js``.
+    Reads Twilio API key SID/secret, TwiML app SID, and account SID from Triton
+    Settings (with fallbacks to ``frappe.conf`` / env for the account SID);
+    ``frappe.throw`` if any are missing. Grants both outgoing (via the TwiML
+    app) and incoming voice. NOTE: the Twilio ``identity`` is hard-coded to
+    "nikolas_erpnext". Returns the JWT as a string.
+    """
     settings = frappe.get_doc("Triton Settings")
     twilio_api_key_sid = getattr(settings, "twilio_api_key_sid", None)
     twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
@@ -467,8 +598,14 @@ def get_softphone_token():
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
 def receive_mms():
+    """Twilio MMS webhook: download inbound media and attach it to the Customer.
+
+    Guest endpoint guarded by ``@validate_twilio_request`` (Twilio signature).
+    Locates the Customer for the ``From`` number, fetches ``MediaUrl0`` over
+    HTTP, and saves it as a private File attached to that Customer. Returns "OK".
+    """
     frappe.set_user("triton@sapphirefountains.com")
-    
+
     sender_number = frappe.form_dict.get("From")
     media_url = frappe.form_dict.get("MediaUrl0")
 
@@ -494,6 +631,11 @@ def receive_mms():
 
 @frappe.whitelist()
 def send_voicemail_email(subject, body, caller_number=None, **kwargs):
+    """Email a voicemail / message summary to info@sapphirefountains.com.
+
+    Authenticated whitelist. Side effect: sends one email immediately
+    (``now=True``). Returns ``{"status": ...}``; errors are logged and returned.
+    """
     try:
         message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
         
@@ -509,10 +651,21 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
         return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
+    """Placeholder hook for future call-transfer transcript analysis. No-op."""
     pass
 
 @frappe.whitelist()
 def trigger_outbound_call(doctype, docname, target_number):
+    """Initiate a click-to-call via the Triton gateway from a Desk form.
+
+    Authenticated whitelist, called from contact.js / customer.js / lead.js.
+    Resolves the *calling* user's own active Employee and cell number from the
+    session (``frappe.throw`` if absent). For Customer/Contact references it
+    prefers the stored phone field over ``target_number``. POSTs to
+    ``<gateway_url>/api/outbound-call`` with the ``admin_webhook_secret`` as a
+    Bearer token. The gateway then bridges the employee's cell to the target.
+    Returns a success dict or throws on gateway failure (logged).
+    """
     try:
         user = frappe.session.user
         employee_map = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=["name", "cell_number"])
@@ -570,6 +723,13 @@ def trigger_outbound_call(doctype, docname, target_number):
 
 @frappe.whitelist()
 def get_employee_number(employee_name):
+    """Fuzzy-lookup an active Employee's cell number by name.
+
+    Authenticated whitelist used by Triton for inbound call routing (e.g.
+    "transfer me to <name>"). ``employee_name`` is matched with a ``LIKE
+    %name%`` query against active Employees. Returns the cell number string or
+    ``None`` (also ``None`` on error, which is logged).
+    """
     # Used by Triton for inbound routing via fuzzy search on Employee
     try:
         if not employee_name:
@@ -594,6 +754,15 @@ def get_employee_number(employee_name):
 
 @frappe.whitelist()
 def log_call_details(call_sid, direction, from_number, to_number, duration, transcript, summary, reference_doctype=None, reference_docname=None):
+    """Create a Phone Communication for a completed (typically softphone) call.
+
+    Authenticated whitelist. ``direction`` ("Outbound"/"Received") drives
+    sent/received and sender fields and the display name (from the to/from
+    number, overridden by the reference doc's name when provided). Customer /
+    Contact / Lead references are attached via ``timeline_links``; any other
+    reference type is set as ``reference_doctype``/``reference_name``. Commits;
+    returns ``{"status", "communication_id"}`` (rollback + error dict on failure).
+    """
     try:
         if not call_sid or str(call_sid).strip().lower() in ["undefined", "null", "none", ""]:
             call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
@@ -646,6 +815,22 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
 def process_unified_sms(**kwargs):
+    """Ingest an inbound SMS: log it, attach media, auto-assign, and alert.
+
+    Guest endpoint guarded by ``@validate_webhook_secret`` (Triton gateway).
+    Creates a received SMS Communication linked to the resolved Customer/Contact;
+    optionally records AI analysis/sentiment as a Comment and decodes base64
+    media into private File attachments.
+
+    Intelligent assignment: assigns the Communication (via ``assign_to``) to (1)
+    whoever last *sent* an SMS to this number, else (2) whoever a prior inbound
+    SMS was assigned to, else (3) the info@ inbox — non-fallback assignments get
+    High priority. If ``is_urgent``, creates Notification Log alerts for the
+    assignee and every "Production Team" role holder.
+
+    Side effects: many doc writes (``ignore_permissions``) + commit; on error,
+    rollback and HTTP 500.
+    """
     try:
         frappe.set_user("triton@sapphirefountains.com")
 
@@ -831,6 +1016,17 @@ def process_unified_sms(**kwargs):
 
 @frappe.whitelist()
 def send_sms(target_number, message, media_urls=None, reference_doctype=None, reference_docname=None):
+    """Send an outbound SMS via the Triton gateway and log it.
+
+    Authenticated whitelist, called from ``public/js/telephony_client.js``.
+    Resolves the sending user's active Employee (``frappe.throw`` if none).
+    Appends a " - [Employee Name]" signature only when no SMS has been sent to
+    this number in the last 24h (avoids repeating the signature in a thread).
+    POSTs to ``<gateway_url>/api/send-sms`` with the ``admin_webhook_secret``
+    Bearer token, then records a *Sent* SMS Communication owned by the user,
+    linked to the reference doc or resolved Customer/Contact. Commits; throws on
+    gateway failure (logged).
+    """
     try:
         if not target_number or not message:
             frappe.throw(_("Target number and message are required."))

@@ -1,3 +1,10 @@
+"""One-time migration patch (post_model_sync; listed in patches.txt).
+
+Re-applies the Project "Procurement" section field layout (same definition as
+``add_project_procurement_buttons``) to fix ``insert_after`` ordering on sites
+where the buttons were originally created in a different order. Runs after
+``add_project_procurement_buttons`` in patches.txt. Idempotent.
+"""
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 

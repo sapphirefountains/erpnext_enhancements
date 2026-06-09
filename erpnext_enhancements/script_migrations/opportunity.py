@@ -1,3 +1,16 @@
+"""Migrated Opportunity Server Scripts, wired via ``hooks.py``.
+
+All three functions are registered in ``hooks.py`` under
+``doc_events["Opportunity"]["before_save"]`` (alongside
+:func:`erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags`):
+  * :func:`stamp_won_date`
+  * :func:`validate_ranks_on_won`
+  * :func:`update_lead_status`
+
+Originally Frappe "Server Script" records stored only in the site DB; now
+versioned with the app.
+"""
+
 import frappe
 
 # Opportunity Server Scripts migrated to native doc_events.
@@ -48,6 +61,14 @@ def update_lead_status(doc, method=None):
 	When a new Opportunity is created from a Lead, mark the Lead as Converted.
 	The Lead is referenced via ``party_name`` when ``opportunity_from == "Lead"``;
 	the Opportunity doctype has no ``lead`` field.
+
+	NOTE (see CHANGELOG 0.2.8): guarding on the non-existent ``doc.lead`` raised
+	``AttributeError`` on *every* Opportunity save; the guard now checks
+	``opportunity_from == "Lead" and party_name``.
+
+	Side effects:
+		Saves the linked Lead (``status="Converted"``, ``opportunity=doc.name``)
+		with ``ignore_permissions``. A missing Lead is logged, not raised.
 	"""
 	if doc.is_new() and doc.opportunity_from == "Lead" and doc.party_name:
 		try:

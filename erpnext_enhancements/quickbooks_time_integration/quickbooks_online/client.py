@@ -1,3 +1,16 @@
+"""HTTP/OAuth2 client for the QuickBooks Online REST API.
+
+This is the transport layer of the integration. It owns the full OAuth2
+lifecycle (build authorization URL -> exchange code -> refresh access token)
+and the authenticated request helpers (generic ``request``, plus ``query``,
+``get_entity`` and ``cdc``) that ``sync.py`` and ``api.py`` build on.
+
+Token storage is delegated to ``utils.set_secret``/``get_secret`` (encrypted
+Password fields on the singleton Settings doc); ``_store_tokens`` also persists
+the computed expiry and connection status. The client transparently refreshes
+on a 401 and retries the request once.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -22,17 +35,33 @@ from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils im
 
 
 class QuickBooksAPIError(Exception):
+	"""Raised when a QBO token or data request returns an HTTP error (>=400)."""
+
 	pass
 
 
 class QuickBooksClient:
+	"""Thin wrapper around the QBO OAuth2 + REST endpoints.
+
+	Bound to a single ``QuickBooks Online Settings`` doc (loaded lazily if not
+	passed) which supplies credentials, the realm id and the Sandbox/Production
+	environment. Construct per-operation; it is cheap and holds no connection.
+	"""
+
 	def __init__(self, settings=None):
 		self.settings = settings or get_settings()
 
 	def get_base_url(self):
+		"""Return the API host for the configured environment (defaults Sandbox)."""
 		return ENVIRONMENT_BASE_URLS.get(self.settings.environment or "Sandbox", ENVIRONMENT_BASE_URLS["Sandbox"])
 
 	def build_authorization_url(self, state: str, environment: str | None = None):
+		"""Build the Intuit consent URL the user is redirected to for OAuth2.
+
+		``state`` is the CSRF token minted by ``api.start_oauth`` (validated on
+		callback). Optionally overrides the environment in memory. Raises if the
+		client id or redirect URI have not been configured on Settings.
+		"""
 		if environment:
 			self.settings.environment = environment
 		if not self.settings.client_id or not self.settings.redirect_uri:
@@ -53,6 +82,13 @@ class QuickBooksClient:
 		)
 
 	def exchange_code(self, code: str, realm_id: str):
+		"""Exchange an OAuth2 authorization code for tokens and persist them.
+
+		Called by ``api.oauth_callback`` after the user consents. ``realm_id`` is
+		the QBO company id returned alongside the code; it is stored on Settings.
+		Side effects: HTTP POST to the token endpoint, then writes access/refresh
+		tokens, expiry and "Connected" status (see ``_store_tokens``).
+		"""
 		payload = {
 			"grant_type": "authorization_code",
 			"code": code,
@@ -63,6 +99,14 @@ class QuickBooksClient:
 		return data
 
 	def refresh_access_token(self):
+		"""Use the stored refresh token to obtain a new access token.
+
+		Invoked proactively by ``tasks.refresh_token_if_needed`` (hourly
+		scheduler) and reactively by ``request`` on a 401. Side effects: HTTP POST
+		to the token endpoint and persistence via ``_store_tokens`` (QBO may also
+		rotate the refresh token, which is then saved). Raises if no refresh token
+		is stored -- the integration must be reconnected.
+		"""
 		refresh_token = get_secret(self.settings, "refresh_token")
 		if not refresh_token:
 			frappe.throw("QuickBooks Online refresh token is missing. Reconnect the integration.")
@@ -72,6 +116,12 @@ class QuickBooksClient:
 		return data
 
 	def _token_request(self, payload):
+		"""POST to the Intuit token endpoint with HTTP Basic client auth.
+
+		Shared by ``exchange_code`` and ``refresh_access_token``. The client
+		id/secret are sent base64-encoded in the Authorization header (OAuth2
+		client_secret_basic). Raises ``QuickBooksAPIError`` on any >=400 response.
+		"""
 		client_secret = get_secret(self.settings, "client_secret")
 		if not self.settings.client_id or not client_secret:
 			frappe.throw("QuickBooks Online Client ID and Client Secret are required.")
@@ -92,12 +142,23 @@ class QuickBooksClient:
 		return response.json()
 
 	def _store_tokens(self, data, realm_id=None):
+		"""Persist tokens, computed expiry and connection status to Settings.
+
+		Side effects: encrypts access/refresh tokens (refresh only updated when
+		present so a refresh response without one keeps the old token), stores the
+		realm id when given, sets status "Connected", saves and commits.
+
+		The stored ``token_expires_at`` is deliberately backdated by 300s (5 min)
+		relative to QBO's ``expires_in`` so callers refresh slightly early and
+		avoid using a token that expires mid-request.
+		"""
 		set_secret(self.settings, "access_token", data.get("access_token"))
 		if data.get("refresh_token"):
 			set_secret(self.settings, "refresh_token", data.get("refresh_token"))
 		if realm_id:
 			self.settings.realm_id = realm_id
 		expires_in = int(data.get("expires_in") or 3600)
+		# Subtract a 5-minute safety margin from the real expiry.
 		self.settings.token_expires_at = add_to_date(now_datetime(), seconds=expires_in - 300, as_datetime=True)
 		self.settings.status = "Connected"
 		self.settings.status_message = "Connected to QuickBooks Online."
@@ -105,6 +166,14 @@ class QuickBooksClient:
 		frappe.db.commit()
 
 	def request(self, method: str, path: str, **kwargs):
+		"""Make an authenticated QBO API call, refreshing the token on 401.
+
+		Prepends the environment base URL to ``path`` and injects the bearer
+		token plus the pinned ``minorversion`` query param. On a 401 it refreshes
+		the access token once and retries the same request; any other >=400
+		response raises ``QuickBooksAPIError``. Returns the parsed JSON body (or
+		``{}`` for an empty body). Raises if no access token is stored.
+		"""
 		access_token = get_secret(self.settings, "access_token")
 		if not access_token:
 			frappe.throw("QuickBooks Online access token is missing. Connect the integration first.")
@@ -124,6 +193,7 @@ class QuickBooksClient:
 			timeout=kwargs.pop("timeout", 60),
 			**kwargs,
 		)
+		# 401 => access token expired/revoked: refresh once and retry the same call.
 		if response.status_code == 401:
 			self.refresh_access_token()
 			return self.request(method, path, **kwargs, params=params)
@@ -132,6 +202,11 @@ class QuickBooksClient:
 		return response.json() if response.text else {}
 
 	def query(self, query: str):
+		"""Run a QBO SQL-like query (the ``/query`` endpoint, text/plain body).
+
+		Used by ``sync.query_all`` for paginated full imports. The query string
+		uses QBO's ``startposition``/``maxresults`` paging syntax.
+		"""
 		return self.request(
 			"GET",
 			f"/v3/company/{self.settings.realm_id}/query",
@@ -140,9 +215,16 @@ class QuickBooksClient:
 		)
 
 	def get_entity(self, entity_type: str, qbo_id: str):
+		"""Fetch a single QBO entity by id (used for webhook/manual entity syncs)."""
 		return self.request("GET", f"/v3/company/{self.settings.realm_id}/{entity_type.lower()}/{qbo_id}")
 
 	def cdc(self, entities: list[str], changed_since):
+		"""Call the Change Data Capture endpoint for entities changed since a cursor.
+
+		``changed_since`` is the ISO timestamp cursor (Settings.last_cdc_sync).
+		QBO returns every record of the given entity types modified or deleted
+		since then. Invoked by ``sync.run_cdc`` on the hourly scheduler poll.
+		"""
 		return self.request(
 			"GET",
 			f"/v3/company/{self.settings.realm_id}/cdc",

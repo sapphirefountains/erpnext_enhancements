@@ -1,3 +1,15 @@
+/**
+ * Filter help button — global list-view enhancement.
+ *
+ * Targets: list views (the filter toolbar), globally.
+ * Loaded via: hooks.py `app_include_js` (global desk script).
+ *
+ * Injects a small "?" button before the standard list-view Filter button that
+ * opens an explanatory dialog describing how the three-column filter UI works
+ * (field / condition / value) and what each condition means. Re-injected on
+ * `app_ready` and on router change so it survives list re-renders. Button styling
+ * lives in desk_enhancements.bundle.css (`.filter-help-btn`).
+ */
 frappe.provide("erpnext_enhancements.filter_help");
 
 (function() {
