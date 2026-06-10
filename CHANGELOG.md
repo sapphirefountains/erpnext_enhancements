@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-09
+
+### Added
+- **The last load-bearing DB-only custom DocTypes are now app DocTypes**: `Process Document` (Mermaid.js process docs, 11 documents, form script already shipped in `public/js/process_document.js`) → Enhancements Core; `Sales Activity Settings` (Single) → CRM Enhancements; `Additional Supplier Group` (child table behind `Supplier.custom_additional_supplier_groups`) → Global Enhancements. Generated with frappe's canonical export serializer from the live definitions (only `custom`/`module`/`modified` differ), same as the v0.7.0 port.
+
+### Changed
+- **`customer_inactivity_reminder` now has a global fallback.** Customers without a positive per-customer `custom_reminder_days` fall back to the `inactivity_threshold` from the now-shipped Sales Activity Settings Single (live value: 90 days); `custom_reminder_days = -1` opts a customer out, and setting the global threshold to 0 disables the fallback site-wide. Previously such customers were skipped entirely. **Measured against live data, the first daily run after deploy creates ~694 follow-up ToDos** (the backlog of long-inactive customers — 286 owned by Administrator, 212 brian.morisseau, 183 nikolas.bradshaw, the rest spread thin); warn those owners, set the global threshold to 0 until ready, or prune by owner afterwards. (The old DB Server Script "Customer Inactivity Notification" that read this Single is already disabled; app code is now its only consumer.)
+
+### Fixed
+- **Follow-up ToDos are now actually assigned.** The ported reminder (and the original server script before it) set `assigned_to`, a field that does not exist on Frappe v16's ToDo — the key was silently dropped, leaving every follow-up ToDo it ever created unassigned and invisible in assignees' lists (confirmed on live: existing Open customer ToDos all have `allocated_to = NULL`). The insert now sets `allocated_to` (the Customer's owner).
+- **`setup/supplier_groups.py` no longer creates the "Additional Supplier Group" DocType at runtime** — it ships with the app and is synced by doctype sync before the `after_migrate` hook runs.
+
+### Removed
+- **Three abandoned DB-only DocTypes are deleted by patch `delete_abandoned_doctypes`** (sign-off: Nikolas, 2026-06-09): `Materials` (0 rows), `Rental Status` (0 rows), `Water Feature Types` (1 orphan row; superseded by the Serial No migration). All three were referenced by nothing — no DocField, Custom Field, script, or repo code. The patch also deletes the disabled "Mermaid.js Render" Client Script, superseded by the app's Process Document form script. **Deleting a DocType drops its table.**
+
 ## [0.7.0] - 2026-06-09
 
 ### Added

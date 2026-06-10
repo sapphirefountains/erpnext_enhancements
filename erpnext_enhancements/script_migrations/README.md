@@ -17,7 +17,7 @@ Almost everything here is wired through `doc_events` / `scheduler_events` in [`h
 | `opportunity.validate_ranks_on_won` | `Opportunity` `before_save` | On `Closed Won`, throws unless Scope/Schedule/Budget ranks are each 1/2/3. |
 | `opportunity.update_lead_status` | `Opportunity` `before_save` | When a new Opportunity comes from a Lead, marks the Lead **Converted**. |
 | `customer.set_last_activity` | `Customer` `before_save` | Stamps `custom_last_activity_date = today` on every save. |
-| `customer.customer_inactivity_reminder` | `scheduler_events.daily` | Creates Open follow-up ToDos for customers past their reminder window (skips if an Open ToDo already exists); commits. |
+| `customer.customer_inactivity_reminder` | `scheduler_events.daily` | Creates Open follow-up ToDos (allocated to the Customer's owner) for customers past their reminder window — per-customer `custom_reminder_days`, falling back to the global `inactivity_threshold` from the **Sales Activity Settings** Single; `-1` opts a customer out; skips if an Open ToDo already exists; commits. |
 | `address.set_full_address` | `Address` `before_save` | Builds comma-joined `custom_full_address` from line1/line2/city/state/pincode. |
 | `debug.run_debug_query` | none (whitelisted endpoint) | Developer helper returning DocLink rows pointing at a given Customer. |
 

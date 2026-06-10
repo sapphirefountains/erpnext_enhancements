@@ -20,6 +20,7 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `migrate_assets_to_serial_no` | post | Moves "SF Water Feature" Assets onto Serial No, repoints Maintenance Records + SO Items, marks the old Assets Scrapped. |
 | `migrate_contact_data` | post | Backfills the Contact/Address directory model from legacy scalar links, the Project Stakeholder child table, and legacy address fields. |
 | `update_project_statuses` | post | Bulk-updates Projects with status `'Open'` → `'Active'`. |
+| `delete_abandoned_doctypes` | post | Deletes the abandoned DB-only DocTypes "Materials", "Rental Status", "Water Feature Types" (unreferenced, 0–1 rows; metadata only — the orphaned tables remain until a `bench trim-database`) and the superseded "Mermaid.js Render" Client Script. |
 
 ## Important note from `patches.txt`
 

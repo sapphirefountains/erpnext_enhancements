@@ -10,6 +10,7 @@ Houses the **"Triton" AI-assistant** configuration (the in-app chat widget) and 
 | `doctype/triton_assistant_settings/triton_assistant_settings.js` | Form script: "Test Connection" button | `frappe.ui.form.on(... refresh)` |
 | `doctype/triton_allowed_user/triton_allowed_user.py` | Child table: whitelisted users | `TritonAllowedUser` (pass) |
 | `doctype/directory_link_exclusion/directory_link_exclusion.py` | Records a hidden Contact/Address per source doc | `DirectoryLinkExclusion` (pass) |
+| `doctype/additional_supplier_group/…py` | Child table behind `Supplier.custom_additional_supplier_groups` (ported from a DB-only custom DocType in v0.8.0; see `setup/supplier_groups.py`) | `AdditionalSupplierGroup` (pass) |
 
 ## Triton AI assistant
 
