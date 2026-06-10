@@ -21,6 +21,8 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `migrate_contact_data` | post | Backfills the Contact/Address directory model from legacy scalar links, the Project Stakeholder child table, and legacy address fields. |
 | `update_project_statuses` | post | Bulk-updates Projects with status `'Open'` → `'Active'`. |
 | `delete_abandoned_doctypes` | post | Deletes the abandoned DB-only DocTypes "Materials", "Rental Status", "Water Feature Types" (unreferenced, 0–1 rows; metadata only — the orphaned tables remain until a `bench trim-database`) and the superseded "Mermaid.js Render" Client Script. |
+| `seed_collab_doctypes` | post | Seeds the live-collab doctype allowlist in ERPNext Enhancements Settings and enables the feature (v1.0.0 launch list). |
+| `backfill_stage_changed_on` | post | Sets `Opportunity.custom_stage_changed_on = modified` where empty so the Sales Pipeline board's days-in-stage aging starts sane; creates the Custom Field first if missing (patches run before fixture sync). |
 
 ## Important note from `patches.txt`
 

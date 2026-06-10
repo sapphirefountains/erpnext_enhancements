@@ -188,10 +188,12 @@ doc_events = {
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
 			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
+			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
 		],
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.status_alerts.notify_closed_won",
+			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},

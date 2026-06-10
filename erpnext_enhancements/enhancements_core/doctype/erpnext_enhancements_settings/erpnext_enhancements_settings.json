@@ -14,7 +14,10 @@
   "collab_doctypes",
   "status_alerts_section",
   "status_alert_recipients",
-  "unconverted_nag_hours"
+  "unconverted_nag_hours",
+  "pipeline_section",
+  "pipeline_stale_amber_days",
+  "pipeline_stale_red_days"
  ],
  "fields": [
   {
@@ -83,6 +86,25 @@
    "fieldname": "unconverted_nag_hours",
    "fieldtype": "Int",
    "label": "Unconverted Reminder After (Hours)"
+  },
+  {
+   "fieldname": "pipeline_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Pipeline Dashboard"
+  },
+  {
+   "default": "7",
+   "description": "Opportunities sitting in a stage this many days turn amber on the Sales Pipeline board.",
+   "fieldname": "pipeline_stale_amber_days",
+   "fieldtype": "Int",
+   "label": "Stale After (Days, Amber)"
+  },
+  {
+   "default": "14",
+   "description": "Opportunities sitting in a stage this many days turn red and pulse on the Sales Pipeline board.",
+   "fieldname": "pipeline_stale_red_days",
+   "fieldtype": "Int",
+   "label": "Very Stale After (Days, Red)"
   }
  ],
  "issingle": 1,

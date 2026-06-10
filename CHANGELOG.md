@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-10
+
+Phase 2 of the Jun 9 Projects/Invoice-processing meeting: the sales pipeline on a wall TV ("two-three days to build that out… get another Raspberry Pi and another screen").
+
+### Added
+- **Sales Pipeline board — new desk page `/app/sales-pipeline`** (`crm_enhancements/page/sales_pipeline/`, module CRM Enhancements). A funnel-column view of open Opportunities whose columns are read from the live `Opportunity.status` meta (a stage rename on the site reshapes the board without a code change), plus two special columns: green **"Won — awaiting project"** (Closed Won with empty `custom_created_project` — the PRO-0204 Step 1→2 gap, on the wall where it can't hide) and a muted, never-stale **On Hold**. Cards show customer, summary one-liner, amount, AE, and a days-in-stage badge; columns show count + $ total (totals always cover the full set; cards cap at 30 per column with a "+N more" footer). Stalest cards sort to the top.
+- **Staleness lights ("it lights up if it's been sitting too long").** New Opportunity field `custom_stage_changed_on` (read-only, no_copy, fixtures + field_order splice) is stamped by a `before_save` hook on every entry into a new stage — an edit inside the same stage keeps the clock running. Cards turn **amber** / **red** (red pulses; disabled under `prefers-reduced-motion`) past the thresholds in **ERPNext Enhancements Settings → Sales Pipeline Dashboard** (new Ints, defaults 7/14 days); the won column ages on a tighter hardcoded 1/3-day clock to match the unconverted nag from v1.1.0. One-shot patch `backfill_stage_changed_on` seeds the stamp from `modified` for pre-existing opportunities — and because patches run *before* fixture sync, it creates the Custom Field itself if missing (`is_system_generated=False`, same name) so the fixture adopts the record later in the same migrate.
+- **Realtime + kiosk-resilient refresh.** Every Opportunity save publishes `sales_pipeline_updated` (an `on_update` hook, mirroring the Project Dashboard's pattern); open boards refetch behind a 2s debounce, with a 5-minute poll as fallback for wall TVs that miss socket reconnects (both skipped while the tab is hidden or routed away). Footer shows last-updated time and the active thresholds.
+- **TV mode.** `/app/sales-pipeline/tv` (the route the Raspberry Pi should bookmark) or the header button: desk chrome hidden, typography scaled for across-the-room reading, fullscreen requested. Styling is theme-aware per the app convention — structural colors from Frappe CSS variables, literal amber/red accents with `[data-theme="dark"]` contrast overrides. Page CSS/JS ship through the Page asset mechanism (served via `getpage`, not the immutable `/assets` cache, so deploys reach the kiosk).
+- **Access model** mirrors the Project Dashboard: page-level gate (a `Custom Role` for page `sales-pipeline` wins if configured; otherwise any staff role — deliberately broad for a wall display), then permission-free data fetch so per-user User Permissions can't silently empty a shared board.
+- Test suite (`tests/test_sales_pipeline.py`): stale-level matrix (incl. 0-threshold disable), stage-stamp guard (insert / stage change / same-stage edit), live board-shape assertions (column order follows meta, won column placement, card cap + overflow accounting, parked never stale), and permission-denied behavior.
+
+### Notes
+- The Opportunity form gains the read-only "Stage Changed On" timestamp under Date Closed Won (the meeting asked for visible timestamps).
+- Deploy is behavior-neutral for existing screens; the board only exists at its own route. `bench migrate` re-imports fixtures again this release (~782 records).
+
 ## [1.1.0] - 2026-06-10
 
 Phase 1 of the Jun 9 Projects/Invoice-processing meeting: the hand-off automations for PRO-0204 "Won Opportunity Hand-Off" Steps 1 and 5, plus the agreed Opportunity/Lead form standardization. New module `status_alerts.py`; all recipient configuration lives in **ERPNext Enhancements Settings → Status Change SMS Alerts** (new section + child doctype **Status Alert Recipient**), so the team list changes without a deploy.
