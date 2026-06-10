@@ -1,0 +1,100 @@
+"""Live collaborative form sync relay.
+
+Clients on a collab-enabled form (see ``public/js/collab/live_form_sync.js``)
+POST debounced field changes here; after a write-permission check the change is
+re-published to the document's realtime room (``doc:{doctype}/{docname}``),
+whose membership is itself permission-checked by Frappe's socket.io
+``can_subscribe_doc``. Clients never emit realtime events to each other
+directly — this endpoint is the security authority for every broadcast.
+
+The relay never writes to the database: broadcast values are ephemeral and
+persistence only happens through normal document saves, so a forged or
+oversized value can at worst annoy room members who already have read access
+to the document.
+
+Security model:
+	- ``doctype`` must be in ``COLLAB_DOCTYPES`` (server-side allowlist; the
+	  JS constant of the same name only gates client attachment).
+	- Caller must hold *write* permission on the specific document.
+	- ``fieldname`` must exist on the target meta and hold a value (display
+	  fieldtypes such as Section Break / HTML / Table are rejected).
+	- ``value`` is capped at ``MAX_VALUE_LENGTH`` characters.
+
+No server-side throttle in v1: the client debounces 300ms per field (~3
+requests/sec/field while typing) and each call is one permission check plus
+one Redis publish. v2 hardening, should abuse appear: a ``frappe.cache()``
+token bucket keyed by ``(user, docname)``.
+"""
+
+import frappe
+from frappe import _
+from frappe.model import no_value_fields
+from frappe.utils import cstr
+
+# v2: move this list to a child table on ERPNext Enhancements Settings (the
+# Single already follows a child-table-per-feature pattern), read it here, and
+# ship it to the client via extend_bootinfo. Keep in sync with COLLAB_DOCTYPES
+# in public/js/collab/live_form_sync.js.
+COLLAB_DOCTYPES = {"Task"}
+
+# Generous cap for Text Editor HTML; anything larger is rejected outright.
+MAX_VALUE_LENGTH = 140_000
+
+
+@frappe.whitelist()
+def broadcast_field_update(
+	doctype,
+	docname,
+	fieldname,
+	value=None,
+	origin=None,
+	child_doctype=None,
+	child_name=None,
+):
+	"""Validate a field change and re-publish it to the document's realtime room.
+
+	Args:
+		doctype, docname: the parent document being collaboratively edited.
+		fieldname: changed field on the parent (or on the child row).
+		value: new value (scalar; ephemeral — never persisted here).
+		origin: opaque client id so the sender can ignore its own echo.
+		child_doctype, child_name: set when the change targets a child table
+			row; ``child_doctype`` must be one of the parent's table options.
+	"""
+	if doctype not in COLLAB_DOCTYPES:
+		frappe.throw(_("Live sync is not enabled for {0}").format(doctype))
+
+	if not frappe.has_permission(doctype, "write", doc=docname):
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+
+	meta = frappe.get_meta(doctype)
+	if child_doctype:
+		if child_doctype not in {df.options for df in meta.get_table_fields()}:
+			frappe.throw(_("Invalid child table"))
+		target_meta = frappe.get_meta(child_doctype)
+	else:
+		target_meta = frappe.get_meta(doctype)
+
+	df = target_meta.get_field(fieldname)
+	if not df or df.fieldtype in no_value_fields:
+		frappe.throw(_("Invalid field"))
+
+	if value is not None and len(cstr(value)) > MAX_VALUE_LENGTH:
+		frappe.throw(_("Value too large for live sync"))
+
+	frappe.publish_realtime(
+		"collab_field_update",
+		{
+			"doctype": doctype,
+			"docname": docname,
+			"fieldname": fieldname,
+			"value": value,
+			"origin": origin,
+			"child_doctype": child_doctype,
+			"child_name": child_name,
+			# reserved for v2 per-field presence highlights
+			"user": frappe.session.user,
+		},
+		doctype=doctype,
+		docname=docname,
+	)
