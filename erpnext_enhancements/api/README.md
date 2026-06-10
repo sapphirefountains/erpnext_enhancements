@@ -4,7 +4,7 @@ This package holds the app's Frappe **whitelisted endpoints** (`@frappe.whitelis
 
 Every function is documented inline. This README is the map.
 
-> ⚠️ **Mixed indentation:** most files in this folder use 4-space indentation, but `analytics.py`, `comments.py`, and `user_drafts.py` use **tabs**. Match the file you are editing.
+> ⚠️ **Mixed indentation:** most files in this folder use 4-space indentation, but `analytics.py`, `collab.py`, `comments.py`, and `user_drafts.py` use **tabs**. Match the file you are editing.
 
 ## File map
 
@@ -13,6 +13,7 @@ Every function is documented inline. This README is the map.
 | `activity_log.py` | Timeline badge counts for a document | `get_activity_counts` | `public/js/activity_log_numbering.js` | — |
 | `analytics.py` | GA4 + Search Console dashboard data | `get_ga4_data`, `get_gsc_data` | `enhancements_core/page/ga4_dashboard/ga4_dashboard.js` | Google Analytics 4 Data API, Google Search Console API |
 | `booking.py` | Composite (Travel/Rental/Maintenance) asset booking | `create_composite_booking` | booking UI / client script | — |
+| `collab.py` | Live collaborative editing relay — validates and re-publishes field changes + per-field focus presence to the document's realtime room; never writes to the DB | `broadcast_field_update`, `broadcast_focus` | `public/js/collab/live_form_sync.js` | — |
 | `comments.py` | Custom comment CRUD + file linking (backs the Vue Comments App) | `get_comments`, `add_comment`, `update_comment`, `delete_comment`, `link_files_to_comment` | `comments.js`, `global_comments.js`, `crm_note_enhancements.js` | — |
 | `communication.py` | AI email/SMS reply drafting | `suggest_sms_reply`; hook `after_insert_communication`; worker `generate_draft_response` | `communication.js`; `Communication` `after_insert` hook | Vertex AI (via `gemini.py`) |
 | `gemini.py` | Vertex AI Gemini REST client (internal helper) | `generate_content_with_vertex_ai` | imported by `communication.py` | Vertex AI `generateContent` |
@@ -38,6 +39,7 @@ Every function is documented inline. This README is the map.
 - **Session-trust:** `time_kiosk` derives the Employee from `frappe.session.user` and rejects a mismatched claimed employee (`_resolve_employee`). The legacy single-point `log_geolocation` still trusts the supplied `employee` for back-compat.
 - **Role-gated:** `time_kiosk.get_location_history` — only `System Manager` / `HR Manager` may view *another* employee's history; everyone else sees only their own.
 - **Owner-gated:** `comments.update_comment` / `delete_comment` allow edits/deletes only when `comment.owner == frappe.session.user`.
+- **Write-permission-gated broadcasts:** `collab.broadcast_field_update` / `broadcast_focus` require **write** permission on the specific document, enforce a doctype allowlist (`COLLAB_DOCTYPES`) plus field validation and a value-size cap, and only re-publish to the doc's realtime room (whose membership Frappe's socket.io already permission-checks) — they never persist anything.
 - **Permission-checked reads:** `activity_log`, `comments` read endpoints, and `search` re-check `frappe.has_permission` / filter with `ignore_permissions=False` before returning data.
 - Telephony webhook handlers act as the service user `triton@sapphirefountains.com` and write with `ignore_permissions=True`.
 

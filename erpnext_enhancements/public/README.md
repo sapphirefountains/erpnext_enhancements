@@ -77,6 +77,19 @@ Every file has a top-of-file doc block. This README is the architecture map.
 - **`comments_auto.js`** holds `COMMENT_APP_DOCTYPES` (~23 doctypes) and auto-mounts the app on each. It **deliberately excludes** Project, Customer, Employee, Account, Timesheet, Contact — because those doctypes' own form scripts already call `render_comments_app` (avoiding a double mount).
 - **`global_comments.js`** is separate: it patches the **native** Frappe Timeline (not the Vue app) to add an "Attach File" button. Both paths funnel through the same `link_files_to_comment` API.
 
+## Live collaborative editing (`js/collab/`)
+
+Google-Docs-style multi-user form editing for the doctypes in `COLLAB_DOCTYPES` (the JS constant in `live_form_sync.js`; mirrored — authoritatively — in [`api/collab.py`](../api/README.md)). One file, shipped via `erpnext_enhancements.bundle.js`:
+
+- **`live_form_sync.js`** — the whole engine, one `LiveFormSync` instance per attached form (`frm._live_sync`):
+  - **Outbound:** a wildcard `frappe.model.on` observer (parent + child-table doctypes) captures local edits, debounces 300ms per field, and POSTs them to `api.collab.broadcast_field_update`, which write-permission-checks and re-publishes to the doc's realtime room.
+  - **Inbound:** `collab_field_update` events apply via `frappe.model.set_value` behind an origin/echo guard (correctness rests on value-equality loop breakers in both directions, not the guard flag). A field the local user is typing in is never clobbered — remote values park in `pending_remote` and apply on blur only if no newer local edit exists. Last-write-wins per field.
+  - **Save sync:** on a collaborator's save (`doc_update`), a dirty form silently fetches the saved doc, merges it (local unsaved edits win per field), adopts the new `modified` timestamp (so the next local save passes `check_if_latest()`), and shows a passive "Updated by …" toast; Frappe's conflict banner is suppressed for collab forms only (guarded prototype patch on `show_conflict_message`). Clean forms keep Frappe's stock silent reload.
+  - **Per-field presence:** focusin/focusout broadcast `api.collab.broadcast_focus` events; receivers outline the field (or grid cell) in the sender's deterministic palette color with a name badge ("Jane is editing this field"). A 30s heartbeat + 75s receiver-side TTL make presence self-healing — a crashed tab leaves no ghost highlight. Styles: [`css/collab.css`](#css-css).
+  - **Scope guards:** attaches only to saved drafts (`docstatus === 0`, never new docs); child tables sync cell edits on saved rows only (row add/remove lands at the next save — unsaved rows have per-client local names); document-level "currently viewing" avatars remain Frappe's built-in FormViewers, untouched.
+
+> **Onboarding a new doctype:** add it to both `COLLAB_DOCTYPES` constants **and** audit its form scripts for field-level change handlers with non-idempotent side effects — they re-fire on every receiving client when remote values are applied (see the checklist comment next to the JS constant).
+
 ## Kanban patch suite
 
 Shipped as one esbuild bundle — `kanban.bundle.js` imports the four files below in
@@ -121,7 +134,8 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | File | Styles | Load |
 |---|---|---|
 | `desk_enhancements.bundle.css` | Desk "Sapphire glass" theme + Procurement Tracker, Comments App, Kanban, activity numbering, filter-help | app_include_css |
-| `desk_addons.bundle.scss` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`). A `.scss` entry **on purpose**: sass inlines its extension-less imports against the real path; a plain `.css` entry's `@import`s get resolved against the postcss plugin's temp dir and ENOENT the whole `bench build` (broke the v0.8.1 Frappe Cloud deploy). Builds to `desk_addons.bundle.css` | app_include_css |
+| `desk_addons.bundle.scss` | Imports the six feature stylesheets below (old include order, after `desk_enhancements`). A `.scss` entry **on purpose**: sass inlines its extension-less imports against the real path; a plain `.css` entry's `@import`s get resolved against the postcss plugin's temp dir and ENOENT the whole `bench build` (broke the v0.8.1 Frappe Cloud deploy). Builds to `desk_addons.bundle.css` | app_include_css |
+| `collab.css` | Live-collab per-field presence highlights (`.ee-collab-focus*` ring + name badge) | `desk_addons.bundle.scss` |
 | `login_enhancements.bundle.css` | Login/forgot/signup pages | web_include_css |
 | `global_enhancements/horizontal_scroll.css` | Opportunity Kanban horizontal scroll layout | doctype_css["Opportunity"] |
 | `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.scss` |

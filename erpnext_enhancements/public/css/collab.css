@@ -1,0 +1,43 @@
+/*
+ * collab.css — "Jane is editing this field" highlights for live collaborative
+ * editing (see public/js/collab/live_form_sync.js).
+ *
+ * Loaded via: desk_addons.bundle.scss (extension-less @import, inlined by
+ * sass at build time — see that file's header for why).
+ *
+ * The engine adds .ee-collab-focus to a field's control wrapper (or
+ * .ee-collab-focus-cell to a grid cell), sets --ee-collab-color to the
+ * editing user's deterministic palette color, and appends a
+ * .ee-collab-focus-badge with their name. Highlights are removed on blur
+ * events or expire client-side after a TTL.
+ */
+
+.ee-collab-focus {
+	position: relative;
+	box-shadow: 0 0 0 2px var(--ee-collab-color, #7c3aed);
+	border-radius: var(--border-radius, 6px);
+}
+
+.ee-collab-focus-cell {
+	position: relative;
+	box-shadow: inset 0 0 0 2px var(--ee-collab-color, #7c3aed);
+}
+
+.ee-collab-focus-badge {
+	position: absolute;
+	top: -9px;
+	right: 4px;
+	z-index: 6;
+	max-width: 160px;
+	overflow: hidden;
+	padding: 3px 6px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	color: #fff;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	pointer-events: none;
+	border-radius: 8px;
+	background: var(--ee-collab-color, #7c3aed);
+}
