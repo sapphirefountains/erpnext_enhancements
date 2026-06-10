@@ -34,6 +34,34 @@ Related code outside this folder:
 - **Realtime:** `publish_realtime_update(doc, method)` fires `frappe.publish_realtime("project_dashboard_updated", …)` and is registered on both **Task** `on_update` and **Project** `on_update`. Client code subscribes and refreshes the health banner / Gantt in place (preserving scroll position).
 - **Permission gating:** `check_permission()` prefers native Page role permissions (Custom Role + Has Role for the "Project Dashboard" page), falling back to the legacy `Project Dashboard Settings.permitted_roles` child table. Once page access is granted, list/Gantt reads fetch with ignore-permissions (a portfolio view, so per-record User Permissions don't narrow it); inline-edit/write endpoints still enforce per-document `frappe.has_permission("Project", "write", …)`, and `update_project_details` restricts edits to a whitelisted `EDITABLE_PROJECT_FIELDS` set.
 
+## Hand-Off Process engine (PRO-0204, v1.3.0)
+
+The 7-step "Won Opportunity Hand-Off" tracker. Definition lives in **Process Step
+Template** records (`doctype/process_step_template/`, seeded insert-only by the
+`seed_process_step_templates` patch — site edits survive); per-project state lives in
+the **Project Process Step** child table (`Project.custom_process_steps`, fixtures, on
+the "Hand-Off Process" tab with a progress bar rendered by
+`public/js/project_enhancements/process_steps.js`). The engine itself is the top-level
+module [`process_steps.py`](../process_steps.py):
+
+- **Seeding** — `before_insert` on Project copies enabled templates when the project
+  has a `custom_opportunity`; steps anchored *Opportunity Won* / *Project Created*
+  retro-complete. In-flight projects are never back-filled (Jun 9 meeting decision);
+  they opt in via the form button → whitelisted `start_process`.
+- **Anchors** — a *Payment Received* anchor completes its step when
+  `custom_payment_received` is ticked (runs after `status_alerts.stamp_payment_received_date`
+  in the `before_save` chain — order matters).
+- **Notifications** — completing a step notifies the *new* current step's responsible
+  person (SMS + Notification Log via `status_alerts._deliver`); the last completion
+  posts a "process complete" comment instead. Roles resolve per project at send time:
+  PM → `custom_project_owner`, AE → source Opportunity's `opportunity_owner`,
+  AR → `handoff_ar_rep` in ERPNext Enhancements Settings.
+- **Escalation** — daily scheduler nags the current step's owner once it's past
+  `due_by` (now + SLA hours when the step became current), max once/day per step.
+- **Visibility** — the Sales Pipeline board (`crm_enhancements/page/sales_pipeline/`)
+  shows a "Hand-off in progress" rail of active projects with their current step,
+  overdue ones glowing first.
+
 ## Master Project
 
 A lightweight container doctype grouping ordinary Projects into a program/portfolio. Projects join via the **`Project.custom_master_project`** Link field (no child table on the Master side); **`Project.custom_subproject_order`** controls ordering under the master. `get_projects_and_tasks` returns member Projects and their Tasks for the form's read-only HTML tables. The dashboard's `get_master_project_projects` / `update_master_project_structure` reuse the same grouping (the latter persists drag-reordering).

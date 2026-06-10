@@ -28,7 +28,7 @@ board (see the Project Dashboard docstring for the history there).
 """
 
 import frappe
-from frappe.utils import cint, date_diff, flt, getdate, now_datetime, nowdate
+from frappe.utils import cint, date_diff, flt, get_datetime, getdate, now_datetime, nowdate
 
 # Statuses that never appear on the board.
 TERMINAL_STATUSES = {"Lost", "Closed Lost", "Closed", "Converted"}
@@ -47,6 +47,9 @@ WON_RED_DAYS = 3
 
 DEFAULT_STALE_AMBER_DAYS = 7
 DEFAULT_STALE_RED_DAYS = 14
+
+# Hand-off rail: how many in-progress projects show under the board.
+HANDOFF_RAIL_LIMIT = 14
 
 # Fallback page-access roles when no Custom Role is configured for the page.
 # Deliberately broad — the meeting's intent is office-wide visibility on a
@@ -205,10 +208,72 @@ def get_pipeline_data():
 
 	return {
 		"stages": columns,
+		"handoff": _handoff_strip(),
 		"currency": frappe.defaults.get_global_default("currency") or "USD",
 		"thresholds": {"amber": amber_days, "red": red_days},
 		"generated_at": str(now_datetime()),
 	}
+
+
+def _handoff_strip():
+	"""Active projects with an unfinished PRO-0204 hand-off, overdue first.
+
+	The post-won extension of the funnel: once an opportunity converts, its
+	project appears here as "Step N/total — current step" until the process
+	completes. Best-effort by design — any failure logs and returns an empty
+	rail rather than taking the whole board down.
+	"""
+	empty = {"projects": [], "overflow": 0}
+	try:
+		rows = frappe.get_all(
+			"Project Process Step",
+			filters={"parenttype": "Project"},
+			fields=["parent", "step_number", "step_title", "status", "due_by"],
+			order_by="parent asc, step_number asc",
+		)
+		if not rows:
+			return empty
+
+		active = {
+			p.name: p.project_name or p.name
+			for p in frappe.get_all(
+				"Project",
+				filters={"name": ("in", list({row.parent for row in rows})), "status": "Active"},
+				fields=["name", "project_name"],
+			)
+		}
+
+		by_parent = {}
+		for row in rows:
+			by_parent.setdefault(row.parent, []).append(row)
+
+		now = now_datetime()
+		items = []
+		for parent, steps in by_parent.items():
+			if parent not in active:
+				continue
+			current = next((s for s in steps if s.status == "Pending"), None)
+			if not current:
+				continue
+			items.append(
+				{
+					"project": parent,
+					"label": active[parent],
+					"step_number": current.step_number,
+					"step_title": current.step_title,
+					"total": len(steps),
+					"overdue": bool(current.due_by and get_datetime(current.due_by) < now),
+				}
+			)
+
+		items.sort(key=lambda item: (not item["overdue"], item["step_number"]))
+		return {
+			"projects": items[:HANDOFF_RAIL_LIMIT],
+			"overflow": max(len(items) - HANDOFF_RAIL_LIMIT, 0),
+		}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Sales Pipeline hand-off rail failed")
+		return empty
 
 
 def stamp_stage_change(doc, method=None):

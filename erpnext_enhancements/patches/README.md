@@ -23,6 +23,8 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `delete_abandoned_doctypes` | post | Deletes the abandoned DB-only DocTypes "Materials", "Rental Status", "Water Feature Types" (unreferenced, 0–1 rows; metadata only — the orphaned tables remain until a `bench trim-database`) and the superseded "Mermaid.js Render" Client Script. |
 | `seed_collab_doctypes` | post | Seeds the live-collab doctype allowlist in ERPNext Enhancements Settings and enables the feature (v1.0.0 launch list). |
 | `backfill_stage_changed_on` | post | Sets `Opportunity.custom_stage_changed_on = modified` where empty so the Sales Pipeline board's days-in-stage aging starts sane; creates the Custom Field first if missing (patches run before fixture sync). |
+| `seed_process_step_templates` | post | Seeds the seven PRO-0204 "Won Opportunity Hand-Off" Process Step Template records (insert-only by `step_number`, so site edits survive). |
+| `backfill_project_opportunity_link` | post | Fills empty `Project.custom_opportunity` from the reverse `Opportunity.custom_created_project` stamp — the forward link was never persisted before v1.3.0 (the old mapping wrote to a non-existent `custom_sales_opportunity` field). |
 
 ## Important note from `patches.txt`
 

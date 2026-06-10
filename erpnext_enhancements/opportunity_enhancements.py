@@ -10,9 +10,16 @@ created Project remembers which Opportunity it came from. Wired in hooks.py via:
 
 Because the standard method is overridden globally, every "Create > Project"
 action launched from an Opportunity (including the desk button) routes here.
-The stored link (``Project.custom_sales_opportunity``) is later used by
-``sync_attachments_from_opportunity`` to copy Opportunity/Lead files onto the
-Project (see project_enhancements/__init__.py, Project ``after_save`` hook).
+
+The link is stamped on ``Project.custom_opportunity`` — the real, persisted
+Link field. (Historical note, v1.3.0: this used to stamp
+``custom_sales_opportunity``, a field that does not exist on the site — the
+value was silently dropped on insert, which meant the attachment sync in
+``sync_attachments_from_opportunity`` only worked within the creation request
+and the PRO-0204 seeding/AE-resolution had no forward link to key on.)
+The stored link is used by ``sync_attachments_from_opportunity``
+(project_enhancements/__init__.py, Project ``after_save``) and by the
+hand-off process engine (``process_steps.seed_process_steps``).
 """
 
 import frappe
@@ -24,7 +31,7 @@ def make_project(source_name, target_doc=None):
 	"""Build a Project from an Opportunity, stamping the source link.
 
 	Overrides ``erpnext...opportunity.make_project`` (see module docstring). Delegates
-	to the original mapper, then sets ``custom_sales_opportunity`` on the resulting
+	to the original mapper, then sets ``custom_opportunity`` on the resulting
 	(unsaved) Project document so the origin Opportunity is recorded.
 
 	Args:
@@ -34,11 +41,10 @@ def make_project(source_name, target_doc=None):
 
 	Returns:
 	    Document: The mapped Project document (not yet saved) with
-	    ``custom_sales_opportunity`` populated.
+	    ``custom_opportunity`` populated.
 	"""
 	target = original_make_project(source_name, target_doc)
 
-	# Set the custom field
-	target.custom_sales_opportunity = source_name
+	target.custom_opportunity = source_name
 
 	return target

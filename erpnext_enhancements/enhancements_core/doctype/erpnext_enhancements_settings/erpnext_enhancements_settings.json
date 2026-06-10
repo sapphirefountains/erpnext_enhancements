@@ -17,7 +17,9 @@
   "unconverted_nag_hours",
   "pipeline_section",
   "pipeline_stale_amber_days",
-  "pipeline_stale_red_days"
+  "pipeline_stale_red_days",
+  "handoff_section",
+  "handoff_ar_rep"
  ],
  "fields": [
   {
@@ -105,6 +107,18 @@
    "fieldname": "pipeline_stale_red_days",
    "fieldtype": "Int",
    "label": "Very Stale After (Days, Red)"
+  },
+  {
+   "fieldname": "handoff_section",
+   "fieldtype": "Section Break",
+   "label": "Hand-Off Process (PRO-0204)"
+  },
+  {
+   "description": "The Finance person responsible for Accounts Receivable hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
+   "fieldname": "handoff_ar_rep",
+   "fieldtype": "Link",
+   "label": "Accounts Receivable Rep",
+   "options": "Employee"
   }
  ],
  "issingle": 1,

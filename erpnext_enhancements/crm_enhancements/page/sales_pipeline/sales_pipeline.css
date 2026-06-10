@@ -32,6 +32,84 @@
 	text-align: right;
 }
 
+/* --- Hand-off rail: projects mid PRO-0204 process, under the funnel --- */
+
+.sales-pipeline-rail {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 6px 12px;
+	border-top: 1px solid var(--border-color);
+}
+
+.sales-pipeline-rail .rail-title {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-right: 4px;
+}
+
+.rail-chip {
+	display: inline-flex;
+	flex-direction: column;
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 4px 10px;
+	text-decoration: none !important;
+	color: var(--text-color);
+	line-height: 1.3;
+}
+
+.rail-chip .rail-chip-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.rail-chip .rail-chip-step {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.rail-chip.rail-overdue {
+	border-color: #dc2626;
+	box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.rail-chip.rail-overdue .rail-chip-step {
+	color: #dc2626;
+	font-weight: 700;
+}
+
+[data-theme="dark"] .rail-chip.rail-overdue {
+	border-color: #ef4444;
+	box-shadow: inset 3px 0 0 #ef4444;
+}
+
+[data-theme="dark"] .rail-chip.rail-overdue .rail-chip-step {
+	color: #f87171;
+}
+
+.rail-overflow {
+	font-size: 12px;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-label {
+	font-size: 15px;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-step {
+	font-size: 13px;
+}
+
+body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
+	font-size: 14px;
+}
+
 /* --- Columns --- */
 
 .pipeline-column {

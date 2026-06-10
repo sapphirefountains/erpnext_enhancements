@@ -35,8 +35,9 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 	wrapper.sales_pipeline_state = state;
 
 	const board = $('<div class="sales-pipeline-board"></div>');
+	const rail = $('<div class="sales-pipeline-rail" style="display:none"></div>');
 	const footer = $('<div class="sales-pipeline-footer text-muted"></div>');
-	$(page.body).addClass("sales-pipeline-page").append(board).append(footer);
+	$(page.body).addClass("sales-pipeline-page").append(board).append(rail).append(footer);
 
 	page.set_secondary_action(__("Refresh"), () => refresh(), "refresh");
 	page.add_inner_button(__("TV Mode"), () => set_tv_mode(!state.tv_mode));
@@ -120,6 +121,8 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 			board.append(column);
 		});
 
+		render_rail(data.handoff);
+
 		footer.text(
 			__("Updated {0} — amber after {1} days in stage, red after {2}", [
 				frappe.datetime.now_time(),
@@ -127,6 +130,29 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 				data.thresholds.red,
 			])
 		);
+	}
+
+	// Post-won extension: projects mid hand-off (PRO-0204), overdue steps glow.
+	function render_rail(handoff) {
+		const esc = frappe.utils.escape_html;
+		rail.empty();
+		if (!handoff || !handoff.projects || !handoff.projects.length) {
+			rail.hide();
+			return;
+		}
+		rail.show();
+		rail.append(`<span class="rail-title">${__("Hand-off in progress")}</span>`);
+		handoff.projects.forEach((p) => {
+			rail.append(`
+				<a class="rail-chip ${p.overdue ? "rail-overdue" : ""}" href="/app/project/${encodeURIComponent(p.project)}">
+					<span class="rail-chip-label">${esc(p.label)}</span>
+					<span class="rail-chip-step">${__("Step {0}/{1}", [p.step_number, p.total])} · ${esc(p.step_title)}</span>
+				</a>
+			`);
+		});
+		if (handoff.overflow) {
+			rail.append(`<span class="rail-overflow text-muted">+${handoff.overflow}</span>`);
+		}
 	}
 
 	// Access check, then first paint + schedules.
