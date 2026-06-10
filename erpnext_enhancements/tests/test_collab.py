@@ -4,6 +4,8 @@ Verifies that ``broadcast_field_update`` enforces the doctype allowlist,
 write permission, field validity (existence + value-holding fieldtype),
 value size cap, and child-table validity — and that a valid call publishes
 exactly one ``collab_field_update`` event to the document's realtime room.
+``broadcast_focus`` (per-field presence) shares the same guards and is
+covered for both the focus and blur shapes.
 """
 
 from unittest.mock import patch
@@ -11,7 +13,11 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from erpnext_enhancements.api.collab import MAX_VALUE_LENGTH, broadcast_field_update
+from erpnext_enhancements.api.collab import (
+	MAX_VALUE_LENGTH,
+	broadcast_field_update,
+	broadcast_focus,
+)
 
 NO_ROLE_USER = "collab_test_no_role@example.com"
 
@@ -20,6 +26,13 @@ class TestCollabRelay(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
+		# the allowlist is settings-driven; seed it for the suite (rolled back
+		# with the rest of the FrappeTestCase transaction)
+		settings = frappe.get_single("ERPNext Enhancements Settings")
+		settings.collab_enabled = 1
+		settings.set("collab_doctypes", [])
+		settings.append("collab_doctypes", {"document_type": "Task"})
+		settings.save(ignore_permissions=True)
 		self.task = frappe.get_doc({"doctype": "Task", "subject": "Collab Relay Test Task"}).insert(
 			ignore_permissions=True
 		)
@@ -41,12 +54,19 @@ class TestCollabRelay(FrappeTestCase):
 		return args
 
 	def test_rejects_disallowed_doctype(self):
-		"""Doctypes outside COLLAB_DOCTYPES are rejected."""
+		"""Doctypes not in the settings allowlist are rejected."""
 		with self.assertRaises(frappe.ValidationError):
-			broadcast_field_update(**self._valid_args(doctype="Project", docname="X"))
+			broadcast_field_update(**self._valid_args(doctype="Sales Invoice", docname="X"))
 
-	def test_rejects_without_write_permission(self):
-		"""A user without write permission on the Task gets PermissionError."""
+	def test_rejects_when_master_switch_off(self):
+		"""collab_enabled=0 disables the relay even for listed doctypes."""
+		settings = frappe.get_single("ERPNext Enhancements Settings")
+		settings.collab_enabled = 0
+		settings.save(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			broadcast_field_update(**self._valid_args())
+
+	def _ensure_no_role_user(self):
 		if not frappe.db.exists("User", NO_ROLE_USER):
 			frappe.get_doc(
 				{
@@ -56,6 +76,10 @@ class TestCollabRelay(FrappeTestCase):
 					"last_name": "NoRole",
 				}
 			).insert(ignore_permissions=True)
+
+	def test_rejects_without_write_permission(self):
+		"""A user without write permission on the Task gets PermissionError."""
+		self._ensure_no_role_user()
 		frappe.set_user(NO_ROLE_USER)
 		with self.assertRaises(frappe.PermissionError):
 			broadcast_field_update(**self._valid_args())
@@ -112,3 +136,59 @@ class TestCollabRelay(FrappeTestCase):
 		payload = pub.call_args[0][1]
 		self.assertEqual(payload["child_doctype"], "Task Depends On")
 		self.assertEqual(payload["child_name"], "some-row-name")
+
+	# ---------------------------------------------------- broadcast_focus
+
+	def _focus_args(self, **overrides):
+		args = {
+			"doctype": "Task",
+			"docname": self.task.name,
+			"fieldname": "subject",
+			"origin": "Administrator:testclient",
+			"focused": 1,
+		}
+		args.update(overrides)
+		return args
+
+	def test_focus_rejects_disallowed_doctype(self):
+		"""Focus presence respects the same doctype allowlist."""
+		with self.assertRaises(frappe.ValidationError):
+			broadcast_focus(**self._focus_args(doctype="Sales Invoice", docname="X"))
+
+	def test_focus_rejects_without_write_permission(self):
+		"""Only users who can edit the document broadcast focus presence."""
+		self._ensure_no_role_user()
+		frappe.set_user(NO_ROLE_USER)
+		with self.assertRaises(frappe.PermissionError):
+			broadcast_focus(**self._focus_args())
+
+	def test_focus_requires_fieldname_when_focused(self):
+		"""A focus event must name a field; only blurs may omit it."""
+		with self.assertRaises(frappe.ValidationError):
+			broadcast_focus(**self._focus_args(fieldname=None))
+
+	def test_focus_publishes_to_doc_room(self):
+		"""A valid focus event publishes collab_focus with user identity."""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
+			broadcast_focus(**self._focus_args())
+
+		pub.assert_called_once()
+		args, kwargs = pub.call_args
+		self.assertEqual(args[0], "collab_focus")
+		self.assertEqual(kwargs.get("doctype"), "Task")
+		self.assertEqual(kwargs.get("docname"), self.task.name)
+		payload = args[1]
+		self.assertEqual(payload["fieldname"], "subject")
+		self.assertEqual(payload["focused"], 1)
+		self.assertEqual(payload["user"], "Administrator")
+		self.assertTrue(payload["user_fullname"])
+
+	def test_blur_publishes_without_fieldname(self):
+		"""A blur (focused=0) needs no fieldname and still publishes."""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
+			broadcast_focus(**self._focus_args(fieldname=None, focused=0))
+
+		pub.assert_called_once()
+		payload = pub.call_args[0][1]
+		self.assertEqual(payload["focused"], 0)
+		self.assertIsNone(payload["fieldname"])

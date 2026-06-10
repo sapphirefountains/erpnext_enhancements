@@ -1,0 +1,94 @@
+/*
+ * collab.css — "Jane is editing this field" highlights for live collaborative
+ * editing (see public/js/collab/live_form_sync.js).
+ *
+ * Loaded via: desk_addons.bundle.scss (extension-less @import, inlined by
+ * sass at build time — see that file's header for why).
+ *
+ * The engine adds .ee-collab-focus to a field's control wrapper (or
+ * .ee-collab-focus-cell to a grid cell) plus a deterministic per-user
+ * .ee-collab-color-{0..5} palette class, and appends a .ee-collab-focus-badge
+ * with the editor's name. Highlights are removed on blur events or expire
+ * client-side after a TTL.
+ *
+ * THEME AWARENESS: all color comes from the --ee-collab-color custom property
+ * set by the palette classes below — JS never assigns colors. Frappe's theme
+ * switcher sets [data-theme="dark"] on <html>, so the dark overrides kick in
+ * (and switch live, since the property is resolved at paint time). Light mode
+ * uses deeper shades that read against white inputs; dark mode uses brighter
+ * ones that read against dark surfaces, with dark badge text for contrast.
+ * If you add a class here, bump FOCUS_COLOR_COUNT in live_form_sync.js.
+ */
+
+.ee-collab-color-0 {
+	--ee-collab-color: #6d28d9; /* violet */
+}
+.ee-collab-color-1 {
+	--ee-collab-color: #0369a1; /* sky */
+}
+.ee-collab-color-2 {
+	--ee-collab-color: #15803d; /* green */
+}
+.ee-collab-color-3 {
+	--ee-collab-color: #c2410c; /* orange */
+}
+.ee-collab-color-4 {
+	--ee-collab-color: #be185d; /* pink */
+}
+.ee-collab-color-5 {
+	--ee-collab-color: #a16207; /* amber */
+}
+
+[data-theme="dark"] .ee-collab-color-0 {
+	--ee-collab-color: #a78bfa;
+}
+[data-theme="dark"] .ee-collab-color-1 {
+	--ee-collab-color: #38bdf8;
+}
+[data-theme="dark"] .ee-collab-color-2 {
+	--ee-collab-color: #4ade80;
+}
+[data-theme="dark"] .ee-collab-color-3 {
+	--ee-collab-color: #fb923c;
+}
+[data-theme="dark"] .ee-collab-color-4 {
+	--ee-collab-color: #f472b6;
+}
+[data-theme="dark"] .ee-collab-color-5 {
+	--ee-collab-color: #facc15;
+}
+
+.ee-collab-focus {
+	position: relative;
+	box-shadow: 0 0 0 2px var(--ee-collab-color, #6d28d9);
+	border-radius: var(--border-radius, 6px);
+}
+
+.ee-collab-focus-cell {
+	position: relative;
+	box-shadow: inset 0 0 0 2px var(--ee-collab-color, #6d28d9);
+}
+
+.ee-collab-focus-badge {
+	position: absolute;
+	top: -9px;
+	right: 4px;
+	z-index: 6;
+	max-width: 160px;
+	overflow: hidden;
+	padding: 3px 6px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	color: #fff;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	pointer-events: none;
+	border-radius: 8px;
+	background: var(--ee-collab-color, #6d28d9);
+}
+
+/* dark-mode palette colors are light — flip the badge text for contrast */
+[data-theme="dark"] .ee-collab-focus-badge {
+	color: var(--gray-900, #1c2126);
+}

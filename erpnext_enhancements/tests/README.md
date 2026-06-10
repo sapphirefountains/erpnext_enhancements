@@ -19,6 +19,7 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 
 | Test file | Subsystem covered | Style / fixtures |
 |---|---|---|
+| `test_collab.py` | `api.collab` live-collab relay (allowlist, write permission, field/child validation, size cap, publish payloads for field updates + focus presence) | `FrappeTestCase`; Task fixture; `frappe.publish_realtime` patched |
 | `test_comments_api.py` | `api.comments` CRUD | `unittest.mock` (no DB) |
 | `test_dashboard_override.py` | Project dashboard `get_dashboard_data` | Pure unit, no mocks |
 | `test_geo_telemetry.py` | `api.time_kiosk` geolocation (single-point, batch, history, purge) | `FrappeTestCase`; two employees (unlinked + user-linked w/ Job Interval); `patch` for the DB-error path |

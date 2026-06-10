@@ -36,6 +36,7 @@ ERPNext Enhancements layers Sapphire Fountains' business processes onto a stock 
 - **Time tracking** — a standalone, installable **Time Kiosk PWA** with battery-aware GPS tracking, offline queueing, and automatic consolidation into ERPNext Timesheets.
 - **CRM enhancements** — Opportunity customizations and automatic Google Drive project-folder provisioning.
 - **Integrations** — QuickBooks Online (accounting sync), Twilio/Triton telephony (click-to-call + SMS), Google Analytics 4 / Search Console dashboard, and the "Triton" in-app AI assistant.
+- **Live collaborative editing** — Google-Docs-style multi-user editing on the ten most-used doctypes: field changes stream in real time to everyone viewing the same document, saves apply silently on collaborators' screens (no more "Document has been modified" conflicts between collaborators), and per-field highlights show who is editing what.
 - **Desk usability fixes** — Kanban drag/scroll/leak fixes, a custom Vue comments app, safe form drafts, an aggregated contacts/addresses directory, sidebar tweaks, and a pile of performance hotfixes for upstream Frappe bugs.
 
 ## Architecture at a glance
@@ -114,6 +115,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `override_doctype_class` | Replace a core controller | `Task` → `task_enhancements.doctype.task.task.Task` |
 | `override_whitelisted_methods` | Replace a core endpoint | `opportunity.make_project` → `opportunity_enhancements.make_project` |
 | `override_doctype_dashboards` | Customize the "connections" dashboard | `Project`, `Employee` |
+| `extend_bootinfo` | Per-session data shipped to the desk client | `boot.boot_session` — the live-collab doctype allowlist (`frappe.boot.collab_doctypes`) from ERPNext Enhancements Settings |
 | `after_migrate` | Idempotent setup after each migrate | `setup.custom_fields`, `setup.supplier_groups` |
 | `fixtures` | Records installed on migrate | **All manual customizations** — every manually created Custom Field (425) and Property Setter (349); see [`fixtures/README.md`](erpnext_enhancements/fixtures/README.md) — plus Travel Trip Workflow + states/actions, maintenance Notifications + Print Format |
 | `portal_menu_items` | Customer portal links | `/maintenance-records` |
@@ -142,6 +144,7 @@ A few subsystems are large enough to call out; each is documented fully in its m
 
 - **Project Dashboard** — a desk Page (`project-dashboard`) with lazily-loaded tab components, realtime updates via `publish_realtime`, an interactive portfolio Gantt, and optimistic inline editing. → [Project Enhancements README](erpnext_enhancements/project_enhancements/README.md)
 - **Time Kiosk PWA** — `/kiosk`, an installable offline-capable PWA. The front-end (`public/js/kiosk/`) samples GPS with `watchPosition` + distance filter + heartbeat; the service worker (`www/kiosk-sw.js`) queues points in IndexedDB and batch-uploads with Background Sync. → [www README](erpnext_enhancements/www/README.md) and [public README](erpnext_enhancements/public/README.md#kiosk-pwa-front-end)
+- **Live collaborative editing** — Google-Docs-style multi-user form editing, configured per-doctype on **ERPNext Enhancements Settings** (master switch + allowlist child table; toggle doctypes with no deploy — seeded at launch with Task, Project, Opportunity, Customer, Contact, Address, Item, Supplier, Purchase Order drafts, ToDo). A client engine (`public/js/collab/live_form_sync.js`) streams debounced field changes through a permission-checked relay (`api/collab.py`) into Frappe's per-document realtime rooms; collaborators' saves merge silently (adopting the new `modified` timestamp, so `TimestampMismatchError` can't occur between collaborators), and theme-aware per-field presence highlights show who is editing which field. → [API README](erpnext_enhancements/api/README.md) and [public README](erpnext_enhancements/public/README.md#live-collaborative-editing-jscollab)
 - **Custom Comments App** — a Vue 3 notes UI mounted on ~23 doctypes. → [public README](erpnext_enhancements/public/README.md#the-comments-app)
 - **Contact / primary-contact / directory model** — denormalized primary contacts kept in sync both directions, plus an aggregated contacts/addresses directory with per-document exclusions. → [script_migrations README](erpnext_enhancements/script_migrations/README.md) and `sync_contact.py`
 - **QuickBooks Online sync** — OAuth2 → REST client → entity mapping → idempotent upsert → audit log, with CDC polling, webhooks, and retries. → [QuickBooks README](erpnext_enhancements/quickbooks_time_integration/README.md)

@@ -6,8 +6,14 @@ The app-wide configuration hub (``issingle``). Holds:
   * ``maintenance_fee_item`` / ``maintenance_services_group`` — defaults read by
     ``api.maintenance_workflow.create_sales_invoice`` when billing a maintenance
     visit.
+  * ``collab_enabled`` + ``collab_doctypes`` (child table Collab Doctype) — the
+    live collaborative editing master switch and doctype allowlist, read by
+    ``api.collab.get_collab_doctypes()`` and shipped to the desk client via
+    ``boot.boot_session``. Seeded with the launch doctypes by the
+    ``seed_collab_doctypes`` patch.
 
-No custom controller logic; values are read via ``frappe.get_single`` elsewhere.
+No custom controller logic; values are read via ``frappe.get_single`` /
+``frappe.get_cached_doc`` elsewhere.
 """
 
 import frappe

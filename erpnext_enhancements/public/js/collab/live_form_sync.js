@@ -1,7 +1,11 @@
 /**
  * live_form_sync.js — Google-Docs-style live collaborative editing for forms.
  *
- * Targets: desk forms of the doctypes in COLLAB_DOCTYPES (pilot: Task).
+ * Targets: desk forms of the doctypes in frappe.boot.collab_doctypes — the
+ * settings-driven allowlist on ERPNext Enhancements Settings (master switch
+ * `collab_enabled` + `collab_doctypes` child table), shipped to the client by
+ * boot.boot_session and enforced server-side by api/collab.py. Toggling
+ * doctypes needs no deploy; clients pick changes up on their next page load.
  * Loaded via: erpnext_enhancements.bundle.js (global desk bundle).
  *
  * While two or more users have the same document open:
@@ -26,22 +30,42 @@
  * (unsaved rows have per-client local names, so live row sync would need an
  * id-mapping protocol — deferred to v2).
  *
- * Presence ("currently viewing" avatars) is Frappe's built-in FormViewers —
- * nothing here touches it (which is also why teardown() never calls
- * doc_unsubscribe: the form lifecycle owns the room).
+ * Per-field presence ("Jane is editing this field"): focusing a field
+ * broadcasts a collab_focus event (relayed by api.collab.broadcast_focus);
+ * receivers outline the field in the sender's color and badge it with their
+ * name (styles in public/css/collab.css, shipped via desk_addons.bundle.scss).
+ * Presence is best-effort: a 30s heartbeat re-asserts the focus and receivers
+ * expire highlights after a 75s TTL, so a missed blur (crashed tab, dropped
+ * connection) self-heals. Document-level presence ("currently viewing"
+ * avatars) is Frappe's built-in FormViewers — nothing here touches it (which
+ * is also why teardown() never calls doc_unsubscribe: the form lifecycle owns
+ * the room).
  */
 (function () {
 	if (window.__ee_live_form_sync_loaded) return;
 	window.__ee_live_form_sync_loaded = true;
 
-	// v2: move to a child table on ERPNext Enhancements Settings and ship via
-	// extend_bootinfo. Keep in sync with COLLAB_DOCTYPES in api/collab.py
-	// (the Python set is the security authority; this one only gates
-	// client-side attachment). Before onboarding a new doctype, audit its form
-	// scripts: field triggers with non-idempotent side effects (server calls)
-	// fire on every receiving client when remote values are applied.
-	const COLLAB_DOCTYPES = ["Task"];
+	// The allowlist lives on ERPNext Enhancements Settings and arrives in
+	// frappe.boot.collab_doctypes (boot.boot_session); api/collab.py is the
+	// security authority for broadcasts, this list only gates client-side
+	// attachment. ONBOARDING A NEW DOCTYPE (do this before adding it in
+	// settings): audit its form scripts — field-level change triggers with
+	// non-idempotent side effects (server calls) fire on every receiving
+	// client when remote values are applied. Audited 2026-06-10 for the launch
+	// list: unified_tab_controller field handlers are read-only re-renders
+	// (writes live in button click handlers); the Opportunity tag-sync write
+	// branch is guarded in crm_enhancements/opportunity.js.
 	const DEBOUNCE_MS = 300;
+	// Per-field presence: heartbeat re-asserts a held focus; receivers expire
+	// a highlight after the TTL, so the TTL must comfortably exceed the
+	// heartbeat (a missed blur self-heals within one TTL).
+	const FOCUS_HEARTBEAT_MS = 30 * 1000;
+	const FOCUS_TTL_MS = 75 * 1000;
+	// Highlight palette size; a user is deterministically hashed to one of the
+	// .ee-collab-color-{0..N-1} classes so they look the same on every
+	// collaborator's screen. The actual colors live in css/collab.css with
+	// light- and dark-theme variants (keep the class count in sync).
+	const FOCUS_COLOR_COUNT = 6;
 	const CLIENT_ID =
 		((frappe.session && frappe.session.user) || "unknown") +
 		":" +
@@ -57,6 +81,14 @@
 		if (a === b) return true;
 		const norm = (v) => (v == null ? "" : String(v));
 		return norm(a) === norm(b);
+	}
+
+	function user_color_class(user) {
+		let hash = 0;
+		for (const ch of String(user || "")) {
+			hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+		}
+		return "ee-collab-color-" + (hash % FOCUS_COLOR_COUNT);
 	}
 
 	function ensure_observers(doctype) {
@@ -97,6 +129,10 @@
 			this._degraded_notified = false;
 			this._merge_chain = Promise.resolve();
 			this._merge_queued = false;
+			this.remote_focus = {}; // origin -> {user, user_fullname, fieldname, child_doctype, child_name, $el, expire_timer}
+			this._local_focus = null; // {fieldname, child_doctype, child_name} currently held locally
+			this._focus_heartbeat = null;
+			this._blur_timer = null;
 		}
 
 		_key(dt, dn, fieldname) {
@@ -110,18 +146,32 @@
 			this._bound_remote_field = (data) => this._on_remote_field(data);
 			this._bound_doc_update = (data) => this._on_doc_saved(data);
 			this._bound_reconnect = () => this._on_reconnect();
+			this._bound_remote_focus = (data) => this._on_remote_focus(data);
 			frappe.realtime.on("collab_field_update", this._bound_remote_field);
 			frappe.realtime.on("doc_update", this._bound_doc_update);
 			frappe.realtime.on("connect", this._bound_reconnect);
+			frappe.realtime.on("collab_focus", this._bound_remote_focus);
+			// namespaced per-instance so teardown only unbinds its own handlers
+			this._focus_ns = ".ee_collab_" + Math.random().toString(36).slice(2, 8);
+			$(this.frm.wrapper)
+				.on("focusin" + this._focus_ns, (e) => this._on_local_focusin(e))
+				.on("focusout" + this._focus_ns, () => this._on_local_focusout());
 		}
 
 		teardown() {
 			Object.values(this.debounce_timers).forEach(clearTimeout);
 			this.debounce_timers = {};
 			clearTimeout(this._saving_timer);
+			clearTimeout(this._blur_timer);
+			clearInterval(this._focus_heartbeat);
+			if (this._local_focus) this._send_focus(0); // best-effort; receivers also TTL out
+			this._local_focus = null;
+			Object.keys(this.remote_focus).forEach((origin) => this._clear_focus(origin));
+			$(this.frm.wrapper).off(this._focus_ns);
 			frappe.realtime.off("collab_field_update", this._bound_remote_field);
 			frappe.realtime.off("doc_update", this._bound_doc_update);
 			frappe.realtime.off("connect", this._bound_reconnect);
+			frappe.realtime.off("collab_focus", this._bound_remote_focus);
 			if (active_syncs[this.doctype + "/" + this.docname] === this) {
 				delete active_syncs[this.doctype + "/" + this.docname];
 			}
@@ -293,6 +343,182 @@
 			this._apply_remote(info.dt, info.dn, info.fieldname, info.value, key);
 		}
 
+		// ---------------------------------------------------- focus presence
+
+		_on_local_focusin(e) {
+			clearTimeout(this._blur_timer);
+			const target = this._resolve_focus_target($(e.target));
+			if (!target) {
+				this._on_local_focusout();
+				return;
+			}
+			const same =
+				this._local_focus &&
+				this._local_focus.fieldname === target.fieldname &&
+				this._local_focus.child_name === target.child_name;
+			if (same) return;
+			this._local_focus = target;
+			this._send_focus(1);
+			if (!this._focus_heartbeat) {
+				this._focus_heartbeat = setInterval(() => {
+					if (this._local_focus) this._send_focus(1);
+				}, FOCUS_HEARTBEAT_MS);
+			}
+		}
+
+		_on_local_focusout() {
+			// debounced: moving between fields fires focusout+focusin back to
+			// back, and the focusin replaces the highlight without a blur gap.
+			clearTimeout(this._blur_timer);
+			this._blur_timer = setTimeout(() => {
+				if (!this._local_focus) return;
+				const active = document.activeElement;
+				if (
+					active &&
+					this.frm.wrapper.contains(active) &&
+					this._resolve_focus_target($(active))
+				) {
+					return; // still inside a broadcastable field
+				}
+				this._local_focus = null;
+				clearInterval(this._focus_heartbeat);
+				this._focus_heartbeat = null;
+				this._send_focus(0);
+			}, 200);
+		}
+
+		_resolve_focus_target($el) {
+			const fieldname = $el.closest("[data-fieldname]").attr("data-fieldname");
+			if (!fieldname || fieldname.startsWith("__")) return null;
+			const $row = $el.closest(".grid-row[data-name]");
+			if ($row.length) {
+				const table_field = $el
+					.closest('[data-fieldtype="Table"][data-fieldname]')
+					.attr("data-fieldname");
+				const df =
+					table_field &&
+					frappe.meta.get_docfield(this.doctype, table_field, this.docname);
+				const row_name = $row.attr("data-name");
+				const row = df && df.options && locals[df.options] && locals[df.options][row_name];
+				// unsaved rows aren't addressable on other clients
+				if (!row || row.__islocal || row.parent !== this.docname) return null;
+				return { fieldname, child_doctype: df.options, child_name: row_name };
+			}
+			if (!this.frm.fields_dict[fieldname]) return null;
+			return { fieldname, child_doctype: null, child_name: null };
+		}
+
+		_send_focus(focused) {
+			// presence is best-effort: failures are silent (no degraded toast —
+			// field sync errors already cover the "relay is down" case).
+			const target = this._local_focus || {};
+			frappe.call({
+				method: "erpnext_enhancements.api.collab.broadcast_focus",
+				type: "POST",
+				args: {
+					doctype: this.doctype,
+					docname: this.docname,
+					fieldname: focused ? target.fieldname : null,
+					child_doctype: focused ? target.child_doctype : null,
+					child_name: focused ? target.child_name : null,
+					origin: CLIENT_ID,
+					focused: focused,
+				},
+				error: () => {},
+			});
+		}
+
+		_on_remote_focus(data) {
+			if (!data || data.origin === CLIENT_ID) return;
+			if (data.doctype !== this.doctype || data.docname !== this.docname) return;
+			if (!data.focused) {
+				this._clear_focus(data.origin);
+				return;
+			}
+			this._clear_focus(data.origin);
+			const info = {
+				user: data.user,
+				user_fullname: data.user_fullname || data.user,
+				fieldname: data.fieldname,
+				child_doctype: data.child_doctype,
+				child_name: data.child_name,
+				$el: null,
+				expire_timer: setTimeout(() => this._clear_focus(data.origin), FOCUS_TTL_MS),
+			};
+			this.remote_focus[data.origin] = info;
+			this._render_focus(data.origin);
+		}
+
+		_render_focus(origin) {
+			const info = this.remote_focus[origin];
+			if (!info) return;
+			this._unrender_focus(info);
+			let $target;
+			if (info.child_name) {
+				const table_field = this._table_fieldname(info.child_doctype);
+				const grid = table_field && this.frm.fields_dict[table_field];
+				$target =
+					grid && grid.$wrapper
+						? grid.$wrapper
+								.find(
+									'.grid-row[data-name="' +
+										info.child_name +
+										'"] [data-fieldname="' +
+										info.fieldname +
+										'"]'
+								)
+								.first()
+						: $();
+			} else {
+				const control = this.frm.fields_dict[info.fieldname];
+				$target = control && control.$wrapper ? control.$wrapper : $();
+			}
+			if (!$target || !$target.length) return; // field hidden/collapsed: skip quietly
+			// colors come entirely from CSS (light/dark theme variants in
+			// collab.css) — JS only assigns the deterministic palette class.
+			info.color_class = user_color_class(info.user);
+			$target
+				.addClass(info.child_name ? "ee-collab-focus-cell" : "ee-collab-focus")
+				.addClass(info.color_class);
+			$('<span class="ee-collab-focus-badge"></span>')
+				.text(info.user_fullname)
+				.attr("title", __("{0} is editing this field", [info.user_fullname]))
+				.appendTo($target);
+			info.$el = $target;
+		}
+
+		_unrender_focus(info) {
+			if (!info || !info.$el) return;
+			info.$el.removeClass(
+				"ee-collab-focus ee-collab-focus-cell " + (info.color_class || "")
+			);
+			info.$el.find("> .ee-collab-focus-badge").remove();
+			info.$el = null;
+		}
+
+		_clear_focus(origin) {
+			const info = this.remote_focus[origin];
+			if (!info) return;
+			clearTimeout(info.expire_timer);
+			this._unrender_focus(info);
+			delete this.remote_focus[origin];
+		}
+
+		rerender_focus() {
+			// form refresh / grid re-render wipes DOM decorations; re-apply from
+			// state (also called after a save-merge for the same reason).
+			Object.keys(this.remote_focus).forEach((origin) => this._render_focus(origin));
+		}
+
+		_table_fieldname(child_doctype) {
+			const meta = frappe.get_meta(this.doctype);
+			const df = ((meta && meta.fields) || []).find(
+				(f) =>
+					frappe.model.table_fields.includes(f.fieldtype) && f.options === child_doctype
+			);
+			return df && df.fieldname;
+		}
+
 		// --------------------------------------------------------- save sync
 
 		_is_visible() {
@@ -388,6 +614,7 @@
 				frm.doc.__unsaved = 0;
 				if (typeof frm.refresh_header === "function") frm.refresh_header();
 			}
+			this.rerender_focus(); // grid refresh wiped any cell highlights
 			this._notify_remote_save(saved.modified_by);
 		}
 
@@ -506,20 +733,33 @@
 		frm._live_sync.attach();
 	}
 
-	COLLAB_DOCTYPES.forEach((doctype) => {
-		// appends to any existing doctype_js handlers; does not replace them
-		frappe.ui.form.on(doctype, {
-			refresh(frm) {
-				attach_or_reattach(frm);
-			},
-			before_save(frm) {
-				frm._live_sync && frm._live_sync.on_local_before_save();
-			},
-			after_save(frm) {
-				frm._live_sync && frm._live_sync.on_local_save();
-			},
+	function register_collab_doctypes() {
+		const doctypes = (frappe.boot && frappe.boot.collab_doctypes) || [];
+		doctypes.forEach((doctype) => {
+			// appends to any existing doctype_js handlers; does not replace them
+			frappe.ui.form.on(doctype, {
+				refresh(frm) {
+					attach_or_reattach(frm);
+					// refresh re-rendered the controls, dropping highlight DOM
+					frm._live_sync && frm._live_sync.rerender_focus();
+				},
+				before_save(frm) {
+					frm._live_sync && frm._live_sync.on_local_before_save();
+				},
+				after_save(frm) {
+					frm._live_sync && frm._live_sync.on_local_save();
+				},
+			});
 		});
-	});
+	}
+
+	// frappe.boot isn't assigned yet when bundles are evaluated; the desk app
+	// triggers "app_ready" after boot setup and before any form can render.
+	if (frappe.boot && frappe.boot.collab_doctypes) {
+		register_collab_doctypes();
+	} else {
+		$(document).on("app_ready", register_collab_doctypes);
+	}
 
 	// Collab forms merge remote saves silently; suppress the built-in
 	// "document has been modified" conflict banner for them only.
