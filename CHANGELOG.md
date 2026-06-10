@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-10
+
+### Fixed
+- **Buttons inside HTML-field widgets work again on collab-enabled doctypes — the Comments App "New Note" button (Project, Task, …) and the Project Gantt toolbar (Today / zoom) were both broken.** Collab's per-field presence broke them: those widgets mount inside HTML fields (`custom_comments_field`, `custom_gantt_chart_html`), so clicking any of their buttons fired a `focusin` that `live_form_sync.js` broadcast as "editing" that host field — and the relay's strict validation threw **"Invalid field"** (HTML is a no-value fieldtype), popping an error modal over whatever the click was doing (HTTP 417 + the `aria-hidden`-on-focused-modal console warning; the modal is what killed the opening New Note dialog). Fixed generically on both ends, so every widget hosted in an HTML field (task tree, unified contacts/addresses tabs, …) is covered: the client no longer broadcasts focus for non-value fieldtypes (HTML, Button, Table wrappers — `_resolve_focus_target` now checks `frappe.model.no_value_type`, same rule as field sync), and `broadcast_focus` now **silently drops** invalid field targets instead of throwing — presence is best-effort by design, and stale cached clients must not be able to trigger user-facing modals. Allowlist and write-permission checks still throw, and `broadcast_field_update` keeps its strict validation.
+- **Task tree styles no longer 404.** `task_tree_manager.js` still `frappe.require`d `/assets/erpnext_enhancements/css/task_tree.css` — a path that hasn't existed since the styles moved into `desk_addons.bundle.css` (the file lives under `css/project_enhancements/`), so every Project form logged a refused-stylesheet MIME error and the on-demand load contributed nothing. The dead require is removed; the bundle already ships the styles globally.
+
 ## [1.0.0] - 2026-06-10
 
 Live collaborative editing — the headline feature that earns the 1.0. Two or more people can now work on the same document like a Google Doc: every field change streams to everyone viewing it, saves apply on collaborators' screens silently, and you can see exactly which field each person is editing.

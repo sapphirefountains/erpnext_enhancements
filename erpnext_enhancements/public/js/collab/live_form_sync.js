@@ -402,10 +402,21 @@
 				const row = df && df.options && locals[df.options] && locals[df.options][row_name];
 				// unsaved rows aren't addressable on other clients
 				if (!row || row.__islocal || row.parent !== this.docname) return null;
+				if (!this._is_value_field(df.options, fieldname, row_name)) return null;
 				return { fieldname, child_doctype: df.options, child_name: row_name };
 			}
 			if (!this.frm.fields_dict[fieldname]) return null;
+			if (!this._is_value_field(this.doctype, fieldname, this.docname)) return null;
 			return { fieldname, child_doctype: null, child_name: null };
+		}
+
+		_is_value_field(dt, fieldname, dn) {
+			// Focusable things live inside non-value wrappers too — buttons of
+			// custom widgets mounted in HTML fields (e.g. the Comments App's
+			// "New Note"), Button fields, a grid's own Table wrapper. The relay
+			// rejects those, so never broadcast them as presence.
+			const df = frappe.meta.get_docfield(dt, fieldname, dn);
+			return !!df && !frappe.model.no_value_type.includes(df.fieldtype);
 		}
 
 		_send_focus(focused) {

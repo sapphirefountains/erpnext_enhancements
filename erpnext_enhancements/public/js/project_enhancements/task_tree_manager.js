@@ -17,7 +17,8 @@
  * handleDragMove). All mutations round-trip through the project_dashboard.py
  * whitelisted methods. Expanded-state and column choices persist in localStorage.
  *
- * Assets (task_tree.css, SortableJS from CDN) are loaded on demand in loadAssets().
+ * Assets: styles ship globally in desk_addons.bundle.css (task_tree import);
+ * SortableJS is loaded on demand from CDN in loadAssets().
  */
 frappe.provide("erpnext_enhancements");
 
@@ -84,11 +85,12 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 	}
 
 	loadAssets() {
+		// Styles already ship in desk_addons.bundle.css (global include); the
+		// old frappe.require of a raw task_tree.css path 404'd with a MIME
+		// error since the bundle move. Only SortableJS loads on demand.
 		return new Promise((resolve) => {
-			frappe.require("/assets/erpnext_enhancements/css/task_tree.css", () => {
-				const script_url = "https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js";
-				frappe.require(script_url, () => resolve());
-			});
+			const script_url = "https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js";
+			frappe.require(script_url, () => resolve());
 		});
 	}
 

@@ -5,8 +5,8 @@
  * drag-and-drop nest/reorder feedback, milestone/recurring icons) rendered by the
  * project_enhancements task tree manager, plus the project-dashboard list column
  * selector and Project Name / Project ID cells.
- * Loaded via: hooks.py `app_include_css`
- *   ("/assets/erpnext_enhancements/css/project_enhancements/task_tree.css").
+ * Loaded via: desk_addons.bundle.scss (extension-less @import, inlined by
+ *   sass into desk_addons.bundle.css — see hooks.py `app_include_css`).
  */
 .task-grid {
 	display: flex;
