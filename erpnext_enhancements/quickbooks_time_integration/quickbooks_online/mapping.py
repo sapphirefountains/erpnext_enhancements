@@ -123,6 +123,8 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		if preview:
 			return {"action": "update", "doctype": erpnext_doctype, "name": doc.name, "fields": list(values)}
 		apply_values(doc, values)
+		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
+			values.pop("account_type", None)
 		doc.save(ignore_permissions=True)
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
@@ -154,6 +156,8 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		if erpnext_doctype == "Account" and values.get("is_group") and not doc.get("is_group"):
 			doc.is_group = 1
 			applied_values["is_group"] = 1
+		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
+			applied_values.pop("account_type", None)
 		doc.save(ignore_permissions=True)
 		save_mapping(
 			entity_type,
@@ -630,17 +634,25 @@ def _matching_owned_values(doc, incoming_values: dict):
 
 
 def _map_account(payload, settings):
-	"""Map a QBO Account to an ERPNext Account (root/type derived from AccountType)."""
+	"""Map a QBO Account to an ERPNext Account (root/type derived from AccountType).
+
+	Group accounts get no ``account_type``: they never receive postings, and a
+	set Account Type blocks ERPNext's ledger->group conversion when a linked
+	leaf later turns out to have children.
+	"""
 	parent_account = _qbo_parent_account(payload, settings)
+	is_group = (
+		1
+		if payload.get("_qbo_has_children") or (payload.get("SubAccount") is False and not parent_account)
+		else 0
+	)
 	return "Account", {
 		"account_name": payload.get("Name"),
 		"company": settings.company,
 		"parent_account": parent_account,
-		"is_group": 1
-		if payload.get("_qbo_has_children") or (payload.get("SubAccount") is False and not parent_account)
-		else 0,
+		"is_group": is_group,
 		"root_type": _account_root_type(payload.get("AccountType")),
-		"account_type": _account_type(payload.get("AccountType")),
+		"account_type": None if is_group else _account_type(payload.get("AccountType")),
 	}
 
 
@@ -851,7 +863,27 @@ def _ensure_group_parent(erpnext_doctype: str, values: dict):
 		return
 	parent = frappe.get_doc("Account", parent_name)
 	parent.is_group = 1
+	# ERPNext refuses the conversion while an Account Type is set; groups never
+	# receive postings, so the type is informational and safe to drop.
+	parent.account_type = None
 	parent.save(ignore_permissions=True)
+
+
+def _clear_account_type_for_group_conversion(erpnext_doctype: str, doc) -> bool:
+	"""Drop Account Type when an existing ledger Account is being made a group.
+
+	ERPNext blocks the ledger->group conversion while an Account Type is set
+	("Cannot covert to Group because Account Type is selected.", account.py's
+	``validate_group_or_ledger``). Returns True when it cleared the field so the
+	caller can drop ``account_type`` from the QBO-owned values it records.
+	"""
+	if erpnext_doctype != "Account" or not doc.get("is_group") or not doc.get("account_type"):
+		return False
+	was_group = frappe.db.get_value("Account", doc.name, "is_group")
+	if was_group is None or int(was_group):
+		return False
+	doc.account_type = None
+	return True
 
 
 def _root_account_for_type(root_type, settings):

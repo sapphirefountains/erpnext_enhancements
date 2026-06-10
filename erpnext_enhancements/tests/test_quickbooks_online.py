@@ -157,7 +157,7 @@ def test_customer_type_resolves_against_customized_select_options(monkeypatch):
 def test_ensure_group_parent_promotes_ledger_parent(monkeypatch):
 	"""_ensure_group_parent converts an existing ledger parent Account to a group."""
 	frappe = install_frappe_stub()
-	parent = types.SimpleNamespace(is_group=0, saved=False)
+	parent = types.SimpleNamespace(is_group=0, account_type="Expense Account", saved=False)
 	parent.save = lambda **kwargs: setattr(parent, "saved", True)
 	monkeypatch.setattr(
 		frappe.db,
@@ -172,6 +172,8 @@ def test_ensure_group_parent_promotes_ledger_parent(monkeypatch):
 	_ensure_group_parent("Account", {"parent_account": "Job Expenses - SF"})
 
 	assert parent.is_group == 1
+	# A set Account Type blocks ERPNext's ledger->group conversion.
+	assert parent.account_type is None
 	assert parent.saved
 
 
@@ -196,6 +198,49 @@ def test_ensure_group_parent_leaves_groups_and_other_doctypes_alone(monkeypatch)
 	_ensure_group_parent("Account", {"parent_account": "Job Expenses - SF"})
 	_ensure_group_parent("Customer", {"parent_account": "Job Expenses - SF"})
 	_ensure_group_parent("Account", {})
+
+
+def test_clear_account_type_for_group_conversion(monkeypatch):
+	"""account_type is cleared only when an existing ledger Account becomes a group."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: 0,
+	)
+	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+		_clear_account_type_for_group_conversion,
+	)
+
+	def make_doc(**attrs):
+		doc = types.SimpleNamespace(name="Automobile - SF", **attrs)
+		doc.get = lambda fieldname: getattr(doc, fieldname, None)
+		return doc
+
+	converting = make_doc(is_group=1, account_type="Expense Account")
+	assert _clear_account_type_for_group_conversion("Account", converting) is True
+	assert converting.account_type is None
+
+	staying_ledger = make_doc(is_group=0, account_type="Expense Account")
+	assert _clear_account_type_for_group_conversion("Account", staying_ledger) is False
+	assert staying_ledger.account_type == "Expense Account"
+
+	no_type = make_doc(is_group=1, account_type=None)
+	assert _clear_account_type_for_group_conversion("Account", no_type) is False
+
+	non_account = make_doc(is_group=1, account_type="Expense Account")
+	assert _clear_account_type_for_group_conversion("Customer", non_account) is False
+	assert non_account.account_type == "Expense Account"
+
+	# Already a group in the DB: no conversion is happening, leave the type alone.
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: 1,
+	)
+	already_group = make_doc(is_group=1, account_type="Expense Account")
+	assert _clear_account_type_for_group_conversion("Account", already_group) is False
+	assert already_group.account_type == "Expense Account"
 
 
 def test_account_mapping_uses_existing_root_as_parent():
@@ -235,6 +280,9 @@ def test_account_parent_with_qbo_children_is_group():
 	assert doctype == "Account"
 	assert values["parent_account"] == "Expenses - DC"
 	assert values["is_group"] == 1
+	# Group accounts must not carry an account_type: it blocks ledger->group
+	# conversion and groups never receive postings anyway.
+	assert values["account_type"] is None
 
 
 def test_account_payload_query_marks_parents_without_polluting_raw_payload(monkeypatch):
