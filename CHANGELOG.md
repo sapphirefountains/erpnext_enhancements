@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-10
+
+### Added
+- **Master switch for the entire Jun 9 process-automation suite** — new checkbox **ERPNext Enhancements Settings → Process Automation → Enable Process Automation Suite**, default **OFF**, so production can deploy this code completely dormant (behaving exactly as before) while the test environment runs with it on; flip production when test is producing what you want. No deploy to flip: server hooks read the live value on every event, desk UI reads `frappe.boot.ee_process_automation` (new bootinfo flag, same model as live-collab) on each page load.
+  - **Gated when OFF**: Closed-Won SMS, the won-but-unconverted daily reminder, Payment Received comment + PM/AE alerts, hand-off step seeding on new projects, step notifications + SLA escalations, the Project form's hand-off progress bar / Start button (`start_process` also server-throws), the Generate Contract buttons + `create_contract`, and the Sales Pipeline board (friendly "switched off" notice instead of data).
+  - **Deliberately not gated** (invisible, zero flow impact — and they make the eventual flip seamless): the silent `custom_stage_changed_on` / payment-date stamps (so stage-aging history is already accumulated the day the board goes live), schema/fixtures/seeded templates (data at rest), and the Task Dashboard block (only appears where explicitly added to a Workspace). Two always-on form-level conveniences that a runtime flag cannot gate are called out in the settings description: the Lead quick-entry dialog and the Opportunity field descriptions (both fixture property setters; low-risk).
+  - Guard logic centralized in `feature_flags.py` (`process_automation_enabled` / `throw_if_process_automation_disabled`); test suites pin the flag on and new tests assert the off state is fully silent (no seeding, no alerts, whitelisted endpoints throw a clear message).
+
 ## [1.7.2] - 2026-06-10
 
 ### Changed

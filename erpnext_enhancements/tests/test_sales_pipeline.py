@@ -71,6 +71,19 @@ class TestPipelineData(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
+		patcher = patch(
+			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.throw_if_process_automation_disabled"
+		)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def test_disabled_switch_throws(self):
+		with patch(
+			"erpnext_enhancements.feature_flags.process_automation_enabled", return_value=False
+		):
+			from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
+
+			self.assertRaises(frappe.ValidationError, throw_if_process_automation_disabled)
 
 	def test_board_shape_follows_meta(self):
 		data = get_pipeline_data()

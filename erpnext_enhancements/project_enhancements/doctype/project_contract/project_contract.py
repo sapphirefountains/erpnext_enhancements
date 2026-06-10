@@ -32,6 +32,8 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt, today
 
+from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
+
 # Series include the generation year (SF-OC-2026-0001); frappe keys the
 # counter on the resolved prefix, so numbering restarts at 0001 each year.
 SERIES_BY_KEY = {
@@ -411,6 +413,7 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	Respects the caller's permissions (no ignore_permissions): the user needs
 	create rights on Project Contract and read rights on the source.
 	"""
+	throw_if_process_automation_disabled()
 	template_doc = frappe.get_doc("Contract Template", template)
 	if not cint(template_doc.enabled):
 		frappe.throw(_("Contract Template {0} is disabled.").format(template))

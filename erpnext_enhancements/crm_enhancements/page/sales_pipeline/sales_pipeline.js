@@ -155,6 +155,17 @@ frappe.pages["sales-pipeline"].on_page_load = function (wrapper) {
 		}
 	}
 
+	// Master switch: the suite (and this board) is dormant until enabled in
+	// ERPNext Enhancements Settings — show a plain explanation, not an error.
+	if (!frappe.boot.ee_process_automation) {
+		board.html(`
+			<div class="alert alert-info m-4">
+				${__("The Sales Pipeline board is part of the process-automation suite, which is currently switched off (ERPNext Enhancements Settings → Process Automation). Flip it on to use this board.")}
+			</div>
+		`);
+		return;
+	}
+
 	// Access check, then first paint + schedules.
 	frappe
 		.call("erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.check_permission")

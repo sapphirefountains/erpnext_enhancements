@@ -49,6 +49,12 @@
 	function render(frm) {
 		const field = frm.get_field("custom_process_progress");
 		if (!field || !field.$wrapper) return;
+		// master switch: hide the hand-off UI entirely while the suite is
+		// dormant (ERPNext Enhancements Settings; server guards are authority)
+		if (!frappe.boot.ee_process_automation) {
+			field.$wrapper.html("");
+			return;
+		}
 		const esc = frappe.utils.escape_html;
 		const steps = (frm.doc.custom_process_steps || [])
 			.slice()
