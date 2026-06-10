@@ -6,57 +6,41 @@ app_email = "info@sapphirefountains.com"
 app_license = "mit"
 
 # include js, css files in header of desk.html
+#
+# Everything global ships as esbuild bundles ("name.bundle.css/js", resolved
+# through assets.json to a content-hashed filename) — NOT raw /assets paths.
+# Raw /assets paths are served with a 1-year *immutable* Cache-Control and
+# carry no content hash, so edits to them never reach a device that already
+# cached them (the "Kanban fix works on desktop, phones still broken" bug,
+# v0.8.1). The only exceptions are the two vendored libraries below.
 app_include_css = [
     "desk_enhancements.bundle.css",
-    # global_enhancements
-    "/assets/erpnext_enhancements/css/global_enhancements/triton_widget.css",
-    # project_enhancements
-    "/assets/erpnext_enhancements/css/project_enhancements/task_tree.css",
-    "/assets/erpnext_enhancements/css/project_enhancements/frappe-gantt.css",
-    # task_enhancements
-    "/assets/erpnext_enhancements/css/task_enhancements/task_enhancements.css",
-    # quickbooks_time_integration
-    "/assets/erpnext_enhancements/css/quickbooks_time_integration/qb_time_integration.css",
+    # The remaining global styles, in the old include order (cascade preserved):
+    # see public/css/desk_addons.bundle.css.
+    "desk_addons.bundle.css",
 ]
 app_include_js = [
-    "/assets/erpnext_enhancements/js/erpnext_enhancements.js",
-    "/assets/erpnext_enhancements/js/kanban_patches.js",
-    "/assets/erpnext_enhancements/js/kanban_customization.js",
-    # Hotfix for the Kanban filter memory leak (upstream frappe/frappe#24156).
-    # Remove once the upstream fix ships in our deployed frappe version.
-    "/assets/erpnext_enhancements/js/kanban_leak_fix.js",
-    # Perf fix for the layout-thrashing drag-to-scroll handler in frappe core's
-    # bind_clickdrag (forced full-document reflow on every mousemove). Remove once
-    # frappe stops reading offsetLeft on mousemove.
-    "/assets/erpnext_enhancements/js/kanban_scroll_perf.js",
-    "/assets/erpnext_enhancements/js/global_comments.js",
-    # Custom "Comments App" — loaded once globally. vue.global.js + comments.js
-    # define erpnext_enhancements.render_comments_app; comments_auto.js mounts it
-    # on every doctype listed in COMMENT_APP_DOCTYPES (replacing the old per-
-    # doctype *_comments.js files).
+    # Vendored global-defining libraries stay raw ON PURPOSE: importing a UMD
+    # build from an esbuild bundle captures its exports instead of letting it
+    # set window.Vue / window.Gantt — and their content never changes, so the
+    # immutable /assets cache cannot serve them stale. Loaded first so the
+    # globals exist before any bundled consumer runs.
     "/assets/erpnext_enhancements/js/vue.global.js",
-    "/assets/erpnext_enhancements/js/comments.js",
-    "/assets/erpnext_enhancements/js/comments_auto.js",
-    "/assets/erpnext_enhancements/js/crm_note_enhancements.js",
-    "/assets/erpnext_enhancements/js/performance_fixes.js",
-    "/assets/erpnext_enhancements/js/activity_log_numbering.js",
-    "/assets/erpnext_enhancements/js/filter_help.js",
-    "/assets/erpnext_enhancements/js/telephony_client.js",
-    # global_enhancements
-    "/assets/erpnext_enhancements/js/global_enhancements/quill_mentions.js",
-    "/assets/erpnext_enhancements/js/global_enhancements/global_sidebar.js",
-    "/assets/erpnext_enhancements/js/global_enhancements/auto_collapse_sidebar.js",
-    "/assets/erpnext_enhancements/js/global_enhancements/unlink_and_delete.js",
-    "/assets/erpnext_enhancements/js/global_enhancements/triton_widget.js",
-    # project_enhancements
     "/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js",
-    "/assets/erpnext_enhancements/js/project_enhancements/task_tree_manager.js",
-    "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
-    "/assets/erpnext_enhancements/js/project_enhancements/gantt_zoom.js",
+    # Kanban patch suite (hold-to-drag, Opportunity styling, leak hotfix for
+    # frappe/frappe#24156, drag-to-scroll perf fix). See public/js/kanban.bundle.js
+    # for the imports and each file's removal conditions.
+    "kanban.bundle.js",
+    # Every other global desk script (awesomebar/nav/drafts, Comments App,
+    # Triton widget, telephony, task tree/gantt preloads, ...), in the old
+    # include order: see public/js/erpnext_enhancements.bundle.js.
+    "erpnext_enhancements.bundle.js",
 ]
 
 # include js, css files in header of web template
-web_include_css = "/assets/erpnext_enhancements/css/login_enhancements.css"
+# Bundle reference (was "/assets/erpnext_enhancements/css/login_enhancements.css",
+# which 404s — public/css only contains login_enhancements.bundle.css).
+web_include_css = "login_enhancements.bundle.css"
 
 doctype_js = {
     "Opportunity": [

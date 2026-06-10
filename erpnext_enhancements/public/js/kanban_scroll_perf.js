@@ -1,8 +1,8 @@
 /*
  * Kanban drag-to-scroll perf fix — layout thrash in frappe core's bind_clickdrag.
  *
- * Targets: every `.kanban` board (the bug is in frappe core). Loaded via hooks.py
- *   `app_include_js`. See CHANGELOG for additional detail.
+ * Targets: every `.kanban` board (the bug is in frappe core). Loaded via
+ *   kanban.bundle.js (hooks.py `app_include_js`). See CHANGELOG for additional detail.
  *
  * THE BUG (frappe/frappe kanban_board.bundle.js -> bind_clickdrag):
  *   The board's "grab the background and drag sideways to reveal more columns"

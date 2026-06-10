@@ -1,8 +1,8 @@
 /*
  * Kanban filter memory-leak hotfix (upstream: frappe/frappe#24156)
  *
- * Targets: every Kanban board (the leak is in frappe core). Loaded via hooks.py
- *   `app_include_js`. See CHANGELOG for additional detail.
+ * Targets: every Kanban board (the leak is in frappe core). Loaded via
+ *   kanban.bundle.js (hooks.py `app_include_js`). See CHANGELOG for additional detail.
  *
  * THE BUG (in frappe core, kanban_board.bundle.js):
  *   The Kanban board's Vuex `store` is a module-level singleton that lives for

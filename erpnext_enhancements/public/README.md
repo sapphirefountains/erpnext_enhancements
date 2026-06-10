@@ -6,6 +6,20 @@ Assets are loaded via [`../hooks.py`](../hooks.py) — `app_include_js`/`app_inc
 
 Every file has a top-of-file doc block. This README is the architecture map.
 
+> **Globals ship as bundles — never add raw `/assets` paths to `app_include_*`.**
+> `/assets` is served with a 1-year *immutable* Cache-Control and raw paths get
+> no content hash, so an edited raw include never reaches a device that already
+> cached it (the v0.8.1 "Kanban fix works on desktop, phones still broken" bug).
+> Global JS goes through `js/kanban.bundle.js` or `js/erpnext_enhancements.bundle.js`,
+> global CSS through `css/desk_enhancements.bundle.css` or `css/desk_addons.bundle.css`
+> — esbuild gives the built files content-hashed names. Where "Load" says
+> `app_include_js/css` below, the file is imported by one of those bundles. The
+> only raw global includes are the two vendored UMD libs (`vue.global.js`,
+> `frappe-gantt.umd.js`): a bundle import would capture their exports instead of
+> setting `window.Vue`/`window.Gantt`, and their content never changes, so
+> stale caching cannot affect them. (`doctype_js` files are unaffected: they
+> load through `frappe.require`'s version-aware cache.)
+
 ## Four kinds of client code
 
 1. **Per-doctype form/list/calendar scripts** — `frappe.ui.form.on(...)` / `frappe.listview_settings[...]`. Loaded per-doctype. Many are explicitly noted as migrated from database Client Scripts into version-controlled files (`*_migrated_scripts.js`).
@@ -28,11 +42,11 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `contact.js` | Contact | Comments App + Triton call/SMS + mirror Customer→`custom_account` | doctype_js |
 | `crm_note_enhancements.js` | CRM Note dialogs (global) | Patches `Dialog` to add attachments to Add/Edit Note | app_include_js |
 | `customer.js` | Customer | Comments App, Triton buttons, "Create" dropdown, reminder cadence, related-doc tables | doctype_js |
-| `erpnext_enhancements.js` | whole desk | Awesomebar live search, map placeholder, safe auto-save/drafts, nav guard, "Add to Desk", sidebar/home tweaks, Vue file manager | app_include_js |
+| `erpnext_enhancements.js` | whole desk | Awesomebar live search, map placeholder, safe auto-save/drafts, "Add to Desk", sidebar/home tweaks, Vue file manager | app_include_js |
 | `filter_help.js` | list views (global) | Injects a "?" filter-help dialog button | app_include_js |
 | `global_comments.js` | all forms (timeline) | Patches the **native** Timeline to attach files into comments | app_include_js |
 | `item.js` / `item_list.js` | Item form/list | Migrated: show item code; widen name/code columns | doctype_js / doctype_list_js |
-| `kanban_*.js` | Kanban boards | See [Kanban patch suite](#kanban-patch-suite) | app_include_js |
+| `kanban_*.js` | Kanban boards | See [Kanban patch suite](#kanban-patch-suite) | `kanban.bundle.js` (app_include_js) |
 | `lead.js` | Lead | Triton call + migrated "Create Opportunity" | doctype_js |
 | `opportunity.js` | Opportunity | Thin stub (real logic in `crm_enhancements/`) | doctype_js |
 | `opportunity_list.js` | Opportunity list | Redirect fresh list loads to the Kanban board | doctype_list_js |
@@ -65,9 +79,16 @@ Every file has a top-of-file doc block. This README is the architecture map.
 
 ## Kanban patch suite
 
+Shipped as one esbuild bundle — `kanban.bundle.js` imports the four files below in
+order. The bundle exists for cache busting, not code organisation: raw `/assets`
+paths are served with a 1-year **immutable** Cache-Control, so phones kept running
+the first copy of each patch they ever downloaded across deploys (the "works on
+desktop, mobile still grabs cards" bug, v0.8.1). The hashed bundle filename gives
+every deploy a fresh URL.
+
 | File | Fixes |
 |---|---|
-| `kanban_patches.js` | Press-and-hold (1s) before a card drags, for **mouse and touch**; applied to every board via a document `MutationObserver` (decoupled from `render`, which the leak fix short-circuits). |
+| `kanban_patches.js` | Press-and-hold (1s) before a card drags, for **mouse and touch**; applied to every board via a document `MutationObserver` (decoupled from `render`, which the leak fix short-circuits). Also backports SortableJS 1.15.4's `pointercancel` cancel for pointer-only inputs (pen, some Windows-touch configs). |
 | `kanban_customization.js` | Opportunity-board styling: dark high-value cards + coloured value-stream dots; bulk-fetches the `custom_value_stream` child table the list query omits. |
 | `kanban_leak_fix.js` | Hotfix for the Kanban filter memory leak (upstream frappe/frappe#24156): takes the reactive `update_cards` path on same-board refresh instead of re-`init()`. |
 | `kanban_scroll_perf.js` | Fixes layout-thrash in core `bind_clickdrag` drag-to-scroll (reads `e.pageX` only, no `offsetLeft`; capture-phase handler `stopPropagation`s core's reflow-forcing handler). |
@@ -100,19 +121,20 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | File | Styles | Load |
 |---|---|---|
 | `desk_enhancements.bundle.css` | Desk "Sapphire glass" theme + Procurement Tracker, Comments App, Kanban, activity numbering, filter-help | app_include_css |
-| `login_enhancements.bundle.css` | Login/forgot/signup pages | web_include_css (as `login_enhancements.css`) |
+| `desk_addons.bundle.css` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`) | app_include_css |
+| `login_enhancements.bundle.css` | Login/forgot/signup pages | web_include_css |
 | `global_enhancements/horizontal_scroll.css` | Opportunity Kanban horizontal scroll layout | doctype_css["Opportunity"] |
-| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | app_include_css |
+| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.css` |
 | `kiosk/kiosk.css` | Standalone Time Kiosk PWA shell | `www/kiosk.html` `<link>` (not hooks) |
-| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | app_include_css |
-| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | app_include_css |
-| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | app_include_css |
-| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | app_include_css |
+| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.css` |
+| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.css` |
+| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.css` |
+| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.css` |
 
 ## Gotchas
 
 - Comments App double-mount avoidance: the six doctypes whose form scripts call `render_comments_app` are intentionally absent from `COMMENT_APP_DOCTYPES`.
-- `kiosk.css` is the one CSS file **not** loaded via `hooks.py` (it's referenced by `www/kiosk.html`). `hooks.py` references the compiled `login_enhancements.css`, but the on-disk source is `login_enhancements.bundle.css`.
+- `kiosk.css` is the one CSS file **not** loaded via `hooks.py` (it's referenced by `www/kiosk.html`).
 - Many global monkey-patches (`KanbanView.refresh`, `FileView.setup_view`, `TreeView.get_tree_nodes`, `msgprint`/`show_alert`/`request.error`) are guarded by idempotency flags and **may need revisiting on Frappe upgrades**.
 - `task_gantt.js` is a doc-comment stub — the scroll-to-today logic it describes is not in the file body (flagged in-file).
 - CDN dependencies: `process_document.js` (Mermaid) and `telephony_client.js` (Twilio SDK) lazy-load third-party scripts from jsDelivr at runtime.
