@@ -25,6 +25,7 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `backfill_stage_changed_on` | post | Sets `Opportunity.custom_stage_changed_on = modified` where empty so the Sales Pipeline board's days-in-stage aging starts sane; creates the Custom Field first if missing (patches run before fixture sync). |
 | `seed_process_step_templates` | post | Seeds the seven PRO-0204 "Won Opportunity Hand-Off" Process Step Template records (insert-only by `step_number`, so site edits survive). |
 | `backfill_project_opportunity_link` | post | Fills empty `Project.custom_opportunity` from the reverse `Opportunity.custom_created_project` stamp — the forward link was never persisted before v1.3.0 (the old mapping wrote to a non-existent `custom_sales_opportunity` field). |
+| `seed_task_dashboard_block` | post | Creates the "Task Dashboard" Custom HTML Block from the repo-root `Custom HTML Block/task_dashboard.*` sources (insert-only; UI edits survive). The block must then be added to a Workspace once by hand. |
 
 ## Important note from `patches.txt`
 

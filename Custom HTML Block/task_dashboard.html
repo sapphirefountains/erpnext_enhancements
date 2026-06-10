@@ -1,0 +1,42 @@
+<div class="tdb-root">
+    <div class="tdb-header">
+        <div class="tdb-title-wrap">
+            <h4 class="tdb-title">Morning Task Dashboard</h4>
+            <span class="tdb-updated" id="tdb-updated"></span>
+        </div>
+        <div class="tdb-clock" id="tdb-clock"></div>
+    </div>
+
+    <div class="tdb-grid">
+        <section class="tdb-panel tdb-projects">
+            <div class="tdb-panel-head">
+                <span>Top 10 Priority Projects</span>
+                <span class="tdb-panel-hint">company rank 1&ndash;30 &middot; PM / tech lead</span>
+            </div>
+            <div class="tdb-panel-body" id="tdb-top-projects">
+                <div class="tdb-loading">Loading&hellip;</div>
+            </div>
+        </section>
+
+        <section class="tdb-panel tdb-overdue">
+            <div class="tdb-panel-head">
+                <span>Overdue / At Risk</span>
+                <span class="tdb-panel-hint" id="tdb-overdue-count"></span>
+            </div>
+            <div class="tdb-panel-body" id="tdb-overdue"></div>
+        </section>
+
+        <section class="tdb-panel tdb-today">
+            <div class="tdb-panel-head">
+                <span>Today's Tasks</span>
+                <span class="tdb-panel-hint" id="tdb-today-count"></span>
+            </div>
+            <div class="tdb-panel-body" id="tdb-today"></div>
+        </section>
+
+        <section class="tdb-panel tdb-events">
+            <div class="tdb-panel-head"><span>Today's Calendar</span></div>
+            <div class="tdb-panel-body" id="tdb-events"></div>
+        </section>
+    </div>
+</div>

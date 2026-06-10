@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-10
+
+The parked Phase 2 item from the Jun 9 meeting: the morning task dashboard refinements — "I'd like to see all of them at once… just a list of the top 10" and "it won't say Joe and Bob are going to this site today — we can" — shipped as a new **"Task Dashboard" Custom HTML Block** (the existing TV screen wasn't in the repo or among the site's blocks, so this is a fresh, version-controlled widget rather than a guess-edit of whatever the screen runs today).
+
+### Added
+- **`api/task_dashboard.py` — one whitelisted endpoint (`get_task_dashboard_data`) feeding the whole screen**: (1) *Top 10 priority projects as a list, all at once* — Active projects with `custom_company_priority` 1–30 (the same eligibility rule the home widget uses), each row carrying rank, **PM and tech lead resolved to names** (bulk Employee fetch), and a percent-complete bar; (2) *Overdue / at-risk* — open tasks past `exp_end_date`, oldest first, with a days-overdue badge (capped at 20 with a "+" indicator); (3) *Today's tasks with technicians* — open tasks whose expected window **spans** today (a 3-day task shows all 3 days; single-dated edge cases included), each with its assignees (`_assign`) resolved to full names in two bulk queries; (4) *Today's calendar* — public, open Events overlapping today. Open-task filtering matches this site's **customized Task statuses** (`Canceled` one-L, plus `Invoiced`/`Template` excluded — the existing home widget filters on spellings this site doesn't use). Access mirrors the Sales Pipeline model: staff-role gate, then permission-free fetch, so the Employee user-permission cascade can't empty a shared wall display.
+- **Block sources, version-controlled** in `Custom HTML Block/task_dashboard.{html,js,css}` (the folder's established export convention, README updated): header with live clock + last-updated stamp; Top-10 rail left, Overdue/Today/Calendar stack right (single column under 900px); priority-tinted task rows; assignee chips ("Unassigned" dashed); empty states. Refresh = the existing `project_dashboard_updated` realtime event (published on every Project/Task save) debounced 5s, plus a 5-minute interval as kiosk fallback, both skipped while the tab is hidden — and because a workspace re-render re-runs block scripts with a fresh `root_element`, all timers and the single realtime subscription live on `window` and are **re-pointed, never stacked**. Styles run inside the block's shadow root and take structural colors from Frappe CSS variables (custom properties pierce shadow boundaries, so Frappe Light and Timeless Night both work without `[data-theme]` selectors); only priority/overdue accents are literal.
+- **`seed_task_dashboard_block` patch** — creates the Custom HTML Block from the repo source files on migrate, **insert-only** (UI edits after creation are never clobbered; the repo→UI paste-back workflow from the folder README applies for later code changes). Logs and skips gracefully if the source folder is missing.
+
+### Notes
+- One manual step after deploy: edit the target Workspace (Home, or whatever the TV shows) and add the "Task Dashboard" block.
+- If this should *replace* the current morning TV screen, point the TV's browser at a workspace containing the block; the old screen (wherever it lives) is untouched.
+
 ## [1.3.0] - 2026-06-10
 
 Phase 3 of the Jun 9 Projects/Invoice-processing meeting: the PRO-0204 "Won Opportunity Hand-Off" process engine — "when it hits one step, it automatically sends a notification to who's responsible for the next step… time stamp… auto reminder after 24 hours." The system now holds everyone accountable, step by step.
