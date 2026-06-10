@@ -32,7 +32,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `filter_help.js` | list views (global) | Injects a "?" filter-help dialog button | app_include_js |
 | `global_comments.js` | all forms (timeline) | Patches the **native** Timeline to attach files into comments | app_include_js |
 | `item.js` / `item_list.js` | Item form/list | Migrated: show item code; widen name/code columns | doctype_js / doctype_list_js |
-| `kanban_*.js` | Kanban boards | See [Kanban patch suite](#kanban-patch-suite) | app_include_js |
+| `kanban_*.js` | Kanban boards | See [Kanban patch suite](#kanban-patch-suite) | `kanban.bundle.js` (app_include_js) |
 | `lead.js` | Lead | Triton call + migrated "Create Opportunity" | doctype_js |
 | `opportunity.js` | Opportunity | Thin stub (real logic in `crm_enhancements/`) | doctype_js |
 | `opportunity_list.js` | Opportunity list | Redirect fresh list loads to the Kanban board | doctype_list_js |
@@ -65,9 +65,16 @@ Every file has a top-of-file doc block. This README is the architecture map.
 
 ## Kanban patch suite
 
+Shipped as one esbuild bundle — `kanban.bundle.js` imports the four files below in
+order. The bundle exists for cache busting, not code organisation: raw `/assets`
+paths are served with a 1-year **immutable** Cache-Control, so phones kept running
+the first copy of each patch they ever downloaded across deploys (the "works on
+desktop, mobile still grabs cards" bug, v0.8.1). The hashed bundle filename gives
+every deploy a fresh URL.
+
 | File | Fixes |
 |---|---|
-| `kanban_patches.js` | Press-and-hold (1s) before a card drags, for **mouse and touch**; applied to every board via a document `MutationObserver` (decoupled from `render`, which the leak fix short-circuits). |
+| `kanban_patches.js` | Press-and-hold (1s) before a card drags, for **mouse and touch**; applied to every board via a document `MutationObserver` (decoupled from `render`, which the leak fix short-circuits). Also backports SortableJS 1.15.4's `pointercancel` cancel for pointer-only inputs (pen, some Windows-touch configs). |
 | `kanban_customization.js` | Opportunity-board styling: dark high-value cards + coloured value-stream dots; bulk-fetches the `custom_value_stream` child table the list query omits. |
 | `kanban_leak_fix.js` | Hotfix for the Kanban filter memory leak (upstream frappe/frappe#24156): takes the reactive `update_cards` path on same-board refresh instead of re-`init()`. |
 | `kanban_scroll_perf.js` | Fixes layout-thrash in core `bind_clickdrag` drag-to-scroll (reads `e.pageX` only, no `offsetLeft`; capture-phase handler `stopPropagation`s core's reflow-forcing handler). |

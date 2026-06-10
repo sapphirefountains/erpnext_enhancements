@@ -4,7 +4,7 @@
  * - Value Stream Indicator Dots in card footer from 'custom_value_stream' child table
  *
  * Targets: the "Opportunity" Kanban board (board name "Opportunity") only.
- * Loaded via: hooks.py `app_include_js` (global desk script).
+ * Loaded via: kanban.bundle.js (hooks.py `app_include_js`, global desk script).
  *
  * Patches frappe.views.KanbanView.prototype.render_card (to style high-value
  * cards and append coloured value-stream dots) and .get_data (to bulk-fetch the

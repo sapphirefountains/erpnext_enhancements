@@ -1,8 +1,11 @@
 /*
  * Kanban "press-and-hold to grab" — drag delay for mouse AND touch.
  *
- * Targets: every Kanban board (board-agnostic). Loaded via hooks.py
- *   `app_include_js`. See CHANGELOG for the full history of this fix.
+ * Targets: every Kanban board (board-agnostic). Loaded via kanban.bundle.js
+ *   (hooks.py `app_include_js`). See CHANGELOG for the full history of this fix —
+ *   including the stale-cache root cause (raw /assets paths + 1-year immutable
+ *   Cache-Control) that kept phones running pre-fix copies of this file until
+ *   it became a content-hashed bundle (v0.8.1).
  *
  * THE PROBLEM:
  *   Frappe's Kanban starts a drag the instant a pointer lands on a card. On a touch
@@ -124,6 +127,35 @@
         });
     }
 
+    // Backport of a SortableJS fix that landed in 1.15.4 (frappe pins 1.15.0):
+    // 1.15.0's delay branch cancels a pending hold on touchend/touchcancel/mouseup
+    // and on >threshold movement, but never listens for `pointercancel`. Real
+    // phones are unaffected (touch events fire alongside pointer events, so the
+    // bound touchmove/touchcancel still cancel the hold), but on pointer-only
+    // inputs (pen/stylus, some Windows touch configs) the browser fires ONLY
+    // `pointercancel` when it claims the gesture for native scrolling — the
+    // pending 1s timer survives the scroll takeover and fires mid-scroll,
+    // grabbing a card nobody is pressing. On pointercancel, abort the pending
+    // delayed drag on every patched Sortable. _disableDelayedDrag is a no-op on
+    // instances with nothing pending; the chosen-class guard skips the case
+    // where the hold already completed and a real drag is in flight (Chrome
+    // also fires pointercancel when a native HTML5 drag starts — cancelling
+    // then would poke the live drag, not a pending one).
+    function cancel_pending_delayed_drags() {
+        if (!document.querySelector(".kanban")) return;
+        if (document.querySelector(".sortable-chosen")) return; // drag already started
+        document.querySelectorAll('[class*="kanban"]').forEach((el) => {
+            const sortable = get_sortable(el);
+            if (
+                sortable &&
+                sortable.__hold_to_drag &&
+                typeof sortable._disableDelayedDrag === "function"
+            ) {
+                sortable._disableDelayedDrag();
+            }
+        });
+    }
+
     // Coalesce a burst of container insertions during a board build into a single
     // pass, then one delayed re-pass to catch a Sortable whose instance is attached a
     // tick after its element lands in the DOM (Vue mounted() vs the observer microtask).
@@ -146,6 +178,12 @@
     function start() {
         // Patch anything already present (e.g. a board built before this script ran).
         apply_hold_delay(document);
+
+        // Capture phase so the pending hold is aborted even if something stops
+        // the event from bubbling. pointercancel is rare (scroll takeover /
+        // native dragstart), so the handler's DOM walk costs nothing in steady
+        // state.
+        document.addEventListener("pointercancel", cancel_pending_delayed_drags, true);
 
         // Permanent net: scan whenever a Kanban container is inserted, regardless of
         // how the board was rendered or refreshed. Lean callback — bails immediately on

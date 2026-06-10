@@ -20,15 +20,13 @@ app_include_css = [
 ]
 app_include_js = [
     "/assets/erpnext_enhancements/js/erpnext_enhancements.js",
-    "/assets/erpnext_enhancements/js/kanban_patches.js",
-    "/assets/erpnext_enhancements/js/kanban_customization.js",
-    # Hotfix for the Kanban filter memory leak (upstream frappe/frappe#24156).
-    # Remove once the upstream fix ships in our deployed frappe version.
-    "/assets/erpnext_enhancements/js/kanban_leak_fix.js",
-    # Perf fix for the layout-thrashing drag-to-scroll handler in frappe core's
-    # bind_clickdrag (forced full-document reflow on every mousemove). Remove once
-    # frappe stops reading offsetLeft on mousemove.
-    "/assets/erpnext_enhancements/js/kanban_scroll_perf.js",
+    # Kanban patch suite (hold-to-drag, Opportunity styling, leak hotfix for
+    # frappe/frappe#24156, drag-to-scroll perf fix) — shipped as a bundle so the
+    # built filename carries a content hash. Raw /assets paths are served with a
+    # 1-year immutable Cache-Control and left mobile devices running stale
+    # copies across deploys. See public/js/kanban.bundle.js for the imports and
+    # each file's removal conditions.
+    "kanban.bundle.js",
     "/assets/erpnext_enhancements/js/global_comments.js",
     # Custom "Comments App" — loaded once globally. vue.global.js + comments.js
     # define erpnext_enhancements.render_comments_app; comments_auto.js mounts it

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-09
+
+### Fixed
+- **Kanban hold-to-drag now actually reaches phones and tablets.** The press-and-hold patch suite shipped as raw `/assets/erpnext_enhancements/js/kanban_*.js` scripts, and the server serves `/assets` with `Cache-Control: max-age=31536000, immutable` (verified on the live site) — so a mobile browser keeps executing the *first* copy of each file it ever downloaded, for up to a year, without revalidating even on a normal reload. Desktops used for testing get hard-refreshed; phones never do, which is exactly why the 1-second hold worked with a mouse while touch devices kept grabbing cards instantly when scrolling. The four `kanban_*.js` patches now ship as a single esbuild bundle (`public/js/kanban.bundle.js`, referenced as `kanban.bundle.js` in `app_include_js`, same mechanism as `desk_enhancements.bundle.css`): the built filename carries a content hash, so every deploy gets a new URL and every device — including the stale phones — picks up the current code on its next page load. This was very likely also the root cause of the earlier "the delay never seems to apply" round documented in `kanban_patches.js`. Code-wise nothing else moved: the bundle just imports the four files in their old include order.
+- **Backported SortableJS 1.15.4's `pointercancel` handling into `kanban_patches.js`.** Frappe pins SortableJS 1.15.0, whose delay branch cancels a pending hold on `touchend`/`touchcancel`/`mouseup` and on >threshold movement — but never listens for `pointercancel`. Phones are covered (touch events fire alongside pointer events), but on pointer-only inputs (pen/stylus, some Windows-touch configurations) the browser fires *only* `pointercancel` when it claims the gesture for native scrolling, so the pending 1s timer survived the scroll takeover and could fire mid-scroll, grabbing a card nobody was pressing. A document-level `pointercancel` listener now aborts any pending delayed drag (guarded so it never touches a drag that already legitimately started).
+
 ## [0.8.0] - 2026-06-09
 
 ### Added
