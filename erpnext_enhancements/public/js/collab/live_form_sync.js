@@ -40,7 +40,23 @@
 	// client-side attachment). Before onboarding a new doctype, audit its form
 	// scripts: field triggers with non-idempotent side effects (server calls)
 	// fire on every receiving client when remote values are applied.
-	const COLLAB_DOCTYPES = ["Task"];
+	// Top 10 by edit volume + multi-editor activity (tabVersion, 180 days,
+	// 2026-06). Audited 2026-06-10: unified_tab_controller field handlers are
+	// read-only re-renders (writes live in button click handlers); the
+	// Opportunity tag-sync write branch is guarded in
+	// crm_enhancements/opportunity.js.
+	const COLLAB_DOCTYPES = [
+		"Task",
+		"Project",
+		"Opportunity",
+		"Customer",
+		"Contact",
+		"Address",
+		"Item",
+		"Supplier",
+		"Purchase Order",
+		"ToDo",
+	];
 	const DEBOUNCE_MS = 300;
 	const CLIENT_ID =
 		((frappe.session && frappe.session.user) || "unknown") +

@@ -35,7 +35,19 @@ from frappe.utils import cstr
 # Single already follows a child-table-per-feature pattern), read it here, and
 # ship it to the client via extend_bootinfo. Keep in sync with COLLAB_DOCTYPES
 # in public/js/collab/live_form_sync.js.
-COLLAB_DOCTYPES = {"Task"}
+# Top 10 by edit volume + multi-editor activity (tabVersion, 180 days, 2026-06).
+COLLAB_DOCTYPES = {
+	"Task",
+	"Project",
+	"Opportunity",
+	"Customer",
+	"Contact",
+	"Address",
+	"Item",
+	"Supplier",
+	"Purchase Order",
+	"ToDo",
+}
 
 # Generous cap for Text Editor HTML; anything larger is rejected outright.
 MAX_VALUE_LENGTH = 140_000

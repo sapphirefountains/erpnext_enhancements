@@ -43,7 +43,7 @@ class TestCollabRelay(FrappeTestCase):
 	def test_rejects_disallowed_doctype(self):
 		"""Doctypes outside COLLAB_DOCTYPES are rejected."""
 		with self.assertRaises(frappe.ValidationError):
-			broadcast_field_update(**self._valid_args(doctype="Project", docname="X"))
+			broadcast_field_update(**self._valid_args(doctype="Sales Invoice", docname="X"))
 
 	def test_rejects_without_write_permission(self):
 		"""A user without write permission on the Task gets PermissionError."""
