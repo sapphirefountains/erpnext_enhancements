@@ -27,7 +27,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 
 | Doctype | Configures | Consumed by |
 |---|---|---|
-| **ERPNext Enhancements Settings** | Project reminder recipients (`project_reminder_emails`) + maintenance billing defaults (`maintenance_fee_item`, `maintenance_services_group`) | `project_enhancements.send_project_start_reminders`, `api.maintenance_workflow` |
+| **ERPNext Enhancements Settings** | Project reminder recipients (`project_reminder_emails`) + maintenance billing defaults (`maintenance_fee_item`, `maintenance_services_group`) + live collaborative editing (`collab_enabled` master switch + `collab_doctypes` allowlist, child table **Collab Doctype**; seeded by the `seed_collab_doctypes` patch — toggle doctypes with no deploy, clients pick it up on next page load) | `project_enhancements.send_project_start_reminders`, `api.maintenance_workflow`, `api.collab` + `boot.boot_session` |
 | **GA4 Settings** | `ga4_property_id`, `gsc_property_url`, attached `credentials_json` | `api.analytics` |
 | **Time Kiosk Settings** | Location-tracking toggles/sampling (distance filter, heartbeat, high accuracy, min accuracy, max batch, wake lock) + `retention_days` | `api.time_kiosk`, `public/js/kiosk/geo.js` |
 | **Triton Settings** | External AI/telephony gateway: URL, prompts/guidelines, model IDs, Password secrets (Maps/Vertex key, Twilio creds, admin webhook secret) | `api.telephony`, `api.gemini`, `triton_chat.py` |

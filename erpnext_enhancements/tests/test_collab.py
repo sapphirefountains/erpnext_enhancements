@@ -26,6 +26,13 @@ class TestCollabRelay(FrappeTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
+		# the allowlist is settings-driven; seed it for the suite (rolled back
+		# with the rest of the FrappeTestCase transaction)
+		settings = frappe.get_single("ERPNext Enhancements Settings")
+		settings.collab_enabled = 1
+		settings.set("collab_doctypes", [])
+		settings.append("collab_doctypes", {"document_type": "Task"})
+		settings.save(ignore_permissions=True)
 		self.task = frappe.get_doc({"doctype": "Task", "subject": "Collab Relay Test Task"}).insert(
 			ignore_permissions=True
 		)
@@ -47,9 +54,17 @@ class TestCollabRelay(FrappeTestCase):
 		return args
 
 	def test_rejects_disallowed_doctype(self):
-		"""Doctypes outside COLLAB_DOCTYPES are rejected."""
+		"""Doctypes not in the settings allowlist are rejected."""
 		with self.assertRaises(frappe.ValidationError):
 			broadcast_field_update(**self._valid_args(doctype="Sales Invoice", docname="X"))
+
+	def test_rejects_when_master_switch_off(self):
+		"""collab_enabled=0 disables the relay even for listed doctypes."""
+		settings = frappe.get_single("ERPNext Enhancements Settings")
+		settings.collab_enabled = 0
+		settings.save(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			broadcast_field_update(**self._valid_args())
 
 	def _ensure_no_role_user(self):
 		if not frappe.db.exists("User", NO_ROLE_USER):

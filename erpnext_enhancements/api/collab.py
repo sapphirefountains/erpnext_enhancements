@@ -20,8 +20,9 @@ oversized value can at worst annoy room members who already have read access
 to the document.
 
 Security model:
-	- ``doctype`` must be in ``COLLAB_DOCTYPES`` (server-side allowlist; the
-	  JS constant of the same name only gates client attachment).
+	- ``doctype`` must be in the settings-driven allowlist
+	  (:func:`get_collab_doctypes` — master switch + child table on ERPNext
+	  Enhancements Settings; the bootinfo copy only gates client attachment).
 	- Caller must hold *write* permission on the specific document.
 	- ``fieldname`` must exist on the target meta and hold a value (display
 	  fieldtypes such as Section Break / HTML / Table are rejected).
@@ -39,12 +40,11 @@ from frappe import _
 from frappe.model import no_value_fields
 from frappe.utils import cint, cstr, get_fullname
 
-# v2: move this list to a child table on ERPNext Enhancements Settings (the
-# Single already follows a child-table-per-feature pattern), read it here, and
-# ship it to the client via extend_bootinfo. Keep in sync with COLLAB_DOCTYPES
-# in public/js/collab/live_form_sync.js.
-# Top 10 by edit volume + multi-editor activity (tabVersion, 180 days, 2026-06).
-COLLAB_DOCTYPES = {
+# The launch allowlist — top 10 by edit volume + multi-editor activity
+# (tabVersion, 180 days, 2026-06). The *live* allowlist is settings-driven
+# (see get_collab_doctypes); this tuple only seeds it via the
+# seed_collab_doctypes patch on existing sites.
+DEFAULT_COLLAB_DOCTYPES = (
 	"Task",
 	"Project",
 	"Opportunity",
@@ -55,10 +55,29 @@ COLLAB_DOCTYPES = {
 	"Supplier",
 	"Purchase Order",
 	"ToDo",
-}
+)
 
 # Generous cap for Text Editor HTML; anything larger is rejected outright.
 MAX_VALUE_LENGTH = 140_000
+
+
+def get_collab_doctypes():
+	"""The live collab allowlist, from ERPNext Enhancements Settings.
+
+	Returns an empty set when the master switch (``collab_enabled``) is off.
+	``frappe.get_cached_doc`` keeps this one cheap lookup per request and is
+	invalidated automatically when the Single is saved — so toggling doctypes
+	needs no deploy; collaborators pick the change up on their next page load
+	(the client list ships in bootinfo via ``boot.boot_session``).
+	"""
+	try:
+		settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+	except Exception:
+		# fresh DB mid-migrate: the Single/table may not exist yet
+		return set()
+	if not cint(settings.get("collab_enabled")):
+		return set()
+	return {row.document_type for row in settings.get("collab_doctypes") or [] if row.document_type}
 
 
 def _check_target(doctype, docname, fieldname, child_doctype):
@@ -69,7 +88,7 @@ def _check_target(doctype, docname, fieldname, child_doctype):
 	``child_doctype``, which must be one of the parent's table options — and
 	holds a value (display fieldtypes are rejected).
 	"""
-	if doctype not in COLLAB_DOCTYPES:
+	if doctype not in get_collab_doctypes():
 		frappe.throw(_("Live sync is not enabled for {0}").format(doctype))
 
 	if not frappe.has_permission(doctype, "write", doc=docname):

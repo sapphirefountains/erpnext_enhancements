@@ -1,8 +1,11 @@
 /**
  * live_form_sync.js — Google-Docs-style live collaborative editing for forms.
  *
- * Targets: desk forms of the doctypes in COLLAB_DOCTYPES (the top 10 most
- * used — see the constant below).
+ * Targets: desk forms of the doctypes in frappe.boot.collab_doctypes — the
+ * settings-driven allowlist on ERPNext Enhancements Settings (master switch
+ * `collab_enabled` + `collab_doctypes` child table), shipped to the client by
+ * boot.boot_session and enforced server-side by api/collab.py. Toggling
+ * doctypes needs no deploy; clients pick changes up on their next page load.
  * Loaded via: erpnext_enhancements.bundle.js (global desk bundle).
  *
  * While two or more users have the same document open:
@@ -42,38 +45,27 @@
 	if (window.__ee_live_form_sync_loaded) return;
 	window.__ee_live_form_sync_loaded = true;
 
-	// v2: move to a child table on ERPNext Enhancements Settings and ship via
-	// extend_bootinfo. Keep in sync with COLLAB_DOCTYPES in api/collab.py
-	// (the Python set is the security authority; this one only gates
-	// client-side attachment). Before onboarding a new doctype, audit its form
-	// scripts: field triggers with non-idempotent side effects (server calls)
-	// fire on every receiving client when remote values are applied.
-	// Top 10 by edit volume + multi-editor activity (tabVersion, 180 days,
-	// 2026-06). Audited 2026-06-10: unified_tab_controller field handlers are
-	// read-only re-renders (writes live in button click handlers); the
-	// Opportunity tag-sync write branch is guarded in
-	// crm_enhancements/opportunity.js.
-	const COLLAB_DOCTYPES = [
-		"Task",
-		"Project",
-		"Opportunity",
-		"Customer",
-		"Contact",
-		"Address",
-		"Item",
-		"Supplier",
-		"Purchase Order",
-		"ToDo",
-	];
+	// The allowlist lives on ERPNext Enhancements Settings and arrives in
+	// frappe.boot.collab_doctypes (boot.boot_session); api/collab.py is the
+	// security authority for broadcasts, this list only gates client-side
+	// attachment. ONBOARDING A NEW DOCTYPE (do this before adding it in
+	// settings): audit its form scripts — field-level change triggers with
+	// non-idempotent side effects (server calls) fire on every receiving
+	// client when remote values are applied. Audited 2026-06-10 for the launch
+	// list: unified_tab_controller field handlers are read-only re-renders
+	// (writes live in button click handlers); the Opportunity tag-sync write
+	// branch is guarded in crm_enhancements/opportunity.js.
 	const DEBOUNCE_MS = 300;
 	// Per-field presence: heartbeat re-asserts a held focus; receivers expire
 	// a highlight after the TTL, so the TTL must comfortably exceed the
 	// heartbeat (a missed blur self-heals within one TTL).
 	const FOCUS_HEARTBEAT_MS = 30 * 1000;
 	const FOCUS_TTL_MS = 75 * 1000;
-	// Highlight palette; a user is deterministically hashed to one color so
-	// they look the same on every collaborator's screen.
-	const FOCUS_COLORS = ["#7c3aed", "#0ea5e9", "#16a34a", "#ea580c", "#db2777", "#ca8a04"];
+	// Highlight palette size; a user is deterministically hashed to one of the
+	// .ee-collab-color-{0..N-1} classes so they look the same on every
+	// collaborator's screen. The actual colors live in css/collab.css with
+	// light- and dark-theme variants (keep the class count in sync).
+	const FOCUS_COLOR_COUNT = 6;
 	const CLIENT_ID =
 		((frappe.session && frappe.session.user) || "unknown") +
 		":" +
@@ -91,12 +83,12 @@
 		return norm(a) === norm(b);
 	}
 
-	function user_color(user) {
+	function user_color_class(user) {
 		let hash = 0;
 		for (const ch of String(user || "")) {
 			hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
 		}
-		return FOCUS_COLORS[hash % FOCUS_COLORS.length];
+		return "ee-collab-color-" + (hash % FOCUS_COLOR_COUNT);
 	}
 
 	function ensure_observers(doctype) {
@@ -482,23 +474,24 @@
 				$target = control && control.$wrapper ? control.$wrapper : $();
 			}
 			if (!$target || !$target.length) return; // field hidden/collapsed: skip quietly
-			const color = user_color(info.user);
+			// colors come entirely from CSS (light/dark theme variants in
+			// collab.css) — JS only assigns the deterministic palette class.
+			info.color_class = user_color_class(info.user);
 			$target
 				.addClass(info.child_name ? "ee-collab-focus-cell" : "ee-collab-focus")
-				.css("--ee-collab-color", color);
+				.addClass(info.color_class);
 			$('<span class="ee-collab-focus-badge"></span>')
 				.text(info.user_fullname)
 				.attr("title", __("{0} is editing this field", [info.user_fullname]))
-				.css("background-color", color)
 				.appendTo($target);
 			info.$el = $target;
 		}
 
 		_unrender_focus(info) {
 			if (!info || !info.$el) return;
-			info.$el
-				.removeClass("ee-collab-focus ee-collab-focus-cell")
-				.css("--ee-collab-color", "");
+			info.$el.removeClass(
+				"ee-collab-focus ee-collab-focus-cell " + (info.color_class || "")
+			);
 			info.$el.find("> .ee-collab-focus-badge").remove();
 			info.$el = null;
 		}
@@ -740,22 +733,33 @@
 		frm._live_sync.attach();
 	}
 
-	COLLAB_DOCTYPES.forEach((doctype) => {
-		// appends to any existing doctype_js handlers; does not replace them
-		frappe.ui.form.on(doctype, {
-			refresh(frm) {
-				attach_or_reattach(frm);
-				// refresh re-rendered the controls, dropping highlight DOM
-				frm._live_sync && frm._live_sync.rerender_focus();
-			},
-			before_save(frm) {
-				frm._live_sync && frm._live_sync.on_local_before_save();
-			},
-			after_save(frm) {
-				frm._live_sync && frm._live_sync.on_local_save();
-			},
+	function register_collab_doctypes() {
+		const doctypes = (frappe.boot && frappe.boot.collab_doctypes) || [];
+		doctypes.forEach((doctype) => {
+			// appends to any existing doctype_js handlers; does not replace them
+			frappe.ui.form.on(doctype, {
+				refresh(frm) {
+					attach_or_reattach(frm);
+					// refresh re-rendered the controls, dropping highlight DOM
+					frm._live_sync && frm._live_sync.rerender_focus();
+				},
+				before_save(frm) {
+					frm._live_sync && frm._live_sync.on_local_before_save();
+				},
+				after_save(frm) {
+					frm._live_sync && frm._live_sync.on_local_save();
+				},
+			});
 		});
-	});
+	}
+
+	// frappe.boot isn't assigned yet when bundles are evaluated; the desk app
+	// triggers "app_ready" after boot setup and before any form can render.
+	if (frappe.boot && frappe.boot.collab_doctypes) {
+		register_collab_doctypes();
+	} else {
+		$(document).on("app_ready", register_collab_doctypes);
+	}
 
 	// Collab forms merge remote saves silently; suppress the built-in
 	// "document has been modified" conflict banner for them only.

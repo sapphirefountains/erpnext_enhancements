@@ -8,7 +8,10 @@
   "project_reminder_emails",
   "maintenance_section",
   "maintenance_fee_item",
-  "maintenance_services_group"
+  "maintenance_services_group",
+  "collab_section",
+  "collab_enabled",
+  "collab_doctypes"
  ],
  "fields": [
   {
@@ -38,6 +41,26 @@
    "fieldtype": "Link",
    "label": "Maintenance Services Item Group",
    "options": "Item Group"
+  },
+  {
+   "fieldname": "collab_section",
+   "fieldtype": "Section Break",
+   "label": "Live Collaborative Editing"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for Google-Docs-style live form editing. Changes apply on collaborators' next page load — no deploy needed.",
+   "fieldname": "collab_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Live Collaborative Editing"
+  },
+  {
+   "depends_on": "collab_enabled",
+   "description": "Doctypes with live collaborative editing. Before adding one, audit its form scripts for field-change handlers with side effects — they re-run on every collaborator's screen when remote values arrive (see the checklist in public/js/collab/live_form_sync.js).",
+   "fieldname": "collab_doctypes",
+   "fieldtype": "Table",
+   "label": "Collaborative Doctypes",
+   "options": "Collab Doctype"
   }
  ],
  "issingle": 1,

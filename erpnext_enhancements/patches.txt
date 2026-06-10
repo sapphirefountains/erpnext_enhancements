@@ -19,6 +19,8 @@ erpnext_enhancements.patches.migrate_contact_data
 erpnext_enhancements.patches.update_project_statuses
 # v0.8.0 doctype cleanup
 erpnext_enhancements.patches.delete_abandoned_doctypes
+# v1.0.0 live collab: settings-driven allowlist
+erpnext_enhancements.patches.seed_collab_doctypes
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

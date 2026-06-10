@@ -39,7 +39,7 @@ Every function is documented inline. This README is the map.
 - **Session-trust:** `time_kiosk` derives the Employee from `frappe.session.user` and rejects a mismatched claimed employee (`_resolve_employee`). The legacy single-point `log_geolocation` still trusts the supplied `employee` for back-compat.
 - **Role-gated:** `time_kiosk.get_location_history` — only `System Manager` / `HR Manager` may view *another* employee's history; everyone else sees only their own.
 - **Owner-gated:** `comments.update_comment` / `delete_comment` allow edits/deletes only when `comment.owner == frappe.session.user`.
-- **Write-permission-gated broadcasts:** `collab.broadcast_field_update` / `broadcast_focus` require **write** permission on the specific document, enforce a doctype allowlist (`COLLAB_DOCTYPES`) plus field validation and a value-size cap, and only re-publish to the doc's realtime room (whose membership Frappe's socket.io already permission-checks) — they never persist anything.
+- **Write-permission-gated broadcasts:** `collab.broadcast_field_update` / `broadcast_focus` require **write** permission on the specific document, enforce the settings-driven doctype allowlist (`get_collab_doctypes()` — master switch + child table on ERPNext Enhancements Settings) plus field validation and a value-size cap, and only re-publish to the doc's realtime room (whose membership Frappe's socket.io already permission-checks) — they never persist anything.
 - **Permission-checked reads:** `activity_log`, `comments` read endpoints, and `search` re-check `frappe.has_permission` / filter with `ignore_permissions=False` before returning data.
 - Telephony webhook handlers act as the service user `triton@sapphirefountains.com` and write with `ignore_permissions=True`.
 
