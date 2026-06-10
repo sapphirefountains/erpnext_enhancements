@@ -314,3 +314,18 @@ override_doctype_dashboards = {
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}]
+
+# ---------------------------------------------------------------------------
+# Runtime framework monkeypatches
+# ---------------------------------------------------------------------------
+# Carried in app code so they survive `bench update` (vs. editing apps/frappe).
+# Applied here because Frappe imports every app's hooks.py in every worker the
+# first time it loads hooks, so this runs once per process before any patched
+# path is reached. `_load_app_hooks` skips functions and `_`-prefixed names, so
+# neither the import alias nor the call is mistaken for a hook. See
+# monkeypatches.py for what/why — currently: stop a cached `None` (e.g. the
+# `telephony` Module Def query) from crashing get_modules_from_all_apps and the
+# app switcher.
+from erpnext_enhancements.monkeypatches import apply as _apply_monkeypatches
+
+_apply_monkeypatches()
