@@ -87,9 +87,15 @@ SCOPE_STREAMS = [
 
 
 class ProjectContract(Document):
+	# NOTE on field access: every read in the validate/autoname path uses
+	# ``self.get(...)`` rather than bare attributes. A NEW document arriving
+	# from the desk omits every empty field (the client strips nulls before
+	# POSTing), and BaseDocument raises AttributeError for unset attributes —
+	# bare reads crashed the very first save from the UI (production report,
+	# Jun 10: ``'ProjectContract' object has no attribute 'amended_from'``).
 	def autoname(self):
-		key = self.template_key or frappe.db.get_value(
-			"Contract Template", self.contract_template, "template_key"
+		key = self.get("template_key") or frappe.db.get_value(
+			"Contract Template", self.get("contract_template"), "template_key"
 		)
 		series = SERIES_BY_KEY.get(key)
 		if not series:
@@ -105,10 +111,15 @@ class ProjectContract(Document):
 		self._stamp_revision()
 		self.validate_msa_gate()
 		self._compute_totals()
-		self.title = f"{frappe.db.get_value('Contract Template', self.contract_template, 'title')}: {self.party_display or self.party}"
+		template_title = (
+			frappe.db.get_value("Contract Template", self.get("contract_template"), "title")
+			or self.get("template_key")
+			or ""
+		)
+		self.title = f"{template_title}: {self.get('party_display') or self.get('party') or ''}"
 
 	def _fetch_template_props(self):
-		if not self.contract_template:
+		if not self.get("contract_template"):
 			return
 		template_key, template_party_type = frappe.db.get_value(
 			"Contract Template", self.contract_template, ["template_key", "party_type"]
@@ -116,35 +127,37 @@ class ProjectContract(Document):
 		self.template_key = template_key
 		if template_party_type != FLEXIBLE_PARTY:
 			self.party_type = template_party_type
-		elif not self.party_type:
+		elif not self.get("party_type"):
 			frappe.throw(
 				_("Select the Party Type (Customer / Supplier / Employee) for this agreement."),
 				title=_("Party Type Required"),
 			)
 
 	def _resolve_party_display(self):
-		if not self.party:
+		if not self.get("party"):
 			return
 		name_field = {
 			"Customer": "customer_name",
 			"Supplier": "supplier_name",
 			"Employee": "employee_name",
-		}.get(self.party_type)
+		}.get(self.get("party_type"))
 		if name_field:
 			self.party_display = (
 				frappe.db.get_value(self.party_type, self.party, name_field) or self.party
 			)
 
 	def _stamp_revision(self):
-		if self.amended_from and not cint(self.revision):
+		if self.get("amended_from") and not cint(self.get("revision")):
 			self.revision = cint(frappe.db.get_value("Project Contract", self.amended_from, "revision")) + 1
 
 	def validate_msa_gate(self):
 		"""SOWs (and any template flagged requires_msa) need a Signed MSA for the party."""
+		if not self.get("contract_template"):
+			return
 		if not cint(frappe.db.get_value("Contract Template", self.contract_template, "requires_msa")):
 			return
 		msa = None
-		if self.msa_contract:
+		if self.get("msa_contract"):
 			msa = frappe.db.get_value(
 				"Project Contract",
 				self.msa_contract,
@@ -156,9 +169,9 @@ class ProjectContract(Document):
 				_("Select the Master Subcontractor Agreement this SOW is issued under."),
 				title=_("MSA Required"),
 			)
-		if msa.party != self.party:
+		if msa.party != self.get("party"):
 			frappe.throw(
-				_("MSA {0} belongs to {1}, not {2}.").format(msa.name, msa.party, self.party),
+				_("MSA {0} belongs to {1}, not {2}.").format(msa.name, msa.party, self.get("party")),
 				title=_("MSA Mismatch"),
 			)
 		if msa.docstatus != 1 or msa.status != "Signed":
@@ -172,31 +185,31 @@ class ProjectContract(Document):
 		self.msa_effective_date = msa.signed_on or msa.contract_date
 
 	def _compute_totals(self):
-		self.milestones_total = sum(flt(row.amount) for row in (self.milestones or []))
+		self.milestones_total = sum(flt(row.amount) for row in (self.get("milestones") or []))
 
-		if self.template_key == "owner":
-			included = [row for row in (self.phases or []) if cint(row.included)]
+		if self.get("template_key") == "owner":
+			included = [row for row in (self.get("phases") or []) if cint(row.included)]
 			self.total_contract_value = sum(flt(row.fee) for row in included)
 			self.total_due_at_signing = sum(flt(row.retainer) for row in included)
 			self.total_design_fee = (
-				flt(self.concept_design_fee)
-				+ flt(self.design_development_fee)
-				+ flt(self.construction_documents_fee)
+				flt(self.get("concept_design_fee"))
+				+ flt(self.get("design_development_fee"))
+				+ flt(self.get("construction_documents_fee"))
 			)
-		elif self.template_key == "rental":
+		elif self.get("template_key") == "rental":
 			self.total_rental_amount = (
-				flt(self.base_rental_fee)
-				+ flt(self.delivery_setup_fee)
-				+ flt(self.pickup_removal_fee)
-				+ flt(self.chemicals_fee)
-				+ flt(self.other_fee)
+				flt(self.get("base_rental_fee"))
+				+ flt(self.get("delivery_setup_fee"))
+				+ flt(self.get("pickup_removal_fee"))
+				+ flt(self.get("chemicals_fee"))
+				+ flt(self.get("other_fee"))
 			)
-			self.total_due_at_signing = self.total_rental_amount + flt(self.security_deposit)
-		elif self.template_key == "maintenance":
-			self.total_due_at_signing = flt(self.maintenance_deposit)
+			self.total_due_at_signing = self.total_rental_amount + flt(self.get("security_deposit"))
+		elif self.get("template_key") == "maintenance":
+			self.total_due_at_signing = flt(self.get("maintenance_deposit"))
 
 	def on_submit(self):
-		if self.status == "Draft":
+		if self.get("status") == "Draft":
 			self.status = "Out for Signature"
 
 	def on_cancel(self):
@@ -204,9 +217,9 @@ class ProjectContract(Document):
 
 	def render_body(self):
 		"""Rendered agreement HTML — called by the 'Project Contract' print format."""
-		body = frappe.db.get_value("Contract Template", self.contract_template, "body")
+		body = frappe.db.get_value("Contract Template", self.get("contract_template"), "body")
 		if not body:
-			frappe.throw(_("Contract Template {0} has no body.").format(self.contract_template))
+			frappe.throw(_("Contract Template {0} has no body.").format(self.get("contract_template")))
 		return frappe.render_template(body, _render_context(self))
 
 
