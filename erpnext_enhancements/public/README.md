@@ -109,9 +109,9 @@ These plug into the [Project Dashboard](../project_enhancements/README.md#projec
 
 ## Kiosk PWA front-end (`js/kiosk/`)
 
-`www/kiosk.html` injects a boot payload (`window.KIOSK_BOOT` = employee, settings, current status, csrf) and loads `app.js` + `geo.js`, then registers `/kiosk-sw.js`.
+`www/kiosk.html` injects a boot payload (`window.KIOSK_BOOT` = employee, settings, current status, csrf; plus `window.KIOSK_BUILD`, the per-deploy cache-bust token) and loads `app.js` + `geo.js` (both URL-versioned with `?v=<build>`), then registers `/kiosk-sw.js?v=<build>`.
 
-- **`app.js`** — UI / clock state machine. Seeds UI from boot status, confirms via `get_current_status`, and switches the card between idle / active (Open) / paused (break) views. Actions POST to [`api.time_kiosk.log_time`](../api/README.md); it starts/stops `KioskGeo` **only while Open** (never on break) and posts config (csrf, batch size) to the service worker.
+- **`app.js`** — UI / clock state machine. Seeds UI from boot status, confirms via `get_current_status`, and switches the card between idle / active (Open) / paused (break) views. Actions POST to [`api.time_kiosk.log_time`](../api/README.md); it starts/stops `KioskGeo` **only while Open** (never on break) and posts config (csrf, batch size) to the service worker. Also owns the deploy-update loop (`registration.update()` on foreground + hourly; one deferred reload when a new worker takes control) and the standalone-mode back/forward/refresh bar (`setupNav` — shown only when there's no browser chrome).
 - **`geo.js`** — geolocation on the **main thread** (workers can't read GPS). `warmup()` primes the permission on page visit; `start()` runs `watchPosition` **and** a heartbeat interval; `consider()` filters fixes (drop below `min_accuracy_m`; record only when moved ≥ `distance_filter_m` or the heartbeat elapsed). Accepted points are posted to the **service worker** (`{type:'enqueue'}`), which owns durable batching/upload. `visibilitychange`/`online` re-acquire the wake lock, grab a catch-up fix, and flush. Exposes `window.KioskGeo`.
 
 See [`www/README.md`](../www/README.md) for the service-worker / offline side.

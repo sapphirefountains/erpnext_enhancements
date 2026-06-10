@@ -16,6 +16,14 @@
   app.js) precaches this shell and these assets, so the app launches and runs
   without a network. Geolocation points are queued in IndexedDB and uploaded in
   batches with Background Sync retry. See kiosk-sw.js for the full lifecycle.
+
+  Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
+  so every mutable asset URL below carries ?v={{ deploy_version }} (a token
+  that changes on each bench build — kiosk.py::get_deploy_version). A deploy
+  therefore gives the browser brand-new URLs, and window.KIOSK_BUILD versions
+  the service-worker registration so its cache rotates too. The icons stay
+  unversioned on purpose: their content never changes (same rationale as the
+  vendored libraries in hooks.py).
 #}
 {% extends "templates/web.html" %}
 
@@ -23,7 +31,7 @@
 
 {# PWA declaration: manifest, theme/standalone meta, app icons, and kiosk styles. #}
 {% block head_include %}
-<link rel="manifest" href="/kiosk-manifest.json">
+<link rel="manifest" href="/kiosk-manifest.json?v={{ deploy_version }}">
 <meta name="theme-color" content="#00a0dd">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -32,7 +40,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon.svg">
 <link rel="icon" type="image/png" sizes="192x192" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
 <link rel="apple-touch-icon" href="/assets/erpnext_enhancements/kiosk/icons/kiosk-icon-192.png">
-<link rel="stylesheet" href="/assets/erpnext_enhancements/css/kiosk/kiosk.css">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/kiosk/kiosk.css?v={{ deploy_version }}">
 {% endblock %}
 
 {# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
@@ -68,7 +76,8 @@
   // Server-injected boot payload (employee, current interval, settings, csrf).
   window.KIOSK_BOOT = {{ boot_json | safe }};
   window.KIOSK_CSRF = "{{ csrf_token }}";
+  window.KIOSK_BUILD = "{{ deploy_version }}";
 </script>
-<script src="/assets/erpnext_enhancements/js/kiosk/geo.js"></script>
-<script src="/assets/erpnext_enhancements/js/kiosk/app.js"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/geo.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/kiosk/app.js?v={{ deploy_version }}"></script>
 {% endblock %}

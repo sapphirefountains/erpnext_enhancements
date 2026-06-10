@@ -23,6 +23,30 @@
 
 .kiosk-boot { padding: 80px 0; color: var(--tk-muted); }
 
+/* Installed-app navigation (back / forward / refresh) — app.js unhides it only
+   when running standalone, i.e. with no browser chrome (see setupNav). */
+.tk-nav {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin: 0 0 4px;
+  padding-top: env(safe-area-inset-top);
+}
+.tk-nav[hidden] { display: none; }
+.tk-nav-btn {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--tk-border);
+  border-radius: 50%;
+  background: var(--tk-card);
+  color: var(--tk-text);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tk-nav-btn:active { filter: brightness(0.92); }
+
 .tk-header { text-align: center; margin: 8px 0 16px; }
 .tk-clock { font-size: 2.6rem; font-weight: 700; line-height: 1.1; color: var(--tk-text); }
 .tk-status { color: var(--tk-muted); font-weight: 600; margin: 4px 0 0; }
