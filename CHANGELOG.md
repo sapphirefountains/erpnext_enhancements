@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-10
+
+### Fixed
+- **QuickBooks Online import: group-account conversion no longer fails with `Cannot covert to Group because Account Type is selected.`** (upstream typo). v1.0.3 started setting `is_group = 1` on parent accounts, but ERPNext's `Account.validate_group_or_ledger` refuses a ledger→group conversion while the account's **Account Type** field is set — and the affected accounts had one, both from the pre-existing chart of accounts and from the sync's own mapper. Since group accounts never receive GL postings, the type is informational and safe to drop, so the sync now clears it wherever a conversion happens: `_ensure_group_parent` clears it when promoting a ledger parent, the new `_clear_account_type_for_group_conversion` clears it on the update and auto-link paths (also dropping `account_type` from the recorded QBO-owned fields so the cleared value isn't flagged as a user conflict on the next sync), and `_map_account` no longer assigns an `account_type` to accounts it already knows are groups. Accounts with existing GL entries still refuse conversion (a different, intentional ERPNext guard). Re-run **Import All** / **Retry Failed** after deploying.
+
 ## [1.0.3] - 2026-06-10
 
 ### Fixed
