@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-06-10
+
+### Changed
+- **All agreements now carry the current office address (85 W 300 S, Bountiful, UT 84010)** — user-directed update, Jun 10 2026. The three retained originals predated the move: the NDA's intro recited "3176 South 400 East" and the Architect Agreement's two notice-address blocks (agreement + embedded SOW signature pages) listed "3176 S 400 E". The corrections live in the regeneration pipeline (`scripts/contract_templates/jinjify.py`, count-asserted like every other transform), so re-running against the source .docx files preserves them; the revised-suite templates already used the new address and reproduced byte-identically. No "3176" remains in any template.
+
 ## [1.7.1] - 2026-06-10
 
 ### Changed

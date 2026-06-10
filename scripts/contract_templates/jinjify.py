@@ -360,6 +360,12 @@ t.finish()
 
 # ============================================================ Nondisclosure Agreement (DOC-0033, retained)
 t = T("nondisclosure_agreement.html")
+# Office address update (user-directed, Jun 10 2026): the retained original
+# predates the move; all agreements now carry the current address.
+t.rep(
+    "3176 South 400 East, Bountiful, Utah  84010",
+    "85 W 300 S, Bountiful, UT 84010",
+)
 t.rep(
     "is entered this ___ day of _____, 20__ (“Effective Date”)",
     'is entered this {% if doc.contract_date %}{{ frappe.utils.formatdate(doc.contract_date, "d") }}'
@@ -386,6 +392,13 @@ t.finish()
 
 # ============================================================ Architect Agreement (DOC-0101, retained)
 t = T("architect_agreement.html")
+# Office address update (user-directed, Jun 10 2026) - both notice-address
+# blocks (agreement + embedded SOW signature pages).
+t.rep(
+    "3176 S 400 E<br>Bountiful, UT 84010",
+    "85 W 300 S<br>Bountiful, UT 84010",
+    n=2,
+)
 # page-1 header table (full-table pattern only matches the 2-row header, not
 # the embedded SOW table that begins with the same rows)
 t.rep(
