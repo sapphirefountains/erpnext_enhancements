@@ -56,6 +56,21 @@ MAINTENANCE_OPTIONS = [
 # Value Stream name -> owner-contract phase key (preselects the checkboxes).
 VALUE_STREAM_PHASE = {"Design": "design", "Build": "construction", "Service": "maintenance"}
 
+# The Jun 9 meeting's scope model, mirrored on Opportunity AND Project:
+# per value stream, "Customer Requests" (the customer's words, entered by
+# Sales) and "Deliverables" (the internal breakdown, entered by PM/Design).
+# (stream label, parent table fieldname, child column) pairs per stream.
+SCOPE_STREAMS = [
+	("Design", "custom_design_customer_requests", "design_customer_requests",
+	 "custom_design_deliverables", "design_deliverables"),
+	("Build", "custom_build_customer_requests", "build_customer_requests",
+	 "custom_build_deliverables", "build_deliverables"),
+	("Service", "custom_service_customer_requests", "service_customer_requests",
+	 "custom_service_deliverables", "service_deliverables"),
+	("Rent", "custom_rent_customer_requests", "rent_customer_requests",
+	 "custom_rent_deliverables", "rent_deliverables"),
+]
+
 
 class ProjectContract(Document):
 	def autoname(self):
@@ -223,6 +238,62 @@ def _render_context(doc):
 	}
 
 
+def _compose_scope(source):
+	"""SOW scope HTML from a source doc's request/deliverable scope tables.
+
+	Walks the four value streams (Design/Build/Service/Rent); for each stream
+	with content, emits the Customer Requests (the customer's ask, verbatim)
+	and the Deliverables (the PM/Design breakdown — PRO-0204 Step 6) as
+	lists. Streams with no rows are omitted entirely.
+	"""
+
+	def lines(table_field, column):
+		rows = source.get(table_field) or []
+		texts = []
+		for row in rows:
+			text = (row.get(column) or "").strip()
+			if text:
+				texts.append(frappe.utils.escape_html(text).replace("\n", "<br>"))
+		return texts
+
+	sections = []
+	for label, req_field, req_col, del_field, del_col in SCOPE_STREAMS:
+		requests = lines(req_field, req_col)
+		deliverables = lines(del_field, del_col)
+		if not requests and not deliverables:
+			continue
+		part = [f"<h4>{label}</h4>"]
+		if requests:
+			part.append(
+				"<p><b>Customer Requests</b></p><ul>"
+				+ "".join(f"<li>{text}</li>" for text in requests)
+				+ "</ul>"
+			)
+		if deliverables:
+			part.append(
+				"<p><b>Deliverables</b></p><ul>"
+				+ "".join(f"<li>{text}</li>" for text in deliverables)
+				+ "</ul>"
+			)
+		sections.append("".join(part))
+	return "".join(sections)
+
+
+@frappe.whitelist()
+def compose_scope_of_work(source_doctype, source_name):
+	"""Scope HTML for an SOW from a Project or Opportunity (form button / auto-pull).
+
+	"Depending on which stage the contract is in": the form pulls from the
+	linked Project once one exists, else from the Opportunity — both carry
+	the same scope tables.
+	"""
+	if source_doctype not in ("Opportunity", "Project"):
+		frappe.throw(_("Scope can only be pulled from an Opportunity or a Project."))
+	source = frappe.get_doc(source_doctype, source_name)
+	source.check_permission("read")
+	return _compose_scope(source)
+
+
 # ---------------------------------------------------------------------------
 # Generation (the "Generate Contract" buttons)
 # ---------------------------------------------------------------------------
@@ -266,6 +337,12 @@ def _prefill_from_opportunity(doc, opportunity):
 			if text:
 				doc.append("equipment_items", {"description": text[:140]})
 
+	# SOW scope from the opportunity's request/deliverable tables (only when
+	# nothing filled it yet — a Project source takes precedence, see
+	# _prefill_from_project).
+	if doc.template_key == "sow" and not doc.scope_of_work:
+		doc.scope_of_work = _compose_scope(opp) or None
+
 
 def _prefill_from_project(doc, project):
 	proj = frappe.get_doc("Project", project)
@@ -278,6 +355,11 @@ def _prefill_from_project(doc, project):
 	doc.contact_person = doc.contact_person or proj.get("custom_customer_name")
 	doc.contact_phone = doc.contact_phone or proj.get("custom_customer_phone") or proj.get("custom_contact_phone")
 	doc.contact_email = doc.contact_email or proj.get("custom_customer_email")
+	# SOW scope: the project's tables carry the PM/Design breakdown once the
+	# engagement reaches project stage, so they win; the opportunity prefill
+	# below only fills scope if the project had none.
+	if doc.template_key == "sow" and not doc.scope_of_work:
+		doc.scope_of_work = _compose_scope(proj) or None
 	if proj.get("custom_opportunity"):
 		_prefill_from_opportunity(doc, proj.custom_opportunity)
 
@@ -325,11 +407,13 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 		frappe.get_doc("Supplier", source_name).check_permission("read")
 		_prefill_from_supplier(doc, source_name)
 
-	# Customer-side billing address / contacts when a party is known.
-	if doc.party_type == "Customer" and doc.party and not doc.billing_address:
+	# Party billing address when a party is known (Customer types from the
+	# source; Supplier for an SOW generated off a Project/Opportunity with the
+	# supplier picked in the dialog).
+	if doc.party and not doc.billing_address:
 		doc.billing_address = frappe.db.get_value(
 			"Address",
-			{"link_doctype": "Customer", "link_name": doc.party},
+			{"link_doctype": doc.party_type, "link_name": doc.party},
 			"custom_full_address",
 		)
 

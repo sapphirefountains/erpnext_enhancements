@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-10
+
+The SOW's scope of work now comes from the meeting's scope model instead of free typing.
+
+### Added
+- **SOW scope composes from the source's scope tables.** `compose_scope_of_work` (whitelisted) walks the four value streams' `custom_{design,build,service,rent}_customer_requests` / `_deliverables` child tables — which exist identically on **both** Opportunity and Project — and renders each non-empty stream as "Customer Requests" (the customer's words, entered by Sales) and "Deliverables" (the PM/Design breakdown, PRO-0204 Step 6) lists. Wired three ways: (1) **prefill at generation** — an SOW created from a Project uses the project's tables, falling back to the source Opportunity's ("depending on which stage the contract is in"); (2) **auto-pull on link** — setting Project/Opportunity on an empty-scope SOW draft fills it silently; (3) **"Pull Scope from Source"** form button re-pulls deliberately, confirming before overwriting existing scope.
+- **SOW generation from Project and Opportunity** (not just Supplier): the Generate Contract dialog gains a Subcontractor (Supplier) picker for the SOW type, so the PM can issue an SOW from the project they're staffing — party, scope, project link and supplier billing address all prefill in one step. The Signed-MSA gate applies on every path (check up front, offer to create the MSA when missing).
+- Scope-composition tests: stream ordering, request/deliverable sectioning, HTML escaping, multiline rows, omission of empty streams and whitespace-only rows.
+
+### Changed
+- `create_contract` now resolves the party billing address generically (Customer or Supplier) instead of Customer-only.
+
 ## [1.5.0] - 2026-06-10
 
 Phase 4 contract generation: Brian's revised agreement suite (Apr 2026) generates inside ERPNext — auto-populated, print-friendly, revision-tracked. Five agreements: Master Subcontractor Agreement, Statement of Work, Owner Contract, Rental Agreement, Maintenance Services Agreement. (The sixth document in the packet, the Contract Comparison Report, is an internal review doc — not a generation target.)

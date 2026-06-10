@@ -20,6 +20,7 @@ from frappe.tests.utils import FrappeTestCase
 from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
 	SERIES_BY_KEY,
 	ProjectContract,
+	_compose_scope,
 	_render_context,
 )
 
@@ -143,6 +144,45 @@ class TestRevisionStamp(FrappeTestCase):
 		doc = _bare(amended_from=None, revision=0)
 		doc._stamp_revision()
 		self.assertEqual(doc.revision, 0)
+
+
+class _FakeSource:
+	"""A Project/Opportunity stand-in carrying the scope child tables."""
+
+	def __init__(self, **tables):
+		self._tables = tables
+
+	def get(self, key, default=None):
+		return self._tables.get(key, default)
+
+
+class TestScopeComposition(FrappeTestCase):
+	def test_streams_with_content_render_in_order(self):
+		source = _FakeSource(
+			custom_design_customer_requests=[frappe._dict(design_customer_requests="20ft fountain\nwith LEDs")],
+			custom_design_deliverables=[frappe._dict(design_deliverables="Concept package")],
+			custom_build_deliverables=[frappe._dict(build_deliverables="Install basin & pumps")],
+		)
+		out = _compose_scope(source)
+		self.assertIn("<h4>Design</h4>", out)
+		self.assertIn("<h4>Build</h4>", out)
+		self.assertLess(out.index("Design"), out.index("Build"))
+		self.assertIn("Customer Requests", out)
+		self.assertIn("20ft fountain<br>with LEDs", out)
+		self.assertIn("Install basin &amp; pumps", out)  # escaped
+		# streams without rows are omitted entirely
+		self.assertNotIn("Service", out)
+		self.assertNotIn("Rent", out)
+		# Build has no requests -> no empty Customer Requests block under it
+		build_section = out[out.index("<h4>Build</h4>") :]
+		self.assertNotIn("Customer Requests", build_section)
+
+	def test_empty_and_blank_rows_yield_nothing(self):
+		self.assertEqual(_compose_scope(_FakeSource()), "")
+		source = _FakeSource(
+			custom_service_customer_requests=[frappe._dict(service_customer_requests="   ")],
+		)
+		self.assertEqual(_compose_scope(source), "")
 
 
 class TestTemplatesRender(FrappeTestCase):

@@ -80,10 +80,16 @@ secure-link instruction and/or a blank card form — card data never enters ERPN
   Revision N (`revision` + `amended_from`), `track_changes` for draft history. Naming
   series per type: `SF-MSA-` / `SF-SOW-` / `SF-OC-` / `SF-RA-` / `SF-MAINT-`.
 - **Generation** — "Create > Generate Contract" on Opportunity/Project (customer
-  types) and Supplier (MSA/SOW), via `create_contract` (whitelisted): prefils party,
-  contacts, addresses, description, value-stream phase preselection, rental dates and
-  rent-deliverable equipment lines from the source. The SOW button checks
-  `get_signed_msa` up front and offers to create the MSA instead.
+  types + SOW with a supplier picker) and Supplier (MSA/SOW), via `create_contract`
+  (whitelisted): prefils party, contacts, addresses, description, value-stream phase
+  preselection, rental dates and rent-deliverable equipment lines from the source.
+  Every SOW path checks `get_signed_msa` up front and offers to create the MSA instead.
+- **SOW scope of work** composes from the source's scope tables
+  (`custom_{design,build,service,rent}_customer_requests` / `_deliverables` —
+  requests are the customer's words, deliverables the PM/Design breakdown):
+  prefilled at generation, auto-pulled when a Project/Opportunity is linked to an
+  empty-scope draft (Project wins once it exists — "depending on which stage"), and
+  re-pullable via the form's "Pull Scope from Source" button (`compose_scope_of_work`).
 - **Printing** — the "Project Contract Print" Jinja print format (fixtures) calls
   `doc.render_body()`; blanks print as fillable lines so the paper flow still works.
   E-signature is a planned follow-up.

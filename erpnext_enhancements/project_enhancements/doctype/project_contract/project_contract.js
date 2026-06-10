@@ -2,10 +2,59 @@
  * @file Project Contract form behavior.
  * @description
  * - Filters the MSA link on SOWs to Signed MSAs of the selected supplier.
+ * - SOW scope of work pulls from the linked source's Customer Requests /
+ *   Deliverables tables (Project once it exists, else Opportunity — both
+ *   carry the same scope model): automatically when the link is set on an
+ *   empty-scope draft, and on demand via "Pull Scope from Source" (which
+ *   overwrites after a confirm).
  * - "Mark as Signed" button on submitted contracts stamps status/signed_on
  *   (asking who signed), completing the paper flow until e-sign lands.
  * - "Preview / Print" jumps straight to the Project Contract Print format.
  */
+
+function ee_scope_source(frm) {
+	if (frm.doc.project) return ["Project", frm.doc.project];
+	if (frm.doc.opportunity) return ["Opportunity", frm.doc.opportunity];
+	return null;
+}
+
+function ee_pull_scope(frm, { quiet = false } = {}) {
+	const source = ee_scope_source(frm);
+	if (!source) {
+		if (!quiet) frappe.msgprint(__("Link a Project or Opportunity first."));
+		return;
+	}
+	frappe
+		.call(
+			"erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract.compose_scope_of_work",
+			{ source_doctype: source[0], source_name: source[1] }
+		)
+		.then((r) => {
+			if (r.message) {
+				frm.set_value("scope_of_work", r.message);
+				if (!quiet) {
+					frappe.show_alert({
+						message: __("Scope pulled from {0} {1}", [__(source[0]), source[1]]),
+						indicator: "green",
+					});
+				}
+			} else if (!quiet) {
+				frappe.msgprint(
+					__("{0} {1} has no Customer Requests or Deliverables to pull.", [
+						__(source[0]),
+						source[1],
+					])
+				);
+			}
+		});
+}
+
+function ee_maybe_autofill_scope(frm) {
+	// only on an editable SOW draft whose scope is still empty
+	if (frm.doc.template_key !== "sow" || frm.doc.docstatus !== 0) return;
+	if (frm.doc.scope_of_work) return;
+	ee_pull_scope(frm, { quiet: true });
+}
 
 frappe.ui.form.on("Project Contract", {
 	setup(frm) {
@@ -52,5 +101,26 @@ frappe.ui.form.on("Project Contract", {
 				frappe.set_route("print", "Project Contract", frm.doc.name);
 			});
 		}
+
+		if (frm.doc.template_key === "sow" && frm.doc.docstatus === 0 && !frm.is_new()) {
+			frm.add_custom_button(__("Pull Scope from Source"), () => {
+				if (frm.doc.scope_of_work) {
+					frappe.confirm(
+						__("Replace the current Scope of Work with the source's Customer Requests and Deliverables?"),
+						() => ee_pull_scope(frm)
+					);
+				} else {
+					ee_pull_scope(frm);
+				}
+			});
+		}
+	},
+
+	project(frm) {
+		ee_maybe_autofill_scope(frm);
+	},
+
+	opportunity(frm) {
+		ee_maybe_autofill_scope(frm);
 	},
 });
