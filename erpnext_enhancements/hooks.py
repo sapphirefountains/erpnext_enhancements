@@ -190,7 +190,7 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
 	},
 	"Sapphire Maintenance Record": {
-		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_sales_order_next_visit",
+		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 	},
 	"Opportunity": {
 		"before_save": [
@@ -318,7 +318,13 @@ fixtures = [
 	{"dt": "Workflow Action Master", "filters": [["name", "in", ["Request Review", "Approve & Submit"]]]},
 	{
 		"dt": "Notification",
-		"filters": [["name", "in", ["Maintenance Review Needed", "Maintenance Finalized"]]],
+		"filters": [
+			[
+				"name",
+				"in",
+				["Maintenance Review Needed", "Maintenance Finalized", "Maintenance Reading Out of Range"],
+			]
+		],
 	},
 	{"dt": "Print Format", "filters": [["name", "in", ["Maintenance Record Print", "Project Contract Print"]]]},
 ]

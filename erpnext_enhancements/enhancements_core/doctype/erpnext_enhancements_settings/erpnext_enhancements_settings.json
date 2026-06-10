@@ -11,6 +11,9 @@
   "maintenance_section",
   "maintenance_fee_item",
   "maintenance_services_group",
+  "consumables_item_group",
+  "default_consumables_warehouse",
+  "water_feature_item",
   "collab_section",
   "collab_enabled",
   "collab_doctypes",
@@ -63,6 +66,27 @@
    "fieldtype": "Link",
    "label": "Maintenance Services Item Group",
    "options": "Item Group"
+  },
+  {
+   "description": "Item Group the consumables picker on Maintenance Records is limited to (e.g. \"Service\"). Leave empty to allow any stock item.",
+   "fieldname": "consumables_item_group",
+   "fieldtype": "Link",
+   "label": "Consumables Item Group",
+   "options": "Item Group"
+  },
+  {
+   "description": "Last-resort source warehouse for consumables on Maintenance Records, used when neither the contract feature's warehouse nor the technician's vehicle warehouse is set.",
+   "fieldname": "default_consumables_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Consumables Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "description": "The Item whose Serial Nos represent customer water features. Drives the Serial No pickers on Sales Orders and Maintenance Contracts.",
+   "fieldname": "water_feature_item",
+   "fieldtype": "Link",
+   "label": "Water Feature Item",
+   "options": "Item"
   },
   {
    "fieldname": "collab_section",

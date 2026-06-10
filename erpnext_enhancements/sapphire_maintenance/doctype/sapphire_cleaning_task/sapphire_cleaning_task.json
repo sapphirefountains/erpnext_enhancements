@@ -1,14 +1,13 @@
 {
- "creation": "2024-05-22 12:00:00.000000",
+ "creation": "2026-06-10 12:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section",
   "serial_no",
-  "question",
-  "answer",
-  "selection",
-  "other_details"
+  "task",
+  "is_done",
+  "notes"
  ],
  "fields": [
   {
@@ -27,42 +26,34 @@
    "read_only": 1
   },
   {
-   "fieldname": "question",
+   "fieldname": "task",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Question",
+   "label": "Task",
    "read_only": 1
   },
   {
-   "fieldname": "answer",
-   "fieldtype": "Long Text",
+   "default": "0",
+   "fieldname": "is_done",
+   "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Answer"
+   "label": "Done"
   },
   {
-   "fieldname": "selection",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Selection",
-   "options": "\nPass\nFail\nReplace\nOther"
-  },
-  {
-   "depends_on": "eval:doc.selection == 'Other'",
-   "fieldname": "other_details",
+   "fieldname": "notes",
    "fieldtype": "Data",
-   "label": "Other Details",
-   "mandatory_depends_on": "eval:doc.selection == 'Other'"
+   "label": "Notes"
   }
  ],
- "modified": "2024-05-22 12:00:00.000000",
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-06-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
- "name": "Sapphire Maintenance Result",
+ "name": "Sapphire Cleaning Task",
  "owner": "Administrator",
  "permissions": [],
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": [],
- "istable": 1,
- "editable_grid": 1
+ "states": []
 }

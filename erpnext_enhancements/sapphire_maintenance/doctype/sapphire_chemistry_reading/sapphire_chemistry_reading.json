@@ -1,0 +1,89 @@
+{
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section",
+  "serial_no",
+  "reading",
+  "reading_value",
+  "uom",
+  "min_value",
+  "max_value",
+  "out_of_range",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "section",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Section",
+   "options": "Sapphire Maintenance Section"
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Water Feature",
+   "options": "Serial No",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reading",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Reading",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reading_value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Value"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Unit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_value",
+   "fieldtype": "Float",
+   "label": "Min",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_value",
+   "fieldtype": "Float",
+   "label": "Max",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "out_of_range",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Out of Range",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Data",
+   "label": "Notes"
+  }
+ ],
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Chemistry Reading",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

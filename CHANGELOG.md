@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-10
+
+### Added
+- **Modular maintenance visit forms (Google Forms replacement)** — the per-project / per-water-feature maintenance forms move into ERPNext as composable building blocks:
+  - **Sapphire Maintenance Section** (+ Section Item child): a reusable, typed form block — Chemical Dosing, Water Chemistry, Equipment Inspection, or Cleaning Tasks — authored once and shared across every form template. **Sapphire Maintenance Template** is now *composed* of sections (`sections` child table) instead of owning flat question rows; the superseded `Sapphire Template Item` doctype is dropped by patch.
+  - **Maintenance Record reshaped**: two new typed child tables (`chemistry_readings`, `cleaning_tasks`) join the existing results/consumables; every section row carries `section` + `serial_no` columns. The form instantiates all four tables from the resolved template via the new whitelisted `get_visit_payload` (replaces `get_template_items`), including on first open of scheduler-drafted records.
+  - **Chemical dosing reduces stock the same way everywhere**: dosing sections prefill consumable rows at qty 0 mapped to real Items; on submit only rows with qty > 0 become the Material Issue Stock Entry. Per-row warehouse defaults resolve feature's on-site store → technician's vehicle (new `Employee.custom_default_vehicle_warehouse`) → new Settings default.
+  - **Water chemistry ranges + supervisor alerts**: readings carry min/max targets (per-feature overrides via the new `Serial No.custom_reading_overrides` table, matched by reading label); `validate` computes `out_of_range` flags and the new "Maintenance Reading Out of Range" Notification emails the new **Maintenance Supervisor** role on submit, with a timeline Comment for the audit trail.
+- **Sapphire Maintenance Contract** (+ Contract Feature / Seasonal Visit children) — the operational contract driving visit scheduling. Created via "Create → Maintenance Contract" from a submitted Sales Order *or* a Signed Maintenance Services Agreement (Project Contract), linking both: the legal doc contributes frequency, invoicing cadence, start date and included seasonal options (startup/winterization months); the Sales Order contributes the covered water features. `visit_shape` decides whether the scheduler drafts one record per feature or one per site visit (per-feature rows inside a single form); seasonal rows draft once a year in their target month. One Active contract per project, auto-expired past `end_date`.
+- Seed patch `seed_maintenance_sections`: four sample sections (dosing mapped to the live chemical items, pH/chlorine/ORP/alkalinity ranges, inspection + cleaning checklists), three Draft templates (Standard Fountain Maintenance, Seasonal Startup, Winterization), the supervisor role, and Settings defaults. Insert-only and existence-guarded.
+
+### Changed
+- **Predictive scheduling is contract-driven**: the daily generator reads Active Maintenance Contracts' feature rows; submit-time scheduling (`update_next_visit_dates`, renamed from `update_sales_order_next_visit`) rolls contract dates forward and *mirrors* them to the Sales Order Item custom fields for existing reports. Projects without an Active contract keep the legacy Sales-Order-Item path. The historical double-fire on submit is gone (doc-event only).
+- **Warranty flow uses the native Warranty Claim** — one draft claim per failed in-warranty water feature (complaint lists the failed checks), replacing the Material Transfer Material Request and its `WARRANTY-RETURN-PENDING` placeholder item.
+- **Per-visit invoicing respects the contract**: the draft Sales Invoice is only auto-created when the contract bills "Per Visit" (looked up via the contract's Sales Order first); consumables bill only consumed quantities.
+- **No more hardcoded item codes** — new Settings fields: *Water Feature Item* (drives the Serial No pickers on Sales Order and the contract; was the literal `"Customer Water Feature"`), *Consumables Item Group* (the record's item picker filtered on the literal `"Consumables"` while the chemicals live in "Service"), and *Default Consumables Warehouse*. Runtime code never matches items by code string; sections store Item links, which survive renames.
+- Technician dashboard widget now also surfaces contract context (gate code, key location, preferred days/time from the signed agreement) and the Project's Service-stream deliverables; it renders for per-site records without a header serial. Portal/print format gains Water Chemistry (with out-of-range badges) and Cleaning Tasks tables, per-feature columns on per-site records, and hides untouched consumable prefills.
+
 ## [1.8.1] - 2026-06-10
 
 ### Fixed

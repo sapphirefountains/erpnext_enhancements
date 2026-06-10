@@ -1,0 +1,54 @@
+{
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "visit_label",
+  "template",
+  "target_month",
+  "last_generated_year"
+ ],
+ "fields": [
+  {
+   "description": "e.g. Seasonal Startup, Winterization.",
+   "fieldname": "visit_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Visit",
+   "reqd": 1
+  },
+  {
+   "fieldname": "template",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "fieldname": "target_month",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Target Month",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_generated_year",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Last Generated Year",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Seasonal Visit",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

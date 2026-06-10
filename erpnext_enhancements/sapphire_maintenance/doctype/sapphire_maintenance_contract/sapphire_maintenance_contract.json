@@ -1,0 +1,181 @@
+{
+ "autoname": "naming_series:",
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "customer",
+  "project",
+  "status",
+  "column_break_links",
+  "project_contract",
+  "sales_order",
+  "invoicing_frequency",
+  "terms_section",
+  "start_date",
+  "end_date",
+  "column_break_terms",
+  "visit_shape",
+  "default_template",
+  "features_section",
+  "covered_features",
+  "seasonal_section",
+  "seasonal_visits"
+ ],
+ "fields": [
+  {
+   "default": "MNT-CON-.YYYY.-",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Naming Series",
+   "options": "MNT-CON-.YYYY.-"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nActive\nExpired\nCancelled"
+  },
+  {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The signed Maintenance Services Agreement this operational contract executes.",
+   "fieldname": "project_contract",
+   "fieldtype": "Link",
+   "label": "Project Contract",
+   "options": "Project Contract"
+  },
+  {
+   "description": "The commercial Sales Order. Per-visit invoices are drawn against it.",
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order"
+  },
+  {
+   "default": "Per Visit",
+   "description": "Pulled from the Project Contract. Only \"Per Visit\" auto-drafts a Sales Invoice when a Maintenance Record is submitted.",
+   "fieldname": "invoicing_frequency",
+   "fieldtype": "Select",
+   "label": "Invoicing Frequency",
+   "options": "Per Visit\nMonthly\nQuarterly\nAnnually"
+  },
+  {
+   "fieldname": "terms_section",
+   "fieldtype": "Section Break",
+   "label": "Terms"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date"
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date"
+  },
+  {
+   "fieldname": "column_break_terms",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Per Feature",
+   "description": "Per Feature: one visit form per water feature. Per Site Visit: one form covers all covered features, with per-feature rows inside it.",
+   "fieldname": "visit_shape",
+   "fieldtype": "Select",
+   "label": "Visit Shape",
+   "options": "Per Feature\nPer Site Visit",
+   "reqd": 1
+  },
+  {
+   "description": "Used for covered features that don't set their own template.",
+   "fieldname": "default_template",
+   "fieldtype": "Link",
+   "label": "Default Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "fieldname": "features_section",
+   "fieldtype": "Section Break",
+   "label": "Covered Water Features"
+  },
+  {
+   "fieldname": "covered_features",
+   "fieldtype": "Table",
+   "label": "Covered Features",
+   "options": "Sapphire Contract Feature"
+  },
+  {
+   "fieldname": "seasonal_section",
+   "fieldtype": "Section Break",
+   "label": "Seasonal Visits"
+  },
+  {
+   "description": "Annual one-off visits (startup, winterization) drafted when their target month arrives.",
+   "fieldname": "seasonal_visits",
+   "fieldtype": "Table",
+   "label": "Seasonal Visits",
+   "options": "Sapphire Seasonal Visit"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Maintenance Contract",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "customer"
+}

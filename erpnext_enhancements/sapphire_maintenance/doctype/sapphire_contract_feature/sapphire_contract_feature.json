@@ -1,0 +1,74 @@
+{
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "serial_no",
+  "frequency",
+  "template",
+  "default_warehouse",
+  "last_visit_date",
+  "next_visit_date",
+  "sales_order_item"
+ ],
+ "fields": [
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Water Feature (Serial No)",
+   "options": "Serial No",
+   "reqd": 1
+  },
+  {
+   "fieldname": "frequency",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Frequency",
+   "options": "\nDaily\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nYearly"
+  },
+  {
+   "description": "Blank = the contract's default template, falling back to the Active template for the Project/Customer.",
+   "fieldname": "template",
+   "fieldtype": "Link",
+   "label": "Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "description": "Where this feature's chemicals are drawn from (e.g. an on-site store). Blank = the technician's vehicle warehouse, then the settings default.",
+   "fieldname": "default_warehouse",
+   "fieldtype": "Link",
+   "label": "Chemical Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "last_visit_date",
+   "fieldtype": "Date",
+   "label": "Last Visit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "next_visit_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Next Visit"
+  },
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Sales Order Item"
+  }
+ ],
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Contract Feature",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

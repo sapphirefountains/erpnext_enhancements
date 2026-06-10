@@ -10,6 +10,9 @@
  * - "Mark as Signed" button on submitted contracts stamps status/signed_on
  *   (asking who signed), completing the paper flow until e-sign lands.
  * - "Preview / Print" jumps straight to the Project Contract Print format.
+ * - Signed Maintenance Services Agreements get "Create > Maintenance
+ *   Contract", mapping the legal terms into an operational Sapphire
+ *   Maintenance Contract (visit scheduling + modular visit forms).
  */
 
 function ee_scope_source(frm) {
@@ -100,6 +103,20 @@ frappe.ui.form.on("Project Contract", {
 			frm.add_custom_button(__("Preview / Print"), () => {
 				frappe.set_route("print", "Project Contract", frm.doc.name);
 			});
+		}
+
+		if (frm.doc.template_key === "maintenance" && frm.doc.status === "Signed") {
+			frm.add_custom_button(
+				__("Maintenance Contract"),
+				() => {
+					frappe.model.open_mapped_doc({
+						method:
+							"erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.make_contract_from_project_contract",
+						frm: frm,
+					});
+				},
+				__("Create")
+			);
 		}
 
 		if (frm.doc.template_key === "sow" && frm.doc.docstatus === 0 && !frm.is_new()) {

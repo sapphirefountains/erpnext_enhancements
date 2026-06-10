@@ -17,12 +17,30 @@
   },
   {
    "dependencies": "",
+   "label": "Maintenance Contract",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Contract"
+  },
+  {
+   "dependencies": "",
    "label": "Maintenance Template",
    "link_count": 0,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link",
    "link_to": "Sapphire Maintenance Template"
+  },
+  {
+   "dependencies": "",
+   "label": "Form Section",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Section"
   },
   {
    "dependencies": "",

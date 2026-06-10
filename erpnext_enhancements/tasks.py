@@ -6,7 +6,8 @@ Two unrelated scheduling features live here, both registered in hooks.py:
   Task is completed, spawns the next occurrence per its recurrence rules.
 * :func:`predictive_maintenance_scheduling` — ``daily`` scheduler_event. Wraps
   :func:`generate_predictive_maintenance_records`, which drafts upcoming Sapphire
-  Maintenance Records from maintenance Sales Orders.
+  Maintenance Records from Active Sapphire Maintenance Contracts (falling back
+  to maintenance Sales Orders for projects without one).
 """
 import frappe
 from frappe.utils import add_days, add_months, add_years, get_weekday, getdate
@@ -142,18 +143,87 @@ def create_duplicate_task(doc, new_date):
 def generate_predictive_maintenance_records():
 	"""
 	Cron job to automatically generate Draft Sapphire Maintenance Records.
-	Queries Sales Order Item for active maintenance contracts where the 
-	next predictive visit is within 7 days.
+
+	Contract-driven: Active Sapphire Maintenance Contracts are the scheduling
+	source of truth. Per contract:
+
+	* **Per Feature** shape — one draft per covered feature whose
+	  ``next_visit_date`` is within 7 days (deduped on project + serial).
+	* **Per Site Visit** shape — a single draft covering the whole site when
+	  any feature is due (deduped on the contract link).
+	* **Seasonal visits** — one draft per seasonal row when its target month
+	  arrives, at most once per year (``last_generated_year`` stamp).
+
+	Drafts are bare headers; the visit form instantiates its section tables
+	from the resolved template when the technician opens it. Contracts whose
+	``end_date`` has passed are marked Expired. Projects *without* an Active
+	contract fall back to the legacy Sales Order Item query so pre-contract
+	maintenance orders keep generating visits.
 	"""
 	from frappe.utils import add_days, nowdate, getdate
 
-	# 1. Get all Sales Order Items for Active Maintenance Orders
-	# Filter by next_predictive_visit <= 7 days from now
+	today = getdate(nowdate())
+	horizon = add_days(today, 7)
+	month_name = today.strftime("%B")
+
+	# 0. Expire contracts that ran out
+	for name in frappe.get_all(
+		"Sapphire Maintenance Contract",
+		filters={"status": "Active", "end_date": ["<", today]},
+		pluck="name",
+	):
+		frappe.db.set_value("Sapphire Maintenance Contract", name, "status", "Expired")
+
+	# 1. Contract-driven generation
+	contract_projects = set()
+	contracts = frappe.get_all(
+		"Sapphire Maintenance Contract", filters={"status": "Active"}, pluck="name"
+	)
+	for contract_name in contracts:
+		contract = frappe.get_doc("Sapphire Maintenance Contract", contract_name)
+		if contract.project:
+			contract_projects.add(contract.project)
+		if contract.start_date and getdate(contract.start_date) > today:
+			continue
+
+		due_features = [
+			row for row in contract.covered_features
+			if row.next_visit_date and getdate(row.next_visit_date) <= horizon
+		]
+
+		if contract.visit_shape == "Per Site Visit":
+			if due_features and not frappe.db.exists(
+				"Sapphire Maintenance Record",
+				{"maintenance_contract": contract.name, "visit_label": ["is", "not set"], "docstatus": 0},
+			):
+				_draft_maintenance_record(contract)
+		else:
+			for row in due_features:
+				if frappe.db.exists(
+					"Sapphire Maintenance Record",
+					{"project": contract.project, "serial_no": row.serial_no, "docstatus": 0},
+				):
+					continue
+				_draft_maintenance_record(contract, serial_no=row.serial_no)
+
+		# Seasonal (annual) visits: startup / winterization
+		for row in contract.get("seasonal_visits", []):
+			if row.target_month != month_name or (row.last_generated_year or 0) >= today.year:
+				continue
+			if not frappe.db.exists(
+				"Sapphire Maintenance Record",
+				{"maintenance_contract": contract.name, "visit_label": row.visit_label, "docstatus": 0},
+			):
+				_draft_maintenance_record(contract, visit_label=row.visit_label)
+			frappe.db.set_value("Sapphire Seasonal Visit", row.name, "last_generated_year", today.year)
+
+	# 2. Legacy fallback for projects without an Active contract: Sales Order
+	# Items whose next predictive visit is within 7 days.
 	items = frappe.db.get_all(
 		"Sales Order Item",
 		filters={
 			"docstatus": 1,
-			"custom_next_predictive_visit": ["<=", add_days(nowdate(), 7)],
+			"custom_next_predictive_visit": ["<=", horizon],
 			"custom_serial_no": ["is", "set"]
 		},
 		fields=["name", "parent", "custom_serial_no", "custom_next_predictive_visit"],
@@ -167,21 +237,40 @@ def generate_predictive_maintenance_records():
 			["status", "project", "customer"]
 		)
 
+		if so_project in contract_projects:
+			continue
+
 		if so_status not in ["Closed", "Completed"] and so_project:
-			# 2. Check for existing Draft record for this project + serial_no
+			# Check for existing Draft record for this project + serial_no
 			if not frappe.db.exists("Sapphire Maintenance Record", {
 				"project": so_project,
 				"serial_no": item.custom_serial_no,
 				"docstatus": 0
 			}):
-				# 3. Create the Maintenance Record
+				# Create the Maintenance Record
 				maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
 				maintenance_record.customer = so_customer
 				maintenance_record.project = so_project
 				maintenance_record.serial_no = item.custom_serial_no
 				maintenance_record.insert(ignore_permissions=True)
-				
+
 				frappe.logger().info(f"Generated predictive Maintenance Record for serial_no {item.custom_serial_no} in project {so_project}")
+
+
+def _draft_maintenance_record(contract, serial_no=None, visit_label=None):
+	"""Insert a bare draft visit record for a contract (header fields only)."""
+	record = frappe.new_doc("Sapphire Maintenance Record")
+	record.customer = contract.customer
+	record.project = contract.project
+	record.maintenance_contract = contract.name
+	record.serial_no = serial_no
+	record.visit_label = visit_label
+	record.insert(ignore_permissions=True)
+	frappe.logger().info(
+		f"Generated predictive Maintenance Record for contract {contract.name}"
+		f" ({serial_no or visit_label or 'site visit'})"
+	)
+	return record
 
 
 def predictive_maintenance_scheduling():
