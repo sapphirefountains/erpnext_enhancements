@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-10
+
+### Fixed
+- **`twilio` is now a declared dependency** (`pyproject.toml`: `twilio>=8,<10`). `api/telephony.py` imports it at module top (`twilio.request_validator.RequestValidator` for webhook signature validation, `twilio.jwt.access_token` for softphone Voice JWTs), but it was never in the `dependencies` array — it only worked because the production bench happened to have the package installed, and a fresh `bench get-app` install would have raised `ImportError` on every request importing the telephony module. The constraint admits the 8.x/9.x SDKs (the used APIs are stable across both) and guards against a breaking 10.x. An AST audit of every import across the app found no other gaps: `google*` packages are declared, and `requests`/`werkzeug` are provided by frappe itself (bench-managed, deliberately undeclared per the existing `frappe~=16.0.0` comment). Existing benches are unaffected; the declaration only matters for fresh installs and `bench setup requirements`.
+
 ## [1.2.0] - 2026-06-10
 
 Phase 2 of the Jun 9 Projects/Invoice-processing meeting: the sales pipeline on a wall TV ("two-three days to build that out… get another Raspberry Pi and another screen").

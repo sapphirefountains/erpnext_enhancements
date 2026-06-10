@@ -14,6 +14,10 @@ dependencies = [
     "google-auth",
     "google-auth-httplib2",
     "google-auth-oauthlib",
+    # api/telephony.py imports twilio at module top (webhook signature
+    # validation + Voice access-token JWTs). The used APIs are stable across
+    # 8.x-9.x; the bound guards against a breaking 10.x.
+    "twilio>=8,<10",
     # "frappe~=16.0.0" # Installed and managed by bench.
 ]
 
