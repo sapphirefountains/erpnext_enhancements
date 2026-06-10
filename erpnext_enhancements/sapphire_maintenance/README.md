@@ -62,6 +62,8 @@ Buttons creating contracts live on the source forms: `public/js/sales_order_enha
 
 **Scheduling:** the daily job `tasks.predictive_maintenance_scheduling` reads Active Maintenance Contracts — Per Feature shape drafts one record per due feature, Per Site Visit drafts one per site, seasonal rows draft once a year in their target month. Drafts are bare headers; the form instantiates its tables from the template on first open (`get_visit_payload`). Projects without an Active contract fall back to the legacy Sales Order Item cadence fields.
 
+**Time Kiosk integration:** clocking into a project with an Active contract (or Active template) surfaces a **Maintenance Form** button on the kiosk's active-job card (`api/time_kiosk.py::get_maintenance_context` — links the newest open draft, else a prefilled new record, opened in a new tab so the clock keeps running). Clock-out and cross-project switches re-check the server and warn (non-blocking confirm) when the technician hasn't submitted a record for that project since clock-in. Field technicians need the native **Maintenance User** role (create/write/submit on the record, read on contracts/templates).
+
 **On submit**, `SapphireMaintenanceRecord.on_submit` enqueues [`api/maintenance_workflow.py::process_maintenance_submission`](../api/README.md) (background, "default" queue) which runs isolated steps:
 
 - `create_stock_entry` — Material Issue for consumables with qty > 0 (untouched dosing prefills don't move stock); per-row warehouse falls back feature store → technician's vehicle (`Employee.custom_default_vehicle_warehouse`) → settings default.

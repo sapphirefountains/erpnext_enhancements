@@ -5,7 +5,8 @@ Covers: section -> template composition and visit-payload instantiation
 evaluator, the consumable-warehouse fallback chain, stock-entry row building
 (qty-0 prefills skipped), contract mapping from Sales Order / Project
 Contract, contract-driven predictive scheduling for both visit shapes (with
-dedupe), and next-visit date roll-forward on submit-time scheduling.
+dedupe), next-visit date roll-forward on submit-time scheduling, and the Time
+Kiosk's maintenance-form context (required / form link / submitted-since).
 """
 import frappe
 import unittest
@@ -326,6 +327,42 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.assertEqual(len(drafts), 1)
 		contract.reload()
 		self.assertEqual(contract.seasonal_visits[0].last_generated_year, getdate(nowdate()).year)
+
+	# ------------------------------------------------------------------ kiosk
+
+	def test_kiosk_maintenance_context_and_submission_check(self):
+		from frappe.utils import now_datetime
+		from erpnext_enhancements.api.time_kiosk import get_maintenance_context
+
+		# No Active contract and no Active template -> not required
+		self.assertFalse(get_maintenance_context(project=self.project)["required"])
+
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}])
+		clock_in = now_datetime()
+
+		ctx = get_maintenance_context(project=self.project, since=clock_in)
+		self.assertTrue(ctx["required"])
+		self.assertEqual(ctx["contract"], contract.name)
+		self.assertIn("/app/sapphire-maintenance-record/new?", ctx["form_route"])
+		self.assertIn("maintenance_contract=", ctx["form_route"])
+		self.assertFalse(ctx["submitted_since"])
+
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.technician = "Administrator"
+		record.maintenance_contract = contract.name
+		record.insert(ignore_permissions=True)
+
+		# An open draft becomes the link target
+		ctx = get_maintenance_context(project=self.project)
+		self.assertEqual(ctx["draft"], record.name)
+		self.assertTrue(ctx["form_route"].endswith(record.name))
+
+		record.submit()
+		ctx = get_maintenance_context(project=self.project, since=clock_in)
+		self.assertTrue(ctx["submitted_since"])
 
 	def test_update_next_visit_dates_rolls_contract_forward(self):
 		contract = self._make_contract(

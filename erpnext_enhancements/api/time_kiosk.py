@@ -392,6 +392,92 @@ def get_tasks_for_project(project):
 
 
 @frappe.whitelist()
+def get_maintenance_context(project=None, since=None):
+    """Maintenance-form context for the kiosk's active job card.
+
+    Called by the kiosk PWA when a technician is clocked into a project, and
+    again before clock-out / project-switch. A project "has maintenance" when
+    it carries an Active Sapphire Maintenance Contract or resolves to an
+    Active maintenance form template (project- or customer-scoped).
+
+    Args:
+        project (str): Project name (docname).
+        since (str, optional): Datetime (the interval's clock-in). When given,
+            ``submitted_since`` reports whether the session user submitted a
+            Sapphire Maintenance Record for the project after that moment —
+            the basis for the "no form submitted" clock-out warning.
+
+    Returns:
+        dict: {"required": False} when the project has no maintenance; else {
+            "required": True,
+            "contract": Active contract name or None,
+            "draft": newest open draft record for the project or None,
+            "form_route": desk URL — the draft when one exists, else a
+                prefilled new-record route (project/customer/contract/
+                technician as query params -> frappe.route_options),
+            "submitted_since": bool (False when ``since`` not given),
+        }
+    """
+    if not project:
+        return {"required": False}
+
+    contract = frappe.db.get_value(
+        "Sapphire Maintenance Contract",
+        {"project": project, "status": "Active"},
+        ["name", "visit_shape"],
+        as_dict=True,
+    )
+    if not contract:
+        from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+            resolve_template,
+        )
+        if not resolve_template(project=project):
+            return {"required": False}
+
+    draft = frappe.db.get_value(
+        "Sapphire Maintenance Record",
+        {"project": project, "docstatus": 0},
+        "name",
+        order_by="modified desc",
+    )
+
+    if draft:
+        form_route = "/app/sapphire-maintenance-record/" + draft
+    else:
+        from urllib.parse import urlencode
+
+        params = {"project": project, "technician": frappe.session.user}
+        customer = frappe.db.get_value("Project", project, "customer")
+        if customer:
+            params["customer"] = customer
+        if contract:
+            params["maintenance_contract"] = contract.name
+        form_route = "/app/sapphire-maintenance-record/new?" + urlencode(params)
+
+    submitted_since = False
+    if since:
+        user = frappe.session.user
+        submitted_since = bool(frappe.get_all(
+            "Sapphire Maintenance Record",
+            filters={
+                "project": project,
+                "docstatus": 1,
+                "modified": [">=", get_datetime(since)],
+            },
+            or_filters=[["technician", "=", user], ["owner", "=", user]],
+            limit=1,
+        ))
+
+    return {
+        "required": True,
+        "contract": contract.name if contract else None,
+        "draft": draft,
+        "form_route": form_route,
+        "submitted_since": submitted_since,
+    }
+
+
+@frappe.whitelist()
 def link_attachment(file_name, project, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
