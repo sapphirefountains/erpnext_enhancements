@@ -28,6 +28,8 @@ erpnext_enhancements.patches.seed_process_step_templates
 erpnext_enhancements.patches.backfill_project_opportunity_link
 # v1.4.0 morning task dashboard block
 erpnext_enhancements.patches.seed_task_dashboard_block
+# v1.5.0 contract generation: the five agreement templates
+erpnext_enhancements.patches.seed_contract_templates
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

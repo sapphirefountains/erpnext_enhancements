@@ -62,6 +62,32 @@ module [`process_steps.py`](../process_steps.py):
   shows a "Hand-off in progress" rail of active projects with their current step,
   overdue ones glowing first.
 
+## Contract generation (Phase 4, v1.5.0)
+
+Five agreements generate inside ERPNext: **MSA** (Master Subcontractor Agreement, per
+Supplier, Tier 1/Tier 2), **SOW** (Statement of Work — only creatable under a *Signed*
+MSA for the same Supplier; the gate lives in `ProjectContract.validate_msa_gate`),
+**Owner Contract** (phase-selectable Design/Construction/Maintenance), **Rental
+Agreement**, and **Maintenance Services Agreement** (payment authorization prints as a
+secure-link instruction and/or a blank card form — card data never enters ERPNext).
+
+- **`Contract Template`** (`doctype/contract_template/`) — the Jinja HTML bodies,
+  seeded insert-only from `templates/contracts/` (regeneration pipeline:
+  `scripts/contract_templates/`); legal-text edits happen on the site record.
+- **`Project Contract`** (`doctype/project_contract/`) — submittable instance with
+  per-type structured data (phase/milestone/equipment/service-option child tables,
+  computed totals) and native revision lineage: submit = issued, cancel + amend =
+  Revision N (`revision` + `amended_from`), `track_changes` for draft history. Naming
+  series per type: `SF-MSA-` / `SF-SOW-` / `SF-OC-` / `SF-RA-` / `SF-MAINT-`.
+- **Generation** — "Create > Generate Contract" on Opportunity/Project (customer
+  types) and Supplier (MSA/SOW), via `create_contract` (whitelisted): prefils party,
+  contacts, addresses, description, value-stream phase preselection, rental dates and
+  rent-deliverable equipment lines from the source. The SOW button checks
+  `get_signed_msa` up front and offers to create the MSA instead.
+- **Printing** — the "Project Contract Print" Jinja print format (fixtures) calls
+  `doc.render_body()`; blanks print as fillable lines so the paper flow still works.
+  E-signature is a planned follow-up.
+
 ## Master Project
 
 A lightweight container doctype grouping ordinary Projects into a program/portfolio. Projects join via the **`Project.custom_master_project`** Link field (no child table on the Master side); **`Project.custom_subproject_order`** controls ordering under the master. `get_projects_and_tasks` returns member Projects and their Tasks for the form's read-only HTML tables. The dashboard's `get_master_project_projects` / `update_master_project_structure` reuse the same grouping (the latter persists drag-reordering).

@@ -50,6 +50,7 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
+		"public/js/contracts.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
@@ -64,6 +65,7 @@ doctype_js = {
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
 		"public/js/project_enhancements/process_steps.js",
+		"public/js/contracts.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
@@ -103,6 +105,7 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/contracts.js",
 	],
 	"Lead": [
 		"public/js/vue.global.js",
@@ -317,7 +320,7 @@ fixtures = [
 		"dt": "Notification",
 		"filters": [["name", "in", ["Maintenance Review Needed", "Maintenance Finalized"]]],
 	},
-	{"dt": "Print Format", "filters": [["name", "=", "Maintenance Record Print"]]},
+	{"dt": "Print Format", "filters": [["name", "in", ["Maintenance Record Print", "Project Contract Print"]]]},
 ]
 
 override_whitelisted_methods = {

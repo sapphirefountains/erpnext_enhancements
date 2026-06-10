@@ -1,0 +1,125 @@
+{
+ "actions": [],
+ "autoname": "field:template_key",
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "template_key",
+  "title",
+  "column_break_main",
+  "party_type",
+  "requires_msa",
+  "enabled",
+  "body_section",
+  "description",
+  "body"
+ ],
+ "fields": [
+  {
+   "description": "Stable machine key (msa, sow, owner, rental, maintenance). Drives the contract numbering series and generation logic — do not change after contracts exist.",
+   "fieldname": "template_key",
+   "fieldtype": "Data",
+   "label": "Template Key",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Who the agreement is with: Customer for owner/rental/maintenance contracts, Supplier for subcontractor agreements (matches the Subcontracting module's party model).",
+   "fieldname": "party_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Party Type",
+   "options": "Customer\nSupplier",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "A contract from this template can only be created for a party with a Signed Master Subcontractor Agreement (used by the SOW).",
+   "fieldname": "requires_msa",
+   "fieldtype": "Check",
+   "label": "Requires Signed MSA"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "body_section",
+   "fieldtype": "Section Break",
+   "label": "Agreement Body"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "description": "Jinja HTML rendered with the Project Contract as context (doc, fill(), cb(), money(), dt() helpers — see process docs). Edit here when legal text changes; no deploy needed. Seeded from the version-controlled sources in templates/contracts/.",
+   "fieldname": "body",
+   "fieldtype": "Code",
+   "label": "Body (Jinja HTML)",
+   "options": "Jinja",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Contract Template",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Employee",
+   "share": 1
+  }
+ ],
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title"
+}

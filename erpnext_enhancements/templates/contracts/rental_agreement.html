@@ -1,0 +1,106 @@
+<h3><b>RENTAL AGREEMENT</b></h3>
+<p><b>Water Feature &amp; Fountain Equipment Rental</b></p>
+<p><b>Sapphire Fountains, LLC</b></p>
+<p>85 W 300 S, Bountiful, UT 84010</p>
+<p>www.sapphirefountains.com</p>
+<h1>RENTER &amp; RENTAL INFORMATION</h1>
+<table class="ct-table"><tr><td><b>Renter Name:</b></td><td>{{ fill(doc.party_display, 50) }}</td></tr><tr><td><b>Renter Address:</b></td><td>{{ multiline(doc.billing_address, 50, 1) }}</td></tr><tr><td><b>City / State / Zip:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.contact_phone, 50) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.contact_email, 50) }}</td></tr><tr><td><b>Rental Site Address:</b></td><td>{{ multiline(doc.site_address, 50, 1) }}</td></tr><tr><td><b>Rental Start Date:</b></td><td>{{ dt(doc.rental_start_date) }}</td></tr><tr><td><b>Rental End Date:</b></td><td>{{ dt(doc.rental_end_date) }}</td></tr><tr><td><b>Agreement Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr></table>
+<h1>EQUIPMENT DESCRIPTION</h1>
+<table class="ct-table">{% for item in doc.equipment_items %}<tr><td><b>Item {{ loop.index }} – Description:</b></td><td>{{ fill(item.description, 45) }}</td></tr><tr><td><b>Item {{ loop.index }} – Serial / ID #:</b></td><td>{{ fill(item.serial_id, 45) }}</td></tr>{% endfor %}{% if not doc.equipment_items %}{% for i in [1, 2, 3] %}<tr><td><b>Item {{ i }} – Description:</b></td><td>{{ blank(45) }}</td></tr><tr><td><b>Item {{ i }} – Serial / ID #:</b></td><td>{{ blank(45) }}</td></tr>{% endfor %}{% endif %}<tr><td><b>Additional Equipment:</b></td><td>(see attached equipment list if needed)</td></tr></table>
+<h1>1. PARTIES</h1>
+<p>This Rental Agreement (&quot;Agreement&quot;) is entered into between Sapphire Fountains, LLC (&quot;Owner&quot;) and the Renter identified above (&quot;Renter&quot;). Owner agrees to rent the equipment described above (collectively, the &quot;Equipment&quot;) to Renter under the terms and conditions set forth herein.</p>
+<h1>2. RENTAL PERIOD</h1>
+<p>2.1  The rental period begins on the Rental Start Date and ends on the Rental End Date identified above (&quot;Rental Period&quot;). Equipment must be returned or made available for pickup by 5:00 PM on the Rental End Date unless a written extension is agreed upon in advance.</p>
+<p>2.2  If Renter retains the Equipment beyond the Rental End Date without a written extension, Renter shall be charged the applicable daily rental rate for each day (or part thereof) of overholding, in addition to any other remedies available to Owner.</p>
+<p>2.3  Owner shall deliver/install the Equipment on the Rental Start Date and retrieve/deinstall the Equipment on the Rental End Date, unless otherwise agreed. Delivery and pickup fees are specified in Section 3.</p>
+<h1>3. RENTAL FEES AND PAYMENT</h1>
+<p>3.1  Renter agrees to pay Owner the following amounts for the Rental Period:</p>
+<table class="ct-table"><tr><td><b>Base Rental Fee:</b></td><td>{{ money(doc.base_rental_fee) }}</td></tr><tr><td><b>Delivery &amp; Setup Fee:</b></td><td>{{ money(doc.delivery_setup_fee) }}</td></tr><tr><td><b>Pickup &amp; Removal Fee:</b></td><td>{{ money(doc.pickup_removal_fee) }}</td></tr><tr><td><b>Water Treatment / Chemicals:</b></td><td>{{ money(doc.chemicals_fee) }}</td></tr><tr><td><b>Other ({{ fill(doc.other_fee_label, 16) }}):</b></td><td>{{ money(doc.other_fee) }}</td></tr><tr><td><b>Total Rental Amount:</b></td><td>{{ money(doc.total_rental_amount) }}</td></tr><tr><td><b>Security Deposit:</b></td><td>{{ money(doc.security_deposit) }}</td></tr><tr><td><b>Total Due at Signing:</b></td><td>{{ money(doc.total_due_at_signing) }}</td></tr></table>
+<p>3.2  Payment is due as follows: 50% of the Total Rental Amount plus the full Security Deposit is due upon signing this Agreement. The remaining 50% is due no later than ___ days prior to the Rental Start Date.</p>
+<p>3.3  Acceptable payment methods include check, ACH transfer, or credit card (credit card payments subject to a 3% processing fee).</p>
+<p>3.4  Overdue payments shall accrue interest at 1.5% per month. Owner may cancel this Agreement if payment is not received within five (5) business days of the due date, and Owner shall retain any deposits as liquidated damages.</p>
+<h1>4. SECURITY DEPOSIT</h1>
+<p>4.1  The Security Deposit identified above shall be held by Owner as security for Renter&#x27;s obligations under this Agreement, including but not limited to damage, excessive cleaning, missing components, and overholding charges.</p>
+<p>4.2  Owner shall return the Security Deposit within fourteen (14) business days following return/removal of the Equipment, less any deductions for: damage beyond normal wear and tear; missing accessories, components, or parts; required cleaning or repairs; or outstanding rental charges.</p>
+<p>4.3  Owner shall provide Renter with an itemized written statement of any deductions from the Security Deposit.</p>
+<h1>5. DELIVERY, INSTALLATION, AND RETURN</h1>
+<p>5.1  Owner (or Owner&#x27;s authorized representative) shall deliver, install, and test the Equipment at the rental site. Renter shall provide adequate access, a level surface, access to electrical power (if required), and a clean water source on-site.</p>
+<p>5.2  Renter shall ensure that the rental site is accessible and ready for installation on the agreed delivery date. Any delay caused by Renter shall be charged at Owner&#x27;s then-current hourly rate.</p>
+<p>5.3  Renter shall make the Equipment available for pickup/deinstallation by Owner on the Rental End Date. Failure to provide timely access will result in overholding charges (Section 2.2).</p>
+<p>5.4  Equipment Condition Documentation. A detailed Equipment Condition Report (see Exhibit A) shall be completed and signed by both Parties at delivery/installation and again at return/removal. Each item is rated using the scale: N = New, G = Good, F = Fair, P = Poor, D = Damaged. Photographs of the Equipment shall be taken at both delivery and return and shall form part of the condition record. Renter&#x27;s signature on the Equipment Condition Report at delivery constitutes acceptance of the stated delivery condition. Any item not rated at delivery shall be presumed to have been in &quot;Good&quot; condition. Discrepancies between the delivery and return ratings shall be the basis for any damage charges under Section 8.</p>
+<h1>6. RENTER&#x27;S RESPONSIBILITIES</h1>
+<p>6.1  Renter shall use the Equipment only for its intended purpose and in accordance with any operating instructions provided by Owner. Renter shall not modify, disassemble, repair, or alter the Equipment in any way.</p>
+<p>6.2  Renter shall protect the Equipment from damage, theft, and unauthorized use. Renter shall be responsible for Equipment from the time of delivery until the time of return/pickup by Owner.</p>
+<p>6.3  Renter shall not move the Equipment from the rental site address identified above without Owner&#x27;s prior written consent.</p>
+<p>6.4  Renter shall not sublease, loan, or transfer possession of the Equipment to any third party.</p>
+<p>6.5  Renter shall ensure that children and unauthorized persons are kept at a safe distance from the Equipment at all times during the Rental Period.</p>
+<p>6.6  Renter shall monitor water levels and report any Equipment malfunction or damage to Owner promptly. Renter shall not attempt to repair the Equipment.</p>
+<p>6.7  Renter is responsible for obtaining any permits or approvals required for the Equipment&#x27;s use at the rental site.</p>
+<h1>7. MAINTENANCE DURING RENTAL PERIOD</h1>
+<p>7.1  Owner is responsible for major repairs and maintenance resulting from normal wear and tear. Owner shall respond to Equipment malfunction reports within a commercially reasonable time.</p>
+<p>7.2  Renter is responsible for daily monitoring, maintaining adequate water levels, removing debris from the Equipment, and following operating instructions provided by Owner.</p>
+<p>7.3  If Equipment malfunction is caused by Renter&#x27;s negligence or misuse, repair costs shall be charged to Renter and deducted from the Security Deposit or billed separately.</p>
+<h1>8. DAMAGE AND LOSS</h1>
+<p>8.1  Renter shall be responsible for all damage to the Equipment beyond normal wear and tear occurring during the Rental Period, including damage caused by accidents, misuse, vandalism, theft, or acts of third parties.</p>
+<p>8.2  In the event of damage or loss, Renter shall notify Owner immediately and shall not move or further alter the Equipment.</p>
+<p>8.3  Renter shall pay the reasonable cost of repair or, if the Equipment is determined to be a total loss, the replacement value of the Equipment, less any applicable depreciation.</p>
+<p>8.4  Owner&#x27;s assessment of repair costs and replacement value shall be final, subject to Renter&#x27;s right to obtain an independent estimate at Renter&#x27;s expense.</p>
+<h1>9. INSURANCE</h1>
+<p>9.1  Renter is strongly encouraged to obtain temporary property/liability insurance to cover the Equipment and any liability arising from its use during the Rental Period.</p>
+<p>9.2  Owner&#x27;s insurance does not cover damage to third-party property or bodily injury caused by Renter&#x27;s use of the Equipment.</p>
+<p>9.3  If requested, Renter shall provide Owner with a certificate of insurance prior to the Rental Start Date naming Sapphire Fountains, LLC as an additional insured.</p>
+<h1>10. INDEMNIFICATION</h1>
+<p>10.1  Renter shall indemnify, defend, and hold harmless Sapphire Fountains, LLC, its members, managers, employees, and agents from and against any and all claims, losses, damages, liabilities, costs, and expenses (including reasonable attorneys&#x27; fees) arising out of or related to: (a) Renter&#x27;s use, operation, or custody of the Equipment; (b) any breach of this Agreement by Renter; (c) any personal injury or property damage occurring at the rental site during the Rental Period; or (d) Renter&#x27;s negligence or willful misconduct.</p>
+<p>10.2  Renter assumes all risk associated with the use of the Equipment and the presence of water features at the rental site, including but not limited to slip-and-fall risks, electrical hazards, and drowning risks. Renter agrees to take all reasonable precautions to protect guests and the public.</p>
+<h1>11. LIMITATION OF LIABILITY</h1>
+<p>11.1  Owner&#x27;s maximum liability to Renter shall not exceed the total rental fees paid by Renter under this Agreement.</p>
+<p>11.2  Owner shall not be liable for loss of use, loss of enjoyment, lost profits, or any indirect, incidental, special, or consequential damages arising from any Equipment malfunction, provided Owner responds to repair requests within a commercially reasonable time.</p>
+<h1>12. CANCELLATION POLICY</h1>
+<p>12.1  Cancellations made more than thirty (30) days prior to the Rental Start Date: full refund of rental fees; Security Deposit refunded.</p>
+<p>12.2  Cancellations made between fifteen (15) and thirty (30) days prior to the Rental Start Date: 50% of rental fees retained; Security Deposit refunded.</p>
+<p>12.3  Cancellations made fewer than fifteen (15) days prior to the Rental Start Date: 100% of rental fees retained; Security Deposit refunded.</p>
+<p>12.4  Owner reserves the right to cancel this Agreement due to circumstances beyond Owner&#x27;s control (e.g., equipment failure, natural disaster). In such event, Owner shall provide a full refund of all amounts paid.</p>
+<h1>13. DEFAULT AND REMEDIES</h1>
+<p>13.1  Renter shall be in default if: (a) Renter fails to make a required payment; (b) Renter fails to return Equipment by the Rental End Date; (c) Renter violates any material term of this Agreement; or (d) Renter becomes insolvent.</p>
+<p>13.2  Upon default, Owner may: (a) repossess the Equipment immediately without notice; (b) declare all outstanding rental amounts immediately due; and/or (c) pursue all available legal remedies including recovery of repair/replacement costs.</p>
+<h1>14. GOVERNING LAW AND DISPUTE RESOLUTION</h1>
+<p>14.1  Governing Law. This Agreement shall be governed by and construed in accordance with the laws of the State of Utah, without regard to its conflict of law principles.</p>
+<p>14.2  Negotiation. The Parties shall attempt in good faith to resolve any dispute arising under or relating to this Agreement through written negotiation for a period of thirty (30) days following delivery of written notice identifying the nature of the dispute.</p>
+<p>14.3  Mediation. If the Parties are unable to resolve the dispute through negotiation within thirty (30) days, either Party may submit the dispute to non-binding mediation before a mutually agreed neutral mediator in Salt Lake City, Utah. The Parties shall share the mediator&#x27;s fees equally and each bear their own attorneys&#x27; fees in mediation. Mediation shall be completed within sixty (60) days of the mediator&#x27;s appointment. Mediation is a condition precedent to arbitration, and no Party may demand arbitration without first participating in good faith in mediation, unless the dispute involves irreparable harm warranting emergency equitable relief.</p>
+<p>14.4  Arbitration. If mediation fails to resolve the dispute, either Party may submit the matter to final, binding arbitration in Salt Lake City, Utah, administered by the American Arbitration Association under its Commercial Arbitration Rules then in effect. The arbitrator&#x27;s decision shall be final and binding and may be entered as a judgment in any court of competent jurisdiction. The prevailing party shall be entitled to recover reasonable attorneys&#x27; fees and costs.</p>
+<p>14.5  JURY TRIAL WAIVER. TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, EACH PARTY IRREVOCABLY AND UNCONDITIONALLY WAIVES ANY AND ALL RIGHTS TO A TRIAL BY JURY IN ANY ACTION, PROCEEDING, OR COUNTERCLAIM (WHETHER BASED ON CONTRACT, TORT, OR OTHERWISE) ARISING OUT OF OR RELATING TO THIS AGREEMENT, THE EQUIPMENT, OR THE TRANSACTIONS CONTEMPLATED HEREBY. EACH PARTY ACKNOWLEDGES THAT THIS WAIVER IS KNOWING AND VOLUNTARY, AND THAT THE OTHER PARTY IS RELYING ON THIS WAIVER AS A MATERIAL TERM OF THIS AGREEMENT.</p>
+<h1>15. GENERAL PROVISIONS</h1>
+<p>15.1  Entire Agreement. This Agreement constitutes the entire agreement between Owner and Renter regarding the rental of the Equipment and supersedes all prior discussions and representations.</p>
+<p>15.2  Amendments. Any modification must be in writing and signed by both Parties.</p>
+<p>15.3  Severability. If any provision is invalid, the remainder of this Agreement shall remain in full force.</p>
+<p>15.4  Electronic Signatures. This Agreement may be signed electronically; such signatures are fully binding.</p>
+<p>15.5  Photographs. Owner reserves the right to photograph the Equipment in use for marketing and portfolio purposes.</p>
+<h1>EXHIBIT A – EQUIPMENT CONDITION REPORT</h1>
+<p>Complete at delivery AND again at return/removal. Both Parties or their authorized representatives must sign each section.</p>
+<p>Condition Rating Scale: N = New  |  G = Good  |  F = Fair  |  P = Poor  |  D = Damaged / Non-Functional  |  NA = Not Applicable</p>
+<table class="ct-table"><tr><td><b>Item / Component</b></td><td><b>Delivery Condition</b></td><td><b>Return Condition</b></td><td><b>Notes / Damage Description</b></td></tr><tr><td>Pump(s) / Motor(s)</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Pump Strainer Basket(s)</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Fountain Basin / Bowl</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Water Level Sensor / Float</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Nozzles / Jets / Spray Heads</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Distribution Manifold / Plumbing</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Supply &amp; Return Plumbing Lines</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Fittings, Unions &amp; Valves</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Filter Assembly / Media</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Skimmer / Debris Basket</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Lighting Fixtures (underwater)</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Lighting Fixtures (exterior/accent)</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Power Cords &amp; GFCI Plugs</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Control Panel / Timer / Transformer</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Decorative Elements / Statuary</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Basin Liner / Waterproof Coating</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Frame / Structural Components</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Hoses / Flex Connectors</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Chemical Dosing Equipment (if any)</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr><tr><td>Other: {{ blank(30) }}</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td></td></tr></table>
+<h3>DELIVERY INSPECTION</h3>
+<p>Photos taken:  [ ] Yes  [ ] No    Number of photos: {{ blank(30) }}     Storage location / shared link: {{ blank(30) }}</p>
+<p>Delivery Notes / Observed Pre-Existing Damage: {{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>Owner Representative: {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Renter (or Authorized Agent): {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<h3>RETURN / REMOVAL INSPECTION</h3>
+<p>Photos taken:  [ ] Yes  [ ] No    Number of photos: {{ blank(30) }}     Storage location / shared link: {{ blank(30) }}</p>
+<p>Return Notes / Damage Observed at Return: {{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>Damage Charge Estimate (if any): {{ money(None) }}    Description: {{ blank(30) }}</p>
+<p>Owner Representative: {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Renter (or Authorized Agent): {{ blank(30) }}    Title: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<h1>SIGNATURES</h1>
+<p>By signing below, the Parties agree to be bound by the terms of this Rental Agreement.</p>
+<p><b>Sapphire Fountains, LLC (Owner)</b></p>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Authorized Representative of Sapphire Fountains, LLC)</p>
+<h3><b>RENTER</b></h3>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Renter)</p>

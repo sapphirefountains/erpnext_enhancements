@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "option_key",
+  "option_label",
+  "included",
+  "price",
+  "unit"
+ ],
+ "fields": [
+  {
+   "fieldname": "option_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Option Key"
+  },
+  {
+   "columns": 4,
+   "fieldname": "option_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Service Option",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "included",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Included"
+  },
+  {
+   "columns": 2,
+   "fieldname": "price",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Price"
+  },
+  {
+   "columns": 3,
+   "description": "e.g. \"visit\", \"event\", \"year\"; include frequency like \"4 visits / month\"",
+   "fieldname": "unit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Per"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Contract Service Option",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

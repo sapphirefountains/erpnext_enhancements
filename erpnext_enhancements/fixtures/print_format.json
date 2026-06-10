@@ -1,10 +1,20 @@
 [
-  {
-    "doctype": "Print Format",
-    "name": "Maintenance Record Print",
-    "standard": "Yes",
-    "doc_type": "Sapphire Maintenance Record",
-    "custom_format": 1,
-    "html": "<h3>Maintenance Record: {{ doc.name }}</h3><p>Project: {{ doc.project }}</p><p>Technician: {{ doc.technician }}</p><br/><h4>Consumables</h4><table><tr><th>Item</th><th>Qty</th></tr>{% for row in doc.consumables %}<tr><td>{{ row.item }}</td><td>{{ row.qty }}</td></tr>{% endfor %}</table>"
-  }
+ {
+  "custom_format": 1,
+  "doc_type": "Sapphire Maintenance Record",
+  "doctype": "Print Format",
+  "html": "<h3>Maintenance Record: {{ doc.name }}</h3><p>Project: {{ doc.project }}</p><p>Technician: {{ doc.technician }}</p><br/><h4>Consumables</h4><table><tr><th>Item</th><th>Qty</th></tr>{% for row in doc.consumables %}<tr><td>{{ row.item }}</td><td>{{ row.qty }}</td></tr>{% endfor %}</table>",
+  "name": "Maintenance Record Print",
+  "standard": "Yes"
+ },
+ {
+  "css": ".contract-doc { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.45; color: #000; }\n.contract-doc h1 { font-size: 13pt; text-align: center; margin: 14px 0 8px; page-break-after: avoid; }\n.contract-doc h2, .contract-doc h3 { font-size: 11pt; margin: 12px 0 6px; page-break-after: avoid; }\n.contract-doc p { margin: 5px 0; text-align: justify; }\n.contract-doc table.ct-table { width: 100%; border-collapse: collapse; margin: 8px 0; page-break-inside: avoid; }\n.contract-doc table.ct-table td { border: 1px solid #444; padding: 4px 7px; vertical-align: top; font-size: 10pt; }\n.contract-doc .ct-blank { display: inline-block; border-bottom: 1px solid #000; min-height: 1em; white-space: nowrap; overflow: hidden; }\n.contract-doc .ct-cb { font-size: 12pt; }",
+  "custom_format": 1,
+  "doc_type": "Project Contract",
+  "doctype": "Print Format",
+  "html": "<div class=\"contract-doc contract-{{ doc.template_key }}\">\n{{ doc.render_body() }}\n{% if doc.revision %}<p style=\"text-align:right; font-size:9pt;\"><i>Revision {{ doc.revision }} (supersedes {{ doc.amended_from }})</i></p>{% endif %}\n</div>",
+  "name": "Project Contract Print",
+  "print_format_type": "Jinja",
+  "standard": "Yes"
+ }
 ]
