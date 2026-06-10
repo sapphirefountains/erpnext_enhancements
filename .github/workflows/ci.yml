@@ -49,6 +49,32 @@ jobs:
       - run: python -m unittest test_sync_time_kiosk.py -v
 
   # ---------------------------------------------------------------------------
+  # Version sync — hard gate.
+  #
+  # release.yml refuses to tag when __init__.py and package.json disagree
+  # ("bump both together"), but it only runs after a merge to main — by then
+  # the drift has already silently blocked the release (this bit v0.9.0: only
+  # __init__.py was bumped, the Release run failed post-merge, and no tag was
+  # cut until a follow-up PR). This job runs the same comparison on every
+  # push/PR so a half-finished bump fails *before* merge, where it's cheap.
+  # ---------------------------------------------------------------------------
+  version-sync:
+    name: Version sync (__init__.py == package.json)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare versions
+        run: |
+          PY=$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' erpnext_enhancements/__init__.py)
+          PKG=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' package.json | head -1)
+          echo "__init__.py: $PY"
+          echo "package.json: $PKG"
+          if [ -z "$PY" ] || [ "$PKG" != "$PY" ]; then
+            echo "::error::Version drift -- __init__.py is '$PY' but package.json is '$PKG'. Bump both together (release.yml will refuse to tag otherwise)."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
   # NOTE: A Frappe integration-test job (spinning up a real bench with ERPNext
   # + payments and running `bench run-tests --app erpnext_enhancements`) was
   # removed. On the version-16 toolchain it never reached our own assertions —
