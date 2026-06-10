@@ -6,6 +6,7 @@
   "start_url": "/kiosk",
   "scope": "/kiosk",
   "display": "standalone",
+  "display_override": ["minimal-ui"],
   "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#00a0dd",

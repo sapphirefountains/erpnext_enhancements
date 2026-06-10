@@ -27,13 +27,21 @@
  *   - sync:     the SYNC_TAG Background Sync event re-runs flushQueue() once the
  *               browser regains connectivity.
  *
- * Cache versioning: CACHE = 'time-kiosk-v3'. Bump the version suffix (…-v4, …-v5)
- * whenever the precached app shell / assets change so installed clients fetch the
- * new files. On activate the old cache is deleted, so the bump is the cache-bust.
- * (The IndexedDB schema is versioned separately via DB_VERSION below.)
+ * Cache versioning — AUTOMATIC, per deploy. The page registers this script as
+ * /kiosk-sw.js?v=<deploy token> (kiosk.py::get_deploy_version — the mtime of
+ * sites/assets/assets.json, i.e. a new value on every bench build). A deploy is
+ * therefore a new script URL: the browser installs the new worker, whose CACHE
+ * name embeds the token, and activate deletes every other cache — no manual
+ * version bump needed anymore. Precaching uses `cache: 'reload'` + the same
+ * ?v= suffix the page uses, so the 1-year-immutable HTTP cache for raw /assets
+ * can never feed a stale copy into a fresh cache.
+ * (The IndexedDB schema is versioned separately via DB_VERSION below — it does
+ * NOT rotate per deploy; bump it only on schema changes.)
  */
 
-const CACHE = 'time-kiosk-v3';
+// 'dev' only if registered without ?v= (e.g. a manual register() in devtools).
+const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
+const CACHE = 'time-kiosk-' + VERSION;
 const SYNC_TAG = 'flush-geo';
 const BATCH_ENDPOINT =
   '/api/method/erpnext_enhancements.api.time_kiosk.log_geolocation_batch';
@@ -48,6 +56,12 @@ const PRECACHE = [
   '/assets/erpnext_enhancements/kiosk/icons/kiosk-maskable-512.png',
   '/kiosk-manifest.json',
 ];
+
+// The page requests these URLs with the same ?v= token (kiosk.html), so cache
+// keys line up; fetch matching uses ignoreSearch as a belt-and-braces anyway.
+function versioned(url) {
+  return url + (url.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(VERSION);
+}
 
 // --- IndexedDB -------------------------------------------------------------
 // Two object stores, created/upgraded in openDB().onupgradeneeded:
@@ -198,7 +212,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     // Best-effort: a single 404 shouldn't fail the whole install.
-    await Promise.allSettled(PRECACHE.map((url) => cache.add(url)));
+    // `cache: 'reload'` bypasses the HTTP cache — raw /assets are served
+    // immutable for a year, and a new deploy must precache fresh bytes.
+    await Promise.allSettled(
+      PRECACHE.map((url) => cache.add(new Request(versioned(url), { cache: 'reload' })))
+    );
     self.skipWaiting();
   })());
 });
@@ -238,7 +256,11 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/assets/erpnext_enhancements/') ||
       url.pathname === '/kiosk-manifest.json') {
     event.respondWith((async () => {
-      const cached = await caches.match(req);
+      // ignoreSearch: the cache only ever holds this deploy's entries (activate
+      // deleted the rest), so matching across ?v= variants can't serve a stale
+      // deploy — it just keeps page and worker tolerant of a brief skew while
+      // an update is mid-flight.
+      const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
         if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
         return res;

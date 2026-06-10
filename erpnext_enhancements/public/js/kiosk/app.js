@@ -12,8 +12,10 @@
  * token) and drives KioskGeo (geo.js) for location tracking, which runs only while
  * clocked in AND active (status "Open").
  *
- * Flow: init() injects the template, caches DOM refs, wires events, configures
- * KioskGeo + warms up the location permission, registers the service worker, seeds
+ * Flow: init() injects the template, caches DOM refs, wires events (incl. the
+ * standalone-mode back/forward/refresh bar — see setupNav), configures KioskGeo +
+ * warms up the location permission, registers the service worker (versioned per
+ * deploy via window.KIOSK_BUILD, with foreground/hourly update checks), seeds
  * the UI from the boot status then confirms via get_current_status. renderState()
  * is the central state machine that switches the card between the idle/clock-in
  * form, the active (Open) view, and the paused (break) view, and starts/stops
@@ -26,6 +28,10 @@
   var BOOT = window.KIOSK_BOOT || {};
   var CSRF = window.KIOSK_CSRF || BOOT.csrf_token || '';
   var SETTINGS = BOOT.settings || {};
+  // Per-deploy cache-bust token (kiosk.py::get_deploy_version, injected by
+  // kiosk.html). Versions the service-worker registration so every deploy
+  // rotates the SW cache automatically.
+  var BUILD = window.KIOSK_BUILD || '';
 
   var app = {
     status: null,            // 'Open' | 'Paused' | 'Idle'
@@ -39,6 +45,11 @@
   var el = {};
 
   var TEMPLATE = [
+    '<div class="tk-nav" id="tk-nav" hidden>',
+    '  <button class="tk-nav-btn" id="tk-nav-back" type="button" aria-label="Go back">&#8249;</button>',
+    '  <button class="tk-nav-btn" id="tk-nav-forward" type="button" aria-label="Go forward">&#8250;</button>',
+    '  <button class="tk-nav-btn" id="tk-nav-refresh" type="button" aria-label="Refresh">&#8635;</button>',
+    '</div>',
     '<div class="tk-header">',
     '  <div class="tk-clock" id="tk-clock">--:--:--</div>',
     '  <p class="tk-status" id="tk-status">Ready to Work</p>',
@@ -414,10 +425,73 @@
 
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/kiosk-sw.js')
-      .then(sendSWConfig)
+    // The ?v= token ties the worker to this deploy: a new build is a new
+    // script URL, so the browser installs the new worker (skipWaiting) and
+    // its activate step deletes the previous deploy's cache. No manual
+    // CACHE-version bumps in kiosk-sw.js anymore.
+    var swUrl = '/kiosk-sw.js' + (BUILD ? '?v=' + encodeURIComponent(BUILD) : '');
+    var hadController = !!navigator.serviceWorker.controller;
+
+    navigator.serviceWorker.register(swUrl)
+      .then(function (reg) {
+        sendSWConfig();
+        watchForUpdates(reg);
+      })
       .catch(function () { /* SW optional; app still works online */ });
     navigator.serviceWorker.ready.then(sendSWConfig);
+
+    // When an updated worker takes control mid-session, reload once so the
+    // page runs the code it just precached — but never while the user is
+    // looking at the app (a visible reload could eat a half-typed note), and
+    // never on the very first install (the page is already current).
+    var reloadScheduled = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloadScheduled) return;
+      reloadScheduled = true;
+      if (document.hidden) { window.location.reload(); return; }
+      document.addEventListener('visibilitychange', function onHide() {
+        if (!document.hidden) return;
+        document.removeEventListener('visibilitychange', onHide);
+        window.location.reload();
+      });
+    });
+  }
+
+  // Installed PWAs can stay open for days, but the browser only checks for a
+  // new worker on navigation — so also re-check whenever the app returns to
+  // the foreground, and hourly while it stays open. With the reload hook
+  // above, a deploy reaches even a kiosk that is never relaunched.
+  function watchForUpdates(reg) {
+    function check() {
+      reg.update().catch(function () { /* offline — next check will retry */ });
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') check();
+    });
+    setInterval(check, 60 * 60 * 1000);
+  }
+
+  // -- Installed-app navigation ---------------------------------------------
+  // An installed PWA running standalone (or iOS "Add to Home Screen") has no
+  // browser chrome, so back/forward/refresh are impossible — notably after
+  // following the "View My History" link. Render our own bar in that case.
+  // In a normal browser tab — or when the browser honors the manifest's
+  // minimal-ui display_override and draws its own controls — it stays hidden.
+  function isStandaloneDisplay() {
+    if (window.navigator.standalone === true) return true; // iOS home-screen app
+    return !!(window.matchMedia && (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.matchMedia('(display-mode: fullscreen)').matches
+    ));
+  }
+
+  function setupNav() {
+    var bar = $('tk-nav');
+    if (!bar || !isStandaloneDisplay()) return;
+    bar.hidden = false;
+    $('tk-nav-back').addEventListener('click', function () { window.history.back(); });
+    $('tk-nav-forward').addEventListener('click', function () { window.history.forward(); });
+    $('tk-nav-refresh').addEventListener('click', function () { window.location.reload(); });
   }
 
   // -- Clock / timer -------------------------------------------------------
@@ -515,6 +589,7 @@
     root.removeAttribute('aria-busy');
     cacheEls();
     wire();
+    setupNav();
 
     window.KioskGeo.configure(SETTINGS).onStatus(renderTrack);
     // Ask for location permission on visit, so it's granted before clock-in.

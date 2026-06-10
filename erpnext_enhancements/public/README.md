@@ -11,7 +11,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 > no content hash, so an edited raw include never reaches a device that already
 > cached it (the v0.8.1 "Kanban fix works on desktop, phones still broken" bug).
 > Global JS goes through `js/kanban.bundle.js` or `js/erpnext_enhancements.bundle.js`,
-> global CSS through `css/desk_enhancements.bundle.css` or `css/desk_addons.bundle.css`
+> global CSS through `css/desk_enhancements.bundle.css` or `css/desk_addons.bundle.scss`
 > — esbuild gives the built files content-hashed names. Where "Load" says
 > `app_include_js/css` below, the file is imported by one of those bundles. The
 > only raw global includes are the two vendored UMD libs (`vue.global.js`,
@@ -109,9 +109,9 @@ These plug into the [Project Dashboard](../project_enhancements/README.md#projec
 
 ## Kiosk PWA front-end (`js/kiosk/`)
 
-`www/kiosk.html` injects a boot payload (`window.KIOSK_BOOT` = employee, settings, current status, csrf) and loads `app.js` + `geo.js`, then registers `/kiosk-sw.js`.
+`www/kiosk.html` injects a boot payload (`window.KIOSK_BOOT` = employee, settings, current status, csrf; plus `window.KIOSK_BUILD`, the per-deploy cache-bust token) and loads `app.js` + `geo.js` (both URL-versioned with `?v=<build>`), then registers `/kiosk-sw.js?v=<build>`.
 
-- **`app.js`** — UI / clock state machine. Seeds UI from boot status, confirms via `get_current_status`, and switches the card between idle / active (Open) / paused (break) views. Actions POST to [`api.time_kiosk.log_time`](../api/README.md); it starts/stops `KioskGeo` **only while Open** (never on break) and posts config (csrf, batch size) to the service worker.
+- **`app.js`** — UI / clock state machine. Seeds UI from boot status, confirms via `get_current_status`, and switches the card between idle / active (Open) / paused (break) views. Actions POST to [`api.time_kiosk.log_time`](../api/README.md); it starts/stops `KioskGeo` **only while Open** (never on break) and posts config (csrf, batch size) to the service worker. Also owns the deploy-update loop (`registration.update()` on foreground + hourly; one deferred reload when a new worker takes control) and the standalone-mode back/forward/refresh bar (`setupNav` — shown only when there's no browser chrome).
 - **`geo.js`** — geolocation on the **main thread** (workers can't read GPS). `warmup()` primes the permission on page visit; `start()` runs `watchPosition` **and** a heartbeat interval; `consider()` filters fixes (drop below `min_accuracy_m`; record only when moved ≥ `distance_filter_m` or the heartbeat elapsed). Accepted points are posted to the **service worker** (`{type:'enqueue'}`), which owns durable batching/upload. `visibilitychange`/`online` re-acquire the wake lock, grab a catch-up fix, and flush. Exposes `window.KioskGeo`.
 
 See [`www/README.md`](../www/README.md) for the service-worker / offline side.
@@ -121,15 +121,15 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | File | Styles | Load |
 |---|---|---|
 | `desk_enhancements.bundle.css` | Desk "Sapphire glass" theme + Procurement Tracker, Comments App, Kanban, activity numbering, filter-help | app_include_css |
-| `desk_addons.bundle.css` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`) | app_include_css |
+| `desk_addons.bundle.scss` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`). A `.scss` entry **on purpose**: sass inlines its extension-less imports against the real path; a plain `.css` entry's `@import`s get resolved against the postcss plugin's temp dir and ENOENT the whole `bench build` (broke the v0.8.1 Frappe Cloud deploy). Builds to `desk_addons.bundle.css` | app_include_css |
 | `login_enhancements.bundle.css` | Login/forgot/signup pages | web_include_css |
 | `global_enhancements/horizontal_scroll.css` | Opportunity Kanban horizontal scroll layout | doctype_css["Opportunity"] |
-| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.css` |
+| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.scss` |
 | `kiosk/kiosk.css` | Standalone Time Kiosk PWA shell | `www/kiosk.html` `<link>` (not hooks) |
-| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.css` |
-| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.css` |
-| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.css` |
-| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.css` |
+| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.scss` |
+| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.scss` |
+| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.scss` |
+| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.scss` |
 
 ## Gotchas
 
