@@ -4,8 +4,11 @@ Verifies that ``broadcast_field_update`` enforces the doctype allowlist,
 write permission, field validity (existence + value-holding fieldtype),
 value size cap, and child-table validity — and that a valid call publishes
 exactly one ``collab_field_update`` event to the document's realtime room.
-``broadcast_focus`` (per-field presence) shares the same guards and is
-covered for both the focus and blur shapes.
+``broadcast_focus`` (per-field presence) shares the allowlist/permission
+guards (throwing) but drops invalid field targets *silently* — a throw
+there surfaces as an error modal on the sender, which is how presence
+broke the Comments App "New Note" button (clicking it focused the host
+HTML field). Covered for the focus, blur, and silent-drop shapes.
 """
 
 from unittest.mock import patch
@@ -162,10 +165,36 @@ class TestCollabRelay(FrappeTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			broadcast_focus(**self._focus_args())
 
-	def test_focus_requires_fieldname_when_focused(self):
-		"""A focus event must name a field; only blurs may omit it."""
-		with self.assertRaises(frappe.ValidationError):
+	def test_focus_without_fieldname_dropped_silently(self):
+		"""A focus event without a field is ignored — no publish, no throw."""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
 			broadcast_focus(**self._focus_args(fieldname=None))
+		pub.assert_not_called()
+
+	def test_focus_on_display_fieldtype_dropped_silently(self):
+		"""Focus inside a non-value wrapper (HTML/Button/Table) is ignored.
+
+		Regression: the Comments App mounts in an HTML field; clicking its
+		"New Note" button broadcast that field, and the old throw popped an
+		"Invalid field" modal that killed the dialog being opened.
+		"""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
+			broadcast_focus(**self._focus_args(fieldname="depends_on"))
+		pub.assert_not_called()
+
+	def test_focus_on_unknown_field_dropped_silently(self):
+		"""Focus on a fieldname missing from the meta is ignored, not thrown."""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
+			broadcast_focus(**self._focus_args(fieldname="not_a_real_field"))
+		pub.assert_not_called()
+
+	def test_focus_on_invalid_child_doctype_dropped_silently(self):
+		"""Focus naming a child doctype the parent doesn't declare is ignored."""
+		with patch("erpnext_enhancements.api.collab.frappe.publish_realtime") as pub:
+			broadcast_focus(
+				**self._focus_args(child_doctype="Sales Order Item", child_name="row1")
+			)
+		pub.assert_not_called()
 
 	def test_focus_publishes_to_doc_room(self):
 		"""A valid focus event publishes collab_focus with user identity."""

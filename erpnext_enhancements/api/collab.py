@@ -25,7 +25,12 @@ Security model:
 	  Enhancements Settings; the bootinfo copy only gates client attachment).
 	- Caller must hold *write* permission on the specific document.
 	- ``fieldname`` must exist on the target meta and hold a value (display
-	  fieldtypes such as Section Break / HTML / Table are rejected).
+	  fieldtypes such as Section Break / HTML / Table do not). Field updates
+	  reject invalid fields with a throw; focus events drop them *silently* —
+	  presence is best-effort, and a throw surfaces as an error modal on the
+	  sender (focus can land inside non-value wrappers, e.g. the Comments App
+	  button in an HTML field, where a modal would break the click it rode in
+	  on).
 	- ``value`` is capped at ``MAX_VALUE_LENGTH`` characters.
 
 No server-side throttle in v1: the client debounces 300ms per field (~3
@@ -80,33 +85,42 @@ def get_collab_doctypes():
 	return {row.document_type for row in settings.get("collab_doctypes") or [] if row.document_type}
 
 
-def _check_target(doctype, docname, fieldname, child_doctype):
-	"""Shared guard for both broadcast endpoints.
-
-	Enforces the doctype allowlist and write permission, and (when a
-	``fieldname`` is given) validates that it exists on the parent meta — or on
-	``child_doctype``, which must be one of the parent's table options — and
-	holds a value (display fieldtypes are rejected).
-	"""
+def _check_access(doctype, docname):
+	"""Allowlist + write-permission guard shared by both endpoints (throws)."""
 	if doctype not in get_collab_doctypes():
 		frappe.throw(_("Live sync is not enabled for {0}").format(doctype))
 
 	if not frappe.has_permission(doctype, "write", doc=docname):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	if not fieldname:
-		return
 
+def _is_broadcastable_field(doctype, fieldname, child_doctype):
+	"""Whether ``fieldname`` is a valid sync target.
+
+	True when it exists on the parent meta — or on ``child_doctype``, which
+	must be one of the parent's table options — and holds a value (display
+	fieldtypes such as Section Break / HTML / Table do not).
+	"""
 	meta = frappe.get_meta(doctype)
 	if child_doctype:
 		if child_doctype not in {df.options for df in meta.get_table_fields()}:
-			frappe.throw(_("Invalid child table"))
+			return False
 		target_meta = frappe.get_meta(child_doctype)
 	else:
 		target_meta = meta
 
 	df = target_meta.get_field(fieldname)
-	if not df or df.fieldtype in no_value_fields:
+	return bool(df) and df.fieldtype not in no_value_fields
+
+
+def _check_target(doctype, docname, fieldname, child_doctype):
+	"""Strict guard for field updates: access checks plus field validity.
+
+	Focus events use :func:`_check_access` + :func:`_is_broadcastable_field`
+	directly so an invalid field can be dropped without a throw.
+	"""
+	_check_access(doctype, docname)
+	if fieldname and not _is_broadcastable_field(doctype, fieldname, child_doctype):
 		frappe.throw(_("Invalid field"))
 
 
@@ -181,10 +195,16 @@ def broadcast_focus(
 		focused: 1 on focus/heartbeat, 0 on blur.
 	"""
 	focused = cint(focused)
-	if focused and not fieldname:
-		frappe.throw(_("Invalid field"))
+	_check_access(doctype, docname)
 
-	_check_target(doctype, docname, fieldname, child_doctype)
+	if focused and not (fieldname and _is_broadcastable_field(doctype, fieldname, child_doctype)):
+		# Drop quietly, never throw: focus can land inside non-value wrappers
+		# (HTML fields hosting custom widgets — e.g. the Comments App's "New
+		# Note" button — Buttons, grid Table wrappers), and a throw here pops
+		# an "Invalid field" error modal on the sender that breaks whatever
+		# the click was doing. Nothing is published, so nothing is at risk;
+		# receivers TTL out any highlight this event would have refreshed.
+		return
 
 	frappe.publish_realtime(
 		"collab_focus",
