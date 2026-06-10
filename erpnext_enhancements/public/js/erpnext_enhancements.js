@@ -13,9 +13,13 @@
  *     field from the form's single Address link (patches Controller.refresh).
  *   - Safe auto-save / "User Form Drafts": persists dirty form state to
  *     localStorage + server (erpnext_enhancements.api.user_drafts.*) and offers a
- *     restore banner on reload.
- *   - Navigation guard: intercepts clicks, frappe.set_route and router.render to
- *     confirm before leaving a form with unsaved changes.
+ *     restore banner on reload. This is the ONLY unsaved-changes protection: the
+ *     old blocking navigation guard ("You have unsaved changes. Are you sure you
+ *     want to leave?" on clicks / set_route / router.render) was removed in
+ *     v0.8.1 — it fired falsely right after saving a new document (the save-then-
+ *     route-to-real-name race) and on forms scripts dirty programmatically, while
+ *     protecting little the drafts don't (in-session, frappe keeps the dirty doc
+ *     in locals; cross-session, the draft banner restores it).
  *   - "Add to Desk": adds list/form menu items to pin a shortcut to a Workspace
  *     (erpnext_enhancements.api.workspace_utils.*).
  *   - UI tweaks: Home navbar button, remove "Go to Home" button, force-expand the
@@ -189,13 +193,6 @@ $(document).on("app_ready", function () {
         setup_home_buttons();
     } catch (e) {
         console.error("Error setting up home buttons:", e);
-    }
-
-    // Setup Global Navigation Guard
-    try {
-        setup_navigation_guard();
-    } catch (e) {
-        console.error("Error setting up navigation guard:", e);
     }
 
     // Initialize Auto-Save Listeners
@@ -458,149 +455,6 @@ function setup_home_buttons() {
         $('.navbar-nav').first().append(home_html);
     }
 
-}
-
-// ==========================================
-// Global Navigation Guard
-// ==========================================
-
-function setup_navigation_guard() {
-    if (window._nav_guard_installed) {
-        // console.log("[ERPNext Enhancements] Navigation Guard already installed.");
-        return;
-    }
-
-    let is_navigating = false;
-    function is_dirty() {
-        try {
-            if (window.cur_frm && window.cur_frm.doc && window.cur_frm.is_dirty()) {
-                return true;
-            }
-        } catch (e) {
-            // ignore
-        }
-        return false;
-    }
-
-    function clear_dirty() {
-        if (window.cur_frm && window.cur_frm.doc) {
-            window.cur_frm.doc.__unsaved = 0;
-        }
-    }
-
-    // 1. Global Click Interceptor (Capture Phase)
-    // This catches clicks on Sidebar, Breadcrumbs, and Link fields BEFORE Frappe/Browser handles them.
-    document.addEventListener('click', function (e) {
-        // Find closest anchor tag
-        const target = e.target.closest('a');
-        if (!target) return;
-
-        // Check if it's an internal link (hash-based)
-        const href = target.getAttribute('href');
-        if (!href || !href.startsWith('#')) return;
-
-        // Ignore new tabs or modifiers
-        if (e.ctrlKey || e.metaKey || e.shiftKey || target.target === '_blank') return;
-
-        // If dirty, intercept
-        if (is_dirty()) {
-            // Prevent the default navigation
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-
-            if (is_navigating) return;
-            is_navigating = true;
-
-            frappe.confirm(
-                __("You have unsaved changes. Are you sure you want to leave?"),
-                () => {
-                    // User chose to leave
-                    is_navigating = false;
-                    clear_dirty();
-
-                    // Manually proceed with the navigation
-                    // Since we blocked the click, the hash didn't change.
-                    // We can now safely set the hash or click again?
-                    // Setting hash is safest.
-                    window.location.href = href;
-                },
-                () => {
-                    // User chose to stay
-                    is_navigating = false;
-                    // Do nothing, we already prevented default.
-                }
-            );
-        }
-    }, true); // true = Capture Phase (runs before bubbling/other listeners)
-
-
-    // 2. Intercept frappe.set_route (Programmatic / Awesomebar)
-    if (frappe.set_route) {
-        const original_set_route = frappe.set_route;
-        frappe.set_route = function (...args) {
-            if (is_dirty()) {
-                if (is_navigating) return Promise.resolve();
-                is_navigating = true;
-
-                return new Promise((resolve, reject) => {
-                    frappe.confirm(
-                        __("You have unsaved changes. Are you sure you want to leave?"),
-                        () => {
-                            is_navigating = false;
-                            clear_dirty();
-                            resolve(original_set_route.apply(this, args));
-                        },
-                        () => {
-                            is_navigating = false;
-                            reject();
-                        }
-                    );
-                });
-            } else {
-                return original_set_route.apply(this, args);
-            }
-        };
-    }
-
-    // 3. Intercept Router Render (Back/Forward Button Fallback)
-    // If a navigation event bypasses the click listener (e.g. Browser Back Button),
-    // the hash changes and Frappe's router picks it up.
-    // We override 'render' to stop the view from actually changing.
-    if (frappe.router && frappe.router.render) {
-        const original_render = frappe.router.render;
-        frappe.router.render = function(...args) {
-            if (is_dirty()) {
-                 // The hash has already changed. We must stop rendering.
-                 if (is_navigating) return; // Prevent double dialogs
-                 is_navigating = true;
-
-                 frappe.confirm(
-                    __("You have unsaved changes. Are you sure you want to leave?"),
-                    () => {
-                        is_navigating = false;
-                        clear_dirty();
-                        // Proceed with rendering the new page
-                        original_render.apply(this, args);
-                    },
-                    () => {
-                        is_navigating = false;
-                        // User chose to stay.
-                        // We do NOT call original_render, so the DOM remains on the old form.
-                        // Note: The URL in the browser bar will show the NEW hash (from the back button).
-                        // This is a known trade-off to avoid infinite hash-revert loops.
-                        // If the user attempts to Save, it will work for the current DOM.
-                    }
-                 );
-                 // We return here to BLOCK the render
-                 return;
-            }
-
-            return original_render.apply(this, args);
-        };
-    }
-
-    window._nav_guard_installed = true;
 }
 
 // ==========================================

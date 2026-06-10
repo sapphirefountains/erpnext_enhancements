@@ -42,7 +42,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `contact.js` | Contact | Comments App + Triton call/SMS + mirror Customer→`custom_account` | doctype_js |
 | `crm_note_enhancements.js` | CRM Note dialogs (global) | Patches `Dialog` to add attachments to Add/Edit Note | app_include_js |
 | `customer.js` | Customer | Comments App, Triton buttons, "Create" dropdown, reminder cadence, related-doc tables | doctype_js |
-| `erpnext_enhancements.js` | whole desk | Awesomebar live search, map placeholder, safe auto-save/drafts, nav guard, "Add to Desk", sidebar/home tweaks, Vue file manager | app_include_js |
+| `erpnext_enhancements.js` | whole desk | Awesomebar live search, map placeholder, safe auto-save/drafts, "Add to Desk", sidebar/home tweaks, Vue file manager | app_include_js |
 | `filter_help.js` | list views (global) | Injects a "?" filter-help dialog button | app_include_js |
 | `global_comments.js` | all forms (timeline) | Patches the **native** Timeline to attach files into comments | app_include_js |
 | `item.js` / `item_list.js` | Item form/list | Migrated: show item code; widen name/code columns | doctype_js / doctype_list_js |
