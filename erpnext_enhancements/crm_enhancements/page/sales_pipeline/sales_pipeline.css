@@ -1,0 +1,365 @@
+/*
+ * Sales Pipeline board (/app/sales-pipeline).
+ *
+ * Theme convention (see memory/dark-theme-convention): structural colors come
+ * from Frappe CSS variables so Frappe Light and Timeless Night both work; only
+ * the semantic staleness accents (amber/red) and the won-green are literal,
+ * with [data-theme="dark"] adjustments for contrast.
+ *
+ * Delivered through the Page asset mechanism (no immutable /assets cache —
+ * page CSS is served via getpage, so deploys reach every device).
+ */
+
+.sales-pipeline-page {
+	display: flex;
+	flex-direction: column;
+	height: calc(100vh - 130px);
+}
+
+.sales-pipeline-board {
+	display: flex;
+	gap: 12px;
+	padding: 12px;
+	flex: 1;
+	overflow-x: auto;
+	overflow-y: hidden;
+	align-items: stretch;
+}
+
+.sales-pipeline-footer {
+	padding: 4px 16px 10px;
+	font-size: 12px;
+	text-align: right;
+}
+
+/* --- Hand-off rail: projects mid PRO-0204 process, under the funnel --- */
+
+.sales-pipeline-rail {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 6px 12px;
+	border-top: 1px solid var(--border-color);
+}
+
+.sales-pipeline-rail .rail-title {
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-right: 4px;
+}
+
+.rail-chip {
+	display: inline-flex;
+	flex-direction: column;
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 4px 10px;
+	text-decoration: none !important;
+	color: var(--text-color);
+	line-height: 1.3;
+}
+
+.rail-chip .rail-chip-label {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.rail-chip .rail-chip-step {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.rail-chip.rail-overdue {
+	border-color: #dc2626;
+	box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.rail-chip.rail-overdue .rail-chip-step {
+	color: #dc2626;
+	font-weight: 700;
+}
+
+[data-theme="dark"] .rail-chip.rail-overdue {
+	border-color: #ef4444;
+	box-shadow: inset 3px 0 0 #ef4444;
+}
+
+[data-theme="dark"] .rail-chip.rail-overdue .rail-chip-step {
+	color: #f87171;
+}
+
+.rail-overflow {
+	font-size: 12px;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-label {
+	font-size: 15px;
+}
+
+body.sales-pipeline-tv .rail-chip .rail-chip-step {
+	font-size: 13px;
+}
+
+body.sales-pipeline-tv .sales-pipeline-rail .rail-title {
+	font-size: 14px;
+}
+
+/* --- Columns --- */
+
+.pipeline-column {
+	flex: 1 1 0;
+	min-width: 220px;
+	display: flex;
+	flex-direction: column;
+	background: var(--bg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	overflow: hidden;
+}
+
+.pipeline-column-head {
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--fg-color);
+}
+
+.pipeline-column-title {
+	font-weight: 700;
+	color: var(--heading-color);
+	font-size: 14px;
+	line-height: 1.2;
+}
+
+.pipeline-column-meta {
+	display: flex;
+	justify-content: space-between;
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.pipeline-count::before {
+	content: "▣ ";
+	opacity: 0.6;
+}
+
+.pipeline-total {
+	font-weight: 600;
+}
+
+.pipeline-column-cards {
+	padding: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	overflow-y: auto;
+	flex: 1;
+}
+
+.pipeline-empty,
+.pipeline-overflow {
+	text-align: center;
+	font-size: 12px;
+	padding: 8px 0;
+}
+
+/* Won — awaiting project: the Step 1 -> Step 2 gap, green accent. */
+.pipeline-column-won .pipeline-column-head {
+	border-top: 3px solid #16a34a;
+}
+
+/* Parked (On Hold): visually muted, never stale. */
+.pipeline-column-parked {
+	opacity: 0.65;
+}
+
+.pipeline-column-parked .pipeline-column-head {
+	border-top: 3px solid var(--border-color);
+}
+
+/* --- Cards --- */
+
+.pipeline-card {
+	display: block;
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 8px 10px;
+	text-decoration: none !important;
+	color: var(--text-color);
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pipeline-card:hover {
+	transform: translateY(-2px);
+	box-shadow: var(--shadow-md, 0 4px 10px rgba(0, 0, 0, 0.12));
+}
+
+.pipeline-card-top {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.pipeline-card-customer {
+	font-weight: 600;
+	color: var(--heading-color);
+	font-size: 13px;
+	line-height: 1.25;
+}
+
+.pipeline-card-days {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--text-muted);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	padding: 0 7px;
+	white-space: nowrap;
+}
+
+.pipeline-card-summary {
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-top: 3px;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.pipeline-card-bottom {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	margin-top: 6px;
+	font-size: 12px;
+}
+
+.pipeline-card-amount {
+	font-weight: 700;
+	color: var(--heading-color);
+}
+
+.pipeline-card-owner {
+	color: var(--text-muted);
+	font-size: 11px;
+}
+
+/* --- Staleness: "it lights up if it's been sitting too long" --- */
+
+.pipeline-card.stale-amber {
+	border-color: #d97706;
+	box-shadow: inset 3px 0 0 #d97706;
+}
+
+.pipeline-card.stale-amber .pipeline-card-days {
+	background: #fef3c7;
+	border-color: #d97706;
+	color: #92400e;
+	font-weight: 700;
+}
+
+.pipeline-card.stale-red {
+	border-color: #dc2626;
+	box-shadow: inset 3px 0 0 #dc2626, 0 0 8px rgba(220, 38, 38, 0.35);
+	animation: pipeline-pulse 2.4s ease-in-out infinite;
+}
+
+.pipeline-card.stale-red .pipeline-card-days {
+	background: #fee2e2;
+	border-color: #dc2626;
+	color: #991b1b;
+	font-weight: 700;
+}
+
+@keyframes pipeline-pulse {
+	0%,
+	100% {
+		box-shadow: inset 3px 0 0 #dc2626, 0 0 4px rgba(220, 38, 38, 0.25);
+	}
+	50% {
+		box-shadow: inset 3px 0 0 #dc2626, 0 0 14px rgba(220, 38, 38, 0.55);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pipeline-card.stale-red {
+		animation: none;
+	}
+}
+
+/* Dark theme: brighter accents, darker badge fills (contrast flips). */
+[data-theme="dark"] .pipeline-card.stale-amber {
+	border-color: #f59e0b;
+	box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+[data-theme="dark"] .pipeline-card.stale-amber .pipeline-card-days {
+	background: rgba(245, 158, 11, 0.18);
+	border-color: #f59e0b;
+	color: #fbbf24;
+}
+
+[data-theme="dark"] .pipeline-card.stale-red {
+	border-color: #ef4444;
+	box-shadow: inset 3px 0 0 #ef4444, 0 0 10px rgba(239, 68, 68, 0.45);
+}
+
+[data-theme="dark"] .pipeline-card.stale-red .pipeline-card-days {
+	background: rgba(239, 68, 68, 0.18);
+	border-color: #ef4444;
+	color: #f87171;
+}
+
+/* --- TV mode: chrome off, typography up, made for across-the-room --- */
+
+body.sales-pipeline-tv .navbar,
+body.sales-pipeline-tv .page-head {
+	display: none !important;
+}
+
+body.sales-pipeline-tv .content.page-container {
+	margin-top: 0 !important;
+}
+
+body.sales-pipeline-tv .sales-pipeline-page {
+	height: 100vh;
+}
+
+body.sales-pipeline-tv .pipeline-column-title {
+	font-size: 19px;
+}
+
+body.sales-pipeline-tv .pipeline-column-meta {
+	font-size: 15px;
+}
+
+body.sales-pipeline-tv .pipeline-card-customer {
+	font-size: 17px;
+}
+
+body.sales-pipeline-tv .pipeline-card-summary {
+	font-size: 14px;
+}
+
+body.sales-pipeline-tv .pipeline-card-days,
+body.sales-pipeline-tv .pipeline-card-owner {
+	font-size: 13px;
+}
+
+body.sales-pipeline-tv .pipeline-card-amount,
+body.sales-pipeline-tv .pipeline-card-bottom {
+	font-size: 15px;
+}
+
+body.sales-pipeline-tv .sales-pipeline-footer {
+	font-size: 14px;
+}

@@ -1014,6 +1014,39 @@ def process_unified_sms(**kwargs):
 
 
 
+def send_system_sms(target_number, message):
+    """Send a system-initiated SMS via the Triton gateway. NOT whitelisted.
+
+    Internal-alert variant of :func:`send_sms` for hook/scheduler callers
+    (``erpnext_enhancements.status_alerts``): no session user, so no Employee
+    resolution and no signature logic, and no Communication record — these are
+    internal team alerts, not customer correspondence (the in-app trail is the
+    caller's Notification Log). Raises on a missing gateway config or a gateway
+    failure; callers decide whether one bad send aborts the batch.
+    """
+    if not target_number or not message:
+        frappe.throw(_("Target number and message are required."))
+
+    settings = frappe.get_doc("Triton Settings")
+    triton_url = getattr(settings, "gateway_url", None)
+    if not triton_url:
+        frappe.throw(_("Gateway URL is not configured in Triton Settings."))
+    api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
+
+    headers = {"Content-Type": "application/json"}
+    if api_secret:
+        headers["Authorization"] = f"Bearer {api_secret}"
+
+    import requests
+    response = requests.post(
+        f"{triton_url.rstrip('/')}/api/send-sms",
+        json={"to_number": target_number, "content": message, "media_urls": []},
+        headers=headers,
+        timeout=15,
+    )
+    response.raise_for_status()
+
+
 @frappe.whitelist()
 def send_sms(target_number, message, media_urls=None, reference_doctype=None, reference_docname=None):
     """Send an outbound SMS via the Triton gateway and log it.

@@ -1,0 +1,146 @@
+<h3><b>OWNER CONTRACT</b></h3>
+<p><b>Water Feature &amp; Fountain Services Agreement</b></p>
+<p><b>Sapphire Fountains, LLC</b></p>
+<p>85 W 300 S, Bountiful, UT 84010</p>
+<p>www.sapphirefountains.com</p>
+<h1>PROJECT &amp; OWNER INFORMATION</h1>
+<table class="ct-table"><tr><td><b>Owner Name:</b></td><td>{{ fill(doc.party_display, 50) }}</td></tr><tr><td><b>Owner Address:</b></td><td>{{ multiline(doc.billing_address, 50, 1) }}</td></tr><tr><td><b>City / State / Zip:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.contact_phone, 50) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.contact_email, 50) }}</td></tr><tr><td><b>Project Site Address:</b></td><td>{{ multiline(doc.site_address, 50, 1) }}</td></tr><tr><td><b>Property Type:</b></td><td>{{ cb(doc.property_type=="Residential") }} Residential    {{ cb(doc.property_type=="Commercial") }} Commercial    {{ cb(doc.property_type=="Municipal") }} Municipal    {{ cb(doc.property_type=="Other") }} Other: ___</td></tr><tr><td><b>Feature Location:</b></td><td>{{ cb(doc.feature_location=="Outdoor") }} Outdoor    {{ cb(doc.feature_location=="Indoor") }} Indoor    {{ cb(doc.feature_location=="Both") }} Both</td></tr><tr><td><b>Project Name / Description:</b></td><td>{{ fill(doc.project_title, 50) }}</td></tr><tr><td><b>Contract Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr></table>
+<h1>SERVICES SELECTED</h1>
+<p>Check all services that apply to this contract. Each selected service is subject to the terms and pricing below and the corresponding section of this Contract. Retainer / Deposit is due at signing for each selected service.</p>
+<table class="ct-table"><tr><td>{% set _p = phases.get("design") %}{{ cb(_p and _p.included) }}</td><td><b>PHASE </b><b>1  —</b><b>  Design &amp; Engineering</b><br>Conceptual design, construction drawings, hydraulic &amp; equipment specifications, and engineering coordination for the water feature.</td><td><b>Fee / Price</b><br><b>{{ money(_p.fee if _p else None) }}</b></td><td><b>Retainer / Deposit</b><br><b>{{ money(_p.retainer if _p else None) }}</b></td></tr></table>
+<table class="ct-table"><tr><td>{% set _p = phases.get("construction") %}{{ cb(_p and _p.included) }}</td><td><b>PHASE </b><b>2  —</b><b>  Construction &amp; Installation</b><br>Site preparation, excavation, plumbing, equipment installation, water feature assembly, startup, commissioning, and Owner training.</td><td><b>Fee / Price</b><br><b>{{ money(_p.fee if _p else None) }}</b></td><td><b>Retainer / Deposit</b><br><b>{{ money(_p.retainer if _p else None) }}</b></td></tr></table>
+<table class="ct-table"><tr><td>{% set _p = phases.get("maintenance") %}{{ cb(_p and _p.included) }}</td><td><b>PHASE </b><b>3  —</b><b>  Ongoing Maintenance</b><br>Scheduled maintenance visits, water chemistry, cleaning, seasonal startup and/or winterization as selected.</td><td><b>Fee / Price</b><br><b>{{ money(_p.fee if _p else None) }} / period</b></td><td><b>Retainer / Deposit</b><br><b>{{ money(_p.retainer if _p else None) }}</b></td></tr></table>
+<p><b>Total Contract Value (all selected phases):  {{ money(doc.total_contract_value) }}</b></p>
+<p><b>Total Due at Signing (sum of selected retainers/deposits):  {{ money(doc.total_due_at_signing) }}</b></p>
+<h1>1. PARTIES</h1>
+<p>This Owner Contract (&quot;Contract&quot;) is entered into between Sapphire Fountains, LLC, a Utah limited liability company (&quot;Contractor&quot;), and the Owner identified above (&quot;Owner&quot;). Contractor agrees to provide the services checked above, and Owner agrees to pay therefor in accordance with this Contract. Only the phases checked above are active under this Contract; unchecked phases may be added by written amendment at any time.</p>
+<h1>2. PHASE 1 — DESIGN &amp; ENGINEERING SERVICES</h1>
+<p>(Applicable only if Phase 1 is selected above.)</p>
+<h2>2.1  Design Scope</h2>
+<p>Contractor shall provide the following design services for the project:</p>
+<p>Initial consultation and site assessment;</p>
+<p>Conceptual design development, including schematic drawings and feature recommendations;</p>
+<p>Preliminary design presentation for Owner review and approval;</p>
+<p>Design development drawings (plan, section, elevation) with hydraulic layout and equipment schedule;</p>
+<p>Construction-level drawings and written specifications suitable for bidding and installation;</p>
+<p>Coordination with Owner&#x27;s general contractor or consultants as reasonably necessary;</p>
+<p>Up to ___ rounds of revisions per design phase (additional revisions at {{ money(None) }} / hr).</p>
+<h2>2.2  Design Deliverables</h2>
+<table class="ct-table"><tr><td><b>Concept Design Package:</b></td><td>Schematic drawings, design narrative, material palette</td></tr><tr><td><b>Design Development Package:</b></td><td>Developed drawings, equipment list, specification outline</td></tr><tr><td><b>Construction Documents:</b></td><td>Final construction-ready drawings and specifications (PDF + CAD)</td></tr></table>
+<h2>2.3  Design Fee &amp; Retainer</h2>
+<table class="ct-table"><tr><td><b>Design Retainer (due at signing):</b></td><td>{{ money(doc.design_retainer) }}</td></tr><tr><td><b>Phase 1 – Concept Design Fee:</b></td><td>{{ money(doc.concept_design_fee) }}</td></tr><tr><td><b>Phase 2 – Design Development Fee:</b></td><td>{{ money(doc.design_development_fee) }}</td></tr><tr><td><b>Phase 3 – Construction Documents Fee:</b></td><td>{{ money(doc.construction_documents_fee) }}</td></tr><tr><td><b>Total Design Fee:</b></td><td>{{ money(doc.total_design_fee) }}</td></tr><tr><td><b>Design Retainer applied to:</b></td><td>First design invoice(s)</td></tr></table>
+<p>2.4  Design payments are due as follows: retainer at signing; 50% of Phase 1 fee upon Phase 1 delivery; balance of Phase 1 fee and 100% of subsequent phase fees due prior to commencement of each phase. Invoices are due within ten (10) days. Contractor may suspend design services for overdue balances.</p>
+<p>2.5  Ownership of design documents is governed by Section 13 of this Contract.</p>
+<p>2.6  Design schedule (estimated, subject to timely Owner review and approval):</p>
+<table class="ct-table"><tr><td><b>Concept Design:</b></td><td>{{ fill(doc.concept_days, 4) }} calendar days after retainer receipt</td></tr><tr><td><b>Design Development:</b></td><td>{{ fill(doc.design_development_days, 4) }} calendar days after Owner approval of concepts</td></tr><tr><td><b>Construction Documents:</b></td><td>{{ fill(doc.construction_documents_days, 4) }} calendar days after Owner approval of design development</td></tr></table>
+<p>2.7  Owner shall review and provide written approval or revision requests for each design phase within fourteen (14) calendar days of delivery. Failure to respond within this period shall be deemed approval.</p>
+<h1>3. PHASE 2 — CONSTRUCTION &amp; INSTALLATION</h1>
+<p>(Applicable only if Phase 2 is selected above.)</p>
+<h2>3.1  Scope of Work</h2>
+<p>Contractor shall furnish all labor, materials, equipment, and supervision necessary to construct and install the water feature as described below and in Exhibit A:</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>(Attach detailed scope, drawings, and/or specifications as Exhibit A.)</p>
+<p>Construction scope includes, as applicable: site preparation, excavation, plumbing and hydraulic installation, electrical rough-in coordination, fountain and water feature assembly, equipment installation, water treatment system setup, startup and commissioning, and Owner training.</p>
+<p>Items not expressly described herein are excluded from the construction scope. Additional work requires a written Change Order.</p>
+<h2>3.2  Construction Price &amp; Payment Schedule</h2>
+<table class="ct-table"><tr><td><b>Milestone</b></td><td><b>Due Upon</b></td><td><b>%</b></td><td><b>Amount</b></td></tr>{% for m in doc.milestones %}<tr><td>{{ m.milestone }}</td><td>{{ fill(m.due_upon, 22) }}</td><td>{{ m.percent or "" }}{% if m.percent %}%{% endif %}</td><td>{{ money(m.amount) }}</td></tr>{% endfor %}{% if not doc.milestones %}<tr><td>Construction Deposit (due at signing)</td><td>{{ blank(22) }}</td><td>{{ blank(4) }}</td><td>{{ money(None) }}</td></tr><tr><td>Progress Payment #1</td><td>{{ blank(22) }}</td><td>{{ blank(4) }}</td><td>{{ money(None) }}</td></tr><tr><td>Progress Payment #2</td><td>{{ blank(22) }}</td><td>{{ blank(4) }}</td><td>{{ money(None) }}</td></tr><tr><td>Final Payment (due upon Substantial Completion)</td><td>{{ blank(22) }}</td><td>{{ blank(4) }}</td><td>{{ money(None) }}</td></tr>{% endif %}<tr><td><b>Total Construction Price</b></td><td></td><td></td><td><b>{{ money(doc.milestones_total) }}</b></td></tr></table>
+<p>Payments are due within five (5) business days of each milestone. Overdue amounts accrue interest at 1.5% per month. Contractor may suspend Work for non-payment after five (5) days&#x27; written notice. Contractor shall provide lien waivers concurrent with each progress payment upon request.</p>
+<p>Construction Price includes all labor, standard materials, and equipment per the scope. It excludes permitting fees, utility connection fees, Owner-furnished materials, and items specifically excluded herein.</p>
+<h2>3.3  Project Schedule</h2>
+<table class="ct-table"><tr><td><b>Construction Start Date:</b></td><td>Within {{ fill(doc.construction_start_days, 4) }} days of deposit receipt and permit (if required)</td></tr><tr><td><b>Anticipated Completion Date:</b></td><td>{{ dt(doc.anticipated_completion_date) }}</td></tr></table>
+<h2>3.4  Change Orders</h2>
+<p>No change to the construction scope or price is effective unless documented in a written Change Order signed by both Parties. Unforeseen concealed conditions (utilities, unsuitable soils, buried structures) entitle Contractor to an equitable adjustment in price and schedule.</p>
+<h2>3.5  Permits and Approvals</h2>
+<p>Contractor shall apply for and obtain all required building and installation permits. Permit fees are paid by Owner and are not included in the Construction Price unless specifically noted. Owner is responsible for any HOA or municipal approvals prior to commencement.</p>
+<h1>4. PHASE 3 — ONGOING MAINTENANCE</h1>
+<p>(Applicable only if Phase 3 is selected above.)</p>
+<h2>4.1  Maintenance Services</h2>
+<p>Contractor shall perform regularly scheduled maintenance visits per the selected plan; full service details, scheduling, and Owner responsibilities are governed by Contractor&#x27;s standard Maintenance Services Agreement, which is incorporated herein by reference when Phase 3 is selected.</p>
+<h2>4.2  Maintenance Plan Selection</h2>
+<p>  [ ]  Standard Maintenance Plan: {{ blank(30) }} visits per  [ ] month  [ ] year   at {{ money(None) }} per visit</p>
+<p>  [ ]  Seasonal Startup (Spring): {{ money(None) }} per event</p>
+<p>  [ ]  Winterization (Fall): {{ money(None) }} per event</p>
+<p>  [ ]  Startup + Winterization Package: {{ money(None) }} per year</p>
+<p>  [ ]  As-Needed / On-Call Service: {{ money(None) }} per hour (1-hour minimum)</p>
+<h2>4.3  Maintenance Pricing &amp; Deposit</h2>
+<table class="ct-table"><tr><td><b>Annual Maintenance Fee:</b></td><td>{{ money(doc.annual_maintenance_fee) }}</td></tr><tr><td><b>Maintenance Deposit (due at signing):</b></td><td>{{ money(doc.maintenance_deposit) }}</td></tr><tr><td><b>Invoicing Frequency:</b></td><td>{{ cb(doc.invoicing_frequency=="Per Visit") }} Per visit  {{ cb(doc.invoicing_frequency=="Monthly") }} Monthly  {{ cb(doc.invoicing_frequency=="Quarterly") }} Quarterly  {{ cb(doc.invoicing_frequency=="Annually") }} Annually</td></tr></table>
+<p>4.4  Maintenance fees are due within fifteen (15) days of invoice; overdue balances accrue interest at 1.5% per month. Services commence upon Substantial Completion of Phase 2 (if applicable) or the agreed independent start date, and auto-renew annually unless either Party provides thirty (30) days&#x27; written notice of non-renewal. All other maintenance terms — scheduling, access, chemicals, service standards, and credit card policy — are governed by Contractor&#x27;s Maintenance Services Agreement.</p>
+<h1>5. SITE ACCESS AND OWNER RESPONSIBILITIES</h1>
+<p>5.1  Owner shall provide Contractor with unobstructed access to the project site during normal working hours (Monday through Friday, 7:00 AM to 5:00 PM, unless otherwise agreed).</p>
+<p>5.2  Owner shall identify the location of all underground utilities prior to any excavation. Owner assumes responsibility for damage to utilities not identified or marked.</p>
+<p>5.3  Owner shall ensure the site is free of hazardous materials and other conditions that would impede the Work.</p>
+<p>5.4  Owner shall provide access to electrical power and water at the project site as needed, at Owner&#x27;s expense.</p>
+<p>5.5  For maintenance visits, Owner shall provide gate codes, key access, or other means of entry and ensure the feature is accessible during the scheduled service window.</p>
+<h1>6. MATERIALS AND EQUIPMENT</h1>
+<p>6.1  All materials and equipment furnished by Contractor shall be new and conform to the specifications, unless otherwise agreed.</p>
+<p>6.2  Contractor reserves the right to substitute materials of equal or better quality when specified items are unavailable, with advance notice to Owner.</p>
+<p>6.3  Owner-furnished materials shall be delivered to the site timely. Contractor is not responsible for delays or defects arising from Owner-furnished items.</p>
+<h1>7. WARRANTIES</h1>
+<p>7.1  Construction Warranty. Contractor warrants all construction labor and workmanship for one (1) year from Substantial Completion.</p>
+<p>7.2  Equipment &amp; Materials. Equipment and materials are warranted per manufacturer warranties, which Contractor passes through to Owner and will assist Owner in asserting.</p>
+<p>7.3  Design. Contractor warrants that design services will be performed with the degree of care and skill ordinarily exercised by design professionals under similar circumstances. Contractor shall correct material design errors at no additional charge when notified in writing within the warranty period.</p>
+<p>7.4  Maintenance. Contractor warrants maintenance services will be performed in a professional, workmanlike manner consistent with industry standards.</p>
+<p>7.5  Warranty Exclusions. Warranties do not cover: Owner neglect or misuse; unauthorized modifications; failure to perform required maintenance; acts of God; or normal wear and tear.</p>
+<h1>8. SUBSTANTIAL COMPLETION AND FINAL ACCEPTANCE</h1>
+<p>8.1  Upon Substantial Completion of construction, Contractor shall notify Owner in writing. Owner shall inspect the Work within five (5) business days and provide a written punch list, if any. Contractor shall complete punch list items within a reasonable time.</p>
+<p>8.2  Final payment is due upon completion of all punch list items and delivery of a final lien waiver by Contractor.</p>
+<h1>9. INSURANCE</h1>
+<p>9.1  Contractor shall maintain during performance of the Work: Commercial General Liability ($1,000,000 per occurrence / $2,000,000 aggregate); Workers&#x27; Compensation (as required by Utah law); and Commercial Auto Liability ($500,000 CSL).</p>
+<p>9.2  Owner shall maintain property insurance on the project site covering the full replacement value of the Work.</p>
+<p>9.3  Certificates of insurance shall be provided upon request.</p>
+<h1>10. INDEMNIFICATION</h1>
+<p>10.1  Contractor shall indemnify and hold harmless Owner from claims arising from Contractor&#x27;s negligent acts or omissions in performance of the Work.</p>
+<p>10.2  Owner shall indemnify and hold harmless Contractor from claims arising from Owner&#x27;s acts, omissions, or pre-existing site conditions.</p>
+<h1>11. LIMITATION OF LIABILITY</h1>
+<p>11.1  Contractor&#x27;s maximum liability under this Contract shall not exceed the total fees paid by Owner under the applicable phase giving rise to the claim.</p>
+<p>11.2  Neither Party shall be liable for indirect, incidental, consequential, or punitive damages.</p>
+<h1>12. TERMINATION</h1>
+<p>12.1  Owner may terminate any phase of this Contract for convenience upon fourteen (14) days&#x27; written notice, and shall pay Contractor for all work, materials ordered, and reasonable demobilization costs through the termination date. Prepaid design retainer amounts for unperformed services shall be refunded on a pro-rated basis.</p>
+<p>12.2  Contractor may terminate if Owner fails to make a required payment within ten (10) days of written notice of non-payment, or upon Owner&#x27;s material breach.</p>
+<p>12.3  Either Party may terminate immediately upon the other&#x27;s insolvency or bankruptcy filing.</p>
+<h1>13. INTELLECTUAL PROPERTY AND DESIGN OWNERSHIP</h1>
+<p>13.1  All drawings, specifications, renderings, and documents prepared by Contractor remain the intellectual property of Sapphire Fountains, LLC.</p>
+<p>13.2  Upon full payment of all design fees, Contractor grants Owner a non-exclusive license to use the design documents solely for the construction and maintenance of the specific project described herein.</p>
+<p>13.3  Contractor retains the right to photograph the completed project and use images for portfolio and marketing purposes.</p>
+<h1>14. DISPUTE RESOLUTION</h1>
+<p>14.1  Negotiation. Any dispute, claim, or controversy arising out of or relating to this Contract shall first be submitted to senior representatives of both Parties for good-faith written negotiation for a period of thirty (30) days following written notice describing the dispute in reasonable detail.</p>
+<p>14.2  Mediation. If the Parties are unable to resolve the dispute through negotiation within thirty (30) days, either Party may initiate non-binding mediation before a mutually agreed neutral mediator in Salt Lake City, Utah. The Parties shall share mediator fees equally and bear their own attorneys&#x27; fees. Mediation shall be completed within sixty (60) days of the mediator&#x27;s appointment. Participation in mediation in good faith is a condition precedent to arbitration, except where a Party seeks emergency injunctive or equitable relief from a court of competent jurisdiction to prevent irreparable harm.</p>
+<p>14.3  Arbitration. If the dispute is not resolved through mediation, either Party may submit it to final, binding arbitration in Salt Lake City, Utah, administered by the American Arbitration Association under its Construction Industry Arbitration Rules then in effect. The arbitrator shall have authority to award any remedy available at law or in equity. The arbitrator&#x27;s decision shall be final and binding and may be entered as a judgment in any court of competent jurisdiction.</p>
+<p>14.4  The prevailing party in any arbitration or other legal proceeding to enforce this Contract shall be entitled to recover reasonable attorneys&#x27; fees and costs from the non-prevailing party.</p>
+<p>14.5  Pending resolution of any dispute, each Party shall continue to perform its obligations under this Contract (except for those obligations directly at issue in the dispute) unless this Contract has been terminated.</p>
+<h1>15. FORCE MAJEURE</h1>
+<p>15.1  Neither Party shall be in default or liable to the other for any delay or failure to perform its obligations under this Contract to the extent that such delay or failure is caused by a Force Majeure Event. A &quot;Force Majeure Event&quot; means any circumstance or event beyond a Party&#x27;s reasonable control, including but not limited to: acts of God; fire, flood, earthquake, storm, hurricane, tornado, or other natural disasters; epidemic, pandemic, or public health emergency; war, invasion, terrorism, riot, insurrection, or civil unrest; government action, law, order, regulation, or embargo; strikes or labor disputes not involving that Party&#x27;s own direct employees; prolonged or widespread failure of utilities, telecommunications, or supply chains; or extraordinary weather conditions that make performance at the project site unsafe or impracticable.</p>
+<p>15.2  The Party affected by a Force Majeure Event shall: (a) provide written notice to the other Party as promptly as practicable after becoming aware of the event; (b) describe the nature, expected duration, and impact of the event; and (c) use commercially reasonable efforts to mitigate the effects and resume performance as soon as reasonably practicable.</p>
+<p>15.3  During a Force Majeure Event, performance obligations and deadlines shall be suspended for the duration of the event and extended by a reasonable period. Owner shall not be required to pay for work not performed during a Force Majeure Event, and Contractor shall not be in breach for delayed performance. Schedule impacts due to Force Majeure events shall be addressed through a written Change Order adjusting project timelines, with no adjustment to the Contract price unless the event also results in documented additional costs.</p>
+<p>15.4  If a Force Majeure Event continues for more than ninety (90) consecutive calendar days, either Party may terminate the affected phase of this Contract upon thirty (30) days&#x27; written notice without liability for the delay or non-performance caused by the Force Majeure Event, except that Owner shall pay Contractor for all work satisfactorily completed through the termination date and for non-cancellable material orders.</p>
+<h1>16. GENERAL PROVISIONS</h1>
+<p>16.1  Governing Law. This Contract is governed by Utah law.</p>
+<p>16.2  Entire Agreement. This Contract, with all exhibits, constitutes the entire agreement and supersedes all prior discussions.</p>
+<p>16.3  Amendments. Modifications must be in writing and signed by both Parties.</p>
+<p>16.4  Notices. Notices shall be in writing by email (with confirmation), overnight courier, or certified mail.</p>
+<p>16.5  Lien Rights. Contractor reserves all rights under Utah&#x27;s mechanics&#x27; lien statutes. Owner acknowledges receipt of any required Preliminary Notice.</p>
+<p>16.6  Electronic Signatures. This Contract may be executed electronically; such signatures are fully binding.</p>
+<h1>EXHIBIT A – CONSTRUCTION SCOPE OF WORK</h1>
+<p>(Attach detailed scope, drawings, and specifications or complete below)</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<h1>SIGNATURES</h1>
+<p>By signing below, the Parties agree to be bound by the terms of this Owner Contract for all phases checked above.</p>
+<p><b>Sapphire Fountains, LLC</b></p>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Authorized Representative of Sapphire Fountains, LLC)</p>
+<h3><b>OWNER</b></h3>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Property Owner)</p>

@@ -22,6 +22,7 @@ Every function is documented inline. This README is the map.
 | `maintenance_workflow.py` | Post-submit automation (stock / timesheet / RMA / invoice) | `process_maintenance_submission` (bg worker) + 4 step helpers | enqueued from the Sapphire Maintenance Record controller | — |
 | `procurement.py` | Supplier purchase-link store | `get_item_links`, `save_item_link` | `procurement_links.js` | — |
 | `search.py` | AwesomeBar global-search augmentation | `search_global_docs` | `erpnext_enhancements.js` | — |
+| `task_dashboard.py` | Morning TV screen data: top-10 ranked projects (PM/tech lead), overdue + today's tasks with assignee names, today's public events | `get_task_dashboard_data` | "Task Dashboard" Custom HTML Block (`Custom HTML Block/task_dashboard.js`) | — |
 | `telephony.py` | Triton/Twilio voice + SMS integration | many (see below) | external Triton/Twilio webhooks; `contact.js`/`customer.js`/`lead.js`/`telephony_client.js` | Twilio (signatures, Voice JWT), Triton gateway HTTP API |
 | `time_kiosk.py` | Time tracking + geolocation | `log_time`, `get_current_status`, `get_projects`, `get_kiosk_options`, `get_tasks_for_project`, `link_attachment`, `log_geolocation`, `log_geolocation_batch`, `get_kiosk_bootstrap`, `get_location_history`; daily `purge_old_location_logs` | `public/js/kiosk/app.js`, `www/kiosk-sw.js`, `www/kiosk.py`, `location_timeline.js` | — |
 | `user_drafts.py` | Per-user form autosave | `save_draft`, `delete_draft`; daily `cleanup_stale_drafts` | `erpnext_enhancements.js` | — |

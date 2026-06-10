@@ -208,6 +208,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 						raise
 
 			project.project_name = opp.custom_opportunity_name
+			# Persisted forward link to the source Opportunity: keys the PRO-0204
+			# hand-off seeding (process_steps), AE resolution for payment/step
+			# alerts, and the after_save attachment sync.
+			project.custom_opportunity = opportunity_name
 
 			# --- All field and table mapping logic remains the same ---
 			direct_mappings = {

@@ -426,8 +426,15 @@ def get_procurement_documents(project_name):
 def sync_attachments_from_opportunity(doc, method):
 	"""
 	Sync attachments from the linked Opportunity (and its parent Lead) to the Project.
+
+	Reads the persisted ``custom_opportunity`` link (with a fallback to the
+	legacy in-memory ``custom_sales_opportunity`` attribute, which only ever
+	existed within the creation request — see opportunity_enhancements.py,
+	v1.3.0 note). Idempotent: files already on the Project (by file_name) are
+	never re-copied, so running on every save just picks up late additions.
 	"""
-	if not doc.custom_sales_opportunity:
+	source_opportunity = doc.get("custom_opportunity") or doc.get("custom_sales_opportunity")
+	if not source_opportunity:
 		return
 
 	# 1. Get the list of files ALREADY on this Project (prevent duplicates)
@@ -436,12 +443,12 @@ def sync_attachments_from_opportunity(doc, method):
 	)
 
 	# 2. Identify all related IDs (Opportunity + original Lead)
-	ids_to_check = [doc.custom_sales_opportunity]
+	ids_to_check = [source_opportunity]
 
 	# We need to load the Opportunity to see if it has a parent Lead
 	try:
 		# Try loading as standard Opportunity
-		source_opp = frappe.get_doc("Opportunity", doc.custom_sales_opportunity)
+		source_opp = frappe.get_doc("Opportunity", source_opportunity)
 
 		# Check if it is linked to a Lead (standard field 'party_name' or 'lead')
 		if source_opp.opportunity_from == "Lead" and source_opp.party_name:

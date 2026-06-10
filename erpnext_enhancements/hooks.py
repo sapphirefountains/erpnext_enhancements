@@ -50,6 +50,7 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
+		"public/js/contracts.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
@@ -63,6 +64,8 @@ doctype_js = {
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
+		"public/js/project_enhancements/process_steps.js",
+		"public/js/contracts.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
@@ -102,6 +105,7 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/contracts.js",
 	],
 	"Lead": [
 		"public/js/vue.global.js",
@@ -157,11 +161,21 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 	},
 	"Project": {
-		"before_save": "erpnext_enhancements.script_migrations.project.remove_open_status",
+		"before_insert": "erpnext_enhancements.process_steps.seed_process_steps",
+		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
+		"before_save": [
+			"erpnext_enhancements.script_migrations.project.remove_open_status",
+			"erpnext_enhancements.status_alerts.stamp_payment_received_date",
+			# must run after stamp_payment_received_date: the Payment Received
+			# anchor consumes the stamped date
+			"erpnext_enhancements.process_steps.sync_process_steps",
+		],
 		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+			"erpnext_enhancements.status_alerts.notify_payment_received",
+			"erpnext_enhancements.process_steps.notify_step_transitions",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -184,8 +198,13 @@ doc_events = {
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
 			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
+			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
 		],
-		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+		"on_update": [
+			"erpnext_enhancements.sync_contact.sync_from_main_doc",
+			"erpnext_enhancements.status_alerts.notify_closed_won",
+			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
+		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Contact": {
@@ -215,6 +234,8 @@ scheduler_events = {
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
 		"erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
+		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
+		"erpnext_enhancements.process_steps.escalate_overdue_steps",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
@@ -299,7 +320,7 @@ fixtures = [
 		"dt": "Notification",
 		"filters": [["name", "in", ["Maintenance Review Needed", "Maintenance Finalized"]]],
 	},
-	{"dt": "Print Format", "filters": [["name", "=", "Maintenance Record Print"]]},
+	{"dt": "Print Format", "filters": [["name", "in", ["Maintenance Record Print", "Project Contract Print"]]]},
 ]
 
 override_whitelisted_methods = {

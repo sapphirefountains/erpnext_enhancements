@@ -1,0 +1,133 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "step_number",
+  "step_title",
+  "responsible_role",
+  "column_break_main",
+  "auto_anchor",
+  "sla_hours",
+  "enabled",
+  "details_section",
+  "description",
+  "process_document"
+ ],
+ "fields": [
+  {
+   "fieldname": "step_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Step Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "step_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step Title",
+   "reqd": 1
+  },
+  {
+   "description": "Role-shaped, resolved per project at notification time: Account Executive = owner of the source Opportunity; Project Manager = the project's Project Manager field; Accounts Receivable = the rep named in ERPNext Enhancements Settings.",
+   "fieldname": "responsible_role",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Responsible Role",
+   "options": "Account Executive\nAccounts Receivable\nProject Manager",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Completes automatically from this system event. Leave blank for steps confirmed manually on the Project.",
+   "fieldname": "auto_anchor",
+   "fieldtype": "Select",
+   "label": "Auto-Complete Anchor",
+   "options": "\nOpportunity Won\nProject Created\nPayment Received"
+  },
+  {
+   "default": "24",
+   "description": "Hours after this step becomes the current step before daily escalation reminders fire. 0 disables escalation for this step.",
+   "fieldname": "sla_hours",
+   "fieldtype": "Int",
+   "label": "SLA (Hours)"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "description": "Shown to the responsible person — what done looks like for this step.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "description": "The source process definition this step encodes (e.g. PRO-0204), so the system and the official document can't drift silently.",
+   "fieldname": "process_document",
+   "fieldtype": "Link",
+   "label": "Process Document",
+   "options": "Process Document"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Process Step Template",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Employee",
+   "share": 1
+  }
+ ],
+ "show_title_field_in_link": 1,
+ "sort_field": "step_number",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "step_title"
+}

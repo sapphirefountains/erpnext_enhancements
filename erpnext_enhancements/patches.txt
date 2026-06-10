@@ -21,6 +21,15 @@ erpnext_enhancements.patches.update_project_statuses
 erpnext_enhancements.patches.delete_abandoned_doctypes
 # v1.0.0 live collab: settings-driven allowlist
 erpnext_enhancements.patches.seed_collab_doctypes
+# v1.2.0 sales pipeline: days-in-stage aging for pre-existing opportunities
+erpnext_enhancements.patches.backfill_stage_changed_on
+# v1.3.0 hand-off process engine: PRO-0204 step definitions + forward opportunity link
+erpnext_enhancements.patches.seed_process_step_templates
+erpnext_enhancements.patches.backfill_project_opportunity_link
+# v1.4.0 morning task dashboard block
+erpnext_enhancements.patches.seed_task_dashboard_block
+# v1.5.0 contract generation: the five agreement templates
+erpnext_enhancements.patches.seed_contract_templates
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

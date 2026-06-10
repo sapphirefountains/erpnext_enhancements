@@ -1,0 +1,320 @@
+/* Task Dashboard — Custom HTML Block styles.
+ *
+ * Runs inside the block's shadow root. Structural colors come from Frappe's
+ * CSS custom properties (custom properties inherit through shadow boundaries,
+ * so Frappe Light and Timeless Night both render correctly without any
+ * [data-theme] selector); only semantic priority/overdue accents are literal,
+ * chosen to read on both themes. */
+
+.tdb-root {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    background: var(--bg-color, transparent);
+}
+
+/* --- Header --- */
+
+.tdb-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.tdb-title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.tdb-title {
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--heading-color, inherit);
+}
+
+.tdb-updated {
+    font-size: 11px;
+    color: var(--text-muted, #888);
+}
+
+.tdb-clock {
+    font-size: 22px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--heading-color, inherit);
+}
+
+/* --- Grid: projects rail on the left, the day on the right --- */
+
+.tdb-grid {
+    display: grid;
+    grid-template-columns: minmax(300px, 5fr) minmax(320px, 7fr);
+    grid-template-areas:
+        "projects overdue"
+        "projects today"
+        "projects events";
+    grid-template-rows: auto auto auto;
+    gap: 10px;
+    align-items: start;
+}
+
+.tdb-projects { grid-area: projects; }
+.tdb-overdue  { grid-area: overdue; }
+.tdb-today    { grid-area: today; }
+.tdb-events   { grid-area: events; }
+
+@media (max-width: 900px) {
+    .tdb-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas: "overdue" "today" "projects" "events";
+    }
+}
+
+/* --- Panels --- */
+
+.tdb-panel {
+    border: 1px solid var(--border-color, #d1d8dd);
+    border-radius: 10px;
+    background: var(--fg-color, #fff);
+    overflow: hidden;
+}
+
+.tdb-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color, #d1d8dd);
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--heading-color, inherit);
+}
+
+.tdb-overdue .tdb-panel-head { border-top: 3px solid #dc2626; }
+.tdb-today .tdb-panel-head   { border-top: 3px solid #2490ef; }
+.tdb-events .tdb-panel-head  { border-top: 3px solid #8b5cf6; }
+.tdb-projects .tdb-panel-head{ border-top: 3px solid #16a34a; }
+
+.tdb-panel-hint {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-muted, #888);
+}
+
+.tdb-panel-body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.tdb-projects .tdb-panel-body { max-height: none; }
+
+.tdb-loading,
+.tdb-empty {
+    padding: 14px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted, #888);
+}
+
+.tdb-empty-good { font-size: 14px; }
+
+/* --- Top-10 project rows --- */
+
+.tdb-project {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    border-radius: 8px;
+    text-decoration: none !important;
+    color: var(--text-color, inherit);
+    background: var(--bg-color, transparent);
+}
+
+.tdb-project:hover { border-color: var(--text-muted, #888); }
+
+.tdb-project-rank {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #16a34a;
+    color: #fff;
+    font-weight: 800;
+    font-size: 13px;
+}
+
+.tdb-project-main { flex: 1; min-width: 0; }
+
+.tdb-project-name {
+    display: block;
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--heading-color, inherit);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tdb-project-people {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted, #888);
+}
+
+.tdb-role {
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    border: 1px solid var(--border-color, #d1d8dd);
+    border-radius: 4px;
+    padding: 0 3px;
+    color: var(--text-muted, #888);
+}
+
+.tdb-project-pct {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    font-variant-numeric: tabular-nums;
+}
+
+.tdb-pct-bar {
+    width: 54px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border-color, #d1d8dd);
+    overflow: hidden;
+    display: inline-block;
+}
+
+.tdb-pct-bar > span {
+    display: block;
+    height: 100%;
+    background: #16a34a;
+}
+
+/* --- Task rows (overdue + today) --- */
+
+.tdb-task {
+    display: block;
+    padding: 7px 10px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    border-left-width: 4px;
+    border-radius: 8px;
+    text-decoration: none !important;
+    color: var(--text-color, inherit);
+    background: var(--bg-color, transparent);
+}
+
+.tdb-task:hover { border-color: var(--text-muted, #888); }
+
+.tdb-task.prio-urgent { border-left-color: #dc2626; }
+.tdb-task.prio-high   { border-left-color: #ea580c; }
+.tdb-task.prio-medium { border-left-color: #ca8a04; }
+.tdb-task.prio-low    { border-left-color: #64748b; }
+
+.tdb-task-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.tdb-task-subject {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--heading-color, inherit);
+}
+
+.tdb-overdue-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 800;
+    color: #dc2626;
+    border: 1px solid #dc2626;
+    border-radius: 9px;
+    padding: 0 7px;
+    white-space: nowrap;
+}
+
+.tdb-task-project {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    text-decoration: none !important;
+    margin-top: 2px;
+}
+
+.tdb-no-project { color: #dc2626; font-weight: 700; }
+
+.tdb-rank { color: #ca8a04; font-size: 10px; margin-left: 5px; }
+
+.tdb-task-people {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 5px;
+}
+
+.tdb-chip {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 9px;
+    border: 1px solid var(--border-color, #d1d8dd);
+    background: var(--fg-color, #fff);
+    color: var(--text-color, inherit);
+}
+
+.tdb-chip-none {
+    border-style: dashed;
+    color: var(--text-muted, #888);
+}
+
+/* --- Events --- */
+
+.tdb-event {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color, #d1d8dd);
+}
+
+.tdb-event:last-child { border-bottom: none; }
+
+.tdb-event-time {
+    flex-shrink: 0;
+    min-width: 70px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #8b5cf6;
+    font-variant-numeric: tabular-nums;
+}
+
+.tdb-event-subject {
+    font-size: 13px;
+    color: var(--text-color, inherit);
+}

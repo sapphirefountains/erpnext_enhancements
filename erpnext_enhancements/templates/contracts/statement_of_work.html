@@ -1,0 +1,107 @@
+<h3><b>STATEMENT OF WORK</b></h3>
+<p>Issued Under Master Services Agreement</p>
+<p><b>Sapphire Fountains, LLC</b></p>
+<p>85 W 300 S, Bountiful, UT 84010  |  www.sapphirefountains.com</p>
+<h1>SOW REFERENCE INFORMATION</h1>
+<table class="ct-table"><tr><td><b>SOW Number:</b></td><td><b>{{ doc.name }}</b></td></tr><tr><td><b>SOW Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr><tr><td><b>MSA Effective Date:</b></td><td>{{ dt(doc.msa_effective_date) }}</td></tr><tr><td><b>Project Name:</b></td><td>{{ fill(doc.project_title, 40) }}</td></tr><tr><td><b>Project Number:</b></td><td>{{ fill(doc.project, 24) }}</td></tr><tr><td><b>Project Site Address:</b></td><td>{{ multiline(doc.site_address, 45, 1) }}</td></tr></table>
+<h1>PARTIES</h1>
+<table class="ct-table"><tr><td><b>Company:</b></td><td>Sapphire Fountains, LLC, 85 W 300 S, Bountiful, UT 84010</td></tr><tr><td><b>Company Contact:</b></td><td>{{ fill(doc.company_contact, 45) }}</td></tr><tr><td><b>Subcontractor:</b></td><td>{{ fill(doc.party_display, 45) }}</td></tr><tr><td><b>Subcontractor Address:</b></td><td>{{ multiline(doc.billing_address, 45, 1) }}</td></tr><tr><td><b>Subcontractor Contact:</b></td><td>{{ fill(doc.contact_person, 45) }}</td></tr><tr><td><b>Subcontractor License #:</b></td><td>{{ fill(doc.subcontractor_license, 45) }}</td></tr></table>
+<p>This Statement of Work (&quot;SOW&quot;) is entered into pursuant to and incorporates by reference the Master Services Agreement between Sapphire Fountains, LLC (&quot;Company&quot;) and the Subcontractor identified above, dated as of the MSA Effective Date above. In the event of any conflict between this SOW and the MSA, the terms of this SOW shall control with respect to this engagement. All capitalized terms not defined herein have the meanings given in the MSA.</p>
+<h1>1. PROJECT OVERVIEW</h1>
+<p>1.1  Project Description:</p>
+<p>{{ multiline(doc.project_description, 90, 3) }}</p>
+<p>1.2  Project Type:  [ ] New Installation   [ ] Renovation / Retrofit   [ ] Repair   [ ] Maintenance   [ ] Other: {{ blank(30) }}</p>
+<p>1.3  Feature Type:  [ ] Commercial Fountain   [ ] Residential Fountain   [ ] Indoor Feature   [ ] Outdoor Feature   [ ] Pond / Water Garden   [ ] Other: {{ blank(30) }}</p>
+<h1>2. SCOPE OF SERVICES</h1>
+<p>Subcontractor shall furnish all labor, materials (unless Company-furnished), tools, equipment, and supervision necessary to complete the following services:</p>
+<h2>2.1  Included Services (check all that apply)</h2>
+<p>  [ ]  Site preparation and layout</p>
+<p>  [ ]  Excavation and grading</p>
+<p>  [ ]  Concrete / masonry work</p>
+<p>  [ ]  Plumbing / hydraulic installation</p>
+<p>  [ ]  Electrical rough-in / conduit</p>
+<p>  [ ]  Equipment installation (pumps, filters, lighting)</p>
+<p>  [ ]  Water feature / fountain assembly</p>
+<p>  [ ]  Tile / stone / decorative finish work</p>
+<p>  [ ]  Landscaping / planting</p>
+<p>  [ ]  System startup, testing, and commissioning</p>
+<p>  [ ]  Cleanup and debris removal</p>
+<p>  [ ]  Other: {{ blank(30) }}</p>
+<h2>2.2  Detailed Scope Description</h2>
+<p>Provide a detailed description of work, including specific tasks, materials to be used, quality standards, and any applicable drawings or specifications. Attach additional pages or reference drawings as needed.</p>
+{% if doc.scope_of_work %}<div>{{ doc.scope_of_work }}</div>{% else %}<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>{% endif %}
+<p>(Attach drawings, specifications, or cut sheets as Attachment 1 to this SOW.)</p>
+<h2>2.3  Exclusions</h2>
+<p>The following items are expressly excluded from this SOW and are either Owner-furnished, Company-furnished, or outside Subcontractor&#x27;s scope:</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<h1>3. DELIVERABLES</h1>
+<p>Subcontractor shall provide the following deliverables upon completion of the Work or at the milestones indicated:</p>
+<table class="ct-table"><tr><td><b>Deliverable</b></td><td><b>Description / Standard</b></td><td><b>Due Date</b></td><td><b>Accepted By</b></td></tr><tr><td>Completed Work</td><td>Per scope in Section 2</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>As-built markups (if applicable)</td><td>Red-line drawings</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Equipment documentation</td><td>O&amp;M manuals, warranties</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Lien waiver / release</td><td>Conditional / unconditional</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr><tr><td>Other: {{ blank(30) }}</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td><td>{{ blank(30) }}</td></tr></table>
+<h1>4. PROJECT SCHEDULE</h1>
+<table class="ct-table"><tr><td><b>Mobilization / Start Date:</b></td><td>{{ dt(doc.mobilization_date) }}</td></tr><tr><td><b>Substantial Completion Date:</b></td><td>{{ dt(doc.substantial_completion_date) }}</td></tr><tr><td><b>Final Completion Date:</b></td><td>{{ dt(doc.final_completion_date) }}</td></tr><tr><td><b>Working Hours:</b></td><td>{{ fill(doc.working_hours, 45) }}</td></tr><tr><td><b>Site Access Notes:</b></td><td>{{ multiline(doc.site_access_notes, 45, 1) }}</td></tr></table>
+<p>4.1  Subcontractor shall submit a project schedule within ___ business days of SOW execution and update it weekly or upon request.</p>
+<p>4.2  Time is of the essence with respect to the Substantial Completion Date. Delays caused by Subcontractor may result in liquidated damages as specified in Section 4.3, if applicable.</p>
+<p>4.3  Liquidated Damages (if applicable):  [ ] N/A   [ ] {{ money(None) }} per calendar day beyond Substantial Completion Date.</p>
+<h1>5. COMPENSATION</h1>
+<h2>5.1  Compensation Type</h2>
+<p>[ ] Fixed Price (Lump Sum)     [ ] Time &amp; Materials     [ ] Unit Price     [ ] Cost Plus Fee</p>
+<h2>5.2  Compensation Schedule</h2>
+<table class="ct-table"><tr><td><b>Milestone / Phase</b></td><td><b>Description</b></td><td><b>Due Upon</b></td><td><b>Amount</b></td></tr>{% for m in doc.milestones %}<tr><td>{{ m.milestone }}</td><td>{{ fill(m.description, 24) }}</td><td>{{ fill(m.due_upon, 18) }}</td><td>{{ money(m.amount) }}</td></tr>{% endfor %}{% if not doc.milestones %}<tr><td>Mobilization Payment</td><td>Upon execution of SOW + mobilization</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Progress Payment #1</td><td>{{ blank(24) }}</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Substantial Completion</td><td>Upon Company acceptance</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr><tr><td>Final Payment / Retention</td><td>Upon final completion + lien waiver</td><td>{{ blank(18) }}</td><td>{{ money(None) }}</td></tr>{% endif %}<tr><td><b>TOTAL</b></td><td></td><td></td><td><b>{{ money(doc.milestones_total) }}</b></td></tr></table>
+<p>5.3  Retention: Company shall withhold ___% of each progress payment as retention. Retention shall be released upon Final Completion and delivery of final lien waiver.</p>
+<p>5.4  Time &amp; Materials Rate Schedule (if applicable):</p>
+<table class="ct-table"><tr><td><b>Journeyman / Lead Rate:</b></td><td>{{ money(doc.rate_journeyman) }} / hr</td></tr><tr><td><b>Apprentice / Helper Rate:</b></td><td>{{ money(doc.rate_apprentice) }} / hr</td></tr><tr><td><b>Equipment Rate:</b></td><td>{{ money(doc.rate_equipment) }} / hr (specify: {{ fill(doc.equipment_rate_note, 20) }})</td></tr><tr><td><b>Materials:</b></td><td>Cost + {{ fill(doc.materials_markup_percent, 4) }}% markup</td></tr><tr><td><b>Not-to-Exceed Amount:</b></td><td>{{ money(doc.not_to_exceed) }}</td></tr></table>
+<p>5.5  Invoices shall be submitted by the ___ of each month (or upon milestone completion) and include: SOW number, project name, description of work completed, hours worked (for T&amp;M), and supporting documentation. Payment terms are governed by the MSA.</p>
+<h1>6. COMPANY-FURNISHED ITEMS</h1>
+<p>The following items will be furnished by Company to Subcontractor at no cost. Subcontractor is responsible for their proper handling, storage, and installation:</p>
+<p>[ ] None — all materials and equipment are Subcontractor-furnished</p>
+<p>[ ] Company-furnished items (list below):</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<h1>7. SUBCONTRACTOR PERSONNEL</h1>
+<p>7.1  Subcontractor&#x27;s Project Lead / Foreman for this SOW:</p>
+<table class="ct-table"><tr><td><b>Name:</b></td><td>{{ fill(doc.supervisor_name, 45) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.supervisor_phone, 45) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.supervisor_email, 45) }}</td></tr><tr><td><b>License / Certification (if req&#x27;d):</b></td><td>{{ fill(doc.supervisor_license, 45) }}</td></tr></table>
+<p>7.2  Subcontractor shall not substitute key personnel without Company&#x27;s prior written consent.</p>
+<p>7.3  Company reserves the right to request removal of any Subcontractor employee from the project for cause (unsafe behavior, misconduct, or failure to meet quality standards).</p>
+<h1>8. SAFETY AND SITE REQUIREMENTS</h1>
+<p>8.1  Subcontractor shall comply with all OSHA standards and the following site-specific safety requirements:</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>8.2  Subcontractor shall conduct a tailgate safety meeting at the start of each new phase of work and document attendance.</p>
+<p>8.3  Subcontractor shall maintain a clean and orderly work area and remove debris daily.</p>
+<p>8.4  Subcontractor shall provide Company with copies of any incident or near-miss reports within 24 hours of occurrence.</p>
+<h1>9. QUALITY AND INSPECTIONS</h1>
+<p>9.1  Subcontractor shall perform the Work in accordance with the quality standards specified herein and in any referenced drawings or specifications.</p>
+<p>9.2  Company (or its representative) reserves the right to inspect the Work at any time. Subcontractor shall provide reasonable cooperation and access.</p>
+<p>9.3  Work that fails to meet the specified quality standards shall be corrected by Subcontractor at no additional cost within ___ business days of written notice.</p>
+<p>9.4  Required inspections / hold points (check all that apply):</p>
+<p>  [ ]  Pre-pour inspection (before concrete placement)</p>
+<p>  [ ]  Rough plumbing inspection</p>
+<p>  [ ]  Electrical rough-in inspection</p>
+<p>  [ ]  Equipment installation inspection</p>
+<p>  [ ]  Final completion / startup inspection</p>
+<p>  [ ]  Other: {{ blank(30) }}</p>
+<h1>10. SPECIAL TERMS</h1>
+<p>List any terms specific to this SOW that supplement or modify the MSA (e.g., unique warranty periods, specific insurance endorsements, special subcontractors, or owner-required provisions):</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<h1>SIGNATURES</h1>
+<p>This Statement of Work is hereby incorporated into and made part of the Master Services Agreement between the Parties. By signing below, the Parties agree to be bound by the terms of this SOW.</p>
+<p><b>Sapphire Fountains, LLC (Company)</b></p>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Authorized Representative of Sapphire Fountains, LLC)</p>
+<h3><b>SUBCONTRACTOR</b></h3>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Authorized Representative of Subcontractor)</p>

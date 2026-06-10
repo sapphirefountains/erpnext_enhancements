@@ -1,0 +1,144 @@
+<h3><b>MAINTENANCE SERVICES AGREEMENT</b></h3>
+<p><b>Water Feature &amp; Fountain Ongoing Maintenance</b></p>
+<p><b>Sapphire Fountains, LLC</b></p>
+<p>85 W 300 S, Bountiful, UT 84010</p>
+<p>www.sapphirefountains.com</p>
+<h1>CLIENT &amp; PROPERTY INFORMATION</h1>
+<table class="ct-table"><tr><td><b>Client Name:</b></td><td>{{ fill(doc.party_display, 50) }}</td></tr><tr><td><b>Billing Address:</b></td><td>{{ multiline(doc.billing_address, 50, 1) }}</td></tr><tr><td><b>City / State / Zip:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Phone:</b></td><td>{{ fill(doc.contact_phone, 50) }}</td></tr><tr><td><b>Email:</b></td><td>{{ fill(doc.contact_email, 50) }}</td></tr><tr><td><b>Service Site Address:</b></td><td>{{ multiline(doc.site_address, 50, 1) }}</td></tr><tr><td><b>Property Type:</b></td><td>{{ cb(doc.property_type=="Residential") }} Residential    {{ cb(doc.property_type=="Commercial") }} Commercial    {{ cb(doc.property_type in ("Municipal", "Other")) }} Other: {{ blank(14) }}</td></tr><tr><td><b>Feature Location:</b></td><td>{{ cb(doc.feature_location=="Outdoor") }} Outdoor    {{ cb(doc.feature_location=="Indoor") }} Indoor    {{ cb(doc.feature_location=="Both") }} Both</td></tr><tr><td><b>Feature Description:</b></td><td>{{ fill(doc.feature_description, 50) }}</td></tr><tr><td><b>Agreement Start Date:</b></td><td>{{ dt(doc.agreement_start_date) }}</td></tr><tr><td><b>Gate Code / Entry Code:</b></td><td>{{ fill(doc.gate_code, 50) }}</td></tr><tr><td><b>Key Location:</b></td><td>{{ fill(doc.key_location, 50) }}</td></tr><tr><td><b>Access Notes:</b></td><td>{{ blank(30) }}</td></tr></table>
+<h1>SERVICE PLAN SELECTION</h1>
+<p>Check all applicable service options. Detailed scope for each is described in Section 2.</p>
+<p>{% set _o = service_options.get("standard") %}  {{ cb(_o and _o.included) }}  Standard Maintenance Plan  –  {{ money(_o.price if _o else None) }} per visit  /  {{ fill(_o.unit if _o else None, 14) }}</p>
+<p>{% set _o = service_options.get("startup") %}  {{ cb(_o and _o.included) }}  Seasonal Startup (Spring)  –  {{ money(_o.price if _o else None) }} per event</p>
+<p>{% set _o = service_options.get("winterization") %}  {{ cb(_o and _o.included) }}  Winterization (Fall)  –  {{ money(_o.price if _o else None) }} per event</p>
+<p>{% set _o = service_options.get("package") %}  {{ cb(_o and _o.included) }}  Seasonal Startup + Winterization Package  –  {{ money(_o.price if _o else None) }} per year</p>
+<p>  [ ]  As-Needed / On-Call Service  –  {{ money(None) }} per hour (minimum 1 hour)</p>
+<p>  [ ]  Custom Plan  –  see Exhibit A for details</p>
+<p><b>Annual Service Fee Total (if applicable): {{ money(None) }}</b></p>
+<h1>1. PARTIES</h1>
+<p>This Maintenance Services Agreement (&quot;Agreement&quot;) is entered into between Sapphire Fountains, LLC, a Utah limited liability company (&quot;Service Provider&quot;), and the Client identified above (&quot;Client&quot;). Service Provider agrees to provide the maintenance services selected above, and Client agrees to pay for such services in accordance with this Agreement.</p>
+<h1>2. SCOPE OF SERVICES</h1>
+<p>2.1  Standard Maintenance Services. Each scheduled maintenance visit shall include, as applicable to the Client&#x27;s water feature type:</p>
+<p>Inspection of pump(s), motor(s), and mechanical components for proper operation;</p>
+<p>Cleaning of pump strainer baskets, skimmers, and filters;</p>
+<p>Removal of debris (leaves, algae, sediment) from basin, bowl, and surrounding area;</p>
+<p>Testing and adjustment of water chemistry (pH, alkalinity, sanitizer levels);</p>
+<p>Addition of water treatment chemicals as needed (cost of chemicals included unless otherwise noted);</p>
+<p>Inspection and cleaning of nozzles, jets, and distribution heads;</p>
+<p>Inspection of lighting components (bulbs, wiring, fixtures);</p>
+<p>Water level check and top-off as needed;</p>
+<p>Visual inspection of plumbing connections for leaks;</p>
+<p>Documentation of any noted issues or recommended repairs;</p>
+<p>Written service report provided to Client following each visit.</p>
+<p>2.2  Seasonal Startup Services (Spring). If selected, Service Provider shall perform the following upon spring activation:</p>
+<p>Full inspection of all mechanical and electrical components after winter dormancy;</p>
+<p>Reinstallation and reconnection of pumps, plumbing, and equipment removed for winter storage;</p>
+<p>System flush and initial fill;</p>
+<p>Chemical startup treatment and water balancing;</p>
+<p>Full operational test of pump, lighting, and all features;</p>
+<p>Identification and documentation of any winter damage or components requiring repair or replacement.</p>
+<p>2.3  Winterization Services (Fall). If selected, Service Provider shall perform the following to prepare the water feature for winter:</p>
+<p>Complete draining of basin, plumbing, and equipment;</p>
+<p>Removal, cleaning, and secure storage of pumps, lights, and sensitive components (stored on-site or at Service Provider&#x27;s facility as agreed);</p>
+<p>Blowing out and clearing of all water lines to prevent freeze damage;</p>
+<p>Installation of covers or protective materials as applicable;</p>
+<p>Documentation of equipment removed and its condition.</p>
+<p>2.4  Services NOT Included. The following are not included in standard maintenance and will be quoted separately as needed:</p>
+<p>Structural repairs, major equipment replacement, or resurfacing;</p>
+<p>Electrical repairs beyond minor bulb replacement;</p>
+<p>Plumbing repairs requiring excavation or re-piping;</p>
+<p>Removal of invasive vegetation or tree root intrusion;</p>
+<p>Water features that are inaccessible without specialized equipment.</p>
+<h1>3. SERVICE SCHEDULE</h1>
+<p>3.1  Service Provider shall perform maintenance visits on the following schedule:</p>
+<table class="ct-table"><tr><td><b>Visit Frequency:</b></td><td>{{ cb(doc.visit_frequency=="Weekly") }} Weekly  {{ cb(doc.visit_frequency=="Bi-Weekly") }} Bi-Weekly  {{ cb(doc.visit_frequency=="Monthly") }} Monthly  {{ cb(doc.visit_frequency=="Quarterly") }} Quarterly  {{ cb(doc.visit_frequency=="Custom") }} Custom</td></tr><tr><td><b>Preferred Visit Day(s):</b></td><td>{{ fill(doc.preferred_days, 45) }}</td></tr><tr><td><b>Preferred Time Window:</b></td><td>{{ fill(doc.preferred_time, 45) }}</td></tr><tr><td><b>Spring Startup (target month):</b></td><td>{{ fill(doc.startup_month, 45) }}</td></tr><tr><td><b>Winterization (target month):</b></td><td>{{ fill(doc.winterization_month, 45) }}</td></tr></table>
+<p>3.2  Service Provider shall make reasonable efforts to perform visits on the agreed schedule. Schedule adjustments due to weather, access issues, or other circumstances beyond Service Provider&#x27;s control will be rescheduled as promptly as possible.</p>
+<p>3.3  Client shall ensure unobstructed access to the water feature during scheduled service windows. If Service Provider is unable to access the site, the visit may be forfeited or rescheduled at Service Provider&#x27;s discretion; the service fee may still apply.</p>
+<h1>4. FEES AND PAYMENT</h1>
+<p>4.1  Client agrees to pay for services at the rates selected in the Service Plan Selection above.</p>
+<p>4.2  Invoices shall be issued: [ ] Per visit  [ ] Monthly  [ ] Quarterly  [ ] Annually (prepaid).</p>
+<p>4.3  Credit Card on File — Required and Automatic Charge. Client must keep a valid credit or debit card on file at all times and complete the Credit Card Authorization Form (Exhibit B) before services begin. Client authorizes Service Provider to charge the card on file for all amounts due under this Agreement. Upon completion of each visit or service, the card on file will be charged automatically and a &quot;Paid&quot; invoice will be emailed to Client — no separate billing notice is required. If the card is declined, a $35.00 declined-transaction fee applies and Client must provide updated payment information within five (5) business days to avoid service suspension. Client shall keep card information current throughout the term of this Agreement.</p>
+<p>4.4  Service Provider reserves the right to suspend services for accounts more than thirty (30) days past due or for which no valid card on file exists. Service Provider may require prepayment by certified funds if Client has two or more declined transactions.</p>
+<p>4.5  Rates are subject to annual adjustment with thirty (30) days&#x27; written notice to Client. Continued use of services after the effective date of a rate change constitutes acceptance.</p>
+<p>4.6  Any additional services requested by Client beyond the agreed scope will be quoted and invoiced separately. No additional work will be performed without Client&#x27;s written or email authorization.</p>
+<h1>5. CHEMICALS AND MATERIALS</h1>
+<p>5.1  Water treatment chemicals used during routine maintenance are included in the service fee unless otherwise noted in the selected plan.</p>
+<p>5.2  Replacement parts, major components, and non-standard chemicals required for repair or restoration are not included and will be billed separately at cost plus a 15% handling fee, with Client approval prior to purchase.</p>
+<p>5.3  Service Provider uses industry-standard, environmentally appropriate water treatment products. Client shall notify Service Provider of any known sensitivities, HOA restrictions, or environmental requirements affecting chemical use.</p>
+<h1>6. CLIENT RESPONSIBILITIES</h1>
+<p>6.1  Client shall maintain the water feature between scheduled visits by: monitoring and maintaining adequate water levels; removing large debris promptly; promptly reporting any unusual noises, leaks, or visible damage to Service Provider; and following any operational guidelines provided by Service Provider.</p>
+<p>6.2  Client shall not alter, repair, or add chemicals to the water feature without consulting Service Provider, as unauthorized modifications may void warranty protections and affect water balance.</p>
+<p>6.3  Client shall ensure that electrical and water supply connections to the water feature are functional and in safe condition prior to Service Provider&#x27;s visits.</p>
+<p>6.4  Client shall provide Service Provider with gate codes, key access, or other means of entry to the property as needed for scheduled service visits.</p>
+<h1>7. SERVICE REPORTS AND RECOMMENDATIONS</h1>
+<p>7.1  Following each maintenance visit, Service Provider shall provide Client with a written or electronic service report summarizing: services performed; water chemistry readings; chemical treatments applied; and any observed issues or recommended repairs.</p>
+<p>7.2  Repair recommendations are advisory. Client is responsible for authorizing and scheduling any recommended repairs. Service Provider is not liable for damage or deterioration resulting from Client&#x27;s decision not to address recommended repairs.</p>
+<h1>8. ADDITIONAL / REPAIR SERVICES</h1>
+<p>8.1  Repair work identified during maintenance visits will be quoted to Client in writing. Client&#x27;s written or email approval is required before any repair work is performed.</p>
+<p>8.2  Emergency service calls (outside of scheduled visits) are available at Service Provider&#x27;s then-current emergency rate of {{ money(None) }} per hour, with a minimum charge of {{ blank(30) }} hours, subject to availability.</p>
+<p>8.3  Service Provider shall not be responsible for pre-existing conditions, deferred maintenance, or damage caused by factors outside its control (e.g., freeze damage when winterization was declined, vandalism, or acts of nature).</p>
+<h1>9. TERM AND RENEWAL</h1>
+<p>9.1  This Agreement shall begin on the Agreement Start Date and continue for an initial term of:</p>
+<p>[ ] One (1) Year    [ ] Two (2) Years    [ ] Month-to-Month    [ ] Other: {{ blank(30) }}</p>
+<p>9.2  Unless either Party provides written notice of non-renewal at least thirty (30) days prior to the end of the then-current term, this Agreement shall automatically renew for successive one-year terms at the then-current service rates.</p>
+<p>9.3  Month-to-month agreements may be terminated by either Party with thirty (30) days&#x27; written notice.</p>
+<h1>10. TERMINATION</h1>
+<p>10.1  Either Party may terminate this Agreement for any reason upon thirty (30) days&#x27; written notice.</p>
+<p>10.2  Service Provider may terminate this Agreement immediately if: (a) Client fails to pay any invoice within thirty (30) days of the due date and does not cure after written notice; or (b) Client&#x27;s property poses a safety hazard to Service Provider&#x27;s technicians.</p>
+<p>10.3  Upon termination, Client shall pay for all services rendered through the termination date. Prepaid amounts for unperformed services shall be refunded on a pro-rated basis, less any applicable cancellation fee.</p>
+<p>10.4  Early termination of an annual prepaid plan shall be subject to a cancellation fee equal to 25% of the remaining prepaid balance.</p>
+<h1>11. WARRANTIES AND LIMITATION OF LIABILITY</h1>
+<p>11.1  Service Provider warrants that all maintenance services will be performed in a professional and workmanlike manner consistent with industry standards.</p>
+<p>11.2  Service Provider does not warrant that any water feature will remain free of algae, scaling, or other conditions between scheduled service visits, as environmental factors are outside Service Provider&#x27;s control.</p>
+<p>11.3  Liability Cap. SERVICE PROVIDER&#x27;S TOTAL CUMULATIVE LIABILITY TO CLIENT ARISING OUT OF OR RELATED TO THIS AGREEMENT — WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY, OR ANY OTHER LEGAL THEORY — SHALL NOT EXCEED THE TOTAL SERVICE FEES ACTUALLY PAID BY CLIENT TO SERVICE PROVIDER IN THE SIX (6) CALENDAR MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM. This limitation applies regardless of whether Service Provider has been advised of the possibility of such damages and regardless of the form of the action. If Client has been a customer for fewer than six (6) months, the cap shall be the total amounts paid during the actual period of service.</p>
+<p>11.4  Exclusion of Consequential Damages. IN NO EVENT SHALL EITHER PARTY BE LIABLE FOR INDIRECT, INCIDENTAL, CONSEQUENTIAL, SPECIAL, EXEMPLARY, OR PUNITIVE DAMAGES, INCLUDING WITHOUT LIMITATION LOST PROFITS, LOSS OF USE, LOSS OF DATA, OR COST OF PROCUREMENT OF SUBSTITUTE SERVICES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.</p>
+<p>11.5  Essential Basis. Client acknowledges that the liability cap and exclusion of certain damages set forth in this Section 11 reflect a reasonable allocation of risk and are an essential basis of the bargain between the Parties. Without these limitations, Service Provider would not have entered into this Agreement.</p>
+<h1>12. INSURANCE AND SAFETY</h1>
+<p>12.1  Service Provider maintains commercial general liability insurance and workers&#x27; compensation insurance as required by Utah law. Certificates of insurance are available upon written request.</p>
+<p>12.2  Service Provider&#x27;s technicians shall follow all applicable safety standards. Client shall notify Service Provider of any known site hazards prior to scheduled visits.</p>
+<p>12.3  Service Provider is not responsible for accidental damage to irrigation systems, buried utilities, or underground structures that were not identified or marked prior to service.</p>
+<h1>13. INDEMNIFICATION</h1>
+<p>13.1  Each Party shall indemnify, defend, and hold harmless the other from claims arising from its own negligent acts, omissions, or breach of this Agreement.</p>
+<p>13.2  Client assumes responsibility for the safety of the water feature and its surroundings, including risks associated with water, electrical components, and public access, during periods when Service Provider is not on-site.</p>
+<h1>14. GOVERNING LAW AND DISPUTE RESOLUTION</h1>
+<p>14.1  This Agreement shall be governed by the laws of the State of Utah.</p>
+<p>14.2  Disputes shall first be addressed through written notice and good-faith negotiation for thirty (30) days. Unresolved disputes shall be submitted to binding arbitration in Salt Lake City, Utah.</p>
+<p>14.3  The prevailing Party in any dispute shall be entitled to recover reasonable attorneys&#x27; fees and costs.</p>
+<h1>15. FORCE MAJEURE</h1>
+<p>15.1  Neither Party shall be in default or liable to the other for any delay or failure to perform its obligations under this Agreement to the extent that such delay or failure is caused by a Force Majeure Event. A &quot;Force Majeure Event&quot; means any circumstance beyond a Party&#x27;s reasonable control, including but not limited to: acts of God; fire, flood, earthquake, storm, hurricane, tornado, or other natural disasters; epidemic or pandemic; war, invasion, terrorism, riot, or civil unrest; government action, law, order, or regulation; strikes or labor disputes not involving that Party&#x27;s own employees; prolonged or widespread failure of utilities or telecommunications infrastructure; or extreme weather conditions rendering site access unsafe.</p>
+<p>15.2  The Party affected by a Force Majeure Event shall: (a) provide written notice to the other Party as soon as reasonably practicable after becoming aware of the event; (b) describe the nature and expected duration of the event; and (c) use commercially reasonable efforts to mitigate the effects and resume performance as soon as practicable.</p>
+<p>15.3  During a Force Majeure Event, Service Provider&#x27;s obligation to perform and Client&#x27;s obligation to pay for unperformed services shall both be suspended for the duration of the event. Service Provider shall reschedule suspended visits as promptly as conditions allow. Fees for services not performed due to a Force Majeure Event shall not be charged or shall be credited to Client&#x27;s account.</p>
+<p>15.4  If a Force Majeure Event continues for more than sixty (60) consecutive days, either Party may terminate the affected portion of this Agreement upon written notice without liability, except that Client shall remain responsible for all fees for services actually performed prior to the termination date.</p>
+<h1>16. GENERAL PROVISIONS</h1>
+<p>16.1  Entire Agreement. This Agreement constitutes the entire agreement between the Parties regarding maintenance services and supersedes all prior discussions.</p>
+<p>16.2  Amendments. Any modification must be in writing and signed by both Parties.</p>
+<p>16.3  Assignment. Client may not assign this Agreement without Service Provider&#x27;s prior written consent. Service Provider may assign this Agreement to a successor entity.</p>
+<p>16.4  Notices. All notices shall be in writing, delivered by email (with confirmation), overnight courier, or certified mail to the addresses listed in this Agreement.</p>
+<p>16.5  Photographs. Service Provider may photograph the water feature for internal documentation, quality control, and marketing purposes.</p>
+<p>16.6  Electronic Signatures. This Agreement may be executed electronically, and such signatures shall be fully binding.</p>
+<h1>EXHIBIT A – CUSTOM SERVICE PLAN DETAILS</h1>
+<p>(Complete only if Custom Plan was selected above)</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<p>{{ blank(30) }}</p>
+<h1>EXHIBIT B – CREDIT CARD AUTHORIZATION FORM</h1>
+<p>By completing this form, Client authorizes Sapphire Fountains, LLC to charge the credit or debit card below for all service fees, materials, and other amounts due under the Maintenance Services Agreement, on or after the applicable payment due date. This authorization remains in effect until Client provides written notice of revocation, provided all outstanding balances have been paid in full.</p>
+{% if doc.payment_section_choice in ("Payment Link", "Both") %}<p><b>Preferred payment setup:</b> Client will receive a secure payment link (processed by our payment provider) by text or email to store a card on file and authorize charges per Section 4. No card details are written on or stored with this Agreement. A QR code for the same link may be presented at signing.</p>{% endif %}{% if doc.payment_section_choice in ("Manual Card Authorization", "Both") %}<table class="ct-table"><tr><td><b>Cardholder Name:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Billing Address:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>City / State / Zip:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Card Type:</b></td><td>[ ] Visa    [ ] Mastercard    [ ] Amex    [ ] Discover</td></tr><tr><td><b>Card Number:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Expiration Date:</b></td><td>{{ blank(30) }} (MM/YY)</td></tr><tr><td><b>CVV / Security Code:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Email for Receipts:</b></td><td>{{ blank(30) }}</td></tr></table>
+<p>By signing below, I authorize Sapphire Fountains, LLC to charge the card above for amounts due under my Maintenance Services Agreement. I confirm that I am the authorized cardholder and that the information provided is accurate.</p>
+<p>Cardholder Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>For Service Provider Use Only:</p>
+<table class="ct-table"><tr><td><b>Card entered by:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Date entered:</b></td><td>{{ blank(30) }}</td></tr><tr><td><b>Last 4 digits confirmed:</b></td><td>{{ blank(30) }}</td></tr></table>{% endif %}
+<h1>SIGNATURES</h1>
+<p>By signing below, the Parties agree to be bound by the terms of this Maintenance Services Agreement.</p>
+<p><b>Sapphire Fountains, LLC (Service Provider)</b></p>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Authorized Representative of Sapphire Fountains, LLC)</p>
+<h3><b>CLIENT</b></h3>
+<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Client)</p>

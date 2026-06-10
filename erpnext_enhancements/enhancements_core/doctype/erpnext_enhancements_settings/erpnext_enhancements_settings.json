@@ -11,7 +11,15 @@
   "maintenance_services_group",
   "collab_section",
   "collab_enabled",
-  "collab_doctypes"
+  "collab_doctypes",
+  "status_alerts_section",
+  "status_alert_recipients",
+  "unconverted_nag_hours",
+  "pipeline_section",
+  "pipeline_stale_amber_days",
+  "pipeline_stale_red_days",
+  "handoff_section",
+  "handoff_ar_rep"
  ],
  "fields": [
   {
@@ -61,6 +69,56 @@
    "fieldtype": "Table",
    "label": "Collaborative Doctypes",
    "options": "Collab Doctype"
+  },
+  {
+   "fieldname": "status_alerts_section",
+   "fieldtype": "Section Break",
+   "label": "Status Change SMS Alerts"
+  },
+  {
+   "description": "Employees texted (via the Triton gateway) when an Opportunity is marked Closed Won, and reminded daily about won opportunities still awaiting a Project. Numbers come from each Employee's Cell Number — no number stored here.",
+   "fieldname": "status_alert_recipients",
+   "fieldtype": "Table",
+   "label": "SMS Recipients",
+   "options": "Status Alert Recipient"
+  },
+  {
+   "default": "24",
+   "description": "The daily reminder lists Closed Won opportunities that still have no Project after this many hours. Set 0 to disable the reminder entirely.",
+   "fieldname": "unconverted_nag_hours",
+   "fieldtype": "Int",
+   "label": "Unconverted Reminder After (Hours)"
+  },
+  {
+   "fieldname": "pipeline_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Pipeline Dashboard"
+  },
+  {
+   "default": "7",
+   "description": "Opportunities sitting in a stage this many days turn amber on the Sales Pipeline board.",
+   "fieldname": "pipeline_stale_amber_days",
+   "fieldtype": "Int",
+   "label": "Stale After (Days, Amber)"
+  },
+  {
+   "default": "14",
+   "description": "Opportunities sitting in a stage this many days turn red and pulse on the Sales Pipeline board.",
+   "fieldname": "pipeline_stale_red_days",
+   "fieldtype": "Int",
+   "label": "Very Stale After (Days, Red)"
+  },
+  {
+   "fieldname": "handoff_section",
+   "fieldtype": "Section Break",
+   "label": "Hand-Off Process (PRO-0204)"
+  },
+  {
+   "description": "The Finance person responsible for Accounts Receivable hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
+   "fieldname": "handoff_ar_rep",
+   "fieldtype": "Link",
+   "label": "Accounts Receivable Rep",
+   "options": "Employee"
   }
  ],
  "issingle": 1,

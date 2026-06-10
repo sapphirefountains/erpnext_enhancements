@@ -1,0 +1,917 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "contract_template",
+  "template_key",
+  "status",
+  "column_break_hdr",
+  "contract_date",
+  "revision",
+  "title",
+  "parties_section",
+  "party_type",
+  "party",
+  "party_display",
+  "contact_person",
+  "contact_phone",
+  "contact_email",
+  "column_break_party",
+  "opportunity",
+  "project",
+  "billing_address",
+  "site_address",
+  "details_section",
+  "project_title",
+  "project_description",
+  "column_break_details",
+  "property_type",
+  "feature_location",
+  "feature_description",
+  "nda_purpose",
+  "architect_owner",
+  "architect_owner_agreement_date",
+  "msa_section",
+  "msa_tier",
+  "sow_section",
+  "msa_contract",
+  "msa_effective_date",
+  "company_contact",
+  "subcontractor_license",
+  "column_break_sow",
+  "mobilization_date",
+  "substantial_completion_date",
+  "final_completion_date",
+  "working_hours",
+  "site_access_notes",
+  "scope_section",
+  "scope_of_work",
+  "tm_section",
+  "rate_journeyman",
+  "rate_apprentice",
+  "rate_equipment",
+  "column_break_tm",
+  "equipment_rate_note",
+  "materials_markup_percent",
+  "not_to_exceed",
+  "supervisor_section",
+  "supervisor_name",
+  "supervisor_phone",
+  "column_break_super",
+  "supervisor_email",
+  "supervisor_license",
+  "owner_section",
+  "phases",
+  "total_contract_value",
+  "design_section",
+  "design_retainer",
+  "concept_design_fee",
+  "design_development_fee",
+  "construction_documents_fee",
+  "total_design_fee",
+  "column_break_design",
+  "concept_days",
+  "design_development_days",
+  "construction_documents_days",
+  "construction_section",
+  "construction_start_days",
+  "anticipated_completion_date",
+  "milestones_section",
+  "milestones",
+  "milestones_total",
+  "rental_section",
+  "rental_start_date",
+  "rental_end_date",
+  "equipment_items",
+  "rental_fees_section",
+  "base_rental_fee",
+  "delivery_setup_fee",
+  "pickup_removal_fee",
+  "chemicals_fee",
+  "column_break_rental",
+  "other_fee_label",
+  "other_fee",
+  "total_rental_amount",
+  "security_deposit",
+  "maintenance_section",
+  "service_options",
+  "agreement_start_date",
+  "visit_frequency",
+  "preferred_days",
+  "preferred_time",
+  "column_break_maint",
+  "startup_month",
+  "winterization_month",
+  "gate_code",
+  "key_location",
+  "maint_fees_section",
+  "annual_maintenance_fee",
+  "maintenance_deposit",
+  "column_break_mfee",
+  "invoicing_frequency",
+  "payment_section_choice",
+  "totals_section",
+  "total_due_at_signing",
+  "column_break_sign",
+  "signed_on",
+  "signed_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Series",
+   "no_copy": 1,
+   "options": "SF-MSA-.YYYY.-.####\nSF-SOW-.YYYY.-.####\nSF-OC-.YYYY.-.####\nSF-RA-.YYYY.-.####\nSF-MAINT-.YYYY.-.####\nSF-NDA-.YYYY.-.####\nSF-ARCH-.YYYY.-.####\nSF-EC-.YYYY.-.####"
+  },
+  {
+   "fieldname": "contract_template",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Contract Type",
+   "options": "Contract Template",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "contract_template.template_key",
+   "fieldname": "template_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Template Key",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nOut for Signature\nSigned\nVoid"
+  },
+  {
+   "fieldname": "column_break_hdr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Today",
+   "fieldname": "contract_date",
+   "fieldtype": "Date",
+   "label": "Contract Date",
+   "reqd": 1
+  },
+  {
+   "description": "0 = original; increments on each amendment (submit, cancel, amend), preserving full lineage via Amended From.",
+   "fieldname": "revision",
+   "fieldtype": "Int",
+   "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "parties_section",
+   "fieldtype": "Section Break",
+   "label": "Party & Links"
+  },
+  {
+   "description": "Set by the contract type; for flexible templates (NDA, Employee-Contractor) pick the counterparty's record type.",
+   "fieldname": "party_type",
+   "fieldtype": "Select",
+   "label": "Party Type",
+   "options": "Customer\nSupplier\nEmployee"
+  },
+  {
+   "fieldname": "party",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Party",
+   "options": "party_type",
+   "reqd": 1
+  },
+  {
+   "fieldname": "party_display",
+   "fieldtype": "Data",
+   "label": "Party Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "contact_person",
+   "fieldtype": "Data",
+   "label": "Contact Person"
+  },
+  {
+   "fieldname": "contact_phone",
+   "fieldtype": "Data",
+   "label": "Contact Phone"
+  },
+  {
+   "fieldname": "contact_email",
+   "fieldtype": "Data",
+   "label": "Contact Email"
+  },
+  {
+   "fieldname": "column_break_party",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "fieldname": "billing_address",
+   "fieldtype": "Small Text",
+   "label": "Billing / Mailing Address"
+  },
+  {
+   "fieldname": "site_address",
+   "fieldtype": "Small Text",
+   "label": "Project / Service Site Address"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Engagement Details"
+  },
+  {
+   "fieldname": "project_title",
+   "fieldtype": "Data",
+   "label": "Project Name / Description"
+  },
+  {
+   "fieldname": "project_description",
+   "fieldtype": "Small Text",
+   "label": "Detailed Description"
+  },
+  {
+   "fieldname": "column_break_details",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\" || doc.template_key==\"maintenance\"",
+   "fieldname": "property_type",
+   "fieldtype": "Select",
+   "label": "Property Type",
+   "options": "\nResidential\nCommercial\nMunicipal\nOther"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\" || doc.template_key==\"maintenance\"",
+   "fieldname": "feature_location",
+   "fieldtype": "Select",
+   "label": "Feature Location",
+   "options": "\nOutdoor\nIndoor\nBoth"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "feature_description",
+   "fieldtype": "Data",
+   "label": "Feature Description"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"nda\"",
+   "description": "Fills the NDA recital: \"in connection with a ... between the Parties\". Leave empty to keep the generic wording.",
+   "fieldname": "nda_purpose",
+   "fieldtype": "Data",
+   "label": "Proposed Business Relationship"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "fieldname": "architect_owner",
+   "fieldtype": "Data",
+   "label": "Owner (Architect's Client)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Date of the Architect's agreement with their Owner (the Prime Agreement recited in the header).",
+   "fieldname": "architect_owner_agreement_date",
+   "fieldtype": "Date",
+   "label": "Prime Agreement Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "msa_section",
+   "fieldtype": "Section Break",
+   "label": "Master Subcontractor Agreement"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"msa\"",
+   "fieldname": "msa_tier",
+   "fieldtype": "Select",
+   "label": "Subcontractor Tier",
+   "mandatory_depends_on": "eval:doc.template_key==\"msa\"",
+   "options": "\nTier 1 - Service & Design\nTier 2 - Trade"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "sow_section",
+   "fieldtype": "Section Break",
+   "label": "Statement of Work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "description": "The Signed MSA this SOW is issued under - required before an SOW can be created.",
+   "fieldname": "msa_contract",
+   "fieldtype": "Link",
+   "label": "Master Subcontractor Agreement",
+   "mandatory_depends_on": "eval:doc.template_key==\"sow\"",
+   "options": "Project Contract"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "msa_effective_date",
+   "fieldtype": "Date",
+   "label": "MSA Effective Date",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "company_contact",
+   "fieldtype": "Data",
+   "label": "Company Contact"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "subcontractor_license",
+   "fieldtype": "Data",
+   "label": "Subcontractor License #"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_sow",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "mobilization_date",
+   "fieldtype": "Date",
+   "label": "Mobilization / Start Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "substantial_completion_date",
+   "fieldtype": "Date",
+   "label": "Substantial Completion Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "final_completion_date",
+   "fieldtype": "Date",
+   "label": "Final Completion Date"
+  },
+  {
+   "default": "Mon-Fri, 7:00 AM - 5:00 PM (unless otherwise agreed)",
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "working_hours",
+   "fieldtype": "Data",
+   "label": "Working Hours"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "site_access_notes",
+   "fieldtype": "Small Text",
+   "label": "Site Access Notes"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Scope of Work"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "scope_of_work",
+   "fieldtype": "Text Editor",
+   "label": "Scope of Work"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "tm_section",
+   "fieldtype": "Section Break",
+   "label": "Time & Materials Rates (if applicable)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "rate_journeyman",
+   "fieldtype": "Currency",
+   "label": "Journeyman / Lead Rate (per hr)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "rate_apprentice",
+   "fieldtype": "Currency",
+   "label": "Apprentice / Helper Rate (per hr)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "rate_equipment",
+   "fieldtype": "Currency",
+   "label": "Equipment Rate (per hr)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_tm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "equipment_rate_note",
+   "fieldtype": "Data",
+   "label": "Equipment Rate Applies To"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "materials_markup_percent",
+   "fieldtype": "Float",
+   "label": "Materials Markup %",
+   "precision": "1"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "not_to_exceed",
+   "fieldtype": "Currency",
+   "label": "Not-to-Exceed Amount"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "supervisor_section",
+   "fieldtype": "Section Break",
+   "label": "Site Supervisor / Foreman"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "supervisor_name",
+   "fieldtype": "Data",
+   "label": "Name"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "supervisor_phone",
+   "fieldtype": "Data",
+   "label": "Phone"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "column_break_super",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "supervisor_email",
+   "fieldtype": "Data",
+   "label": "Email"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\"",
+   "fieldname": "supervisor_license",
+   "fieldtype": "Data",
+   "label": "License / Certification"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "owner_section",
+   "fieldtype": "Section Break",
+   "label": "Owner Contract - Phases"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "phases",
+   "fieldtype": "Table",
+   "label": "Services Selected",
+   "options": "Contract Phase Item"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "total_contract_value",
+   "fieldtype": "Currency",
+   "label": "Total Contract Value",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "design_section",
+   "fieldtype": "Section Break",
+   "label": "Design Fees & Timeline"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "design_retainer",
+   "fieldtype": "Currency",
+   "label": "Design Retainer (due at signing)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "concept_design_fee",
+   "fieldtype": "Currency",
+   "label": "Phase 1 - Concept Design Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "design_development_fee",
+   "fieldtype": "Currency",
+   "label": "Phase 2 - Design Development Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "construction_documents_fee",
+   "fieldtype": "Currency",
+   "label": "Phase 3 - Construction Documents Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "total_design_fee",
+   "fieldtype": "Currency",
+   "label": "Total Design Fee",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "column_break_design",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "concept_days",
+   "fieldtype": "Int",
+   "label": "Concept Design (calendar days)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "design_development_days",
+   "fieldtype": "Int",
+   "label": "Design Development (calendar days)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "construction_documents_days",
+   "fieldtype": "Int",
+   "label": "Construction Documents (calendar days)"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "construction_section",
+   "fieldtype": "Section Break",
+   "label": "Construction Schedule"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "construction_start_days",
+   "fieldtype": "Int",
+   "label": "Construction Start (days after deposit/permit)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\"",
+   "fieldname": "anticipated_completion_date",
+   "fieldtype": "Date",
+   "label": "Anticipated Completion Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" || doc.template_key==\"owner\"",
+   "fieldname": "milestones_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Milestones"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" || doc.template_key==\"owner\"",
+   "fieldname": "milestones",
+   "fieldtype": "Table",
+   "label": "Milestones",
+   "options": "Contract Milestone"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"sow\" || doc.template_key==\"owner\"",
+   "fieldname": "milestones_total",
+   "fieldtype": "Currency",
+   "label": "Milestones Total",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "rental_section",
+   "fieldtype": "Section Break",
+   "label": "Rental"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "rental_start_date",
+   "fieldtype": "Date",
+   "label": "Rental Start Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "rental_end_date",
+   "fieldtype": "Date",
+   "label": "Rental End Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "equipment_items",
+   "fieldtype": "Table",
+   "label": "Equipment",
+   "options": "Contract Equipment Item"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "rental_fees_section",
+   "fieldtype": "Section Break",
+   "label": "Rental Fees"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "base_rental_fee",
+   "fieldtype": "Currency",
+   "label": "Base Rental Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "delivery_setup_fee",
+   "fieldtype": "Currency",
+   "label": "Delivery & Setup Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "pickup_removal_fee",
+   "fieldtype": "Currency",
+   "label": "Pickup & Removal Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "chemicals_fee",
+   "fieldtype": "Currency",
+   "label": "Water Treatment / Chemicals"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "column_break_rental",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "other_fee_label",
+   "fieldtype": "Data",
+   "label": "Other Fee Label"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "other_fee",
+   "fieldtype": "Currency",
+   "label": "Other Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "total_rental_amount",
+   "fieldtype": "Currency",
+   "label": "Total Rental Amount",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"rental\"",
+   "fieldname": "security_deposit",
+   "fieldtype": "Currency",
+   "label": "Security Deposit"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "maintenance_section",
+   "fieldtype": "Section Break",
+   "label": "Maintenance Plan"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "service_options",
+   "fieldtype": "Table",
+   "label": "Service Plan Selection",
+   "options": "Contract Service Option"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "agreement_start_date",
+   "fieldtype": "Date",
+   "label": "Agreement Start Date"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "visit_frequency",
+   "fieldtype": "Select",
+   "label": "Visit Frequency",
+   "options": "\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nCustom"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "preferred_days",
+   "fieldtype": "Data",
+   "label": "Preferred Visit Day(s)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "preferred_time",
+   "fieldtype": "Data",
+   "label": "Preferred Time Window"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "column_break_maint",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "startup_month",
+   "fieldtype": "Data",
+   "label": "Spring Startup (target month)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "winterization_month",
+   "fieldtype": "Data",
+   "label": "Winterization (target month)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "gate_code",
+   "fieldtype": "Data",
+   "label": "Gate / Entry Code"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "key_location",
+   "fieldtype": "Data",
+   "label": "Key Location"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "maint_fees_section",
+   "fieldtype": "Section Break",
+   "label": "Maintenance Fees & Payment"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "annual_maintenance_fee",
+   "fieldtype": "Currency",
+   "label": "Annual Maintenance Fee"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "maintenance_deposit",
+   "fieldtype": "Currency",
+   "label": "Maintenance Deposit (due at signing)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "column_break_mfee",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "fieldname": "invoicing_frequency",
+   "fieldtype": "Select",
+   "label": "Invoicing Frequency",
+   "options": "\nPer Visit\nMonthly\nQuarterly\nAnnually"
+  },
+  {
+   "default": "Payment Link",
+   "depends_on": "eval:doc.template_key==\"maintenance\"",
+   "description": "Payment Link prints secure-link/QR instructions (card data never enters ERPNext); Manual prints a blank card form for handwritten entry on the signed copy.",
+   "fieldname": "payment_section_choice",
+   "fieldtype": "Select",
+   "label": "Payment Authorization Section",
+   "options": "Payment Link\nManual Card Authorization\nBoth"
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Totals & Signing"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"owner\" || doc.template_key==\"rental\" || doc.template_key==\"maintenance\"",
+   "fieldname": "total_due_at_signing",
+   "fieldtype": "Currency",
+   "label": "Total Due at Signing",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sign",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "signed_on",
+   "fieldtype": "Date",
+   "label": "Signed On",
+   "no_copy": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "signed_by",
+   "fieldtype": "Data",
+   "label": "Signed By (name)",
+   "no_copy": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Project Contract",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Employee",
+   "share": 1
+  }
+ ],
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}
