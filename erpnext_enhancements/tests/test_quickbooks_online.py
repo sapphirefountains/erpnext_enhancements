@@ -124,6 +124,80 @@ def test_customer_mapping_uses_native_erpnext_fields():
 	assert values["customer_group"] == "Commercial"
 
 
+def test_customer_type_resolves_against_customized_select_options(monkeypatch):
+	"""QBO company/individual translate to the site's customized customer_type options."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe,
+		"get_meta",
+		lambda doctype: types.SimpleNamespace(
+			has_field=lambda fieldname: False,
+			get_field=lambda fieldname: types.SimpleNamespace(
+				options="Commercial\nResidential\nPartnership"
+			),
+		),
+	)
+	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+
+	_, company_values = map_qbo_to_erpnext(
+		"Customer",
+		{"Id": "1", "DisplayName": "Acme Supply", "CompanyName": "Acme Supply"},
+		types.SimpleNamespace(company="Demo Company"),
+	)
+	_, person_values = map_qbo_to_erpnext(
+		"Customer",
+		{"Id": "2", "DisplayName": "Jane Doe"},
+		types.SimpleNamespace(company="Demo Company"),
+	)
+
+	assert company_values["customer_type"] == "Commercial"
+	assert person_values["customer_type"] == "Residential"
+
+
+def test_ensure_group_parent_promotes_ledger_parent(monkeypatch):
+	"""_ensure_group_parent converts an existing ledger parent Account to a group."""
+	frappe = install_frappe_stub()
+	parent = types.SimpleNamespace(is_group=0, saved=False)
+	parent.save = lambda **kwargs: setattr(parent, "saved", True)
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: 0 if doctype == "Account" else None,
+	)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: parent, raising=False)
+	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+		_ensure_group_parent,
+	)
+
+	_ensure_group_parent("Account", {"parent_account": "Job Expenses - SF"})
+
+	assert parent.is_group == 1
+	assert parent.saved
+
+
+def test_ensure_group_parent_leaves_groups_and_other_doctypes_alone(monkeypatch):
+	"""_ensure_group_parent is a no-op for group parents and non-Account doctypes."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: 1,
+	)
+	monkeypatch.setattr(
+		frappe,
+		"get_doc",
+		lambda doctype, name: (_ for _ in ()).throw(AssertionError("should not load the parent")),
+		raising=False,
+	)
+	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+		_ensure_group_parent,
+	)
+
+	_ensure_group_parent("Account", {"parent_account": "Job Expenses - SF"})
+	_ensure_group_parent("Customer", {"parent_account": "Job Expenses - SF"})
+	_ensure_group_parent("Account", {})
+
+
 def test_account_mapping_uses_existing_root_as_parent():
 	"""A QBO Account maps under the matching ERPNext root account as a leaf."""
 	install_frappe_stub()
