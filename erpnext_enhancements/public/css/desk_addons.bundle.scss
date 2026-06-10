@@ -1,0 +1,27 @@
+/*
+ * Global desk styles that used to be raw app_include_css entries — bundled so
+ * the built filename carries a content hash (raw /assets paths are served with
+ * a 1-year immutable Cache-Control and never pick up edits on devices that
+ * already cached them; see kanban.bundle.js for the full story).
+ *
+ * Import order mirrors the old hooks.py app_include_css order, and this bundle
+ * is listed AFTER desk_enhancements.bundle.css in hooks.py, so the CSS cascade
+ * is unchanged.
+ *
+ * WHY .scss AND NOT .css: frappe's esbuild runs style entries through
+ * @frappe/esbuild-plugin-postcss2, which writes the postcss output to a temp
+ * directory and hands esbuild THAT path — so relative @imports in a plain .css
+ * entry get resolved against the temp dir and fail the whole build with ENOENT
+ * (this broke the Frappe Cloud deploy of v0.8.1). A .scss entry is compiled by
+ * sass against the ORIGINAL path first, so sass inlines these imports itself
+ * before the temp hop. Same pattern as frappe core's own *.bundle.scss files.
+ * The imports are extension-less on purpose: sass inlines an extension-less
+ * import of a .css file, but leaves `@import "...css"` in the output as a
+ * runtime CSS import — which would 404. The built asset keeps its name:
+ * hooks.py still references "desk_addons.bundle.css" via assets.json.
+ */
+@import "./global_enhancements/triton_widget";
+@import "./project_enhancements/task_tree";
+@import "./project_enhancements/frappe-gantt";
+@import "./task_enhancements/task_enhancements";
+@import "./quickbooks_time_integration/qb_time_integration";

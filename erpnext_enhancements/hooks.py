@@ -16,7 +16,8 @@ app_license = "mit"
 app_include_css = [
     "desk_enhancements.bundle.css",
     # The remaining global styles, in the old include order (cascade preserved):
-    # see public/css/desk_addons.bundle.css.
+    # see public/css/desk_addons.bundle.scss (a .scss entry — its imports must
+    # be inlined by sass, not esbuild — but the built asset name stays .css).
     "desk_addons.bundle.css",
 ]
 app_include_js = [

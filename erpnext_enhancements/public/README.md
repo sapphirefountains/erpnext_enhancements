@@ -11,7 +11,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 > no content hash, so an edited raw include never reaches a device that already
 > cached it (the v0.8.1 "Kanban fix works on desktop, phones still broken" bug).
 > Global JS goes through `js/kanban.bundle.js` or `js/erpnext_enhancements.bundle.js`,
-> global CSS through `css/desk_enhancements.bundle.css` or `css/desk_addons.bundle.css`
+> global CSS through `css/desk_enhancements.bundle.css` or `css/desk_addons.bundle.scss`
 > — esbuild gives the built files content-hashed names. Where "Load" says
 > `app_include_js/css` below, the file is imported by one of those bundles. The
 > only raw global includes are the two vendored UMD libs (`vue.global.js`,
@@ -121,15 +121,15 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | File | Styles | Load |
 |---|---|---|
 | `desk_enhancements.bundle.css` | Desk "Sapphire glass" theme + Procurement Tracker, Comments App, Kanban, activity numbering, filter-help | app_include_css |
-| `desk_addons.bundle.css` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`) | app_include_css |
+| `desk_addons.bundle.scss` | Imports the five feature stylesheets below (old include order, after `desk_enhancements`). A `.scss` entry **on purpose**: sass inlines its extension-less imports against the real path; a plain `.css` entry's `@import`s get resolved against the postcss plugin's temp dir and ENOENT the whole `bench build` (broke the v0.8.1 Frappe Cloud deploy). Builds to `desk_addons.bundle.css` | app_include_css |
 | `login_enhancements.bundle.css` | Login/forgot/signup pages | web_include_css |
 | `global_enhancements/horizontal_scroll.css` | Opportunity Kanban horizontal scroll layout | doctype_css["Opportunity"] |
-| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.css` |
+| `global_enhancements/triton_widget.css` | Triton assistant FAB + chat panel | `desk_addons.bundle.scss` |
 | `kiosk/kiosk.css` | Standalone Time Kiosk PWA shell | `www/kiosk.html` `<link>` (not hooks) |
-| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.css` |
-| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.css` |
-| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.css` |
-| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.css` |
+| `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.scss` |
+| `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.scss` |
+| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.scss` |
+| `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.scss` |
 
 ## Gotchas
 
