@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-10
+
+### Fixed
+- **QuickBooks Online import: Customers no longer fail with `Account Type cannot be "Company". It should be one of "Commercial", "Residential", "Partnership"`.** The site customizes `Customer.customer_type`'s Select options via Property Setter (Commercial/Residential/Partnership), but `_map_customer` hardcoded ERPNext's stock values, so every Customer create failed validation. The mapper now resolves the value against the field's *actual* options (`_select_option` in `quickbooks_online/mapping.py`): a QBO customer with a `CompanyName` prefers Company → Commercial, an individual prefers Individual → Residential, falling back to the field's first option. Stock sites keep the old Company/Individual behavior; `supplier_type` got the same treatment for symmetry.
+- **QuickBooks Online import: sub-accounts no longer fail with `Parent account <X> can not be a ledger`.** QBO parent accounts (Automobile, Cost of Labor, Job Expenses, Job Materials, Insurance, …) were auto-linked to pre-existing chart-of-accounts rows that are *leaf* accounts — and the link path only fills blank fields, so `is_group` stayed 0 and every child account under them was rejected. Two fixes in `upsert_entity`: the auto-link path now promotes a linked ledger to a group when QBO says the account has children, and `_ensure_group_parent` converts a ledger `parent_account` to a group before any child Account is written under it (covering parents that pre-date the sync entirely). The conversion goes through the Account controller, so parents that already have GL entries still refuse — those genuinely need manual chart restructuring. Re-running **Import All** (or Retry Failed) after deploying picks up all previously failed accounts idempotently.
+
 ## [1.0.2] - 2026-06-10
 
 ### Fixed
