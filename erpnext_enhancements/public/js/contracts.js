@@ -59,6 +59,9 @@
 	}
 
 	function add_generate_button(frm, types, source_doctype) {
+		// master switch: the suite is dormant until enabled in
+		// ERPNext Enhancements Settings (boot flag; server guard is authority)
+		if (!frappe.boot.ee_process_automation) return;
 		if (frm.is_new()) return;
 		frm.add_custom_button(
 			__("Generate Contract"),

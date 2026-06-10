@@ -85,7 +85,32 @@ def _seeded_project(**overrides):
 	return project
 
 
+def _force_flag(testcase, value=True):
+	patcher = patch(
+		"erpnext_enhancements.process_steps.process_automation_enabled", return_value=value
+	)
+	patcher.start()
+	testcase.addCleanup(patcher.stop)
+
+
+class TestMasterSwitchOff(FrappeTestCase):
+	"""With the suite switched off, the engine never seeds or notifies."""
+
+	def setUp(self):
+		super().setUp()
+		_force_flag(self, value=False)
+
+	def test_no_seeding(self):
+		project = _FakeProject(custom_opportunity="OPP-0001")
+		with patch("erpnext_enhancements.process_steps._templates", return_value=TEMPLATES):
+			seed_process_steps(project)
+		self.assertEqual(project.get("custom_process_steps"), [])
+
+
 class TestSeeding(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		_force_flag(self)
 	def test_seeds_with_retro_anchors(self):
 		project = _seeded_project()
 		steps = project.get("custom_process_steps")
@@ -124,6 +149,10 @@ class TestSeeding(FrappeTestCase):
 
 
 class TestSync(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		_force_flag(self)
+
 	def test_payment_anchor_autocompletes(self):
 		project = _seeded_project()
 		project._fields["custom_payment_received"] = 1
@@ -153,6 +182,10 @@ class TestSync(FrappeTestCase):
 
 
 class TestTransitions(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		_force_flag(self)
+
 	def _pair(self):
 		"""(before, after) sharing row names, ready for diffing."""
 		after = _seeded_project()

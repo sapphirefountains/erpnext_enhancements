@@ -30,6 +30,8 @@ board (see the Project Dashboard docstring for the history there).
 import frappe
 from frappe.utils import cint, date_diff, flt, get_datetime, getdate, now_datetime, nowdate
 
+from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
+
 # Statuses that never appear on the board.
 TERMINAL_STATUSES = {"Lost", "Closed Lost", "Closed", "Converted"}
 WON_STATUS = "Closed Won"
@@ -128,6 +130,7 @@ def _stage_columns():
 @frappe.whitelist()
 def get_pipeline_data():
 	"""Everything the board needs in one call."""
+	throw_if_process_automation_disabled()
 	if not check_permission():
 		frappe.throw(frappe._("You do not have permission to view the Sales Pipeline."), frappe.PermissionError)
 

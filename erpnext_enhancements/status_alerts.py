@@ -32,6 +32,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, get_url, get_url_to_form, getdate, now_datetime, today
 
+from erpnext_enhancements.feature_flags import process_automation_enabled
+
 
 def _in_maintenance_context():
 	"""True while migrating/installing/patching/importing — never alert from those."""
@@ -115,6 +117,8 @@ def notify_closed_won(doc, method=None):
 	"""
 	if doc.status != "Closed Won" or _in_maintenance_context():
 		return
+	if not process_automation_enabled():
+		return
 	before = doc.get_doc_before_save()
 	if before and before.status == "Closed Won":
 		return
@@ -163,6 +167,8 @@ def nag_unconverted_opportunities():
 	day granularity — with the 24h default an opportunity won today is never
 	nagged, one won yesterday or earlier is.
 	"""
+	if not process_automation_enabled():
+		return
 	settings = frappe.get_single("ERPNext Enhancements Settings")
 	raw_hours = settings.get("unconverted_nag_hours")
 	hours = 24 if raw_hours in (None, "") else cint(raw_hours)
@@ -225,6 +231,8 @@ def notify_payment_received(doc, method=None):
 	confirmed again).
 	"""
 	if not cint(doc.custom_payment_received) or _in_maintenance_context():
+		return
+	if not process_automation_enabled():
 		return
 	before = doc.get_doc_before_save()
 	if before and cint(before.custom_payment_received):

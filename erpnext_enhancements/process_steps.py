@@ -40,6 +40,10 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, get_datetime, get_url_to_form, now_datetime
 
+from erpnext_enhancements.feature_flags import (
+	process_automation_enabled,
+	throw_if_process_automation_disabled,
+)
 from erpnext_enhancements.status_alerts import _deliver
 
 ROLE_AE = "Account Executive"
@@ -137,12 +141,14 @@ def seed_process_steps(doc, method=None):
 		doc.custom_opportunity = doc.get("custom_sales_opportunity")
 	if not doc.get("custom_opportunity"):
 		return
+	if not process_automation_enabled():
+		return
 	_append_steps(doc)
 
 
 def announce_seeded_steps(doc, method=None):
 	"""Project ``after_insert`` — tell the first pending step's owner it's up."""
-	if not _has_steps_field(doc):
+	if not _has_steps_field(doc) or not process_automation_enabled():
 		return
 	current = _first_pending(doc.get(STEPS_FIELD) or [])
 	if current:
@@ -151,7 +157,7 @@ def announce_seeded_steps(doc, method=None):
 
 def sync_process_steps(doc, method=None):
 	"""Project ``before_save`` — anchors, completion stamps, due dates."""
-	if not _has_steps_field(doc):
+	if not _has_steps_field(doc) or not process_automation_enabled():
 		return
 	steps = doc.get(STEPS_FIELD) or []
 	if not steps:
@@ -178,7 +184,7 @@ def sync_process_steps(doc, method=None):
 
 def notify_step_transitions(doc, method=None):
 	"""Project ``on_update`` — a step just completed: hand off to the next owner."""
-	if not _has_steps_field(doc):
+	if not _has_steps_field(doc) or not process_automation_enabled():
 		return
 	steps = doc.get(STEPS_FIELD) or []
 	before = doc.get_doc_before_save()
@@ -311,6 +317,8 @@ def escalate_overdue_steps():
 	Only the *current* step of each active project escalates (later pending
 	steps aren't actionable yet), at most once per day per step.
 	"""
+	if not process_automation_enabled():
+		return
 	now = now_datetime()
 	rows = frappe.get_all(
 		"Project Process Step",
@@ -364,6 +372,7 @@ def start_process(project):
 	automatically — this is their explicit opt-in. Anchored steps complete
 	retroactively (won date, project creation, payment if already received).
 	"""
+	throw_if_process_automation_disabled()
 	doc = frappe.get_doc("Project", project)
 	if not doc.has_permission("write"):
 		frappe.throw(_("Not permitted to modify this Project."), frappe.PermissionError)

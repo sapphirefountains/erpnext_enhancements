@@ -4,6 +4,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "process_automation_section",
+  "process_automation_enabled",
   "project_reminders_section",
   "project_reminder_emails",
   "maintenance_section",
@@ -22,6 +24,18 @@
   "handoff_ar_rep"
  ],
  "fields": [
+  {
+   "fieldname": "process_automation_section",
+   "fieldtype": "Section Break",
+   "label": "Process Automation (Jun 9 Suite)"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the Jun 9 process-automation suite: Closed-Won SMS alerts, the won-but-unconverted reminder, Payment Received alerts, the PRO-0204 hand-off step engine, contract generation, and the Sales Pipeline board. OFF = the system behaves as it did before (silent timestamps still accumulate so the boards are meaningful from day one when enabled). Server behavior changes immediately; desk buttons/pages update on each user's next page load. Always-on regardless of this switch: the Lead quick-entry dialog and Opportunity field descriptions (form-level fixtures), and the Task Dashboard block (only appears where explicitly added to a Workspace).",
+   "fieldname": "process_automation_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Process Automation Suite"
+  },
   {
    "fieldname": "project_reminders_section",
    "fieldtype": "Section Break",

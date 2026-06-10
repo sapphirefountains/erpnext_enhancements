@@ -44,7 +44,19 @@ class _FakeDoc:
 		self.comments.append((comment_type, text))
 
 
+def _force_flag(testcase, module, value=True):
+	"""Pin the process-automation master switch for a test class (the gated
+	modules import the flag function by value, so patch their local ref)."""
+	patcher = patch(f"erpnext_enhancements.{module}.process_automation_enabled", return_value=value)
+	patcher.start()
+	testcase.addCleanup(patcher.stop)
+
+
 class TestClosedWonGuard(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		_force_flag(self, "status_alerts")
+
 	def _opp(self, status, before_status=None):
 		before = _FakeDoc(status=before_status) if before_status else None
 		return _FakeDoc(before=before, status=status)
@@ -81,7 +93,37 @@ class TestClosedWonGuard(FrappeTestCase):
 			frappe.flags.in_migrate = False
 
 
+class TestMasterSwitchOff(FrappeTestCase):
+	"""With the suite switched off, the alert hooks are completely silent."""
+
+	def setUp(self):
+		super().setUp()
+		_force_flag(self, "status_alerts", value=False)
+
+	def test_closed_won_is_silent(self):
+		doc = _FakeDoc(before=_FakeDoc(status="Qualification"), status="Closed Won")
+		with patch.object(frappe, "enqueue") as enqueue:
+			notify_closed_won(doc)
+		enqueue.assert_not_called()
+
+	def test_payment_received_is_silent(self):
+		doc = _FakeDoc(
+			before=_FakeDoc(custom_payment_received=0),
+			custom_payment_received=1,
+			custom_payment_received_on=None,
+			custom_payment_method="Check",
+		)
+		with patch.object(frappe, "enqueue") as enqueue:
+			notify_payment_received(doc)
+		enqueue.assert_not_called()
+		self.assertEqual(doc.comments, [])
+
+
 class TestPaymentReceivedGuard(FrappeTestCase):
+	def setUp(self):
+		super().setUp()
+		_force_flag(self, "status_alerts")
+
 	def _project(self, received, before_received=None, **fields):
 		before = (
 			_FakeDoc(custom_payment_received=before_received)
