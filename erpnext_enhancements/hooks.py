@@ -157,11 +157,15 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 	},
 	"Project": {
-		"before_save": "erpnext_enhancements.script_migrations.project.remove_open_status",
+		"before_save": [
+			"erpnext_enhancements.script_migrations.project.remove_open_status",
+			"erpnext_enhancements.status_alerts.stamp_payment_received_date",
+		],
 		"after_save": "erpnext_enhancements.project_enhancements.sync_attachments_from_opportunity",
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.publish_realtime_update",
+			"erpnext_enhancements.status_alerts.notify_payment_received",
 		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -185,7 +189,10 @@ doc_events = {
 			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 		],
-		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+		"on_update": [
+			"erpnext_enhancements.sync_contact.sync_from_main_doc",
+			"erpnext_enhancements.status_alerts.notify_closed_won",
+		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Contact": {
@@ -215,6 +222,7 @@ scheduler_events = {
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
 		"erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
+		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
