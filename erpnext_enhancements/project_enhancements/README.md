@@ -84,7 +84,8 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
   per-type structured data (phase/milestone/equipment/service-option child tables,
   computed totals) and native revision lineage: submit = issued, cancel + amend =
   Revision N (`revision` + `amended_from`), `track_changes` for draft history. Naming
-  series per type: `SF-MSA-` / `SF-SOW-` / `SF-OC-` / `SF-RA-` / `SF-MAINT-`.
+  series per type with the generation year, counters restarting yearly:
+  `SF-{MSA,SOW,OC,RA,MAINT,NDA,ARCH,EC}-YYYY-####` (e.g. `SF-OC-2026-0001`).
 - **Generation** — "Create > Generate Contract" on Opportunity/Project (customer
   types + SOW with a supplier picker) and Supplier (MSA/SOW), via `create_contract`
   (whitelisted): prefils party, contacts, addresses, description, value-stream phase

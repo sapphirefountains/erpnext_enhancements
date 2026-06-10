@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-06-10
+
+### Changed
+- **Contract numbers now carry the generation year**: `SF-OC-2026-0001` instead of `SF-OC-0001` (all eight series: `SF-{MSA,SOW,OC,RA,MAINT,NDA,ARCH,EC}-YYYY-####`). Frappe keys the series counter on the resolved prefix, so numbering restarts at 0001 each January — the year in the number is also the year of the counter. No migration needed: the contract system is unreleased, so no existing names are affected.
+
 ## [1.7.0] - 2026-06-10
 
 The original DOC-#### agreement packet, reconciled against the Contract Comparison Report and the **three retained agreements** added as generatable templates. The other five originals are deliberately NOT templated: the report marks them superseded by the revised suite already shipped in v1.5.0 (DOC-0034→MSA, DOC-0099→SOW, DOC-0100→Maintenance, DOC-0032→Rental, DOC-0102→Owner Contract) — templating them would have resurrected retired legal documents.

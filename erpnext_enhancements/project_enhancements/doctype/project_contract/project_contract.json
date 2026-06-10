@@ -127,7 +127,7 @@
    "hidden": 1,
    "label": "Series",
    "no_copy": 1,
-   "options": "SF-MSA-.####\nSF-SOW-.####\nSF-OC-.####\nSF-RA-.####\nSF-MAINT-.####\nSF-NDA-.####\nSF-ARCH-.####\nSF-EC-.####"
+   "options": "SF-MSA-.YYYY.-.####\nSF-SOW-.YYYY.-.####\nSF-OC-.YYYY.-.####\nSF-RA-.YYYY.-.####\nSF-MAINT-.YYYY.-.####\nSF-NDA-.YYYY.-.####\nSF-ARCH-.YYYY.-.####\nSF-EC-.YYYY.-.####"
   },
   {
    "fieldname": "contract_template",

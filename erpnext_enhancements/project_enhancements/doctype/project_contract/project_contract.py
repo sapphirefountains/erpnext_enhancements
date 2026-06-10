@@ -32,17 +32,19 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt, today
 
+# Series include the generation year (SF-OC-2026-0001); frappe keys the
+# counter on the resolved prefix, so numbering restarts at 0001 each year.
 SERIES_BY_KEY = {
-	"msa": "SF-MSA-.####",
-	"sow": "SF-SOW-.####",
-	"owner": "SF-OC-.####",
-	"rental": "SF-RA-.####",
-	"maintenance": "SF-MAINT-.####",
+	"msa": "SF-MSA-.YYYY.-.####",
+	"sow": "SF-SOW-.YYYY.-.####",
+	"owner": "SF-OC-.YYYY.-.####",
+	"rental": "SF-RA-.YYYY.-.####",
+	"maintenance": "SF-MAINT-.YYYY.-.####",
 	# retained originals (Contract Comparison Report: no replacement in the
 	# revised suite, still in active use)
-	"nda": "SF-NDA-.####",
-	"architect": "SF-ARCH-.####",
-	"employee_contractor": "SF-EC-.####",
+	"nda": "SF-NDA-.YYYY.-.####",
+	"architect": "SF-ARCH-.YYYY.-.####",
+	"employee_contractor": "SF-EC-.YYYY.-.####",
 }
 
 # Templates whose party type is fixed get it stamped from the template; "Any
