@@ -11,8 +11,9 @@
  *  - Renders a Google Maps embed of that address into the `custom_map_placeholder`
  *    HTML field, refreshing it whenever the full address changes.
  *
- * The two custom fields used here are created by
- * project_enhancements/setup_address.py. Note the server side also sets
+ * The two custom fields used here (`custom_full_address`, `custom_map_placeholder`)
+ * are managed by the app fixtures (fixtures/custom_field.json), synced on
+ * migrate. Note the server side also sets
  * `custom_full_address` on save via the `Address` `before_save` hook
  * (script_migrations.address.set_full_address); this script keeps the field and
  * the map live in the browser before a save round-trip.

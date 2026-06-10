@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-09
+
+### Changed
+- **The repo is now the source of truth for all manual customizations (Phase 2).** `fixtures/custom_field.json` and `fixtures/property_setter.json` now carry every manually created Custom Field (425) and Property Setter (349) from the live site — re-exported fresh today and verified byte-identical to the Phase 1 snapshot — and the `fixtures` hook exports/syncs everything with `is_system_generated = 0` minus six records owned by other apps (see `fixtures/README.md`, the new authoritative spec). On deploy, `bench migrate` re-applies these files; Customize Form changes on the site no longer survive fixture-touching deploys. **Back up the DB before the first deploy of this release** (the first sync re-writes values identical to what the site already holds, so it is expected to be a functional no-op).
+- **`create_comments_tab` (after_migrate) is now insert-only.** It previously rewrote the fixture-owned Project Comments tab/field with `update=True` and a recomputed `insert_after` on every migrate — running *after* fixture sync, it would have silently overridden any future fixture edit. It now only creates missing fields (fresh installs, Master Project).
+
+### Removed
+- **`crm_enhancements/custom/opportunity.json` and `project_enhancements/custom/project.json`** (`sync_on_migrate` customization channels). All 16 of their live-matching records are now fixture-owned; the 17th, `Project-total_expense_claim`, was a frozen 2025 copy of an HRMS-owned field (`is_system_generated = 1`) that the file re-imposed on every migrate — ownership returns to HRMS. These files synced *after* fixtures in the migrate pipeline and would have masked fixture edits.
+- **The dead `custom_fields` dict in hooks.py.** Frappe core never reads an app-level `custom_fields` hook and no consumer exists in this repo; its `Project-custom_drive_folder_id` definition had silently drifted from the live record (which the fixtures now own). Corrected the false provenance claim in `crm_enhancements/README.md`.
+- **`project_enhancements/setup_address.py`** (manual `bench execute` installer). Its definitions for the two Address map fields had drifted from live, and a re-run would have inserted an orphan `custom_map_section` that exists in no fixture. The fixtures own the real records.
+- **`customizations_snapshot/`** (Phase 1). Superseded: the fixture files now carry the same content, and the snapshot README's spec moved to `fixtures/README.md`.
+
 ## [0.5.0] - 2026-06-09
 
 ### Added

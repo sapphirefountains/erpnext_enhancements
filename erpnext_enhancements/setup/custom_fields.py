@@ -7,8 +7,10 @@ HTML widgets, primary address + location map — onto the relevant party doctype
 plus a "Comments" tab for Project / Master Project.
 
 All creation goes through ``create_custom_fields(..., update=True)`` and existing
-fields are skipped (only their ``insert_after`` ordering is reconciled), so the
-functions are safe to re-run.
+fields are skipped (the unified tabs additionally reconcile ``insert_after`` for
+their own system-generated widget fields), so the functions are safe to re-run.
+Manual, fixture-owned records (e.g. the Project Comments tab) are never updated
+here — fixtures sync earlier in the migrate pipeline and own those values.
 """
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
@@ -147,13 +149,15 @@ def create_unified_tabs():
 				}
 			])
 
-		# Skip creation if the fieldname already exists (Standard or Custom)
-		# But update insert_after for specific fields if they are custom
+		# Skip creation if the fieldname already exists (Standard or Custom).
+		# Reconcile insert_after only for our own system-generated widget fields —
+		# manual records are fixture-owned and must never be rewritten here.
 		fields_to_create = []
 		for field in fields:
 			if meta.has_field(field["fieldname"]):
-				if frappe.db.exists("Custom Field", {"dt": doctype, "fieldname": field["fieldname"]}):
-					frappe.db.set_value("Custom Field", {"dt": doctype, "fieldname": field["fieldname"]}, "insert_after", field["insert_after"])
+				filters = {"dt": doctype, "fieldname": field["fieldname"], "is_system_generated": 1}
+				if frappe.db.exists("Custom Field", filters):
+					frappe.db.set_value("Custom Field", filters, "insert_after", field["insert_after"])
 				continue
 			fields_to_create.append(field)
 
@@ -178,10 +182,18 @@ def create_primary_contact_fields():
 
 
 def create_comments_tab(doctype):
-	"""Add a "Comments" tab hosting the Comments-app HTML widget to a doctype."""
+	"""Add a "Comments" tab hosting the Comments-app HTML widget to a doctype.
+
+	Insert-only: fields that already exist are never touched. The Project pair
+	is a manual customization owned by the fixtures (which sync before this
+	after_migrate hook runs); rewriting it here with ``update=True`` would
+	silently override the fixture on every migrate. This only provisions
+	missing fields (fresh installs, Master Project).
+	"""
 	if not frappe.db.exists("DocType", doctype):
 		return
 
+	meta = frappe.get_meta(doctype)
 	fields = [
 		{
 			"fieldname": "custom_comments_tab",
@@ -197,7 +209,9 @@ def create_comments_tab(doctype):
 		}
 	]
 
-	create_custom_fields({doctype: fields}, update=True)
+	fields_to_create = [f for f in fields if not meta.has_field(f["fieldname"])]
+	if fields_to_create:
+		create_custom_fields({doctype: fields_to_create}, update=True)
 
 
 def get_last_field_before_tabs(doctype):

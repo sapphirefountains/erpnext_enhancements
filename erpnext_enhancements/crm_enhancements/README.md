@@ -9,7 +9,6 @@ Customizes the **Opportunity** doctype and integrates **Google Drive**: when an 
 | `api.py` | Opportunity→Project conversion + tag sync | `enqueue_project_creation` (whitelisted), `create_project_from_opportunity_background`, `sync_opportunity_tags`, `sync_opportunity_tags_for_existing` (whitelisted) | `sync_opportunity_tags` → `Opportunity` `before_save` |
 | `drive_utils.py` | Google Drive v3 API wrappers | `get_drive_service`, `create_folder`, `find_folder`, `provision_project_folders` | called by the background worker in `api.py` |
 | `doctype/project_folder_google_drive_settings/*.py` | Single settings doctype controller | `ProjectFolderGoogleDriveSettings` | — |
-| `custom/opportunity.json` | Exported Opportunity customizations | — | installed on migrate |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`) — see the [public README](../public/README.md#crm-enhancements).
 
@@ -22,7 +21,7 @@ Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js
 - **Result handling** — the returned folder id is saved to `Project.custom_drive_folder_id` (via `db_set`); the `webViewLink` is attached to the Project as a public File. Drive failures are caught and logged so they never abort Project creation; success/failure is reported to the requesting user over the `project_creation_status` realtime channel.
 - **Resilience** — `create_folder` retries up to 5× with exponential backoff on HTTP 403/429; `find_folder` retries once after 2s; single quotes in folder names are escaped to avoid Drive query-syntax errors.
 
-> `custom_drive_folder_id` is declared as a hidden Custom Field on Project directly in [`../hooks.py`](../hooks.py) (`custom_fields`), so it exists without a separate fixture.
+> `custom_drive_folder_id` is a hidden Custom Field on Project managed by the app fixtures ([`../fixtures/custom_field.json`](../fixtures/custom_field.json)), synced on migrate.
 
 ## Gotchas
 
