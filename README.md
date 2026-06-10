@@ -115,7 +115,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `override_whitelisted_methods` | Replace a core endpoint | `opportunity.make_project` → `opportunity_enhancements.make_project` |
 | `override_doctype_dashboards` | Customize the "connections" dashboard | `Project`, `Employee` |
 | `after_migrate` | Idempotent setup after each migrate | `setup.custom_fields`, `setup.supplier_groups` |
-| `fixtures` | Records installed on migrate | Custom Fields, Travel Trip Workflow + states/actions, maintenance Notifications + Print Format |
+| `fixtures` | Records installed on migrate | **All manual customizations** — every manually created Custom Field (425) and Property Setter (349); see [`fixtures/README.md`](erpnext_enhancements/fixtures/README.md) — plus Travel Trip Workflow + states/actions, maintenance Notifications + Print Format |
 | `portal_menu_items` | Customer portal links | `/maintenance-records` |
 
 When you add a feature, you almost always register it here. When you are tracing "what runs when X is saved", start here.

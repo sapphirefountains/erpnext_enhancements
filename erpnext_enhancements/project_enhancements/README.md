@@ -9,7 +9,6 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | File | Purpose | Key functions / classes | Wiring |
 |---|---|---|---|
 | `__init__.py` | Module helpers: procurement status, attachment sync, start reminders, dashboard override, project comments | `get_procurement_status`, `get_procurement_documents`, `sync_attachments_from_opportunity`, `send_project_start_reminders`, `get_dashboard_data`, `get_project_comments`/`add`/`delete`/`update` | Project `after_save` → `sync_attachments_from_opportunity`; `scheduler.daily` → `send_project_start_reminders`; `override_doctype_dashboards["Project"]` → `get_dashboard_data` |
-| `setup_address.py` | One-off installer for Address map Custom Fields | `setup_fields` | Manual (`bench execute`); not in hooks |
 | `doctype/master_project/master_project.py` | Master Project controller; rollup of member Projects + Tasks | `MasterProject.get_projects_and_tasks` | Doctype controller |
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project/project.py` | List-view grouping + printable Project Brief data | `get_project_grouping_option`, `get_project_brief_data` | Whitelisted (client scripts) |

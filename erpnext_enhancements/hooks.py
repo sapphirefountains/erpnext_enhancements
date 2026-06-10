@@ -153,19 +153,6 @@ doctype_css = {
     "Opportunity": "public/css/global_enhancements/horizontal_scroll.css",
 }
 
-# Custom fields created/synced automatically on migrate (from crm_enhancements)
-custom_fields = {
-    "Project": [
-        {
-            "fieldname": "custom_drive_folder_id",
-            "label": "Drive Folder ID",
-            "fieldtype": "Data",
-            "hidden": 1,
-            "insert_after": "project_name",
-        }
-    ]
-}
-
 # Override standard doctype classes (from task_enhancements)
 override_doctype_class = {
     "Task": "erpnext_enhancements.task_enhancements.doctype.task.task.Task",
@@ -255,67 +242,35 @@ after_migrate = [
     "erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 ]
 
+# Version-controlled customizations: every manually created Custom Field and
+# Property Setter on the site lives in fixtures/ and is re-applied on migrate —
+# the repo is the source of truth, UI changes do not survive deploys.
+# The "not in" lists exclude records that are flagged manual on the site but are
+# owned by other installed apps or the framework; they must never be exported or
+# synced from here. See fixtures/README.md for the full spec.
 fixtures = [
     {
         "dt": "Custom Field",
         "filters": [
-            ["name", "in", [
-                "Expense Claim-custom_travel_trip",
-                "Project-custom_project_id",
-                "Project-custom_comments_tab",
-                "Project-custom_comments_field",
-                "Task-custom_comments_tab",
-                "Task-custom_comments_field",
-                "Material Request-custom_project",
-                "Request for Quotation-custom_project",
-                "Customer-custom_comments_tab",
-                "Customer-custom_comments_field",
-                "Kanban Board-custom_swimlane_field",
-                "Kanban Board Column-custom_wip_limit",
-                "Employee-custom_comments_tab",
-                "Employee-custom_comments_field",
-                "Stock Entry-custom_comments_tab",
-                "Stock Entry-custom_comments_field",
-                "Delivery Note-custom_comments_tab",
-                "Delivery Note-custom_comments_field",
-                "Serial No-custom_comments_tab",
-                "Serial No-custom_comments_field",
-                "Batch-custom_comments_tab",
-                "Batch-custom_comments_field",
-                "Supplier-custom_comments_tab",
-                "Supplier-custom_comments_field",
-                "Supplier Quotation-custom_comments_tab",
-                "Supplier Quotation-custom_comments_field",
-                "Quotation-custom_comments_tab",
-                "Quotation-custom_comments_field",
-                "Purchase Order-custom_comments_tab",
-                "Purchase Order-custom_comments_field",
-                "Lead-custom_comments_tab",
-                "Lead-custom_comments_field",
-                "Contact-custom_comments_tab",
-                "Contact-custom_comments_field",
-                "Address-custom_comments_tab",
-                "Address-custom_comments_field",
-                "Task-custom_create_child_task_btn",
-                "Asset-custom_current_event_location",
-                "Asset-custom_map_placeholder",
-                "Asset-custom_rental_status",
-                "Serial No-custom_pump_make_model",
-                "Serial No-custom_filtration_media_type",
-                "Serial No-custom_water_volume",
-                "Serial No-custom_site_instructions",
-                "Serial No-custom_project",
-                "Sales Order Item-custom_serial_no",
-                "Sales Order Item-custom_maintenance_frequency",
-                "Sales Order Item-custom_last_visit_date",
-                "Sales Order Item-custom_next_predictive_visit",
-                "Sales Order-custom_display_labor_hours",
-                "Sales Invoice-custom_maintenance_record"
-            ]]
-        ]
+            ["is_system_generated", "=", 0],
+            ["name", "not in", [
+                "User-hide_my_private_information_from_others",  # lms
+                "User-user_category",                            # lms
+                "User-verify_terms",                             # lms
+                "User-assistant_enabled",                        # frappe_assistant_core
+                "Sapphire Maintenance Record-workflow_state",    # frappe workflow engine
+            ]],
+        ],
     },
-    # project_enhancements: all Custom Fields on the Project doctype
-    {"dt": "Custom Field", "filters": [["dt", "=", "Project"]]},
+    {
+        "dt": "Property Setter",
+        "filters": [
+            ["is_system_generated", "=", 0],
+            ["name", "not in", [
+                "LMS Certificate-main-default_print_format",     # lms
+            ]],
+        ],
+    },
     {"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
     {"dt": "Workflow State", "filters": [["name", "in", ["Draft", "Requested", "Approved", "Booking in Progress", "Ready for Travel", "In Progress", "Expense Review", "Closed", "Pending Review", "Final/Submitted"]]]},
     {"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
