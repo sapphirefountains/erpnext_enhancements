@@ -22,12 +22,19 @@ from docx.text.paragraph import Paragraph
 
 OUT_DIR = "erpnext_enhancements/templates/contracts"
 
+# Revised suite (Apr 2026) + the three retained originals (per the Contract
+# Comparison Report: DOC-0033/0101/0137 have no replacement in the revised
+# suite and stay in active use). Files not present in the given folder are
+# skipped, so the script can be run per-folder.
 DOCS = {
 	"01_Master_Subcontractor_Agreement.docx": "master_subcontractor_agreement.html",
 	"01b_Statement_of_Work_Template.docx": "statement_of_work.html",
 	"03_Owner_Contract.docx": "owner_contract.html",
 	"04_Rental_Agreement.docx": "rental_agreement.html",
 	"05_Maintenance_Services_Agreement.docx": "maintenance_services_agreement.html",
+	"DOC-0033 General Nondisclosure Agreement.docx": "nondisclosure_agreement.html",
+	"DOC-0101 Architect Agreement.docx": "architect_agreement.html",
+	"DOC-0137 Employee-Contractor Agreement.docx": "employee_contractor_agreement.html",
 }
 
 
@@ -107,6 +114,9 @@ def table_html(t):
 def main():
 	base = sys.argv[1]
 	for src, dst in DOCS.items():
+		if not os.path.exists(os.path.join(base, src)):
+			print(f"skip (not in folder): {src}")
+			continue
 		d = docx.Document(os.path.join(base, src))
 		parts = []
 		for block in iter_blocks(d):

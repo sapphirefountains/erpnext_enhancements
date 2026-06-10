@@ -32,6 +32,9 @@
   "property_type",
   "feature_location",
   "feature_description",
+  "nda_purpose",
+  "architect_owner",
+  "architect_owner_agreement_date",
   "msa_section",
   "msa_tier",
   "sow_section",
@@ -124,7 +127,7 @@
    "hidden": 1,
    "label": "Series",
    "no_copy": 1,
-   "options": "SF-MSA-.####\nSF-SOW-.####\nSF-OC-.####\nSF-RA-.####\nSF-MAINT-.####"
+   "options": "SF-MSA-.####\nSF-SOW-.####\nSF-OC-.####\nSF-RA-.####\nSF-MAINT-.####\nSF-NDA-.####\nSF-ARCH-.####\nSF-EC-.####"
   },
   {
    "fieldname": "contract_template",
@@ -186,12 +189,11 @@
    "label": "Party & Links"
   },
   {
-   "fetch_from": "contract_template.party_type",
+   "description": "Set by the contract type; for flexible templates (NDA, Employee-Contractor) pick the counterparty's record type.",
    "fieldname": "party_type",
    "fieldtype": "Select",
    "label": "Party Type",
-   "options": "Customer\nSupplier",
-   "read_only": 1
+   "options": "Customer\nSupplier\nEmployee"
   },
   {
    "fieldname": "party",
@@ -287,6 +289,26 @@
    "fieldname": "feature_description",
    "fieldtype": "Data",
    "label": "Feature Description"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"nda\"",
+   "description": "Fills the NDA recital: \"in connection with a ... between the Parties\". Leave empty to keep the generic wording.",
+   "fieldname": "nda_purpose",
+   "fieldtype": "Data",
+   "label": "Proposed Business Relationship"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "fieldname": "architect_owner",
+   "fieldtype": "Data",
+   "label": "Owner (Architect's Client)"
+  },
+  {
+   "depends_on": "eval:doc.template_key==\"architect\"",
+   "description": "Date of the Architect's agreement with their Owner (the Prime Agreement recited in the header).",
+   "fieldname": "architect_owner_agreement_date",
+   "fieldtype": "Date",
+   "label": "Prime Agreement Date"
   },
   {
    "depends_on": "eval:doc.template_key==\"msa\"",

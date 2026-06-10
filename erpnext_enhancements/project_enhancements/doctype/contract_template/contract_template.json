@@ -17,7 +17,7 @@
  ],
  "fields": [
   {
-   "description": "Stable machine key (msa, sow, owner, rental, maintenance). Drives the contract numbering series and generation logic — do not change after contracts exist.",
+   "description": "Stable machine key (msa, sow, owner, rental, maintenance). Drives the contract numbering series and generation logic \u2014 do not change after contracts exist.",
    "fieldname": "template_key",
    "fieldtype": "Data",
    "label": "Template Key",
@@ -36,12 +36,12 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Who the agreement is with: Customer for owner/rental/maintenance contracts, Supplier for subcontractor agreements (matches the Subcontracting module's party model).",
+   "description": "Who the agreement is with: Customer for owner/rental/maintenance/architect contracts, Supplier for subcontractor agreements (matches the Subcontracting module's party model), Any Party for flexible agreements (NDA, Employee-Contractor) where the counterparty type is picked per contract.",
    "fieldname": "party_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Party Type",
-   "options": "Customer\nSupplier",
+   "options": "Customer\nSupplier\nAny Party",
    "reqd": 1
   },
   {
@@ -68,7 +68,7 @@
    "label": "Description"
   },
   {
-   "description": "Jinja HTML rendered with the Project Contract as context (doc, fill(), cb(), money(), dt() helpers — see process docs). Edit here when legal text changes; no deploy needed. Seeded from the version-controlled sources in templates/contracts/.",
+   "description": "Jinja HTML rendered with the Project Contract as context (doc, fill(), cb(), money(), dt() helpers \u2014 see process docs). Edit here when legal text changes; no deploy needed. Seeded from the version-controlled sources in templates/contracts/.",
    "fieldname": "body",
    "fieldtype": "Code",
    "label": "Body (Jinja HTML)",

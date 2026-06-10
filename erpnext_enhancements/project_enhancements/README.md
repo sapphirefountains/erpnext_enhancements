@@ -64,12 +64,18 @@ module [`process_steps.py`](../process_steps.py):
 
 ## Contract generation (Phase 4, v1.5.0)
 
-Five agreements generate inside ERPNext: **MSA** (Master Subcontractor Agreement, per
-Supplier, Tier 1/Tier 2), **SOW** (Statement of Work — only creatable under a *Signed*
-MSA for the same Supplier; the gate lives in `ProjectContract.validate_msa_gate`),
-**Owner Contract** (phase-selectable Design/Construction/Maintenance), **Rental
-Agreement**, and **Maintenance Services Agreement** (payment authorization prints as a
-secure-link instruction and/or a blank card form — card data never enters ERPNext).
+Eight agreements generate inside ERPNext. The revised suite (Apr 2026): **MSA**
+(Master Subcontractor Agreement, per Supplier, Tier 1/Tier 2), **SOW** (Statement of
+Work — only creatable under a *Signed* MSA for the same Supplier; the gate lives in
+`ProjectContract.validate_msa_gate`), **Owner Contract** (phase-selectable
+Design/Construction/Maintenance), **Rental Agreement**, and **Maintenance Services
+Agreement** (payment authorization prints as a secure-link instruction and/or a blank
+card form — card data never enters ERPNext). Plus the three retained originals (per
+the Contract Comparison Report, no replacement in the revised suite): **Mutual NDA**
+(DOC-0033, party = Customer/Supplier/Employee picked per contract), **Architect
+Agreement** (DOC-0101, the architect engages Sapphire — party Customer; includes its
+own embedded SOW page), and **Employee-Contractor Agreement** (DOC-0137). The
+superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templated.
 
 - **`Contract Template`** (`doctype/contract_template/`) — the Jinja HTML bodies,
   seeded insert-only from `templates/contracts/` (regeneration pipeline:

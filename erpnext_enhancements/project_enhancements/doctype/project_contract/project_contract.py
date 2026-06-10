@@ -38,7 +38,17 @@ SERIES_BY_KEY = {
 	"owner": "SF-OC-.####",
 	"rental": "SF-RA-.####",
 	"maintenance": "SF-MAINT-.####",
+	# retained originals (Contract Comparison Report: no replacement in the
+	# revised suite, still in active use)
+	"nda": "SF-NDA-.####",
+	"architect": "SF-ARCH-.####",
+	"employee_contractor": "SF-EC-.####",
 }
+
+# Templates whose party type is fixed get it stamped from the template; "Any
+# Party" templates (NDA, Employee-Contractor) let the user pick the
+# counterparty's record type per contract (Customer / Supplier / Employee).
+FLEXIBLE_PARTY = "Any Party"
 
 OWNER_PHASES = [
 	("design", "Phase 1 — Design & Engineering"),
@@ -94,18 +104,32 @@ class ProjectContract(Document):
 		self.title = f"{frappe.db.get_value('Contract Template', self.contract_template, 'title')}: {self.party_display or self.party}"
 
 	def _fetch_template_props(self):
-		if self.contract_template and not self.template_key:
-			self.template_key, self.party_type = frappe.db.get_value(
-				"Contract Template", self.contract_template, ["template_key", "party_type"]
+		if not self.contract_template:
+			return
+		template_key, template_party_type = frappe.db.get_value(
+			"Contract Template", self.contract_template, ["template_key", "party_type"]
+		)
+		self.template_key = template_key
+		if template_party_type != FLEXIBLE_PARTY:
+			self.party_type = template_party_type
+		elif not self.party_type:
+			frappe.throw(
+				_("Select the Party Type (Customer / Supplier / Employee) for this agreement."),
+				title=_("Party Type Required"),
 			)
 
 	def _resolve_party_display(self):
 		if not self.party:
 			return
-		if self.party_type == "Customer":
-			self.party_display = frappe.db.get_value("Customer", self.party, "customer_name") or self.party
-		else:
-			self.party_display = frappe.db.get_value("Supplier", self.party, "supplier_name") or self.party
+		name_field = {
+			"Customer": "customer_name",
+			"Supplier": "supplier_name",
+			"Employee": "employee_name",
+		}.get(self.party_type)
+		if name_field:
+			self.party_display = (
+				frappe.db.get_value(self.party_type, self.party, name_field) or self.party
+			)
 
 	def _stamp_revision(self):
 		if self.amended_from and not cint(self.revision):
@@ -366,6 +390,8 @@ def _prefill_from_project(doc, project):
 
 def _prefill_from_supplier(doc, supplier):
 	doc.party = supplier
+	if not doc.party_type or doc.party_type == FLEXIBLE_PARTY:
+		doc.party_type = "Supplier"
 	address = frappe.db.get_value(
 		"Address",
 		{"link_doctype": "Supplier", "link_name": supplier},
@@ -390,7 +416,8 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	doc = frappe.new_doc("Project Contract")
 	doc.contract_template = template_doc.name
 	doc.template_key = template_doc.template_key
-	doc.party_type = template_doc.party_type
+	if template_doc.party_type != FLEXIBLE_PARTY:
+		doc.party_type = template_doc.party_type
 	doc.contract_date = today()
 	if party:
 		doc.party = party

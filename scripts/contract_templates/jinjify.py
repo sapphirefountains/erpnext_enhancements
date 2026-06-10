@@ -356,3 +356,76 @@ t.rep(
     'business at {{ fill((doc.billing_address or "").replace("\\n", ", "), 55) }} (&quot;Subcontractor&quot;).</p>',
 )
 t.finish()
+
+
+# ============================================================ Nondisclosure Agreement (DOC-0033, retained)
+t = T("nondisclosure_agreement.html")
+t.rep(
+    "is entered this ___ day of _____, 20__ (“Effective Date”)",
+    'is entered this {% if doc.contract_date %}{{ frappe.utils.formatdate(doc.contract_date, "d") }}'
+    "{% else %}___{% endif %} day of "
+    '{% if doc.contract_date %}{{ frappe.utils.formatdate(doc.contract_date, "MMMM") }}'
+    "{% else %}_____{% endif %}, "
+    '{% if doc.contract_date %}{{ frappe.utils.formatdate(doc.contract_date, "yyyy") }}'
+    "{% else %}20__{% endif %} (“Effective Date”)",
+)
+t.rep(
+    "[COMPANY]. (the“[Company]”), a [State] [Entity] with its principal place of business at [ADDRESS].",
+    "<b>{{ fill(doc.party_display, 40) }}</b> (the “Company”), a {{ blank(22) }} with its "
+    'principal place of business at {{ fill((doc.billing_address or "").replace("\n", ", "), 45) }}.',
+)
+t.rep(
+    "a [proposed business relationship] between",
+    "a {% if doc.nda_purpose %}{{ fill(doc.nda_purpose, 34) }}{% else %}proposed business relationship{% endif %} between",
+)
+t.rep(
+    "<td>[COMPANY].<br>By:{{ BLANK }}</td>",
+    "<td><b>{{ fill(doc.party_display, 30) }}</b><br>By:{{ BLANK }}</td>",
+)
+t.finish()
+
+# ============================================================ Architect Agreement (DOC-0101, retained)
+t = T("architect_agreement.html")
+# page-1 header table (full-table pattern only matches the 2-row header, not
+# the embedded SOW table that begins with the same rows)
+t.rep(
+    '<table class="ct-table"><tr><td><b>Architect:</b></td><td></td></tr>'
+    "<tr><td><b>Effective Date:</b></td><td></td></tr></table>",
+    '<table class="ct-table"><tr><td><b>Architect:</b></td><td>{{ fill(doc.party_display, 45) }}</td></tr>'
+    "<tr><td><b>Effective Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr></table>",
+)
+# embedded SOW header rows (the only remaining occurrence after the rep above)
+t.rep(
+    "<tr><td><b>Architect:</b></td><td></td></tr><tr><td><b>Effective Date:</b></td><td></td></tr>",
+    "<tr><td><b>Architect:</b></td><td>{{ fill(doc.party_display, 45) }}</td></tr>"
+    "<tr><td><b>Effective Date:</b></td><td>{{ dt(doc.contract_date) }}</td></tr>",
+)
+t.rep(
+    "<tr><td><b>Under Services Agreement Dated:</b></td><td></td></tr><tr><td><b>SOW No.</b></td><td></td></tr>",
+    "<tr><td><b>Under Services Agreement Dated:</b></td><td>{{ dt(doc.contract_date) }}</td></tr>"
+    "<tr><td><b>SOW No.</b></td><td>{{ doc.name }}</td></tr>",
+)
+t.rep(
+    "WHEREAS, Architect has entered into an agreement with {{ BLANK }} (“<u>Owner</u>”) dated "
+    "{{ BLANK }} (“<u>Prime Agreement</u>”) to provide professional services in connection with "
+    "{{ BLANK }} “<u>Project</u>”)",
+    "WHEREAS, Architect has entered into an agreement with <b>{{ fill(doc.architect_owner, 40) }}</b> "
+    "(“<u>Owner</u>”) dated {{ dt(doc.architect_owner_agreement_date) }} "
+    "(“<u>Prime Agreement</u>”) to provide professional services in connection with "
+    "{{ fill(doc.project_title, 40) }} “<u>Project</u>”)",
+)
+t.rep(
+    "<p><b>Description of </b><b>Services/Project to be Provided by Sapphire</b><b>:</b></p>",
+    "<p><b>Description of </b><b>Services/Project to be Provided by Sapphire</b><b>:</b></p>"
+    "{% if doc.scope_of_work %}<div>{{ doc.scope_of_work }}</div>"
+    "{% else %}<p>{{ blank(90) }}</p><p>{{ blank(90) }}</p>{% endif %}",
+)
+t.finish()
+
+# ============================================================ Employee-Contractor Agreement (DOC-0137, retained)
+t = T("employee_contractor_agreement.html")
+t.rep(
+    "<p>{{ BLANK }}\t\t{{ BLANK }}</p>\n<p>Name\t\t\t\t\t\t\t\t\tDate</p>",
+    "<p>{{ fill(doc.party_display, 35) }}\t\t{{ blank(18) }}</p>\n<p>Name\t\t\t\t\t\t\t\t\tDate</p>",
+)
+t.finish()

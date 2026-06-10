@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-10
+
+The original DOC-#### agreement packet, reconciled against the Contract Comparison Report and the **three retained agreements** added as generatable templates. The other five originals are deliberately NOT templated: the report marks them superseded by the revised suite already shipped in v1.5.0 (DOC-0034→MSA, DOC-0099→SOW, DOC-0100→Maintenance, DOC-0032→Rental, DOC-0102→Owner Contract) — templating them would have resurrected retired legal documents.
+
+### Added
+- **Mutual Non-Disclosure Agreement** (`nda`, DOC-0033, series `SF-NDA-`): effective date renders as "this {day} day of {month}, {year}" from the contract date; counterparty name/address fill from the party; the recital's "[proposed business relationship]" is overridable via a new `nda_purpose` field (generic wording kept when empty); signature blocks stay handwritten. Added to the Supplier Generate-Contract button (the common pre-MSA flow) and creatable standalone for anyone else.
+- **Architect Agreement** (`architect`, DOC-0101, series `SF-ARCH-`, party **Customer** — the architect engages and pays Sapphire as design subconsultant): header and embedded-SOW tables fill with architect + effective date; the recital's Owner / Prime Agreement date come from new `architect_owner` / `architect_owner_agreement_date` fields; the embedded SOW's number is the contract's own name, and its "Description of Services to be Provided by Sapphire" renders the `scope_of_work` field (writing lines when empty).
+- **Employee-Contractor Agreement** (`employee_contractor`, DOC-0137, series `SF-EC-`): printed name prefils from the party; signature/date stay handwritten. The comparison report flags this one "REVIEW RECOMMENDED" — the template is verbatim; route wording changes through legal, then edit the site record.
+- **Flexible party model.** `Contract Template.party_type` gains **"Any Party"**; `Project Contract.party_type` is now pickable (Customer / Supplier / **Employee** — Employee joins for the EC agreement) when the template is flexible, and stamped/enforced by the controller when fixed. Party-name resolution covers all three doctypes.
+- The conversion pipeline (`scripts/contract_templates/`) covers all eight documents, skips files missing from a given folder so it can be run per-source-folder — and reproduced the five committed templates **byte-identically** when re-run, proving the determinism the README promises.
+
+### Notes
+- Both retained supplier-facing docs carry the old office address (3176 S 400 E) and DOC-0137 predates the revised suite's legal pass — kept **verbatim** per the report's "retained" status; wording/address updates belong to a legal review, then a site-record edit.
+- New templates seed on migrate (insert-only, existing sites get just the three new records).
+
 ## [1.6.0] - 2026-06-10
 
 The SOW's scope of work now comes from the meeting's scope model instead of free typing.

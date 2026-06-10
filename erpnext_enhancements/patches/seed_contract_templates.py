@@ -54,6 +54,32 @@ TEMPLATES = [
 		"file": "maintenance_services_agreement.html",
 		"description": "Ongoing maintenance plan agreement. Payment authorization prints as a secure-link instruction and/or a blank card form - card data is never stored in ERPNext.",
 	},
+	# Retained originals — the Contract Comparison Report keeps these three in
+	# active use with no replacement in the revised suite.
+	{
+		"template_key": "nda",
+		"title": "Mutual Non-Disclosure Agreement",
+		"party_type": "Any Party",
+		"requires_msa": 0,
+		"file": "nondisclosure_agreement.html",
+		"description": "General mutual NDA (DOC-0033, retained). Counterparty can be a Customer, Supplier, or Employee record.",
+	},
+	{
+		"template_key": "architect",
+		"title": "Architect Agreement",
+		"party_type": "Customer",
+		"requires_msa": 0,
+		"file": "architect_agreement.html",
+		"description": "Architect engages Sapphire as design subconsultant under their prime agreement with an Owner (DOC-0101, retained). Includes its own embedded SOW page.",
+	},
+	{
+		"template_key": "employee_contractor",
+		"title": "Employee-Contractor Agreement",
+		"party_type": "Any Party",
+		"requires_msa": 0,
+		"file": "employee_contractor_agreement.html",
+		"description": "Expectations / confidentiality / IP assignment / non-compete for employees and individual contractors (DOC-0137, retained; comparison report recommends a legal review pass).",
+	},
 ]
 
 

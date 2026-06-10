@@ -26,6 +26,7 @@
 	const SUPPLIER_TYPES = [
 		{ value: "msa", label: __("Master Subcontractor Agreement") },
 		{ value: "sow", label: __("Statement of Work (requires signed MSA)") },
+		{ value: "nda", label: __("Mutual Non-Disclosure Agreement") },
 	];
 
 	function create_contract(template, source_doctype, source_name, extra) {
