@@ -104,6 +104,11 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			"issues": preflight_issues,
 		}
 
+	# A child Account can't be written under a ledger parent, so promote the
+	# parent to a group first (no-op for other doctypes / group parents).
+	if not preview:
+		_ensure_group_parent(erpnext_doctype, values)
+
 	# Already-linked path: update the previously synced ERPNext record in place.
 	mapping = get_mapping(entity_type, qbo_id)
 	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
@@ -118,6 +123,8 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		if preview:
 			return {"action": "update", "doctype": erpnext_doctype, "name": doc.name, "fields": list(values)}
 		apply_values(doc, values)
+		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
+			values.pop("account_type", None)
 		doc.save(ignore_permissions=True)
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
@@ -143,6 +150,14 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			}
 		doc = frappe.get_doc(erpnext_doctype, existing_match["name"])
 		applied_values = apply_blank_values(doc, values)
+		# A QBO group account auto-linked to a pre-existing ledger must become a
+		# group or its children can never nest under it (apply_blank_values
+		# treats the existing 0 as a value and leaves it).
+		if erpnext_doctype == "Account" and values.get("is_group") and not doc.get("is_group"):
+			doc.is_group = 1
+			applied_values["is_group"] = 1
+		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
+			applied_values.pop("account_type", None)
 		doc.save(ignore_permissions=True)
 		save_mapping(
 			entity_type,
@@ -619,25 +634,42 @@ def _matching_owned_values(doc, incoming_values: dict):
 
 
 def _map_account(payload, settings):
-	"""Map a QBO Account to an ERPNext Account (root/type derived from AccountType)."""
+	"""Map a QBO Account to an ERPNext Account (root/type derived from AccountType).
+
+	Group accounts get no ``account_type``: they never receive postings, and a
+	set Account Type blocks ERPNext's ledger->group conversion when a linked
+	leaf later turns out to have children.
+	"""
 	parent_account = _qbo_parent_account(payload, settings)
+	is_group = (
+		1
+		if payload.get("_qbo_has_children") or (payload.get("SubAccount") is False and not parent_account)
+		else 0
+	)
 	return "Account", {
 		"account_name": payload.get("Name"),
 		"company": settings.company,
 		"parent_account": parent_account,
-		"is_group": 1
-		if payload.get("_qbo_has_children") or (payload.get("SubAccount") is False and not parent_account)
-		else 0,
+		"is_group": is_group,
 		"root_type": _account_root_type(payload.get("AccountType")),
-		"account_type": _account_type(payload.get("AccountType")),
+		"account_type": None if is_group else _account_type(payload.get("AccountType")),
 	}
 
 
 def _map_customer(payload, settings):
-	"""Map a QBO Customer to an ERPNext Customer (Company vs Individual by CompanyName)."""
+	"""Map a QBO Customer to an ERPNext Customer (company vs individual by CompanyName).
+
+	``customer_type`` is resolved against the field's actual Select options --
+	sites customize them via Property Setter (e.g. Commercial/Residential/
+	Partnership), and an option not in the list fails validation on insert.
+	"""
 	return "Customer", {
 		"customer_name": _display_name(payload),
-		"customer_type": "Company" if payload.get("CompanyName") else "Individual",
+		"customer_type": _select_option(
+			"Customer",
+			"customer_type",
+			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
+		),
 		"customer_group": _default_group("Customer Group", "All Customer Groups"),
 		"territory": _default_group("Territory", "All Territories"),
 	}
@@ -647,7 +679,11 @@ def _map_supplier(payload, settings):
 	"""Map a QBO Vendor to an ERPNext Supplier."""
 	return "Supplier", {
 		"supplier_name": _display_name(payload),
-		"supplier_type": "Company" if payload.get("CompanyName") else "Individual",
+		"supplier_type": _select_option(
+			"Supplier",
+			"supplier_type",
+			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
+		),
 		"supplier_group": _default_group("Supplier Group", "All Supplier Groups"),
 	}
 
@@ -779,6 +815,24 @@ def _default_group(doctype: str, fallback_name: str):
 	return None
 
 
+def _select_option(doctype: str, fieldname: str, preferred):
+	"""Return the first ``preferred`` value that is a valid option of a Select field.
+
+	Property Setters can replace a field's options (e.g. Customer.customer_type
+	-> Commercial/Residential/Partnership), making the stock value invalid. Falls
+	back to the field's first option, else the first preference.
+	"""
+	try:
+		field = frappe.get_meta(doctype).get_field(fieldname)
+		options = [option.strip() for option in (field.options or "").split("\n") if option.strip()]
+	except Exception:
+		options = []
+	for value in preferred:
+		if value in options:
+			return value
+	return options[0] if options else preferred[0]
+
+
 def _qbo_parent_account(payload, settings):
 	"""Resolve an Account's parent: the mapped QBO ParentRef, else the root for its type."""
 	parent_ref = payload.get("ParentRef") or {}
@@ -788,6 +842,48 @@ def _qbo_parent_account(payload, settings):
 		if parent:
 			return parent
 	return _root_account_for_type(_account_root_type(payload.get("AccountType")), settings)
+
+
+def _ensure_group_parent(erpnext_doctype: str, values: dict):
+	"""Promote a ledger parent Account to a group so a child can be written under it.
+
+	QBO parent accounts auto-linked to pre-existing chart-of-accounts leaves stay
+	ledgers, and ERPNext then rejects every child with "Parent account ... can
+	not be a ledger". The conversion goes through the Account controller, which
+	still blocks parents that already have GL entries (those sync attempts keep
+	failing and need manual chart restructuring).
+	"""
+	if erpnext_doctype != "Account":
+		return
+	parent_name = values.get("parent_account")
+	if not parent_name:
+		return
+	is_group = frappe.db.get_value("Account", parent_name, "is_group")
+	if is_group is None or int(is_group):
+		return
+	parent = frappe.get_doc("Account", parent_name)
+	parent.is_group = 1
+	# ERPNext refuses the conversion while an Account Type is set; groups never
+	# receive postings, so the type is informational and safe to drop.
+	parent.account_type = None
+	parent.save(ignore_permissions=True)
+
+
+def _clear_account_type_for_group_conversion(erpnext_doctype: str, doc) -> bool:
+	"""Drop Account Type when an existing ledger Account is being made a group.
+
+	ERPNext blocks the ledger->group conversion while an Account Type is set
+	("Cannot covert to Group because Account Type is selected.", account.py's
+	``validate_group_or_ledger``). Returns True when it cleared the field so the
+	caller can drop ``account_type`` from the QBO-owned values it records.
+	"""
+	if erpnext_doctype != "Account" or not doc.get("is_group") or not doc.get("account_type"):
+		return False
+	was_group = frappe.db.get_value("Account", doc.name, "is_group")
+	if was_group is None or int(was_group):
+		return False
+	doc.account_type = None
+	return True
 
 
 def _root_account_for_type(root_type, settings):
