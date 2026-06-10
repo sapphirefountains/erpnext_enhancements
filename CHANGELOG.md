@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-10
+
+### Fixed
+- **The app switcher (and every other module-list consumer) no longer 500s when one app's module cache is poisoned with `None`.** Loading the app list calls CRM's `crm.api.check_app_permission` → `get_modules_from_all_apps_for_user()`, which walks every installed app with `modules_list += get_modules_from_app(app)` (`frappe/utils/modules.py`) — unguarded. `get_modules_from_app` is `@redis_cache`-decorated, and that decorator *intentionally* returns `None` when a `None` result was previously cached for a key (`frappe/utils/caching.py`, the "Edge Case: None can mean cache miss or the result itself is None" branch). So a single transient empty/failed `Module Def` query — observed for the **`telephony`** app — gets cached as `None`, and for the rest of that entry's TTL every `list += None` raises `TypeError: 'NoneType' object is not iterable`, taking down the app switcher, Dashboard / Dashboard Chart / Number Card, and the User / Module Profile forms. The function itself can't produce `None` (its body is `frappe.get_all(...)`, always a list) — the `None` comes purely from the cache layer. Rather than edit `apps/frappe` (overwritten on `bench update`), the fix is a runtime monkeypatch carried in app code (new `monkeypatches.py`, applied once per worker from the bottom of `hooks.py` — where Frappe imports every app's hooks): `get_modules_from_app` is wrapped to coerce `None → []`, equivalent to the upstream `get_modules_from_app(app) or []` guard but covering every caller, not just the one loop. The patch is idempotent and self-guarding (a failure logs and is skipped, never breaking hook loading), and is covered by `tests/test_monkeypatches.py`, which reproduces the original crash and asserts it's gone. Immediate recovery on an already-affected site is `bench --site <site> clear-cache`, which evicts the poisoned entry.
+
 ## [1.0.1] - 2026-06-10
 
 ### Fixed
