@@ -10,6 +10,7 @@ Customizes the **Opportunity** doctype and integrates **Google Drive**: when an 
 | `drive_utils.py` | Google Drive v3 API wrappers | `get_drive_service`, `create_folder`, `find_folder`, `provision_project_folders` | called by the background worker in `api.py` |
 | `doctype/project_folder_google_drive_settings/*.py` | Single settings doctype controller | `ProjectFolderGoogleDriveSettings` | — |
 | `doctype/accounts_lead`, `accounts_opportunity`, `accounts_project`, `lead_source`, `opportunity_contributor`, `value_stream`, `value_streams` | CRM child tables / masters ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
+| `doctype/sales_activity_settings/…py` | Single: global `inactivity_threshold` (days) — fallback reminder window for `script_migrations.customer.customer_inactivity_reminder` (ported v0.8.0) | `SalesActivitySettings` (pass) | synced on migrate |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`) — see the [public README](../public/README.md#crm-enhancements).
 
