@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-09
+
+### Added
+- **17 DB-only custom DocTypes ported into the app** (closing the fresh-install gap documented in `fixtures/README.md`): the 16 child tables referenced by `fixtures/custom_field.json` Link/Table fields (Accounts Lead/Opportunity/Project, Lead Source, Opportunity Contributor, Value Stream, Project Notes, Project Stakeholder, and the Build/Design/Rent/Service Customer Requests + Deliverables tables) plus the transitively required **Value Streams** master. Each now lives as a standard app DocType under `crm_enhancements/doctype/` (7, from the live `CRM` module) or `project_enhancements/doctype/` (10, from `Projects`), generated with frappe's own canonical export serializer from the live definitions — only `custom` (removed), `module` (remapped) and `modified` (stamped) differ. Because app doctype sync runs **before** fixture sync on migrate and fresh install, `custom_field.json` now imports cleanly on a from-scratch site; previously frappe skipped the entire 425-record file at the first missing Link target.
+### Changed
+- On the live site, the first migrate of this release flips the 17 from `custom = 1` to app-owned — verified non-destructive against the deployed Frappe 16.20.0 source (the reload path deletes only doctype metadata rows, never the data tables; row counts such as Value Stream's 1310 are untouched). Their definitions are henceforth edited in the repo (UI editing of standard DocTypes requires developer mode), extending the repo-as-source-of-truth model from Phase 2 to the DocTypes themselves. Any UI edit made to these 17 DocTypes between this export and the deploy is overwritten by the repo definitions — deploy promptly.
+- **Lead Source**: this ERPNext v16 install no longer ships its historical `Lead Source` doctype (verified: no `erpnext.crm.doctype.lead_source` module on the bench, `Lead.source` absent), so the port is collision-free; if a future ERPNext upgrade reintroduces it, ours must be renamed first. The live record is a one-field husk referenced only by `Customer-custom_lead_source` — ported faithfully, cleanup is a separate decision.
+
 ## [0.6.0] - 2026-06-09
 
 ### Changed

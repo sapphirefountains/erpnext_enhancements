@@ -80,15 +80,21 @@ app keeps those channels disjoint from fixture-owned records:
 
 ## Fresh-install caveats
 
-These do not affect the production site (where every record already exists); they
-matter only for building a brand-new site from this app:
+These concern building a brand-new site from this app (on the production site every
+fixture record already exists; the only production effect noted below is the benign
+one-time `custom = 1` → app-owned flip):
 
-- **16 of the 28 Link/Table target doctypes referenced by `custom_field.json` are
-  DB-only custom DocTypes** (created via the UI, existing in no app — e.g. Value
-  Stream, Project Notes, the Deliverables child tables). On a fresh site they don't
-  exist, the first Link-field validation raises, and frappe **skips the entire
-  fixture file** with only a console message. A true from-scratch rebuild needs those
-  DocTypes ported into the app (or restored from backup) first.
+- ~~16 of the 28 Link/Table target doctypes are DB-only custom DocTypes~~ —
+  **resolved in v0.7.0**: all 17 such DocTypes (the 16 fixture-referenced ones plus
+  the transitively required Value Streams) are now proper app DocTypes under
+  `crm_enhancements/doctype/` and `project_enhancements/doctype/`. App doctype sync
+  runs before fixture sync on both migrate and fresh install, so `custom_field.json`
+  imports cleanly. On the live site, the first v0.7.0 migrate flips them from
+  `custom = 1` to app-owned (schema and data untouched); from then on their
+  definitions are edited in the repo, not the UI. One name to watch: **Lead Source**
+  — this ERPNext v16 install no longer ships its old doctype of that name, but if a
+  future ERPNext upgrade reintroduces it, the names will collide and ours must be
+  renamed first.
 - Custom Fields import in file order (alphabetical by name), so a field whose
   `insert_after` points at a field created later in the file may land at the end of
   the form (cosmetic; identical to `bench export-fixtures` behavior).
