@@ -12,6 +12,7 @@
   "column_break_hdr",
   "contract_date",
   "revision",
+  "amended_from",
   "title",
   "parties_section",
   "party_type",
@@ -173,6 +174,15 @@
    "fieldname": "revision",
    "fieldtype": "Int",
    "label": "Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Project Contract",
+   "print_hide": 1,
    "read_only": 1
   },
   {

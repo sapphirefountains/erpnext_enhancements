@@ -146,6 +146,45 @@ class TestRevisionStamp(FrappeTestCase):
 		self.assertEqual(doc.revision, 0)
 
 
+class TestNewDocAttributeSafety(FrappeTestCase):
+	"""A NEW document from the desk omits every empty field (the client strips
+	nulls before POSTing), so the validate path must never read unset fields
+	as bare attributes. Regression for the Jun 10 production crash:
+	``AttributeError: 'ProjectContract' object has no attribute 'amended_from'``
+	on the very first save of an MSA from the UI."""
+
+	def test_stamp_revision_with_no_attributes_at_all(self):
+		doc = _bare()  # neither amended_from nor revision exist
+		doc._stamp_revision()  # must not raise
+		self.assertIsNone(doc.get("revision"))
+
+	def test_owner_totals_without_fee_attributes(self):
+		doc = _bare(template_key="owner", milestones=[], phases=[])
+		doc._compute_totals()  # design fee fields absent entirely
+		self.assertEqual(doc.total_design_fee, 0)
+		self.assertEqual(doc.total_contract_value, 0)
+
+	def test_rental_totals_without_fee_attributes(self):
+		doc = _bare(template_key="rental", milestones=[])
+		doc._compute_totals()  # no fee fields, no equipment
+		self.assertEqual(doc.total_rental_amount, 0)
+		self.assertEqual(doc.total_due_at_signing, 0)
+
+	def test_maintenance_totals_without_deposit(self):
+		doc = _bare(template_key="maintenance", milestones=[])
+		doc._compute_totals()
+		self.assertEqual(doc.total_due_at_signing, 0)
+
+	def test_msa_gate_skips_without_template(self):
+		doc = _bare()  # no contract_template attribute
+		doc.validate_msa_gate()  # must not raise
+
+	def test_party_display_skips_without_party(self):
+		doc = _bare()  # no party attribute
+		doc._resolve_party_display()  # must not raise
+		self.assertIsNone(doc.get("party_display"))
+
+
 class _FakeSource:
 	"""A Project/Opportunity stand-in carrying the scope child tables."""
 

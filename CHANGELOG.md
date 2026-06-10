@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-06-10
+
+### Fixed
+- **Saving a new Project Contract crashed** (`AttributeError: 'ProjectContract' object has no attribute 'amended_from'` — hit twice in production testing: saving a new MSA from the desk, and Generate Contract from a Project). Two defects, both fixed:
+  - The validate/autoname path read fields as **bare attributes**. New documents omit unset fields (desk saves strip nulls before POSTing; `frappe.new_doc` only initializes fields that exist in meta) and `BaseDocument` raises `AttributeError` for unset attributes — so the first save of *any* contract type crashed on either path, and an Owner Contract with untouched fee fields would have crashed in `_compute_totals` the same way. Every read in `autoname` / `validate` / `_stamp_revision` / `validate_msa_gate` / `_compute_totals` / `on_submit` / `render_body` now goes through `self.get(...)`. New regression suite (`TestNewDocAttributeSafety`) exercises the controller on documents with the attributes entirely absent — exactly what reaches the server.
+  - **`amended_from` was missing from the doctype definition** (dropped when the schema was regenerated in v1.5.0; confirmed absent on the live site — which is also why `frappe.new_doc` never initialized it). Beyond the crash, this would have silently broken the revision lineage: amending a cancelled contract had no column to store the predecessor in. The field is now declared explicitly (Link → Project Contract, read-only, no-copy, print-hide), as a submittable doctype requires; `bench migrate` adds the column.
+
 ## [1.8.0] - 2026-06-10
 
 ### Added
