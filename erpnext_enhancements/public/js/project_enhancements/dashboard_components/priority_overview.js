@@ -214,7 +214,7 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 				{ key: "project_name", label: "Project Name", locked: true },
 				{ key: "project_id", label: "Project ID" },
 				{ key: "custom_company_priority", label: "Company Priority" },
-				{ key: "custom_project_priority", label: "Project Priority" },
+				{ key: "custom_project_priority", label: "Value Stream Priority" },
 				{ key: "completion", label: "Completion Percentage" },
 				{ key: "spend_percent", label: "Spend %" },
 			]
@@ -397,7 +397,7 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
                         <th class="dashcol dashcol-project_name">Project Name</th>
                         <th class="dashcol dashcol-project_id">Project ID</th>
                         <th class="dashcol dashcol-custom_company_priority">Company Priority</th>
-                        <th class="dashcol dashcol-custom_project_priority">Project Priority</th>
+                        <th class="dashcol dashcol-custom_project_priority">Value Stream Priority</th>
                         <th class="dashcol dashcol-completion">Completion Percentage</th>
                         <th class="dashcol dashcol-spend_percent">Spend %</th>
                     </tr>
