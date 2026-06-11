@@ -1,0 +1,29 @@
+[
+    {
+        "skill_id": "ee-maintenance-dispatcher",
+        "title": "Maintenance Dispatcher Workflow",
+        "description": "Morning dispatch routine for fountain maintenance: review the day board, find visits due, check who is clocked in, follow up flagged chemistry/warranty visits, and brief technicians before dispatch.",
+        "skill_type": "Workflow",
+        "status": "Published",
+        "visibility": "Public",
+        "content_file": "maintenance_dispatcher.md"
+    },
+    {
+        "skill_id": "ee-project-status-reporter",
+        "title": "Project Status Reporter Workflow",
+        "description": "Build a project or portfolio status report: health metrics, hand-off process steps, schedule (Gantt) state, and procurement blockers, composed into a stakeholder-ready narrative.",
+        "skill_type": "Workflow",
+        "status": "Published",
+        "visibility": "Public",
+        "content_file": "project_status_reporter.md"
+    },
+    {
+        "skill_id": "ee-time-tracking-analyst",
+        "title": "Time Kiosk Analyst Workflow",
+        "description": "Analyze field-crew time: who is clocked in now, daily hour rollups per employee and project, and Job Interval to Timesheet sync health.",
+        "skill_type": "Workflow",
+        "status": "Published",
+        "visibility": "Public",
+        "content_file": "time_tracking_analyst.md"
+    }
+]

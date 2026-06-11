@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-06-11
+
+### Added
+- **Frappe Assistant Core (FAC) integration — custom MCP tools + skills.** AI assistants connected to the site's MCP endpoint (Claude via FAC) can now reach the app's cross-doctype business logic, not just generic document CRUD. Seven **read-only** tools in the new `assistant_tools/` package, registered via the `assistant_tools` hook and auto-discovered by FAC's custom_tools plugin:
+  - *Maintenance ops*: `maintenance_day_board` (wraps the Day Board feed: scheduled drafts, techs clocked in, submitted today, flagged), `maintenance_contract_status` (contract terms, per-feature cadence, upcoming/overdue visit list), `maintenance_visit_history` (submitted visits list/detail incl. readings-with-ranges, cleaning tasks, consumables + chemistry trends), `maintenance_site_briefing` (safety instructions, access codes, contract context, last visits, open drafts — wraps the technician dashboard context).
+  - *Projects*: `project_status_overview` (portfolio / single-project / master-project scopes: health metrics, hand-off process-step state, optional Gantt task list), `project_procurement_status` (stage-graduation rollup or document tree over the MR→RFQ→SQ→PO→PR/SE→PI chain).
+  - *Time kiosk*: `workforce_time_status` (who's clocked in now, per-user status, daily/range hour rollups per employee/project, Timesheet sync health). GPS/location data is deliberately not exposed.
+  - Permission model: each tool gates on a `requires_permission` DocType (also controls per-user tool visibility in FAC); list queries use `frappe.get_list` (role + user permissions); reused raw-SQL feeds get explicit `has_permission` document gates.
+- **Three bundled FAC skills** (workflow prompt templates, synced into `FAC Skill` rows on migrate via the `assistant_skills` hook): *Maintenance Dispatcher*, *Project Status Reporter*, *Time Kiosk Analyst* — step-by-step multi-tool playbooks with data-model pitfalls, in `data/skills/`.
+- **No hard FAC dependency**: the hooks are inert strings on sites without frappe_assistant_core; nothing in app code imports the new package (tripwire-tested). Two new test suites: `test_assistant_tools_schema.py` (bench-free contract tests: tool/module naming, FAC built-in collision guard, inputSchema validity, skills manifest, FAC-optional tripwire) and `test_assistant_tools_integration.py` (bench + FAC only, self-skipping: registry discovery, execution smoke tests, fixture-backed assertions, roleless-user denial).
+
 ## [1.9.0] - 2026-06-10
 
 ### Added
