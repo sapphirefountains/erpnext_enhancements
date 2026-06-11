@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-06-11
+
+### Added
+- **Morning Briefing — per-user daily AI digest** (ported from Triton's briefing scheduler):
+  - **Pre-generated weekday mornings**: new cron scheduler entry (`30 6 * * 1-5`, evaluated in the site's System Settings timezone — verify it's America/Denver) enqueues a long-queue batch that builds one briefing per enabled recipient and caches it in the new **Daily Briefing** doctype (one row per user/day via `format:` autoname; durable on purpose — Redis caches are flushed by migrate/clear-cache exactly when 24/7 displays churn). 60-day retention via a daily purge job.
+  - **Contents** (all native data, queries shared with the Task Dashboard backend): today's and overdue Tasks assigned to the user (`_assign`), today's public + own calendar Events, the user's open Opportunity pipeline, and due ToDos.
+  - **Narrative**: Gemini via the existing `api/gemini.py` wrapper with strict only-reference-live-data guardrails and fixed sections (📅 Schedule / 📋 Tasks / ⚠️ Overdue / 💼 Pipeline Pulse / 🎯 Top 3 Priorities). When Gemini fails or is switched off, a **deterministic markdown fallback** composed from the same data ships instead — never a dead apology; `narrative_source` records which path ran.
+  - **Surfaces**: new "Morning Briefing" **Custom HTML Block** (insert-only seed patch, same repo-source model as the Task Dashboard block; renders via `frappe.markdown`, Refresh button force-regenerates) and an optional **per-recipient email** (markdown → HTML, sent only by the scheduled batch).
+  - **Settings** (ERPNext Enhancements Settings → Morning Briefing): `briefing_enabled` master switch (default OFF, staged-rollout convention), `briefing_use_gemini` cost switch, `briefing_recipients` child table (new **Briefing Recipient** doctype) with per-row email opt-in. Any staff role can still pull a briefing on demand from the block; recipients govern the batch + email.
+  - Endpoint: `get_morning_briefing(force=0)` — session user only, role-gated like the Task Dashboard.
+  - Tests: `tests/test_briefing.py` (fallback composition incl. empty-day friendliness, prompt guardrails, per-day cache idempotency, force regeneration, recipient batch, master-switch gates, purge retention) — Gemini stays off throughout, so no network calls.
+
 ## [1.11.0] - 2026-06-11
 
 ### Added

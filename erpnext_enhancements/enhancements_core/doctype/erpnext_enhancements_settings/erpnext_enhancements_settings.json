@@ -29,7 +29,11 @@
   "pipeline_stale_amber_days",
   "pipeline_stale_red_days",
   "handoff_section",
-  "handoff_ar_rep"
+  "handoff_ar_rep",
+  "briefing_section",
+  "briefing_enabled",
+  "briefing_use_gemini",
+  "briefing_recipients"
  ],
  "fields": [
   {
@@ -198,6 +202,34 @@
    "fieldtype": "Link",
    "label": "Accounts Receivable Rep",
    "options": "Employee"
+  },
+  {
+   "fieldname": "briefing_section",
+   "fieldtype": "Section Break",
+   "label": "Morning Briefing"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. Weekday mornings at 06:30 (site timezone) a per-user briefing is pre-generated for every recipient below: today's + overdue tasks, today's calendar, open pipeline, due ToDos. Surfaced in the \"Morning Briefing\" workspace block and optionally emailed.",
+   "fieldname": "briefing_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Morning Briefing"
+  },
+  {
+   "default": "1",
+   "depends_on": "briefing_enabled",
+   "description": "Narrate the briefing with Gemini (Vertex AI key from Triton Settings). OFF = deterministic markdown from the same data, zero AI cost.",
+   "fieldname": "briefing_use_gemini",
+   "fieldtype": "Check",
+   "label": "Use Gemini Narrative"
+  },
+  {
+   "depends_on": "briefing_enabled",
+   "description": "Who gets a pre-generated briefing each weekday morning. Any staff user can still pull one on demand from the workspace block.",
+   "fieldname": "briefing_recipients",
+   "fieldtype": "Table",
+   "label": "Briefing Recipients",
+   "options": "Briefing Recipient"
   }
  ],
  "issingle": 1,

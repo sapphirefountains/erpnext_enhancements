@@ -229,6 +229,12 @@ doc_events = {
 }
 
 scheduler_events = {
+	"cron": {
+		# Morning Briefing pre-generation, weekdays 06:30. Frappe evaluates cron
+		# in the site's System Settings timezone (must be America/Denver here).
+		# The handler immediately enqueues the batch onto the long queue.
+		"30 6 * * 1-5": ["erpnext_enhancements.api.briefing.scheduled_briefing_run"],
+	},
 	"daily": [
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
 		"erpnext_enhancements.tasks.predictive_maintenance_scheduling",
@@ -238,6 +244,7 @@ scheduler_events = {
 		"erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
 		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 		"erpnext_enhancements.process_steps.escalate_overdue_steps",
+		"erpnext_enhancements.api.briefing.purge_old_briefings",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",

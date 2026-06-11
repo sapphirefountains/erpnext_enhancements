@@ -1,0 +1,98 @@
+{
+ "actions": [],
+ "autoname": "format:BRIEF-{date}-{user}",
+ "creation": "2026-06-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "date",
+  "column_break_meta",
+  "narrative_source",
+  "generated_at",
+  "content_section",
+  "content",
+  "generation_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Gemini = AI narrative; Fallback = deterministic markdown composed from the same live data (Gemini unavailable or disabled).",
+   "fieldname": "narrative_source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Narrative Source",
+   "options": "Gemini\nFallback",
+   "read_only": 1
+  },
+  {
+   "fieldname": "generated_at",
+   "fieldtype": "Datetime",
+   "label": "Generated At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Briefing"
+  },
+  {
+   "fieldname": "content",
+   "fieldtype": "Long Text",
+   "label": "Content (Markdown)",
+   "read_only": 1
+  },
+  {
+   "description": "Last Gemini error for this generation, if the narrative fell back.",
+   "fieldname": "generation_error",
+   "fieldtype": "Small Text",
+   "label": "Generation Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Daily Briefing",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
