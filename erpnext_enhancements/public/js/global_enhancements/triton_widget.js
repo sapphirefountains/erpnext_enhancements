@@ -65,7 +65,7 @@
 		if (_mermaidPromise) return _mermaidPromise;
 		_mermaidPromise = new Promise((resolve, reject) => {
 			const s = document.createElement("script");
-			s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js";
+			s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js";
 			s.onload = () => {
 				try {
 					window.mermaid.initialize({ startOnLoad: false, theme: "default" });
