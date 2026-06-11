@@ -43,6 +43,9 @@ import "./global_enhancements/quill_mentions.js";
 import "./global_enhancements/global_sidebar.js";
 import "./global_enhancements/auto_collapse_sidebar.js";
 import "./global_enhancements/unlink_and_delete.js";
+// Sapphire Fountains Mermaid theme (window.sf_mermaid) — before its consumers
+// (triton_widget.js here; process_document.js via doctype_js loads later).
+import "./global_enhancements/mermaid_theme.js";
 import "./global_enhancements/triton_widget.js";
 // project_enhancements (task_tree_manager / column_selector / gantt_zoom are
 // preloaded globally so doctype scripts and lazy dashboard tabs can use their

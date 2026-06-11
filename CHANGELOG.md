@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-06-11
+
+### Added
+- **Process Document Visual Builder** — an in-app split-pane Mermaid editor on the Process Document form (custom button + a link above the preview), so charts can be built without leaving ERPNext:
+  - Live preview: code on the left, diagram on the right, re-rendered (debounced) as you type; `mermaid.parse` runs first so syntax errors surface in a non-destructive error bar while the last good diagram stays on screen.
+  - **Insert…** menu drops building blocks at the cursor: starter flowchart, step/decision/start–end/external-system nodes, labeled and dotted arrows, subgraphs, and the **Sapphire Fountains style pack**.
+  - Zoom in/out/fit, Copy Code, Download SVG, and a deep link to mermaid.live; **Apply to Document** writes back to `mermaid_code` (normal save flow — nothing is saved behind your back).
+  - Builder chrome uses Frappe CSS variables (works in Frappe Light and Timeless Night per the repo's dark-theme convention).
+- **Sapphire Fountains brand theme for every Mermaid diagram** (`public/js/global_enhancements/mermaid_theme.js`, shipped in the global bundle as `window.sf_mermaid`). Branding extracted from sapphirefountains.com (Bricks theme globals): **Lato** plus the sapphire/teal palette (`#00609C` primary, `#00A0DF` sky, `#62CBC9` teal, `#00263E` navy, `#B14FC5` orchid, `#F8F8F8` mist). Applied via Mermaid's `base` theme variables to the Process Document preview, the Visual Builder, and the Triton widget's fenced-code diagrams — one source of truth, no more per-file `theme: "default"`.
+  - Diagrams deliberately render on a **light canvas in both desk themes**: the seeded charts class their nodes with literal pastel fills, which would pair with light theme text under a dark Mermaid theme and become unreadable. Diagrams are treated like print (literal colors, light surface); the surrounding UI follows the desk theme.
+  - The canonical brand `classDef` pack (eight classes, explicit `color:`) ships as `window.sf_mermaid.CLASS_PACK` and as a builder Insert snippet.
+
+### Changed
+- **"Sapphire Fountains Enhancements Flow" restyled to the brand palette** (seeder + live site updated; render-verified through the real `mermaid_theme.js` against `mermaid@11.15.0`). The eleven legacy ERPNext charts keep their Material module colors deliberately — eight semantic categories need more distinct hues than the brand palette offers; the brand theme still restyles their typography, edges, and subgraphs at the renderer level.
+
 ## [1.11.0] - 2026-06-11
 
 ### Added

@@ -18,7 +18,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | `doctype/triton_settings/…py` | AI-gateway / telephony Single config | `on_update` webhook, `trigger_refresh_webhook` (bg), whitelisted `get_gateway_config` |
 | `doctype/training_insight/…py` / `.js` | AI training example | (stub) |
 | `doctype/user_form_draft/…py` | Per-user autosaved form draft | (stub) |
-| `doctype/process_document/…py` | Mermaid.js process documentation (ported from a DB-only custom DocType in v0.8.0; form script: `public/js/process_document.js`; chart content version-controlled in `setup/process_documents.py` and upserted on every migrate since v1.11.0) | (stub) |
+| `doctype/process_document/…py` | Mermaid.js process documentation (ported from a DB-only custom DocType in v0.8.0; form script: `public/js/process_document.js` — brand-themed preview + Visual Builder dialog since v1.12.0; chart content version-controlled in `setup/process_documents.py` and upserted on every migrate since v1.11.0) | (stub) |
 | `page/ga4_dashboard/ga4_dashboard.js` | GA4 + GSC charts page | `on_page_load` |
 | `page/location_timeline/location_timeline.js` | Leaflet map replay of kiosk points | `on_page_load` |
 | `page/time_kiosk/time_kiosk.js` | Legacy redirect to the `/kiosk` PWA | `on_page_load`/`on_page_show` |
