@@ -54,7 +54,15 @@ Configuration lives in **ERPNext Enhancements Settings → Maintenance**: fee it
 | `doctype/sapphire_maintenance_template/…py` | Template controller | (no custom logic) |
 | other `doctype/…` children | istable stubs | — |
 
-Buttons creating contracts live on the source forms: `public/js/sales_order_enhancements.js` (submitted SO with water-feature items) and `project_enhancements/doctype/project_contract/project_contract.js` (Signed maintenance agreements).
+Buttons creating contracts live on the source forms — three entry points for three realities:
+
+| You have… | Button | Prefills |
+|---|---|---|
+| a submitted **Sales Order** | SO → Create → Maintenance Contract (`public/js/sales_order_enhancements.js`) | features + frequencies from the order's water-feature items |
+| a Signed **Maintenance Services Agreement** | Project Contract → Create → Maintenance Contract (`project_contract.js`) | frequency, invoicing cadence, seasonal options, start date |
+| **only a Project** (verbal/legacy arrangement) | Project → Create → Maintenance Contract (`public/js/project.js`) | customer + covered features from the project's Serial Nos (`custom_project`), Active template; links an SO/agreement if one happens to exist |
+
+Each path back-fills the other links when the documents exist; none of them are required. A project that already has an Active contract shows a jump-to button instead. And the floor below all of this: an **Active template scoped to the Project/Customer alone** is enough for techs to fill forms — contracts only add scheduling, visit shape, and invoicing behavior.
 
 ## Lifecycle
 

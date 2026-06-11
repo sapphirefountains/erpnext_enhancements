@@ -167,6 +167,69 @@ def make_contract_from_project_contract(source_name):
 	return doc
 
 
+@frappe.whitelist()
+def make_contract_from_project(source_name):
+	"""Map a bare Project into a draft Maintenance Contract.
+
+	Whitelisted; called by the Project form's "Create > Maintenance Contract"
+	button via ``frappe.model.open_mapped_doc``. This is the entry point for
+	**verbal/legacy arrangements** that have no Sales Order or written
+	agreement: covered features prefill from the project's own Serial Nos
+	(``Serial No.custom_project``, filtered to the configured water-feature
+	Item when one is set). A submitted Maintenance Sales Order and a Signed
+	maintenance-type Project Contract are linked when they happen to exist,
+	but neither is required.
+	"""
+	project = frappe.get_doc("Project", source_name)
+	if not project.customer:
+		frappe.throw(_("Set a Customer on Project {0} first — the Maintenance Contract needs one.").format(source_name))
+
+	doc = frappe.new_doc("Sapphire Maintenance Contract")
+	doc.customer = project.customer
+	doc.project = source_name
+
+	so_name = frappe.db.get_value(
+		"Sales Order",
+		{"project": source_name, "order_type": "Maintenance", "docstatus": 1},
+		"name",
+	)
+	if so_name:
+		doc.sales_order = so_name
+		_append_features_from_sales_order(doc, so_name)
+
+	_append_features_from_project_serials(doc, source_name)
+
+	project_contract = frappe.db.get_value(
+		"Project Contract",
+		{"project": source_name, "template_key": "maintenance", "status": "Signed", "docstatus": 1},
+		"name",
+	)
+	if project_contract:
+		_apply_project_contract(doc, frappe.get_doc("Project Contract", project_contract))
+
+	if not doc.default_template:
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+			resolve_template,
+		)
+		doc.default_template = resolve_template(project=source_name, customer=project.customer)
+
+	return doc
+
+
+def _append_features_from_project_serials(doc, project):
+	"""Add covered-feature rows for the project's water features (Serial Nos)."""
+	existing = {row.serial_no for row in doc.get("covered_features", [])}
+	filters = {"custom_project": project}
+	water_feature_item = frappe.db.get_single_value("ERPNext Enhancements Settings", "water_feature_item")
+	if water_feature_item:
+		filters["item_code"] = water_feature_item
+	for serial in frappe.get_all("Serial No", filters=filters, pluck="name", order_by="name"):
+		if serial in existing:
+			continue
+		doc.append("covered_features", {"serial_no": serial, "next_visit_date": nowdate()})
+		existing.add(serial)
+
+
 def _apply_project_contract(doc, contract):
 	"""Copy the legal agreement's operational terms onto the contract doc."""
 	doc.project_contract = contract.name

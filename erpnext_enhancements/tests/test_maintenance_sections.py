@@ -262,6 +262,20 @@ class TestMaintenanceSections(unittest.TestCase):
 		)
 		self.assertTrue(all(row.frequency == "Monthly" for row in contract.covered_features))
 
+	def test_make_contract_from_project(self):
+		"""Verbal/legacy arrangements: contract from a bare Project, features from its Serial Nos."""
+		frappe.db.set_value("Project", self.project, "customer", self.customer)
+		for serial in SERIALS:
+			frappe.db.set_value("Serial No", serial, "custom_project", self.project)
+
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
+			make_contract_from_project,
+		)
+		contract = make_contract_from_project(self.project)
+		self.assertEqual(contract.customer, self.customer)
+		self.assertEqual(contract.project, self.project)
+		self.assertEqual({row.serial_no for row in contract.covered_features}, set(SERIALS))
+
 	def test_single_active_contract_per_project(self):
 		self._make_contract(features=[{"serial_no": SERIALS[0]}])
 		with self.assertRaises(frappe.ValidationError):
