@@ -156,6 +156,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 
 	refresh: function (frm) {
 		frm.trigger("toggle_safety_gate");
+		frm.trigger("render_historical_visits");
 		if (frm.doc.project) {
 			frm.trigger("render_dashboard");
 		}
@@ -205,6 +206,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 	project: function (frm) {
 		frm.trigger("populate_from_template");
 		frm.trigger("render_dashboard");
+		frm.trigger("render_historical_visits");
 	},
 
 	serial_no: function (frm) {
@@ -378,6 +380,55 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 					frm.get_field("dashboard").$wrapper.html(dashboard_html);
 					frm.trigger("toggle_safety_gate");
 				}
+			},
+		});
+	},
+
+	// Read-only "Historical Visits" panel (HTML field) — last 5 submitted visits
+	// for the Project, with a link back to each record. Replaces the former
+	// virtual `historical_visits` child table. Depends only on the project, so
+	// it's refreshed from `refresh` and the `project` change.
+	render_historical_visits: function (frm) {
+		const field = frm.get_field("historical_visits");
+		if (!field) return;
+		if (!frm.doc.project) {
+			field.$wrapper.empty();
+			return;
+		}
+
+		frappe.call({
+			method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_historical_visits",
+			args: { project: frm.doc.project, exclude: frm.doc.name },
+			callback: function (r) {
+				const visits = r.message || [];
+				const sanitise = frappe.utils.xss_sanitise;
+				let rows_html;
+				if (visits.length) {
+					rows_html = visits
+						.map(
+							(v) => `
+						<div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+							<a class="text-xs font-medium text-blue-600" href="/app/sapphire-maintenance-record/${encodeURIComponent(v.name)}">
+								${frappe.datetime.global_date_format(v.creation)}
+							</a>
+							<span class="text-xs text-gray-500">${sanitise(v.technician || "")}</span>
+						</div>`
+						)
+						.join("");
+				} else {
+					rows_html = '<p class="text-xs text-gray-400">No previous visits for this project.</p>';
+				}
+
+				const html = `
+					<div class="p-4 bg-gray-50 border-l-4 border-gray-400 rounded-r-md">
+						<h3 class="flex items-center text-sm font-bold text-gray-800">
+							<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+							Historical Visits
+						</h3>
+						<div class="mt-2">${rows_html}</div>
+					</div>
+				`;
+				field.$wrapper.html(html);
 			},
 		});
 	},

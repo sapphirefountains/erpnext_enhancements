@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-06-11
+
+### Fixed
+- **Maintenance Record crash for users with User Permissions** — opening a Sapphire Maintenance Record (and any other `has_permission` check on it: the activity-timeline counts, sharing, list/report access) raised `Table 'tabSapphire Historical Visit' doesn't exist` for any user constrained by a User Permission. The `historical_visits` field was a Table pointing at the `is_virtual` **Sapphire Historical Visit** child doctype, whose rows were faked by a `cached_property`; that hack didn't shadow Frappe's child-table loader, so `has_user_permission` → `get_all_children(include_computed=True)` SQL-loaded the non-existent table. System Managers and unrestricted users never hit the crash, which is why it surfaced only for scoped users.
+
+### Changed
+- **Historical Visits reimplemented as a read-only HTML panel.** The crashing virtual child table is replaced by a `historical_visits` **HTML field** rendered client-side (`render_historical_visits`) from the new permission-respecting whitelisted `get_historical_visits` (last 5 submitted visits for the Project, with a link back to each record). HTML fields are never SQL-loaded or walked by the permission machinery, so the failure mode can't recur. The virtual **Sapphire Historical Visit** doctype and the `cached_property` are gone; the orphaned doctype metadata is cleared by patch `remove_historical_visit_doctype`.
+
 ## [1.15.0] - 2026-06-11
 
 > Versions 1.11.0–1.14.0 are claimed by the Triton feature-port branch (Call Intelligence / Morning Briefing / Wall Display / AI Governance), unmerged at the time of this entry.

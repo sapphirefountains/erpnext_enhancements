@@ -148,10 +148,10 @@
    "label": "Visit Notes"
   },
   {
+   "description": "Read-only panel — last 5 submitted visits for the Project. Rendered client-side from get_historical_visits; not a stored table.",
    "fieldname": "historical_visits",
-   "fieldtype": "Table",
-   "label": "Historical Visits",
-   "options": "Sapphire Historical Visit"
+   "fieldtype": "HTML",
+   "label": "Historical Visits"
   },
   {
    "fieldname": "completion_percent",
