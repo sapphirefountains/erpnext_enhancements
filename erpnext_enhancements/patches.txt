@@ -39,6 +39,14 @@ erpnext_enhancements.patches.remove_template_item_doctype
 # v1.15.0 travel management redesign: retire the old workflow, seed settings + role
 erpnext_enhancements.patches.retire_travel_trip_workflow
 erpnext_enhancements.patches.seed_travel_settings
+# v1.11.0 call intelligence: supervisor role + Call Log perms + IVR call types
+erpnext_enhancements.patches.seed_call_intelligence
+# v1.12.0 morning briefing workspace block
+erpnext_enhancements.patches.seed_morning_briefing_block
+# v1.13.0 wall/TV display login role
+erpnext_enhancements.patches.seed_wall_display_role
+# v1.14.0 AI governance auditor role
+erpnext_enhancements.patches.create_ai_auditor_role
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

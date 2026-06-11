@@ -6,3 +6,4 @@ Global Enhancements
 Project Enhancements
 Task Enhancements
 QuickBooks Time Integration
+AI Governance

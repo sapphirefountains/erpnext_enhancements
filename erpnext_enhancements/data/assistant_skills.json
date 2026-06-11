@@ -25,5 +25,14 @@
         "status": "Published",
         "visibility": "Public",
         "content_file": "time_tracking_analyst.md"
+    },
+    {
+        "skill_id": "ee-ai-write-confirmation",
+        "title": "AI Write Confirmation Workflow",
+        "description": "How to behave when writes are confirmation-gated: a mutating tool returns an unexecuted pending-action envelope; never fabricate results, ask the user to confirm in ERPNext, then retrieve the real outcome with check_ai_pending_action.",
+        "skill_type": "Workflow",
+        "status": "Published",
+        "visibility": "Public",
+        "content_file": "ai_write_confirmation.md"
     }
 ]

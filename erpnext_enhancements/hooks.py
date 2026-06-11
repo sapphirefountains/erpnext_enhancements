@@ -95,6 +95,7 @@ doctype_js = {
 		"task_enhancements/doctype/task/task.js",
 	],
 	"Travel Trip": ["public/js/travel_trip.js", "public/js/travel/travel_trip_map.js"],
+	"Call Log": ["public/js/call_log.js"],
 	"Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
 	"Material Request": [
 		"public/js/vue.global.js",
@@ -138,6 +139,7 @@ doctype_list_js = {
 	"Task": "public/js/project_enhancements/task_gantt.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
+	"Call Log": "public/js/global_enhancements/call_log_list.js",
 }
 doctype_calendar_js = {
 	"Asset Booking": "public/js/asset_booking_calendar.js",
@@ -250,6 +252,12 @@ doc_events = {
 }
 
 scheduler_events = {
+	"cron": {
+		# Morning Briefing pre-generation, weekdays 06:30. Frappe evaluates cron
+		# in the site's System Settings timezone (must be America/Denver here).
+		# The handler immediately enqueues the batch onto the long queue.
+		"30 6 * * 1-5": ["erpnext_enhancements.api.briefing.scheduled_briefing_run"],
+	},
 	"daily": [
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
 		"erpnext_enhancements.tasks.predictive_maintenance_scheduling",
@@ -264,12 +272,15 @@ scheduler_events = {
 		"erpnext_enhancements.travel_management.tasks.auto_advance_trip_statuses",
 		"erpnext_enhancements.travel_management.reminders.send_pre_travel_reminders",
 		"erpnext_enhancements.travel_management.reminders.send_post_trip_expense_nudges",
+		"erpnext_enhancements.api.briefing.purge_old_briefings",
+		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.cdc_poll",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -285,6 +296,8 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
+	# Mermaid.js Process Document charts — repo is the source of truth
+	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -346,11 +359,43 @@ fixtures = [
 			[
 				"name",
 				"in",
-				["Maintenance Review Needed", "Maintenance Finalized", "Maintenance Reading Out of Range"],
+				[
+					"Maintenance Review Needed",
+					"Maintenance Finalized",
+					"Maintenance Reading Out of Range",
+					"High Escalation Risk Call",
+					"Compliance Flag on Call",
+				],
 			]
 		],
 	},
 	{"dt": "Print Format", "filters": [["name", "in", ["Maintenance Record Print", "Project Contract Print"]]]},
+	# Call Center analytics (v1.11.0). Charts/cards are filtered by name so a
+	# re-export never sweeps up user-created dashboards from the site.
+	{
+		"dt": "Dashboard Chart",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Call Volume (Daily)",
+					"Call Sentiment",
+					"Call Escalation Risk",
+					"Calls by Direction",
+					"Calls by Intent",
+					"AI Tokens per Day",
+					"AI Actions by Status",
+					"AI Mutations by Risk",
+				],
+			]
+		],
+	},
+	{
+		"dt": "Number Card",
+		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT"]]],
+	},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center"]]]},
 ]
 
 override_whitelisted_methods = {
@@ -402,6 +447,10 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.project_status_overview.ProjectStatusOverview",
 	"erpnext_enhancements.assistant_tools.project_procurement_status.ProjectProcurementStatus",
 	"erpnext_enhancements.assistant_tools.workforce_time_status.WorkforceTimeStatus",
+	# v1.14.0 AI governance: the model's read-only half of the write-confirmation
+	# round-trip (see assistant_tools/_gate.py — there is deliberately no MCP
+	# confirm tool).
+	"erpnext_enhancements.assistant_tools.check_ai_pending_action.CheckAiPendingAction",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

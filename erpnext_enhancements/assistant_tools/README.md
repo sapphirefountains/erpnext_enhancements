@@ -6,6 +6,46 @@ assistants (Claude, etc.) connected to the site's MCP endpoint. Companion FAC
 *skills* (workflow prompt templates) live in `../data/skills/` and are
 registered via the `assistant_skills` hook.
 
+Since v1.14.0 this package also carries the **AI write-confirmation gate**
+(`_gate.py`, applied from `__init__.py`) — see "Write gate" below.
+
+## Write gate (AI Governance, v1.14.0)
+
+When **ERPNext Enhancements Settings → AI Governance → Require Confirmation
+for AI Writes** is ON (default OFF — ships dormant):
+
+- Importing this package (which FAC does on every MCP request before
+  dispatch) wraps `BaseTool._safe_execute` — the single choke point both FAC
+  execution paths converge on. Mutating tools (`create/update/delete/
+  submit_document`, `run_workflow`, `run_python_code`, dashboard creation)
+  return an **anti-fabrication envelope** instead of executing, and an
+  **AI Pending Action** is created for the requesting user (desk notification
+  sent). `run_database_query` is exempt (FAC enforces read-only SQL); our own
+  tools are explicitly read-only.
+- Confirmation is **desk-only by design**: the AI Pending Action form's
+  *Confirm & Execute* / *Cancel* buttons call `gating_api.confirm_action` /
+  `cancel_action` (dotted path — no Python import, the tripwire stays green).
+  There is deliberately **no MCP confirm tool** — a model-callable confirm
+  would collapse the human-in-the-loop guarantee under prompt injection.
+- The model retrieves the real outcome afterwards via the read-only
+  `check_ai_pending_action` tool; the `ee-ai-write-confirmation` skill teaches
+  connected assistants the flow.
+- Every executed mutation (confirmed or allowlist-exempt) lands in the
+  append-only **AI Action Log**; settings allow a per-doctype create/update
+  exemption list, a pending TTL (default 1 h, hourly expiry sweep) and an
+  optional retention window.
+- **FAC-upgrade risk**: `_safe_execute` is private FAC API. `apply_gate()`
+  logs an Error Log entry when the seam is missing, and the integration
+  canary test (`test_ai_gating_integration.test_gate_marker_present`) fails
+  on bench CI. Written against FAC v2.4.3.
+
+Manual smoke test: enable the flag, ask a connected assistant to create a
+ToDo → expect the confirmation message + desk notification; confirm in the
+desk; ask the assistant to check the action → it reports the created doc.
+
+Note: a desk-side "test tool" execution of a mutating FAC tool is gated too —
+any `_safe_execute` of a mutating tool counts as an assistant-channel write.
+
 ## The FAC-optional invariant
 
 **Nothing inside erpnext_enhancements may import this package.** The import
@@ -29,10 +69,13 @@ For the same reason, do **not** add `frappe_assistant_core` to
 - `source_app = "erpnext_enhancements"`, a non-empty `description`, a
   `requires_permission` DocType (gates both execution and per-user tool
   visibility), and a valid JSON Schema `inputSchema` are required.
-- Everything in this first batch is **read-only**. Reused app functions were
-  audited for writes; write-capable functions (`update_next_visit_dates`,
-  `log_time`, dashboard `update_*`, …) are out of scope until a dedicated
-  write-tools batch.
+- Every *tool* in this package is **read-only** (including
+  `check_ai_pending_action`). Reused app functions were audited for writes;
+  write-capable functions (`update_next_visit_dates`, `log_time`, dashboard
+  `update_*`, …) are out of scope until a dedicated write-tools batch. The
+  write *gate* (`_gate.py`/`gating_api.py`) does write — AI Pending Action /
+  AI Action Log rows — but never business documents; confirmed executions run
+  FAC's own built-ins.
 - Permission model: list queries go through `frappe.get_list` (role + user
   permissions enforced); anything that reaches raw SQL or `frappe.get_all`
   inside a reused function is gated first with an explicit

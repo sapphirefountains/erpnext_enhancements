@@ -7,6 +7,36 @@ Three standalone web pages live here, separate from the heavy desk app:
 - **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
 
 The **Time Kiosk** is a standalone, installable Progressive Web App served at **`/kiosk`**. This folder is the PWA *shell* (page controller, HTML, service worker, manifest); the *front-end logic* lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) and the *server endpoints* in [`api/time_kiosk.py`](../api/README.md).
+# `www/` — standalone PWA shells (Time Kiosk + Wall Display)
+
+Two standalone, chrome-free web apps live here, separate from the heavy desk app:
+
+- the **Time Kiosk** at **`/kiosk`** (installable PWA for technicians — the rest of this README);
+- the **Wall Display** at **`/wall`** (read-only project/TV dashboard — see below).
+
+This folder is each app's *shell* (page controller, HTML, service worker); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` and the server endpoints in [`api/`](../api/README.md).
+
+## Wall Display (`/wall`)
+
+A 24/7 wall/TV portfolio display ported from Triton's DashboardView: morning briefing band (today's tasks / overdue / today's schedule), auto-rotating per-project task-completion carousel (top-10 ranked projects, SVG donut), Open-Meteo weather chip. Dark, flat, perf-lite by construction (no backdrop-filter/animations — Pi-friendly).
+
+```
+www/wall.py             controller — guest→login redirect, staff-role gate, boot payload
+www/wall.html           chrome-free shell — injects WALL_BOOT/WALL_BUILD, loads wall.css/app.js (?v= busted)
+www/wall-sw.js          service worker — kiosk-sw minus the geo queue: offline shell + last-good data
+public/js/wall/app.js   vanilla renderer: band, carousel, donut, weather, clock
+public/css/wall/wall.css
+api/task_dashboard.py    get_wall_dashboard_data (task-dashboard payload + task_stats + settings + deploy_version)
+```
+
+- **Auth**: sign the TV in once with a dedicated user holding only the **Wall Display** role (`patches/seed_wall_display_role`, `desk_access = 0`). The data endpoint role-gates then fetches permission-free, exactly like the Task Dashboard block. A 401/403 on refresh reloads the page, which bounces through `/login?redirect-to=/wall`. Raise `session_expiry` in System Settings so the Pi isn't re-logging in weekly.
+- **Deploy pickup, two belts**: (1) the SW is registered as `/wall-sw.js?v=<deploy token>` and re-checked every 60s; a new worker taking control reloads the page immediately (nothing to protect on a display). (2) Every data refresh carries the server's `deploy_version`; a mismatch with `WALL_BUILD` reloads even if the SW never installed.
+- **Settings** (ERPNext Enhancements Settings → Wall / TV Display): rotation seconds, data refresh seconds, weather toggle + coordinates/label (defaults: Bountiful UT).
+- **Donut semantics**: `Completed` + `Invoiced` count as done; `Canceled`/`Cancelled`/`Template` are in neither slice.
+
+---
+
+The rest of this README covers the **Time Kiosk**.
 
 ## How the pieces fit
 
