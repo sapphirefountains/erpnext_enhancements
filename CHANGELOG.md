@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-06-11
+
+### Fixed
+- **`bench migrate` crashed in `drop_legacy_travel_trips`** (`Unknown column 'custom_travel_trip' in 'WHERE'`, seen twice on the test site — the fix was pushed to the #408 branch minutes after the PR merged, so main never got it; re-landed here). Root cause: `frappe.delete_doc` in a **pre-model-sync** patch loads the document with the NEW controller and meta against the OLD schema — `get_doc` queries child tables model sync hasn't created yet (`tabTrip Traveler`, …) and the new `on_trash` filters on the `custom_travel_trip` Custom Field that fixtures only create later in the same migrate. The patch now deletes **raw rows only** (the two legacy trips, their old child-table rows, and the sidecars `delete_doc` would have cleaned: Comments, Versions, ToDos, DocShares, Workflow Actions).
+- `retire_travel_trip_workflow` deleted Workflow Action rows by a `workflow` column that does not exist (verified live) — the same 1054 crash waiting one patch later. It now clears them by `reference_doctype`.
+- Defense in depth: `TravelTrip.on_trash`, `_linked_total` and `integrations._refresh_linked_total` guard every `custom_travel_trip` query with `frappe.db.has_column`, so a missing fixture field can never crash a save or delete mid-migrate or on a partially set-up site.
+
 ## [1.15.1] - 2026-06-11
 
 ### Fixed
