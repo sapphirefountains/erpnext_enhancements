@@ -52,6 +52,9 @@ STAFF_ROLES = {
 	"Projects Manager",
 	"Projects User",
 	"Employee",
+	# Low-privilege role for the dedicated wall-display users (one per TV/Pi)
+	# that sign in to /wall. Seeded by patches/seed_wall_display_role.
+	"Wall Display",
 }
 
 
@@ -242,3 +245,68 @@ def get_task_dashboard_data():
 		"today": today,
 		"generated_at": frappe.utils.now(),
 	}
+
+
+# ------------------------------------------------------------------ wall display
+
+# Donut semantics on the wall: Invoiced counts as done (it is excluded from
+# CLOSED_TASK_STATUSES above only because it isn't *actionable* — a different
+# question). Cancelled work belongs in neither slice.
+WALL_DONE_STATUSES = {"Completed", "Invoiced"}
+WALL_SKIP_STATUSES = {"Canceled", "Cancelled", "Template"}
+
+
+def _project_task_stats(project_ids):
+	"""Per-project task-completion counts for the wall carousel donuts —
+	one GROUP BY query for all projects."""
+	if not project_ids:
+		return {}
+	rows = frappe.get_all(
+		"Task",
+		filters={"project": ("in", list(project_ids))},
+		fields=["project", "status", "count(name) as qty"],
+		group_by="project, status",
+	)
+	stats = {}
+	for row in rows:
+		if row.status in WALL_SKIP_STATUSES:
+			continue
+		entry = stats.setdefault(row.project, {"total": 0, "completed": 0})
+		entry["total"] += cint(row.qty)
+		if row.status in WALL_DONE_STATUSES:
+			entry["completed"] += cint(row.qty)
+	for entry in stats.values():
+		entry["pending"] = entry["total"] - entry["completed"]
+	return stats
+
+
+def _wall_settings():
+	settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+
+	def check_default_on(field):
+		value = settings.get(field)
+		return 1 if value is None else cint(value)
+
+	return {
+		"rotation_seconds": cint(settings.get("wall_rotation_seconds")) or 60,
+		"refresh_seconds": cint(settings.get("wall_data_refresh_seconds")) or 300,
+		"show_weather": check_default_on("wall_show_weather"),
+		"weather_latitude": float(settings.get("weather_latitude") or 40.8894),
+		"weather_longitude": float(settings.get("weather_longitude") or -111.8808),
+		"weather_label": settings.get("weather_label") or "Bountiful, UT",
+	}
+
+
+@frappe.whitelist()
+def get_wall_dashboard_data():
+	"""Everything the /wall display renders: the Task Dashboard payload plus
+	per-project completion stats, wall settings, and the deploy version (the
+	page reloads itself when the server's token no longer matches its own —
+	belt two of the deploy-pickup story, the service worker being belt one)."""
+	from erpnext_enhancements.utils.deploy import get_deploy_version
+
+	data = get_task_dashboard_data()  # role gate happens in there
+	data["task_stats"] = _project_task_stats([p["name"] for p in data["top_projects"]])
+	data["settings"] = _wall_settings()
+	data["deploy_version"] = get_deploy_version()
+	return data

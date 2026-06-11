@@ -29,7 +29,26 @@
   "pipeline_stale_amber_days",
   "pipeline_stale_red_days",
   "handoff_section",
-  "handoff_ar_rep"
+  "handoff_ar_rep",
+  "briefing_section",
+  "briefing_enabled",
+  "briefing_use_gemini",
+  "briefing_recipients",
+  "wall_section",
+  "wall_rotation_seconds",
+  "wall_data_refresh_seconds",
+  "wall_column_break",
+  "wall_show_weather",
+  "weather_latitude",
+  "weather_longitude",
+  "weather_label",
+  "ai_governance_section",
+  "ai_write_gating_enabled",
+  "ai_pending_action_ttl_hours",
+  "ai_exempt_doctypes",
+  "ai_governance_column_break",
+  "ai_usage_tracking_enabled",
+  "ai_action_log_retention_days"
  ],
  "fields": [
   {
@@ -198,6 +217,130 @@
    "fieldtype": "Link",
    "label": "Accounts Receivable Rep",
    "options": "Employee"
+  },
+  {
+   "fieldname": "briefing_section",
+   "fieldtype": "Section Break",
+   "label": "Morning Briefing"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. Weekday mornings at 06:30 (site timezone) a per-user briefing is pre-generated for every recipient below: today's + overdue tasks, today's calendar, open pipeline, due ToDos. Surfaced in the \"Morning Briefing\" workspace block and optionally emailed.",
+   "fieldname": "briefing_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Morning Briefing"
+  },
+  {
+   "default": "1",
+   "depends_on": "briefing_enabled",
+   "description": "Narrate the briefing with Gemini (Vertex AI key from Triton Settings). OFF = deterministic markdown from the same data, zero AI cost.",
+   "fieldname": "briefing_use_gemini",
+   "fieldtype": "Check",
+   "label": "Use Gemini Narrative"
+  },
+  {
+   "depends_on": "briefing_enabled",
+   "description": "Who gets a pre-generated briefing each weekday morning. Any staff user can still pull one on demand from the workspace block.",
+   "fieldname": "briefing_recipients",
+   "fieldtype": "Table",
+   "label": "Briefing Recipients",
+   "options": "Briefing Recipient"
+  },
+  {
+   "fieldname": "wall_section",
+   "fieldtype": "Section Break",
+   "label": "Wall / TV Display (/wall)"
+  },
+  {
+   "default": "60",
+   "description": "Seconds each project stays on screen in the rotating carousel.",
+   "fieldname": "wall_rotation_seconds",
+   "fieldtype": "Int",
+   "label": "Carousel Rotation (Seconds)"
+  },
+  {
+   "default": "300",
+   "description": "How often the display re-fetches live data. It also reloads itself automatically when a deploy changes the asset build.",
+   "fieldname": "wall_data_refresh_seconds",
+   "fieldtype": "Int",
+   "label": "Data Refresh (Seconds)"
+  },
+  {
+   "fieldname": "wall_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "wall_show_weather",
+   "fieldtype": "Check",
+   "label": "Show Weather Widget"
+  },
+  {
+   "default": "40.8894",
+   "description": "Open-Meteo coordinates for the weather chip (default: HQ, Bountiful UT).",
+   "fieldname": "weather_latitude",
+   "fieldtype": "Float",
+   "label": "Weather Latitude",
+   "precision": "4"
+  },
+  {
+   "default": "-111.8808",
+   "fieldname": "weather_longitude",
+   "fieldtype": "Float",
+   "label": "Weather Longitude",
+   "precision": "4"
+  },
+  {
+   "default": "Bountiful, UT",
+   "fieldname": "weather_label",
+   "fieldtype": "Data",
+   "label": "Weather Location Label"
+  },
+  {
+   "fieldname": "ai_governance_section",
+   "fieldtype": "Section Break",
+   "label": "AI Governance"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. ON: AI assistants connected through Frappe Assistant Core may not mutate documents directly — each write becomes an AI Pending Action the requesting user (or a System Manager) must confirm in the desk; every executed mutation lands in the append-only AI Action Log. OFF: behaviour is unchanged (FAC's own audit log still records everything).",
+   "fieldname": "ai_write_gating_enabled",
+   "fieldtype": "Check",
+   "label": "Require Confirmation for AI Writes"
+  },
+  {
+   "default": "1",
+   "depends_on": "ai_write_gating_enabled",
+   "description": "Unconfirmed proposals expire after this many hours (hard-checked at confirm time; an hourly sweep tidies the list view).",
+   "fieldname": "ai_pending_action_ttl_hours",
+   "fieldtype": "Int",
+   "label": "Pending Action TTL (Hours)"
+  },
+  {
+   "depends_on": "ai_write_gating_enabled",
+   "description": "Doctypes whose AI create/update skips confirmation (still logged, marked Auto Approved). Delete / submit / workflow / code execution never skip.",
+   "fieldname": "ai_exempt_doctypes",
+   "fieldtype": "Table",
+   "label": "Confirmation-Exempt Doctypes",
+   "options": "AI Confirmation Exempt Doctype"
+  },
+  {
+   "fieldname": "ai_governance_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Record per-call Gemini token counts (AI Model Usage) for the in-app drafting/briefing features.",
+   "fieldname": "ai_usage_tracking_enabled",
+   "fieldtype": "Check",
+   "label": "Track Gemini Token Usage"
+  },
+  {
+   "default": "0",
+   "description": "Delete AI Action Log rows and decided Pending Actions older than this many days. 0 = keep forever.",
+   "fieldname": "ai_action_log_retention_days",
+   "fieldtype": "Int",
+   "label": "Action Log Retention (Days)"
   }
  ],
  "issingle": 1,

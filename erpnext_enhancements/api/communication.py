@@ -94,7 +94,9 @@ Email Content:
 
     try:
         from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
-        response_text, thoughts = generate_content_with_vertex_ai(prompt, system_instruction, settings)
+        response_text, thoughts = generate_content_with_vertex_ai(
+            prompt, system_instruction, settings, feature="email_draft"
+        )
     except Exception as e:
         frappe.log_error(message=str(e), title="Vertex AI Communication Generation Failed")
         return
@@ -187,7 +189,9 @@ Message Content:
 
     try:
         from erpnext_enhancements.api.gemini import generate_content_with_vertex_ai
-        response_text, thoughts = generate_content_with_vertex_ai(prompt, system_instruction, settings)
+        response_text, thoughts = generate_content_with_vertex_ai(
+            prompt, system_instruction, settings, feature="sms_draft"
+        )
     except Exception as e:
         frappe.log_error(message=str(e), title="Vertex AI SMS Generation Failed")
         frappe.throw(_("Failed to generate AI response. Please try again."))

@@ -1,0 +1,80 @@
+/* Morning Briefing block — Frappe CSS variables pierce the shadow boundary,
+   so both Frappe Light and Timeless Night render correctly without any
+   hard-coded colors. */
+
+.mbr-root {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg, 10px);
+    padding: 1rem 1.25rem;
+    color: var(--text-color);
+    font-family: var(--font-stack, inherit);
+}
+
+.mbr-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.mbr-title {
+    margin: 0;
+    font-size: var(--text-lg);
+    color: var(--heading-color, var(--text-color));
+}
+
+.mbr-meta {
+    margin-left: 0.5rem;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.mbr-refresh {
+    border: 1px solid var(--border-color);
+    background: var(--control-bg);
+    color: var(--text-color);
+    border-radius: var(--border-radius, 6px);
+    font-size: var(--text-sm);
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+}
+
+.mbr-refresh:hover {
+    background: var(--fg-hover-color, var(--control-bg));
+}
+
+.mbr-refresh:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+.mbr-loading,
+.mbr-disabled {
+    color: var(--text-muted);
+    font-size: var(--text-md);
+    padding: 1rem 0;
+}
+
+.mbr-content {
+    font-size: var(--text-md);
+    line-height: 1.55;
+    max-height: 28rem;
+    overflow-y: auto;
+}
+
+.mbr-content h2 {
+    font-size: var(--text-base);
+    margin: 0.9rem 0 0.35rem;
+    color: var(--heading-color, var(--text-color));
+}
+
+.mbr-content ul {
+    margin: 0.25rem 0 0.5rem;
+    padding-left: 1.25rem;
+}
+
+.mbr-content li {
+    margin-bottom: 0.15rem;
+}

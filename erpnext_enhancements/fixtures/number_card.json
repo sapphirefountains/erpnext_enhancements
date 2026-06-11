@@ -1,0 +1,51 @@
+[
+  {
+    "doctype": "Number Card",
+    "name": "Total Calls",
+    "label": "Total Calls",
+    "type": "Document Type",
+    "document_type": "Call Log",
+    "function": "Count",
+    "filters_json": "[]",
+    "is_public": 1,
+    "show_percentage_stats": 1,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "High Risk Calls",
+    "label": "High Risk Calls",
+    "type": "Document Type",
+    "document_type": "Call Log",
+    "function": "Count",
+    "filters_json": "[[\"Call Log\",\"custom_escalation_risk\",\"=\",\"High\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 1,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "Missed Calls",
+    "label": "Missed Calls",
+    "type": "Document Type",
+    "document_type": "Call Log",
+    "function": "Count",
+    "filters_json": "[[\"Call Log\",\"status\",\"=\",\"No Answer\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 1,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "Avg CSAT",
+    "label": "Avg CSAT",
+    "type": "Document Type",
+    "document_type": "Call Log",
+    "function": "Average",
+    "aggregate_function_based_on": "custom_csat_score",
+    "filters_json": "[[\"Call Log\",\"custom_csat_score\",\">\",0,false]]",
+    "is_public": 1,
+    "show_percentage_stats": 1,
+    "stats_time_interval": "Weekly"
+  }
+]

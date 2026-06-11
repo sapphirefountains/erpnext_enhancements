@@ -1,0 +1,223 @@
+{
+ "actions": [],
+ "autoname": "format:AI-PA-{YYYY}-{#####}",
+ "creation": "2026-06-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "tool_name",
+  "summary",
+  "risk",
+  "status",
+  "column_break_meta",
+  "integration",
+  "requested_by",
+  "client_id",
+  "session_id",
+  "expires_at",
+  "decision_section",
+  "decided_by",
+  "decided_at",
+  "column_break_target",
+  "target_doctype",
+  "target_name",
+  "action_log",
+  "payload_section",
+  "arguments",
+  "args_hash",
+  "result",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "tool_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Tool",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "risk",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Risk",
+   "options": "Low\nMedium\nHigh",
+   "read_only": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nConfirmed\nExecuted\nFailed\nCancelled\nExpired",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "frappe_assistant_core",
+   "fieldname": "integration",
+   "fieldtype": "Data",
+   "label": "Integration",
+   "read_only": 1
+  },
+  {
+   "description": "The human whose session the AI was operating under (FAC OAuth user). Only this user — or a System Manager — can confirm.",
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "AI channel (e.g. claude-desktop, triton), from the MCP session.",
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "session_id",
+   "fieldtype": "Data",
+   "label": "Session ID",
+   "read_only": 1
+  },
+  {
+   "description": "Confirm before this moment; afterwards the action can only expire. The endpoint enforces this even before the hourly sweep flips the status.",
+   "fieldname": "expires_at",
+   "fieldtype": "Datetime",
+   "label": "Expires At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break",
+   "label": "Decision & Outcome"
+  },
+  {
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Decided By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decided_at",
+   "fieldtype": "Datetime",
+   "label": "Decided At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_target",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Link",
+   "label": "Target DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "description": "Plain text (not a Dynamic Link) on purpose: the target may not exist yet (create) or any more (delete). Stamped from the result for creates.",
+   "fieldname": "target_name",
+   "fieldtype": "Data",
+   "label": "Target Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "action_log",
+   "fieldtype": "Link",
+   "label": "Action Log",
+   "options": "AI Action Log",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "payload_section",
+   "fieldtype": "Section Break",
+   "label": "Payload"
+  },
+  {
+   "description": "Tool arguments, credential-like keys redacted.",
+   "fieldname": "arguments",
+   "fieldtype": "Code",
+   "label": "Arguments",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "args_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Arguments Hash",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Code",
+   "label": "Result",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "AI Governance",
+ "name": "AI Pending Action",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "AI Auditor"
+  },
+  {
+   "if_owner": 1,
+   "read": 1,
+   "role": "All"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "summary",
+ "track_changes": 1
+}
