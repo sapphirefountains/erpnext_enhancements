@@ -7,6 +7,11 @@ args fingerprint, argument sanitization (fallback heuristic — FAC is absent
 here), result truncation, and that ``apply_gate()`` no-ops cleanly against
 the stub BaseTool (which has no ``_safe_execute`` seam).
 
+Stubs are installed in ``setUpModule`` (execution time), NOT at import time:
+pytest imports every test module before running anything, and stubbing
+``frappe`` during collection would fool the bench-only integration suites'
+``import frappe`` skip-guards into running against the stub.
+
 Run: python -m pytest erpnext_enhancements/tests/test_ai_gate_unit.py
 """
 
@@ -19,18 +24,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.tests.test_assistant_tools_schema import install_stubs
+_gate = None
 
-install_stubs()  # before importing the gate (package __init__ applies it)
 
-# gating_api decorates with @frappe.whitelist() at import time; the shared
-# stub doesn't carry it (tool modules never need it).
-import frappe  # noqa: E402  (the stub module)
+def setUpModule():
+    global _gate
+    from erpnext_enhancements.tests.test_assistant_tools_schema import install_stubs
 
-if not hasattr(frappe, "whitelist"):
-    frappe.whitelist = lambda *a, **k: (lambda f: f)
+    install_stubs()
 
-from erpnext_enhancements.assistant_tools import _gate  # noqa: E402
+    # gating_api decorates with @frappe.whitelist() at import time; the shared
+    # stub doesn't carry it (tool modules never need it).
+    import frappe
+
+    if not hasattr(frappe, "whitelist"):
+        frappe.whitelist = lambda *a, **k: (lambda f: f)
+
+    from erpnext_enhancements.assistant_tools import _gate as gate_module
+
+    _gate = gate_module
 
 
 class TestClassification(unittest.TestCase):
@@ -114,7 +126,7 @@ class TestFingerprintAndSanitize(unittest.TestCase):
         self.assertEqual(scrubbed["items"][0]["qty"], 2)
 
     def test_truncate_json_caps_size(self):
-        big = {"blob": "x" * (2 * _gate.RESULT_MAX_BYTES)}
+        big = {"blob": "x" * (2 * 50_000)}
         text = _gate.truncate_json(big)
         self.assertLessEqual(len(text), _gate.RESULT_MAX_BYTES + 50)
         self.assertIn("[truncated]", text)
