@@ -64,5 +64,46 @@
     "type": "Donut",
     "filters_json": "[[\"Call Log\",\"type_of_call\",\"!=\",\"\",false]]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "AI Tokens per Day",
+    "chart_name": "AI Tokens per Day",
+    "chart_type": "Sum",
+    "document_type": "AI Model Usage",
+    "based_on": "timestamp",
+    "value_based_on": "total_tokens",
+    "timeseries": 1,
+    "timespan": "Last Month",
+    "time_interval": "Daily",
+    "type": "Line",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "AI Actions by Status",
+    "chart_name": "AI Actions by Status",
+    "chart_type": "Group By",
+    "document_type": "AI Pending Action",
+    "group_by_type": "Count",
+    "group_by_based_on": "status",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "AI Mutations by Risk",
+    "chart_name": "AI Mutations by Risk",
+    "chart_type": "Group By",
+    "document_type": "AI Action Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "risk",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[]",
+    "is_public": 1
   }
 ]

@@ -40,6 +40,8 @@ erpnext_enhancements.patches.seed_call_intelligence
 erpnext_enhancements.patches.seed_morning_briefing_block
 # v1.13.0 wall/TV display login role
 erpnext_enhancements.patches.seed_wall_display_role
+# v1.14.0 AI governance auditor role
+erpnext_enhancements.patches.create_ai_auditor_role
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

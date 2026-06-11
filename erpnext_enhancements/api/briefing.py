@@ -332,7 +332,7 @@ def _generate_narrative(data, user, settings):
 
 		triton_settings = frappe.get_doc("Triton Settings")
 		text, _thoughts = generate_content_with_vertex_ai(
-			compose_prompt(data, user), SYSTEM_INSTRUCTION, triton_settings
+			compose_prompt(data, user), SYSTEM_INSTRUCTION, triton_settings, feature="morning_briefing"
 		)
 		if text and text.strip():
 			return text.strip(), "Gemini", None

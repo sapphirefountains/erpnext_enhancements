@@ -41,7 +41,14 @@
   "wall_show_weather",
   "weather_latitude",
   "weather_longitude",
-  "weather_label"
+  "weather_label",
+  "ai_governance_section",
+  "ai_write_gating_enabled",
+  "ai_pending_action_ttl_hours",
+  "ai_exempt_doctypes",
+  "ai_governance_column_break",
+  "ai_usage_tracking_enabled",
+  "ai_action_log_retention_days"
  ],
  "fields": [
   {
@@ -288,6 +295,52 @@
    "fieldname": "weather_label",
    "fieldtype": "Data",
    "label": "Weather Location Label"
+  },
+  {
+   "fieldname": "ai_governance_section",
+   "fieldtype": "Section Break",
+   "label": "AI Governance"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. ON: AI assistants connected through Frappe Assistant Core may not mutate documents directly — each write becomes an AI Pending Action the requesting user (or a System Manager) must confirm in the desk; every executed mutation lands in the append-only AI Action Log. OFF: behaviour is unchanged (FAC's own audit log still records everything).",
+   "fieldname": "ai_write_gating_enabled",
+   "fieldtype": "Check",
+   "label": "Require Confirmation for AI Writes"
+  },
+  {
+   "default": "1",
+   "depends_on": "ai_write_gating_enabled",
+   "description": "Unconfirmed proposals expire after this many hours (hard-checked at confirm time; an hourly sweep tidies the list view).",
+   "fieldname": "ai_pending_action_ttl_hours",
+   "fieldtype": "Int",
+   "label": "Pending Action TTL (Hours)"
+  },
+  {
+   "depends_on": "ai_write_gating_enabled",
+   "description": "Doctypes whose AI create/update skips confirmation (still logged, marked Auto Approved). Delete / submit / workflow / code execution never skip.",
+   "fieldname": "ai_exempt_doctypes",
+   "fieldtype": "Table",
+   "label": "Confirmation-Exempt Doctypes",
+   "options": "AI Confirmation Exempt Doctype"
+  },
+  {
+   "fieldname": "ai_governance_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Record per-call Gemini token counts (AI Model Usage) for the in-app drafting/briefing features.",
+   "fieldname": "ai_usage_tracking_enabled",
+   "fieldtype": "Check",
+   "label": "Track Gemini Token Usage"
+  },
+  {
+   "default": "0",
+   "description": "Delete AI Action Log rows and decided Pending Actions older than this many days. 0 = keep forever.",
+   "fieldname": "ai_action_log_retention_days",
+   "fieldtype": "Int",
+   "label": "Action Log Retention (Days)"
   }
  ],
  "issingle": 1,

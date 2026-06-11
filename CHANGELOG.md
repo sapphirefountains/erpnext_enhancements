@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-06-11
+
+### Added
+- **AI Governance — write-confirmation gating, append-only audit, and token accounting** (ported from Triton's pending-action/audit model; new `AI Governance` module). Ships **dormant** behind `ai_write_gating_enabled` (default OFF — the app's staged-rollout contract):
+  - **Write gate**: importing `assistant_tools/` (which FAC does on every MCP request before dispatch) wraps `BaseTool._safe_execute` — the single choke point both FAC execution paths converge on. With gating ON, AI-proposed mutations (`create/update/delete/submit_document`, `run_workflow`, `run_python_code`, dashboard creation) do **not** execute: an **AI Pending Action** is recorded (risk-classified High/Medium/Low, args credential-redacted, deduped by fingerprint so model retries don't spawn duplicate cards, TTL default 1 h) and the model receives Triton's proven **anti-fabrication envelope** ("NOT executed, no output exists, do not fabricate; ask the user to confirm"). Reads pass through untouched; gate failures **fail closed** for mutations; `run_database_query` is exempt (FAC enforces read-only SQL).
+  - **Desk-only confirmation by design**: the requesting user (or a System Manager) confirms/cancels via form buttons → `gating_api.confirm_action` re-executes through FAC's registry *as the confirming user* (re-running FAC's accessibility + permission checks and its own audit log), records the outcome, and rolls back partial writes on failure before persisting the Failed state. There is deliberately **no MCP confirm tool** — a model-callable confirm would collapse human-in-the-loop under prompt injection. The model fetches the real result afterwards via the new read-only **`check_ai_pending_action`** FAC tool; a new bundled skill (`ee-ai-write-confirmation`) teaches assistants the flow. Desk notification + realtime ping on every proposal; hourly expiry sweep.
+  - **AI Action Log** (append-only: read+create perms only — even System Manager can't edit/delete; controller-enforced; deletable only by the retention job): every executed AI mutation — confirmed or allowlist-exempt (`auto_approved`) — including attempts that failed before touching a document. Complements (not replaces) native Version history and FAC's Assistant Audit Log: adds intent, risk, the human decision link, and app-controlled retention.
+  - **Exempt-doctype allowlist** (settings child table): AI create/update on listed doctypes skips confirmation but still logs; delete/submit/workflow/code execution never skip.
+  - **AI Model Usage** token accounting: `api/gemini.py` now records `usageMetadata` (prompt/candidates/thoughts/total tokens) per call with a `feature` tag (`email_draft`, `sms_draft`, `morning_briefing`) — best-effort, can never fail the calling draft; toggleable. No cost field on purpose: rates change, tokens are the durable fact.
+  - **Surfaces**: AI Governance workspace (Pending Confirmations shortcut, the three doctypes, FAC's Assistant Audit Log) + three Dashboard Chart fixtures (AI Tokens per Day, AI Actions by Status, AI Mutations by Risk). New **AI Auditor** role (read/report/export on all three doctypes, patch-seeded); requesters see their own pending actions via `if_owner`.
+  - AI Governance module excluded from the all-doctype Triton sync webhook (high-volume log rows would spam the queue).
+  - Tests: `test_ai_gate_unit.py` (bench-free under the FAC stubs: risk/mutation classification, summary templates, anti-fabrication envelope, fingerprint stability, credential redaction, truncation, stub no-op safety) and `test_ai_gating_integration.py` (bench+FAC, self-skipping: gate-marker canary, dormancy proof, envelope + dedupe, confirm/cancel/expire paths, append-only enforcement, read-tool passthrough).
+  - **Known risk**: `_safe_execute` is private FAC API — a FAC upgrade could rename the seam. Mitigations: `apply_gate()` logs an Error Log when the seam is missing, and the integration canary fails on bench CI. Written against FAC v2.4.3.
+
 ## [1.13.0] - 2026-06-11
 
 ### Added

@@ -1,0 +1,12 @@
+{
+ "app_name": "erpnext_enhancements",
+ "creation": "2026-06-11 12:00:00.000000",
+ "doctype": "Module Def",
+ "module_name": "AI Governance",
+ "modified": "2026-06-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "AI Governance",
+ "owner": "Administrator",
+ "package": "ERPNext Enhancements",
+ "restrict_to_domain": ""
+}

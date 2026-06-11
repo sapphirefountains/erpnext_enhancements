@@ -23,8 +23,13 @@ def global_triton_sync(doc, method=None):
     """
     # "Telephony" is excluded because Call Logs are themselves ingested from
     # Triton's webhooks — echoing each ingest back to Triton would enqueue a
-    # pointless POST per call (and risk a feedback loop).
-    excluded_modules = ["Core", "System", "Setup", "Custom", "Data Migration", "Email", "Integrations", "Telephony"]
+    # pointless POST per call (and risk a feedback loop). "AI Governance" holds
+    # high-volume log doctypes (pending actions / action log / model usage)
+    # that would spam the webhook queue for zero indexing value.
+    excluded_modules = [
+        "Core", "System", "Setup", "Custom", "Data Migration", "Email",
+        "Integrations", "Telephony", "AI Governance",
+    ]
 
     try:
         doctype_meta = frappe.get_meta(doc.doctype)

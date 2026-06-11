@@ -16,7 +16,9 @@ as plain ``Exception`` so callers can fall back gracefully.
 import frappe
 import requests
 
-def generate_content_with_vertex_ai(prompt, system_instruction, settings):
+MODEL_ID = "gemini-3.1-pro-preview"
+
+def generate_content_with_vertex_ai(prompt, system_instruction, settings, feature="unknown"):
     """Call Vertex AI ``generateContent`` and return ``(text, thoughts)``.
 
     Args:
@@ -24,6 +26,9 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings):
         system_instruction (str): System instruction / persona text.
         settings: A loaded ``Triton Settings`` doc, used to read the GCP API
             key via ``settings.get_password("maps_api_key")``.
+        feature (str): Which app feature is calling (``email_draft``,
+            ``sms_draft``, ``morning_briefing``, ...) — recorded on the
+            AI Model Usage token-accounting row.
 
     Returns:
         tuple[str, str]: ``(final_text, final_thoughts)`` — the generated answer
@@ -45,7 +50,7 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings):
     if not api_key:
         frappe.throw("Vertex AI API Key (maps_api_key) is missing in Triton Settings")
 
-    url = "https://us-central1-aiplatform.googleapis.com/v1/projects/sapphire-fountains-poseidon/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:generateContent"
+    url = f"https://us-central1-aiplatform.googleapis.com/v1/projects/sapphire-fountains-poseidon/locations/us-central1/publishers/google/models/{MODEL_ID}:generateContent"
 
     headers = {
         "x-goog-api-key": api_key,
@@ -79,6 +84,8 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings):
 
     data = response.json()
 
+    _record_usage(data, feature)
+
     if not data.get("candidates") or len(data["candidates"]) == 0:
         frappe.log_error(message=f"No candidates returned: {data}", title="Vertex AI Response Error")
         raise Exception("Vertex AI returned no candidates")
@@ -99,3 +106,46 @@ def generate_content_with_vertex_ai(prompt, system_instruction, settings):
             final_text += part["text"] + "\n"
 
     return final_text.strip(), final_thoughts.strip()
+
+
+def _record_usage(data, feature):
+    """Best-effort AI Model Usage row from the response's ``usageMetadata``.
+
+    Token accounting must never fail (or slow) the draft that triggered it —
+    everything is wrapped, and the insert is skipped when the
+    ``ai_usage_tracking_enabled`` switch (ERPNext Enhancements Settings → AI
+    Governance) is off or the doctype isn't migrated yet.
+    """
+    try:
+        from frappe.utils import cint
+
+        enabled = frappe.db.get_single_value(
+            "ERPNext Enhancements Settings", "ai_usage_tracking_enabled"
+        )
+        if enabled is not None and not cint(enabled):
+            return
+
+        usage = data.get("usageMetadata") or {}
+        if not usage:
+            return
+
+        frappe.get_doc(
+            {
+                "doctype": "AI Model Usage",
+                "model": MODEL_ID,
+                "feature": feature or "unknown",
+                "user": frappe.session.user,
+                "prompt_tokens": cint(usage.get("promptTokenCount")),
+                "candidates_tokens": cint(usage.get("candidatesTokenCount")),
+                "thoughts_tokens": cint(usage.get("thoughtsTokenCount")),
+                "total_tokens": cint(usage.get("totalTokenCount")),
+                "timestamp": frappe.utils.now_datetime(),
+            }
+        ).insert(ignore_permissions=True)
+    except Exception:
+        try:
+            frappe.log_error(
+                f"AI Model Usage insert failed\n{frappe.get_traceback()}", "AI Governance"
+            )
+        except Exception:
+            pass

@@ -245,12 +245,14 @@ scheduler_events = {
 		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 		"erpnext_enhancements.process_steps.escalate_overdue_steps",
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
+		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.cdc_poll",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -360,6 +362,9 @@ fixtures = [
 					"Call Escalation Risk",
 					"Calls by Direction",
 					"Calls by Intent",
+					"AI Tokens per Day",
+					"AI Actions by Status",
+					"AI Mutations by Risk",
 				],
 			]
 		],
@@ -406,6 +411,10 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.project_status_overview.ProjectStatusOverview",
 	"erpnext_enhancements.assistant_tools.project_procurement_status.ProjectProcurementStatus",
 	"erpnext_enhancements.assistant_tools.workforce_time_status.WorkforceTimeStatus",
+	# v1.14.0 AI governance: the model's read-only half of the write-confirmation
+	# round-trip (see assistant_tools/_gate.py — there is deliberately no MCP
+	# confirm tool).
+	"erpnext_enhancements.assistant_tools.check_ai_pending_action.CheckAiPendingAction",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

@@ -44,6 +44,18 @@ def process_automation_enabled():
 	)
 
 
+def ai_write_gating_enabled():
+	"""True when AI-initiated mutations through FAC require human confirmation.
+
+	Default OFF (the staged-rollout contract): the gate code ships dormant and
+	behaves byte-identically to before until the checkbox in **ERPNext
+	Enhancements Settings → AI Governance** is flipped — no deploy needed.
+	"""
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "ai_write_gating_enabled"))
+	)
+
+
 def throw_if_process_automation_disabled():
 	"""Guard for whitelisted entry points — explains instead of misbehaving."""
 	if not process_automation_enabled():
