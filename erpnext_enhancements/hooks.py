@@ -347,6 +347,39 @@ ignore_links_on_delete = ["User Form Draft"]
 portal_menu_items = [{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}]
 
 # ---------------------------------------------------------------------------
+# Frappe Assistant Core (FAC) integration — read-only MCP tools + skills
+# ---------------------------------------------------------------------------
+# These hooks are read ONLY by frappe_assistant_core: its tool loader imports
+# the dotted paths below (each wrapped in try/except on FAC's side), and its
+# migrate hook syncs the skills manifest into FAC Skill rows. On sites without
+# FAC installed they are inert strings — erpnext_enhancements has no import-
+# time or install-time dependency on FAC. Do not import assistant_tools/* from
+# app code (tripwire-tested). The assistant_tool_configs hook is deliberately
+# NOT used: Frappe's hook merging list-wraps scalar values and FAC does not
+# unwrap them — tool defaults live in each tool's default_config; per-site
+# overrides go in site_config.json under "assistant_tools".
+# NOTE: each module filename must equal its tool's name (FAC's custom_tools
+# plugin derives tool identifiers from the module path).
+assistant_tools = [
+	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
+	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
+	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",
+	"erpnext_enhancements.assistant_tools.maintenance_site_briefing.MaintenanceSiteBriefing",
+	"erpnext_enhancements.assistant_tools.project_status_overview.ProjectStatusOverview",
+	"erpnext_enhancements.assistant_tools.project_procurement_status.ProjectProcurementStatus",
+	"erpnext_enhancements.assistant_tools.workforce_time_status.WorkforceTimeStatus",
+]
+
+# Paths are relative to the app package dir (frappe.get_app_path).
+assistant_skills = [
+	{
+		"app": "erpnext_enhancements",
+		"manifest": "data/assistant_skills.json",
+		"content_dir": "data/skills",
+	},
+]
+
+# ---------------------------------------------------------------------------
 # Runtime framework monkeypatches
 # ---------------------------------------------------------------------------
 # Carried in app code so they survive `bench update` (vs. editing apps/frappe).
