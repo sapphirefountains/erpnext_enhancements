@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-06-11
+
+Maintenance UX follow-ups to v1.16.0: readable template names, a much larger ready-made catalog, and a way for techs to pull a future visit forward.
+
+### Added
+- **Expanded preseeded catalog** (`patches/seed_maintenance_catalog`, insert-only/idempotent): nine more Sections (Advanced Water Chemistry, Pump & Filter Service, Lighting Inspection, Auto-Fill & Water Level, Algae & Water Clarity, Spring Startup Steps, Winterization Steps, Interior Fountain Care, Safety & Electrical), six Templates (Spray Feature / Pondless / Interior Fountain / Large Display Fountain Maintenance, plus full Spring Startup and Winterization), and five Service Plans (Weekly Spray Feature, Bi-Weekly Pondless, Monthly Interior Fountain, Monthly Large Display Per-Site, Seasonal Service Only). All seeded as starting points to trim/rename in the UI. No new Chemical Dosing sections are seeded (those need site-specific Item links) — the new templates reuse the existing dosing section. Each new Section ships with example step instructions.
+- **Visit Wizard "Do Visit Today"** — the wizard's picker now shows, below Today's Visits, an **Upcoming** list of Active-contract feature visits due in the next 8–30 days that have no draft yet (`get_upcoming_visits`; Per Site Visit contracts collapse to one earliest-due site entry). Tapping **Do Visit Today** (`create_visit_today`) creates a record dated today and opens the wizard on it. It's an **extra one-off** — the record carries an "Extra Visit" `visit_label`, so `update_next_visit_dates` leaves the feature's cadence untouched and the originally scheduled visit still happens later.
+- **Per-step instructions in the Visit Wizard.** `Sapphire Maintenance Section` gains a `step_instructions` (Text Editor) field and a `step_images` table (new child doctype `Sapphire Section Image`: photo + caption). As the tech moves through the wizard, each section-backed step shows a collapsible (collapsed by default) "ℹ️ How to do this" panel with the instructions and any how-to images. Authored once per Section, surfaced via `get_visit_bootstrap`; the wizard groups a step's rows by section and leads each group with its panel.
+- **Safety & Wrap-up step guidance.** Templates gain `safety_instructions`/`wrapup_instructions` (Text Editor) plus `safety_images`/`wrapup_images` tables for the wizard's two fixed steps ("Before you start" / "Wrapping up" collapsible panels); the Maintenance Profile gains site-specific `wrapup_instructions`, stacked into the same wrap-up panel. The profile's safety text stays prominent in the red banner. Seeded catalog templates ship generic safety/wrap-up guidance.
+- **Step locations.** Each Template step row can record where on the property the step happens: `location_note`, `location_photo`, and optional `latitude`/`longitude`. The wizard shows an always-visible 📍 line above the step's cards — with a tap-to-navigate Google Maps link when coordinates are set — and folds the spot photo into the step's panel. Authored on the template (customer/project-scoped), so each site's form carries its own spots.
+
+### Changed
+- **Larger, dark-mode-readable Visit Wizard text** — bumped font sizes across the wizard and set explicit `--text-color` on cards/tabs/steppers so everything reads clearly in Frappe Light and Timeless Night.
+
+### Fixed
+- **Kiosk "Today's Visits" links were invisible on dark mode** — the list items reused `.tk-attachment-item`, a bare `<a>` with no `color`, so they fell back to the browser default blue against the dark card. Given an explicit `var(--tk-text)` colour (and a larger font / bigger tap target).
+
+### Changed
+- **Sapphire Maintenance Template now names by `template_name`** (`autoname: field:template_name`) instead of an opaque hash — readable in link fields, the contract form, and Service Plans. `patches/rename_maintenance_templates` renames existing rows (cascading through every link field via `frappe.rename_doc`); collisions are logged and skipped rather than merged.
+
+### Notes
+- Re-run `bench migrate` to apply the rename + catalog seed (both idempotent; safe to run twice). The new templates seed as **Draft** — set them Active (or reference them from a Service Plan) before they resolve automatically for a project/customer.
+
 ## [1.16.0] - 2026-06-11
 
 Maintenance UX overhaul (pre-deployment, so schema moved freely): the contract form refills in clicks instead of grids, and techs get a guided touch-first visit wizard inside the desk.

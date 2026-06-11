@@ -33,56 +33,73 @@ frappe.pages["visit-wizard"].on_page_show = function (wrapper) {
 };
 
 const VZ_STYLE = `
-.vz-wrap{max-width:640px;margin:0 auto;padding-bottom:96px;}
-.vz-muted{color:var(--text-muted);font-size:12px;}
+.vz-wrap{max-width:640px;margin:0 auto;padding-bottom:96px;font-size:15px;}
+.vz-muted{color:var(--text-muted);font-size:13px;}
 .vz-progress{height:6px;border-radius:3px;background:var(--control-bg);margin:8px 0 4px;overflow:hidden;}
 .vz-progress>div{height:100%;border-radius:3px;background:var(--primary,#2490ef);transition:width .25s;}
-.vz-stepline{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted);margin-bottom:10px;}
+.vz-stepline{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:10px;}
 .vz-tabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;position:sticky;top:0;background:var(--bg-color);z-index:3;}
-.vz-tab{flex:0 0 auto;padding:8px 14px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);font-size:13px;cursor:pointer;white-space:nowrap;}
+.vz-tab{flex:0 0 auto;padding:9px 15px;border-radius:16px;border:1px solid var(--border-color);background:var(--card-bg);color:var(--text-color);font-size:15px;cursor:pointer;white-space:nowrap;}
 .vz-tab.vz-active{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
-.vz-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;}
+.vz-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;color:var(--text-color);}
 .vz-card.vz-bad{border-color:#dc2626;background:rgba(220,38,38,.06);}
 .vz-card.vz-done{border-color:#15803d;}
-.vz-card-title{font-weight:600;font-size:15px;}
-.vz-card-sub{font-size:12px;color:var(--text-muted);margin-top:2px;}
-.vz-chip{display:inline-block;font-size:11px;border-radius:10px;padding:1px 8px;margin-left:6px;vertical-align:middle;}
+.vz-card-title{font-weight:600;font-size:17px;}
+.vz-card-sub{font-size:14px;color:var(--text-muted);margin-top:3px;}
+.vz-chip{display:inline-block;font-size:13px;border-radius:10px;padding:2px 9px;margin-left:6px;vertical-align:middle;}
 .vz-chip-red{background:#fde8e8;color:#b91c1c;}
 .vz-chip-green{background:#e7f7ed;color:#15803d;}
-.vz-num{width:100%;margin-top:10px;font-size:22px;text-align:center;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
+.vz-num{width:100%;margin-top:10px;font-size:26px;text-align:center;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);}
 .vz-num:focus{outline:2px solid var(--primary,#2490ef);}
 .vz-stepper{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;}
-.vz-step-btn{flex:0 0 56px;height:48px;font-size:24px;line-height:1;border-radius:10px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);cursor:pointer;}
+.vz-step-btn{flex:0 0 56px;height:50px;font-size:26px;line-height:1;border-radius:10px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);cursor:pointer;}
 .vz-step-btn:active{background:var(--border-color);}
-.vz-qty{flex:1;text-align:center;font-size:24px;font-weight:700;cursor:pointer;}
-.vz-qty input{width:90px;font-size:22px;text-align:center;border:1px solid var(--border-color);border-radius:8px;background:var(--control-bg);color:var(--text-color);padding:6px;}
+.vz-qty{flex:1;text-align:center;font-size:26px;font-weight:700;cursor:pointer;color:var(--text-color);}
+.vz-qty input{width:96px;font-size:24px;text-align:center;border:1px solid var(--border-color);border-radius:8px;background:var(--control-bg);color:var(--text-color);padding:6px;}
 .vz-seg{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
-.vz-seg button{flex:1 1 calc(25% - 8px);min-width:72px;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:13px;cursor:pointer;padding:6px 4px;}
+.vz-seg button{flex:1 1 calc(25% - 8px);min-width:76px;min-height:46px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;cursor:pointer;padding:7px 4px;}
 .vz-seg button.vz-on{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;font-weight:600;}
 .vz-seg button.vz-on.vz-neg{background:#dc2626;border-color:#dc2626;}
 .vz-row-extra{margin-top:10px;display:flex;gap:8px;align-items:center;}
-.vz-row-extra input{flex:1;padding:9px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;}
-.vz-photo-btn{flex:0 0 auto;min-width:48px;min-height:42px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);cursor:pointer;font-size:17px;}
+.vz-row-extra input{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
+.vz-photo-btn{flex:0 0 auto;min-width:50px;min-height:44px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);cursor:pointer;font-size:18px;}
 .vz-photo-btn.vz-has-photo{border-color:#15803d;background:#e7f7ed;}
 .vz-check-card{display:flex;align-items:center;gap:12px;cursor:pointer;}
-.vz-check-box{flex:0 0 28px;height:28px;border:2px solid var(--border-color);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;}
+.vz-check-box{flex:0 0 30px;height:30px;border:2px solid var(--border-color);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;}
 .vz-check-card.vz-on .vz-check-box{background:#15803d;border-color:#15803d;}
-.vz-banner{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:13px;}
+.vz-banner{border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:15px;line-height:1.45;}
 .vz-banner-red{background:#fde8e8;color:#b91c1c;}
 .vz-banner-blue{background:rgba(36,144,239,.1);color:var(--text-color);}
 .vz-banner-green{background:#e7f7ed;color:#15803d;}
-.vz-banner h6{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+.vz-banner h6{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;}
+.vz-help{border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;overflow:hidden;background:var(--card-bg);}
+.vz-help-head{display:flex;align-items:center;gap:8px;width:100%;padding:12px 14px;background:none;border:none;color:var(--text-color);font-size:15px;font-weight:600;cursor:pointer;text-align:left;}
+.vz-help-caret{margin-left:auto;transition:transform .15s;}
+.vz-help.vz-open .vz-help-caret{transform:rotate(90deg);}
+.vz-help-body{display:none;padding:0 14px 12px;font-size:15px;line-height:1.5;color:var(--text-color);}
+.vz-help.vz-open .vz-help-body{display:block;}
+.vz-help-body img{max-width:100%;border-radius:8px;margin:10px 0 2px;display:block;}
+.vz-help-cap{font-size:13px;color:var(--text-muted);margin-bottom:8px;}
+.vz-location{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-muted);margin:2px 0 8px;}
+.vz-location a{color:var(--primary,#2490ef);font-weight:600;white-space:nowrap;}
+.vz-group-head{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin:16px 0 8px;}
 .vz-nav{position:fixed;left:0;right:0;bottom:0;background:var(--card-bg);border-top:1px solid var(--border-color);padding:10px 16px calc(10px + env(safe-area-inset-bottom));z-index:5;}
 .vz-nav-inner{max-width:640px;margin:0 auto;display:flex;gap:10px;}
-.vz-nav button{flex:1;min-height:50px;border-radius:10px;font-size:16px;font-weight:600;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);cursor:pointer;}
+.vz-nav button{flex:1;min-height:52px;border-radius:10px;font-size:17px;font-weight:600;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);cursor:pointer;}
 .vz-nav button.vz-primary{background:var(--primary,#2490ef);border-color:var(--primary,#2490ef);color:#fff;}
 .vz-nav button:disabled{opacity:.45;cursor:not-allowed;}
-.vz-textarea{width:100%;min-height:110px;margin-top:8px;padding:10px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:14px;}
+.vz-textarea{width:100%;min-height:110px;margin-top:8px;padding:11px;border-radius:8px;border:1px solid var(--border-color);background:var(--control-bg);color:var(--text-color);font-size:15px;}
 .vz-sig{width:100%;height:160px;border:1px dashed var(--border-color);border-radius:10px;background:var(--card-bg);touch-action:none;}
-.vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:13px;cursor:pointer;padding:4px 0;}
-.vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;}
+.vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:15px;cursor:pointer;padding:6px 0;}
+.vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;color:var(--text-color);}
 .vz-pick-card:active{border-color:var(--primary,#2490ef);}
-.vz-empty{text-align:center;color:var(--text-muted);padding:40px 10px;}
+.vz-section-head{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;margin:16px 0 8px;}
+.vz-up-card{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:10px;color:var(--text-color);}
+.vz-up-info{min-width:0;}
+.vz-up-date{font-size:13px;color:var(--text-muted);margin-top:3px;}
+.vz-do-btn{flex:0 0 auto;min-height:44px;padding:0 15px;border-radius:8px;border:1px solid var(--primary,#2490ef);background:var(--primary,#2490ef);color:#fff;font-weight:600;font-size:15px;cursor:pointer;white-space:nowrap;}
+.vz-do-btn:disabled{opacity:.5;cursor:not-allowed;}
+.vz-empty{text-align:center;color:var(--text-muted);padding:40px 10px;font-size:15px;}
 .vz-done-screen{text-align:center;padding:48px 16px;}
 .vz-done-screen .vz-done-icon{font-size:52px;}
 .vz-readonly .vz-card,.vz-readonly .vz-nav{pointer-events:none;opacity:.75;}
@@ -101,6 +118,8 @@ class VisitWizard {
 	reset() {
 		this.doc = null;
 		this.dashboard = {};
+		this.section_meta = {};
+		this.template_meta = {};
 		this.steps = [];
 		this.step_index = 0;
 		this.features = [];
@@ -139,30 +158,89 @@ class VisitWizard {
 	// ----- picker --------------------------------------------------------
 
 	show_picker() {
-		this.page.set_title(__("Today's Visits"));
-		frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today").then((r) => {
-			const visits = r.message || [];
+		this.page.set_title(__("Visits"));
+		this.$wrap.html(`<div class="vz-empty">${__("Loading…")}</div>`);
+		Promise.all([
+			frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today"),
+			frappe.call("erpnext_enhancements.api.maintenance_visit.get_upcoming_visits"),
+		]).then(([today_res, upcoming_res]) => {
+			const today = (today_res && today_res.message) || [];
+			const upcoming = (upcoming_res && upcoming_res.message) || [];
 			this.$wrap.empty();
-			if (!visits.length) {
+
+			this.$wrap.append(`<div class="vz-section-head">${__("Today's Visits")}</div>`);
+			if (today.length) {
+				today.forEach((visit) => this.$wrap.append(this.today_card(visit)));
+			} else {
 				this.$wrap.append(
-					`<div class="vz-empty">${__("No open visits for today.")}<br>
+					`<div class="vz-muted" style="padding:2px 0 6px;">${__("Nothing scheduled for today.")}</div>`
+				);
+			}
+
+			if (upcoming.length) {
+				this.$wrap.append(`<div class="vz-section-head">${__("Upcoming — do one early")}</div>`);
+				upcoming.forEach((visit) => this.$wrap.append(this.upcoming_card(visit)));
+			}
+
+			if (!today.length && !upcoming.length) {
+				this.$wrap.append(
+					`<div class="vz-empty">${__("No open or upcoming visits.")}<br>
 					<a href="/app/sapphire-maintenance-record">${__("Open the record list")}</a></div>`
 				);
-				return;
 			}
-			visits.forEach((visit) => {
-				const sub = visit.visit_label || visit.serial_no || __("Site visit");
-				$(`<button class="vz-pick-card">
-					<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
-					<div class="vz-card-sub">${frappe.utils.escape_html(sub)} · ${frappe.utils.escape_html(visit.name)}</div>
-				</button>`)
-					.on("click", () => {
-						window.history.replaceState(null, "", `/app/visit-wizard?record=${encodeURIComponent(visit.name)}`);
-						this.load_record(visit.name);
-					})
-					.appendTo(this.$wrap);
-			});
 		});
+	}
+
+	today_card(visit) {
+		const sub = visit.visit_label || visit.serial_no || __("Site visit");
+		return $(`<button class="vz-pick-card">
+				<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
+				<div class="vz-card-sub">${frappe.utils.escape_html(sub)} · ${frappe.utils.escape_html(visit.name)}</div>
+			</button>`).on("click", () => {
+			window.history.replaceState(null, "", `/app/visit-wizard?record=${encodeURIComponent(visit.name)}`);
+			this.load_record(visit.name);
+		});
+	}
+
+	upcoming_card(visit) {
+		const what = visit.item_name || visit.serial_no || __("Whole site");
+		const when = visit.next_visit_date
+			? frappe.datetime.str_to_user(visit.next_visit_date)
+			: "";
+		const due =
+			visit.days_until != null
+				? __("due {0} · in {1} days", [when, visit.days_until])
+				: when;
+		const $card = $(`<div class="vz-up-card">
+				<div class="vz-up-info">
+					<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
+					<div class="vz-card-sub">${frappe.utils.escape_html(what)}</div>
+					<div class="vz-up-date">${frappe.utils.escape_html(due)}</div>
+				</div>
+				<button type="button" class="vz-do-btn">${__("Do Visit Today")}</button>
+			</div>`);
+		$card.find(".vz-do-btn").on("click", (event) => {
+			const $btn = $(event.currentTarget).prop("disabled", true).text(__("Creating…"));
+			frappe
+				.call({
+					method: "erpnext_enhancements.api.maintenance_visit.create_visit_today",
+					args: { contract: visit.contract, serial_no: visit.serial_no || null },
+				})
+				.then((r) => {
+					const name = r && r.message;
+					if (!name) throw new Error("no record returned");
+					window.history.replaceState(
+						null,
+						"",
+						`/app/visit-wizard?record=${encodeURIComponent(name)}`
+					);
+					this.load_record(name);
+				})
+				.catch(() => {
+					$btn.prop("disabled", false).text(__("Do Visit Today"));
+				});
+		});
+		return $card;
 	}
 
 	// ----- loading -------------------------------------------------------
@@ -179,6 +257,8 @@ class VisitWizard {
 				const data = r.message || {};
 				this.doc = data.record;
 				this.dashboard = data.dashboard || {};
+				this.section_meta = data.sections || {};
+				this.template_meta = data.template_meta || {};
 				this.apply_state(data.state);
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
@@ -437,6 +517,86 @@ class VisitWizard {
 		window.scrollTo(0, 0);
 	}
 
+	// Render a section-backed step: group the step's rows by their source
+	// Section (first-seen order), leading each group with its 📍 location line
+	// and collapsible how-to panel. A sub-header is shown only when the step
+	// draws from more than one section.
+	render_step_groups(table, render_row) {
+		const rows = this.rows(table);
+		const order = [];
+		const groups = {};
+		rows.forEach((row) => {
+			const key = row.section || row.section_title || "__";
+			if (!groups[key]) {
+				groups[key] = [];
+				order.push(key);
+			}
+			groups[key].push(row);
+		});
+		const multi = order.length > 1;
+		order.forEach((key) => {
+			const meta = this.section_meta[key];
+			const title = (meta && meta.title) || groups[key][0].section_title || "";
+			if (multi && title) {
+				this.$wrap.append(`<div class="vz-group-head">${frappe.utils.escape_html(title)}</div>`);
+			}
+			if (meta && meta.location) {
+				this.render_location(meta.location);
+			}
+			this.render_help(meta);
+			groups[key].forEach((row) => this.$wrap.append(render_row(row)));
+		});
+	}
+
+	// Always-visible "where on the property" line for a step: 📍 note plus a
+	// tap-to-navigate Map link when the template step carries coordinates.
+	render_location(location) {
+		let html = `<span>📍 ${frappe.utils.escape_html(location.note || __("Step location"))}</span>`;
+		if (location.latitude && location.longitude) {
+			const url = `https://www.google.com/maps?q=${encodeURIComponent(location.latitude + "," + location.longitude)}`;
+			html += `<a href="${url}" target="_blank" rel="noopener">${__("Map")} ↗</a>`;
+		}
+		this.$wrap.append(`<div class="vz-location">${html}</div>`);
+	}
+
+	// Collapsible (collapsed-by-default) guidance panel: sanitized instructions
+	// HTML, the step's location photo (captioned with its note), and any how-to
+	// images with captions. `title` defaults to "How to do this".
+	render_help(meta, title) {
+		if (!meta) return;
+		const location = meta.location || {};
+		const images = [];
+		if (location.photo) {
+			images.push({ image: location.photo, caption: location.note || __("Step location") });
+		}
+		(meta.images || []).forEach((img) => images.push(img));
+
+		const has_text = meta.instructions && String(meta.instructions).trim();
+		if (!has_text && !images.length) return;
+
+		const sanitise = frappe.utils.xss_sanitise;
+		let body = has_text ? `<div>${sanitise(meta.instructions)}</div>` : "";
+		images.forEach((img) => {
+			if (!img.image) return;
+			body += `<img src="${encodeURI(img.image)}" alt="" loading="lazy">`;
+			if (img.caption) {
+				body += `<div class="vz-help-cap">${frappe.utils.escape_html(img.caption)}</div>`;
+			}
+		});
+
+		const $help = $(`
+			<div class="vz-help">
+				<button type="button" class="vz-help-head">
+					<span>ℹ️ ${frappe.utils.escape_html(title || __("How to do this"))}</span>
+					<span class="vz-help-caret">▸</span>
+				</button>
+				<div class="vz-help-body">${body}</div>
+			</div>
+		`);
+		$help.find(".vz-help-head").on("click", () => $help.toggleClass("vz-open"));
+		this.$wrap.append($help);
+	}
+
 	// ----- step: safety ----------------------------------------------------
 
 	render_safety() {
@@ -457,6 +617,10 @@ class VisitWizard {
 				${serial.custom_site_instructions ? `<br>${sanitise(serial.custom_site_instructions)}` : ""}
 			</div>
 		`);
+
+		// Visit-type safety guidance from the form template (the site-specific
+		// text above stays prominent in the red banner, never collapsed).
+		this.render_help(this.template_meta.safety, __("Before you start"));
 
 		const $ack = $(`
 			<div class="vz-card vz-check-card ${this.safety_ok ? "vz-on" : ""}">
@@ -479,44 +643,46 @@ class VisitWizard {
 	// ----- step: water chemistry --------------------------------------------
 
 	render_readings() {
-		this.rows("chemistry_readings").forEach((row) => {
-			const range_label =
-				row.min_value || row.max_value
-					? `${row.min_value || 0} – ${row.max_value || "∞"} ${frappe.utils.escape_html(row.uom || "")}`
-					: frappe.utils.escape_html(row.uom || "");
-			const $card = $(`
-				<div class="vz-card ${row.out_of_range ? "vz-bad" : ""}" data-reading-row="${frappe.utils.escape_html(row.name || "")}">
-					<span class="vz-card-title">${frappe.utils.escape_html(row.reading || "")}</span>
-					<span class="vz-chip vz-range-chip ${row.out_of_range ? "vz-chip-red" : ""}">${range_label}</span>
-					<input class="vz-num" type="number" inputmode="decimal" step="any"
-						placeholder="—" value="${row.reading_value || ""}">
-					<div class="vz-row-extra">
-						<input type="text" placeholder="${__("Notes")}" value="${frappe.utils.escape_html(row.notes || "")}">
-						<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
-					</div>
+		this.render_step_groups("chemistry_readings", (row) => this.reading_card(row));
+	}
+
+	reading_card(row) {
+		const range_label =
+			row.min_value || row.max_value
+				? `${row.min_value || 0} – ${row.max_value || "∞"} ${frappe.utils.escape_html(row.uom || "")}`
+				: frappe.utils.escape_html(row.uom || "");
+		const $card = $(`
+			<div class="vz-card ${row.out_of_range ? "vz-bad" : ""}" data-reading-row="${frappe.utils.escape_html(row.name || "")}">
+				<span class="vz-card-title">${frappe.utils.escape_html(row.reading || "")}</span>
+				<span class="vz-chip vz-range-chip ${row.out_of_range ? "vz-chip-red" : ""}">${range_label}</span>
+				<input class="vz-num" type="number" inputmode="decimal" step="any"
+					placeholder="—" value="${row.reading_value || ""}">
+				<div class="vz-row-extra">
+					<input type="text" placeholder="${__("Notes")}" value="${frappe.utils.escape_html(row.notes || "")}">
+					<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
 				</div>
-			`);
-			$card.find(".vz-num").on("change", (event) => {
-				const value = parseFloat(event.target.value) || 0;
-				this.set_row("chemistry_readings", row, "reading_value", value);
-				// immediate local range hint; the server's verdict lands on save
-				const low = row.min_value || 0;
-				const high = row.max_value || 0;
-				const out = value && ((low && value < low) || (high && value > high));
-				$card.toggleClass("vz-bad", !!out);
-			});
-			$card.find(".vz-row-extra input").on("change", (event) => {
-				this.set_row("chemistry_readings", row, "notes", event.target.value);
-			});
-			this.bind_photo($card.find(".vz-photo-btn"), "chemistry_readings", row);
-			this.$wrap.append($card);
+			</div>
+		`);
+		$card.find(".vz-num").on("change", (event) => {
+			const value = parseFloat(event.target.value) || 0;
+			this.set_row("chemistry_readings", row, "reading_value", value);
+			// immediate local range hint; the server's verdict lands on save
+			const low = row.min_value || 0;
+			const high = row.max_value || 0;
+			const out = value && ((low && value < low) || (high && value > high));
+			$card.toggleClass("vz-bad", !!out);
 		});
+		$card.find(".vz-row-extra input").on("change", (event) => {
+			this.set_row("chemistry_readings", row, "notes", event.target.value);
+		});
+		this.bind_photo($card.find(".vz-photo-btn"), "chemistry_readings", row);
+		return $card;
 	}
 
 	// ----- step: chemicals used ----------------------------------------------
 
 	render_consumables() {
-		this.rows("consumables").forEach((row) => this.$wrap.append(this.consumable_card(row)));
+		this.render_step_groups("consumables", (row) => this.consumable_card(row));
 
 		if (this.doc.docstatus === 0) {
 			$(`<button type="button" class="vz-link-btn">+ ${__("Add another item")}</button>`)
@@ -603,86 +769,102 @@ class VisitWizard {
 	// ----- step: inspection -----------------------------------------------
 
 	render_results() {
-		this.rows("maintenance_results").forEach((row) => {
-			const options = (row.options || "").split("\n").map((option) => option.trim()).filter(Boolean);
-			const choices = options.length ? options : ["Pass", "Fail", "Replace", "Other"];
-			const $card = $(`
-				<div class="vz-card ${row.selection || row.answer ? "vz-done" : ""}">
-					<div class="vz-card-title">${frappe.utils.escape_html(row.question || "")}</div>
-					<div class="vz-seg"></div>
-					<div class="vz-row-extra" style="display:none;">
-						<input type="text" placeholder="${__("Details")}" value="">
-						<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
-					</div>
+		this.render_step_groups("maintenance_results", (row) => this.result_card(row));
+	}
+
+	result_card(row) {
+		const options = (row.options || "").split("\n").map((option) => option.trim()).filter(Boolean);
+		const choices = options.length ? options : ["Pass", "Fail", "Replace", "Other"];
+		const $card = $(`
+			<div class="vz-card ${row.selection || row.answer ? "vz-done" : ""}">
+				<div class="vz-card-title">${frappe.utils.escape_html(row.question || "")}</div>
+				<div class="vz-seg"></div>
+				<div class="vz-row-extra" style="display:none;">
+					<input type="text" placeholder="${__("Details")}" value="">
+					<button type="button" class="vz-photo-btn ${row.photo ? "vz-has-photo" : ""}">📷</button>
 				</div>
-			`);
-			const $seg = $card.find(".vz-seg");
-			const $extra = $card.find(".vz-row-extra");
-			const $detail = $extra.find("input");
-			const negative = (choice) => ["Fail", "Replace"].includes(choice);
+			</div>
+		`);
+		const $seg = $card.find(".vz-seg");
+		const $extra = $card.find(".vz-row-extra");
+		const $detail = $extra.find("input");
+		const negative = (choice) => ["Fail", "Replace"].includes(choice);
 
-			const sync_extra = () => {
-				const show = row.selection && (negative(row.selection) || row.selection === "Other");
-				$extra.toggle(!!show || !!row.answer || !!row.other_details);
-				$detail.attr(
-					"placeholder",
-					row.selection === "Other" ? __("What happened? (required)") : __("Notes")
-				);
-				$detail.val(row.selection === "Other" ? row.other_details || "" : row.answer || "");
-			};
+		const sync_extra = () => {
+			const show = row.selection && (negative(row.selection) || row.selection === "Other");
+			$extra.toggle(!!show || !!row.answer || !!row.other_details);
+			$detail.attr(
+				"placeholder",
+				row.selection === "Other" ? __("What happened? (required)") : __("Notes")
+			);
+			$detail.val(row.selection === "Other" ? row.other_details || "" : row.answer || "");
+		};
 
-			choices.forEach((choice) => {
-				const $btn = $(`<button type="button">${frappe.utils.escape_html(choice)}</button>`);
-				$btn.toggleClass("vz-on", row.selection === choice);
-				$btn.toggleClass("vz-neg", row.selection === choice && negative(choice));
-				$btn.on("click", () => {
-					this.set_row("maintenance_results", row, "selection", row.selection === choice ? "" : choice);
-					$seg.find("button").removeClass("vz-on vz-neg");
-					if (row.selection) {
-						$btn.addClass("vz-on");
-						if (negative(choice)) $btn.addClass("vz-neg");
-					}
-					$card.toggleClass("vz-done", !!(row.selection || row.answer));
-					sync_extra();
-				});
-				$seg.append($btn);
+		choices.forEach((choice) => {
+			const $btn = $(`<button type="button">${frappe.utils.escape_html(choice)}</button>`);
+			$btn.toggleClass("vz-on", row.selection === choice);
+			$btn.toggleClass("vz-neg", row.selection === choice && negative(choice));
+			$btn.on("click", () => {
+				this.set_row("maintenance_results", row, "selection", row.selection === choice ? "" : choice);
+				$seg.find("button").removeClass("vz-on vz-neg");
+				if (row.selection) {
+					$btn.addClass("vz-on");
+					if (negative(choice)) $btn.addClass("vz-neg");
+				}
+				$card.toggleClass("vz-done", !!(row.selection || row.answer));
+				sync_extra();
 			});
-
-			$detail.on("change", (event) => {
-				const field = row.selection === "Other" ? "other_details" : "answer";
-				this.set_row("maintenance_results", row, field, event.target.value);
-			});
-			this.bind_photo($extra.find(".vz-photo-btn"), "maintenance_results", row);
-			sync_extra();
-			this.$wrap.append($card);
+			$seg.append($btn);
 		});
+
+		$detail.on("change", (event) => {
+			const field = row.selection === "Other" ? "other_details" : "answer";
+			this.set_row("maintenance_results", row, field, event.target.value);
+		});
+		this.bind_photo($extra.find(".vz-photo-btn"), "maintenance_results", row);
+		sync_extra();
+		return $card;
 	}
 
 	// ----- step: cleaning ---------------------------------------------------
 
 	render_tasks() {
-		this.rows("cleaning_tasks").forEach((row) => {
-			const $card = $(`
-				<div class="vz-card vz-check-card ${row.is_done ? "vz-on vz-done" : ""}">
-					<div class="vz-check-box">${row.is_done ? "✓" : ""}</div>
-					<div style="flex:1;">
-						<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")}</div>
-						${row.notes ? `<div class="vz-card-sub">${frappe.utils.escape_html(row.notes)}</div>` : ""}
-					</div>
+		this.render_step_groups("cleaning_tasks", (row) => this.task_card(row));
+	}
+
+	task_card(row) {
+		const $card = $(`
+			<div class="vz-card vz-check-card ${row.is_done ? "vz-on vz-done" : ""}">
+				<div class="vz-check-box">${row.is_done ? "✓" : ""}</div>
+				<div style="flex:1;">
+					<div class="vz-card-title">${frappe.utils.escape_html(row.task || "")}</div>
+					${row.notes ? `<div class="vz-card-sub">${frappe.utils.escape_html(row.notes)}</div>` : ""}
 				</div>
-			`).on("click", () => {
-				const done = row.is_done ? 0 : 1;
-				this.set_row("cleaning_tasks", row, "is_done", done);
-				$card.toggleClass("vz-on vz-done", !!done);
-				$card.find(".vz-check-box").text(done ? "✓" : "");
-			});
-			this.$wrap.append($card);
+			</div>
+		`).on("click", () => {
+			const done = row.is_done ? 0 : 1;
+			this.set_row("cleaning_tasks", row, "is_done", done);
+			$card.toggleClass("vz-on vz-done", !!done);
+			$card.find(".vz-check-box").text(done ? "✓" : "");
 		});
+		return $card;
 	}
 
 	// ----- step: wrap-up ------------------------------------------------------
 
 	render_wrapup() {
+		// Template wrap-up guidance + the site's own reminders (Maintenance
+		// Profile), stacked into one collapsible panel.
+		const template_wrapup = this.template_meta.wrapup || {};
+		const site_note = (this.dashboard.profile || {}).wrapup_instructions;
+		const wrapup_meta = {
+			instructions:
+				(template_wrapup.instructions || "") +
+				(site_note ? `<p><b>${__("This site")}:</b> ${frappe.utils.escape_html(site_note)}</p>` : ""),
+			images: template_wrapup.images || [],
+		};
+		this.render_help(wrapup_meta, __("Wrapping up"));
+
 		const $notes_card = $(`
 			<div class="vz-card">
 				<div class="vz-card-title">${__("Visit Notes")}</div>

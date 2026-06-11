@@ -34,6 +34,19 @@ ALLOWED_ROW_FIELDS = {
 # Tables that accept appended rows from the wizard (the "add other item" flow).
 APPENDABLE_TABLES = {"consumables"}
 
+# "Do Visit Today" creates a record carrying this visit_label. A labelled visit
+# is skipped by api.maintenance_scheduling.update_next_visit_dates, so pulling a
+# future visit forward is an EXTRA one-off — the feature's regular
+# next_visit_date is untouched and its originally scheduled visit still fires.
+EXTRA_VISIT_LABEL = "Extra Visit"
+
+# How far ahead get_upcoming_visits looks, and where it starts (just past the
+# 7-day scheduler horizon, whose due visits already appear as drafts in the
+# kiosk's "Today's Visits").
+UPCOMING_WINDOW_DAYS = 30
+UPCOMING_WINDOW_START_DAYS = 8
+UPCOMING_LIMIT = 50
+
 PAYLOAD_TABLE_MAP = {
     "maintenance_results": "results",
     "chemistry_readings": "readings",
@@ -121,7 +134,121 @@ def get_visit_bootstrap(record):
     return {
         "record": doc.as_dict(),
         "dashboard": get_dashboard_context(doc.project, doc.serial_no) if doc.project else {},
+        "sections": _section_meta(doc),
+        "template_meta": _template_meta(doc.get("template")),
         "state": _wizard_state(doc),
+    }
+
+
+def _section_meta(doc):
+    """Per-section how-to content for the wizard's collapsible step panels.
+
+    Keyed by Section docname (the ``section`` link every visit row carries):
+    {title, type, instructions (Text Editor HTML), images:[{image, caption}],
+    location: {note, photo, latitude, longitude} or None}. Instructions/images
+    come from the Section library (write once, used everywhere); the location
+    comes from the record's resolved template's step row — templates are
+    customer/project-scoped, so each site's form carries its own spots. Only
+    sections the record actually references are returned; the wizard sanitises
+    the HTML and shows a panel only when there's content.
+    """
+    seen = []
+    for table in PAYLOAD_TABLE_MAP:
+        for row in doc.get(table, []):
+            section = row.get("section")
+            if section and section not in seen:
+                seen.append(section)
+    if not seen:
+        return {}
+
+    rows = frappe.get_all(
+        "Sapphire Maintenance Section",
+        filters={"name": ["in", seen]},
+        fields=["name", "section_title", "section_type", "step_instructions"],
+    )
+    images = frappe.get_all(
+        "Sapphire Section Image",
+        filters={"parent": ["in", seen], "parenttype": "Sapphire Maintenance Section"},
+        fields=["parent", "image", "caption"],
+        order_by="parent asc, idx asc",
+    )
+    images_by_section = {}
+    for image in images:
+        images_by_section.setdefault(image.parent, []).append(
+            {"image": image.image, "caption": image.caption}
+        )
+
+    # Step locations live on the resolved template's section rows. A Per Site
+    # Visit can mix per-feature templates; the header template's spots are
+    # shown (a section's location rarely differs between a site's templates).
+    locations = {}
+    if doc.get("template"):
+        for row in frappe.get_all(
+            "Sapphire Template Section",
+            filters={"parent": doc.template, "parenttype": "Sapphire Maintenance Template"},
+            fields=["section", "location_note", "location_photo", "latitude", "longitude"],
+            order_by="idx asc",
+        ):
+            if row.section in locations:
+                continue
+            if row.location_note or row.location_photo or (row.latitude and row.longitude):
+                locations[row.section] = {
+                    "note": row.location_note,
+                    "photo": row.location_photo,
+                    "latitude": row.latitude,
+                    "longitude": row.longitude,
+                }
+
+    return {
+        row.name: {
+            "title": row.section_title,
+            "type": row.section_type,
+            "instructions": row.step_instructions,
+            "images": images_by_section.get(row.name, []),
+            "location": locations.get(row.name),
+        }
+        for row in rows
+    }
+
+
+def _template_meta(template):
+    """The template's Safety/Wrap-up guidance for the wizard's fixed steps.
+
+    Returns {safety: {instructions, images}, wrapup: {instructions, images}}
+    (or {}). Site-specific wrap-up reminders live on the Maintenance Profile
+    and ride along in the dashboard context; the wizard stacks both.
+    """
+    if not template:
+        return {}
+    fields = frappe.db.get_value(
+        "Sapphire Maintenance Template",
+        template,
+        ["safety_instructions", "wrapup_instructions"],
+        as_dict=True,
+    )
+    if not fields:
+        return {}
+
+    images_by_field = {}
+    for image in frappe.get_all(
+        "Sapphire Section Image",
+        filters={"parent": template, "parenttype": "Sapphire Maintenance Template"},
+        fields=["parentfield", "image", "caption"],
+        order_by="idx asc",
+    ):
+        images_by_field.setdefault(image.parentfield, []).append(
+            {"image": image.image, "caption": image.caption}
+        )
+
+    return {
+        "safety": {
+            "instructions": fields.safety_instructions,
+            "images": images_by_field.get("safety_images", []),
+        },
+        "wrapup": {
+            "instructions": fields.wrapup_instructions,
+            "images": images_by_field.get("wrapup_images", []),
+        },
     }
 
 
@@ -218,3 +345,133 @@ def finish_visit(record, signature=None, modified=None):
         doc.submit()
 
     return _wizard_state(doc)
+
+
+@frappe.whitelist()
+def get_upcoming_visits(days=UPCOMING_WINDOW_DAYS):
+    """Future contract visits a tech can pull forward and do today.
+
+    Looks past the 7-day scheduler horizon (today's/this-week's due visits are
+    already drafted and shown in "Today's Visits") through ``days`` ahead, at
+    Active contracts' covered features whose ``next_visit_date`` falls in that
+    window and which have **no open draft yet**. Per Site Visit contracts
+    collapse to a single earliest-due site entry. Sorted soonest-first, capped.
+
+    Returns:
+        list[dict]: [{contract, project, project_title, serial_no, item_name,
+        visit_shape, next_visit_date, days_until}].
+    """
+    from frappe.utils import add_days, cint, date_diff, getdate, nowdate
+
+    days = cint(days) or UPCOMING_WINDOW_DAYS
+    today = getdate(nowdate())
+    window_start = add_days(today, UPCOMING_WINDOW_START_DAYS)
+    window_end = add_days(today, days)
+
+    contracts = frappe.get_list(
+        "Sapphire Maintenance Contract",
+        filters={"status": "Active"},
+        fields=["name", "project", "customer", "visit_shape"],
+    )
+    by_name = {c.name: c for c in contracts}
+    if not by_name:
+        return []
+
+    features = frappe.get_all(
+        "Sapphire Contract Feature",
+        filters={
+            "parent": ["in", list(by_name)],
+            "parenttype": "Sapphire Maintenance Contract",
+            "next_visit_date": ["between", [window_start, window_end]],
+        },
+        fields=["parent", "serial_no", "next_visit_date"],
+        order_by="next_visit_date asc",
+    )
+    if not features:
+        return []
+
+    projects = {by_name[f.parent].project for f in features if by_name[f.parent].project}
+    titles = dict(
+        frappe.get_all("Project", filters={"name": ["in", list(projects)]},
+                       fields=["name", "project_name"], as_list=True)
+    ) if projects else {}
+    serials = {f.serial_no for f in features if f.serial_no}
+    item_names = dict(
+        frappe.get_all("Serial No", filters={"name": ["in", list(serials)]},
+                       fields=["name", "item_name"], as_list=True)
+    ) if serials else {}
+
+    entries = []
+    site_seen = set()
+    for feature in features:
+        contract = by_name[feature.parent]
+        if contract.visit_shape == "Per Site Visit":
+            # one entry per site, at its earliest-due feature (features are
+            # ordered, so the first one wins). Suppress when any open draft
+            # already exists for the contract — the scheduler's regular site
+            # draft, or an Extra Visit a tech just pulled forward — so a site
+            # can't be queued twice.
+            if contract.name in site_seen:
+                continue
+            site_seen.add(contract.name)
+            if frappe.db.exists(
+                "Sapphire Maintenance Record",
+                {"maintenance_contract": contract.name, "docstatus": 0},
+            ):
+                continue
+            serial_no = None
+        else:
+            if frappe.db.exists(
+                "Sapphire Maintenance Record",
+                {"project": contract.project, "serial_no": feature.serial_no, "docstatus": 0},
+            ):
+                continue
+            serial_no = feature.serial_no
+
+        entries.append({
+            "contract": contract.name,
+            "project": contract.project,
+            "project_title": titles.get(contract.project) or contract.project,
+            "serial_no": serial_no,
+            "item_name": item_names.get(serial_no) if serial_no else None,
+            "visit_shape": contract.visit_shape,
+            "next_visit_date": str(feature.next_visit_date),
+            "days_until": date_diff(feature.next_visit_date, today),
+        })
+        if len(entries) >= UPCOMING_LIMIT:
+            break
+
+    return entries
+
+
+@frappe.whitelist()
+def create_visit_today(contract, serial_no=None):
+    """Create a draft visit record now for a feature scheduled later.
+
+    The "Do Visit Today" action: an **extra one-off** visit (carries
+    :data:`EXTRA_VISIT_LABEL`, so submitting it does not advance the feature's
+    cadence — the regularly scheduled visit still happens later). Per Feature
+    contracts pass the feature ``serial_no``; Per Site Visit contracts pass
+    none (the record covers all features). Created with the caller's own
+    permissions; the opening tech claims it as technician.
+
+    Returns:
+        str: the new Sapphire Maintenance Record name (the wizard opens it).
+    """
+    contract_doc = frappe.get_doc("Sapphire Maintenance Contract", contract)
+    if contract_doc.status != "Active":
+        frappe.throw(_("{0} is not an Active contract.").format(contract))
+
+    if serial_no and serial_no not in [row.serial_no for row in contract_doc.covered_features]:
+        frappe.throw(_("{0} is not a covered feature on {1}.").format(serial_no, contract))
+
+    record = frappe.new_doc("Sapphire Maintenance Record")
+    record.customer = contract_doc.customer
+    record.project = contract_doc.project
+    record.maintenance_contract = contract_doc.name
+    record.serial_no = serial_no or None
+    record.visit_label = EXTRA_VISIT_LABEL
+    if "Maintenance User" in frappe.get_roles():
+        record.technician = frappe.session.user
+    record.insert()
+    return record.name
