@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-06-11
+
+### Added
+- **Wall / TV Display at `/wall`** — the dedicated TV screen, ported from Triton's wall dashboard and built on the proven Time Kiosk PWA architecture:
+  - **What it shows**: a briefing band (today's tasks with assignees / overdue-at-risk with days-late / today's schedule, 4 rows + "+N more" each — pure structured data, zero LLM dependency), an **auto-rotating one-project-per-screen carousel** of the top-10 company-priority projects (rank, PM, tech lead, percent-complete meter, SVG task-completion donut), manual pips + pause toggle + per-slide progress bar, a clock, and an **Open-Meteo weather chip** (client-side keyless fetch, WMO-code icons, °F, configurable coordinates — defaults Bountiful UT).
+  - **Architecture** (mirrors `www/kiosk.*`): `www/wall.py` controller (guest → `/login?redirect-to=/wall`, staff-role gate, server-injected `WALL_BOOT` first paint), chrome-free `wall.html`, root-scope `wall-sw.js` (kiosk-sw minus the geolocation queue: precache + offline shell + last-good data responses so brief outages don't blank the screen), vanilla `public/js/wall/app.js` + standalone dark `wall.css` — **perf-lite by construction** (no backdrop-filter, no animations beyond the progress bar; Raspberry-Pi friendly).
+  - **Deploy pickup, two belts**: the service worker is registered with the per-deploy `?v=` token (extracted `get_deploy_version()` into shared `utils/deploy.py`; kiosk re-exports it), re-checked every 60s, page reloads immediately on `controllerchange`; and every data refresh compares the server's `deploy_version` against `WALL_BUILD` and reloads on mismatch — a 24/7 screen converges on a deploy within ~a minute even if the worker never installed.
+  - **Auth**: new low-privilege **Wall Display** role (seed patch, `desk_access=0`) added to the Task Dashboard's staff-role gate; sign each TV in once with a dedicated user holding only that role. Data endpoint `get_wall_dashboard_data` = the Task Dashboard payload + per-project `GROUP BY` task stats + settings + deploy version (role-gate-then-permission-free, same rationale as the block). 401/403 on refresh reloads through login.
+  - **Settings** (ERPNext Enhancements Settings → Wall / TV Display): carousel rotation seconds (60), data refresh seconds (300), weather toggle/lat/lon/label.
+  - **Donut semantics**: `Completed` + `Invoiced` count as done; `Canceled`/`Template` excluded from both slices.
+  - Tests: `tests/test_wall_dashboard.py` (stats math, payload shape, settings defaults, role gate incl. guest denial, deploy-token stability).
+
 ## [1.12.0] - 2026-06-11
 
 ### Added

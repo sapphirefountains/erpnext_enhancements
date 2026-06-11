@@ -1,0 +1,61 @@
+{#
+  Wall / TV Display app shell (served at /wall; controller: wall.py).
+
+  Chrome-free, dark, read-only portfolio display for 24/7 wall screens. The
+  actual UI is rendered client-side by js/wall/app.js into #wall-root from
+  window.WALL_BOOT (server-injected) and the periodic refresh endpoint.
+
+  Deploy pickup (two belts, see app.js):
+    1. The service worker (wall-sw.js) is registered with ?v={{ deploy_version }}
+       and re-checked every 60s — a deploy is a new script URL, the new worker
+       activates, and the page reloads immediately on controllerchange (no user
+       input to protect on a display).
+    2. Every data refresh carries the server's deploy_version — a mismatch with
+       window.WALL_BUILD reloads the page even if the worker never installed.
+
+  Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
+  so every asset URL below carries ?v={{ deploy_version }} (utils/deploy.py).
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Wall Display{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#0b1320">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/wall/wall.css?v={{ deploy_version }}">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  html, body { background: #0b1320; margin: 0; }
+  main, .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div id="wall-root" class="wall-shell" aria-busy="true">
+  <div class="wall-boot">Loading Wall Display…</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  // Server-injected boot payload (same shape as get_wall_dashboard_data).
+  window.WALL_BOOT = {{ boot_json | safe }};
+  window.WALL_BUILD = "{{ deploy_version }}";
+</script>
+<script src="/assets/erpnext_enhancements/js/wall/app.js?v={{ deploy_version }}"></script>
+{% endblock %}

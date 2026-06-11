@@ -11,37 +11,17 @@ service worker (``kiosk-sw.js``) take over once the shell loads. Live data and t
 geolocation upload endpoint live in ``erpnext_enhancements.api.time_kiosk``.
 """
 
-import os
-
 import frappe
 
-import erpnext_enhancements
 from erpnext_enhancements.api.time_kiosk import get_kiosk_bootstrap
+
+# Shared per-deploy cache-bust token (extracted to utils/deploy.py in v1.13.0;
+# re-exported here because kiosk docs/tooling historically reference it from
+# this module).
+from erpnext_enhancements.utils.deploy import get_deploy_version  # noqa: F401
 
 # Always render fresh per-user; never cache the authenticated shell.
 no_cache = 1
-
-
-def get_deploy_version() -> str:
-	"""A token that changes on every deploy, used to cache-bust the kiosk PWA.
-
-	``sites/assets/assets.json`` is rewritten by every ``bench build`` — it is
-	the same file Frappe's own ``frappe.utils.get_build_version`` reads — so
-	its mtime fingerprints the deploy. The kiosk needs it because raw
-	``/assets`` files are served with a 1-year *immutable* Cache-Control (the
-	v0.8.1 stale-cache bug): ``kiosk.html`` appends ``?v=<token>`` to its
-	asset URLs so each deploy is a brand-new URL to the browser, and the
-	service worker is registered as ``/kiosk-sw.js?v=<token>`` so it keys its
-	cache on the deploy (see ``kiosk-sw.js``).
-
-	Unlike frappe's helper (which falls back to a *random* string and would
-	re-bust on every page view), this falls back to the app version so the
-	token stays stable between deploys.
-	"""
-	try:
-		return str(int(os.path.getmtime(os.path.join(frappe.local.sites_path, "assets", "assets.json"))))
-	except OSError:
-		return erpnext_enhancements.__version__
 
 
 def get_context(context):

@@ -33,7 +33,15 @@
   "briefing_section",
   "briefing_enabled",
   "briefing_use_gemini",
-  "briefing_recipients"
+  "briefing_recipients",
+  "wall_section",
+  "wall_rotation_seconds",
+  "wall_data_refresh_seconds",
+  "wall_column_break",
+  "wall_show_weather",
+  "weather_latitude",
+  "weather_longitude",
+  "weather_label"
  ],
  "fields": [
   {
@@ -230,6 +238,56 @@
    "fieldtype": "Table",
    "label": "Briefing Recipients",
    "options": "Briefing Recipient"
+  },
+  {
+   "fieldname": "wall_section",
+   "fieldtype": "Section Break",
+   "label": "Wall / TV Display (/wall)"
+  },
+  {
+   "default": "60",
+   "description": "Seconds each project stays on screen in the rotating carousel.",
+   "fieldname": "wall_rotation_seconds",
+   "fieldtype": "Int",
+   "label": "Carousel Rotation (Seconds)"
+  },
+  {
+   "default": "300",
+   "description": "How often the display re-fetches live data. It also reloads itself automatically when a deploy changes the asset build.",
+   "fieldname": "wall_data_refresh_seconds",
+   "fieldtype": "Int",
+   "label": "Data Refresh (Seconds)"
+  },
+  {
+   "fieldname": "wall_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "wall_show_weather",
+   "fieldtype": "Check",
+   "label": "Show Weather Widget"
+  },
+  {
+   "default": "40.8894",
+   "description": "Open-Meteo coordinates for the weather chip (default: HQ, Bountiful UT).",
+   "fieldname": "weather_latitude",
+   "fieldtype": "Float",
+   "label": "Weather Latitude",
+   "precision": "4"
+  },
+  {
+   "default": "-111.8808",
+   "fieldname": "weather_longitude",
+   "fieldtype": "Float",
+   "label": "Weather Longitude",
+   "precision": "4"
+  },
+  {
+   "default": "Bountiful, UT",
+   "fieldname": "weather_label",
+   "fieldtype": "Data",
+   "label": "Weather Location Label"
   }
  ],
  "issingle": 1,
