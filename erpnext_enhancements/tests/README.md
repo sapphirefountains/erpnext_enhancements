@@ -10,6 +10,7 @@ bench --site <site> run-tests --app erpnext_enhancements
 
 # Bench-free suites (plain pytest/unittest, no site required):
 python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py
+python -m pytest erpnext_enhancements/tests/test_assistant_tools_schema.py
 python -m pytest test_sync_time_kiosk.py        # at repo root
 ```
 
@@ -19,6 +20,8 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 
 | Test file | Subsystem covered | Style / fixtures |
 |---|---|---|
+| `test_assistant_tools_schema.py` | `assistant_tools/` FAC tool contract (name == module filename, no FAC built-in collisions, schema validity), skills manifest, FAC-optional import tripwire | **Bench-free**: stub `frappe` + stub FAC `BaseTool` in `sys.modules`; hooks.py read via `ast` |
+| `test_assistant_tools_integration.py` | FAC tool discovery via `get_tool_registry()` + execution smoke tests (intervals, contracts, project scopes, briefing) + roleless-user denial | `FrappeTestCase`-style `unittest`; skip-guarded — runs only on a bench with `frappe_assistant_core` installed |
 | `test_collab.py` | `api.collab` live-collab relay (allowlist, write permission, field/child validation, size cap, publish payloads for field updates + focus presence) | `FrappeTestCase`; Task fixture; `frappe.publish_realtime` patched |
 | `test_comments_api.py` | `api.comments` CRUD | `unittest.mock` (no DB) |
 | `test_dashboard_override.py` | Project dashboard `get_dashboard_data` | Pure unit, no mocks |
@@ -38,4 +41,5 @@ The standalone Time Kiosk REST sync tool is tested separately by [`test_sync_tim
 ## Notes
 
 - `test_quickbooks_online.py` must be importable **without** a bench, hence the `sys.modules` stub. It fails if run expecting a real `frappe`.
+- `test_assistant_tools_schema.py` is likewise bench-free (same stub approach) and additionally stubs `frappe_assistant_core.core.base_tool.BaseTool`. `test_assistant_tools_integration.py` self-skips unless `frappe_assistant_core` is importable, so a FAC-less bench collects it cleanly.
 - `test_time_kiosk_status.py` exists specifically to lock in the idle-status payload shape (a `get_current_status` response the JS treats as truthy must still mean "not clocked in").
