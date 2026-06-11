@@ -47,6 +47,39 @@ class SapphireMaintenanceRecord(Document):
 
 	def before_submit(self):
 		self._autofill_clock_out()
+		self._validate_mandatory_rows()
+
+	def _validate_mandatory_rows(self):
+		"""Block submit while template-mandated rows are unanswered.
+
+		Rows carry ``is_mandatory`` copied from their template section item
+		(``get_visit_payload``). "Answered" matches compute_completion_percent:
+		a selection/answer, a non-zero reading, a task ticked done or
+		annotated. Consumables are exempt — an untouched qty-0 dosing prefill
+		is a legitimate "none used".
+		"""
+		def tag(row, label):
+			if row.serial_no and not self.serial_no:
+				return _("{0} ({1})").format(label, row.serial_no)
+			return label
+
+		missing = []
+		for row in self.get("maintenance_results", []):
+			if row.is_mandatory and not (row.selection or row.answer):
+				missing.append(tag(row, row.question))
+		for row in self.get("chemistry_readings", []):
+			if row.is_mandatory and not flt(row.reading_value):
+				missing.append(tag(row, row.reading))
+		for row in self.get("cleaning_tasks", []):
+			if row.is_mandatory and not (row.is_done or row.notes):
+				missing.append(tag(row, row.task))
+		if missing:
+			frappe.throw(
+				_("These required items are still unanswered:")
+				+ "<br>"
+				+ "<br>".join(frappe.utils.escape_html(item) for item in missing),
+				title=_("Required Items Missing"),
+			)
 
 	def _job_interval(self, statuses):
 		"""Latest Job Interval for this record's technician + project in the given statuses."""
@@ -188,9 +221,12 @@ def resolve_template(project=None, customer=None, contract=None, feature_row=Non
 	name or None.
 	"""
 	if visit_label and contract:
-		for row in contract.get("seasonal_visits", []):
-			if row.visit_label == visit_label and row.template:
-				return row.template
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
+			iter_seasonal_visits,
+		)
+		for visit in iter_seasonal_visits(contract):
+			if visit["label"] == visit_label and visit["template"]:
+				return visit["template"]
 	if feature_row is not None and feature_row.get("template"):
 		return feature_row.get("template")
 	if contract and contract.get("default_template"):
@@ -229,17 +265,28 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 	resolves each feature's template, and walks the template's sections in
 	order, emitting rows typed by section:
 
+	Every row carries ``section``, ``section_title`` and ``serial_no``; the
+	template section item's ``is_mandatory`` rides along on results, readings
+	and tasks (enforced in ``before_submit``), its custom ``options`` on
+	results, and its ``default_qty``/``qty_step`` plus the Item's
+	name/stock-UOM on consumables — one enrichment point serving the desk
+	form, the visit wizard, print and portal renders alike.
+
 	Returns:
 		dict: {
 			"template":    the resolved template name (of the first feature),
-			"results":     Equipment Inspection rows {question, section, serial_no},
+			"results":     Equipment Inspection rows {question, options,
+			               is_mandatory, section, section_title, serial_no},
 			"readings":    Water Chemistry rows {reading, uom, min_value,
-			               max_value, section, serial_no} (Serial No range
-			               overrides applied),
-			"tasks":       Cleaning Tasks rows {task, section, serial_no},
-			"consumables": Chemical Dosing rows {item, qty: 0, warehouse,
-			               section, serial_no} (warehouse = feature's chemical
-			               warehouse -> technician's vehicle -> settings default),
+			               max_value, is_mandatory, section, section_title,
+			               serial_no} (Serial No range overrides applied),
+			"tasks":       Cleaning Tasks rows {task, is_mandatory, section,
+			               section_title, serial_no},
+			"consumables": Chemical Dosing rows {item, item_name, uom, qty: 0,
+			               default_qty, qty_step, warehouse, section,
+			               section_title, serial_no} (warehouse = feature's
+			               chemical warehouse -> technician's vehicle ->
+			               settings default),
 		}
 	"""
 	from erpnext_enhancements.api.maintenance_workflow import resolve_consumable_warehouse
@@ -268,6 +315,14 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 	customer = contract.customer if contract else None
 	payload = {"template": None, "results": [], "readings": [], "tasks": [], "consumables": []}
 	template_cache = {}
+	item_cache = {}
+
+	def item_details(item_code):
+		if item_code not in item_cache:
+			item_cache[item_code] = frappe.db.get_value(
+				"Item", item_code, ["item_name", "stock_uom"], as_dict=True
+			) or frappe._dict()
+		return item_cache[item_code]
 
 	for feature in features:
 		template_name = resolve_template(
@@ -300,10 +355,21 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 			if section.disabled:
 				continue
 			items = sorted(section.items, key=lambda row: (row.sequence or row.idx))
-			common = {"section": section.name, "serial_no": feature_serial}
+			common = {
+				"section": section.name,
+				"section_title": section.section_title,
+				"serial_no": feature_serial,
+			}
 			if section.section_type == "Equipment Inspection":
 				for item in items:
-					payload["results"].append(dict(common, question=item.label))
+					payload["results"].append(
+						dict(
+							common,
+							question=item.label,
+							options=item.options,
+							is_mandatory=item.is_mandatory,
+						)
+					)
 			elif section.section_type == "Water Chemistry":
 				for item in items:
 					override = overrides.get((item.label or "").strip().lower())
@@ -314,15 +380,28 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 							uom=item.uom,
 							min_value=override.min_value if override else item.min_value,
 							max_value=override.max_value if override else item.max_value,
+							is_mandatory=item.is_mandatory,
 						)
 					)
 			elif section.section_type == "Cleaning Tasks":
 				for item in items:
-					payload["tasks"].append(dict(common, task=item.label))
+					payload["tasks"].append(
+						dict(common, task=item.label, is_mandatory=item.is_mandatory)
+					)
 			elif section.section_type == "Chemical Dosing":
 				for item in items:
+					details = item_details(item.item)
 					payload["consumables"].append(
-						dict(common, item=item.item, qty=0, warehouse=warehouse)
+						dict(
+							common,
+							item=item.item,
+							item_name=details.item_name,
+							uom=details.stock_uom,
+							qty=0,
+							default_qty=item.default_qty,
+							qty_step=item.qty_step or 1,
+							warehouse=warehouse,
+						)
 					)
 
 	return payload

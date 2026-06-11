@@ -1,12 +1,15 @@
 """Tests for the modular maintenance forms + Maintenance Contract subsystem.
 
 Covers: section -> template composition and visit-payload instantiation
-(including per-feature chemistry range overrides), the pure reading-range
-evaluator, the consumable-warehouse fallback chain, stock-entry row building
-(qty-0 prefills skipped), contract mapping from Sales Order / Project
-Contract, contract-driven predictive scheduling for both visit shapes (with
-dedupe), next-visit date roll-forward on submit-time scheduling, and the Time
-Kiosk's maintenance-form context (required / form link / submitted-since).
+(including per-feature chemistry range overrides and the wizard enrichment
+columns), the pure reading-range evaluator, the consumable-warehouse fallback
+chain, stock-entry row building (qty-0 prefills skipped), contract mapping
+from Sales Order / Project Contract, contract validate() materialization of
+frequency/next-visit defaults, contract-driven predictive scheduling for both
+visit shapes (with dedupe) including flat + custom seasonal visits, mandatory
+row enforcement on submit, the Visit Wizard API (bootstrap/save/finish),
+next-visit date roll-forward on submit-time scheduling, and the Time Kiosk's
+maintenance-form context (required / form link / submitted-since).
 """
 import frappe
 import unittest
@@ -64,7 +67,15 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.sections = {
 			"Test Dosing Section": {
 				"section_type": "Chemical Dosing",
-				"items": [{"sequence": 1, "label": "Chlorine (Gal)", "item": CHEMICAL_ITEM}],
+				"items": [
+					{
+						"sequence": 1,
+						"label": "Chlorine (Gal)",
+						"item": CHEMICAL_ITEM,
+						"default_qty": 2,
+						"qty_step": 0.5,
+					}
+				],
 			},
 			"Test Chemistry Section": {
 				"section_type": "Water Chemistry",
@@ -75,7 +86,14 @@ class TestMaintenanceSections(unittest.TestCase):
 			},
 			"Test Inspection Section": {
 				"section_type": "Equipment Inspection",
-				"items": [{"sequence": 1, "label": "Pump operating normally"}],
+				"items": [
+					{
+						"sequence": 1,
+						"label": "Pump operating normally",
+						"options": "OK\nWorn\nReplace",
+						"is_mandatory": 1,
+					}
+				],
 			},
 			"Test Cleaning Section": {
 				"section_type": "Cleaning Tasks",
@@ -136,6 +154,22 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.assertEqual(payload["consumables"][0]["qty"], 0)
 		for key in ("results", "readings", "tasks", "consumables"):
 			self.assertTrue(all(row["serial_no"] == SERIALS[0] for row in payload[key]))
+
+	def test_visit_payload_carries_wizard_enrichment(self):
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0]}])
+		payload = get_visit_payload(
+			project=self.project, serial_no=SERIALS[0], maintenance_contract=contract.name
+		)
+		consumable = payload["consumables"][0]
+		self.assertEqual(consumable["item_name"], "Test Chlorine")
+		self.assertEqual(consumable["default_qty"], 2)
+		self.assertEqual(consumable["qty_step"], 0.5)
+		self.assertTrue(consumable["uom"])
+		self.assertEqual(consumable["section_title"], "Test Dosing Section")
+		result = payload["results"][0]
+		self.assertEqual(result["options"], "OK\nWorn\nReplace")
+		self.assertEqual(result["is_mandatory"], 1)
+		self.assertEqual(payload["readings"][0]["section_title"], "Test Chemistry Section")
 
 	def test_visit_payload_per_site_covers_all_features(self):
 		contract = self._make_contract(
@@ -281,6 +315,65 @@ class TestMaintenanceSections(unittest.TestCase):
 		with self.assertRaises(frappe.ValidationError):
 			self._make_contract(features=[{"serial_no": SERIALS[1]}])
 
+	def test_contract_validate_materializes_defaults(self):
+		"""Blank row frequency inherits the contract default; blank next visit
+		anchors to the start date — the scheduler never sees a silent blank."""
+		contract = frappe.new_doc("Sapphire Maintenance Contract")
+		contract.customer = self.customer
+		contract.project = self.project
+		contract.status = "Draft"
+		contract.default_frequency = "Weekly"
+		contract.start_date = add_days(nowdate(), 3)
+		contract.append("covered_features", {"serial_no": SERIALS[0]})
+		contract.append("covered_features", {"serial_no": SERIALS[1], "frequency": "Monthly"})
+		contract.insert(ignore_permissions=True)
+
+		self.assertEqual(contract.covered_features[0].frequency, "Weekly")
+		self.assertEqual(
+			getdate(contract.covered_features[0].next_visit_date), getdate(contract.start_date)
+		)
+		self.assertEqual(contract.covered_features[1].frequency, "Monthly")
+
+	def test_iter_seasonal_visits_unifies_flat_and_custom(self):
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
+			iter_seasonal_visits,
+		)
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0]}])
+		contract.seasonal_startup = 1
+		contract.startup_month = "April"
+		contract.startup_template = self.template_name
+		contract.append(
+			"seasonal_visits", {"visit_label": "Filter Deep Clean", "target_month": "June"}
+		)
+		contract.save(ignore_permissions=True)
+
+		visits = list(iter_seasonal_visits(contract))
+		self.assertEqual(
+			[(v["label"], v["target_month"]) for v in visits],
+			[("Seasonal Startup", "April"), ("Filter Deep Clean", "June")],
+		)
+		self.assertEqual(visits[0]["template"], self.template_name)
+
+		visits[0]["stamp"](2030)
+		self.assertEqual(
+			frappe.db.get_value(
+				"Sapphire Maintenance Contract", contract.name, "startup_last_generated_year"
+			),
+			2030,
+		)
+		visits[1]["stamp"](2031)
+		contract.reload()
+		self.assertEqual(contract.seasonal_visits[0].last_generated_year, 2031)
+
+	def test_get_project_water_features(self):
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
+			get_project_water_features,
+		)
+		for serial in SERIALS:
+			frappe.db.set_value("Serial No", serial, "custom_project", self.project)
+		features = get_project_water_features(self.project)
+		self.assertEqual({f["value"] for f in features}, set(SERIALS))
+
 	# ------------------------------------------------------------------ scheduling
 
 	def test_contract_scheduling_per_feature_with_dedupe(self):
@@ -342,6 +435,34 @@ class TestMaintenanceSections(unittest.TestCase):
 		contract.reload()
 		self.assertEqual(contract.seasonal_visits[0].last_generated_year, getdate(nowdate()).year)
 
+	def test_flat_seasonal_visit_generation(self):
+		"""The standard startup pair lives as flat contract fields now — the
+		scheduler drafts from them and stamps the dedup year on the contract."""
+		month_name = getdate(nowdate()).strftime("%B")
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly", "next_visit_date": add_days(nowdate(), 60)}]
+		)
+		contract.seasonal_startup = 1
+		contract.startup_month = month_name
+		contract.startup_template = self.template_name
+		contract.save(ignore_permissions=True)
+
+		from erpnext_enhancements.tasks import generate_predictive_maintenance_records
+		generate_predictive_maintenance_records()
+		generate_predictive_maintenance_records()  # once per year, even across runs
+
+		drafts = frappe.get_all(
+			"Sapphire Maintenance Record",
+			filters={"maintenance_contract": contract.name, "visit_label": "Seasonal Startup", "docstatus": 0},
+		)
+		self.assertEqual(len(drafts), 1)
+		self.assertEqual(
+			frappe.db.get_value(
+				"Sapphire Maintenance Contract", contract.name, "startup_last_generated_year"
+			),
+			getdate(nowdate()).year,
+		)
+
 	# ------------------------------------------------------------------ extras
 
 	def test_compute_completion_percent(self):
@@ -380,6 +501,100 @@ class TestMaintenanceSections(unittest.TestCase):
 			self.assertEqual(len(followups), 1)
 		finally:
 			frappe.db.set_single_value("ERPNext Enhancements Settings", "out_of_range_followup_days", original or 0)
+
+	def test_mandatory_rows_block_submit(self):
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.append("maintenance_results", {"question": "Pump operating normally", "is_mandatory": 1})
+		record.insert(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError):
+			record.submit()
+
+		record.reload()
+		record.maintenance_results[0].selection = "Pass"
+		record.save(ignore_permissions=True)
+		record.submit()
+		self.assertEqual(record.docstatus, 1)
+
+	# ------------------------------------------------------------------ wizard api
+
+	def test_visit_api_bootstrap_save_finish(self):
+		from erpnext_enhancements.api.maintenance_visit import (
+			finish_visit,
+			get_visit_bootstrap,
+			save_visit,
+		)
+
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}])
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.maintenance_contract = contract.name
+		record.insert(ignore_permissions=True)
+
+		# bootstrap instantiates the template server-side and saves real rows
+		data = get_visit_bootstrap(record.name)
+		readings = data["record"]["chemistry_readings"]
+		self.assertTrue(readings and readings[0]["name"])
+		ph = next(row for row in readings if row["reading"] == "pH")
+
+		# step save: server re-validates and returns the out-of-range verdict
+		state = save_visit(
+			record.name,
+			frappe.as_json({"rows": {"chemistry_readings": [{"name": ph["name"], "reading_value": 9.5}]}}),
+			modified=data["state"]["modified"],
+		)
+		flagged = next(row for row in state["readings"] if row["name"] == ph["name"])
+		self.assertEqual(flagged["out_of_range"], 1)
+
+		# stale writes are rejected, not silently merged
+		with self.assertRaises(frappe.ValidationError):
+			save_visit(
+				record.name,
+				frappe.as_json({"fields": {"visit_notes": "lost update"}}),
+				modified="2000-01-01 00:00:00.000000",
+			)
+
+		# fields outside the allowlist are dropped, allowed ones stick
+		state = save_visit(
+			record.name,
+			frappe.as_json({"fields": {"visit_notes": "wizard note", "project": "HACK"}}),
+			modified=state["modified"],
+		)
+		self.assertEqual(
+			frappe.db.get_value("Sapphire Maintenance Record", record.name, "visit_notes"),
+			"wizard note",
+		)
+		self.assertEqual(
+			frappe.db.get_value("Sapphire Maintenance Record", record.name, "project"), self.project
+		)
+
+		# ad-hoc consumable rows append and report their new names
+		state = save_visit(
+			record.name,
+			frappe.as_json({"rows": {"consumables": [{"item": CHEMICAL_ITEM, "qty": 1}]}}),
+			modified=state["modified"],
+		)
+		self.assertTrue(state["added"]["consumables"])
+
+		# answer the mandatory inspection so finishing can submit
+		record.reload()
+		for row in record.maintenance_results:
+			row.selection = "OK"
+		record.save(ignore_permissions=True)
+
+		state = finish_visit(record.name, modified=str(record.modified))
+		from frappe.model.workflow import get_workflow_name
+		if get_workflow_name("Sapphire Maintenance Record"):
+			# house workflow: tech finish = Draft -> Pending Review
+			self.assertEqual(state["workflow_state"], "Pending Review")
+			self.assertEqual(state["docstatus"], 0)
+		else:
+			self.assertEqual(state["docstatus"], 1)
 
 	def test_haversine_distance(self):
 		from erpnext_enhancements.api.time_kiosk import _haversine_m

@@ -7,21 +7,35 @@
   "naming_series",
   "customer",
   "project",
-  "status",
-  "column_break_links",
-  "project_contract",
-  "sales_order",
-  "invoicing_frequency",
-  "terms_section",
   "start_date",
   "end_date",
-  "column_break_terms",
-  "visit_shape",
-  "default_template",
+  "column_break_head",
+  "service_plan",
+  "default_frequency",
+  "status",
   "features_section",
   "covered_features",
   "seasonal_section",
-  "seasonal_visits"
+  "seasonal_startup",
+  "startup_month",
+  "column_break_seasonal",
+  "winterization",
+  "winterization_month",
+  "billing_section",
+  "sales_order",
+  "invoicing_frequency",
+  "column_break_billing",
+  "project_contract",
+  "advanced_section",
+  "visit_shape",
+  "default_template",
+  "column_break_advanced",
+  "startup_template",
+  "winterization_template",
+  "custom_seasonal_section",
+  "seasonal_visits",
+  "startup_last_generated_year",
+  "winterization_last_generated_year"
  ],
  "fields": [
   {
@@ -50,46 +64,6 @@
    "options": "Project"
   },
   {
-   "default": "Draft",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Status",
-   "options": "Draft\nActive\nExpired\nCancelled"
-  },
-  {
-   "fieldname": "column_break_links",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "The signed Maintenance Services Agreement this operational contract executes.",
-   "fieldname": "project_contract",
-   "fieldtype": "Link",
-   "label": "Project Contract",
-   "options": "Project Contract"
-  },
-  {
-   "description": "The commercial Sales Order. Per-visit invoices are drawn against it.",
-   "fieldname": "sales_order",
-   "fieldtype": "Link",
-   "label": "Sales Order",
-   "options": "Sales Order"
-  },
-  {
-   "default": "Per Visit",
-   "description": "Pulled from the Project Contract. Only \"Per Visit\" auto-drafts a Sales Invoice when a Maintenance Record is submitted.",
-   "fieldname": "invoicing_frequency",
-   "fieldtype": "Select",
-   "label": "Invoicing Frequency",
-   "options": "Per Visit\nMonthly\nQuarterly\nAnnually"
-  },
-  {
-   "fieldname": "terms_section",
-   "fieldtype": "Section Break",
-   "label": "Terms"
-  },
-  {
    "fieldname": "start_date",
    "fieldtype": "Date",
    "label": "Start Date"
@@ -100,24 +74,31 @@
    "label": "End Date"
   },
   {
-   "fieldname": "column_break_terms",
+   "fieldname": "column_break_head",
    "fieldtype": "Column Break"
   },
   {
-   "default": "Per Feature",
-   "description": "Per Feature: one visit form per water feature. Per Site Visit: one form covers all covered features, with per-feature rows inside it.",
-   "fieldname": "visit_shape",
-   "fieldtype": "Select",
-   "label": "Visit Shape",
-   "options": "Per Feature\nPer Site Visit",
-   "reqd": 1
+   "description": "Picking a plan stamps its defaults (frequency, template, visit shape, seasonal visits) onto this contract. Later plan edits never ripple back here.",
+   "fieldname": "service_plan",
+   "fieldtype": "Link",
+   "label": "Service Plan",
+   "options": "Sapphire Service Plan"
   },
   {
-   "description": "Used for covered features that don't set their own template.",
-   "fieldname": "default_template",
-   "fieldtype": "Link",
-   "label": "Default Form Template",
-   "options": "Sapphire Maintenance Template"
+   "description": "Default for new feature rows — each row can still override.",
+   "fieldname": "default_frequency",
+   "fieldtype": "Select",
+   "label": "Visit Frequency",
+   "options": "\nDaily\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nYearly"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nActive\nExpired\nCancelled"
   },
   {
    "fieldname": "features_section",
@@ -136,15 +117,145 @@
    "label": "Seasonal Visits"
   },
   {
-   "description": "Annual one-off visits (startup, winterization) drafted when their target month arrives.",
+   "default": "0",
+   "description": "Drafts one startup visit per year when the month arrives.",
+   "fieldname": "seasonal_startup",
+   "fieldtype": "Check",
+   "label": "Spring Startup"
+  },
+  {
+   "default": "April",
+   "depends_on": "seasonal_startup",
+   "fieldname": "startup_month",
+   "fieldtype": "Select",
+   "label": "Startup Month",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "fieldname": "column_break_seasonal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Drafts one winterization visit per year when the month arrives.",
+   "fieldname": "winterization",
+   "fieldtype": "Check",
+   "label": "Winterization"
+  },
+  {
+   "default": "October",
+   "depends_on": "winterization",
+   "fieldname": "winterization_month",
+   "fieldtype": "Select",
+   "label": "Winterization Month",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "billing_section",
+   "fieldtype": "Section Break",
+   "label": "Billing & Source Documents"
+  },
+  {
+   "description": "The commercial Sales Order. Per-visit invoices are drawn against it.",
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order"
+  },
+  {
+   "default": "Per Visit",
+   "description": "Pulled from the Project Contract. Only \"Per Visit\" auto-drafts a Sales Invoice when a Maintenance Record is submitted.",
+   "fieldname": "invoicing_frequency",
+   "fieldtype": "Select",
+   "label": "Invoicing Frequency",
+   "options": "Per Visit\nMonthly\nQuarterly\nAnnually"
+  },
+  {
+   "fieldname": "column_break_billing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The signed Maintenance Services Agreement this operational contract executes.",
+   "fieldname": "project_contract",
+   "fieldtype": "Link",
+   "label": "Project Contract",
+   "options": "Project Contract"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "advanced_section",
+   "fieldtype": "Section Break",
+   "label": "Advanced"
+  },
+  {
+   "default": "Per Feature",
+   "description": "Per Feature: one visit form per water feature. Per Site Visit: one form covers all covered features, with per-feature rows inside it.",
+   "fieldname": "visit_shape",
+   "fieldtype": "Select",
+   "label": "Visit Shape",
+   "options": "Per Feature\nPer Site Visit",
+   "reqd": 1
+  },
+  {
+   "description": "Used for covered features that don't set their own template.",
+   "fieldname": "default_template",
+   "fieldtype": "Link",
+   "label": "Default Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "fieldname": "column_break_advanced",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "seasonal_startup",
+   "description": "Blank = the contract's default template.",
+   "fieldname": "startup_template",
+   "fieldtype": "Link",
+   "label": "Startup Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "depends_on": "winterization",
+   "description": "Blank = the contract's default template.",
+   "fieldname": "winterization_template",
+   "fieldtype": "Link",
+   "label": "Winterization Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "custom_seasonal_section",
+   "fieldtype": "Section Break",
+   "label": "Custom Seasonal Visits"
+  },
+  {
+   "description": "Unusual annual one-off visits beyond the standard startup/winterization pair, drafted when their target month arrives.",
    "fieldname": "seasonal_visits",
    "fieldtype": "Table",
-   "label": "Seasonal Visits",
+   "label": "Custom Seasonal Visits",
    "options": "Sapphire Seasonal Visit"
+  },
+  {
+   "fieldname": "startup_last_generated_year",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Startup Last Generated Year",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "winterization_last_generated_year",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Winterization Last Generated Year",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-06-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Maintenance Contract",

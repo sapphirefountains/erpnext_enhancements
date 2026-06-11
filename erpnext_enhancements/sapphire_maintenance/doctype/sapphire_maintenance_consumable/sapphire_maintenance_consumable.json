@@ -4,10 +4,15 @@
  "engine": "InnoDB",
  "field_order": [
   "section",
+  "section_title",
   "serial_no",
   "item",
+  "item_name",
+  "uom",
   "warehouse",
   "qty",
+  "default_qty",
+  "qty_step",
   "serial_and_batch_bundle"
  ],
  "fields": [
@@ -17,6 +22,14 @@
    "hidden": 1,
    "label": "Section",
    "options": "Sapphire Maintenance Section"
+  },
+  {
+   "description": "Grouping header for renders (wizard, print, portal) — copied from the template section.",
+   "fieldname": "section_title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Section Title",
+   "read_only": 1
   },
   {
    "fieldname": "serial_no",
@@ -34,6 +47,20 @@
    "reqd": 1
   },
   {
+   "fetch_from": "item.item_name",
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "item.stock_uom",
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "Unit",
+   "read_only": 1
+  },
+  {
    "fieldname": "warehouse",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -46,6 +73,23 @@
    "in_list_view": 1,
    "label": "Qty",
    "reqd": 1
+  },
+  {
+   "description": "The quantity usually used — the wizard stepper's first-tap prefill. Copied from the template section item.",
+   "fieldname": "default_qty",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "label": "Usual Qty",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "description": "The wizard stepper's +/− increment. Copied from the template section item.",
+   "fieldname": "qty_step",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "label": "Qty Step",
+   "read_only": 1
   },
   {
    "fieldname": "serial_and_batch_bundle",

@@ -5,14 +5,16 @@
  "field_order": [
   "serial_no",
   "frequency",
+  "next_visit_date",
+  "last_visit_date",
+  "overrides_section",
   "template",
   "default_warehouse",
-  "last_visit_date",
-  "next_visit_date",
   "sales_order_item"
  ],
  "fields": [
   {
+   "columns": 4,
    "fieldname": "serial_no",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -21,11 +23,32 @@
    "reqd": 1
   },
   {
+   "columns": 3,
    "fieldname": "frequency",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Frequency",
    "options": "\nDaily\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nYearly"
+  },
+  {
+   "columns": 3,
+   "fieldname": "next_visit_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Next Visit"
+  },
+  {
+   "fieldname": "last_visit_date",
+   "fieldtype": "Date",
+   "label": "Last Visit",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "description": "Both fields have working fallbacks — only set them when this feature differs from the rest of the contract.",
+   "fieldname": "overrides_section",
+   "fieldtype": "Section Break",
+   "label": "Overrides"
   },
   {
    "description": "Blank = the contract's default template, falling back to the Active template for the Project/Customer.",
@@ -42,18 +65,6 @@
    "options": "Warehouse"
   },
   {
-   "fieldname": "last_visit_date",
-   "fieldtype": "Date",
-   "label": "Last Visit",
-   "read_only": 1
-  },
-  {
-   "fieldname": "next_visit_date",
-   "fieldtype": "Date",
-   "in_list_view": 1,
-   "label": "Next Visit"
-  },
-  {
    "fieldname": "sales_order_item",
    "fieldtype": "Data",
    "hidden": 1,
@@ -62,7 +73,7 @@
  ],
  "istable": 1,
  "editable_grid": 1,
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-06-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Contract Feature",
