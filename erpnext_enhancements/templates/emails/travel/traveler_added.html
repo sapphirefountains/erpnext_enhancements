@@ -1,0 +1,16 @@
+{# Sent to a traveler newly added to an already-moving trip (status != Planning).
+   Context: trip, trip_url, itinerary_url, recipient. #}
+<h3>You were added to a trip: {{ trip.purpose }}</h3>
+<p>
+	{{ trip.start_date }} – {{ trip.end_date }} ({{ trip.travel_type }})
+	{% if trip.travel_for_name %}<br>For: {{ trip.travel_for_doctype }} {{ trip.travel_for_name }}{% endif %}
+</p>
+<p>
+	The attached calendar file adds the trip dates and any flights or hotel
+	stays that apply to you.
+</p>
+<p>
+	<a href="{{ itinerary_url }}">Open your mobile itinerary</a> ·
+	<a href="{{ trip_url }}">View the trip ({{ trip.name }})</a> ·
+	<a href="{{ guidelines_url }}">Travel guidelines</a>
+</p>

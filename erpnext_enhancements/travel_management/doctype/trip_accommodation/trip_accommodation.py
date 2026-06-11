@@ -4,15 +4,16 @@
 
 """Controller for the **Trip Accommodation** child table.
 
-Child table (``istable``) embedded in Travel Trip via the ``accommodation``
+Child table (``istable``) embedded in Travel Trip via the ``accommodations``
 field. Each row captures one lodging stay: hotel/lodging (Supplier link),
-address, check-in/check-out dates, booking confirmation number and cost. Rows
-with ``cost > 0`` are picked up by
-``TravelTrip.create_expense_claim_on_workflow_transition`` and turned into
-"Hotel Accommodation" Expense Claim lines.
+fetched primary address, check-in/check-out dates, booking confirmation,
+optional single ``traveler`` (blank = whole crew), attachment, and the shared
+cost block (estimated_cost / cost / paid_by / paid_by_traveler / billable /
+expense_claim stamp). Employee-paid rows are pulled onto that traveler's
+Expense Claim by ``travel_management.api.create_expense_claim``.
 
-No custom server logic is required, so the controller is a plain pass-through
-``Document`` subclass.
+All validation lives in the parent Travel Trip controller, so this is a plain
+pass-through ``Document`` subclass.
 """
 
 import frappe

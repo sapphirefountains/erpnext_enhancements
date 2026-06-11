@@ -60,7 +60,8 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `sales_order_enhancements.js` | Sales Order | Filter `custom_serial_no` query to a specific item | doctype_js |
 | `task_enhancements.js` | Task | `custom_create_child_task_btn` quick-entry | doctype_js |
 | `telephony_client.js` | whole desk | Twilio softphone + SMS dialer service (`erpnext_enhancements.telephony`) | app_include_js |
-| `travel_trip.js` | Travel Trip | Set `transport_ref_doctype` from transport type | doctype_js |
+| `travel_trip.js` | Travel Trip | Create buttons (per-traveler Expense Claims, Advance, Vehicle Log, Lead/Opportunity from stop, Send Itinerary, coordinator Reopen) + link scoping + billable row defaults — backed by `travel_management/api.py` | doctype_js |
+| `travel_trip_calendar.js` | Travel Trip calendar | Calendar field-map + filters; one all-day event per (trip, traveler) via `api.travel.get_events` | doctype_calendar_js |
 
 ### Module sub-folders under `js/`
 
@@ -69,6 +70,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 - **`project_enhancements/`** — `project_form_script.js` (task tree + Gantt tabs), `project_brief.js`, `task_tree_manager.js` (the `TaskTreeManager` hierarchical grid), `gantt_zoom.js` (shared zoom ladder), `task_gantt.js`, plus `dashboard_components/` (below) and the vendored `lib/frappe-gantt.umd.js`.
 - **`task_enhancements/`** — `task_enhancements.js` (patches `TreeView.get_tree_nodes` for the Hierarchical Task View).
 - **`kiosk/`** — `app.js` + `geo.js` (the Time Kiosk PWA front-end, below).
+- **`travel/`** — `travel_trip_map.js` (Leaflet map of agenda-stop POIs in the trip form's `agenda_map_html` field; renders on refresh, frappe-bundled Leaflet via the `location_timeline.js` loader pattern) and `itinerary.js` (the vanilla-JS `/itinerary` page UI — loaded by `www/itinerary.html` with the `?v=` cache-bust token, NOT via hooks; styles in `css/travel/itinerary.css`, `--ti-*` palette + `prefers-color-scheme` dark).
 
 ## The Comments App
 

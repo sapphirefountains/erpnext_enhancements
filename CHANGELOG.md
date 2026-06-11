@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-06-11
+
+> Versions 1.11.0–1.14.0 are claimed by the Triton feature-port branch (Call Intelligence / Morning Briefing / Wall Display / AI Governance), unmerged at the time of this entry.
+
+### Changed
+- **Travel Management redesigned ground-up** — the unused submittable Travel Trip + 9-state System-Manager-only workflow (2 production drafts ever, both stuck in Draft; deleted by patch) is replaced by a crew-based, collaboratively-edited trip hub:
+  - **Travel Trip is no longer submittable.** Lifecycle is a plain status — *Planning → Booked → In Progress → Completed → Closed*; In Progress/Completed auto-advance from trip dates (daily job, Travel Settings kill-switch), Booked/Closed stay manual. Closed locks the document; a coordinator-only *Reopen Trip* action is the escape hatch. The Travel Trip Workflow, its states and actions are removed from fixtures and deleted by patch (`retire_travel_trip_workflow`).
+  - **Crew trips**: a new *Trip Traveler* child table replaces the single `employee` field — every traveler has their own date range, per-diem calc, and Expense Claim/Advance links. Plain employees see and **edit** trips they own or are travelling on (hook-based row scoping that tracks the travelers table live); the new **Travel Coordinator** role (seeded by patch), HR Manager and System Manager see everything. The Employee dashboard's Travel count keeps working through the child-table fieldname fallback — the parent must never regain an `employee` field.
+  - **Business reason linkage**: a *Travel For* dynamic link (Project / Opportunity / Lead / Customer) with read-only `project`/`customer` mirrors; the linked doctype's dashboard grows a Travel connections group (dynamic-link counts on Opportunity/Lead/Customer, mirror-field count on Project). Agenda stops keep their own related-party links, gain `visit_notes`, and can **quick-create a Lead/Opportunity from a stop** (auto-linked back via `outcome_*` + a "Created from Travel Trip" provenance field).
+
+### Added
+- **Travel finance engine**:
+  - Every cost row (Flights / Accommodation / Ground Transport / new *Trip Expense* misc table) carries the shared cost block — `estimated_cost`, `cost`, `paid_by` Company/Employee + `paid_by_traveler`, `billable`, claim stamp. Ground transport rows finally have costs (typed `supplier`/`vehicle` links replace the dynamic-link crutch; Company Fleet rows are forced company-paid and link draft **Vehicle Logs**).
+  - **Per diem** (rate rules by travel type in the new *Travel Settings* Single, first/last-day percent, per-traveler override, frozen once claimed) and **personal-vehicle mileage** (new *Trip Mileage* table, settings rate). Rates seed at 0 — set real numbers in Travel Settings.
+  - **Per-traveler draft Expense Claims** created explicitly from the form (never as a save side-effect): employee-paid rows + mileage + per diem per traveler, expense types mapped in Travel Settings (claim generation now *throws a configuration error* instead of the old silent "Travel" fallback), `project` pushed to claim header and billable detail rows. Three-layer dedupe: row stamps + `per_diem_claimed` + doc_events that clear stamps when a claim is cancelled/deleted. Draft **Employee Advances** per traveler; claim/advance status mirrors back onto the trip.
+  - Trip rollups: estimated vs actual, company-paid vs employee-paid, per-diem/mileage/claimed/advance totals.
+- **Travel UI surfaces**: Calendar view on Travel Trip (one all-day event per trip-traveler, status colors); **`/itinerary`** — a mobile, chrome-free traveler page (kiosk shell pattern, `?v=` cache-busting, dark-scheme aware) with day-by-day cards, tap-to-copy PNRs/confirmations, attachments, per-day Leaflet maps and Google-Maps deep links; a Leaflet **POI map on the trip form** (Itinerary tab); a **Travel workspace**; three Script Reports — *Travel Trip Cost Summary* (estimate/actual/claimed/unclaimed), *Travel Spend by Category* (pivot by Trip/Project/Employee), *Unclaimed Travel Expenses*.
+- **Travel notifications** (all gated behind *Travel Settings → Send Travel Notifications*, off by default): code-driven emails on booked / traveler added / claims drafted / closed-with-unclaimed-expenses, each with a **stable-UID ICS calendar attachment** (dependency-free RFC 5545 builder — re-sends update, not duplicate); a *Send Itinerary* form button (works regardless of the gate); daily **pre-travel reminders** (~48h before each traveler's departure) and a single-shot **post-trip expense nudge**, both stamp-first idempotent.
+- Tests: bench-free ICS suite (folding/escaping/UTC/UID stability — runs in CI) + a FrappeTestCase suite covering per-diem math, rollups, traveler validation, claim dedupe/stamp-clearing and crew permission scoping.
+- **Company travel guidelines page** at `/travel_guidelines` (login-gated, version-controlled): the General Travel Guidelines policy (one-adult-per-room lodging near the site, nearest-Home-Depot site info, direct 8am–5pm flights with the >1-layover approval rule, practical rentals, per diem, itemized-receipt and one-week submission rules, flight-time clock-in policy), each section with an "In the system" callout mapping the rule onto the new module — Travel POIs (*Hardware Store* category for Home Depot) instead of the old "Travel Site Information" page, per-diem amounts read from the trip's Travelers table, receipts attached to cost rows, claims via Create → Expense Claim, timekeeping via the Time Kiosk. Linked from the Travel workspace, the `/itinerary` footer, and the booked/traveler-added emails.
+
+### Removed
+- Travel Trip Workflow fixtures (workflow/states/actions), the `workflow_state`/`custom_expense_claim` fields, and the trip-level single-employee model. The `accommodation` table fieldname is now `accommodations`.
 ## [1.14.0] - 2026-06-11
 
 ### Added

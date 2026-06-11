@@ -1,0 +1,160 @@
+{#
+  Sapphire Fountains — General Travel Guidelines (served at /travel_guidelines;
+  controller: travel_guidelines.py — login-gated, static content).
+
+  This is the company travel POLICY, version-controlled like everything else.
+  The policy substance comes from management; the "In the system" callouts map
+  each rule onto the Travel Management module (Travel Trip rows, Travel POIs,
+  Expense Claims, Time Kiosk) so the page stays the single reference for both
+  the rule and where it lives in ERPNext. Keep policy edits and system-wording
+  edits separable when updating.
+
+  Unlike /kiosk and /itinerary this page KEEPS the standard website chrome —
+  it is a document, not an app shell.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}General Travel Guidelines{% endblock %}
+
+{% block style %}
+<style>
+	.tg-doc { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; line-height: 1.6; }
+	.tg-doc h1 { margin-bottom: 4px; }
+	.tg-doc .tg-intro { color: var(--text-muted, #6c7680); }
+	.tg-doc h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color, #e2e6ea); }
+	.tg-doc .tg-system {
+		background: var(--bg-light-gray, var(--control-bg, #f6f7f9));
+		border-left: 3px solid var(--primary, #00a0dd);
+		border-radius: 6px;
+		padding: 10px 14px;
+		margin: 12px 0;
+		font-size: 0.95em;
+	}
+	.tg-doc .tg-system b:first-child { display: block; margin-bottom: 2px; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="tg-doc">
+	<h1>Sapphire Fountains — General Travel Guidelines</h1>
+	<p class="tg-intro">
+		Standard policies and procedures for all employees traveling for company
+		business. The goal of these guidelines is to ensure that all travel is
+		safe, cost-effective, and efficient. Adherence is required unless an
+		exception is pre-approved by management.
+	</p>
+
+	<h2>1. Booking Accommodations</h2>
+	<p>Your comfort and proximity to the work site are priorities. When booking lodging:</p>
+	<ul>
+		<li><b>Occupancy:</b> all hotel or lodging reservations are to be booked for <b>one adult traveler per room</b>.</li>
+		<li><b>Location:</b> whenever possible, book within a close and convenient distance to the primary project site — this minimizes daily travel time and associated costs.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Record each reservation as an <b>Accommodation</b> row on the Travel Trip —
+		one row per room, with the row's <i>Traveler</i> set to its occupant, the
+		confirmation number, and the booking attached. Hotel check-ins appear on
+		your mobile itinerary and in your calendar invite automatically.
+	</div>
+
+	<h2>2. Travel Site Information</h2>
+	<p>For each project, travelers are required to compile the key site information <b>before departing</b>:</p>
+	<ul>
+		<li><b>Identify key locations:</b> research the area around the project site.</li>
+		<li><b>Locate Home Depot:</b> find the address and contact information for the Home Depot nearest to the project site — crucial for acquiring materials and supplies efficiently.</li>
+		<li><b>Record information:</b> capture the Home Depot location and any other relevant site details (parking information, site contact, gate codes) so the whole crew can find them.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Site information lives as <b>Travel POI</b> records: add the nearest Home
+		Depot with category <i>Hardware Store</i> (plus <i>Supply Depot</i> /
+		<i>Client HQ</i> / <i>Job Site</i> entries as relevant), put parking and
+		access details in the POI <i>Notes</i>, and set the map pin. Link each POI
+		to an itinerary stop on the Travel Trip — pinned POIs then show on the
+		trip's map and on everyone's mobile itinerary
+		(<a href="/itinerary">/itinerary</a>) with Open-in-Maps directions. POIs
+		are reusable: check whether one already exists before creating it.
+	</div>
+
+	<h2>3. Air Travel</h2>
+	<p>To maximize productivity and minimize travel-related fatigue:</p>
+	<ul>
+		<li><b>Direct flights</b> are strongly preferred and should be booked whenever they are available and the cost is reasonable.</li>
+		<li><b>Flight times:</b> aim for a departure between <b>8:00 AM and 5:00 PM</b> in the departure city's time zone. Red-eye flights should be avoided whenever possible so travelers are well-rested.</li>
+		<li><b>Layovers:</b> if a direct flight is not available or is prohibitively expensive, one layover may be booked. <b>More than one layover requires management approval.</b></li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Enter every booked flight as a <b>Flights</b> row on the Travel Trip —
+		airline, flight number, times, the PNR in <i>Booking Reference</i>, and the
+		ticket/confirmation attached. Flights flow to your mobile itinerary (with
+		tap-to-copy PNR) and to your calendar via the trip's invite.
+	</div>
+
+	<h2>4. Ground Transportation</h2>
+	<p>The vehicle you rent should be practical for both your travel and the project's requirements:</p>
+	<ul>
+		<li><b>Convenience:</b> book rentals from locations that are reasonable to pick up and drop off — ideally at the airport of arrival and departure.</li>
+		<li><b>Vehicle size and type:</b> the rental must be appropriate for the project's needs. Consider the need to transport tools or materials, the number of personnel, and fuel efficiency for longer commutes. Choose a standard sedan, SUV, or truck as needed — <b>no sports cars or luxury vehicles</b>.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Record rentals as <b>Ground Transport</b> rows (type <i>Rental/Third
+		Party</i>, with the rental supplier and pickup/return details). Taking a
+		company truck instead? Use a <i>Company Fleet</i> row and create its
+		<b>Vehicle Log</b> from the trip — fleet usage is tracked, never
+		reimbursed. Personal-vehicle miles go in the trip's <b>Mileage</b> table
+		and are reimbursed at the company rate.
+	</div>
+
+	<h2>5. Meals and Per Diem</h2>
+	<p>A per-diem rate is provided to cover meals and incidental expenses:</p>
+	<ul>
+		<li><b>Project-specific rate:</b> the exact per-diem rate is determined by the trip and will be visible to you before your departure.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Per-diem rates are maintained centrally (by travel type, with a reduced
+		first/last travel day) and computed per traveler from your personal trip
+		dates. Your exact amount shows in the Travel Trip's <i>Travelers</i> table
+		and in your itinerary email — no need to wait for a separate notice.
+		Project-specific exceptions are handled with the per-traveler override
+		rate on the trip.
+	</div>
+
+	<h2>6. Expense Reimbursement and Receipts</h2>
+	<p>To ensure timely reimbursement and proper financial tracking, all expenses must be documented correctly:</p>
+	<ul>
+		<li><b>Receipts for reimbursement:</b> itemized receipts are mandatory for all out-of-pocket expenses for which you are seeking reimbursement — including, but not limited to, lodging, airfare, baggage fees, and rental vehicles.</li>
+		<li><b>Receipts for company-card purchases:</b> itemized receipts are also required for all purchases made on a company card. These are not for reimbursement but are necessary for verification and reconciliation of charges.</li>
+		<li><b>Meals and incidentals:</b> the daily per-diem rate covers meals and incidentals — still include receipts for them.</li>
+		<li><b>No cash withdrawals:</b> ATM cash withdrawals are not a reimbursable expense.</li>
+		<li><b>Submitting expenses:</b> submit all required receipts within <b>one week</b> of returning from your trip. Failure to provide receipts may result in a delay or denial of reimbursement.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Every cost row on the Travel Trip is flagged <i>Paid By: Company</i> or
+		<i>Paid By: Employee</i> — attach the itemized receipt to the row either
+		way (company-card receipts are kept for reconciliation). When you're back,
+		use <b>Create&nbsp;→&nbsp;Expense Claim</b> on the trip: your employee-paid
+		costs, per diem, and mileage are gathered onto a draft claim
+		automatically — review it, attach anything missing, and submit. If money
+		is still unclaimed days after the trip ends, the system emails you a
+		reminder.
+	</div>
+
+	<h2>7. Work Hours and Timekeeping</h2>
+	<p>Properly logging work hours during travel is essential:</p>
+	<ul>
+		<li><b>Air travel time</b> is considered work time: clock in at the flight's scheduled departure time and clock out upon landing at your destination.</li>
+		<li><b>Non-billable commute:</b> time spent traveling to and from airports (home to departure airport) or to and from the worksite (hotel to project site) is a standard commute and is <b>not</b> billable work time.</li>
+	</ul>
+	<div class="tg-system">
+		<b>In the system</b>
+		Clock in and out with the <a href="/kiosk">Time Kiosk</a>, the same as on
+		site — your flight times are on your mobile itinerary if you need the
+		scheduled departure for clock-in.
+	</div>
+</div>
+{% endblock %}

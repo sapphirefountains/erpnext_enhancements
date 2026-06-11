@@ -1,34 +1,57 @@
 {
  "actions": [],
+ "autoname": "naming_series:",
  "creation": "2024-05-23 10:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "naming_series",
-  "employee",
-  "employee_name",
-  "department",
   "purpose",
-  "project",
   "status",
-  "workflow_state",
-  "custom_expense_claim",
-  "column_break_1",
+  "travel_type",
+  "company",
+  "column_break_dates",
   "start_date",
   "end_date",
-  "total_estimated_cost",
-  "section_break_1",
+  "booked_on",
+  "closed_on",
+  "business_section",
+  "travel_for_doctype",
+  "travel_for_name",
+  "column_break_bus",
+  "project",
+  "customer",
+  "billable",
+  "description_section",
   "trip_description",
-  "travel_type",
+  "travelers_section",
+  "travelers",
   "logistics_tab",
   "flights_section",
   "flights",
-  "accommodation_section",
-  "accommodation",
+  "accommodations_section",
+  "accommodations",
   "ground_transport_section",
   "ground_transport",
+  "other_costs_section",
+  "other_costs",
+  "mileage_section",
+  "mileage",
   "itinerary_tab",
-  "itinerary"
+  "itinerary",
+  "agenda_map_section",
+  "agenda_map_html",
+  "financials_tab",
+  "totals_section",
+  "total_estimated_cost",
+  "total_actual_cost",
+  "total_company_paid",
+  "total_employee_paid",
+  "column_break_fin",
+  "total_per_diem",
+  "total_mileage_amount",
+  "total_claimed_amount",
+  "total_advance_amount"
  ],
  "fields": [
   {
@@ -39,29 +62,6 @@
    "options": "TRIP-.YYYY.-.#####"
   },
   {
-   "fieldname": "employee",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Employee",
-   "options": "Employee",
-   "reqd": 1
-  },
-  {
-   "fetch_from": "employee.employee_name",
-   "fieldname": "employee_name",
-   "fieldtype": "Data",
-   "label": "Employee Name",
-   "read_only": 1
-  },
-  {
-   "fetch_from": "employee.department",
-   "fieldname": "department",
-   "fieldtype": "Link",
-   "label": "Department",
-   "options": "Department",
-   "read_only": 1
-  },
-  {
    "fieldname": "purpose",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -69,39 +69,39 @@
    "reqd": 1
   },
   {
-   "fieldname": "project",
-   "fieldtype": "Link",
-   "label": "Project",
-   "options": "Project"
-  },
-  {
+   "default": "Planning",
    "fieldname": "status",
    "fieldtype": "Select",
-   "hidden": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nRequested\nApproved\nBooking in Progress\nReady for Travel\nIn Progress\nExpense Review\nClosed"
+   "options": "Planning\nBooked\nIn Progress\nCompleted\nClosed",
+   "reqd": 1
   },
   {
-   "fieldname": "workflow_state",
+   "fieldname": "travel_type",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Travel Type",
+   "options": "Domestic\nInternational\nLocal Site Visit",
+   "reqd": 1
+  },
+  {
+   "default": ":Company",
+   "fieldname": "company",
    "fieldtype": "Link",
-   "label": "Workflow State",
-   "options": "Workflow State",
-   "read_only": 1
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
   },
   {
-   "fieldname": "custom_expense_claim",
-   "fieldtype": "Link",
-   "label": "Expense Claim",
-   "options": "Expense Claim",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_1",
+   "fieldname": "column_break_dates",
    "fieldtype": "Column Break"
   },
   {
    "fieldname": "start_date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "Start Date",
    "reqd": 1
   },
@@ -112,12 +112,67 @@
    "reqd": 1
   },
   {
-   "fieldname": "total_estimated_cost",
-   "fieldtype": "Currency",
-   "label": "Total Estimated Cost"
+   "fieldname": "booked_on",
+   "fieldtype": "Datetime",
+   "label": "Booked On",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
-   "fieldname": "section_break_1",
+   "fieldname": "closed_on",
+   "fieldtype": "Datetime",
+   "label": "Closed On",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "business_section",
+   "fieldtype": "Section Break",
+   "label": "Business Reason"
+  },
+  {
+   "fieldname": "travel_for_doctype",
+   "fieldtype": "Link",
+   "label": "Travel For (Type)",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "travel_for_name",
+   "fieldtype": "Dynamic Link",
+   "in_standard_filter": 1,
+   "label": "Travel For",
+   "options": "travel_for_doctype"
+  },
+  {
+   "fieldname": "column_break_bus",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Mirrored from Travel For when it is a Project; pushed into generated Expense Claims.",
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "read_only": 1
+  },
+  {
+   "description": "Derived from Travel For (Customer, the Project's customer, or the Opportunity/Lead party).",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Default for new cost rows; billable rows appear in the Travel Billable Costs report.",
+   "fieldname": "billable",
+   "fieldtype": "Check",
+   "label": "Billable"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "description_section",
    "fieldtype": "Section Break",
    "label": "Details"
   },
@@ -127,10 +182,16 @@
    "label": "Trip Description"
   },
   {
-   "fieldname": "travel_type",
-   "fieldtype": "Select",
-   "label": "Travel Type",
-   "options": "Domestic\nInternational\nLocal Site Visit"
+   "fieldname": "travelers_section",
+   "fieldtype": "Section Break",
+   "label": "Travelers"
+  },
+  {
+   "fieldname": "travelers",
+   "fieldtype": "Table",
+   "label": "Travelers",
+   "options": "Trip Traveler",
+   "reqd": 1
   },
   {
    "fieldname": "logistics_tab",
@@ -149,12 +210,12 @@
    "options": "Trip Flight"
   },
   {
-   "fieldname": "accommodation_section",
+   "fieldname": "accommodations_section",
    "fieldtype": "Section Break",
    "label": "Accommodation"
   },
   {
-   "fieldname": "accommodation",
+   "fieldname": "accommodations",
    "fieldtype": "Table",
    "label": "Accommodation",
    "options": "Trip Accommodation"
@@ -171,6 +232,28 @@
    "options": "Trip Ground Transport"
   },
   {
+   "fieldname": "other_costs_section",
+   "fieldtype": "Section Break",
+   "label": "Other Costs"
+  },
+  {
+   "fieldname": "other_costs",
+   "fieldtype": "Table",
+   "label": "Other Costs",
+   "options": "Trip Expense"
+  },
+  {
+   "fieldname": "mileage_section",
+   "fieldtype": "Section Break",
+   "label": "Personal Vehicle Mileage"
+  },
+  {
+   "fieldname": "mileage",
+   "fieldtype": "Table",
+   "label": "Mileage",
+   "options": "Trip Mileage"
+  },
+  {
    "fieldname": "itinerary_tab",
    "fieldtype": "Tab Break",
    "label": "Itinerary"
@@ -180,17 +263,94 @@
    "fieldtype": "Table",
    "label": "Itinerary",
    "options": "Trip Agenda"
+  },
+  {
+   "fieldname": "agenda_map_section",
+   "fieldtype": "Section Break",
+   "label": "Map"
+  },
+  {
+   "fieldname": "agenda_map_html",
+   "fieldtype": "HTML",
+   "label": "Agenda Map"
+  },
+  {
+   "fieldname": "financials_tab",
+   "fieldtype": "Tab Break",
+   "label": "Financials"
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "fieldname": "total_estimated_cost",
+   "fieldtype": "Currency",
+   "label": "Total Estimated Cost",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_actual_cost",
+   "fieldtype": "Currency",
+   "label": "Total Actual Cost",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_company_paid",
+   "fieldtype": "Currency",
+   "label": "Total Company Paid",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_employee_paid",
+   "fieldtype": "Currency",
+   "label": "Total Employee Paid",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_fin",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_per_diem",
+   "fieldtype": "Currency",
+   "label": "Total Per Diem",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_mileage_amount",
+   "fieldtype": "Currency",
+   "label": "Total Mileage",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_claimed_amount",
+   "fieldtype": "Currency",
+   "label": "Total Claimed",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_advance_amount",
+   "fieldtype": "Currency",
+   "label": "Total Advances",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
- "is_submittable": 1,
  "links": [],
- "modified": "2024-05-23 10:00:00.000000",
+ "modified": "2026-06-11 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel Trip",
  "naming_rule": "By \"Naming Series\" field",
- "autoname": "naming_series:",
- "naming_series": "TRIP-.YYYY.-.#####",
  "owner": "Administrator",
  "permissions": [
   {
@@ -203,10 +363,7 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "write": 1,
-   "submit": 1,
-   "cancel": 1,
-   "amend": 1
+   "write": 1
   },
   {
    "create": 1,
@@ -216,16 +373,36 @@
    "print": 1,
    "read": 1,
    "report": 1,
+   "role": "Travel Coordinator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
    "role": "Employee",
    "share": 1,
-   "write": 1,
-   "submit": 1,
-   "cancel": 0,
-   "amend": 0
+   "write": 1
   }
  ],
+ "search_fields": "purpose,status,travel_for_name",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "purpose",
  "track_changes": 1
 }

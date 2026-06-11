@@ -5,14 +5,15 @@
 """Controller for the **Trip Ground Transport** child table.
 
 Child table (``istable``) embedded in Travel Trip via the ``ground_transport``
-field. Each row records ground travel: transport type (Rental/Third Party or
-Company Fleet), an optional dynamic-link reference to the underlying record
-(``transport_ref_doctype`` / ``transport_ref_name``), and pickup/drop-off
-locations. These rows are informational only and do not feed the Expense
-Claim roll-up.
+field. Each row records ground travel via typed links: a ``supplier`` for
+Rental/Third Party and Taxi/Rideshare rows, or a ``vehicle`` (+ optional
+``vehicle_log`` created by ``travel_management.api.create_vehicle_log``) for
+Company Fleet rows, plus pickup/drop-off locations and times and the shared
+cost block. The parent controller forces ``paid_by = Company`` on Company
+Fleet rows — fleet usage is never reimbursed.
 
-No custom server logic is required, so the controller is a plain pass-through
-``Document`` subclass.
+All validation lives in the parent Travel Trip controller, so this is a plain
+pass-through ``Document`` subclass.
 """
 
 import frappe

@@ -7,12 +7,21 @@
  "field_order": [
   "hotel_lodging",
   "address",
+  "traveler",
   "column_break_1",
   "check_in_date",
   "check_out_date",
   "section_break_1",
   "booking_confirmation",
-  "cost"
+  "attachment",
+  "cost_section",
+  "estimated_cost",
+  "cost",
+  "billable",
+  "column_break_cost",
+  "paid_by",
+  "paid_by_traveler",
+  "expense_claim"
  ],
  "fields": [
   {
@@ -24,11 +33,19 @@
    "reqd": 1
   },
   {
+   "fetch_from": "hotel_lodging.supplier_primary_address",
    "fieldname": "address",
    "fieldtype": "Data",
-   "fetch_from": "hotel_lodging.address",
-   "in_list_view": 1,
-   "label": "Address"
+   "label": "Address",
+   "read_only": 1
+  },
+  {
+   "description": "Leave blank when the whole crew stays here.",
+   "fieldname": "traveler",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "label": "Traveler",
+   "options": "Employee"
   },
   {
    "fieldname": "column_break_1",
@@ -53,19 +70,70 @@
   {
    "fieldname": "booking_confirmation",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Booking Confirmation #"
+  },
+  {
+   "fieldname": "attachment",
+   "fieldtype": "Attach",
+   "label": "Attachment"
+  },
+  {
+   "fieldname": "cost_section",
+   "fieldtype": "Section Break",
+   "label": "Cost"
+  },
+  {
+   "fieldname": "estimated_cost",
+   "fieldtype": "Currency",
+   "label": "Estimated Cost"
   },
   {
    "fieldname": "cost",
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Cost"
+  },
+  {
+   "default": "0",
+   "fieldname": "billable",
+   "fieldtype": "Check",
+   "label": "Billable"
+  },
+  {
+   "fieldname": "column_break_cost",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Company",
+   "fieldname": "paid_by",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Paid By",
+   "options": "Company\nEmployee",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.paid_by=='Employee'",
+   "fieldname": "paid_by_traveler",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "label": "Paid By Traveler",
+   "mandatory_depends_on": "eval:doc.paid_by=='Employee'",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "expense_claim",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Expense Claim",
+   "no_copy": 1,
+   "options": "Expense Claim",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2024-05-23 10:00:00.000000",
+ "modified": "2026-06-11 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Trip Accommodation",

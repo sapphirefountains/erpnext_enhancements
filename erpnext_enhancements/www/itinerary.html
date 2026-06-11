@@ -1,0 +1,62 @@
+{#
+  Traveler itinerary shell (served at /itinerary; controller: itinerary.py).
+
+  Chrome-free mobile page following the Time Kiosk shell pattern (kiosk.html)
+  WITHOUT the PWA/service-worker layer. Its jobs:
+    * load the itinerary styles (css/travel/itinerary.css) and front-end
+      script (js/travel/itinerary.js);
+    * hand the server-computed boot payload (employee, active trips, csrf) to
+      the front-end as window.ITIN_BOOT / ITIN_CSRF / ITIN_BUILD.
+
+  The day-by-day UI is rendered client-side by itinerary.js into #itinerary-root.
+  Leaflet maps are lazy-loaded from frappe's bundled assets on first use.
+
+  Cache busting: raw /assets are served with a 1-year immutable Cache-Control,
+  so every mutable asset URL below carries ?v={{ deploy_version }} (see
+  itinerary.py / kiosk.py::get_deploy_version).
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}My Itinerary{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00a0dd">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/travel/itinerary.css?v={{ deploy_version }}">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  body { background: var(--ti-bg, #f6f7f9); margin: 0; }
+  main, .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div id="itinerary-root" class="ti-shell" aria-busy="true">
+  <div class="ti-boot">Loading itinerary…</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  // Server-injected boot payload (employee, active trips, csrf).
+  window.ITIN_BOOT = {{ boot_json | safe }};
+  window.ITIN_CSRF = "{{ csrf_token }}";
+  window.ITIN_BUILD = "{{ deploy_version }}";
+</script>
+<script src="/assets/erpnext_enhancements/js/travel/itinerary.js?v={{ deploy_version }}"></script>
+{% endblock %}

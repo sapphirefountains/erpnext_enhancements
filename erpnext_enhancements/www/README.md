@@ -1,3 +1,12 @@
+# `www/` — Web pages (Time Kiosk PWA shell + traveler itinerary)
+
+Three standalone web pages live here, separate from the heavy desk app:
+
+- **`/kiosk`** — the installable Time Kiosk PWA (most of this README), chrome-free.
+- **`/itinerary`** — the traveler itinerary page, chrome-free (see [its section below](#itinerary--traveler-itinerary-page)).
+- **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
+
+The **Time Kiosk** is a standalone, installable Progressive Web App served at **`/kiosk`**. This folder is the PWA *shell* (page controller, HTML, service worker, manifest); the *front-end logic* lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) and the *server endpoints* in [`api/time_kiosk.py`](../api/README.md).
 # `www/` — standalone PWA shells (Time Kiosk + Wall Display)
 
 Two standalone, chrome-free web apps live here, separate from the heavy desk app:
@@ -57,6 +66,20 @@ The asset cache **versions itself**; only the IndexedDB schema is still bumped b
 
 - `CACHE = 'time-kiosk-' + VERSION` — `VERSION` is the `?v=` query of the worker's own registration URL, which `app.js` sets to `window.KIOSK_BUILD` (= `kiosk.py::get_deploy_version`, the mtime of `sites/assets/assets.json` — new on every `bench build`). A deploy is therefore a new SW script URL → the browser installs the new worker → `activate` deletes every other cache. The same `?v=` token is appended to the shell's asset URLs (busting the 1-year-immutable `/assets` HTTP cache) and precaching fetches with `cache: 'reload'`. **No manual bump needed** for shell/asset/manifest changes — deploying is the bump. `app.js` additionally calls `registration.update()` on foreground + hourly, and reloads the page once (deferred until the app is hidden) when an updated worker takes control, so even a never-relaunched kiosk converges on the current deploy.
 - `DB_VERSION` — the IndexedDB schema version (bump only on schema changes; it does **not** rotate per deploy).
+
+## `/itinerary` — traveler itinerary page
+
+Mobile-friendly, day-by-day trip view for travelers (flights with tap-to-copy PNRs, hotel confirmations, agenda stops with POI maps and "Open in Maps" deep links). Follows the kiosk shell pattern **without** the PWA/service-worker layer (no offline queueing needs):
+
+```
+www/itinerary.py               controller — guest → /login redirect; boot payload (employee, trips, csrf)
+www/itinerary.html             chrome-free shell — every asset URL carries ?v={{ deploy_version }}
+public/js/travel/itinerary.js  vanilla-JS UI (trip switcher, day chips, typed cards, lazy Leaflet maps)
+public/css/travel/itinerary.css --ti-* palette + prefers-color-scheme dark (no desk data-theme on web pages)
+api/travel.py                  get_itinerary_bootstrap, get_my_trips, get_trip_itinerary
+```
+
+Security model: the employee is derived from the session (never client-supplied); `get_trip_itinerary` is permission-gated and the Travel Trip hooks scope it to owner/crew/coordinators. Segments pinned to a different single traveler are filtered out of a traveler's view. `itinerary.py` imports `get_deploy_version` from `kiosk.py` — same cache-bust token, do not duplicate it.
 
 ## `sync_time_kiosk.py`
 

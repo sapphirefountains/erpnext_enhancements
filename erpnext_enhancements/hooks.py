@@ -94,7 +94,7 @@ doctype_js = {
 		"public/js/task_enhancements.js",
 		"task_enhancements/doctype/task/task.js",
 	],
-	"Travel Trip": ["public/js/travel_trip.js"],
+	"Travel Trip": ["public/js/travel_trip.js", "public/js/travel/travel_trip_map.js"],
 	"Call Log": ["public/js/call_log.js"],
 	"Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
 	"Material Request": [
@@ -141,7 +141,10 @@ doctype_list_js = {
 	"Item": "public/js/item_list.js",
 	"Call Log": "public/js/global_enhancements/call_log_list.js",
 }
-doctype_calendar_js = {"Asset Booking": "public/js/asset_booking_calendar.js"}
+doctype_calendar_js = {
+	"Asset Booking": "public/js/asset_booking_calendar.js",
+	"Travel Trip": "public/js/travel_trip_calendar.js",
+}
 doctype_css = {
 	"Opportunity": "public/css/global_enhancements/horizontal_scroll.css",
 }
@@ -194,6 +197,26 @@ doc_events = {
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 	},
+	# travel_management: trip emails + mirroring claim/advance status onto
+	# traveler rows and clearing claim stamps on cancel/trash (dedupe guard)
+	"Travel Trip": {
+		"on_update": "erpnext_enhancements.travel_management.notifications.on_trip_update",
+	},
+	"Expense Claim": {
+		"on_update": "erpnext_enhancements.travel_management.integrations.sync_expense_claim_status",
+		"on_update_after_submit": "erpnext_enhancements.travel_management.integrations.sync_expense_claim_status",
+		"on_cancel": "erpnext_enhancements.travel_management.integrations.sync_expense_claim_status",
+		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_expense_claim_status",
+	},
+	"Employee Advance": {
+		"on_update": "erpnext_enhancements.travel_management.integrations.sync_employee_advance_status",
+		"on_update_after_submit": "erpnext_enhancements.travel_management.integrations.sync_employee_advance_status",
+		"on_cancel": "erpnext_enhancements.travel_management.integrations.sync_employee_advance_status",
+		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_employee_advance_status",
+	},
+	"Vehicle Log": {
+		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_vehicle_log_unlink",
+	},
 	"Opportunity": {
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
@@ -244,6 +267,11 @@ scheduler_events = {
 		"erpnext_enhancements.api.time_kiosk.purge_old_location_logs",
 		"erpnext_enhancements.status_alerts.nag_unconverted_opportunities",
 		"erpnext_enhancements.process_steps.escalate_overdue_steps",
+		# travel_management — auto-advance must run before the reminders so
+		# they see today's statuses
+		"erpnext_enhancements.travel_management.tasks.auto_advance_trip_statuses",
+		"erpnext_enhancements.travel_management.reminders.send_pre_travel_reminders",
+		"erpnext_enhancements.travel_management.reminders.send_post_trip_expense_nudges",
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 	],
@@ -309,7 +337,7 @@ fixtures = [
 			],
 		],
 	},
-	{"dt": "Workflow", "filters": [["document_type", "=", "Travel Trip"]]},
+	{"dt": "Workflow", "filters": [["document_type", "=", "Sapphire Maintenance Record"]]},
 	{
 		"dt": "Workflow State",
 		"filters": [
@@ -318,20 +346,12 @@ fixtures = [
 				"in",
 				[
 					"Draft",
-					"Requested",
-					"Approved",
-					"Booking in Progress",
-					"Ready for Travel",
-					"In Progress",
-					"Expense Review",
-					"Closed",
 					"Pending Review",
 					"Final/Submitted",
 				],
 			]
 		],
 	},
-	{"dt": "Workflow Action", "filters": [["workflow", "=", "Travel Trip Workflow"]]},
 	{"dt": "Workflow Action Master", "filters": [["name", "in", ["Request Review", "Approve & Submit"]]]},
 	{
 		"dt": "Notification",
@@ -385,6 +405,20 @@ override_whitelisted_methods = {
 override_doctype_dashboards = {
 	"Project": "erpnext_enhancements.project_enhancements.get_dashboard_data",
 	"Employee": "erpnext_enhancements.dashboard_overrides.get_data",
+	# Travel Trips taken FOR these doctypes (dynamic travel_for link)
+	"Opportunity": "erpnext_enhancements.travel_management.dashboard.get_opportunity_dashboard_data",
+	"Lead": "erpnext_enhancements.travel_management.dashboard.get_lead_dashboard_data",
+	"Customer": "erpnext_enhancements.travel_management.dashboard.get_customer_dashboard_data",
+}
+
+# Row-level Travel Trip access: crew members (travelers child table) and
+# owners only; Travel Coordinator / HR Manager / System Manager see all.
+permission_query_conditions = {
+	"Travel Trip": "erpnext_enhancements.travel_management.permissions.get_permission_query_conditions",
+}
+
+has_permission = {
+	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]
