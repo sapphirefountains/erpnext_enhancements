@@ -30,7 +30,7 @@ function load_and_render_mermaid(frm) {
         mermaid_loading = true;
 
         let script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js";
+        script.src = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js";
 
         script.onload = () => {
             mermaid.initialize({ startOnLoad: false, theme: "default" });
