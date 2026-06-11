@@ -71,7 +71,7 @@
             { key: 'project_name', label: 'Project Name', locked: true },
             { key: 'project_id', label: 'Project ID' },
             { key: 'company_priority', label: 'Company Priority' },
-            { key: 'project_priority', label: 'Project Priority' },
+            { key: 'project_priority', label: 'Value Stream Priority' },
             { key: 'percent_complete', label: 'Completion' },
             { key: 'spend_percent', label: 'Spend %' }
         ]),
@@ -774,7 +774,7 @@
                         ${th('project_name', 'Project Name')}
                         ${project_id_th}
                         ${th('company_priority', 'Company Priority')}
-                        ${th('project_priority', 'Project Priority', 'Groups by Value Stream')}
+                        ${th('project_priority', 'Value Stream Priority', 'Groups by Value Stream')}
                         ${th('percent_complete', 'Completion')}
                         ${th('spend_percent', 'Spend %', 'Spend as % of total project budget')}
                     </tr>
