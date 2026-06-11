@@ -1,20 +1,13 @@
-# `www/` — Web pages (Time Kiosk PWA shell + traveler itinerary)
+# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary)
 
-Three standalone web pages live here, separate from the heavy desk app:
+Four standalone web pages live here, separate from the heavy desk app:
 
-- **`/kiosk`** — the installable Time Kiosk PWA (most of this README), chrome-free.
-- **`/itinerary`** — the traveler itinerary page, chrome-free (see [its section below](#itinerary--traveler-itinerary-page)).
-- **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
+- the **Time Kiosk** at **`/kiosk`** — installable PWA for technicians, chrome-free (most of this README);
+- the **Wall Display** at **`/wall`** — read-only project/TV dashboard, chrome-free (see below);
+- the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
+- the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
 
-The **Time Kiosk** is a standalone, installable Progressive Web App served at **`/kiosk`**. This folder is the PWA *shell* (page controller, HTML, service worker, manifest); the *front-end logic* lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) and the *server endpoints* in [`api/time_kiosk.py`](../api/README.md).
-# `www/` — standalone PWA shells (Time Kiosk + Wall Display)
-
-Two standalone, chrome-free web apps live here, separate from the heavy desk app:
-
-- the **Time Kiosk** at **`/kiosk`** (installable PWA for technicians — the rest of this README);
-- the **Wall Display** at **`/wall`** (read-only project/TV dashboard — see below).
-
-This folder is each app's *shell* (page controller, HTML, service worker); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` and the server endpoints in [`api/`](../api/README.md).
+This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 
 ## Wall Display (`/wall`)
 

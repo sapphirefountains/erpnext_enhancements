@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.15.1] - 2026-06-11
 
 ### Fixed
+- **CHANGELOG: duplicate `1.12.0` headings merged.** Two parallel branches (PR #407 Mermaid visual builder, PR #409 Triton feature ports) both claimed 1.11.0 and 1.12.0; the 1.11.0 sections were consolidated when the branches merged, the 1.12.0 ones were not. Both feature sets keep their original numbers under one heading each, with a note explaining the collision — entries are deliberately **not renumbered** (the numbers appear in commit messages and PR descriptions, and `__init__.py`/`package.json` only ever moved forward on main, so no code version was wrong).
+- `www/README.md`: the PR #408 / main merge had stacked two competing intro sections (kiosk/itinerary/guidelines vs. kiosk/wall); unified into a single four-page index — the fix was pushed after the PR merged, re-landed here.
 - **Maintenance Record crash for users with User Permissions** — opening a Sapphire Maintenance Record (and any other `has_permission` check on it: the activity-timeline counts, sharing, list/report access) raised `Table 'tabSapphire Historical Visit' doesn't exist` for any user constrained by a User Permission. The `historical_visits` field was a Table pointing at the `is_virtual` **Sapphire Historical Visit** child doctype, whose rows were faked by a `cached_property`; that hack didn't shadow Frappe's child-table loader, so `has_user_permission` → `get_all_children(include_computed=True)` SQL-loaded the non-existent table. System Managers and unrestricted users never hit the crash, which is why it surfaced only for scoped users.
 
 ### Changed
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.15.0] - 2026-06-11
 
-> Versions 1.11.0–1.14.0 are claimed by the Triton feature-port branch (Call Intelligence / Morning Briefing / Wall Display / AI Governance), unmerged at the time of this entry.
+> Numbered 1.15.0 because 1.11.0–1.14.0 were claimed by branches still in flight when this work started (see the version-collision note under 1.12.0).
 
 ### Changed
 - **Travel Management redesigned ground-up** — the unused submittable Travel Trip + 9-state System-Manager-only workflow (2 production drafts ever, both stuck in Draft; deleted by patch) is replaced by a crew-based, collaboratively-edited trip hub:
@@ -66,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.12.0] - 2026-06-11
 
+> Two branches in flight both claimed **1.11.0 and 1.12.0**: the Mermaid visual-builder PR ([#407](https://github.com/sapphirefountains/erpnext_enhancements/pull/407), merged first — the site moved to 1.12.0) and the Triton feature-port PR ([#409](https://github.com/sapphirefountains/erpnext_enhancements/pull/409) — its four features actually reached the site together when the version moved to 1.14.0). Both branches' entries are kept under shared 1.11.0/1.12.0 headings rather than renumbered, since the numbers appear in commit messages and PR descriptions. `__init__.py`/`package.json` only ever moved forward on main (1.12.0 → 1.14.0), so no code version was wrong.
+
 ### Added
 - **Morning Briefing — per-user daily AI digest** (ported from Triton's briefing scheduler):
   - **Pre-generated weekday mornings**: new cron scheduler entry (`30 6 * * 1-5`, evaluated in the site's System Settings timezone — verify it's America/Denver) enqueues a long-queue batch that builds one briefing per enabled recipient and caches it in the new **Daily Briefing** doctype (one row per user/day via `format:` autoname; durable on purpose — Redis caches are flushed by migrate/clear-cache exactly when 24/7 displays churn). 60-day retention via a daily purge job.
@@ -75,9 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Settings** (ERPNext Enhancements Settings → Morning Briefing): `briefing_enabled` master switch (default OFF, staged-rollout convention), `briefing_use_gemini` cost switch, `briefing_recipients` child table (new **Briefing Recipient** doctype) with per-row email opt-in. Any staff role can still pull a briefing on demand from the block; recipients govern the batch + email.
   - Endpoint: `get_morning_briefing(force=0)` — session user only, role-gated like the Task Dashboard.
   - Tests: `tests/test_briefing.py` (fallback composition incl. empty-day friendliness, prompt guardrails, per-day cache idempotency, force regeneration, recipient batch, master-switch gates, purge retention) — Gemini stays off throughout, so no network calls.
-## [1.12.0] - 2026-06-11
-
-### Added
 - **Process Document Visual Builder** — an in-app split-pane Mermaid editor on the Process Document form (custom button + a link above the preview), so charts can be built without leaving ERPNext:
   - Live preview: code on the left, diagram on the right, re-rendered (debounced) as you type; `mermaid.parse` runs first so syntax errors surface in a non-destructive error bar while the last good diagram stays on screen.
   - **Insert…** menu drops building blocks at the cursor: starter flowchart, step/decision/start–end/external-system nodes, labeled and dotted arrows, subgraphs, and the **Sapphire Fountains style pack**.
@@ -91,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"Sapphire Fountains Enhancements Flow" restyled to the brand palette** (seeder + live site updated; render-verified through the real `mermaid_theme.js` against `mermaid@11.15.0`). The eleven legacy ERPNext charts keep their Material module colors deliberately — eight semantic categories need more distinct hues than the brand palette offers; the brand theme still restyles their typography, edges, and subgraphs at the renderer level.
 
 ## [1.11.0] - 2026-06-11
+
+> Shared heading — two branches claimed this number; see the version-collision note under 1.12.0.
 
 ### Added
 - **Call Intelligence — the stock Call Log becomes the system of record for phone calls** (first feature ported natively from Triton). Triton keeps handling Twilio + post-call AI analysis; ERPNext now stores and surfaces the results so calls are browsable without Triton's frontend:
