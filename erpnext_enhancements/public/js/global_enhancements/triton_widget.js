@@ -65,11 +65,18 @@
 		if (_mermaidPromise) return _mermaidPromise;
 		_mermaidPromise = new Promise((resolve, reject) => {
 			const s = document.createElement("script");
-			s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js";
+			s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js";
 			s.onload = () => {
 				try {
-					window.mermaid.initialize({ startOnLoad: false, theme: "default" });
-				} catch (e) {}
+					// Sapphire Fountains brand theme (mermaid_theme.js, same bundle)
+					if (window.sf_mermaid) {
+						window.sf_mermaid.init(window.mermaid);
+					} else {
+						window.mermaid.initialize({ startOnLoad: false, theme: "default" });
+					}
+				} catch (e) {
+					// theme init must never block the mermaid load
+				}
 				resolve(window.mermaid);
 			};
 			s.onerror = () => reject(new Error("mermaid load failed"));
