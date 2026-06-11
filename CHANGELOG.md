@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.9.0] - 2026-06-10
+## [1.10.0] - 2026-06-11
+
+### Added
+- **Searchable, nearest-first Project & Task pickers on the Time Kiosk** — the plain dropdowns become type-to-filter comboboxes:
+  - Search matches the displayed title **and** the docname, so technicians can find a project by number (`PRJ-0123`) as well as by name; each option shows the docname as a sub-line when it differs from the title. The task picker gets the same treatment (matches `TASK-####` too).
+  - **Nearest site first**: `get_kiosk_options` now attaches each project's Sapphire Maintenance Profile site coordinates; the kiosk sorts the picker by distance from the device (one shared position fix, refreshed when the picker opens and at most every 2 minutes) and shows a distance badge ("350 m" / "1.2 km") next to projects with known sites. Projects without coordinates follow alphabetically; with no fix (permission denied / indoors) the list is simply alphabetical.
+  - Touch-friendly: large rows, a ✕ clear button, and keyboard support (arrows / Enter / Escape) for kiosks with a keyboard. The geofenced "clock in here?" suggestion now feeds the same picker and reuses the shared position fix instead of requesting its own.
 
 ### Added
 - **Modular maintenance visit forms (Google Forms replacement)** — the per-project / per-water-feature maintenance forms move into ERPNext as composable building blocks:

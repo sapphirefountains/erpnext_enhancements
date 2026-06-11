@@ -96,6 +96,78 @@
 }
 .tk-field textarea { resize: vertical; min-height: 64px; }
 
+/* Searchable picker (project/task) — input + dropdown panel (see createCombo). */
+.tk-combo { position: relative; }
+.tk-combo input { padding-right: 44px; }
+.tk-combo-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tk-muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tk-combo-clear[hidden] { display: none; }
+.tk-combo-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--tk-card);
+  border: 1px solid var(--tk-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  max-height: 280px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tk-combo-panel[hidden] { display: none; }
+.tk-combo-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--tk-border);
+}
+.tk-combo-option:last-child { border-bottom: none; }
+.tk-combo-option.is-hi,
+.tk-combo-option:active { background: rgba(36, 144, 239, 0.12); }
+.tk-combo-option.is-selected .tk-combo-label { color: var(--tk-primary); }
+.tk-combo-text { flex: 1; min-width: 0; }
+.tk-combo-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tk-combo-sub {
+  font-size: 0.78rem;
+  color: var(--tk-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tk-combo-dist {
+  flex: none;
+  background: #e8f1fd;
+  color: var(--tk-primary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.tk-combo-empty { padding: 14px; color: var(--tk-muted); text-align: center; }
+
 .tk-btn {
   display: block;
   width: 100%;
@@ -226,6 +298,7 @@
   /* Surfaces with no theme variable need explicit dark values (see [data-theme] block below). */
   .tk-btn-outline { background: transparent; }
   .tk-badge { background: rgba(36, 144, 239, 0.2); }
+  .tk-combo-dist { background: rgba(36, 144, 239, 0.2); }
   .tk-track-dot { background: #4a5568; }
 }
 :root[data-theme="dark"] {
@@ -240,4 +313,5 @@
 [data-theme="dark"] .tk-field input { background: #161a1d; color: var(--tk-text); }
 [data-theme="dark"] .tk-btn-outline { background: transparent; }
 [data-theme="dark"] .tk-badge { background: rgba(36, 144, 239, 0.2); }
+[data-theme="dark"] .tk-combo-dist { background: rgba(36, 144, 239, 0.2); }
 [data-theme="dark"] .tk-track-dot { background: #4a5568; }

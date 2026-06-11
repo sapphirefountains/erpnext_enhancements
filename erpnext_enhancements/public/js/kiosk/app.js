@@ -46,6 +46,7 @@
     isSwitching: false,
     loading: false,
     maintenance: null,       // { project, ctx } — get_maintenance_context for the active job
+    projectOptions: [],      // raw get_kiosk_options projects (with site lat/lng) — re-sorted as fixes arrive
   };
 
   // -- DOM refs (filled after template injection) --------------------------
@@ -75,8 +76,8 @@
     '       style="margin-top:0; display:inline-block;">📋 Maintenance Form</a>',
     '  </div>',
     '  <div id="tk-inputs">',
-    '    <div class="tk-field"><label>Project</label><select id="tk-project"></select></div>',
-    '    <div class="tk-field"><label>Task (optional)</label><select id="tk-task"></select></div>',
+    '    <div class="tk-field"><label>Project</label><div class="tk-combo" id="tk-project-combo"></div></div>',
+    '    <div class="tk-field"><label>Task (optional)</label><div class="tk-combo" id="tk-task-combo"></div></div>',
     '    <div class="tk-field"><label>Activity Type</label><select id="tk-activity"></select></div>',
     '    <div class="tk-field"><label>Note (optional)</label>',
     '      <textarea id="tk-note" rows="3" placeholder="What are you working on?"></textarea></div>',
@@ -195,23 +196,264 @@
     });
   }
 
+  // Searchable picker (project/task). A text input filters a dropdown of
+  // options by label AND value — so "PRJ-0123" (the docname) finds a project
+  // whose displayed title doesn't contain it. Options may carry distance_m
+  // (rendered as a badge). Exposes a <select>-like surface: .value get/set,
+  // onChange(cb), setOptions(items). The input doubles as the display of the
+  // current selection; typing only filters — the value changes when an option
+  // is chosen (or cleared), and blur reverts the text to the selection, so
+  // the displayed text always matches .value by the time an action button
+  // (whose tap blurs the input) reads it.
+  function createCombo(container, cfg) {
+    cfg = cfg || {};
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = cfg.placeholder || '';
+    input.autocomplete = 'off';
+    input.setAttribute('inputmode', 'search');
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'tk-combo-clear';
+    clearBtn.setAttribute('aria-label', 'Clear');
+    clearBtn.innerHTML = '&times;';
+    clearBtn.hidden = true;
+    var panel = document.createElement('div');
+    panel.className = 'tk-combo-panel';
+    panel.hidden = true;
+    container.appendChild(input);
+    container.appendChild(clearBtn);
+    container.appendChild(panel);
+
+    var st = { options: [], value: '', typed: false, hi: -1, cbs: [] };
+
+    function find(v) {
+      for (var i = 0; i < st.options.length; i++) {
+        if (st.options[i].value === v) return st.options[i];
+      }
+      return null;
+    }
+    function fire() { st.cbs.forEach(function (cb) { cb(st.value); }); }
+    function syncClear() { clearBtn.hidden = !(st.value || input.value); }
+    function matches(o, q) {
+      return String(o.label || '').toLowerCase().indexOf(q) !== -1 ||
+             String(o.value || '').toLowerCase().indexOf(q) !== -1;
+    }
+    function visible() {
+      // Only filter on text the user actually typed — when the input is just
+      // displaying the current selection, opening shows the full list.
+      var q = st.typed ? input.value.trim().toLowerCase() : '';
+      if (!q) return st.options;
+      return st.options.filter(function (o) { return matches(o, q); });
+    }
+
+    function render() {
+      var list = visible();
+      panel.innerHTML = '';
+      if (!list.length) {
+        var empty = document.createElement('div');
+        empty.className = 'tk-combo-empty';
+        empty.textContent = cfg.emptyText || 'No matches.';
+        panel.appendChild(empty);
+        return;
+      }
+      list.forEach(function (o, idx) {
+        var row = document.createElement('div');
+        row.className = 'tk-combo-option' +
+          (idx === st.hi ? ' is-hi' : '') +
+          (o.value === st.value ? ' is-selected' : '');
+        var txt = document.createElement('div');
+        txt.className = 'tk-combo-text';
+        var main = document.createElement('div');
+        main.className = 'tk-combo-label';
+        main.textContent = o.label;
+        txt.appendChild(main);
+        if (o.value && o.value !== o.label) {
+          var sub = document.createElement('div');
+          sub.className = 'tk-combo-sub';
+          sub.textContent = o.value;
+          txt.appendChild(sub);
+        }
+        row.appendChild(txt);
+        if (o.distance_m != null) {
+          var dist = document.createElement('span');
+          dist.className = 'tk-combo-dist';
+          dist.textContent = formatDistance(o.distance_m);
+          row.appendChild(dist);
+        }
+        // mousedown would blur the input (closing the panel before click
+        // lands) — suppress it so the tap's click event picks the option.
+        row.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+        row.addEventListener('click', function () { choose(o); });
+        panel.appendChild(row);
+      });
+    }
+
+    function openPanel() {
+      if (cfg.onOpen) cfg.onOpen();
+      st.hi = -1;
+      render();
+      panel.hidden = false;
+    }
+    function closePanel() { panel.hidden = true; }
+    function revertText() {
+      var o = find(st.value);
+      input.value = o ? o.label : (st.value || '');
+      st.typed = false;
+      syncClear();
+    }
+    function choose(o) {
+      st.value = o.value;
+      st.typed = false;
+      input.value = o.label;
+      closePanel();
+      syncClear();
+      fire();
+    }
+
+    input.addEventListener('focus', function () {
+      input.select();
+      openPanel();
+    });
+    input.addEventListener('input', function () {
+      st.typed = true;
+      st.hi = -1;
+      if (panel.hidden) panel.hidden = false;
+      render();
+      syncClear();
+    });
+    input.addEventListener('blur', function () {
+      revertText();
+      closePanel();
+    });
+    input.addEventListener('keydown', function (ev) {
+      var list = visible();
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (panel.hidden) { openPanel(); return; }
+        var step = ev.key === 'ArrowDown' ? 1 : -1;
+        st.hi = Math.max(0, Math.min(list.length - 1, st.hi + step));
+        render();
+        var hiRow = panel.children[st.hi];
+        if (hiRow && hiRow.scrollIntoView) hiRow.scrollIntoView({ block: 'nearest' });
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (st.hi >= 0 && list[st.hi]) choose(list[st.hi]);
+        else if (list.length === 1) choose(list[0]);
+      } else if (ev.key === 'Escape') {
+        revertText();
+        closePanel();
+        input.blur();
+      }
+    });
+    clearBtn.addEventListener('click', function () {
+      st.value = '';
+      input.value = '';
+      st.typed = false;
+      closePanel();
+      syncClear();
+      fire();
+    });
+
+    return {
+      get value() { return st.value; },
+      set value(v) {
+        st.value = v || '';
+        revertText();
+        closePanel();
+        fire();
+      },
+      onChange: function (cb) { st.cbs.push(cb); },
+      setOptions: function (items) {
+        st.options = items || [];
+        st.hi = -1;
+        if (st.value && !find(st.value)) {
+          // Selection no longer offered (e.g. task list of another project) —
+          // drop it silently; callers reload dependents themselves.
+          st.value = '';
+          if (!st.typed) input.value = '';
+          syncClear();
+        } else if (st.value && !st.typed) {
+          revertText();
+        }
+        if (!panel.hidden) render();
+      },
+    };
+  }
+
+  function formatDistance(m) {
+    if (m < 950) return Math.round(m) + ' m';
+    return (m / 1000).toFixed(1) + ' km';
+  }
+
+  // Same haversine as geo.js (private there); good enough to rank sites.
+  function haversineM(a, b) {
+    var R = 6371000;
+    var toRad = function (d) { return d * Math.PI / 180; };
+    var dLat = toRad(b.lat - a.lat);
+    var dLng = toRad(b.lng - a.lng);
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  // One shared device fix for nearest-first sorting and the geofenced
+  // suggestion; refreshed at most every 2 minutes.
+  var deviceFix = null; // { lat, lng, t }
+  function requestDeviceFix(cb) {
+    if (!('geolocation' in navigator)) { if (cb) cb(deviceFix); return; }
+    if (deviceFix && Date.now() - deviceFix.t < 120000) { if (cb) cb(deviceFix); return; }
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      deviceFix = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: Date.now() };
+      if (cb) cb(deviceFix);
+    }, function () { if (cb) cb(deviceFix); /* stale fix beats none */ },
+    { maximumAge: 120000, timeout: 8000 });
+  }
+
+  // Nearest site first (projects without coordinates follow, alphabetical).
+  function decorateProjects(projects) {
+    var items = (projects || []).map(function (p) {
+      var o = { value: p.value, label: p.label, distance_m: null };
+      if (deviceFix && p.lat != null && p.lng != null) {
+        o.distance_m = haversineM(deviceFix, { lat: p.lat, lng: p.lng });
+      }
+      return o;
+    });
+    items.sort(function (a, b) {
+      var ad = a.distance_m == null ? Infinity : a.distance_m;
+      var bd = b.distance_m == null ? Infinity : b.distance_m;
+      if (ad !== bd) return ad - bd;
+      return String(a.label).localeCompare(String(b.label));
+    });
+    return items;
+  }
+
+  function resortProjects() {
+    if (app.projectOptions && app.projectOptions.length) {
+      el.project.setOptions(decorateProjects(app.projectOptions));
+    }
+  }
+
   function loadOptions() {
     return api('erpnext_enhancements.api.time_kiosk.get_kiosk_options', {}, { method: 'GET' })
       .then(function (opts) {
         opts = opts || { projects: [], activity_types: [] };
-        fillSelect(el.project, opts.projects, 'Select project…');
+        app.projectOptions = opts.projects || [];
+        el.project.setOptions(decorateProjects(app.projectOptions));
         fillSelect(el.activity, opts.activity_types, 'Select…');
-        fillSelect(el.task, [], 'Select task… (optional)');
+        el.task.setOptions([]);
+        requestDeviceFix(resortProjects);
       })
       .catch(function () { toast('Could not load projects.', 'red'); });
   }
 
   function loadTasks(project) {
-    fillSelect(el.task, [], 'Select task… (optional)');
+    el.task.setOptions([]);
     if (!project) return;
     api('erpnext_enhancements.api.time_kiosk.get_tasks_for_project',
       { project: project }, { method: 'GET' })
-      .then(function (tasks) { fillSelect(el.task, tasks, 'Select task… (optional)'); })
+      .then(function (tasks) { el.task.setOptions(tasks); })
       .catch(function () { /* non-fatal */ });
   }
 
@@ -341,28 +583,28 @@
 
   var geoSuggestChecked = false;
   function maybeSuggestNearby() {
-    if (geoSuggestChecked || !('geolocation' in navigator)) return;
+    if (geoSuggestChecked) return;
     geoSuggestChecked = true; // one position fix per page load is plenty
-    navigator.geolocation.getCurrentPosition(function (pos) {
+    requestDeviceFix(function (fix) {
+      if (!fix) return; // permission denied / unavailable — no suggestion
+      resortProjects();
       if (app.status !== 'Idle') return;
       api('erpnext_enhancements.api.time_kiosk.get_nearby_visit',
-        { lat: pos.coords.latitude, lng: pos.coords.longitude }, { method: 'GET' })
+        { lat: fix.lat, lng: fix.lng }, { method: 'GET' })
         .then(function (site) {
           if (!site || app.status !== 'Idle') return;
           el.geoSuggestText.textContent =
             'You’re near ' + (site.project_title || site.project) +
             ' (~' + site.distance_m + ' m) and a visit is due.';
           el.geoSuggestBtn.onclick = function () {
-            el.project.value = site.project;
-            loadTasks(site.project);
+            el.project.value = site.project; // fires change -> loadTasks
             hide(el.geoSuggest);
             toast('Project selected — ready to clock in.', 'green');
           };
           show(el.geoSuggest);
         })
         .catch(function () { /* best-effort */ });
-    }, function () { /* permission denied / unavailable — no suggestion */ },
-    { maximumAge: 120000, timeout: 8000 });
+    });
   }
 
   // -- Maintenance forms -----------------------------------------------------
@@ -685,8 +927,16 @@
     el.geoSuggestText = $('tk-geo-suggest-text');
     el.geoSuggestBtn = $('tk-geo-suggest-btn');
     el.inputs = $('tk-inputs');
-    el.project = $('tk-project');
-    el.task = $('tk-task');
+    // Searchable pickers expose a <select>-like surface (.value, onChange).
+    el.project = createCombo($('tk-project-combo'), {
+      placeholder: 'Search project name or PRJ-#…',
+      emptyText: 'No matching projects.',
+      onOpen: function () { requestDeviceFix(resortProjects); },
+    });
+    el.task = createCombo($('tk-task-combo'), {
+      placeholder: 'Search task… (optional)',
+      emptyText: 'No matching tasks.',
+    });
     el.activity = $('tk-activity');
     el.note = $('tk-note');
     el.readonly = $('tk-readonly');
@@ -705,7 +955,7 @@
   }
 
   function wire() {
-    el.project.addEventListener('change', function () { loadTasks(el.project.value); });
+    el.project.onChange(function (project) { loadTasks(project); });
     el.clockIn.addEventListener('click', function () { handleAction('Start'); });
     el.pause.addEventListener('click', function () { handleAction('Pause'); });
     el.resume.addEventListener('click', function () { handleAction('Resume'); });
