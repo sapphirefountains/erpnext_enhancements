@@ -51,7 +51,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 | `opportunity.js` | Opportunity | Thin stub (real logic in `crm_enhancements/`) | doctype_js |
 | `opportunity_list.js` | Opportunity list | Redirect fresh list loads to the Kanban board | doctype_list_js |
 | `performance_fixes.js` | desk `<head>` | Strips redundant icon-sprite preload links | app_include_js |
-| `process_document.js` | Process Document | Lazy-load Mermaid.js; render diagram + live-editor link | doctype_js |
+| `process_document.js` | Process Document | Lazy-load Mermaid.js; brand-themed diagram preview + the **Visual Builder** dialog (split-pane live editor, snippet insertion incl. the SF style pack, zoom, SVG export, mermaid.live link) | doctype_js |
 | `procurement_links.js` | Purchase Order / Material Request | Per-item supplier purchase links | doctype_js |
 | `project.js` | Project | Mirror name → `custom_project_id` (one of several Project scripts) | doctype_js |
 | `project_enhancements.js` | Project | Comments App + Vue Procurement Tracker + `custom_btn_*` doc creators | doctype_js |
@@ -65,7 +65,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 ### Module sub-folders under `js/`
 
 - **`crm_enhancements/`** — `opportunity.js` (value-stream tags + Create-Project dialog → background project creation incl. Drive), `opportunity_migrated_scripts.js` (ex-Client-Scripts: rank validation, scope show/hide), `opportunity_list.js` (Kanban card tinting by close date), `opportunity_kanban_totals.js` (per-column amount totals).
-- **`global_enhancements/`** — `triton_widget.js` (the AI assistant FAB/chat), `global_sidebar.js` + `auto_collapse_sidebar.js` (sidebar tweaks), `unified_tab_controller.js` (the aggregated contacts/addresses directory + map on party forms), `quill_mentions.js` (`@`-mentions), `unlink_and_delete.js` ("Unlink and Delete" dialog on LinkExistsError), `primary_contact.js` (read-through contact fields), `file_list.js` (grid-default + preview overlay), `supplier_list.js` (group filters/indicators).
+- **`global_enhancements/`** — `triton_widget.js` (the AI assistant FAB/chat), `mermaid_theme.js` (`window.sf_mermaid` — the Sapphire Fountains Mermaid brand theme: Lato + the sapphire/teal palette from sapphirefountains.com, shared by the Process Document preview/builder and the Triton widget's diagram renderer; diagrams stay on a light canvas in both desk themes because the seeded charts use literal pastel classDef fills), `global_sidebar.js` + `auto_collapse_sidebar.js` (sidebar tweaks), `unified_tab_controller.js` (the aggregated contacts/addresses directory + map on party forms), `quill_mentions.js` (`@`-mentions), `unlink_and_delete.js` ("Unlink and Delete" dialog on LinkExistsError), `primary_contact.js` (read-through contact fields), `file_list.js` (grid-default + preview overlay), `supplier_list.js` (group filters/indicators).
 - **`project_enhancements/`** — `project_form_script.js` (task tree + Gantt tabs), `project_brief.js`, `task_tree_manager.js` (the `TaskTreeManager` hierarchical grid), `gantt_zoom.js` (shared zoom ladder), `task_gantt.js`, plus `dashboard_components/` (below) and the vendored `lib/frappe-gantt.umd.js`.
 - **`task_enhancements/`** — `task_enhancements.js` (patches `TreeView.get_tree_nodes` for the Hierarchical Task View).
 - **`kiosk/`** — `app.js` + `geo.js` (the Time Kiosk PWA front-end, below).

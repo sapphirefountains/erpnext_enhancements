@@ -15,10 +15,17 @@ field-service maintenance, the Time Kiosk, travel, integrations) extend the
 stock ERPNext flows the other charts describe.
 
 Rendering: the desk form script (public/js/process_document.js) renders
-``mermaid_code`` with Mermaid 11, so stick to its flowchart syntax. Color
-conventions shared across charts: CRM blue ``#E3F2FD``, buying orange
-``#FFF3E0``, stock green ``#E8F5E9``, manufacturing purple ``#F3E5F5``,
-accounting grey ``#ECEFF1``, projects cyan ``#E0F7FA``, HR red ``#FFEBEE``.
+``mermaid_code`` with Mermaid 11 and the Sapphire Fountains brand theme
+(public/js/global_enhancements/mermaid_theme.js — Lato + the sapphire/teal
+palette from sapphirefountains.com), so stick to its flowchart syntax. The
+eleven legacy ERPNext charts keep their original Material module colors
+(eight semantic categories need more distinct hues than the brand palette
+offers): CRM blue ``#E3F2FD``, buying orange ``#FFF3E0``, stock green
+``#E8F5E9``, manufacturing purple ``#F3E5F5``, accounting grey ``#ECEFF1``,
+projects cyan ``#E0F7FA``, HR red ``#FFEBEE``. New charts should use the
+brand classDef pack instead (mirrored as ``window.sf_mermaid.CLASS_PACK``
+and as an Insert snippet in the visual builder) — the Sapphire Fountains
+Enhancements Flow chart below is the reference.
 
 ⚠️ Never put raw HTML in chart text — no ``<br/>`` line breaks, no ``<-->``
 arrows. Frappe HTML-sanitizes the Markdown Editor field on save as soon as
@@ -465,15 +472,16 @@ graph TD
     in-app AI assistant"| DESK
     PROJ & MRS & JI -.-> |"Read-only MCP tools + skills"| MCPT
 
-    %% Style Definitions
-    classDef crm fill:#E3F2FD,stroke:#2196F3,stroke-width:2px;
-    classDef projects fill:#E0F7FA,stroke:#00BCD4,stroke-width:2px;
-    classDef maintenance fill:#E0F2F1,stroke:#009688,stroke-width:2px;
-    classDef kiosk fill:#FFF8E1,stroke:#FFC107,stroke-width:2px;
-    classDef hr fill:#FFEBEE,stroke:#F44336,stroke-width:2px;
-    classDef accounting fill:#ECEFF1,stroke:#607D8B,stroke-width:2px;
-    classDef stock fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px;
-    classDef integration fill:#EDE7F6,stroke:#673AB7,stroke-width:2px,stroke-dasharray: 5 5;
+    %% Style Definitions (Sapphire Fountains palette — see
+    %% public/js/global_enhancements/mermaid_theme.js)
+    classDef crm fill:#E6EFF5,stroke:#00609C,stroke-width:2px,color:#00263E;
+    classDef projects fill:#E5F5FC,stroke:#00A0DF,stroke-width:2px,color:#00263E;
+    classDef maintenance fill:#E7F7F6,stroke:#62CBC9,stroke-width:2px,color:#00263E;
+    classDef kiosk fill:#EAF1F1,stroke:#316564,stroke-width:2px,color:#00263E;
+    classDef hr fill:#F6EBF9,stroke:#B14FC5,stroke-width:2px,color:#00263E;
+    classDef accounting fill:#E9EDF0,stroke:#00263E,stroke-width:2px,color:#00263E;
+    classDef stock fill:#E6F0F4,stroke:#005779,stroke-width:2px,color:#00263E;
+    classDef integration fill:#EFE9F1,stroke:#55265F,stroke-width:2px,color:#00263E,stroke-dasharray: 5 5;
 
     %% Class Assignments
     class LEAD,OPP,WON,SO crm;
