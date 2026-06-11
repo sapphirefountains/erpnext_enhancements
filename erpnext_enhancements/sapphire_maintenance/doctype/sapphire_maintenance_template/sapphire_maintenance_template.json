@@ -7,7 +7,7 @@
   "customer",
   "project",
   "status",
-  "template_items"
+  "sections"
  ],
  "fields": [
   {
@@ -39,10 +39,11 @@
    "options": "Draft\nActive\nDisabled"
   },
   {
-   "fieldname": "template_items",
+   "description": "Reusable building blocks this form is composed of. The same Section (e.g. Chemical Dosing) can be shared by many templates.",
+   "fieldname": "sections",
    "fieldtype": "Table",
-   "label": "Template Items",
-   "options": "Sapphire Template Item"
+   "label": "Sections",
+   "options": "Sapphire Template Section"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",
@@ -62,6 +63,11 @@
    "role": "System Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User"
   }
  ],
  "sort_field": "modified",

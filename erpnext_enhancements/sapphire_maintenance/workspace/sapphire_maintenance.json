@@ -17,6 +17,15 @@
   },
   {
    "dependencies": "",
+   "label": "Maintenance Contract",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Contract"
+  },
+  {
+   "dependencies": "",
    "label": "Maintenance Template",
    "link_count": 0,
    "link_type": "DocType",
@@ -26,12 +35,30 @@
   },
   {
    "dependencies": "",
+   "label": "Form Section",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Section"
+  },
+  {
+   "dependencies": "",
    "label": "Maintenance Record",
    "link_count": 0,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link",
    "link_to": "Sapphire Maintenance Record"
+  },
+  {
+   "dependencies": "",
+   "label": "Maintenance Day Board",
+   "link_count": 0,
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "maintenance-day-board"
   }
  ],
  "modified": "2024-04-20 10:40:00.000000",

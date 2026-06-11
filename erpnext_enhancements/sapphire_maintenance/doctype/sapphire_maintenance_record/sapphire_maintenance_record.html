@@ -9,20 +9,28 @@
   a workflow-state badge; an optional Service Duration block (clock in/out and
   net worked hours = total minus paused_duration) shown only when `show_labor`
   and a clock-in exist; the Checklist Results table (maintenance_results, with
-  Pass/Fail/Other styling); the Parts & Consumables table; and the captured
-  client sign-off signature image when present.
+  Pass/Fail/Other styling); the Water Chemistry table (readings vs target
+  range, out-of-range badge); the Cleaning Tasks table; the Parts &
+  Consumables table (consumed rows only); and the captured client sign-off
+  signature image when present.
+
+  Per Site Visit records (a Maintenance Contract covering several water
+  features in one form) have no header serial — child rows are tagged with
+  their feature instead, so the tables grow a Water Feature column.
 #}
 {% extends "templates/web.html" %}
 
 {% block page_content %}
+{% set per_site = doc.maintenance_contract and not doc.serial_no %}
 <div class="max-w-4xl mx-auto py-8 px-4">
     <div class="mb-8 flex justify-between items-start">
         <div>
             <h1 class="text-3xl font-bold text-gray-900">Maintenance Visit: {{ doc.name }}</h1>
             <p class="mt-2 text-sm text-gray-500">
                 <span class="font-medium text-gray-700">Date:</span> {{ frappe.datetime.global_date_format(doc.creation) }} |
-                <span class="font-medium text-gray-700">Serial No:</span> {{ doc.serial_no }} |
+                {% if doc.serial_no %}<span class="font-medium text-gray-700">Serial No:</span> {{ doc.serial_no }} |{% endif %}
                 <span class="font-medium text-gray-700">Project:</span> {{ doc.project }}
+                {% if doc.visit_label %} | <span class="font-medium text-gray-700">Visit:</span> {{ doc.visit_label }}{% endif %}
             </p>
         </div>
         <div class="px-3 py-1 rounded-full text-xs font-semibold 
@@ -62,6 +70,7 @@
             <table class="min-w-full divide-y divide-gray-300">
                 <thead class="bg-gray-50">
                     <tr>
+                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
                         <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Question</th>
                         <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
                         <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
@@ -70,6 +79,7 @@
                 <tbody class="divide-y divide-gray-200 bg-white">
                     {% for row in doc.maintenance_results %}
                     <tr>
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.question }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
@@ -92,20 +102,96 @@
         </div>
     </div>
 
+    <!-- Water Chemistry -->
+    {% if doc.chemistry_readings %}
+    <div class="mb-10">
+        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Water Chemistry</h2>
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
+                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Reading</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Value</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Target Range</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {% for row in doc.chemistry_readings %}
+                    <tr>
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.reading }}</td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm">
+                            <span class="{% if row.out_of_range %}font-bold text-red-700{% else %}text-gray-700{% endif %}">
+                                {{ row.reading_value }} {{ row.uom or '' }}
+                            </span>
+                            {% if row.out_of_range %}
+                            <span class="ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Out of range</span>
+                            {% endif %}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ row.min_value }} &ndash; {{ row.max_value }} {{ row.uom or '' }}</td>
+                        <td class="px-3 py-4 text-sm text-gray-500">{{ row.notes or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Cleaning Tasks -->
+    {% if doc.cleaning_tasks %}
+    <div class="mb-10">
+        <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Cleaning &amp; Service Tasks</h2>
+        <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table class="min-w-full divide-y divide-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
+                        <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Task</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Done</th>
+                        <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {% for row in doc.cleaning_tasks %}
+                    <tr>
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ row.serial_no or '' }}</td>{% endif %}
+                        <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ row.task }}</td>
+                        <td class="whitespace-nowrap px-3 py-4 text-sm">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                {% if row.is_done %} bg-green-100 text-green-800 {% else %} bg-gray-100 text-gray-800 {% endif %}">
+                                {{ _("Done") if row.is_done else _("Not Done") }}
+                            </span>
+                        </td>
+                        <td class="px-3 py-4 text-sm text-gray-500">{{ row.notes or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Consumables -->
+    {% set used_consumables = doc.consumables | selectattr("qty") | list %}
+    {% if used_consumables %}
     <div class="mb-10">
         <h2 class="text-xl font-bold text-gray-900 mb-4 border-b pb-2">Parts & Consumables</h2>
         <div class="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
             <table class="min-w-full divide-y divide-gray-300">
                 <thead class="bg-gray-50">
                     <tr>
+                        {% if per_site %}<th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Water Feature</th>{% endif %}
                         <th class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900">Item</th>
                         <th class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Quantity</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200 bg-white">
-                    {% for item in doc.consumables %}
+                    {% for item in used_consumables %}
                     <tr>
+                        {% if per_site %}<td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm text-gray-500">{{ item.serial_no or '' }}</td>{% endif %}
                         <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900">{{ item.item }}</td>
                         <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{ item.qty }}</td>
                     </tr>
@@ -114,6 +200,7 @@
             </table>
         </div>
     </div>
+    {% endif %}
 
     <!-- Client Sign-off -->
     {% if doc.client_sign_off %}

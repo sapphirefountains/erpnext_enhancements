@@ -33,5 +33,21 @@
         "receiver_by_role": "Accounts Manager"
       }
     ]
+  },
+  {
+    "doctype": "Notification",
+    "name": "Maintenance Reading Out of Range",
+    "channel": "Email",
+    "subject": "Water chemistry out of range: {{ doc.name }} ({{ doc.project }})",
+    "document_type": "Sapphire Maintenance Record",
+    "event": "Submit",
+    "condition": "doc.has_out_of_range_readings",
+    "send_to_all_assignees": 0,
+    "message": "Maintenance Record {{ doc.name }} for project {{ doc.project }} was submitted with out-of-range water chemistry readings:\n\n{% for row in doc.chemistry_readings %}{% if row.out_of_range %}- {{ row.reading }}{% if row.serial_no %} ({{ row.serial_no }}){% endif %}: {{ row.reading_value }} {{ row.uom or '' }} (target {{ row.min_value }}–{{ row.max_value }})\n{% endif %}{% endfor %}\nTechnician: {{ doc.technician }}",
+    "recipients": [
+      {
+        "receiver_by_role": "Maintenance Supervisor"
+      }
+    ]
   }
 ]

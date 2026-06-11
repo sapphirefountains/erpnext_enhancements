@@ -3,12 +3,30 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section",
+  "serial_no",
   "question",
   "answer",
   "selection",
-  "other_details"
+  "other_details",
+  "photo"
  ],
  "fields": [
+  {
+   "fieldname": "section",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Section",
+   "options": "Sapphire Maintenance Section"
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Water Feature",
+   "options": "Serial No",
+   "read_only": 1
+  },
   {
    "fieldname": "question",
    "fieldtype": "Data",
@@ -26,7 +44,8 @@
    "fieldname": "selection",
    "fieldtype": "Select",
    "in_list_view": 1,
-   "label": "Selection"
+   "label": "Selection",
+   "options": "\nPass\nFail\nReplace\nOther"
   },
   {
    "depends_on": "eval:doc.selection == 'Other'",
@@ -34,6 +53,12 @@
    "fieldtype": "Data",
    "label": "Other Details",
    "mandatory_depends_on": "eval:doc.selection == 'Other'"
+  },
+  {
+   "description": "Photo of the check (e.g. a failed part).",
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",

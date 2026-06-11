@@ -30,6 +30,10 @@ erpnext_enhancements.patches.backfill_project_opportunity_link
 erpnext_enhancements.patches.seed_task_dashboard_block
 # v1.5.0 contract generation: the five agreement templates
 erpnext_enhancements.patches.seed_contract_templates
+# v1.9.0 modular maintenance forms: section building blocks, sample templates,
+# supervisor role, settings defaults; drop the superseded flat template-item table
+erpnext_enhancements.patches.seed_maintenance_sections
+erpnext_enhancements.patches.remove_template_item_doctype
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

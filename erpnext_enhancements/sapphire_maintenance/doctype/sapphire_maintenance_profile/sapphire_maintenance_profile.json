@@ -8,7 +8,10 @@
   "project",
   "customer",
   "safety_instructions",
-  "access_codes"
+  "access_codes",
+  "site_location_section",
+  "latitude",
+  "longitude"
  ],
  "fields": [
   {
@@ -38,6 +41,24 @@
    "fieldname": "access_codes",
    "fieldtype": "Data",
    "label": "Access Codes"
+  },
+  {
+   "description": "Site coordinates power the Time Kiosk's \"clock in here?\" suggestion when a technician arrives.",
+   "fieldname": "site_location_section",
+   "fieldtype": "Section Break",
+   "label": "Site Location"
+  },
+  {
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "precision": "6"
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "precision": "6"
   }
  ],
  "index_web_pages_for_search": 1,

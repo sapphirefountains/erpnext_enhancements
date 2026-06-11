@@ -23,7 +23,8 @@
   "location_section",
   "latitude",
   "longitude",
-  "description"
+  "description",
+  "maintenance_nudge_sent"
  ],
  "fields": [
   {
@@ -137,6 +138,16 @@
    "fieldname": "description",
    "fieldtype": "Small Text",
    "label": "Description"
+  },
+  {
+   "default": "0",
+   "description": "Set once the hourly maintenance-form SMS nudge has evaluated this interval (sent or not needed), so it is never scanned twice.",
+   "fieldname": "maintenance_nudge_sent",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Maintenance Nudge Processed",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

@@ -11,6 +11,14 @@
   "maintenance_section",
   "maintenance_fee_item",
   "maintenance_services_group",
+  "consumables_item_group",
+  "default_consumables_warehouse",
+  "water_feature_item",
+  "geofence_radius_m",
+  "maintenance_sms_nudges",
+  "out_of_range_followup_days",
+  "restock_suggestions_enabled",
+  "restock_source_warehouse",
   "collab_section",
   "collab_enabled",
   "collab_doctypes",
@@ -63,6 +71,63 @@
    "fieldtype": "Link",
    "label": "Maintenance Services Item Group",
    "options": "Item Group"
+  },
+  {
+   "description": "Item Group the consumables picker on Maintenance Records is limited to (e.g. \"Service\"). Leave empty to allow any stock item.",
+   "fieldname": "consumables_item_group",
+   "fieldtype": "Link",
+   "label": "Consumables Item Group",
+   "options": "Item Group"
+  },
+  {
+   "description": "Last-resort source warehouse for consumables on Maintenance Records, used when neither the contract feature's warehouse nor the technician's vehicle warehouse is set.",
+   "fieldname": "default_consumables_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Consumables Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "description": "The Item whose Serial Nos represent customer water features. Drives the Serial No pickers on Sales Orders and Maintenance Contracts.",
+   "fieldname": "water_feature_item",
+   "fieldtype": "Link",
+   "label": "Water Feature Item",
+   "options": "Item"
+  },
+  {
+   "default": "250",
+   "description": "Time Kiosk: suggest clocking in when the technician is within this many meters of a maintenance site (coordinates on the Sapphire Maintenance Profile). 0 disables the suggestion.",
+   "fieldname": "geofence_radius_m",
+   "fieldtype": "Int",
+   "label": "Site Geofence Radius (m)"
+  },
+  {
+   "default": "0",
+   "description": "Text the technician (via the Triton gateway) when they clocked out of a maintenance project without submitting a visit form. Runs hourly; uses Employee Cell Number.",
+   "fieldname": "maintenance_sms_nudges",
+   "fieldtype": "Check",
+   "label": "SMS Nudge for Unsubmitted Maintenance Forms"
+  },
+  {
+   "default": "0",
+   "description": "When a visit is submitted with out-of-range water chemistry, draft a follow-up visit due this many days later. 0 disables.",
+   "fieldname": "out_of_range_followup_days",
+   "fieldtype": "Int",
+   "label": "Out-of-Range Follow-Up Visit (Days)"
+  },
+  {
+   "default": "0",
+   "description": "Weekly: draft a Material Transfer request per technician vehicle warehouse, restocking the consumables issued from it over the past week.",
+   "fieldname": "restock_suggestions_enabled",
+   "fieldtype": "Check",
+   "label": "Weekly Truck Restock Suggestions"
+  },
+  {
+   "depends_on": "restock_suggestions_enabled",
+   "description": "Warehouse the restock Material Transfers draw from (e.g. the main inventory room).",
+   "fieldname": "restock_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Restock Source Warehouse",
+   "options": "Warehouse"
   },
   {
    "fieldname": "collab_section",

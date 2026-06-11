@@ -5,30 +5,137 @@
  * (co-located with the doctype). Drives the technician's on-site workflow:
  *
  *  - setup:    restricts the consumables Item link to stock items in the
- *              "Consumables" item group.
- *  - project / serial_no change: (a) populate_checklist seeds the
- *              `maintenance_results` table from the active template via the
- *              whitelisted `get_template_items`; (b) render_dashboard fetches
- *              `get_dashboard_context` and renders an in-form HTML briefing
- *              (safety instructions, access codes/site notes, recent visits).
- *  - safety gate: the `maintenance_results` and `consumables` tables stay
- *              hidden behind an orange warning banner until the technician
- *              ticks `safety_acknowledged` (toggle_safety_gate).
+ *              configured consumables item group (ERPNext Enhancements
+ *              Settings; empty = any stock item).
+ *  - maintenance_contract / project / serial_no change: (a)
+ *              populate_from_template instantiates all four section tables
+ *              (results, chemistry readings, cleaning tasks, consumables)
+ *              from the resolved modular template via the whitelisted
+ *              `get_visit_payload` — asking before overwriting non-empty
+ *              tables; (b) render_dashboard fetches `get_dashboard_context`
+ *              and renders an in-form HTML briefing (safety instructions,
+ *              access codes/site notes, contract access + cadence, service
+ *              scope, recent visits). A scheduler-drafted record populates
+ *              itself on first open (refresh with empty tables).
+ *  - safety gate: all four section tables stay hidden behind an orange
+ *              warning banner until the technician ticks
+ *              `safety_acknowledged` (toggle_safety_gate).
  *
  * All server-supplied strings are passed through `frappe.utils.xss_sanitise`
  * before being injected into the dashboard HTML.
  */
+
+const EE_SECTION_TABLES = ["maintenance_results", "chemistry_readings", "cleaning_tasks", "consumables"];
+
+function ee_tables_empty(frm) {
+	return EE_SECTION_TABLES.every((table) => !(frm.doc[table] || []).length);
+}
+
+function ee_tables_pristine(frm) {
+	// True when the tech hasn't entered anything yet — rebuilding loses nothing.
+	return (
+		(frm.doc.maintenance_results || []).every((r) => !r.answer && !r.selection) &&
+		(frm.doc.chemistry_readings || []).every((r) => !r.reading_value && !r.notes) &&
+		(frm.doc.cleaning_tasks || []).every((r) => !r.is_done && !r.notes) &&
+		(frm.doc.consumables || []).every((r) => !r.qty)
+	);
+}
+
+function ee_apply_payload(frm, payload) {
+	const mapping = {
+		maintenance_results: payload.results,
+		chemistry_readings: payload.readings,
+		cleaning_tasks: payload.tasks,
+		consumables: payload.consumables,
+	};
+	EE_SECTION_TABLES.forEach((table) => {
+		frm.clear_table(table);
+		(mapping[table] || []).forEach((row) => {
+			Object.assign(frm.add_child(table), row);
+		});
+		frm.refresh_field(table);
+	});
+	if (payload.template) {
+		frm.set_value("template", payload.template);
+	}
+}
+
+// Web Speech API dictation into visit_notes — supported on Chrome/Android
+// (the techs' field devices); the button simply doesn't appear elsewhere.
+function ee_setup_dictation(frm) {
+	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!Recognition || frm.doc.docstatus !== 0) return;
+
+	frm.add_custom_button(__("🎤 Dictate Note"), () => {
+		if (frm._ee_recognition) {
+			frm._ee_recognition.stop();
+			return;
+		}
+		const recognition = new Recognition();
+		frm._ee_recognition = recognition;
+		recognition.lang = frappe.boot.lang || "en-US";
+		recognition.interimResults = false;
+		recognition.continuous = false;
+		frappe.show_alert({ message: __("Listening… tap the button again to stop."), indicator: "blue" });
+
+		recognition.onresult = (event) => {
+			const transcript = Array.from(event.results)
+				.map((r) => r[0].transcript)
+				.join(" ")
+				.trim();
+			if (transcript) {
+				const existing = frm.doc.visit_notes ? frm.doc.visit_notes + "\n" : "";
+				frm.set_value("visit_notes", existing + transcript);
+				frappe.show_alert({ message: __("Note added."), indicator: "green" });
+			}
+		};
+		recognition.onerror = () => {
+			frappe.show_alert({ message: __("Could not capture audio."), indicator: "red" });
+		};
+		recognition.onend = () => {
+			frm._ee_recognition = null;
+		};
+		recognition.start();
+	});
+}
+
+// Tiny inline SVG sparkline for the dashboard chemistry trends.
+function ee_sparkline(points, min_value, max_value) {
+	if (!points || points.length < 2) return "";
+	const w = 110, h = 26, pad = 3;
+	const values = points.map((p) => p.value);
+	let low = Math.min.apply(null, values.concat(min_value || []));
+	let high = Math.max.apply(null, values.concat(max_value || []));
+	if (high === low) { high += 1; low -= 1; }
+	const x = (i) => pad + (i * (w - 2 * pad)) / (points.length - 1);
+	const y = (v) => h - pad - ((v - low) * (h - 2 * pad)) / (high - low);
+	const path = points.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(p.value).toFixed(1)).join(" ");
+	const dots = points
+		.map((p, i) =>
+			`<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="2.2" fill="${p.out_of_range ? "#dc2626" : "#2563eb"}"/>`
+		)
+		.join("");
+	return (
+		`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle;">` +
+		`<path d="${path}" fill="none" stroke="#94a3b8" stroke-width="1.5"/>${dots}</svg>`
+	);
+}
+
 frappe.ui.form.on("Sapphire Maintenance Record", {
 	setup: function (frm) {
-		// Filter items in consumables to only Stock Items and Consumables group
+		// Filter items in consumables to stock items in the configured group
 		frm.set_query("item", "consumables", function () {
-			return {
-				filters: [
-					["is_stock_item", "=", 1],
-					["item_group", "=", "Consumables"],
-				],
-			};
+			const filters = [["is_stock_item", "=", 1]];
+			if (frm._ee_consumables_item_group) {
+				filters.push(["item_group", "=", frm._ee_consumables_item_group]);
+			}
+			return { filters: filters };
 		});
+		frappe.db
+			.get_single_value("ERPNext Enhancements Settings", "consumables_item_group")
+			.then((group) => {
+				frm._ee_consumables_item_group = group;
+			});
 
 		frm.set_query("serial_no", function () {
 			return {
@@ -37,13 +144,34 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 				},
 			};
 		});
+
+		frm.set_query("maintenance_contract", function () {
+			const filters = { status: "Active" };
+			if (frm.doc.project) {
+				filters.project = frm.doc.project;
+			}
+			return { filters: filters };
+		});
 	},
 
 	refresh: function (frm) {
 		frm.trigger("toggle_safety_gate");
-		if (frm.doc.project && frm.doc.serial_no) {
+		if (frm.doc.project) {
 			frm.trigger("render_dashboard");
 		}
+		// Scheduler-drafted records arrive as bare headers: fill them on first open.
+		if (frm.doc.docstatus === 0 && frm.doc.project && ee_tables_empty(frm)) {
+			frm.trigger("populate_from_template");
+		}
+
+		// Visit completeness at a glance (computed server-side in validate).
+		if (!frm.is_new() && !ee_tables_empty(frm)) {
+			const pct = frm.doc.completion_percent || 0;
+			const color = pct >= 100 ? "green" : pct >= 50 ? "orange" : "red";
+			frm.dashboard.add_indicator(__("{0}% Complete", [pct]), color);
+		}
+
+		ee_setup_dictation(frm);
 	},
 
 	safety_acknowledged: function (frm) {
@@ -52,8 +180,9 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 
 	toggle_safety_gate: function (frm) {
 		const is_acknowledged = frm.doc.safety_acknowledged;
-		frm.set_df_property("maintenance_results", "hidden", !is_acknowledged);
-		frm.set_df_property("consumables", "hidden", !is_acknowledged);
+		EE_SECTION_TABLES.forEach((table) => {
+			frm.set_df_property(table, "hidden", !is_acknowledged);
+		});
 
 		if (!is_acknowledged) {
 			const overlay_html = `
@@ -68,39 +197,55 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		}
 	},
 
+	maintenance_contract: function (frm) {
+		frm.trigger("populate_from_template");
+		frm.trigger("render_dashboard");
+	},
+
 	project: function (frm) {
-		frm.trigger("populate_checklist");
+		frm.trigger("populate_from_template");
 		frm.trigger("render_dashboard");
 	},
 
 	serial_no: function (frm) {
-		frm.trigger("populate_checklist");
+		frm.trigger("populate_from_template");
 		frm.trigger("render_dashboard");
 	},
 
-	populate_checklist: function (frm) {
-		if (frm.doc.project) {
+	populate_from_template: function (frm) {
+		if (frm.doc.docstatus !== 0) return;
+		if (!frm.doc.project && !frm.doc.maintenance_contract) return;
+
+		const fill = () => {
 			frappe.call({
-				method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_template_items",
+				method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_visit_payload",
 				args: {
 					project: frm.doc.project,
+					serial_no: frm.doc.serial_no,
+					maintenance_contract: frm.doc.maintenance_contract,
+					technician: frm.doc.technician,
+					visit_label: frm.doc.visit_label,
 				},
 				callback: function (r) {
-					if (r.message && r.message.length > 0) {
-						frm.clear_table("maintenance_results");
-						r.message.forEach((item) => {
-							let row = frm.add_child("maintenance_results");
-							row.question = item.question_prompt;
-						});
-						frm.refresh_field("maintenance_results");
+					if (r.message) {
+						ee_apply_payload(frm, r.message);
 					}
 				},
 			});
+		};
+
+		if (ee_tables_empty(frm) || ee_tables_pristine(frm)) {
+			fill();
+		} else {
+			frappe.confirm(
+				__("Rebuild the visit form from the template? Entries already made in the tables below will be cleared."),
+				fill
+			);
 		}
 	},
 
 	render_dashboard: function (frm) {
-		if (!frm.doc.project || !frm.doc.serial_no) return;
+		if (!frm.doc.project) return;
 
 		frappe.call({
 			method: "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record.get_dashboard_context",
@@ -111,9 +256,62 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			callback: function (r) {
 				if (r.message) {
 					const ctx = r.message;
-					const safety = frappe.utils.xss_sanitise(ctx.profile.safety_instructions || "No specific safety instructions provided.");
-					const codes = frappe.utils.xss_sanitise(ctx.profile.access_codes || "N/A");
-					const site_instr = frappe.utils.xss_sanitise(ctx.serial_no.custom_site_instructions || "No specific site instructions.");
+					const sanitise = frappe.utils.xss_sanitise;
+					const safety = sanitise(ctx.profile.safety_instructions || "No specific safety instructions provided.");
+					const codes = sanitise(ctx.profile.access_codes || ctx.contract.gate_code || "N/A");
+					const site_instr = sanitise(ctx.serial_no.custom_site_instructions || "No specific site instructions.");
+
+					let contract_html = "";
+					if (ctx.contract && ctx.contract.name) {
+						const parts = [];
+						if (ctx.contract.key_location) {
+							parts.push(`Key: <span class="font-mono">${sanitise(ctx.contract.key_location)}</span>`);
+						}
+						if (ctx.contract.preferred_days || ctx.contract.preferred_time) {
+							parts.push(
+								`Preferred: ${sanitise(ctx.contract.preferred_days || "")} ${sanitise(ctx.contract.preferred_time || "")}`
+							);
+						}
+						if (parts.length) {
+							contract_html = `<p class="mt-1 text-sm text-blue-700">${parts.join(" &middot; ")}</p>`;
+						}
+					}
+
+					let trends_html = "";
+					if (ctx.trends && ctx.trends.length) {
+						const rows = ctx.trends
+							.map((t) => {
+								const latest = t.points[t.points.length - 1];
+								return `
+								<div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+									<span class="text-xs font-medium text-gray-600">${sanitise(t.reading)}</span>
+									${ee_sparkline(t.points, t.min_value, t.max_value)}
+									<span class="text-xs ${latest.out_of_range ? "font-bold text-red-600" : "text-gray-500"}">
+										${latest.value} ${sanitise(t.uom || "")}
+									</span>
+								</div>`;
+							})
+							.join("");
+						trends_html = `
+							<div class="p-4 bg-indigo-50 border-l-4 border-indigo-400 rounded-r-md">
+								<h3 class="text-sm font-bold text-indigo-800">Chemistry Trends (last visits)</h3>
+								<div class="mt-2">${rows}</div>
+							</div>
+						`;
+					}
+
+					let scope_html = "";
+					const deliverables = (ctx.service_scope && ctx.service_scope.deliverables) || [];
+					if (deliverables.length) {
+						scope_html = `
+							<div class="p-4 bg-green-50 border-l-4 border-green-400 rounded-r-md">
+								<h3 class="text-sm font-bold text-green-800">Contracted Service Scope</h3>
+								<ul class="mt-2 text-sm text-green-700 list-disc list-inside">
+									${deliverables.map((d) => `<li>${sanitise(d)}</li>`).join("")}
+								</ul>
+							</div>
+						`;
+					}
 
 					let visits_html = "";
 					if (ctx.visits && ctx.visits.length > 0) {
@@ -122,7 +320,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 								(v) => `
 							<div class="flex justify-between py-1 border-b border-gray-100 last:border-0">
 								<span class="text-xs font-medium text-gray-600">${frappe.datetime.global_date_format(v.creation)}</span>
-								<span class="text-xs text-gray-500">${frappe.utils.xss_sanitise(v.technician)}</span>
+								<span class="text-xs text-gray-500">${sanitise(v.technician || "")}</span>
 							</div>
 						`
 							)
@@ -156,6 +354,7 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 										Access & Site
 									</h3>
 									<p class="mt-2 text-sm text-blue-700">Code: <span class="font-mono font-bold">${codes}</span></p>
+									${contract_html}
 									<p class="mt-1 text-sm text-blue-700 italic">${site_instr}</p>
 								</div>
 
@@ -170,6 +369,10 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 									</div>
 								</div>
 							</div>
+
+							${trends_html}
+
+							${scope_html}
 						</div>
 					`;
 					frm.get_field("dashboard").$wrapper.html(dashboard_html);

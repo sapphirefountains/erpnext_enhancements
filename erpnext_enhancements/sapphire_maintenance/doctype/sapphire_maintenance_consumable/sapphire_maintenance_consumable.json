@@ -3,12 +3,28 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section",
+  "serial_no",
   "item",
   "warehouse",
   "qty",
   "serial_and_batch_bundle"
  ],
  "fields": [
+  {
+   "fieldname": "section",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Section",
+   "options": "Sapphire Maintenance Section"
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Water Feature",
+   "options": "Serial No",
+   "read_only": 1
+  },
   {
    "fieldname": "item",
    "fieldtype": "Link",

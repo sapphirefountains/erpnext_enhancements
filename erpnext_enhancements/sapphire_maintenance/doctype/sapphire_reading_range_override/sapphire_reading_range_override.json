@@ -1,0 +1,43 @@
+{
+ "creation": "2026-06-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "reading",
+  "min_value",
+  "max_value"
+ ],
+ "fields": [
+  {
+   "description": "Must match a reading label in a Water Chemistry section (e.g. \"pH\").",
+   "fieldname": "reading",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Reading",
+   "reqd": 1
+  },
+  {
+   "fieldname": "min_value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Min Value"
+  },
+  {
+   "fieldname": "max_value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Max Value"
+  }
+ ],
+ "istable": 1,
+ "editable_grid": 1,
+ "modified": "2026-06-10 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Reading Range Override",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

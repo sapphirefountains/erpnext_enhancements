@@ -21,6 +21,12 @@
  * form, the active (Open) view, and the paused (break) view, and starts/stops
  * KioskGeo accordingly. Clock-in/pause/resume/switch/clock-out all post to the
  * log_time endpoint; attachments upload via /api/method/upload_file then link.
+ *
+ * Maintenance forms: while clocked into a project with an Active Maintenance
+ * Contract (or Active form template), the card shows a link to the visit form
+ * (get_maintenance_context — open draft or prefilled new record, opened in a
+ * new tab so the clock keeps running). Clock-out and cross-project switches
+ * warn when no form was submitted during the interval.
  */
 (function () {
   'use strict';
@@ -39,6 +45,7 @@
     attachments: [],
     isSwitching: false,
     loading: false,
+    maintenance: null,       // { project, ctx } — get_maintenance_context for the active job
   };
 
   // -- DOM refs (filled after template injection) --------------------------
@@ -54,10 +61,18 @@
     '  <div class="tk-clock" id="tk-clock">--:--:--</div>',
     '  <p class="tk-status" id="tk-status">Ready to Work</p>',
     '</div>',
+    '<div class="tk-card" id="tk-geo-suggest" style="display:none; margin-bottom:14px; text-align:center;">',
+    '  <p id="tk-geo-suggest-text" style="margin:0 0 8px;"></p>',
+    '  <button class="tk-btn tk-btn-success" id="tk-geo-suggest-btn" style="margin-top:0;">Select This Project</button>',
+    '</div>',
     '<div class="tk-card">',
     '  <div class="tk-timer" id="tk-timer">--:--:--</div>',
     '  <div class="tk-active-project" id="tk-active-project" style="display:none;">',
     '    <span id="tk-active-project-name"></span>',
+    '  </div>',
+    '  <div id="tk-maintenance" style="display:none; text-align:center;">',
+    '    <a class="tk-btn tk-btn-outline" id="tk-maintenance-link" target="_blank" rel="noopener"',
+    '       style="margin-top:0; display:inline-block;">📋 Maintenance Form</a>',
     '  </div>',
     '  <div id="tk-inputs">',
     '    <div class="tk-field"><label>Project</label><select id="tk-project"></select></div>',
@@ -93,6 +108,10 @@
     '    <span class="tk-track-dot"></span>',
     '    <span id="tk-track-text">Location tracking off</span>',
     '  </div>',
+    '</div>',
+    '<div class="tk-card" id="tk-visits" style="display:none; margin-top:14px;">',
+    '  <h6 style="margin:0 0 8px;">Today&#39;s Visits</h6>',
+    '  <div id="tk-visits-list"></div>',
     '</div>',
     '<a class="tk-btn tk-btn-outline" id="tk-history" href="/app/job-interval" style="margin-top:14px;">View My History</a>',
     '<div class="tk-toasts" id="tk-toasts"></div>',
@@ -256,11 +275,15 @@
 
       show(el.attachments);
       renderAttachments();
+      hide(el.visits);
+      hide(el.geoSuggest);
 
       show(el.activeProject);
       var title = ci.project_title || ci.project || '';
       if (ci.task) title += ' — ' + (ci.task_title || ci.task);
       el.activeProjectName.textContent = title;
+
+      loadMaintenanceContext();
 
       // Tracking: only while genuinely active (Open), never on break (Paused).
       if (app.status === 'Open' && ci.name) {
@@ -273,12 +296,144 @@
       show(el.inputs); show(el.clockIn);
       hide(el.activeActions); hide(el.readonly);
       hide(el.activeProject); hide(el.attachments);
+      hide(el.maintenance);
+      app.maintenance = null;
+      loadVisitsToday();
+      maybeSuggestNearby();
       el.attachmentList.innerHTML = '';
       app.attachments = [];
       el.timer.textContent = '--:--:--';
       if (!BOOT.employee) el.clockIn.disabled = true;
       window.KioskGeo.stop();
     }
+  }
+
+  // -- Today's visits + geofenced suggestion (idle screen) -------------------
+  var visitsLoadedAt = 0;
+  function loadVisitsToday() {
+    if (Date.now() - visitsLoadedAt < 60000) return; // renderState re-fires often
+    visitsLoadedAt = Date.now();
+    api('erpnext_enhancements.api.time_kiosk.get_my_visits_today', {}, { method: 'GET' })
+      .then(function (visits) {
+        var box = el.visitsList;
+        if (!box) return;
+        box.innerHTML = '';
+        if (!visits || !visits.length) { hide(el.visits); return; }
+        visits.forEach(function (v) {
+          var label = v.project_title || v.project || '';
+          if (v.visit_label) label += ' — ' + v.visit_label;
+          else if (v.serial_no) label += ' — ' + v.serial_no;
+          var a = document.createElement('a');
+          a.className = 'tk-attachment-item';
+          a.style.display = 'flex';
+          a.style.textDecoration = 'none';
+          a.href = v.route;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.innerHTML = '<span>📋</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            escapeHtml(label) + '</span>';
+          box.appendChild(a);
+        });
+        show(el.visits);
+      })
+      .catch(function () { hide(el.visits); });
+  }
+
+  var geoSuggestChecked = false;
+  function maybeSuggestNearby() {
+    if (geoSuggestChecked || !('geolocation' in navigator)) return;
+    geoSuggestChecked = true; // one position fix per page load is plenty
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      if (app.status !== 'Idle') return;
+      api('erpnext_enhancements.api.time_kiosk.get_nearby_visit',
+        { lat: pos.coords.latitude, lng: pos.coords.longitude }, { method: 'GET' })
+        .then(function (site) {
+          if (!site || app.status !== 'Idle') return;
+          el.geoSuggestText.textContent =
+            'You’re near ' + (site.project_title || site.project) +
+            ' (~' + site.distance_m + ' m) and a visit is due.';
+          el.geoSuggestBtn.onclick = function () {
+            el.project.value = site.project;
+            loadTasks(site.project);
+            hide(el.geoSuggest);
+            toast('Project selected — ready to clock in.', 'green');
+          };
+          show(el.geoSuggest);
+        })
+        .catch(function () { /* best-effort */ });
+    }, function () { /* permission denied / unavailable — no suggestion */ },
+    { maximumAge: 120000, timeout: 8000 });
+  }
+
+  // -- Maintenance forms -----------------------------------------------------
+  // Projects under an Active Maintenance Contract (or with an Active form
+  // template) require a maintenance visit form. While clocked into one, the
+  // card shows a link to the form (an open draft when one exists, else a
+  // prefilled new record); clock-out / project-switch warn when nothing was
+  // submitted during the interval (warnIfMaintenancePending below).
+  function loadMaintenanceContext() {
+    var ci = app.currentInterval;
+    if (!ci || !ci.project) {
+      app.maintenance = null;
+      renderMaintenance();
+      return;
+    }
+    if (app.maintenance && app.maintenance.project === ci.project) {
+      renderMaintenance();
+      return;
+    }
+    app.maintenance = { project: ci.project, ctx: null };
+    api('erpnext_enhancements.api.time_kiosk.get_maintenance_context',
+      { project: ci.project }, { method: 'GET' })
+      .then(function (ctx) {
+        // The interval may have ended or switched while the request ran.
+        if (!app.maintenance || app.maintenance.project !== ci.project) return;
+        app.maintenance.ctx = ctx || { required: false };
+        renderMaintenance();
+        if (ctx && ctx.required && !app.maintenance.noticeShown) {
+          app.maintenance.noticeShown = true;
+          toast('This project requires a maintenance visit form.', 'orange', 5000);
+        }
+      })
+      .catch(function () { /* offline — link/warning are best-effort */ });
+  }
+
+  function renderMaintenance() {
+    var active = (app.status === 'Open' || app.status === 'Paused');
+    var ctx = app.maintenance && app.maintenance.ctx;
+    if (active && ctx && ctx.required && ctx.form_route) {
+      el.maintenanceLink.href = ctx.form_route;
+      el.maintenanceLink.textContent = ctx.draft ? '📋 Maintenance Form (Draft)' : '📋 New Maintenance Form';
+      show(el.maintenance);
+    } else {
+      hide(el.maintenance);
+    }
+  }
+
+  // Before leaving a maintenance project (clock-out or switch), re-check the
+  // server: was a form submitted by this user since clock-in? If not, warn —
+  // OK = go back and complete it (same semantics as the attachments prompt),
+  // Cancel = proceed anyway. Offline or non-maintenance projects proceed
+  // silently.
+  function warnIfMaintenancePending(actionLabel, proceed) {
+    var ci = app.currentInterval;
+    if (!ci || !ci.project) { proceed(); return; }
+    api('erpnext_enhancements.api.time_kiosk.get_maintenance_context',
+      { project: ci.project, since: ci.start_time }, { method: 'GET' })
+      .then(function (ctx) {
+        if (ctx && ctx.required && !ctx.submitted_since) {
+          if (app.maintenance && app.maintenance.project === ci.project) {
+            app.maintenance.ctx = ctx;
+            renderMaintenance();
+          }
+          if (window.confirm(
+            'No maintenance form has been submitted for this visit. ' +
+            'Press OK to go back and complete it, or Cancel to ' + actionLabel + ' anyway.'
+          )) return; // OK = stay
+        }
+        proceed();
+      })
+      .catch(function () { proceed(); });
   }
 
   // -- Attachments ---------------------------------------------------------
@@ -522,6 +677,13 @@
     el.timer = $('tk-timer');
     el.activeProject = $('tk-active-project');
     el.activeProjectName = $('tk-active-project-name');
+    el.maintenance = $('tk-maintenance');
+    el.maintenanceLink = $('tk-maintenance-link');
+    el.visits = $('tk-visits');
+    el.visitsList = $('tk-visits-list');
+    el.geoSuggest = $('tk-geo-suggest');
+    el.geoSuggestText = $('tk-geo-suggest-text');
+    el.geoSuggestBtn = $('tk-geo-suggest-btn');
     el.inputs = $('tk-inputs');
     el.project = $('tk-project');
     el.task = $('tk-task');
@@ -549,10 +711,12 @@
     el.resume.addEventListener('click', function () { handleAction('Resume'); });
 
     el.clockOut.addEventListener('click', function () {
-      promptIfNoAttachments(
-        'No attachments added. Press OK to go back and add them, or Cancel to clock out anyway.',
-        function () { handleAction('Stop'); }
-      );
+      warnIfMaintenancePending('clock out', function () {
+        promptIfNoAttachments(
+          'No attachments added. Press OK to go back and add them, or Cancel to clock out anyway.',
+          function () { handleAction('Stop'); }
+        );
+      });
     });
 
     el.switchBtn.addEventListener('click', function () {
@@ -562,7 +726,15 @@
           function () { app.isSwitching = true; renderState(); }
         );
       } else {
-        handleAction('Switch');
+        // Only the project being LEFT needs its form; switching tasks within
+        // the same project keeps the visit going.
+        var ci = app.currentInterval || {};
+        var newProject = el.project.value;
+        if (newProject && ci.project && newProject !== ci.project) {
+          warnIfMaintenancePending('switch projects', function () { handleAction('Switch'); });
+        } else {
+          handleAction('Switch');
+        }
       }
     });
 

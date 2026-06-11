@@ -10,7 +10,10 @@
  "field_order": [
   "customer",
   "project",
+  "maintenance_contract",
   "serial_no",
+  "template",
+  "visit_label",
   "technician",
   "clock_in_time",
   "clock_out_time",
@@ -19,9 +22,14 @@
   "safety_acknowledged",
   "dashboard",
   "maintenance_results",
+  "chemistry_readings",
+  "cleaning_tasks",
   "consumables",
+  "visit_notes",
   "historical_visits",
+  "completion_percent",
   "warranty_rma_flag",
+  "has_out_of_range_readings",
   "sales_invoice",
   "workflow_state",
   "client_sign_off"
@@ -42,11 +50,32 @@
    "options": "Project"
   },
   {
+   "description": "The Active contract for the Project. Empty serial_no + a Per Site Visit contract = one form covering all covered features.",
+   "fieldname": "maintenance_contract",
+   "fieldtype": "Link",
+   "label": "Maintenance Contract",
+   "options": "Sapphire Maintenance Contract"
+  },
+  {
    "fieldname": "serial_no",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Serial No",
    "options": "Serial No"
+  },
+  {
+   "fieldname": "template",
+   "fieldtype": "Link",
+   "label": "Form Template",
+   "options": "Sapphire Maintenance Template",
+   "read_only": 1
+  },
+  {
+   "description": "Set for seasonal visits (e.g. Seasonal Startup, Winterization).",
+   "fieldname": "visit_label",
+   "fieldtype": "Data",
+   "label": "Visit Type",
+   "read_only": 1
   },
   {
    "fieldname": "technician",
@@ -95,10 +124,28 @@
    "options": "Sapphire Maintenance Result"
   },
   {
+   "fieldname": "chemistry_readings",
+   "fieldtype": "Table",
+   "label": "Water Chemistry",
+   "options": "Sapphire Chemistry Reading"
+  },
+  {
+   "fieldname": "cleaning_tasks",
+   "fieldtype": "Table",
+   "label": "Cleaning Tasks",
+   "options": "Sapphire Cleaning Task"
+  },
+  {
    "fieldname": "consumables",
    "fieldtype": "Table",
    "label": "Consumables",
    "options": "Sapphire Maintenance Consumable"
+  },
+  {
+   "description": "General notes for the visit — the form's Dictate button writes here.",
+   "fieldname": "visit_notes",
+   "fieldtype": "Small Text",
+   "label": "Visit Notes"
   },
   {
    "fieldname": "historical_visits",
@@ -107,10 +154,25 @@
    "options": "Sapphire Historical Visit"
   },
   {
+   "fieldname": "completion_percent",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Completed",
+   "read_only": 1
+  },
+  {
    "default": "0",
    "fieldname": "warranty_rma_flag",
    "fieldtype": "Check",
    "label": "Warranty RMA Triggered",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_out_of_range_readings",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Readings Out of Range",
    "read_only": 1
   },
   {
@@ -148,6 +210,27 @@
    "read": 1,
    "report": 1,
    "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Supervisor",
    "share": 1,
    "write": 1
   }

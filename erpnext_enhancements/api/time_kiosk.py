@@ -392,6 +392,187 @@ def get_tasks_for_project(project):
 
 
 @frappe.whitelist()
+def get_maintenance_context(project=None, since=None):
+    """Maintenance-form context for the kiosk's active job card.
+
+    Called by the kiosk PWA when a technician is clocked into a project, and
+    again before clock-out / project-switch. A project "has maintenance" when
+    it carries an Active Sapphire Maintenance Contract or resolves to an
+    Active maintenance form template (project- or customer-scoped).
+
+    Args:
+        project (str): Project name (docname).
+        since (str, optional): Datetime (the interval's clock-in). When given,
+            ``submitted_since`` reports whether the session user submitted a
+            Sapphire Maintenance Record for the project after that moment —
+            the basis for the "no form submitted" clock-out warning.
+
+    Returns:
+        dict: {"required": False} when the project has no maintenance; else {
+            "required": True,
+            "contract": Active contract name or None,
+            "draft": newest open draft record for the project or None,
+            "form_route": desk URL — the draft when one exists, else a
+                prefilled new-record route (project/customer/contract/
+                technician as query params -> frappe.route_options),
+            "submitted_since": bool (False when ``since`` not given),
+        }
+    """
+    if not project:
+        return {"required": False}
+
+    contract = frappe.db.get_value(
+        "Sapphire Maintenance Contract",
+        {"project": project, "status": "Active"},
+        ["name", "visit_shape"],
+        as_dict=True,
+    )
+    if not contract:
+        from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+            resolve_template,
+        )
+        if not resolve_template(project=project):
+            return {"required": False}
+
+    draft = frappe.db.get_value(
+        "Sapphire Maintenance Record",
+        {"project": project, "docstatus": 0},
+        "name",
+        order_by="modified desc",
+    )
+
+    if draft:
+        form_route = "/app/sapphire-maintenance-record/" + draft
+    else:
+        from urllib.parse import urlencode
+
+        params = {"project": project, "technician": frappe.session.user}
+        customer = frappe.db.get_value("Project", project, "customer")
+        if customer:
+            params["customer"] = customer
+        if contract:
+            params["maintenance_contract"] = contract.name
+        form_route = "/app/sapphire-maintenance-record/new?" + urlencode(params)
+
+    submitted_since = False
+    if since:
+        user = frappe.session.user
+        submitted_since = bool(frappe.get_all(
+            "Sapphire Maintenance Record",
+            filters={
+                "project": project,
+                "docstatus": 1,
+                "modified": [">=", get_datetime(since)],
+            },
+            or_filters=[["technician", "=", user], ["owner", "=", user]],
+            limit=1,
+        ))
+
+    return {
+        "required": True,
+        "contract": contract.name if contract else None,
+        "draft": draft,
+        "form_route": form_route,
+        "submitted_since": submitted_since,
+    }
+
+
+@frappe.whitelist()
+def get_my_visits_today():
+    """Open maintenance visit drafts for the kiosk's "Today's Visits" list.
+
+    Draft Sapphire Maintenance Records that are unassigned or assigned to the
+    session user (the predictive scheduler creates them as bare headers).
+    Returns [{name, project, project_title, serial_no, visit_label, route}],
+    oldest first, capped at 10.
+    """
+    user = frappe.session.user
+    drafts = frappe.get_all(
+        "Sapphire Maintenance Record",
+        filters={"docstatus": 0},
+        or_filters=[["technician", "=", user], ["technician", "is", "not set"]],
+        fields=["name", "project", "serial_no", "visit_label"],
+        order_by="creation asc",
+        limit=10,
+    )
+    projects = {d.project for d in drafts if d.project}
+    titles = {}
+    if projects:
+        titles = dict(frappe.get_all(
+            "Project",
+            filters={"name": ["in", list(projects)]},
+            fields=["name", "project_name"],
+            as_list=True,
+        ))
+    for d in drafts:
+        d["project_title"] = titles.get(d.project) or d.project
+        d["route"] = "/app/sapphire-maintenance-record/" + d.name
+    return drafts
+
+
+@frappe.whitelist()
+def get_nearby_visit(lat=None, lng=None):
+    """Geofenced clock-in suggestion for the idle kiosk.
+
+    Compares the device position against Sapphire Maintenance Profile site
+    coordinates; within the configured radius (ERPNext Enhancements Settings >
+    Site Geofence Radius, 0 = disabled), returns the nearest site that has a
+    visit waiting — an open draft record, or an Active contract feature due
+    within 7 days. Returns None when there is nothing to suggest.
+    """
+    if not lat or not lng:
+        return None
+    radius = cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "geofence_radius_m"))
+    if not radius:
+        return None
+
+    lat, lng = flt(lat), flt(lng)
+    sites = frappe.get_all(
+        "Sapphire Maintenance Profile",
+        filters={"latitude": ["!=", 0], "longitude": ["!=", 0]},
+        fields=["project", "latitude", "longitude"],
+    )
+
+    best = None
+    for site in sites:
+        distance = _haversine_m(lat, lng, site.latitude, site.longitude)
+        if distance <= radius and (best is None or distance < best[0]):
+            best = (distance, site.project)
+    if not best:
+        return None
+
+    distance, project = best
+    has_visit = frappe.db.exists("Sapphire Maintenance Record", {"project": project, "docstatus": 0})
+    if not has_visit:
+        contract = frappe.db.get_value(
+            "Sapphire Maintenance Contract", {"project": project, "status": "Active"}, "name"
+        )
+        if not contract:
+            return None
+        has_visit = frappe.db.exists(
+            "Sapphire Contract Feature",
+            {"parent": contract, "next_visit_date": ["<=", add_days(frappe.utils.nowdate(), 7)]},
+        )
+    if not has_visit:
+        return None
+
+    return {
+        "project": project,
+        "project_title": frappe.db.get_value("Project", project, "project_name") or project,
+        "distance_m": round(distance),
+    }
+
+
+def _haversine_m(lat1, lng1, lat2, lng2):
+    """Great-circle distance between two WGS84 points, in meters."""
+    from math import asin, cos, radians, sin, sqrt
+
+    lat1, lng1, lat2, lng2 = map(radians, (flt(lat1), flt(lng1), flt(lat2), flt(lng2)))
+    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lng2 - lng1) / 2) ** 2
+    return 6371000 * 2 * asin(sqrt(a))
+
+
+@frappe.whitelist()
 def link_attachment(file_name, project, task=None):
     """
     After a file is uploaded to a Job Interval, duplicate the File record so
