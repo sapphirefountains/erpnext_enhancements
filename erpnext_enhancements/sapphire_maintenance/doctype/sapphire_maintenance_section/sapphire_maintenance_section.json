@@ -8,6 +8,9 @@
   "section_type",
   "disabled",
   "description",
+  "instructions_section",
+  "step_instructions",
+  "step_images",
   "items"
  ],
  "fields": [
@@ -38,6 +41,24 @@
    "fieldname": "description",
    "fieldtype": "Small Text",
    "label": "Description"
+  },
+  {
+   "fieldname": "instructions_section",
+   "fieldtype": "Section Break",
+   "label": "Step Instructions"
+  },
+  {
+   "description": "How-to guidance for completing this step. Shown in the Visit Wizard as a collapsible panel (collapsed by default) on the step's page.",
+   "fieldname": "step_instructions",
+   "fieldtype": "Text Editor",
+   "label": "Instructions"
+  },
+  {
+   "description": "Optional photos illustrating how to complete this step, shown under the instructions in the Visit Wizard.",
+   "fieldname": "step_images",
+   "fieldtype": "Table",
+   "label": "Instruction Images",
+   "options": "Sapphire Section Image"
   },
   {
    "fieldname": "items",

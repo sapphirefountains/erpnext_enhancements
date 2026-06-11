@@ -134,6 +134,21 @@ SECTIONS = [
 	),
 ]
 
+# Example step instructions (Text Editor HTML), keyed by section title. Shown in
+# the Visit Wizard's collapsible per-step panel; edit/replace in the UI and add
+# images via the section's Instruction Images table.
+INSTRUCTIONS = {
+	"Advanced Water Chemistry": "<p>Run the secondary test kit panel. Record each value; flag anything outside the target band in the notes.</p>",
+	"Pump & Filter Service": "<ol><li>Lock out the pump before opening anything.</li><li>Clear the basket and inspect the impeller.</li><li>Backwash or rinse the filter, then confirm pressure is back to normal.</li></ol>",
+	"Lighting Inspection": "<p>Power the lights on and walk the feature. Test the GFCI, check lenses/gaskets, and swap any dead bulbs/LEDs.</p>",
+	"Auto-Fill & Water Level": "<p>Watch the auto-fill cycle once. Confirm the float/sensor stops it at the right level and there are no leaks at the valve or fittings.</p>",
+	"Algae & Water Clarity": "<p>Brush walls and tile first, then treat visible algae. Skim and vacuum so the basin is clear before you leave.</p>",
+	"Spring Startup Steps": "<ol><li>Remove the winter cover and inspect for damage.</li><li>Refill, prime, and start the pump.</li><li>Aim the nozzles and balance the chemistry.</li></ol>",
+	"Winterization Steps": "<ol><li>Drain the basin and lines.</li><li>Blow out the plumbing and pull the pump for storage.</li><li>Add antifreeze where needed, cover, and secure power.</li></ol>",
+	"Interior Fountain Care": "<p>Keep it tidy and quiet: wipe and polish surfaces, descale the jets, top off and treat the water, and check for splash.</p>",
+	"Safety & Electrical": "<p><b>Do this first.</b> Verify GFCI protection trips, confirm bonding/grounding, and look for exposed wiring or unsealed junction boxes before any other work.</p>",
+}
+
 # template_name -> ordered list of Section names (base + new)
 TEMPLATES = {
 	"Spray Feature Maintenance": [
@@ -246,6 +261,7 @@ def _seed_sections():
 		section.section_title = section_title
 		section.section_type = section_type
 		section.description = description
+		section.step_instructions = INSTRUCTIONS.get(section_title)
 		for sequence, item in enumerate(items, start=1):
 			section.append("items", dict(item, sequence=sequence))
 		section.insert(ignore_permissions=True)

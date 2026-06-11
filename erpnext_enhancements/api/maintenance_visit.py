@@ -134,7 +134,53 @@ def get_visit_bootstrap(record):
     return {
         "record": doc.as_dict(),
         "dashboard": get_dashboard_context(doc.project, doc.serial_no) if doc.project else {},
+        "sections": _section_meta(doc),
         "state": _wizard_state(doc),
+    }
+
+
+def _section_meta(doc):
+    """Per-section how-to content for the wizard's collapsible step panels.
+
+    Keyed by Section docname (the ``section`` link every visit row carries):
+    {title, type, instructions (Text Editor HTML), images:[{image, caption}]}.
+    Only sections the record actually references are returned. The wizard
+    sanitises the HTML and shows a panel only when there's text or an image.
+    """
+    seen = []
+    for table in PAYLOAD_TABLE_MAP:
+        for row in doc.get(table, []):
+            section = row.get("section")
+            if section and section not in seen:
+                seen.append(section)
+    if not seen:
+        return {}
+
+    rows = frappe.get_all(
+        "Sapphire Maintenance Section",
+        filters={"name": ["in", seen]},
+        fields=["name", "section_title", "section_type", "step_instructions"],
+    )
+    images = frappe.get_all(
+        "Sapphire Section Image",
+        filters={"parent": ["in", seen], "parenttype": "Sapphire Maintenance Section"},
+        fields=["parent", "image", "caption"],
+        order_by="parent asc, idx asc",
+    )
+    images_by_section = {}
+    for image in images:
+        images_by_section.setdefault(image.parent, []).append(
+            {"image": image.image, "caption": image.caption}
+        )
+
+    return {
+        row.name: {
+            "title": row.section_title,
+            "type": row.section_type,
+            "instructions": row.step_instructions,
+            "images": images_by_section.get(row.name, []),
+        }
+        for row in rows
     }
 
 

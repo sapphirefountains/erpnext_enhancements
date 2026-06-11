@@ -220,7 +220,10 @@
 .tk-attachments { margin-top: 16px; border-top: 1px solid var(--tk-border); padding-top: 12px; }
 .tk-attachments h6 { color: var(--tk-muted); margin-bottom: 8px; }
 .tk-attachment-list { max-height: 130px; overflow-y: auto; margin-bottom: 8px; }
-.tk-attachment-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9rem; }
+/* color is explicit: these are also the Today's-Visits links, and a bare <a>
+   would fall back to the default blue — invisible on the dark card. */
+.tk-attachment-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 1rem; color: var(--tk-text); }
+.tk-attachment-item:hover { color: var(--tk-primary); }
 
 /* GPS / tracking indicator */
 .tk-track {

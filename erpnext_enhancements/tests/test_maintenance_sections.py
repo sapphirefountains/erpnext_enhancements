@@ -596,6 +596,28 @@ class TestMaintenanceSections(unittest.TestCase):
 		else:
 			self.assertEqual(state["docstatus"], 1)
 
+	def test_visit_bootstrap_returns_section_instructions(self):
+		from erpnext_enhancements.api.maintenance_visit import get_visit_bootstrap
+
+		section = frappe.get_doc("Sapphire Maintenance Section", "Test Chemistry Section")
+		section.step_instructions = "<p>Dip the test strip and read it after 15 seconds.</p>"
+		section.append("step_images", {"image": "/files/howto.png", "caption": "Strip colour chart"})
+		section.save(ignore_permissions=True)
+
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}])
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.maintenance_contract = contract.name
+		record.insert(ignore_permissions=True)
+
+		meta = get_visit_bootstrap(record.name)["sections"].get("Test Chemistry Section")
+		self.assertTrue(meta, "the chemistry section's how-to content should ride along in bootstrap")
+		self.assertIn("test strip", meta["instructions"])
+		self.assertEqual(meta["images"][0]["image"], "/files/howto.png")
+		self.assertEqual(meta["images"][0]["caption"], "Strip colour chart")
+
 	def test_template_named_by_template_name(self):
 		"""autoname field:template_name -> the doc name IS the friendly name,
 		not an opaque hash."""
