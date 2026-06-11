@@ -4,10 +4,16 @@
  "engine": "InnoDB",
  "field_order": [
   "section",
-  "section_type"
+  "section_type",
+  "location_note",
+  "location_section",
+  "location_photo",
+  "latitude",
+  "longitude"
  ],
  "fields": [
   {
+   "columns": 4,
    "fieldname": "section",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -16,17 +22,51 @@
    "reqd": 1
   },
   {
+   "columns": 2,
    "fetch_from": "section.section_type",
    "fieldname": "section_type",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Section Type",
    "read_only": 1
+  },
+  {
+   "columns": 4,
+   "description": "Where on the property this step happens, e.g. \"Pump vault behind the NE hedge\". Shown to the technician on the step's wizard page.",
+   "fieldname": "location_note",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Location"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "location_section",
+   "fieldtype": "Section Break",
+   "label": "Location Details"
+  },
+  {
+   "description": "Photo of the spot, shown in the step's \"How to do this\" panel.",
+   "fieldname": "location_photo",
+   "fieldtype": "Attach Image",
+   "label": "Location Photo"
+  },
+  {
+   "description": "Optional. With Longitude set, the wizard shows a tap-to-navigate Map link — useful on large properties.",
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "precision": "6"
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "precision": "6"
   }
  ],
  "istable": 1,
  "editable_grid": 1,
- "modified": "2026-06-10 12:00:00.000000",
+ "modified": "2026-06-11 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Sapphire Maintenance",
  "name": "Sapphire Template Section",

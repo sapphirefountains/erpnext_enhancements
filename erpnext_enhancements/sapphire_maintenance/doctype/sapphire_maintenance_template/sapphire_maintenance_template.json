@@ -8,7 +8,12 @@
   "customer",
   "project",
   "status",
-  "sections"
+  "sections",
+  "guidance_section",
+  "safety_instructions",
+  "safety_images",
+  "wrapup_instructions",
+  "wrapup_images"
  ],
  "fields": [
   {
@@ -45,6 +50,35 @@
    "fieldtype": "Table",
    "label": "Sections",
    "options": "Sapphire Template Section"
+  },
+  {
+   "collapsible": 1,
+   "description": "Visit-type guidance shown in the Visit Wizard's collapsible panels on the Safety and Wrap-up steps. Site-specific guidance lives on the project's Maintenance Profile — the wizard shows both.",
+   "fieldname": "guidance_section",
+   "fieldtype": "Section Break",
+   "label": "Safety & Wrap-up Guidance"
+  },
+  {
+   "fieldname": "safety_instructions",
+   "fieldtype": "Text Editor",
+   "label": "Safety Step Instructions"
+  },
+  {
+   "fieldname": "safety_images",
+   "fieldtype": "Table",
+   "label": "Safety Images",
+   "options": "Sapphire Section Image"
+  },
+  {
+   "fieldname": "wrapup_instructions",
+   "fieldtype": "Text Editor",
+   "label": "Wrap-up Step Instructions"
+  },
+  {
+   "fieldname": "wrapup_images",
+   "fieldtype": "Table",
+   "label": "Wrap-up Images",
+   "options": "Sapphire Section Image"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",

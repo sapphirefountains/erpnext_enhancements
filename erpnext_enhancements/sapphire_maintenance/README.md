@@ -18,8 +18,13 @@ Sapphire Maintenance Section (parent)            reusable form building block, t
 │                                                  one line: label (+item / uom+min+max / options+mandatory by type)
 └── Sapphire Section Image (child, istable)       step_images: how-to photo (Attach Image) + caption
 
-Sapphire Maintenance Template (parent)           a visit form = ordered composition of Sections
-└── Sapphire Template Section (child, istable)     link to a Section (idx = order)
+Sapphire Maintenance Template (parent)           a visit form = ordered composition of Sections. Also
+│                                                holds visit-type Safety/Wrap-up step guidance
+│                                                (safety_instructions/wrapup_instructions Text Editors
+│                                                + safety_images/wrapup_images — Sapphire Section Image)
+└── Sapphire Template Section (child, istable)     link to a Section (idx = order) + the step's on-site
+                                                   location: location_note, location_photo, lat/lng
+                                                   (wizard shows 📍 line + tap-to-navigate Map link)
 
 Sapphire Service Plan (master)                   one-pick contract preset: default frequency/template,
                                                  visit shape, invoicing cadence, seasonal startup/
@@ -99,7 +104,9 @@ Each path back-fills the other links when the documents exist; none of them are 
 
 The wizard's no-param picker shows two lists: **Today's Visits** (open drafts, `get_my_visits_today`) and **Upcoming — do one early** (`get_upcoming_visits`): Active-contract features due in the next 8–30 days with no draft yet (Per Site Visit contracts collapse to one earliest-due site entry). Tapping **Do Visit Today** calls `create_visit_today`, which spins up a record dated today carrying the `EXTRA_VISIT_LABEL` ("Extra Visit") `visit_label` — a labelled visit, so `update_next_visit_dates` skips it: the pull-forward is an **extra one-off** and the feature's originally scheduled visit still fires on its own date.
 
-**Per-step instructions:** each section-backed step shows a collapsible (collapsed by default) "ℹ️ How to do this" panel built from the Section's `step_instructions` (Text Editor) and `step_images` (photo + caption). `get_visit_bootstrap` returns this per-section meta keyed by the `section` link every visit row carries; the wizard groups a step's rows by section, leading each group with its panel (and a sub-header when a step draws from more than one section). Author once on the Section — it appears everywhere that section is used. The wizard's CSS uses Frappe theme variables throughout, so it reads correctly in Timeless Night; the kiosk's Today's Visits links are given an explicit `--tk-text` colour (a bare `<a>` was falling back to default-blue, invisible on the dark card).
+**Per-step instructions:** each section-backed step shows a collapsible (collapsed by default) "ℹ️ How to do this" panel built from the Section's `step_instructions` (Text Editor) and `step_images` (photo + caption). `get_visit_bootstrap` returns this per-section meta keyed by the `section` link every visit row carries; the wizard groups a step's rows by section, leading each group with its panel (and a sub-header when a step draws from more than one section). Author once on the Section — it appears everywhere that section is used. The **Safety and Wrap-up steps** get the same treatment from two stacked sources: the Template's `safety_instructions`/`wrapup_instructions` (+ image tables) carry the visit-type guidance ("Before you start" / "Wrapping up" panels), and the Maintenance Profile's `wrapup_instructions` adds the site-specific reminders (the profile's safety text stays prominent in the red banner, never collapsed).
+
+**Step locations:** each Template step row can carry where on the property the step happens — `location_note` ("Pump vault behind the NE hedge"), `location_photo`, and optional lat/lng. The wizard shows an always-visible 📍 line above the step's cards (with a tap-to-navigate Google Maps link when coordinates are set) and folds the spot photo into the step's collapsible panel. Locations live on the **template** (not the section library) because templates are customer/project-scoped — each site's form carries its own spots. The wizard's CSS uses Frappe theme variables throughout, so it reads correctly in Timeless Night; the kiosk's Today's Visits links are given an explicit `--tk-text` colour (a bare `<a>` was falling back to default-blue, invisible on the dark card).
 
 **Time Kiosk integration:** clocking into a project with an Active contract (or Active template) surfaces a **Maintenance Form** button on the kiosk's active-job card (`api/time_kiosk.py::get_maintenance_context` — links the newest open draft *into the Visit Wizard*, else a prefilled new desk record, opened in a new tab so the clock keeps running). Clock-out and cross-project switches re-check the server and warn (non-blocking confirm) when the technician hasn't submitted a record for that project since clock-in. Field technicians need the native **Maintenance User** role (create/write/submit on the record, read on contracts/templates; the workflow's Draft state is editable by this role).
 

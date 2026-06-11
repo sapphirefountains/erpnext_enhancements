@@ -195,6 +195,19 @@ TEMPLATES = {
 	],
 }
 
+# Generic Safety / Wrap-up step guidance stamped on each seeded template
+# (shown in the Visit Wizard's collapsible panels; refine per template in the
+# UI and add images via the template's Safety/Wrap-up Images tables).
+TEMPLATE_SAFETY = (
+	"<p>Walk the site before starting: check for trip hazards, confirm GFCI "
+	"protection, and lock out the pump before opening any equipment.</p>"
+)
+TEMPLATE_WRAPUP = (
+	"<p>Walk the feature once more: water level correct, no leaks, equipment "
+	"area tidy, gates locked. Photograph anything unusual and note it for the "
+	"office.</p>"
+)
+
 # Service Plans. startup/winterization templates default to the "— Full"
 # variants this patch seeds.
 FULL_STARTUP = "Spring Startup — Full"
@@ -276,6 +289,8 @@ def _seed_templates():
 		template = frappe.new_doc("Sapphire Maintenance Template")
 		template.template_name = template_name
 		template.status = "Draft"
+		template.safety_instructions = TEMPLATE_SAFETY
+		template.wrapup_instructions = TEMPLATE_WRAPUP
 		for section_name in section_names:
 			if frappe.db.exists("Sapphire Maintenance Section", section_name):
 				template.append("sections", {"section": section_name})

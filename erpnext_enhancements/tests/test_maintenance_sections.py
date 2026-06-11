@@ -618,6 +618,43 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.assertEqual(meta["images"][0]["image"], "/files/howto.png")
 		self.assertEqual(meta["images"][0]["caption"], "Strip colour chart")
 
+	def test_visit_bootstrap_returns_template_guidance_and_step_locations(self):
+		from erpnext_enhancements.api.maintenance_visit import get_visit_bootstrap
+
+		template = frappe.get_doc("Sapphire Maintenance Template", self.template_name)
+		template.safety_instructions = "<p>Lock out the pump first.</p>"
+		template.wrapup_instructions = "<p>Walk the feature once more.</p>"
+		template.append("safety_images", {"image": "/files/ppe.png", "caption": "Required PPE"})
+		for row in template.sections:
+			if row.section == "Test Chemistry Section":
+				row.location_note = "NE basin skimmer"
+				row.location_photo = "/files/skimmer.png"
+				row.latitude = 40.123456
+				row.longitude = -111.654321
+		template.save(ignore_permissions=True)
+
+		contract = self._make_contract(features=[{"serial_no": SERIALS[0], "frequency": "Monthly"}])
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.maintenance_contract = contract.name
+		record.insert(ignore_permissions=True)
+
+		data = get_visit_bootstrap(record.name)
+
+		guidance = data["template_meta"]
+		self.assertIn("Lock out", guidance["safety"]["instructions"])
+		self.assertEqual(guidance["safety"]["images"][0]["image"], "/files/ppe.png")
+		self.assertIn("once more", guidance["wrapup"]["instructions"])
+
+		location = data["sections"]["Test Chemistry Section"]["location"]
+		self.assertEqual(location["note"], "NE basin skimmer")
+		self.assertEqual(location["photo"], "/files/skimmer.png")
+		self.assertEqual((location["latitude"], location["longitude"]), (40.123456, -111.654321))
+		# sections without a template-step location stay location-less
+		self.assertIsNone(data["sections"]["Test Cleaning Section"]["location"])
+
 	def test_template_named_by_template_name(self):
 		"""autoname field:template_name -> the doc name IS the friendly name,
 		not an opaque hash."""

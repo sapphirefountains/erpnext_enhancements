@@ -80,6 +80,8 @@ const VZ_STYLE = `
 .vz-help.vz-open .vz-help-body{display:block;}
 .vz-help-body img{max-width:100%;border-radius:8px;margin:10px 0 2px;display:block;}
 .vz-help-cap{font-size:13px;color:var(--text-muted);margin-bottom:8px;}
+.vz-location{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-muted);margin:2px 0 8px;}
+.vz-location a{color:var(--primary,#2490ef);font-weight:600;white-space:nowrap;}
 .vz-group-head{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin:16px 0 8px;}
 .vz-nav{position:fixed;left:0;right:0;bottom:0;background:var(--card-bg);border-top:1px solid var(--border-color);padding:10px 16px calc(10px + env(safe-area-inset-bottom));z-index:5;}
 .vz-nav-inner{max-width:640px;margin:0 auto;display:flex;gap:10px;}
@@ -117,6 +119,7 @@ class VisitWizard {
 		this.doc = null;
 		this.dashboard = {};
 		this.section_meta = {};
+		this.template_meta = {};
 		this.steps = [];
 		this.step_index = 0;
 		this.features = [];
@@ -255,6 +258,7 @@ class VisitWizard {
 				this.doc = data.record;
 				this.dashboard = data.dashboard || {};
 				this.section_meta = data.sections || {};
+				this.template_meta = data.template_meta || {};
 				this.apply_state(data.state);
 				this.safety_ok = !!this.doc.safety_acknowledged;
 				this.build_steps();
@@ -514,9 +518,9 @@ class VisitWizard {
 	}
 
 	// Render a section-backed step: group the step's rows by their source
-	// Section (first-seen order), and lead each group with that section's
-	// collapsible how-to panel. A sub-header is shown only when the step draws
-	// from more than one section.
+	// Section (first-seen order), leading each group with its 📍 location line
+	// and collapsible how-to panel. A sub-header is shown only when the step
+	// draws from more than one section.
 	render_step_groups(table, render_row) {
 		const rows = this.rows(table);
 		const order = [];
@@ -536,22 +540,43 @@ class VisitWizard {
 			if (multi && title) {
 				this.$wrap.append(`<div class="vz-group-head">${frappe.utils.escape_html(title)}</div>`);
 			}
+			if (meta && meta.location) {
+				this.render_location(meta.location);
+			}
 			this.render_help(meta);
 			groups[key].forEach((row) => this.$wrap.append(render_row(row)));
 		});
 	}
 
-	// Collapsible (collapsed-by-default) "How to do this" panel for a section:
-	// sanitized instructions HTML + any how-to images with captions.
-	render_help(meta) {
+	// Always-visible "where on the property" line for a step: 📍 note plus a
+	// tap-to-navigate Map link when the template step carries coordinates.
+	render_location(location) {
+		let html = `<span>📍 ${frappe.utils.escape_html(location.note || __("Step location"))}</span>`;
+		if (location.latitude && location.longitude) {
+			const url = `https://www.google.com/maps?q=${encodeURIComponent(location.latitude + "," + location.longitude)}`;
+			html += `<a href="${url}" target="_blank" rel="noopener">${__("Map")} ↗</a>`;
+		}
+		this.$wrap.append(`<div class="vz-location">${html}</div>`);
+	}
+
+	// Collapsible (collapsed-by-default) guidance panel: sanitized instructions
+	// HTML, the step's location photo (captioned with its note), and any how-to
+	// images with captions. `title` defaults to "How to do this".
+	render_help(meta, title) {
 		if (!meta) return;
+		const location = meta.location || {};
+		const images = [];
+		if (location.photo) {
+			images.push({ image: location.photo, caption: location.note || __("Step location") });
+		}
+		(meta.images || []).forEach((img) => images.push(img));
+
 		const has_text = meta.instructions && String(meta.instructions).trim();
-		const has_images = meta.images && meta.images.length;
-		if (!has_text && !has_images) return;
+		if (!has_text && !images.length) return;
 
 		const sanitise = frappe.utils.xss_sanitise;
 		let body = has_text ? `<div>${sanitise(meta.instructions)}</div>` : "";
-		(meta.images || []).forEach((img) => {
+		images.forEach((img) => {
 			if (!img.image) return;
 			body += `<img src="${encodeURI(img.image)}" alt="" loading="lazy">`;
 			if (img.caption) {
@@ -562,7 +587,7 @@ class VisitWizard {
 		const $help = $(`
 			<div class="vz-help">
 				<button type="button" class="vz-help-head">
-					<span>ℹ️ ${__("How to do this")}</span>
+					<span>ℹ️ ${frappe.utils.escape_html(title || __("How to do this"))}</span>
 					<span class="vz-help-caret">▸</span>
 				</button>
 				<div class="vz-help-body">${body}</div>
@@ -592,6 +617,10 @@ class VisitWizard {
 				${serial.custom_site_instructions ? `<br>${sanitise(serial.custom_site_instructions)}` : ""}
 			</div>
 		`);
+
+		// Visit-type safety guidance from the form template (the site-specific
+		// text above stays prominent in the red banner, never collapsed).
+		this.render_help(this.template_meta.safety, __("Before you start"));
 
 		const $ack = $(`
 			<div class="vz-card vz-check-card ${this.safety_ok ? "vz-on" : ""}">
@@ -824,6 +853,18 @@ class VisitWizard {
 	// ----- step: wrap-up ------------------------------------------------------
 
 	render_wrapup() {
+		// Template wrap-up guidance + the site's own reminders (Maintenance
+		// Profile), stacked into one collapsible panel.
+		const template_wrapup = this.template_meta.wrapup || {};
+		const site_note = (this.dashboard.profile || {}).wrapup_instructions;
+		const wrapup_meta = {
+			instructions:
+				(template_wrapup.instructions || "") +
+				(site_note ? `<p><b>${__("This site")}:</b> ${frappe.utils.escape_html(site_note)}</p>` : ""),
+			images: template_wrapup.images || [],
+		};
+		this.render_help(wrapup_meta, __("Wrapping up"));
+
 		const $notes_card = $(`
 			<div class="vz-card">
 				<div class="vz-card-title">${__("Visit Notes")}</div>

@@ -9,6 +9,7 @@
   "customer",
   "safety_instructions",
   "access_codes",
+  "wrapup_instructions",
   "site_location_section",
   "latitude",
   "longitude"
@@ -41,6 +42,12 @@
    "fieldname": "access_codes",
    "fieldtype": "Data",
    "label": "Access Codes"
+  },
+  {
+   "description": "Site-specific wrap-up reminders shown on the Visit Wizard's last step (e.g. where to stage debris, which hose bib to rinse with). Visit-type guidance lives on the form Template.",
+   "fieldname": "wrapup_instructions",
+   "fieldtype": "Small Text",
+   "label": "Wrap-up Instructions"
   },
   {
    "description": "Site coordinates power the Time Kiosk's \"clock in here?\" suggestion when a technician arrives.",

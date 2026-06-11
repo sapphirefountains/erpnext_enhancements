@@ -466,7 +466,12 @@ def get_dashboard_context(project, serial_no=None):
 	context = {}
 
 	# 1. Profile Data
-	profile = frappe.db.get_value("Sapphire Maintenance Profile", {"project": project}, ["safety_instructions", "access_codes"], as_dict=True)
+	profile = frappe.db.get_value(
+		"Sapphire Maintenance Profile",
+		{"project": project},
+		["safety_instructions", "access_codes", "wrapup_instructions"],
+		as_dict=True,
+	)
 	context['profile'] = profile or {}
 
 	# 2. Serial No Data
