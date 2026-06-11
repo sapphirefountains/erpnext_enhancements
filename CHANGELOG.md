@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-06-11
+
+### Added
+- **Process Document charts are version-controlled and app-seeded.** All Mermaid.js Process Documents now live in the repo (`setup/process_documents.py`) and are upserted by a new `after_migrate` hook: missing charts are created, and a chart whose `mermaid_code` drifted from the canonical text is overwritten on the next migrate — the same repo-is-source-of-truth philosophy as `fixtures/`. Site-created documents under other titles are untouched and nothing is deleted.
+  - The eleven charts authored on the site (ERPNext Flow, Sales and CRM, Buying and Procurement, Inventory, Manufacturing, Accounting, HR and Projects, Lead to Project, How to Order, Document Linking, Customer Management) were ported verbatim (whitespace-normalized).
+  - New chart **"Sapphire Fountains Enhancements Flow"** documents the app's own processes and where they hand off to stock ERPNext: Opportunity → custom Create Project → hand-off process steps (anchored auto-completion, SLA notifications, daily escalation); Maintenance Contract → scheduler-drafted visit records → Stock Entry / Warranty Claim / draft Sales Invoice / Timesheet; Time Kiosk clock-ins (Job Interval → GPS logs → Timesheet consolidation, kiosk Maintenance Form button); the Travel Trip workflow → draft Expense Claim; and the background integrations (Google Drive folder provisioning, QuickBooks Online two-way sync, Google Calendar task push, GA4 dashboard, Triton telephony/AI, read-only MCP tools).
+  - **Charts must not contain raw HTML** (no `<br/>` line breaks, no `<-->` arrows): Frappe HTML-sanitizes the Markdown Editor field on save as soon as a value looks like HTML, mangling every `-->` into `--&gt;` — which breaks the rendered diagram *and* would make the seeder's drift check rewrite the document on every migrate. Multi-line labels use quoted strings with real newlines instead (caught live: the first version of the new chart was stored escaped). Enforced by the new bench-free `tests/test_process_documents.py` (extracts the chart dict via `ast`, so it runs without Frappe), alongside title/flowchart shape checks. All 12 charts were also render-verified against the same `mermaid@11.12.0` CDN build the form script loads.
+  - The live site was seeded directly (all 12 documents now match the repo byte-for-byte), so the first post-deploy migrate is a no-op for them.
+
 ## [1.10.0] - 2026-06-11
 
 ### Added

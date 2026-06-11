@@ -116,7 +116,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `override_whitelisted_methods` | Replace a core endpoint | `opportunity.make_project` → `opportunity_enhancements.make_project` |
 | `override_doctype_dashboards` | Customize the "connections" dashboard | `Project`, `Employee` |
 | `extend_bootinfo` | Per-session data shipped to the desk client | `boot.boot_session` — the live-collab doctype allowlist (`frappe.boot.collab_doctypes`) from ERPNext Enhancements Settings |
-| `after_migrate` | Idempotent setup after each migrate | `setup.custom_fields`, `setup.supplier_groups` |
+| `after_migrate` | Idempotent setup after each migrate | `setup.custom_fields`, `setup.supplier_groups`, `setup.process_documents` (seeds/updates the Mermaid.js Process Document charts — repo is the source of truth) |
 | `fixtures` | Records installed on migrate | **All manual customizations** — every manually created Custom Field (425) and Property Setter (349); see [`fixtures/README.md`](erpnext_enhancements/fixtures/README.md) — plus Travel Trip Workflow + states/actions, maintenance Notifications + Print Format |
 | `portal_menu_items` | Customer portal links | `/maintenance-records` |
 
