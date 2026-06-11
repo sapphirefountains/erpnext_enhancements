@@ -28,7 +28,11 @@ TRAVEL_ONLY_STATES = (
 
 def execute():
 	if frappe.db.exists("Workflow", "Travel Trip Workflow"):
-		frappe.db.delete("Workflow Action", {"workflow": "Travel Trip Workflow"})
+		# Workflow Action has NO `workflow` column (verified on the live site) —
+		# its pending-approval rows point at documents, so clear them by
+		# reference. The drop_legacy_travel_trips patch already removed the
+		# trip-referencing rows; this is an idempotent belt-and-braces sweep.
+		frappe.db.delete("Workflow Action", {"reference_doctype": "Travel Trip"})
 		frappe.delete_doc("Workflow", "Travel Trip Workflow", force=True, ignore_permissions=True)
 
 	for state in TRAVEL_ONLY_STATES:
