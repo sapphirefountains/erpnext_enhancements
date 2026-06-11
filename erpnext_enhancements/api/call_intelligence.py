@@ -337,6 +337,9 @@ def process_call_intelligence(**kwargs):
             agent_user=val("agent_user"),
             agent_name=val("agent_name"),
             voicemail_url=val("voicemail_url"),
+            # the gateway may have already logged a Communication for this
+            # call (e.g. the missed-call path) — cross-link it
+            communication=val("communication"),
         )
 
         frappe.db.commit()
