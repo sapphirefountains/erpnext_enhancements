@@ -4,6 +4,7 @@
  "engine": "InnoDB",
  "field_order": [
   "section",
+  "section_title",
   "serial_no",
   "reading",
   "reading_value",
@@ -11,6 +12,7 @@
   "min_value",
   "max_value",
   "out_of_range",
+  "is_mandatory",
   "notes",
   "photo"
  ],
@@ -21,6 +23,14 @@
    "hidden": 1,
    "label": "Section",
    "options": "Sapphire Maintenance Section"
+  },
+  {
+   "description": "Grouping header for renders (wizard, print, portal) — copied from the template section.",
+   "fieldname": "section_title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Section Title",
+   "read_only": 1
   },
   {
    "fieldname": "serial_no",
@@ -68,6 +78,15 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Out of Range",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Submit is blocked while this reading is empty. Copied from the template section item.",
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Mandatory",
    "read_only": 1
   },
   {

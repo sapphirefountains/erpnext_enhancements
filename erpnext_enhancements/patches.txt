@@ -50,6 +50,8 @@ erpnext_enhancements.patches.create_ai_auditor_role
 # v1.15.1 drop the broken virtual "historical visits" child table — it crashed
 # has_permission (get_all_children) for any user with User Permissions
 erpnext_enhancements.patches.remove_historical_visit_doctype
+# v1.16.0 maintenance UX: standard service-plan presets for the contract form
+erpnext_enhancements.patches.seed_service_plans
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

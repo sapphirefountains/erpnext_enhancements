@@ -1,0 +1,180 @@
+{
+ "autoname": "field:plan_name",
+ "creation": "2026-06-11 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "plan_name",
+  "disabled",
+  "column_break_head",
+  "description",
+  "defaults_section",
+  "default_frequency",
+  "default_template",
+  "column_break_defaults",
+  "visit_shape",
+  "invoicing_frequency",
+  "seasonal_section",
+  "seasonal_startup",
+  "startup_month",
+  "startup_template",
+  "column_break_seasonal",
+  "winterization",
+  "winterization_month",
+  "winterization_template"
+ ],
+ "fields": [
+  {
+   "fieldname": "plan_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Plan Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "description": "Retired plans stay on old contracts but disappear from the picker.",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Shown to the office user when picking a plan.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Contract Defaults"
+  },
+  {
+   "fieldname": "default_frequency",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Visit Frequency",
+   "options": "\nDaily\nWeekly\nBi-Weekly\nMonthly\nQuarterly\nYearly"
+  },
+  {
+   "fieldname": "default_template",
+   "fieldtype": "Link",
+   "label": "Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "fieldname": "column_break_defaults",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Per Feature",
+   "description": "Per Feature: one visit form per water feature. Per Site Visit: one form covers all covered features.",
+   "fieldname": "visit_shape",
+   "fieldtype": "Select",
+   "label": "Visit Shape",
+   "options": "Per Feature\nPer Site Visit"
+  },
+  {
+   "description": "Blank = leave the contract's invoicing frequency alone when this plan is applied.",
+   "fieldname": "invoicing_frequency",
+   "fieldtype": "Select",
+   "label": "Invoicing Frequency",
+   "options": "\nPer Visit\nMonthly\nQuarterly\nAnnually"
+  },
+  {
+   "fieldname": "seasonal_section",
+   "fieldtype": "Section Break",
+   "label": "Seasonal Visits"
+  },
+  {
+   "default": "0",
+   "fieldname": "seasonal_startup",
+   "fieldtype": "Check",
+   "label": "Spring Startup"
+  },
+  {
+   "default": "April",
+   "depends_on": "seasonal_startup",
+   "fieldname": "startup_month",
+   "fieldtype": "Select",
+   "label": "Startup Month",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "depends_on": "seasonal_startup",
+   "fieldname": "startup_template",
+   "fieldtype": "Link",
+   "label": "Startup Form Template",
+   "options": "Sapphire Maintenance Template"
+  },
+  {
+   "fieldname": "column_break_seasonal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "winterization",
+   "fieldtype": "Check",
+   "label": "Winterization"
+  },
+  {
+   "default": "October",
+   "depends_on": "winterization",
+   "fieldname": "winterization_month",
+   "fieldtype": "Select",
+   "label": "Winterization Month",
+   "options": "\nJanuary\nFebruary\nMarch\nApril\nMay\nJune\nJuly\nAugust\nSeptember\nOctober\nNovember\nDecember"
+  },
+  {
+   "depends_on": "winterization",
+   "fieldname": "winterization_template",
+   "fieldtype": "Link",
+   "label": "Winterization Form Template",
+   "options": "Sapphire Maintenance Template"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-11 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Service Plan",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

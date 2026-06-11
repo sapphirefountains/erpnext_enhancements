@@ -162,6 +162,10 @@ def generate_predictive_maintenance_records():
 	"""
 	from frappe.utils import add_days, nowdate, getdate
 
+	from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
+		iter_seasonal_visits,
+	)
+
 	today = getdate(nowdate())
 	horizon = add_days(today, 7)
 	month_name = today.strftime("%B")
@@ -206,16 +210,17 @@ def generate_predictive_maintenance_records():
 					continue
 				_draft_maintenance_record(contract, serial_no=row.serial_no)
 
-		# Seasonal (annual) visits: startup / winterization
-		for row in contract.get("seasonal_visits", []):
-			if row.target_month != month_name or (row.last_generated_year or 0) >= today.year:
+		# Seasonal (annual) visits: the contract's flat startup/winterization
+		# fields plus its custom rows, via the single iter_seasonal_visits path.
+		for visit in iter_seasonal_visits(contract):
+			if visit["target_month"] != month_name or (visit["last_generated_year"] or 0) >= today.year:
 				continue
 			if not frappe.db.exists(
 				"Sapphire Maintenance Record",
-				{"maintenance_contract": contract.name, "visit_label": row.visit_label, "docstatus": 0},
+				{"maintenance_contract": contract.name, "visit_label": visit["label"], "docstatus": 0},
 			):
-				_draft_maintenance_record(contract, visit_label=row.visit_label)
-			frappe.db.set_value("Sapphire Seasonal Visit", row.name, "last_generated_year", today.year)
+				_draft_maintenance_record(contract, visit_label=visit["label"])
+			visit["stamp"](today.year)
 
 	# 2. Legacy fallback for projects without an Active contract: Sales Order
 	# Items whose next predictive visit is within 7 days.

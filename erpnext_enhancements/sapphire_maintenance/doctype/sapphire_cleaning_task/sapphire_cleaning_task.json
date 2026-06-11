@@ -4,9 +4,11 @@
  "engine": "InnoDB",
  "field_order": [
   "section",
+  "section_title",
   "serial_no",
   "task",
   "is_done",
+  "is_mandatory",
   "notes",
   "photo"
  ],
@@ -17,6 +19,14 @@
    "hidden": 1,
    "label": "Section",
    "options": "Sapphire Maintenance Section"
+  },
+  {
+   "description": "Grouping header for renders (wizard, print, portal) — copied from the template section.",
+   "fieldname": "section_title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Section Title",
+   "read_only": 1
   },
   {
    "fieldname": "serial_no",
@@ -39,6 +49,15 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Done"
+  },
+  {
+   "default": "0",
+   "description": "Submit is blocked while this task is neither done nor annotated. Copied from the template section item.",
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Mandatory",
+   "read_only": 1
   },
   {
    "fieldname": "notes",

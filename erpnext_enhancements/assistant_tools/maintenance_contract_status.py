@@ -79,6 +79,13 @@ class MaintenanceContractStatus(BaseTool):
                 "name", "project", "customer", "status", "visit_shape",
                 "invoicing_frequency", "start_date", "end_date",
                 "project_contract", "sales_order", "default_template",
+                "service_plan", "default_frequency",
+                # flat seasonal pair — merged into each contract's
+                # seasonal_visits list below, then dropped from the output
+                "seasonal_startup", "startup_month", "startup_template",
+                "startup_last_generated_year",
+                "winterization", "winterization_month", "winterization_template",
+                "winterization_last_generated_year",
             ],
             order_by="project asc",
             limit=max_contracts,
@@ -130,7 +137,31 @@ class MaintenanceContractStatus(BaseTool):
             project_by_contract[contract["name"]] = contract
             if include_features:
                 contract["features"] = features_by_contract.get(contract["name"], [])
-                contract["seasonal_visits"] = seasonal_by_contract.get(contract["name"], [])
+                # Standard startup/winterization live as flat contract fields;
+                # report them in the same shape as the custom child rows.
+                flat_visits = []
+                if contract.get("seasonal_startup"):
+                    flat_visits.append({
+                        "visit_label": "Seasonal Startup",
+                        "template": contract.get("startup_template"),
+                        "target_month": contract.get("startup_month"),
+                        "last_generated_year": contract.get("startup_last_generated_year"),
+                    })
+                if contract.get("winterization"):
+                    flat_visits.append({
+                        "visit_label": "Winterization",
+                        "template": contract.get("winterization_template"),
+                        "target_month": contract.get("winterization_month"),
+                        "last_generated_year": contract.get("winterization_last_generated_year"),
+                    })
+                contract["seasonal_visits"] = flat_visits + seasonal_by_contract.get(contract["name"], [])
+            for internal in (
+                "seasonal_startup", "startup_month", "startup_template",
+                "startup_last_generated_year",
+                "winterization", "winterization_month", "winterization_template",
+                "winterization_last_generated_year",
+            ):
+                contract.pop(internal, None)
 
         for visit in upcoming:
             parent = project_by_contract.get(visit["contract"]) or {}

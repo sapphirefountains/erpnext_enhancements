@@ -13,9 +13,16 @@ chemicals are drawn. It sits between two existing documents:
     water-feature items into ``covered_features``.
 
 The daily scheduler (``tasks.generate_predictive_maintenance_records``) reads
-Active contracts' feature rows (``next_visit_date``) and seasonal rows
-(``target_month``) to draft Sapphire Maintenance Records; record submission
-writes the rolling dates back (``api.maintenance_scheduling``).
+Active contracts' feature rows (``next_visit_date``) and seasonal visits
+(:func:`iter_seasonal_visits`) to draft Sapphire Maintenance Records; record
+submission writes the rolling dates back (``api.maintenance_scheduling``).
+
+Seasonal visits live in two places, unified by :func:`iter_seasonal_visits`:
+the standard startup/winterization pair are flat checkbox+month fields on the
+contract (one click to enable), while unusual annual visits go in the
+``seasonal_visits`` child table ("Custom Seasonal Visits", in a collapsed
+section). A Sapphire Service Plan stamps the standard pair, frequency,
+template and visit shape onto the contract in one pick (form JS).
 """
 
 import frappe
@@ -37,16 +44,37 @@ MONTHS = [
 	"July", "August", "September", "October", "November", "December",
 ]
 
+# The scheduler's draft dedup and the cadence-skip in maintenance_scheduling
+# both key on these exact visit_label strings — never reword them.
+STARTUP_LABEL = "Seasonal Startup"
+WINTERIZATION_LABEL = "Winterization"
+
 
 class SapphireMaintenanceContract(Document):
 	def validate(self):
 		self._check_single_active_contract()
+		self._materialize_feature_defaults()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
 				_("No Sales Order is linked — per-visit invoicing will fall back to the project's Maintenance Sales Order."),
 				indicator="orange",
 				alert=True,
 			)
+
+	def _materialize_feature_defaults(self):
+		"""Fill blanks on feature rows so the scheduler always sees real values.
+
+		Frequency inherits the contract-level default (the value the scheduler
+		uses stays visible on the row, nothing to debug at runtime); a blank
+		``next_visit_date`` would silently never be scheduled, so it anchors to
+		the contract start (or today). Covers rows from every path — form,
+		mappers, API.
+		"""
+		for row in self.get("covered_features", []):
+			if not row.frequency:
+				row.frequency = self.default_frequency
+			if not row.next_visit_date:
+				row.next_visit_date = self.start_date or nowdate()
 
 	def _check_single_active_contract(self):
 		"""The scheduler and visit forms resolve "the" Active contract for a
@@ -73,6 +101,73 @@ def get_active_contract(project):
 		"Sapphire Maintenance Contract", {"project": project, "status": "Active"}, "name"
 	)
 	return frappe.get_doc("Sapphire Maintenance Contract", name) if name else None
+
+
+def iter_seasonal_visits(contract):
+	"""Yield every seasonal visit on a contract in one uniform shape.
+
+	The single code path over both storages: the flat startup/winterization
+	checkbox fields and the "Custom Seasonal Visits" child rows. Consumers
+	(``tasks.generate_predictive_maintenance_records``, ``resolve_template``)
+	never need to know which one a visit came from.
+
+	Yields:
+		dict: {label, target_month, template, last_generated_year,
+		stamp(year)} — ``stamp`` persists the generated-year dedup mark on
+		whichever storage backs the visit.
+	"""
+	flat = [
+		("seasonal_startup", STARTUP_LABEL, "startup_month", "startup_template", "startup_last_generated_year"),
+		("winterization", WINTERIZATION_LABEL, "winterization_month", "winterization_template", "winterization_last_generated_year"),
+	]
+	for check_field, label, month_field, template_field, year_field in flat:
+		if not contract.get(check_field):
+			continue
+		yield {
+			"label": label,
+			"target_month": contract.get(month_field),
+			"template": contract.get(template_field),
+			"last_generated_year": contract.get(year_field),
+			"stamp": lambda year, field=year_field: frappe.db.set_value(
+				"Sapphire Maintenance Contract", contract.name, field, year
+			),
+		}
+	for row in contract.get("seasonal_visits", []):
+		yield {
+			"label": row.visit_label,
+			"target_month": row.target_month,
+			"template": row.template,
+			"last_generated_year": row.last_generated_year,
+			"stamp": lambda year, name=row.name: frappe.db.set_value(
+				"Sapphire Seasonal Visit", name, "last_generated_year", year
+			),
+		}
+
+
+@frappe.whitelist()
+def get_project_water_features(project):
+	"""The project's water features, for the contract form's batch-add dialog.
+
+	Serial Nos assigned to the Project (``custom_project``), filtered to the
+	configured water-feature Item when one is set — the same filter the
+	mapper's :func:`_append_features_from_project_serials` uses. ``get_list``
+	so the caller's Serial No read permissions apply.
+
+	Returns:
+		list[dict]: [{value, description}] shaped for a MultiSelectList.
+	"""
+	if not project:
+		return []
+	filters = {"custom_project": project}
+	water_feature_item = frappe.db.get_single_value("ERPNext Enhancements Settings", "water_feature_item")
+	if water_feature_item:
+		filters["item_code"] = water_feature_item
+	return [
+		{"value": row.name, "description": row.item_name or ""}
+		for row in frappe.get_list(
+			"Serial No", filters=filters, fields=["name", "item_name"], order_by="name"
+		)
+	]
 
 
 def _month_or_default(value, default):
@@ -238,25 +333,17 @@ def _apply_project_contract(doc, contract):
 
 	default_frequency = PROJECT_CONTRACT_FREQUENCY_MAP.get(contract.visit_frequency)
 	if default_frequency:
+		doc.default_frequency = doc.default_frequency or default_frequency
+		# validate() materializes the default on save, but the mapped doc is
+		# shown unsaved first — prefill so the user sees the cadence rows.
 		for row in doc.get("covered_features", []):
 			if not row.frequency:
-				row.frequency = default_frequency
+				row.frequency = doc.default_frequency
 
 	included = {row.option_key for row in contract.get("service_options", []) if row.included}
-	existing = {row.visit_label for row in doc.get("seasonal_visits", [])}
-	if ("startup" in included or "package" in included) and "Seasonal Startup" not in existing:
-		doc.append(
-			"seasonal_visits",
-			{
-				"visit_label": "Seasonal Startup",
-				"target_month": _month_or_default(contract.startup_month, "April"),
-			},
-		)
-	if ("winterization" in included or "package" in included) and "Winterization" not in existing:
-		doc.append(
-			"seasonal_visits",
-			{
-				"visit_label": "Winterization",
-				"target_month": _month_or_default(contract.winterization_month, "October"),
-			},
-		)
+	if "startup" in included or "package" in included:
+		doc.seasonal_startup = 1
+		doc.startup_month = _month_or_default(contract.startup_month, "April")
+	if "winterization" in included or "package" in included:
+		doc.winterization = 1
+		doc.winterization_month = _month_or_default(contract.winterization_month, "October")

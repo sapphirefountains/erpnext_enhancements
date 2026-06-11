@@ -11,7 +11,7 @@
       {
         "state": "Draft",
         "doc_status": 0,
-        "allow_edit": "System Manager"
+        "allow_edit": "Maintenance User"
       },
       {
         "state": "Pending Review",
@@ -29,7 +29,7 @@
         "state": "Draft",
         "action": "Request Review",
         "next_state": "Pending Review",
-        "allowed": "System Manager"
+        "allowed": "Maintenance User"
       },
       {
         "state": "Pending Review",

@@ -431,9 +431,11 @@ def get_maintenance_context(project=None, since=None):
             "required": True,
             "contract": Active contract name or None,
             "draft": newest open draft record for the project or None,
-            "form_route": desk URL — the draft when one exists, else a
-                prefilled new-record route (project/customer/contract/
-                technician as query params -> frappe.route_options),
+            "form_route": desk URL — the Visit Wizard when a draft exists,
+                else a prefilled new-record desk route (project/customer/
+                contract/technician as query params -> frappe.route_options;
+                the wizard needs an existing record, so the create path stays
+                on the desk form),
             "submitted_since": bool (False when ``since`` not given),
         }
     """
@@ -461,7 +463,7 @@ def get_maintenance_context(project=None, since=None):
     )
 
     if draft:
-        form_route = "/app/sapphire-maintenance-record/" + draft
+        form_route = "/app/visit-wizard?record=" + draft
     else:
         from urllib.parse import urlencode
 
@@ -525,7 +527,7 @@ def get_my_visits_today():
         ))
     for d in drafts:
         d["project_title"] = titles.get(d.project) or d.project
-        d["route"] = "/app/sapphire-maintenance-record/" + d.name
+        d["route"] = "/app/visit-wizard?record=" + d.name
     return drafts
 
 

@@ -172,6 +172,13 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 			frm.dashboard.add_indicator(__("{0}% Complete", [pct]), color);
 		}
 
+		// The guided touch-first flow for techs — same record, no grids.
+		if (!frm.is_new() && frm.doc.docstatus === 0) {
+			frm.add_custom_button(__("Open Visit Wizard"), () => {
+				window.location.href = "/app/visit-wizard?record=" + encodeURIComponent(frm.doc.name);
+			});
+		}
+
 		ee_setup_dictation(frm);
 	},
 

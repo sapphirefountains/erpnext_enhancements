@@ -1,0 +1,27 @@
+{
+ "content": "",
+ "creation": "2026-06-11 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "Sapphire Maintenance",
+ "name": "visit-wizard",
+ "owner": "Administrator",
+ "page_name": "visit-wizard",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Maintenance User"
+  },
+  {
+   "role": "Maintenance Supervisor"
+  },
+  {
+   "role": "Projects Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Visit Wizard"
+}

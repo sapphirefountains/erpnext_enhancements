@@ -21,6 +21,7 @@ Every function is documented inline. This README is the map.
 | `gemini.py` | Vertex AI Gemini REST client (internal helper) | `generate_content_with_vertex_ai` | imported by `communication.py` | Vertex AI `generateContent` |
 | `logger.py` | Client-side error reporting sink | `log_client_error` | browser JS | — |
 | `maintenance_scheduling.py` | Predictive next-visit dating: rolls Sapphire Contract Feature dates forward and mirrors them to Sales Order Items | `update_next_visit_dates` (on_submit hook), `calculate_next_date` | `Sapphire Maintenance Record` `on_submit` hook | — |
+| `maintenance_visit.py` | Visit Wizard backend: bootstrap (load + server-side template instantiation), autosave with field allowlist + optimistic locking, workflow-aware finish — session permissions throughout | `get_visit_bootstrap`, `save_visit`, `finish_visit` | `sapphire_maintenance/page/visit_wizard` | — |
 | `maintenance_workflow.py` | Post-submit automation (stock / timesheet / warranty claim / invoice / reading log) | `process_maintenance_submission` (bg worker) + step helpers, `resolve_consumable_warehouse`, `build_stock_entry_rows` | enqueued from the Sapphire Maintenance Record controller | — |
 | `procurement.py` | Supplier purchase-link store | `get_item_links`, `save_item_link` | `procurement_links.js` | — |
 | `search.py` | AwesomeBar global-search augmentation | `search_global_docs` | `erpnext_enhancements.js` | — |

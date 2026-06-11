@@ -6,6 +6,8 @@
   "sequence",
   "label",
   "item",
+  "default_qty",
+  "qty_step",
   "uom",
   "min_value",
   "max_value",
@@ -34,6 +36,19 @@
    "in_list_view": 1,
    "label": "Item",
    "options": "Item"
+  },
+  {
+   "description": "Chemical Dosing only: the quantity usually used — one tap on the visit form's stepper pre-fills it.",
+   "fieldname": "default_qty",
+   "fieldtype": "Float",
+   "label": "Usual Qty"
+  },
+  {
+   "default": "1",
+   "description": "Chemical Dosing only: the visit form's +/− stepper increment, e.g. 0.5.",
+   "fieldname": "qty_step",
+   "fieldtype": "Float",
+   "label": "Qty Step"
   },
   {
    "description": "Water Chemistry only: reading unit, e.g. ppm, mV, pH.",

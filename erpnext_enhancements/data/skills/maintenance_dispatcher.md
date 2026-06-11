@@ -20,7 +20,11 @@ technicians for fountain & water-feature maintenance.
    - `visit_shape` is "Per Feature" (each water feature has its own cadence
      row) or "Per Site Visit" (one visit covers the site).
    - `seasonal_visits` are annual one-offs (e.g. spring start-up) and do
-     **not** advance the regular cadence.
+     **not** advance the regular cadence. The standard startup/winterization
+     pair is stored as flat contract fields, but the tool reports them merged
+     into `seasonal_visits` — treat the list as complete.
+   - `service_plan` / `default_frequency` describe the contract's standard
+     offering; each feature row still carries its own materialized frequency.
 
 3. **Crew availability** — call `workforce_time_status` with
    `{"mode": "now"}` to see who is already on the clock and where, before

@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.15.2] - 2026-06-11
+## [1.16.0] - 2026-06-11
+
+Maintenance UX overhaul (pre-deployment, so schema moved freely): the contract form refills in clicks instead of grids, and techs get a guided touch-first visit wizard inside the desk.
+
+### Added
+- **Sapphire Service Plan** — one-pick contract preset (default frequency, form template, visit shape, invoicing cadence, seasonal startup/winterization defaults). Picking a plan **stamps** its values onto the contract (never a live link — later plan edits don't ripple). Four standard plans seeded by `patches/seed_service_plans` (Weekly/Bi-Weekly/Monthly Full Service, Quarterly Inspection Only).
+- **"Add Water Features" batch dialog** on the contract — the project's water features pre-checked with native Select All, one shared frequency and first-visit date; a 12-fountain contract is ~10 interactions end to end. Backed by new whitelisted `get_project_water_features` (permission-respecting). New feature rows inherit the contract's Visit Frequency and anchor their next visit to the Start Date.
+- **Visit Wizard** (`/app/visit-wizard`, new desk Page + `api/maintenance_visit.py`): Safety briefing/PPE gate → Water Chemistry cards with range chips and server-confirmed out-of-range flags → Chemicals pre-listed from the template with `[−]/[+]` steppers (first tap jumps to the item's usual dose; ad-hoc item add) → Inspection segmented buttons (custom per-question options honored; Fail/Replace reveal notes + photo) → tap-toggle Cleaning checklist → Wrap-up with dictation, hand-drawn signature pad, and a workflow-aware Finish. Per Site Visit records get per-feature tabs. Steps autosave through a field-allowlisted patch API with optimistic locking; everything reads/writes the ordinary Maintenance Record, so stock/timesheet/warranty/invoice automation is untouched and the desk form remains the supervisor surface. Kiosk "Maintenance Form" buttons and Today's Visits now deep-link into the wizard; the record form gains an "Open Visit Wizard" button.
+- **Mandatory template items enforced** — `Sapphire Section Item.is_mandatory` now travels onto visit rows and blocks submit while unanswered (consumables exempt: qty 0 = "none used"). Previously the flag (and custom inspection `options`) were silently dropped by `get_visit_payload`.
+- Template dosing items carry `default_qty` (usual dose) and `qty_step` (stepper increment); consumable rows display `item_name`/`uom`; all visit rows carry `section_title` for grouped renders.
+
+### Changed
+- **Contract form restructured for fill-out speed** — reads top-to-bottom as who → plan → features → seasonal: the standard startup/winterization pair are now **flat checkbox + month fields** (legal-agreement mapping fills them automatically); the `seasonal_visits` child table remains only for custom annual visits, in a collapsed section. Billing/source links and visit-shape/template settings fold into collapsed Billing & Advanced sections; the features grid shows just Feature / Frequency / Next Visit with template+warehouse overrides in a collapsed row section. All seasonal consumers (scheduler, template resolution, assistant tool) go through the single `iter_seasonal_visits()` helper; the assistant tool still reports one merged `seasonal_visits` list.
+- Contract `validate()` materializes the contract-level default frequency onto blank feature rows and backfills blank `next_visit_date` (start date, else today) — a manually added row can no longer be silently unschedulable.
+- `Sapphire Maintenance Result.selection` widened Select → **Data**: server-side Select validation rejected the custom per-question inspection options templates can define. Standard Pass/Fail/Replace/Other stay the default button set; Fail/Replace warranty behavior unchanged.
+- **Workflow fixture roles fixed** (pre-deployment deadlock): Draft is editable and "Request Review" runnable by **Maintenance User** (was System Manager — techs couldn't fill their own drafts); Projects Manager gains a permission row with submit on the record so "Approve & Submit" can actually submit (previously the approving role had no doctype permission at all).
+
+### Fixed
+- `Serial No` picks on contract feature rows now also filter to the selected Project's serials.
+
 
 ### Fixed
 - **`bench migrate` crashed in `drop_legacy_travel_trips`** (`Unknown column 'custom_travel_trip' in 'WHERE'`, seen twice on the test site — the fix was pushed to the #408 branch minutes after the PR merged, so main never got it; re-landed here). Root cause: `frappe.delete_doc` in a **pre-model-sync** patch loads the document with the NEW controller and meta against the OLD schema — `get_doc` queries child tables model sync hasn't created yet (`tabTrip Traveler`, …) and the new `on_trash` filters on the `custom_travel_trip` Custom Field that fixtures only create later in the same migrate. The patch now deletes **raw rows only** (the two legacy trips, their old child-table rows, and the sidecars `delete_doc` would have cleaned: Comments, Versions, ToDos, DocShares, Workflow Actions).
