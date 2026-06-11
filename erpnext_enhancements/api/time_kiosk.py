@@ -362,11 +362,30 @@ def get_projects():
 @frappe.whitelist()
 def get_kiosk_options():
     """Picker options for the standalone kiosk PWA (which has no desk Link controls):
-    active projects and activity types as [{value, label}] lists."""
-    projects = [
-        {"value": p["name"], "label": p.get("project_name") or p["name"]}
-        for p in get_projects()
-    ]
+    active projects and activity types as [{value, label}] lists.
+
+    Projects additionally carry ``lat``/``lng`` when the project has a Sapphire
+    Maintenance Profile with site coordinates — the kiosk's searchable picker
+    uses them to sort nearest-site-first and show a distance badge. ``value`` is
+    the Project docname (PRJ-#####), which the picker also matches against, so
+    technicians can search by project number as well as title."""
+    sites = {
+        s.project: s
+        for s in frappe.get_all(
+            "Sapphire Maintenance Profile",
+            filters={"latitude": ["!=", 0], "longitude": ["!=", 0]},
+            fields=["project", "latitude", "longitude"],
+        )
+        if s.project
+    }
+    projects = []
+    for p in get_projects():
+        item = {"value": p["name"], "label": p.get("project_name") or p["name"]}
+        site = sites.get(p["name"])
+        if site:
+            item["lat"] = site.latitude
+            item["lng"] = site.longitude
+        projects.append(item)
     activity_types = [
         {"value": a["name"], "label": a["name"]}
         for a in frappe.get_all("Activity Type", fields=["name"], order_by="name asc")

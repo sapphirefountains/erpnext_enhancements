@@ -151,6 +151,33 @@ class TestTimeKiosk(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			time_kiosk.log_time(action="Stop")
 
+	def test_kiosk_options_carry_site_coordinates(self):
+		"""get_kiosk_options projects carry the Maintenance Profile site lat/lng (feeds the picker's nearest-first sort)."""
+		# Make sure the test project passes the active-projects filter in get_projects().
+		if any(f.fieldname == "is_active" for f in frappe.get_meta("Project").fields):
+			frappe.db.set_value("Project", self.project, "is_active", "Yes")
+		else:
+			frappe.db.set_value("Project", self.project, "status", "Open")
+
+		profile = frappe.db.get_value(
+			"Sapphire Maintenance Profile", {"project": self.project}, "name")
+		if profile:
+			frappe.db.set_value("Sapphire Maintenance Profile", profile,
+				{"latitude": 40.876543, "longitude": -111.123456})
+		else:
+			frappe.get_doc({
+				"doctype": "Sapphire Maintenance Profile",
+				"project": self.project,
+				"latitude": 40.876543,
+				"longitude": -111.123456,
+			}).insert()
+
+		options = time_kiosk.get_kiosk_options()
+		entry = next((p for p in options["projects"] if p["value"] == self.project), None)
+		self.assertIsNotNone(entry, "active test project should be offered by the kiosk picker")
+		self.assertAlmostEqual(entry["lat"], 40.876543, places=6)
+		self.assertAlmostEqual(entry["lng"], -111.123456, places=6)
+
 	def test_strict_single_interval(self):
 		"""Starting a job while an interval is already open raises ValidationError."""
 		# Manually insert an open interval
