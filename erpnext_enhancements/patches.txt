@@ -52,6 +52,10 @@ erpnext_enhancements.patches.create_ai_auditor_role
 erpnext_enhancements.patches.remove_historical_visit_doctype
 # v1.16.0 maintenance UX: standard service-plan presets for the contract form
 erpnext_enhancements.patches.seed_service_plans
+# v1.17.0 maintenance UX follow-ups: name templates by template_name (was hash),
+# then seed the expanded section/template/service-plan catalog
+erpnext_enhancements.patches.rename_maintenance_templates
+erpnext_enhancements.patches.seed_maintenance_catalog
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

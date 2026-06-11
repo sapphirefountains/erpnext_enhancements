@@ -82,6 +82,12 @@ const VZ_STYLE = `
 .vz-link-btn{border:none;background:none;color:var(--primary,#2490ef);font-size:13px;cursor:pointer;padding:4px 0;}
 .vz-pick-card{display:block;width:100%;text-align:left;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;}
 .vz-pick-card:active{border-color:var(--primary,#2490ef);}
+.vz-section-head{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);font-weight:600;margin:16px 0 8px;}
+.vz-up-card{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+.vz-up-info{min-width:0;}
+.vz-up-date{font-size:12px;color:var(--text-muted);margin-top:2px;}
+.vz-do-btn{flex:0 0 auto;min-height:42px;padding:0 14px;border-radius:8px;border:1px solid var(--primary,#2490ef);background:var(--primary,#2490ef);color:#fff;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;}
+.vz-do-btn:disabled{opacity:.5;cursor:not-allowed;}
 .vz-empty{text-align:center;color:var(--text-muted);padding:40px 10px;}
 .vz-done-screen{text-align:center;padding:48px 16px;}
 .vz-done-screen .vz-done-icon{font-size:52px;}
@@ -139,30 +145,89 @@ class VisitWizard {
 	// ----- picker --------------------------------------------------------
 
 	show_picker() {
-		this.page.set_title(__("Today's Visits"));
-		frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today").then((r) => {
-			const visits = r.message || [];
+		this.page.set_title(__("Visits"));
+		this.$wrap.html(`<div class="vz-empty">${__("Loading…")}</div>`);
+		Promise.all([
+			frappe.call("erpnext_enhancements.api.time_kiosk.get_my_visits_today"),
+			frappe.call("erpnext_enhancements.api.maintenance_visit.get_upcoming_visits"),
+		]).then(([today_res, upcoming_res]) => {
+			const today = (today_res && today_res.message) || [];
+			const upcoming = (upcoming_res && upcoming_res.message) || [];
 			this.$wrap.empty();
-			if (!visits.length) {
+
+			this.$wrap.append(`<div class="vz-section-head">${__("Today's Visits")}</div>`);
+			if (today.length) {
+				today.forEach((visit) => this.$wrap.append(this.today_card(visit)));
+			} else {
 				this.$wrap.append(
-					`<div class="vz-empty">${__("No open visits for today.")}<br>
+					`<div class="vz-muted" style="padding:2px 0 6px;">${__("Nothing scheduled for today.")}</div>`
+				);
+			}
+
+			if (upcoming.length) {
+				this.$wrap.append(`<div class="vz-section-head">${__("Upcoming — do one early")}</div>`);
+				upcoming.forEach((visit) => this.$wrap.append(this.upcoming_card(visit)));
+			}
+
+			if (!today.length && !upcoming.length) {
+				this.$wrap.append(
+					`<div class="vz-empty">${__("No open or upcoming visits.")}<br>
 					<a href="/app/sapphire-maintenance-record">${__("Open the record list")}</a></div>`
 				);
-				return;
 			}
-			visits.forEach((visit) => {
-				const sub = visit.visit_label || visit.serial_no || __("Site visit");
-				$(`<button class="vz-pick-card">
-					<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
-					<div class="vz-card-sub">${frappe.utils.escape_html(sub)} · ${frappe.utils.escape_html(visit.name)}</div>
-				</button>`)
-					.on("click", () => {
-						window.history.replaceState(null, "", `/app/visit-wizard?record=${encodeURIComponent(visit.name)}`);
-						this.load_record(visit.name);
-					})
-					.appendTo(this.$wrap);
-			});
 		});
+	}
+
+	today_card(visit) {
+		const sub = visit.visit_label || visit.serial_no || __("Site visit");
+		return $(`<button class="vz-pick-card">
+				<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
+				<div class="vz-card-sub">${frappe.utils.escape_html(sub)} · ${frappe.utils.escape_html(visit.name)}</div>
+			</button>`).on("click", () => {
+			window.history.replaceState(null, "", `/app/visit-wizard?record=${encodeURIComponent(visit.name)}`);
+			this.load_record(visit.name);
+		});
+	}
+
+	upcoming_card(visit) {
+		const what = visit.item_name || visit.serial_no || __("Whole site");
+		const when = visit.next_visit_date
+			? frappe.datetime.str_to_user(visit.next_visit_date)
+			: "";
+		const due =
+			visit.days_until != null
+				? __("due {0} · in {1} days", [when, visit.days_until])
+				: when;
+		const $card = $(`<div class="vz-up-card">
+				<div class="vz-up-info">
+					<div class="vz-card-title">${frappe.utils.escape_html(visit.project_title || visit.project)}</div>
+					<div class="vz-card-sub">${frappe.utils.escape_html(what)}</div>
+					<div class="vz-up-date">${frappe.utils.escape_html(due)}</div>
+				</div>
+				<button type="button" class="vz-do-btn">${__("Do Visit Today")}</button>
+			</div>`);
+		$card.find(".vz-do-btn").on("click", (event) => {
+			const $btn = $(event.currentTarget).prop("disabled", true).text(__("Creating…"));
+			frappe
+				.call({
+					method: "erpnext_enhancements.api.maintenance_visit.create_visit_today",
+					args: { contract: visit.contract, serial_no: visit.serial_no || null },
+				})
+				.then((r) => {
+					const name = r && r.message;
+					if (!name) throw new Error("no record returned");
+					window.history.replaceState(
+						null,
+						"",
+						`/app/visit-wizard?record=${encodeURIComponent(name)}`
+					);
+					this.load_record(name);
+				})
+				.catch(() => {
+					$btn.prop("disabled", false).text(__("Do Visit Today"));
+				});
+		});
+		return $card;
 	}
 
 	// ----- loading -------------------------------------------------------

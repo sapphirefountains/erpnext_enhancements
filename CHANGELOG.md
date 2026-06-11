@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-06-11
+
+Maintenance UX follow-ups to v1.16.0: readable template names, a much larger ready-made catalog, and a way for techs to pull a future visit forward.
+
+### Added
+- **Expanded preseeded catalog** (`patches/seed_maintenance_catalog`, insert-only/idempotent): nine more Sections (Advanced Water Chemistry, Pump & Filter Service, Lighting Inspection, Auto-Fill & Water Level, Algae & Water Clarity, Spring Startup Steps, Winterization Steps, Interior Fountain Care, Safety & Electrical), six Templates (Spray Feature / Pondless / Interior Fountain / Large Display Fountain Maintenance, plus full Spring Startup and Winterization), and five Service Plans (Weekly Spray Feature, Bi-Weekly Pondless, Monthly Interior Fountain, Monthly Large Display Per-Site, Seasonal Service Only). All seeded as starting points to trim/rename in the UI. No new Chemical Dosing sections are seeded (those need site-specific Item links) — the new templates reuse the existing dosing section.
+- **Visit Wizard "Do Visit Today"** — the wizard's picker now shows, below Today's Visits, an **Upcoming** list of Active-contract feature visits due in the next 8–30 days that have no draft yet (`get_upcoming_visits`; Per Site Visit contracts collapse to one earliest-due site entry). Tapping **Do Visit Today** (`create_visit_today`) creates a record dated today and opens the wizard on it. It's an **extra one-off** — the record carries an "Extra Visit" `visit_label`, so `update_next_visit_dates` leaves the feature's cadence untouched and the originally scheduled visit still happens later.
+
+### Changed
+- **Sapphire Maintenance Template now names by `template_name`** (`autoname: field:template_name`) instead of an opaque hash — readable in link fields, the contract form, and Service Plans. `patches/rename_maintenance_templates` renames existing rows (cascading through every link field via `frappe.rename_doc`); collisions are logged and skipped rather than merged.
+
+### Notes
+- Re-run `bench migrate` to apply the rename + catalog seed (both idempotent; safe to run twice). The new templates seed as **Draft** — set them Active (or reference them from a Service Plan) before they resolve automatically for a project/customer.
+
 ## [1.16.0] - 2026-06-11
 
 Maintenance UX overhaul (pre-deployment, so schema moved freely): the contract form refills in clicks instead of grids, and techs get a guided touch-first visit wizard inside the desk.

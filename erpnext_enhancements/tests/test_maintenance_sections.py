@@ -596,6 +596,58 @@ class TestMaintenanceSections(unittest.TestCase):
 		else:
 			self.assertEqual(state["docstatus"], 1)
 
+	def test_template_named_by_template_name(self):
+		"""autoname field:template_name -> the doc name IS the friendly name,
+		not an opaque hash."""
+		self.assertEqual(self.template_name, self.template)
+
+	def test_get_upcoming_visits_window_and_dedupe(self):
+		from erpnext_enhancements.api.maintenance_visit import create_visit_today, get_upcoming_visits
+
+		contract = self._make_contract(
+			features=[
+				{"serial_no": SERIALS[0], "frequency": "Monthly", "next_visit_date": add_days(nowdate(), 15)},
+				{"serial_no": SERIALS[1], "frequency": "Monthly", "next_visit_date": add_days(nowdate(), 3)},
+			]
+		)
+
+		# 15 days out = in the 8–30 window; 3 days out = inside the scheduler
+		# horizon, so it's a "Today's Visits" draft, not an upcoming pull-forward.
+		ours = [u for u in get_upcoming_visits() if u["contract"] == contract.name]
+		self.assertEqual([u["serial_no"] for u in ours], [SERIALS[0]])
+
+		# a narrower look-ahead drops the 15-day visit too
+		near = [u for u in get_upcoming_visits(days=10) if u["contract"] == contract.name]
+		self.assertFalse(near)
+
+		# once "Do Visit Today" creates a draft, the feature leaves the list
+		create_visit_today(contract.name, SERIALS[0])
+		after = [
+			u for u in get_upcoming_visits()
+			if u["contract"] == contract.name and u["serial_no"] == SERIALS[0]
+		]
+		self.assertFalse(after)
+
+	def test_create_visit_today_is_extra_one_off(self):
+		from erpnext_enhancements.api.maintenance_visit import EXTRA_VISIT_LABEL, create_visit_today
+		from erpnext_enhancements.api.maintenance_scheduling import update_next_visit_dates
+
+		due = add_days(nowdate(), 15)
+		contract = self._make_contract(
+			features=[{"serial_no": SERIALS[0], "frequency": "Monthly", "next_visit_date": due}]
+		)
+		name = create_visit_today(contract.name, SERIALS[0])
+		record = frappe.get_doc("Sapphire Maintenance Record", name)
+		self.assertEqual(record.visit_label, EXTRA_VISIT_LABEL)
+		self.assertEqual(record.serial_no, SERIALS[0])
+		self.assertEqual(record.maintenance_contract, contract.name)
+
+		# extra one-off: completing it must NOT advance the feature's cadence —
+		# the originally scheduled visit still stands.
+		update_next_visit_dates(record, None)
+		contract.reload()
+		self.assertEqual(getdate(contract.covered_features[0].next_visit_date), getdate(due))
+
 	def test_haversine_distance(self):
 		from erpnext_enhancements.api.time_kiosk import _haversine_m
 		# one degree of latitude ≈ 111.2 km
