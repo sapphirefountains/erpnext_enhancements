@@ -1,0 +1,16 @@
+{# Sent to one traveler when their draft Expense Claim is created/extended.
+   Context: trip, trip_url, itinerary_url, claim, claim_url, recipient. #}
+<h3>Expense Claim drafted: {{ claim }}</h3>
+<p>
+	A draft Expense Claim for your costs on trip <b>{{ trip.purpose }}</b>
+	({{ trip.name }}) is ready — employee-paid bookings, per diem and mileage
+	included.
+</p>
+<p>
+	Review the lines, attach any missing receipts, and submit it for
+	reimbursement.
+</p>
+<p>
+	<a href="{{ claim_url }}">Open {{ claim }}</a> ·
+	<a href="{{ trip_url }}">View the trip</a>
+</p>

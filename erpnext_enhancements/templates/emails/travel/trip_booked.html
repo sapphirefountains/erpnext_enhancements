@@ -1,0 +1,17 @@
+{# Trip booked notice — sent to every traveler (with their ICS attached) and the trip owner.
+   Context: trip (Travel Trip doc), trip_url, itinerary_url, recipient. #}
+<h3>Trip booked: {{ trip.purpose }}</h3>
+<p>
+	{{ trip.start_date }} – {{ trip.end_date }} ({{ trip.travel_type }})
+	{% if trip.travel_for_name %}<br>For: {{ trip.travel_for_doctype }} {{ trip.travel_for_name }}{% endif %}
+</p>
+<p>
+	Your bookings are confirmed. The attached calendar file adds the trip,
+	flights and hotel check-ins to your calendar — re-sent versions update the
+	same entries.
+</p>
+<p>
+	<a href="{{ itinerary_url }}">Open your mobile itinerary</a> ·
+	<a href="{{ trip_url }}">View the trip ({{ trip.name }})</a> ·
+	<a href="{{ guidelines_url }}">Travel guidelines</a>
+</p>

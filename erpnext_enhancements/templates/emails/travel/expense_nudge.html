@@ -1,0 +1,15 @@
+{# Single-shot post-trip nudge: traveler still has unclaimed employee-paid
+   costs / per diem / mileage days after the trip ended.
+   Context: trip, trip_url, itinerary_url, unclaimed_amount (formatted),
+   days_since_end, recipient. #}
+<h3>Unclaimed travel expenses: {{ trip.purpose }}</h3>
+<p>
+	Trip {{ trip.name }} ended {{ days_since_end }} day(s) ago and
+	<b>{{ unclaimed_amount }}</b> of your employee-paid costs, per diem or
+	mileage is not on an Expense Claim yet.
+</p>
+<p>
+	Open the trip and use <b>Create → Expense Claim</b> (or ask a Travel
+	Coordinator) to get reimbursed.
+</p>
+<p><a href="{{ trip_url }}">View the trip ({{ trip.name }})</a></p>

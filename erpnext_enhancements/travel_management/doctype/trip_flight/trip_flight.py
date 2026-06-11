@@ -6,13 +6,14 @@
 
 Child table (``istable``) embedded in Travel Trip via the ``flights`` field.
 Each row captures one flight segment: airline (Supplier link), flight number,
-departure/arrival airports and times, booking reference/PNR, cost and an
-optional attachment. Rows with ``cost > 0`` are picked up by
-``TravelTrip.create_expense_claim_on_workflow_transition`` and turned into
-"Air Travel" Expense Claim lines.
+departure/arrival airports and times, booking reference/PNR, an optional
+single ``traveler`` (blank = whole crew), an attachment, and the shared cost
+block (estimated_cost / cost / paid_by / paid_by_traveler / billable /
+expense_claim stamp). Employee-paid rows are pulled onto that traveler's
+Expense Claim by ``travel_management.api.create_expense_claim``.
 
-No custom server logic is required, so the controller is a plain pass-through
-``Document`` subclass.
+All validation lives in the parent Travel Trip controller, so this is a plain
+pass-through ``Document`` subclass.
 """
 
 import frappe

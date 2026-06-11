@@ -23,8 +23,10 @@
   {
    "fieldname": "category",
    "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Category",
-   "options": "Hardware Store\nSupply Depot\nClient HQ\nHotel\nOther"
+   "options": "Hardware Store\nSupply Depot\nClient HQ\nHotel\nAirport\nRestaurant\nJob Site\nOther"
   },
   {
    "fieldname": "geolocation",
@@ -48,7 +50,7 @@
   }
  ],
  "links": [],
- "modified": "2024-05-23 10:00:00.000000",
+ "modified": "2026-06-11 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel POI",
@@ -67,16 +69,27 @@
    "write": 1
   },
   {
-    "create": 1,
-    "delete": 1,
-    "email": 1,
-    "export": 1,
-    "print": 1,
-    "read": 1,
-    "report": 1,
-    "role": "Employee",
-    "share": 1,
-    "write": 1
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Travel Coordinator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Employee",
+   "share": 1,
+   "write": 1
   }
  ],
  "sort_field": "modified",

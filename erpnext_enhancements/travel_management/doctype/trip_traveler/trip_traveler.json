@@ -1,0 +1,192 @@
+{
+ "actions": [],
+ "creation": "2026-06-11 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "is_trip_lead",
+  "column_break_dates",
+  "from_date",
+  "to_date",
+  "per_diem_section",
+  "per_diem_eligible",
+  "per_diem_override_rate",
+  "column_break_pd",
+  "per_diem_amount",
+  "per_diem_claimed",
+  "links_section",
+  "expense_claim",
+  "expense_claim_status",
+  "column_break_links",
+  "employee_advance",
+  "advance_status",
+  "pre_travel_reminder_sent",
+  "expense_nudge_sent",
+  "notes_section",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "ignore_user_permissions": 1,
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_trip_lead",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Trip Lead"
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Defaults to the trip start date.",
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From Date"
+  },
+  {
+   "description": "Defaults to the trip end date.",
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "To Date"
+  },
+  {
+   "fieldname": "per_diem_section",
+   "fieldtype": "Section Break",
+   "label": "Per Diem"
+  },
+  {
+   "default": "1",
+   "fieldname": "per_diem_eligible",
+   "fieldtype": "Check",
+   "label": "Per Diem Eligible"
+  },
+  {
+   "depends_on": "per_diem_eligible",
+   "description": "Leave blank to use the Travel Settings rate for the trip's travel type.",
+   "fieldname": "per_diem_override_rate",
+   "fieldtype": "Currency",
+   "label": "Per Diem Override Rate"
+  },
+  {
+   "fieldname": "column_break_pd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "per_diem_amount",
+   "fieldtype": "Currency",
+   "label": "Per Diem Amount",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "per_diem_claimed",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Per Diem Claimed",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "links_section",
+   "fieldtype": "Section Break",
+   "label": "Linked Documents"
+  },
+  {
+   "fieldname": "expense_claim",
+   "fieldtype": "Link",
+   "label": "Expense Claim",
+   "no_copy": 1,
+   "options": "Expense Claim",
+   "read_only": 1
+  },
+  {
+   "fieldname": "expense_claim_status",
+   "fieldtype": "Data",
+   "label": "Claim Status",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "employee_advance",
+   "fieldtype": "Link",
+   "label": "Employee Advance",
+   "no_copy": 1,
+   "options": "Employee Advance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "advance_status",
+   "fieldtype": "Data",
+   "label": "Advance Status",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "pre_travel_reminder_sent",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Pre-Travel Reminder Sent",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "expense_nudge_sent",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Expense Nudge Sent",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Trip Traveler",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

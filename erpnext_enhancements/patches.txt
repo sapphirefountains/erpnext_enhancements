@@ -2,6 +2,8 @@
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
+# v1.15.0 travel management redesign: clear legacy drafts before the schema flip
+erpnext_enhancements.patches.drop_legacy_travel_trips
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -34,6 +36,9 @@ erpnext_enhancements.patches.seed_contract_templates
 # supervisor role, settings defaults; drop the superseded flat template-item table
 erpnext_enhancements.patches.seed_maintenance_sections
 erpnext_enhancements.patches.remove_template_item_doctype
+# v1.15.0 travel management redesign: retire the old workflow, seed settings + role
+erpnext_enhancements.patches.retire_travel_trip_workflow
+erpnext_enhancements.patches.seed_travel_settings
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

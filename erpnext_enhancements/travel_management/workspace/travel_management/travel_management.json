@@ -1,0 +1,100 @@
+{
+ "app": "erpnext_enhancements",
+ "creation": "2026-06-11 10:00:00.000000",
+ "doctype": "Workspace",
+ "icon": "milestone",
+ "is_standard": 1,
+ "label": "Travel",
+ "links": [
+  {
+   "dependencies": "",
+   "label": "Travel Trip",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link",
+   "link_to": "Travel Trip"
+  },
+  {
+   "dependencies": "",
+   "label": "Travel POI",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Travel POI"
+  },
+  {
+   "dependencies": "",
+   "label": "Travel Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Travel Settings"
+  },
+  {
+   "dependencies": "",
+   "label": "Trip Cost Summary",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Travel Trip Cost Summary",
+   "is_query_report": 1
+  },
+  {
+   "dependencies": "",
+   "label": "Spend by Category",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Travel Spend by Category",
+   "is_query_report": 1
+  },
+  {
+   "dependencies": "",
+   "label": "Unclaimed Travel Expenses",
+   "link_count": 0,
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Unclaimed Travel Expenses",
+   "is_query_report": 1
+  }
+ ],
+ "modified": "2026-06-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Travel",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "sequence_id": 11,
+ "shortcuts": [
+  {
+   "doc_view": "Calendar",
+   "label": "Travel Calendar",
+   "link_to": "Travel Trip",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "New",
+   "label": "New Travel Trip",
+   "link_to": "Travel Trip",
+   "type": "DocType"
+  },
+  {
+   "label": "My Itinerary",
+   "type": "URL",
+   "url": "/itinerary"
+  },
+  {
+   "label": "Travel Guidelines",
+   "type": "URL",
+   "url": "/travel_guidelines"
+  }
+ ],
+ "title": "Travel"
+}

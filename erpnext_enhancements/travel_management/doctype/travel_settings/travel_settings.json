@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "creation": "2026-06-11 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "auto_advance_statuses",
+  "column_break_general",
+  "notifications_enabled",
+  "expense_types_section",
+  "flight_expense_type",
+  "hotel_expense_type",
+  "ground_expense_type",
+  "column_break_types",
+  "misc_expense_type",
+  "per_diem_expense_type",
+  "mileage_expense_type",
+  "per_diem_section",
+  "per_diem_rates",
+  "mileage_rate_section",
+  "mileage_rate"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "description": "Daily job moves trips to In Progress / Completed based on their dates.",
+   "fieldname": "auto_advance_statuses",
+   "fieldtype": "Check",
+   "label": "Auto-Advance Trip Statuses"
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for all travel emails: booked/traveler-added notices with calendar invites, expense-claim notices, pre-travel reminders and post-trip expense nudges.",
+   "fieldname": "notifications_enabled",
+   "fieldtype": "Check",
+   "label": "Send Travel Notifications"
+  },
+  {
+   "description": "Expense Claim Types used when generating per-traveler Expense Claims. Claim generation refuses to run while a needed type is unset.",
+   "fieldname": "expense_types_section",
+   "fieldtype": "Section Break",
+   "label": "Expense Claim Types"
+  },
+  {
+   "fieldname": "flight_expense_type",
+   "fieldtype": "Link",
+   "label": "Flights",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "hotel_expense_type",
+   "fieldtype": "Link",
+   "label": "Accommodation",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "ground_expense_type",
+   "fieldtype": "Link",
+   "label": "Ground Transport",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "column_break_types",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "misc_expense_type",
+   "fieldtype": "Link",
+   "label": "Miscellaneous",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "per_diem_expense_type",
+   "fieldtype": "Link",
+   "label": "Per Diem",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "mileage_expense_type",
+   "fieldtype": "Link",
+   "label": "Mileage",
+   "options": "Expense Claim Type"
+  },
+  {
+   "fieldname": "per_diem_section",
+   "fieldtype": "Section Break",
+   "label": "Per Diem Rates"
+  },
+  {
+   "fieldname": "per_diem_rates",
+   "fieldtype": "Table",
+   "label": "Per Diem Rates",
+   "options": "Travel Per Diem Rate"
+  },
+  {
+   "fieldname": "mileage_rate_section",
+   "fieldtype": "Section Break",
+   "label": "Mileage"
+  },
+  {
+   "description": "Reimbursement rate per mile for personal-vehicle mileage. 0 leaves mileage amounts at 0 until configured.",
+   "fieldname": "mileage_rate",
+   "fieldtype": "Currency",
+   "label": "Mileage Rate (per mile)"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Travel Management",
+ "name": "Travel Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Travel Coordinator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HR Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

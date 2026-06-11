@@ -530,7 +530,9 @@ def send_project_start_reminders():
 
 def get_dashboard_data(data):
 	"""
-	Override Project dashboard to include documents linked via custom_project field.
+	Override Project dashboard to include documents linked via custom_project field,
+	plus a Travel group (Travel Trip links Projects through its read-only
+	``project`` mirror field — see travel_management).
 	"""
 	if not data:
 		data = {}
@@ -539,7 +541,15 @@ def get_dashboard_data(data):
 		data["non_standard_fieldnames"] = {}
 
 	data["non_standard_fieldnames"].update(
-		{"Material Request": "custom_project", "Request for Quotation": "custom_project"}
+		{
+			"Material Request": "custom_project",
+			"Request for Quotation": "custom_project",
+			"Travel Trip": "project",
+		}
+	)
+
+	data.setdefault("transactions", []).append(
+		{"label": _("Travel"), "items": ["Travel Trip"]}
 	)
 
 	return data

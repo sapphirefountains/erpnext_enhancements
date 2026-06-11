@@ -1,0 +1,211 @@
+/*
+ * Traveler itinerary styles (/itinerary — www/itinerary.html + js/travel/itinerary.js).
+ *
+ * Website pages have no desk data-theme attribute, so theming follows the
+ * kiosk convention: a local --ti-* palette with a prefers-color-scheme dark
+ * block (see public/css/kiosk/kiosk.css). Semantic status colors stay literal.
+ * Mobile-first: single column, large tap targets.
+ */
+
+:root {
+	--ti-bg: #f6f7f9;
+	--ti-surface: #ffffff;
+	--ti-text: #1f272e;
+	--ti-muted: #6c7680;
+	--ti-border: #e2e6ea;
+	--ti-accent: #00a0dd;
+	--ti-accent-soft: #e6f6fd;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ti-bg: #161a1f;
+		--ti-surface: #1f262e;
+		--ti-text: #e8ecef;
+		--ti-muted: #97a1ab;
+		--ti-border: #313a44;
+		--ti-accent: #29b6f6;
+		--ti-accent-soft: #103244;
+	}
+}
+
+.ti-shell {
+	max-width: 640px;
+	margin: 0 auto;
+	padding: 0 12px 48px;
+	color: var(--ti-text);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.ti-boot,
+.ti-empty,
+.ti-error {
+	text-align: center;
+	color: var(--ti-muted);
+	padding: 40px 16px;
+}
+
+.ti-error { color: #e03636; }
+
+/* Header */
+.ti-header {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	background: var(--ti-bg);
+	padding: 16px 4px 10px;
+}
+
+.ti-header-title { font-size: 1.35rem; font-weight: 700; }
+.ti-header-sub { color: var(--ti-muted); font-size: 0.9rem; }
+
+/* Trip switcher */
+.ti-switcher {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding: 4px 0 10px;
+	-webkit-overflow-scrolling: touch;
+}
+
+.ti-trip-chip {
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-text);
+	border-radius: 12px;
+	padding: 8px 14px;
+	font: inherit;
+	cursor: pointer;
+}
+
+.ti-trip-chip.active {
+	border-color: var(--ti-accent);
+	background: var(--ti-accent-soft);
+}
+
+.ti-chip-title { font-weight: 600; font-size: 0.92rem; }
+.ti-chip-sub { color: var(--ti-muted); font-size: 0.78rem; }
+
+/* Trip meta */
+.ti-trip-meta { padding: 6px 4px 14px; }
+.ti-trip-purpose { font-size: 1.1rem; font-weight: 650; }
+.ti-trip-sub { color: var(--ti-muted); font-size: 0.88rem; margin-top: 2px; }
+.ti-trip-dates { color: var(--ti-muted); font-size: 0.88rem; margin-top: 2px; }
+
+/* Day sections */
+.ti-day { margin-bottom: 18px; }
+
+.ti-day-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 4px;
+	font-weight: 700;
+}
+
+.ti-day.today .ti-day-date { color: var(--ti-accent); }
+
+.ti-today-badge {
+	background: var(--ti-accent);
+	color: #fff;
+	font-size: 0.7rem;
+	font-weight: 700;
+	border-radius: 999px;
+	padding: 2px 8px;
+}
+
+.ti-map-btn {
+	margin-left: auto;
+	border: 1px solid var(--ti-border);
+	background: var(--ti-surface);
+	color: var(--ti-text);
+	border-radius: 8px;
+	padding: 4px 10px;
+	font-size: 0.82rem;
+	cursor: pointer;
+}
+
+.ti-day-map {
+	display: none;
+	height: 240px;
+	border-radius: 12px;
+	border: 1px solid var(--ti-border);
+	margin-top: 8px;
+	overflow: hidden;
+}
+
+/* Cards */
+.ti-card {
+	background: var(--ti-surface);
+	border: 1px solid var(--ti-border);
+	border-radius: 12px;
+	padding: 12px 14px;
+	margin-bottom: 8px;
+}
+
+.ti-card-kicker {
+	color: var(--ti-muted);
+	font-size: 0.76rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-bottom: 2px;
+}
+
+.ti-card-title { font-weight: 650; font-size: 0.98rem; }
+.ti-card-sub { color: var(--ti-muted); font-size: 0.86rem; margin-top: 2px; }
+
+.ti-notes {
+	font-size: 0.86rem;
+	margin-top: 6px;
+	padding: 8px 10px;
+	border-left: 3px solid var(--ti-border);
+	color: var(--ti-muted);
+	white-space: pre-wrap;
+}
+
+.ti-pnr {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	font-size: 0.9rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.ti-copy {
+	border: 1px solid var(--ti-border);
+	background: transparent;
+	color: var(--ti-accent);
+	border-radius: 6px;
+	padding: 2px 10px;
+	font-size: 0.78rem;
+	cursor: pointer;
+}
+
+.ti-attachment,
+.ti-maps-link {
+	display: inline-block;
+	margin-top: 8px;
+	margin-right: 12px;
+	color: var(--ti-accent);
+	font-size: 0.86rem;
+	text-decoration: none;
+}
+
+/* Footer */
+.ti-footer {
+	text-align: center;
+	padding: 24px 0 8px;
+}
+
+.ti-footer-link {
+	color: var(--ti-muted);
+	font-size: 0.84rem;
+	text-decoration: underline;
+}

@@ -1,0 +1,46 @@
+{# Itinerary summary — the pre-travel reminder AND the "Send Itinerary" button
+   use this template (notifications.send_itinerary_emails).
+   Context: trip, trip_url, itinerary_url, itinerary (api.travel.shape_itinerary
+   output, filtered to this traveler), recipient. #}
+<h3>Your itinerary: {{ trip.purpose }}</h3>
+<p>
+	{{ trip.start_date }} – {{ trip.end_date }} ({{ trip.travel_type }})
+	{% if trip.travel_for_name %}<br>For: {{ trip.travel_for_doctype }} {{ trip.travel_for_name }}{% endif %}
+</p>
+
+{% for day in itinerary.days %}
+<h4 style="margin-bottom: 4px;">{{ frappe.format_date(day.date) }}</h4>
+<ul style="margin-top: 0;">
+	{% for item in day["items"] %}
+	<li>
+		{% if item.type == "flight" %}
+			✈ <b>{{ item.flight_number }}</b> {{ item.departure_airport or "?" }} → {{ item.arrival_airport or "?" }}
+			{% if item.departure_time %}· dep {{ item.departure_time[11:16] }}{% endif %}
+			{% if item.booking_reference %}· PNR <b>{{ item.booking_reference }}</b>{% endif %}
+		{% elif item.type == "hotel_checkin" %}
+			🏨 Check-in: <b>{{ item.hotel }}</b>
+			{% if item.booking_confirmation %}· Confirmation <b>{{ item.booking_confirmation }}</b>{% endif %}
+		{% elif item.type == "hotel_checkout" %}
+			🏨 Check-out: {{ item.hotel }}
+		{% elif item.type == "ground" %}
+			🚗 {{ item.transport_type }}: {{ item.pickup_location or "?" }} → {{ item.dropoff_location or "?" }}
+			{% if item.provider %}· {{ item.provider }}{% endif %}
+		{% elif item.type == "agenda" %}
+			📍 {% if item.time %}{{ item.time[:5] }} · {% endif %}{{ item.activity }}
+			{% if item.poi %}· {{ item.poi.poi_name }}{% endif %}
+		{% endif %}
+	</li>
+	{% endfor %}
+</ul>
+{% else %}
+<p>No itinerary entries yet — check the trip for updates.</p>
+{% endfor %}
+
+<p>
+	The attached calendar file keeps your calendar in sync (re-sends update,
+	not duplicate).
+</p>
+<p>
+	<a href="{{ itinerary_url }}">Open your mobile itinerary</a> ·
+	<a href="{{ trip_url }}">View the trip ({{ trip.name }})</a>
+</p>

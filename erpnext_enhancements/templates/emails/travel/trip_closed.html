@@ -1,0 +1,13 @@
+{# Sent on Close — only to travelers whose Expense Claim is missing or still draft.
+   Context: trip, trip_url, itinerary_url, recipient. #}
+<h3>Trip closed: {{ trip.purpose }}</h3>
+<p>
+	Trip {{ trip.name }} ({{ trip.start_date }} – {{ trip.end_date }}) has been
+	closed, but your expenses are not settled yet — your Expense Claim is
+	missing or still a draft.
+</p>
+<p>
+	Please finish and submit your claim so reimbursement is not delayed. If a
+	cost is missing from the trip, ask a Travel Coordinator to reopen it.
+</p>
+<p><a href="{{ trip_url }}">View the trip ({{ trip.name }})</a></p>
