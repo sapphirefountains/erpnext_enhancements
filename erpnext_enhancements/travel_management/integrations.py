@@ -94,6 +94,8 @@ def sync_vehicle_log_unlink(doc, method=None):
 def _refresh_linked_total(trip, doctype, amount_field, trip_field):
 	"""Recompute one synced rollup on the trip without a full save (a full
 	save would collide with collaboratively open forms)."""
+	if not frappe.db.has_column(doctype, "custom_travel_trip"):
+		return  # fixture-managed back-link field not applied yet
 	if not frappe.db.exists("Travel Trip", trip):
 		return  # trip is mid-deletion; on_trash already unlinked us
 	rows = frappe.get_all(
