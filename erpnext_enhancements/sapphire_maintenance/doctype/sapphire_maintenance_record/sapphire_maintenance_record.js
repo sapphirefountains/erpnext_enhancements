@@ -60,6 +60,67 @@ function ee_apply_payload(frm, payload) {
 	}
 }
 
+// Web Speech API dictation into visit_notes — supported on Chrome/Android
+// (the techs' field devices); the button simply doesn't appear elsewhere.
+function ee_setup_dictation(frm) {
+	const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!Recognition || frm.doc.docstatus !== 0) return;
+
+	frm.add_custom_button(__("🎤 Dictate Note"), () => {
+		if (frm._ee_recognition) {
+			frm._ee_recognition.stop();
+			return;
+		}
+		const recognition = new Recognition();
+		frm._ee_recognition = recognition;
+		recognition.lang = frappe.boot.lang || "en-US";
+		recognition.interimResults = false;
+		recognition.continuous = false;
+		frappe.show_alert({ message: __("Listening… tap the button again to stop."), indicator: "blue" });
+
+		recognition.onresult = (event) => {
+			const transcript = Array.from(event.results)
+				.map((r) => r[0].transcript)
+				.join(" ")
+				.trim();
+			if (transcript) {
+				const existing = frm.doc.visit_notes ? frm.doc.visit_notes + "\n" : "";
+				frm.set_value("visit_notes", existing + transcript);
+				frappe.show_alert({ message: __("Note added."), indicator: "green" });
+			}
+		};
+		recognition.onerror = () => {
+			frappe.show_alert({ message: __("Could not capture audio."), indicator: "red" });
+		};
+		recognition.onend = () => {
+			frm._ee_recognition = null;
+		};
+		recognition.start();
+	});
+}
+
+// Tiny inline SVG sparkline for the dashboard chemistry trends.
+function ee_sparkline(points, min_value, max_value) {
+	if (!points || points.length < 2) return "";
+	const w = 110, h = 26, pad = 3;
+	const values = points.map((p) => p.value);
+	let low = Math.min.apply(null, values.concat(min_value || []));
+	let high = Math.max.apply(null, values.concat(max_value || []));
+	if (high === low) { high += 1; low -= 1; }
+	const x = (i) => pad + (i * (w - 2 * pad)) / (points.length - 1);
+	const y = (v) => h - pad - ((v - low) * (h - 2 * pad)) / (high - low);
+	const path = points.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(p.value).toFixed(1)).join(" ");
+	const dots = points
+		.map((p, i) =>
+			`<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="2.2" fill="${p.out_of_range ? "#dc2626" : "#2563eb"}"/>`
+		)
+		.join("");
+	return (
+		`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle;">` +
+		`<path d="${path}" fill="none" stroke="#94a3b8" stroke-width="1.5"/>${dots}</svg>`
+	);
+}
+
 frappe.ui.form.on("Sapphire Maintenance Record", {
 	setup: function (frm) {
 		// Filter items in consumables to stock items in the configured group
@@ -102,6 +163,15 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 		if (frm.doc.docstatus === 0 && frm.doc.project && ee_tables_empty(frm)) {
 			frm.trigger("populate_from_template");
 		}
+
+		// Visit completeness at a glance (computed server-side in validate).
+		if (!frm.is_new() && !ee_tables_empty(frm)) {
+			const pct = frm.doc.completion_percent || 0;
+			const color = pct >= 100 ? "green" : pct >= 50 ? "orange" : "red";
+			frm.dashboard.add_indicator(__("{0}% Complete", [pct]), color);
+		}
+
+		ee_setup_dictation(frm);
 	},
 
 	safety_acknowledged: function (frm) {
@@ -207,6 +277,29 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 						}
 					}
 
+					let trends_html = "";
+					if (ctx.trends && ctx.trends.length) {
+						const rows = ctx.trends
+							.map((t) => {
+								const latest = t.points[t.points.length - 1];
+								return `
+								<div class="flex justify-between items-center py-1 border-b border-gray-100 last:border-0">
+									<span class="text-xs font-medium text-gray-600">${sanitise(t.reading)}</span>
+									${ee_sparkline(t.points, t.min_value, t.max_value)}
+									<span class="text-xs ${latest.out_of_range ? "font-bold text-red-600" : "text-gray-500"}">
+										${latest.value} ${sanitise(t.uom || "")}
+									</span>
+								</div>`;
+							})
+							.join("");
+						trends_html = `
+							<div class="p-4 bg-indigo-50 border-l-4 border-indigo-400 rounded-r-md">
+								<h3 class="text-sm font-bold text-indigo-800">Chemistry Trends (last visits)</h3>
+								<div class="mt-2">${rows}</div>
+							</div>
+						`;
+					}
+
 					let scope_html = "";
 					const deliverables = (ctx.service_scope && ctx.service_scope.deliverables) || [];
 					if (deliverables.length) {
@@ -276,6 +369,8 @@ frappe.ui.form.on("Sapphire Maintenance Record", {
 									</div>
 								</div>
 							</div>
+
+							${trends_html}
 
 							${scope_html}
 						</div>

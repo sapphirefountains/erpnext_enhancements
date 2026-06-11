@@ -328,6 +328,68 @@ class TestMaintenanceSections(unittest.TestCase):
 		contract.reload()
 		self.assertEqual(contract.seasonal_visits[0].last_generated_year, getdate(nowdate()).year)
 
+	# ------------------------------------------------------------------ extras
+
+	def test_compute_completion_percent(self):
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+			compute_completion_percent,
+		)
+		doc = frappe._dict(
+			maintenance_results=[frappe._dict(selection="Pass"), frappe._dict(selection=None, answer=None)],
+			chemistry_readings=[frappe._dict(reading_value=7.4)],
+			cleaning_tasks=[frappe._dict(is_done=1, notes=None)],
+			consumables=[frappe._dict(qty=0)],  # never counted
+		)
+		self.assertEqual(compute_completion_percent(doc), 75.0)
+		self.assertEqual(compute_completion_percent(frappe._dict()), 0)
+
+	def test_out_of_range_followup_visit(self):
+		original = frappe.db.get_single_value("ERPNext Enhancements Settings", "out_of_range_followup_days")
+		frappe.db.set_single_value("ERPNext Enhancements Settings", "out_of_range_followup_days", 3)
+		try:
+			record = frappe.new_doc("Sapphire Maintenance Record")
+			record.customer = self.customer
+			record.project = self.project
+			record.serial_no = SERIALS[0]
+			record.append("chemistry_readings", {"reading": "pH", "reading_value": 9.0, "min_value": 7.2, "max_value": 7.8})
+			record.insert(ignore_permissions=True)
+			self.assertEqual(record.has_out_of_range_readings, 1)
+
+			from erpnext_enhancements.api.maintenance_workflow import create_followup_visit
+			create_followup_visit(record)
+			create_followup_visit(record)  # deduped
+
+			followups = frappe.get_all(
+				"Sapphire Maintenance Record",
+				filters={"project": self.project, "visit_label": "Chemistry Follow-Up", "docstatus": 0},
+			)
+			self.assertEqual(len(followups), 1)
+		finally:
+			frappe.db.set_single_value("ERPNext Enhancements Settings", "out_of_range_followup_days", original or 0)
+
+	def test_haversine_distance(self):
+		from erpnext_enhancements.api.time_kiosk import _haversine_m
+		# one degree of latitude ≈ 111.2 km
+		self.assertAlmostEqual(_haversine_m(40.0, -111.0, 41.0, -111.0), 111195, delta=300)
+		self.assertEqual(_haversine_m(40.0, -111.0, 40.0, -111.0), 0)
+
+	def test_chemistry_trends(self):
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+			_chemistry_trends,
+		)
+		record = frappe.new_doc("Sapphire Maintenance Record")
+		record.customer = self.customer
+		record.project = self.project
+		record.serial_no = SERIALS[0]
+		record.append("chemistry_readings", {"reading": "pH", "reading_value": 8.4, "min_value": 7.2, "max_value": 7.8})
+		record.insert(ignore_permissions=True)
+		record.submit()
+
+		trends = _chemistry_trends(self.project, SERIALS[0])
+		ph = next(t for t in trends if t["reading"] == "pH")
+		self.assertEqual(ph["points"][-1]["value"], 8.4)
+		self.assertEqual(ph["points"][-1]["out_of_range"], 1)
+
 	# ------------------------------------------------------------------ kiosk
 
 	def test_kiosk_maintenance_context_and_submission_check(self):

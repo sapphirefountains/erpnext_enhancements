@@ -241,6 +241,10 @@ scheduler_events = {
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.cdc_poll",
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
+		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
+	],
+	"weekly": [
+		"erpnext_enhancements.tasks.suggest_truck_restocks",
 	],
 }
 

@@ -257,6 +257,139 @@ def generate_predictive_maintenance_records():
 				frappe.logger().info(f"Generated predictive Maintenance Record for serial_no {item.custom_serial_no} in project {so_project}")
 
 
+def nudge_unsubmitted_maintenance_forms():
+	"""Hourly: text techs who clocked out of a maintenance project without a form.
+
+	Gated by "SMS Nudge for Unsubmitted Maintenance Forms" in ERPNext
+	Enhancements Settings. Scans Job Intervals completed 1–4 hours ago (giving
+	the tech an hour's grace before nagging), on projects that require a
+	maintenance form (Active contract / Active template), where the employee's
+	user hasn't submitted a Sapphire Maintenance Record since clock-in. Sends
+	one SMS via the Triton gateway to the Employee's cell number, with the
+	form link. Every scanned interval is stamped ``maintenance_nudge_sent`` so
+	it is evaluated exactly once; SMS failures are logged and never retried.
+	"""
+	from frappe.utils import add_to_date, cint, get_url, now_datetime
+
+	if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_sms_nudges")):
+		return
+
+	from erpnext_enhancements.api.time_kiosk import get_maintenance_context
+
+	now = now_datetime()
+	intervals = frappe.get_all(
+		"Job Interval",
+		filters={
+			"status": "Completed",
+			"maintenance_nudge_sent": 0,
+			"project": ["is", "set"],
+			"end_time": ["between", [add_to_date(now, hours=-4), add_to_date(now, hours=-1)]],
+		},
+		fields=["name", "employee", "project", "start_time"],
+	)
+
+	for interval in intervals:
+		frappe.db.set_value("Job Interval", interval.name, "maintenance_nudge_sent", 1)
+
+		user_id, cell_number, employee_name = frappe.db.get_value(
+			"Employee", interval.employee, ["user_id", "cell_number", "employee_name"]
+		) or (None, None, None)
+		if not user_id or not cell_number:
+			continue
+
+		frappe.set_user(user_id)
+		try:
+			context = get_maintenance_context(project=interval.project, since=interval.start_time)
+		finally:
+			frappe.set_user("Administrator")
+
+		if not context.get("required") or context.get("submitted_since"):
+			continue
+
+		project_title = frappe.db.get_value("Project", interval.project, "project_name") or interval.project
+		message = (
+			f"Sapphire Fountains: looks like no maintenance form was submitted for your visit to "
+			f"{project_title}. Please fill it out: {get_url(context.get('form_route') or '/app')}"
+		)
+		try:
+			# Lazy import: api.telephony pulls in twilio at module top.
+			from erpnext_enhancements.api.telephony import send_system_sms
+
+			send_system_sms(cell_number, message)
+		except Exception:
+			frappe.log_error(
+				f"Maintenance nudge SMS to {employee_name or cell_number} failed:\n{frappe.get_traceback()}",
+				"Maintenance Nudge SMS Failed",
+			)
+
+
+def suggest_truck_restocks():
+	"""Weekly: draft a restock Material Request per technician vehicle warehouse.
+
+	Gated by "Weekly Truck Restock Suggestions" in ERPNext Enhancements
+	Settings. For each distinct ``Employee.custom_default_vehicle_warehouse``,
+	sums the consumables issued from it over the past 7 days (submitted
+	Material Issue Stock Entries) and drafts one Material Transfer request
+	moving the same quantities from the configured restock source warehouse
+	back to the vehicle — consumption-based replenishment, no par levels to
+	maintain. Skips a vehicle that already got a draft this week.
+	"""
+	from frappe.utils import add_days, cint, nowdate
+
+	settings = frappe.get_single("ERPNext Enhancements Settings")
+	if not cint(settings.restock_suggestions_enabled):
+		return
+	source = settings.restock_source_warehouse
+
+	vehicles = frappe.get_all(
+		"Employee",
+		filters={"custom_default_vehicle_warehouse": ["is", "set"], "status": "Active"},
+		pluck="custom_default_vehicle_warehouse",
+		distinct=True,
+	)
+
+	week_ago = add_days(nowdate(), -7)
+	for warehouse in vehicles:
+		if frappe.db.exists("Material Request", {
+			"material_request_type": "Material Transfer",
+			"set_warehouse": warehouse,
+			"docstatus": 0,
+			"creation": [">=", week_ago],
+		}):
+			continue
+
+		consumption = frappe.db.sql("""
+			SELECT sed.item_code, SUM(sed.qty) AS qty
+			FROM `tabStock Entry Detail` sed
+			JOIN `tabStock Entry` se ON sed.parent = se.name
+			WHERE se.docstatus = 1
+			  AND se.purpose = 'Material Issue'
+			  AND sed.s_warehouse = %s
+			  AND se.posting_date >= %s
+			GROUP BY sed.item_code
+		""", (warehouse, week_ago), as_dict=True)
+		if not consumption:
+			continue
+
+		request = frappe.new_doc("Material Request")
+		request.material_request_type = "Material Transfer"
+		request.schedule_date = add_days(nowdate(), 2)
+		request.set_from_warehouse = source
+		request.set_warehouse = warehouse
+		for row in consumption:
+			request.append("items", {
+				"item_code": row.item_code,
+				"qty": row.qty,
+				"from_warehouse": source,
+				"warehouse": warehouse,
+				"schedule_date": add_days(nowdate(), 2),
+			})
+		request.insert(ignore_permissions=True)
+		frappe.logger().info(
+			f"Drafted restock Material Request {request.name} for {warehouse} ({len(consumption)} items)"
+		)
+
+
 def _draft_maintenance_record(contract, serial_no=None, visit_label=None):
 	"""Insert a bare draft visit record for a contract (header fields only)."""
 	record = frappe.new_doc("Sapphire Maintenance Record")

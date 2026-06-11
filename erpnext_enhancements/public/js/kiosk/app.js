@@ -61,6 +61,10 @@
     '  <div class="tk-clock" id="tk-clock">--:--:--</div>',
     '  <p class="tk-status" id="tk-status">Ready to Work</p>',
     '</div>',
+    '<div class="tk-card" id="tk-geo-suggest" style="display:none; margin-bottom:14px; text-align:center;">',
+    '  <p id="tk-geo-suggest-text" style="margin:0 0 8px;"></p>',
+    '  <button class="tk-btn tk-btn-success" id="tk-geo-suggest-btn" style="margin-top:0;">Select This Project</button>',
+    '</div>',
     '<div class="tk-card">',
     '  <div class="tk-timer" id="tk-timer">--:--:--</div>',
     '  <div class="tk-active-project" id="tk-active-project" style="display:none;">',
@@ -104,6 +108,10 @@
     '    <span class="tk-track-dot"></span>',
     '    <span id="tk-track-text">Location tracking off</span>',
     '  </div>',
+    '</div>',
+    '<div class="tk-card" id="tk-visits" style="display:none; margin-top:14px;">',
+    '  <h6 style="margin:0 0 8px;">Today&#39;s Visits</h6>',
+    '  <div id="tk-visits-list"></div>',
     '</div>',
     '<a class="tk-btn tk-btn-outline" id="tk-history" href="/app/job-interval" style="margin-top:14px;">View My History</a>',
     '<div class="tk-toasts" id="tk-toasts"></div>',
@@ -267,6 +275,8 @@
 
       show(el.attachments);
       renderAttachments();
+      hide(el.visits);
+      hide(el.geoSuggest);
 
       show(el.activeProject);
       var title = ci.project_title || ci.project || '';
@@ -288,12 +298,71 @@
       hide(el.activeProject); hide(el.attachments);
       hide(el.maintenance);
       app.maintenance = null;
+      loadVisitsToday();
+      maybeSuggestNearby();
       el.attachmentList.innerHTML = '';
       app.attachments = [];
       el.timer.textContent = '--:--:--';
       if (!BOOT.employee) el.clockIn.disabled = true;
       window.KioskGeo.stop();
     }
+  }
+
+  // -- Today's visits + geofenced suggestion (idle screen) -------------------
+  var visitsLoadedAt = 0;
+  function loadVisitsToday() {
+    if (Date.now() - visitsLoadedAt < 60000) return; // renderState re-fires often
+    visitsLoadedAt = Date.now();
+    api('erpnext_enhancements.api.time_kiosk.get_my_visits_today', {}, { method: 'GET' })
+      .then(function (visits) {
+        var box = el.visitsList;
+        if (!box) return;
+        box.innerHTML = '';
+        if (!visits || !visits.length) { hide(el.visits); return; }
+        visits.forEach(function (v) {
+          var label = v.project_title || v.project || '';
+          if (v.visit_label) label += ' — ' + v.visit_label;
+          else if (v.serial_no) label += ' — ' + v.serial_no;
+          var a = document.createElement('a');
+          a.className = 'tk-attachment-item';
+          a.style.display = 'flex';
+          a.style.textDecoration = 'none';
+          a.href = v.route;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.innerHTML = '<span>📋</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            escapeHtml(label) + '</span>';
+          box.appendChild(a);
+        });
+        show(el.visits);
+      })
+      .catch(function () { hide(el.visits); });
+  }
+
+  var geoSuggestChecked = false;
+  function maybeSuggestNearby() {
+    if (geoSuggestChecked || !('geolocation' in navigator)) return;
+    geoSuggestChecked = true; // one position fix per page load is plenty
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      if (app.status !== 'Idle') return;
+      api('erpnext_enhancements.api.time_kiosk.get_nearby_visit',
+        { lat: pos.coords.latitude, lng: pos.coords.longitude }, { method: 'GET' })
+        .then(function (site) {
+          if (!site || app.status !== 'Idle') return;
+          el.geoSuggestText.textContent =
+            'You’re near ' + (site.project_title || site.project) +
+            ' (~' + site.distance_m + ' m) and a visit is due.';
+          el.geoSuggestBtn.onclick = function () {
+            el.project.value = site.project;
+            loadTasks(site.project);
+            hide(el.geoSuggest);
+            toast('Project selected — ready to clock in.', 'green');
+          };
+          show(el.geoSuggest);
+        })
+        .catch(function () { /* best-effort */ });
+    }, function () { /* permission denied / unavailable — no suggestion */ },
+    { maximumAge: 120000, timeout: 8000 });
   }
 
   // -- Maintenance forms -----------------------------------------------------
@@ -610,6 +679,11 @@
     el.activeProjectName = $('tk-active-project-name');
     el.maintenance = $('tk-maintenance');
     el.maintenanceLink = $('tk-maintenance-link');
+    el.visits = $('tk-visits');
+    el.visitsList = $('tk-visits-list');
+    el.geoSuggest = $('tk-geo-suggest');
+    el.geoSuggestText = $('tk-geo-suggest-text');
+    el.geoSuggestBtn = $('tk-geo-suggest-btn');
     el.inputs = $('tk-inputs');
     el.project = $('tk-project');
     el.task = $('tk-task');

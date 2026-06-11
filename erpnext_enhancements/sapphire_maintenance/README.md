@@ -64,6 +64,22 @@ Buttons creating contracts live on the source forms: `public/js/sales_order_enha
 
 **Time Kiosk integration:** clocking into a project with an Active contract (or Active template) surfaces a **Maintenance Form** button on the kiosk's active-job card (`api/time_kiosk.py::get_maintenance_context` — links the newest open draft, else a prefilled new record, opened in a new tab so the clock keeps running). Clock-out and cross-project switches re-check the server and warn (non-blocking confirm) when the technician hasn't submitted a record for that project since clock-in. Field technicians need the native **Maintenance User** role (create/write/submit on the record, read on contracts/templates).
 
+**Field conveniences:**
+- *Today's Visits* — the idle kiosk lists the tech's open visit drafts (`get_my_visits_today`), one tap from each form.
+- *Geofenced suggestion* — with site coordinates on the Maintenance Profile and a radius in Settings, the idle kiosk suggests the nearby project when a visit is due (`get_nearby_visit`).
+- *Offline tolerance* — the kiosk service worker serves the last good kiosk API responses when offline; on the desk, the app-wide autosave (localStorage + User Form Draft) preserves a half-filled record through connection loss.
+- *Clock auto-fill* — a record's blank `clock_in_time`/`clock_out_time`/`paused_duration` fill themselves from the technician's Job Interval on save/submit.
+- *Per-row photos* (`photo` Attach Image on results/readings/tasks) and a *🎤 Dictate Note* button (Web Speech API → `visit_notes`).
+- *SMS nudge* — hourly job texts a tech (Triton gateway) who clocked out of a maintenance project 1–4h ago without submitting a form (Settings toggle; one evaluation per interval via `Job Interval.maintenance_nudge_sent`).
+
+**Supervision:**
+- `completion_percent` on every record (answered rows / total rows; consumable prefills excluded) — list column + form indicator.
+- *Maintenance Day Board* (`/app/maintenance-day-board`, roles: System Manager / Maintenance Supervisor / Projects Manager): scheduled drafts, techs clocked in, submitted today, flagged last-7-days; auto-refreshes every 60s (`api/maintenance_board.py`).
+- *Chemistry trend sparklines* on the record dashboard — last 5 visits per reading, red dots out-of-range (`_chemistry_trends`).
+- *Out-of-range follow-up* — Settings days > 0 drafts a "Chemistry Follow-Up" visit + technician ToDo on submit of a flagged record (deduped; labelled visits don't advance the regular cadence).
+
+**Stock:** weekly *truck restock suggestions* (Settings toggle + source warehouse) draft one Material Transfer request per technician vehicle warehouse, replenishing the past week's consumption (`tasks.suggest_truck_restocks`).
+
 **On submit**, `SapphireMaintenanceRecord.on_submit` enqueues [`api/maintenance_workflow.py::process_maintenance_submission`](../api/README.md) (background, "default" queue) which runs isolated steps:
 
 - `create_stock_entry` — Material Issue for consumables with qty > 0 (untouched dosing prefills don't move stock); per-row warehouse falls back feature store → technician's vehicle (`Employee.custom_default_vehicle_warehouse`) → settings default.

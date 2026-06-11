@@ -45,6 +45,7 @@ def process_maintenance_submission(record_name):
             ("Warranty Claim Hook", check_warranty_and_rma),
             ("Sales Invoice Generation", create_sales_invoice),
             ("Out-of-Range Reading Log", log_out_of_range_readings),
+            ("Out-of-Range Follow-Up Visit", create_followup_visit),
         ]
 
         failures = []
@@ -305,6 +306,56 @@ def log_out_of_range_readings(doc):
         for row in flagged
     ]
     doc.add_comment("Comment", _("Out-of-range water chemistry readings:\n{0}").format("\n".join(lines)))
+
+def create_followup_visit(doc):
+    """Draft a follow-up visit when chemistry came back out of range.
+
+    Gated by "Out-of-Range Follow-Up Visit (Days)" in ERPNext Enhancements
+    Settings (0 = off). Creates one draft Sapphire Maintenance Record labelled
+    "Chemistry Follow-Up" for the same project/feature/contract — deduped on
+    that label — and a ToDo for the technician dated +N days. The follow-up
+    label also keeps it from advancing the regular visit cadence
+    (``update_next_visit_dates`` skips labelled visits).
+    """
+    from frappe.utils import add_days, cint
+
+    days = cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "out_of_range_followup_days"))
+    if not days or not doc.has_out_of_range_readings:
+        return
+
+    label = "Chemistry Follow-Up"
+    if frappe.db.exists("Sapphire Maintenance Record", {
+        "project": doc.project,
+        "visit_label": label,
+        "docstatus": 0,
+    }):
+        return
+
+    followup = frappe.new_doc("Sapphire Maintenance Record")
+    followup.customer = doc.customer
+    followup.project = doc.project
+    followup.serial_no = doc.serial_no
+    followup.maintenance_contract = doc.get("maintenance_contract")
+    followup.technician = doc.technician
+    followup.visit_label = label
+    followup.insert(ignore_permissions=True)
+
+    if doc.technician:
+        frappe.get_doc({
+            "doctype": "ToDo",
+            "allocated_to": doc.technician,
+            "date": add_days(nowdate(), days),
+            "reference_type": "Sapphire Maintenance Record",
+            "reference_name": followup.name,
+            "description": _("Chemistry follow-up visit for {0} — readings were out of range on {1}.").format(
+                doc.project, doc.name
+            ),
+        }).insert(ignore_permissions=True)
+
+    doc.add_comment("Comment", _("Out-of-range readings: follow-up visit {0} drafted (due in {1} days).").format(
+        frappe.get_link_to_form("Sapphire Maintenance Record", followup.name), days
+    ))
+
 
 def create_sales_invoice(doc):
     """

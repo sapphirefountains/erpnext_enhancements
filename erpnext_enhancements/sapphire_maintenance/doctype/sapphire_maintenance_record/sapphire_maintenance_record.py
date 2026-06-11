@@ -68,6 +68,58 @@ class SapphireMaintenanceRecord(Document):
 
 	def validate(self):
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
+		self.completion_percent = compute_completion_percent(self)
+		self._autofill_clock_in()
+
+	def before_submit(self):
+		self._autofill_clock_out()
+
+	def _job_interval(self, statuses):
+		"""Latest Job Interval for this record's technician + project in the given statuses."""
+		if not self.technician or not self.project:
+			return None
+		employee = frappe.db.get_value("Employee", {"user_id": self.technician}, "name")
+		if not employee:
+			return None
+		return frappe.db.get_value(
+			"Job Interval",
+			{"employee": employee, "project": self.project, "status": ["in", statuses]},
+			["name", "start_time", "end_time", "total_paused_seconds"],
+			order_by="start_time desc",
+			as_dict=True,
+		)
+
+	def _autofill_clock_in(self):
+		"""Seed clock-in from the technician's running kiosk interval on this project.
+
+		The kiosk (Job Interval) already knows when work started — don't make
+		the tech enter it twice. Only fills a blank field; manual entries win.
+		"""
+		if self.clock_in_time or self.docstatus != 0:
+			return
+		interval = self._job_interval(["Open", "Paused"])
+		if interval:
+			self.clock_in_time = interval.start_time
+
+	def _autofill_clock_out(self):
+		"""On submit, close out blank clock fields from the kiosk interval.
+
+		A still-running interval means the tech is submitting before clocking
+		out — stamp "now" and carry the interval's pause time. A recently
+		completed interval supplies its real end time.
+		"""
+		if self.clock_in_time and not self.clock_out_time:
+			interval = self._job_interval(["Open", "Paused"])
+			if interval:
+				self.clock_out_time = frappe.utils.now_datetime()
+				if not self.paused_duration:
+					self.paused_duration = interval.total_paused_seconds or 0
+			else:
+				interval = self._job_interval(["Completed"])
+				if interval and interval.end_time and str(interval.end_time) >= str(self.clock_in_time):
+					self.clock_out_time = interval.end_time
+					if not self.paused_duration:
+						self.paused_duration = interval.total_paused_seconds or 0
 
 	def on_submit(self):
 		"""Submit lifecycle hook: kick off downstream automation.
@@ -105,6 +157,30 @@ class SapphireMaintenanceRecord(Document):
 			context.show_labor = True if show_labor else False
 
 		context.parents = [{"name": _("Maintenance Records"), "route": "maintenance-records"}]
+
+
+def compute_completion_percent(doc):
+	"""How much of the visit form has been filled in, as 0–100.
+
+	Counted as answered: inspection rows with a selection or answer, readings
+	with a value, cleaning tasks ticked done or annotated. Consumables don't
+	count — an untouched qty-0 dosing prefill is a legitimate "none used".
+	Returns 0 for a record with no section rows. Pure function — no DB access.
+	"""
+	answered = total = 0
+	for row in doc.get("maintenance_results", []):
+		total += 1
+		if row.get("selection") or row.get("answer"):
+			answered += 1
+	for row in doc.get("chemistry_readings", []):
+		total += 1
+		if flt(row.get("reading_value")):
+			answered += 1
+	for row in doc.get("cleaning_tasks", []):
+		total += 1
+		if row.get("is_done") or row.get("notes"):
+			answered += 1
+	return round(answered / total * 100, 1) if total else 0
 
 
 def evaluate_reading_ranges(rows):
@@ -358,4 +434,61 @@ def get_dashboard_context(project, serial_no=None):
 		),
 	} if project else {"requests": [], "deliverables": []}
 
+	# 6. Chemistry trends — last 5 visits' readings, for the dashboard sparklines.
+	context['trends'] = _chemistry_trends(project, serial_no)
+
 	return context
+
+
+def _chemistry_trends(project, serial_no=None):
+	"""Reading history for the dashboard sparklines.
+
+	Last 5 submitted visits for the Project (filtered to the water feature when
+	``serial_no`` is given — matching either the record header or the tagged
+	row). Returns [{reading, uom, min_value, max_value, points: [{date, value,
+	out_of_range}]}] with points oldest-first, readings in the current form's
+	order of appearance.
+	"""
+	if not project:
+		return []
+
+	filters = {"project": project, "docstatus": 1}
+	if serial_no:
+		filters["serial_no"] = ["in", [serial_no, ""]]
+	records = frappe.get_all(
+		"Sapphire Maintenance Record",
+		filters=filters,
+		fields=["name", "creation"],
+		order_by="creation desc",
+		limit=5,
+	)
+	if not records:
+		return []
+
+	created = {r.name: r.creation for r in records}
+	row_filters = {"parent": ["in", list(created)], "parenttype": "Sapphire Maintenance Record"}
+	if serial_no:
+		row_filters["serial_no"] = ["in", [serial_no, ""]]
+	rows = frappe.get_all(
+		"Sapphire Chemistry Reading",
+		filters=row_filters,
+		fields=["parent", "reading", "reading_value", "uom", "min_value", "max_value", "out_of_range"],
+	)
+
+	trends = {}
+	for row in sorted(rows, key=lambda r: str(created[r.parent])):
+		if not flt(row.reading_value):
+			continue  # blank/zero = not measured (see evaluate_reading_ranges)
+		trend = trends.setdefault(row.reading, {
+			"reading": row.reading,
+			"uom": row.uom,
+			"min_value": row.min_value,
+			"max_value": row.max_value,
+			"points": [],
+		})
+		trend["points"].append({
+			"date": str(created[row.parent].date()),
+			"value": row.reading_value,
+			"out_of_range": row.out_of_range,
+		})
+	return list(trends.values())

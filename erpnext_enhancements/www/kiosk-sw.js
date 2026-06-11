@@ -252,6 +252,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Kiosk GET APIs (options, status, today's visits, maintenance context):
+  // network-first, falling back to the last good response so the idle screen
+  // and form links still render in a dead zone (equipment rooms). POSTs
+  // (clock actions) are untouched — they need the server.
+  if (url.pathname.startsWith('/api/method/erpnext_enhancements.api.time_kiosk.')) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req);
+        if (fresh && fresh.ok) {
+          const cache = await caches.open(CACHE);
+          cache.put(req, fresh.clone());
+        }
+        return fresh;
+      } catch (e) {
+        return (await caches.match(req)) || new Response('', { status: 504 });
+      }
+    })());
+    return;
+  }
+
   // Our static assets: cache-first with background refresh.
   if (url.pathname.startsWith('/assets/erpnext_enhancements/') ||
       url.pathname === '/kiosk-manifest.json') {

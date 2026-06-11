@@ -8,7 +8,8 @@
   "question",
   "answer",
   "selection",
-  "other_details"
+  "other_details",
+  "photo"
  ],
  "fields": [
   {
@@ -52,6 +53,12 @@
    "fieldtype": "Data",
    "label": "Other Details",
    "mandatory_depends_on": "eval:doc.selection == 'Other'"
+  },
+  {
+   "description": "Photo of the check (e.g. a failed part).",
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
   }
  ],
  "modified": "2024-05-22 12:00:00.000000",

@@ -25,7 +25,9 @@
   "chemistry_readings",
   "cleaning_tasks",
   "consumables",
+  "visit_notes",
   "historical_visits",
+  "completion_percent",
   "warranty_rma_flag",
   "has_out_of_range_readings",
   "sales_invoice",
@@ -140,10 +142,23 @@
    "options": "Sapphire Maintenance Consumable"
   },
   {
+   "description": "General notes for the visit — the form's Dictate button writes here.",
+   "fieldname": "visit_notes",
+   "fieldtype": "Small Text",
+   "label": "Visit Notes"
+  },
+  {
    "fieldname": "historical_visits",
    "fieldtype": "Table",
    "label": "Historical Visits",
    "options": "Sapphire Historical Visit"
+  },
+  {
+   "fieldname": "completion_percent",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Completed",
+   "read_only": 1
   },
   {
    "default": "0",
