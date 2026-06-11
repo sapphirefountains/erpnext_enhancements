@@ -77,9 +77,16 @@ class TravelTrip(Document):
 
 	def on_trash(self):
 		"""Block deletion while submitted financial documents point here;
-		unlink drafts (and Leads/Opportunities, which are provenance only)."""
+		unlink drafts (and Leads/Opportunities, which are provenance only).
+
+		Every query is guarded by ``has_column``: the ``custom_travel_trip``
+		back-link fields are fixture-managed Custom Fields and may not exist
+		yet mid-migrate or on a partially set-up site.
+		"""
 		linked = []
 		for doctype in ("Expense Claim", "Employee Advance", "Vehicle Log"):
+			if not frappe.db.has_column(doctype, "custom_travel_trip"):
+				continue
 			for row in frappe.get_all(
 				doctype,
 				filters={"custom_travel_trip": self.name},
@@ -96,6 +103,8 @@ class TravelTrip(Document):
 				)
 			)
 		for doctype in ("Lead", "Opportunity"):
+			if not frappe.db.has_column(doctype, "custom_travel_trip"):
+				continue
 			frappe.db.set_value(
 				doctype, {"custom_travel_trip": self.name}, "custom_travel_trip", None
 			)
@@ -335,6 +344,8 @@ class TravelTrip(Document):
 			self.total_advance_amount = self._linked_total("Employee Advance", "advance_amount")
 
 	def _linked_total(self, doctype, amount_field):
+		if not frappe.db.has_column(doctype, "custom_travel_trip"):
+			return 0  # fixture-managed back-link field not applied yet
 		rows = frappe.get_all(
 			doctype,
 			filters={"custom_travel_trip": self.name, "docstatus": ["<", 2]},
