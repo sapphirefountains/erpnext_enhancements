@@ -49,5 +49,39 @@
         "receiver_by_role": "Maintenance Supervisor"
       }
     ]
+  },
+  {
+    "doctype": "Notification",
+    "name": "High Escalation Risk Call",
+    "channel": "Email",
+    "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
+    "document_type": "Call Log",
+    "event": "Value Change",
+    "value_changed": "custom_escalation_risk",
+    "condition": "doc.custom_escalation_risk == 'High'",
+    "send_to_all_assignees": 0,
+    "message": "A call was flagged HIGH escalation risk by post-call analysis.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nSentiment: {{ doc.custom_sentiment or 'n/a' }}\nIntent: {{ doc.type_of_call or 'n/a' }}\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nFollow-up actions:\n{{ doc.custom_follow_up_actions or 'none recorded' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
+    "recipients": [
+      {
+        "receiver_by_role": "Call Center Supervisor"
+      }
+    ]
+  },
+  {
+    "doctype": "Notification",
+    "name": "Compliance Flag on Call",
+    "channel": "Email",
+    "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
+    "document_type": "Call Log",
+    "event": "Value Change",
+    "value_changed": "custom_has_compliance_flags",
+    "condition": "doc.custom_has_compliance_flags",
+    "send_to_all_assignees": 0,
+    "message": "Post-call analysis raised compliance flag(s) on this call.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nFlags:\n{{ doc.custom_compliance_flags or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
+    "recipients": [
+      {
+        "receiver_by_role": "Call Center Supervisor"
+      }
+    ]
   }
 ]

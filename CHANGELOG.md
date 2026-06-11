@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-06-11
+
+### Added
+- **Call Intelligence — the stock Call Log becomes the system of record for phone calls** (first feature ported natively from Triton). Triton keeps handling Twilio + post-call AI analysis; ERPNext now stores and surfaces the results so calls are browsable without Triton's frontend:
+  - **Call Log upsert** (`api/call_intelligence.py`): idempotent by Twilio Call SID (docname == SID via the stock `field:id` autoname). Native fields reused — direction → `type`, Triton status mapped onto stock options (`missed` → No Answer), `duration`, executive summary → `summary` (written only while empty so manual edits via the native Call Summary dialog survive re-deliveries), IVR intent → `type_of_call` (Telephony Call Type, get-or-created), agent → `employee_user_id`/`call_received_by`, Customer/Contact/Lead in `links`. `recording_url` is rewritten to the **private File URL** of the WAV so the stock audio player works in the desk (the Twilio URL is Basic-auth-protected).
+  - **15 fixture-owned custom fields** on Call Log for the AI analysis: caller name, sentiment, escalation risk, CSAT score, agent display name, voicemail URL, link to the transcript Communication, follow-up actions, topics, compliance flags (+ hidden flag bit), and the raw analysis JSON. Sentiment / escalation / caller name are list-view columns and standard filters; partial webhook re-deliveries never blank stored fields.
+  - **Ingestion**: `process_unified_recording` (existing gateway webhook) now consumes the intelligence payload keys it previously ignored and upserts the Call Log after creating the Communication + File; Communication dedup now goes through the Call Log's `custom_communication` link first (the subject-LIKE-SID match stays as fallback). A new standalone guest endpoint `process_call_intelligence` (same Bearer-secret guard) ingests recording-less calls — e.g. missed calls with a voicemail URL. **Missed calls never auto-create Customers** (`get_caller_info` gained `create_if_missing`; robocall protection).
+  - **Call archive UI**: list view renders sentiment/escalation as theme-aware indicator pills (+ 🚩 on compliance-flagged calls); the form gets View Transcript (dialog reading the linked Communication), Open Communication, and Call Back (Triton) buttons. Search fields include the resolved caller name.
+  - **Call Center dashboard** (native Dashboard, `/app/dashboard-view/Call Center`): daily call volume, sentiment / escalation / direction / intent donuts; number cards for total, high-risk, missed calls and average CSAT (weekly % stats). Shipped as curated fixtures filtered by name. Known v1 gap: group-by charts have no rolling time window.
+  - **Notifications**: "High Escalation Risk Call" and "Compliance Flag on Call" (Value Change on the fixture fields) email the new **Call Center Supervisor** role (seeded by patch with read/write/report on Call Log; stock perms already give every Employee read access to the archive).
+  - **Triton Settings**: new "Send Call Email Digest" checkbox (default on) — the per-call email to info@ can now be switched off once the desk archive + notifications replace it.
+  - Telephony module excluded from the all-doctype Triton sync webhook (`utils/triton_sync.py`) — ingested Call Logs no longer echo a change-webhook straight back to Triton.
+  - Tests: `tests/test_call_intelligence.py` (upsert idempotency, status/direction/sentiment mapping, partial-update no-blank, manual-summary preservation, call-type get-or-create, invalid-SID guard, voicemail missed-call path).
+  - Gateway contract (Triton-side, optional fields on the existing POST): `to_number`, `status`, `start_time`, `sentiment`, `escalation_risk`, `analysis` (object: sentiment, escalation_risk, customer_satisfaction, topics[], compliance_flags[]), `ivr_selection`, `agent_user`, `agent_name`, `voicemail_url`. Already-sent fields now consumed: `direction`, `duration`, `caller_name`, `follow_up_actions`. Once deployed, Triton can drop its direct Call Log REST write and unset `VOICE_NOTIFY_EMAIL` (the desk notification replaces it).
+
 ## [1.10.0] - 2026-06-11
 
 ### Added

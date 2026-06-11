@@ -24,7 +24,8 @@
   "twilio_twiml_app_sid",
   "primary_twilio_number",
   "webhook_section",
-  "admin_webhook_secret"
+  "admin_webhook_secret",
+  "send_call_email_digest"
  ],
  "fields": [
   {
@@ -131,6 +132,13 @@
    "fieldname": "admin_webhook_secret",
    "fieldtype": "Password",
    "label": "Admin Webhook Secret"
+  },
+  {
+   "default": "1",
+   "description": "Email each ingested call's summary, transcript and recording to info@. The desk Call Log archive and notifications make this digest optional.",
+   "fieldname": "send_call_email_digest",
+   "fieldtype": "Check",
+   "label": "Send Call Email Digest"
   }
  ],
  "index_web_pages_for_search": 1,

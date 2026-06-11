@@ -95,6 +95,7 @@ doctype_js = {
 		"task_enhancements/doctype/task/task.js",
 	],
 	"Travel Trip": ["public/js/travel_trip.js"],
+	"Call Log": ["public/js/call_log.js"],
 	"Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
 	"Material Request": [
 		"public/js/vue.global.js",
@@ -138,6 +139,7 @@ doctype_list_js = {
 	"Task": "public/js/project_enhancements/task_gantt.js",
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
+	"Call Log": "public/js/global_enhancements/call_log_list.js",
 }
 doctype_calendar_js = {"Asset Booking": "public/js/asset_booking_calendar.js"}
 doctype_css = {
@@ -326,11 +328,40 @@ fixtures = [
 			[
 				"name",
 				"in",
-				["Maintenance Review Needed", "Maintenance Finalized", "Maintenance Reading Out of Range"],
+				[
+					"Maintenance Review Needed",
+					"Maintenance Finalized",
+					"Maintenance Reading Out of Range",
+					"High Escalation Risk Call",
+					"Compliance Flag on Call",
+				],
 			]
 		],
 	},
 	{"dt": "Print Format", "filters": [["name", "in", ["Maintenance Record Print", "Project Contract Print"]]]},
+	# Call Center analytics (v1.11.0). Charts/cards are filtered by name so a
+	# re-export never sweeps up user-created dashboards from the site.
+	{
+		"dt": "Dashboard Chart",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Call Volume (Daily)",
+					"Call Sentiment",
+					"Call Escalation Risk",
+					"Calls by Direction",
+					"Calls by Intent",
+				],
+			]
+		],
+	},
+	{
+		"dt": "Number Card",
+		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT"]]],
+	},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center"]]]},
 ]
 
 override_whitelisted_methods = {

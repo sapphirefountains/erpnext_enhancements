@@ -148,7 +148,7 @@ def get_call_transcript(call_sid):
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
-def get_caller_info(phone_number, twilio_caller_name=None):
+def get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=True):
     """Resolve a phone number to a Customer/Contact, creating them if unknown.
 
     Guest endpoint guarded by ``@validate_webhook_secret``; also used as an
@@ -159,7 +159,9 @@ def get_caller_info(phone_number, twilio_caller_name=None):
     ``Customer.custom_accounts_phone_number`` (the ``.*``-joined regex tolerates
     formatting differences). If neither is found, AUTO-CREATES a Residential
     Customer + primary Contact (with ``ignore_permissions``) named from the
-    Twilio caller id or "Unknown Caller".
+    Twilio caller id or "Unknown Caller" — unless ``create_if_missing`` is
+    falsy (missed-call ingestion passes False so robocalls don't mint junk
+    Customers).
 
     Returns:
         dict: ``{"customer", "contact", "display_name", "context"}`` where
@@ -168,6 +170,9 @@ def get_caller_info(phone_number, twilio_caller_name=None):
     Side effects: may insert Customer + Contact docs and commits the transaction.
     """
     frappe.set_user("triton@sapphirefountains.com")
+
+    if isinstance(create_if_missing, str):
+        create_if_missing = create_if_missing.strip().lower() not in ("0", "false", "no", "")
 
     if not phone_number:
         return {"customer": None, "contact": None, "display_name": twilio_caller_name or "Unknown Caller", "context": []}
@@ -201,7 +206,7 @@ def get_caller_info(phone_number, twilio_caller_name=None):
             customer_name = customers[0].name
             display_name = customers[0].customer_name
 
-    if not customer_name and not contact_name:
+    if not customer_name and not contact_name and create_if_missing:
         fallback_name = twilio_caller_name if twilio_caller_name else f"Unknown Caller - {phone_number}"
         
         cust = frappe.get_doc({
@@ -407,28 +412,68 @@ def process_unified_recording(**kwargs):
     Audio handling: accepts a base64 ``file_content`` field OR a multipart
     ``file`` upload, saved as a private File attached to the Communication.
 
-    Side effects: writes Communication + File docs (``ignore_permissions``);
-    emails a summary (with audio attachment) to info@sapphirefountains.com;
-    commits. On any error rolls back, logs, and returns HTTP 500.
+    Call Intelligence: also upserts the stock Call Log for the SID (see
+    ``api.call_intelligence``) with the AI analysis fields the gateway sends
+    (sentiment, escalation risk, follow-ups, topics, compliance flags, CSAT,
+    IVR intent, agent) and rewrites ``recording_url`` to the private File URL
+    so the native audio player works in the desk.
+
+    Side effects: writes Communication + File + Call Log docs
+    (``ignore_permissions``); emails a summary (with audio attachment) to
+    info@sapphirefountains.com unless Triton Settings unchecks "Send Call
+    Email Digest"; commits. On any error rolls back, logs, and returns HTTP 500.
     """
     try:
         frappe.set_user("triton@sapphirefountains.com")
 
-        call_sid = kwargs.get("call_sid") or frappe.form_dict.get("call_sid")
-        summary = kwargs.get("summary") or frappe.form_dict.get("summary")
-        transcript = kwargs.get("transcript") or frappe.form_dict.get("transcript")
-        customer_phone = kwargs.get("customer_phone") or frappe.form_dict.get("customer_phone")
-        is_voicemail = kwargs.get("is_voicemail") or frappe.form_dict.get("is_voicemail") in [True, "true", "True", 1, "1"]
-        direction = kwargs.get("direction") or frappe.form_dict.get("direction") or "Inbound"
-        
-        info = get_caller_info(customer_phone)
+        def val(key, default=None):
+            v = kwargs.get(key)
+            if v is None:
+                v = frappe.form_dict.get(key)
+            return v if v is not None else default
+
+        call_sid = val("call_sid")
+        summary = val("summary")
+        transcript = val("transcript")
+        customer_phone = val("customer_phone")
+        is_voicemail = val("is_voicemail") in [True, "true", "True", 1, "1"]
+        direction = val("direction") or "Inbound"
+        # Call-intelligence payload (all optional — older gateway builds omit them)
+        caller_name = val("caller_name")
+        to_number = val("to_number")
+        call_status = val("status") or "completed"
+        duration = val("duration")
+        start_time = val("start_time")
+        follow_up_actions = val("follow_up_actions")
+        sentiment = val("sentiment")
+        escalation_risk = val("escalation_risk")
+        analysis = val("analysis")
+        ivr_selection = val("ivr_selection")
+        agent_user = val("agent_user")
+        agent_name = val("agent_name")
+        voicemail_url = val("voicemail_url")
+
+        is_missed = str(call_status).strip().lower() == "missed"
+        info = get_caller_info(
+            customer_phone, twilio_caller_name=caller_name, create_if_missing=not is_missed
+        )
         customer_name = info.get('customer')
         contact_name = info.get('contact')
         display_name = info.get('display_name')
 
         existing_comm = []
         if call_sid and str(call_sid).strip().lower() not in ["undefined", "null", "none", ""]:
-            existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
+            # Canonical cross-ref first: the Call Log for this SID already knows
+            # its Communication. Fall back to the legacy subject-LIKE match.
+            linked_comm = None
+            if frappe.db.exists("Call Log", str(call_sid).strip()):
+                linked_comm = frappe.db.get_value(
+                    "Call Log", str(call_sid).strip(), "custom_communication"
+                )
+            if linked_comm and frappe.db.exists("Communication", linked_comm):
+                existing_comm = [frappe._dict(name=linked_comm)]
+            else:
+                existing_comm = frappe.get_all("Communication", filters={"subject": ["like", f"%{call_sid}%"]}, limit=1)
         else:
             call_sid = f"FALLBACK_{frappe.generate_hash(length=8)}"
 
@@ -488,6 +533,7 @@ def process_unified_recording(**kwargs):
                 frappe.db.set_value("ToDo", t.name, "status", "Closed")
 
         email_attachments = []
+        recording_file_url = None
 
         file_content_b64 = kwargs.get("file_content")
         if file_content_b64:
@@ -502,7 +548,8 @@ def process_unified_recording(**kwargs):
                     "is_private": 1
                 })
                 file_doc.save(ignore_permissions=True)
-                
+                recording_file_url = file_doc.file_url
+
                 email_attachments.append({
                     "fname": file_doc.file_name,
                     "fcontent": file_content
@@ -522,13 +569,62 @@ def process_unified_recording(**kwargs):
                     "is_private": 1
                 })
                 file_doc.save(ignore_permissions=True)
-                
+                recording_file_url = file_doc.file_url
+
                 email_attachments.append({
                     "fname": file_doc.file_name,
                     "fcontent": file_content
                 })
             except Exception as fe:
                 frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Triton File Error")
+
+        # --- Call Intelligence: upsert the stock Call Log for this call -----
+        # Never lets an intelligence failure break the webhook (the
+        # Communication + recording are already committed work).
+        try:
+            from erpnext_enhancements.api.call_intelligence import upsert_call_log
+
+            if direction and str(direction).strip().lower() in ("outbound", "outgoing"):
+                ci_from, ci_to = to_number, customer_phone
+            else:
+                ci_from, ci_to = customer_phone, to_number
+
+            upsert_call_log(
+                call_sid,
+                direction=direction,
+                from_number=ci_from,
+                to_number=ci_to,
+                status=call_status,
+                duration=duration,
+                start_time=start_time,
+                caller_name=caller_name or display_name,
+                customer=customer_name,
+                contact=contact_name,
+                summary=summary,
+                follow_up_actions=follow_up_actions,
+                sentiment=sentiment,
+                escalation_risk=escalation_risk,
+                analysis=analysis,
+                ivr_selection=ivr_selection,
+                agent_user=agent_user,
+                agent_name=agent_name,
+                recording_file_url=recording_file_url,
+                voicemail_url=voicemail_url,
+                communication=comm.name,
+            )
+        except Exception as ce:
+            frappe.log_error(f"Call Log upsert failed for {call_sid}: {str(ce)}", "Call Intelligence")
+
+        try:
+            settings = frappe.get_cached_doc("Triton Settings")
+            digest = settings.get("send_call_email_digest")
+            send_digest = True if digest is None else bool(frappe.utils.cint(digest))
+        except Exception:
+            send_digest = True
+
+        if not send_digest:
+            frappe.db.commit()
+            return {"status": "success", "communication_id": comm.name}
 
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"

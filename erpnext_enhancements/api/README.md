@@ -13,6 +13,7 @@ Every function is documented inline. This README is the map.
 | `activity_log.py` | Timeline badge counts for a document | `get_activity_counts` | `public/js/activity_log_numbering.js` | — |
 | `analytics.py` | GA4 + Search Console dashboard data | `get_ga4_data`, `get_gsc_data` | `enhancements_core/page/ga4_dashboard/ga4_dashboard.js` | Google Analytics 4 Data API, Google Search Console API |
 | `booking.py` | Composite (Travel/Rental/Maintenance) asset booking | `create_composite_booking` | booking UI / client script | — |
+| `call_intelligence.py` | Upserts AI post-call analysis onto the stock **Call Log** (docname == Twilio SID): sentiment, escalation risk, follow-ups, topics, compliance flags, CSAT, IVR intent, agent; idempotent, partial updates never blank fields | `process_call_intelligence`; helper `upsert_call_log` (called by `telephony.process_unified_recording`) | external Triton gateway webhook | — |
 | `collab.py` | Live collaborative editing relay — validates and re-publishes field changes + per-field focus presence to the document's realtime room; never writes to the DB | `broadcast_field_update`, `broadcast_focus` | `public/js/collab/live_form_sync.js` | — |
 | `comments.py` | Custom comment CRUD + file linking (backs the Vue Comments App) | `get_comments`, `add_comment`, `update_comment`, `delete_comment`, `link_files_to_comment` | `comments.js`, `global_comments.js`, `crm_note_enhancements.js` | — |
 | `communication.py` | AI email/SMS reply drafting | `suggest_sms_reply`; hook `after_insert_communication`; worker `generate_draft_response` | `communication.js`; `Communication` `after_insert` hook | Vertex AI (via `gemini.py`) |
@@ -36,7 +37,7 @@ Every function is documented inline. This README is the map.
 - **`allow_guest=True` (unauthenticated) endpoints:**
   - `logger.log_client_error` — writes an Error Log only; the message is untrusted.
   - `telephony.get_gateway_config` — returns only non-sensitive routing config (no secrets).
-  - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` — guarded by `@validate_webhook_secret` (Bearer shared secret).
+  - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` and `call_intelligence.process_call_intelligence` — guarded by `@validate_webhook_secret` (Bearer shared secret).
   - `telephony.receive_mms` — guarded by `@validate_twilio_request` (HMAC signature).
 - **Session-trust:** `time_kiosk` derives the Employee from `frappe.session.user` and rejects a mismatched claimed employee (`_resolve_employee`). The legacy single-point `log_geolocation` still trusts the supplied `employee` for back-compat.
 - **Role-gated:** `time_kiosk.get_location_history` — only `System Manager` / `HR Manager` may view *another* employee's history; everyone else sees only their own.

@@ -1,0 +1,44 @@
+[
+  {
+    "doctype": "Dashboard",
+    "name": "Call Center",
+    "dashboard_name": "Call Center",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Call Volume (Daily)",
+        "width": "Full"
+      },
+      {
+        "chart": "Call Sentiment",
+        "width": "Half"
+      },
+      {
+        "chart": "Call Escalation Risk",
+        "width": "Half"
+      },
+      {
+        "chart": "Calls by Direction",
+        "width": "Half"
+      },
+      {
+        "chart": "Calls by Intent",
+        "width": "Half"
+      }
+    ],
+    "cards": [
+      {
+        "card": "Total Calls"
+      },
+      {
+        "card": "High Risk Calls"
+      },
+      {
+        "card": "Missed Calls"
+      },
+      {
+        "card": "Avg CSAT"
+      }
+    ]
+  }
+]

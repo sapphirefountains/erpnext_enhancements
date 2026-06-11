@@ -1,0 +1,68 @@
+[
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Call Volume (Daily)",
+    "chart_name": "Call Volume (Daily)",
+    "chart_type": "Count",
+    "document_type": "Call Log",
+    "based_on": "creation",
+    "timeseries": 1,
+    "timespan": "Last Month",
+    "time_interval": "Daily",
+    "type": "Bar",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Call Sentiment",
+    "chart_name": "Call Sentiment",
+    "chart_type": "Group By",
+    "document_type": "Call Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "custom_sentiment",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Call Log\",\"custom_sentiment\",\"!=\",\"\",false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Call Escalation Risk",
+    "chart_name": "Call Escalation Risk",
+    "chart_type": "Group By",
+    "document_type": "Call Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "custom_escalation_risk",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Call Log\",\"custom_escalation_risk\",\"!=\",\"\",false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Calls by Direction",
+    "chart_name": "Calls by Direction",
+    "chart_type": "Group By",
+    "document_type": "Call Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "type",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Calls by Intent",
+    "chart_name": "Calls by Intent",
+    "chart_type": "Group By",
+    "document_type": "Call Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "type_of_call",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Call Log\",\"type_of_call\",\"!=\",\"\",false]]",
+    "is_public": 1
+  }
+]

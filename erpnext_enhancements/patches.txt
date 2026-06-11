@@ -34,6 +34,8 @@ erpnext_enhancements.patches.seed_contract_templates
 # supervisor role, settings defaults; drop the superseded flat template-item table
 erpnext_enhancements.patches.seed_maintenance_sections
 erpnext_enhancements.patches.remove_template_item_doctype
+# v1.11.0 call intelligence: supervisor role + Call Log perms + IVR call types
+erpnext_enhancements.patches.seed_call_intelligence
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link
