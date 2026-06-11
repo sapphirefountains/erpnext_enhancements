@@ -32,8 +32,7 @@ Sapphire Maintenance Record (parent, submittable, route: maintenance-records)
 ├── Sapphire Maintenance Result (child, istable)        inspection row: question, selection (Pass/Fail/Replace/Other)
 ├── Sapphire Chemistry Reading (child, istable)         reading vs target range; out_of_range computed in validate
 ├── Sapphire Cleaning Task (child, istable)             done / not done
-├── Sapphire Maintenance Consumable (child, istable)    dosing row: item, warehouse, qty (prefilled at 0)
-└── Sapphire Historical Visit (child, istable + virtual) computed: last 5 submitted visits for the Project
+└── Sapphire Maintenance Consumable (child, istable)    dosing row: item, warehouse, qty (prefilled at 0)
 
 Sapphire Maintenance Profile          one per Project (unique): safety_instructions, access_codes
 Sapphire Reading Range Override       child table on Serial No (custom_reading_overrides):
@@ -46,8 +45,8 @@ Configuration lives in **ERPNext Enhancements Settings → Maintenance**: fee it
 
 | File | Purpose | Key functions |
 |---|---|---|
-| `doctype/sapphire_maintenance_record/sapphire_maintenance_record.py` | Record controller + portal helpers | `historical_visits` (virtual, cached), `validate` (reading ranges), `on_submit`, `get_context`, whitelisted `get_visit_payload`, `get_dashboard_context`; module-level `evaluate_reading_ranges`, `resolve_template` |
-| `doctype/sapphire_maintenance_record/sapphire_maintenance_record.js` | Desk form: safety gate, template instantiation, in-form dashboard | `toggle_safety_gate`, `populate_from_template`, `render_dashboard` |
+| `doctype/sapphire_maintenance_record/sapphire_maintenance_record.py` | Record controller + portal helpers | `validate` (reading ranges), `on_submit`, `get_context`, whitelisted `get_visit_payload`, `get_dashboard_context`, `get_historical_visits` (last 5 visits for the `historical_visits` HTML field — not a child table); module-level `evaluate_reading_ranges`, `resolve_template` |
+| `doctype/sapphire_maintenance_record/sapphire_maintenance_record.js` | Desk form: safety gate, template instantiation, in-form dashboard | `toggle_safety_gate`, `populate_from_template`, `render_dashboard`, `render_historical_visits` |
 | `doctype/sapphire_maintenance_record/sapphire_maintenance_record.html` | Portal/print format ("Maintenance Record Print") | header, Service Duration, checklist, chemistry, cleaning tasks, consumed consumables, sign-off |
 | `doctype/sapphire_maintenance_contract/sapphire_maintenance_contract.py` | Contract controller + mapped-doc creators | `validate` (one Active per project), whitelisted `make_contract_from_sales_order`, `make_contract_from_project_contract`, `get_active_contract` |
 | `doctype/sapphire_maintenance_section/…py` / `.js` | Section controller / type-driven grid columns | `validate` (dosing rows need an Item; min ≤ max) |

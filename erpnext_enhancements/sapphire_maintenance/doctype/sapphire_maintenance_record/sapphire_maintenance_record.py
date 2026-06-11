@@ -37,35 +37,9 @@ Whitelisted helpers used by the desk form's JS: ``get_visit_payload``
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from functools import cached_property
 from frappe.utils import flt
 
 class SapphireMaintenanceRecord(Document):
-	@cached_property
-	def historical_visits(self):
-		"""Return the last 5 submitted visits for this record's Project.
-
-		Backs the virtual ``historical_visits`` child table (the Sapphire
-		Historical Visit doctype is ``is_virtual``), so the rows are computed on
-		read rather than stored. Excludes the current record and returns
-		``frappe._dict`` rows shaped to the virtual table's fields
-		(visit_date / record_id / technician). Returns ``[]`` when no Project is
-		set. Cached per-document instance via ``cached_property``.
-		"""
-		if not self.project:
-			return []
-
-		records = frappe.get_all(
-			"Sapphire Maintenance Record",
-			filters={"project": self.project, "name": ["!=", self.name or ""], "docstatus": 1},
-			fields=["creation as visit_date", "name as record_id", "technician"],
-			order_by="creation desc",
-			limit=5,
-		)
-
-		# Map to virtual child table format
-		return [frappe._dict(d) for d in records]
-
 	def validate(self):
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
@@ -352,6 +326,39 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 					)
 
 	return payload
+
+
+@frappe.whitelist()
+def get_historical_visits(project, exclude=None):
+	"""Last 5 submitted maintenance visits for a Project.
+
+	Backs the read-only ``historical_visits`` HTML field on the desk form
+	(rendered client-side by ``render_historical_visits`` in the form JS). This
+	replaces the former virtual ``historical_visits`` child table — an
+	``is_virtual`` doctype whose ``cached_property`` rows didn't shadow Frappe's
+	child-table loader and crashed permission checks (``has_user_permission`` ->
+	``get_all_children``) on a non-existent table.
+
+	Uses ``get_list`` so the result respects the caller's read permissions and
+	User Permissions on the Maintenance Record. Excludes the current record;
+	returns ``[]`` when no Project is set.
+
+	Args:
+		project (str): Project name (docname).
+		exclude (str, optional): Record name to omit (the open document).
+
+	Returns:
+		list[dict]: ``[{name, creation, technician}]`` newest-first, max 5.
+	"""
+	if not project:
+		return []
+	return frappe.get_list(
+		"Sapphire Maintenance Record",
+		filters={"project": project, "name": ["!=", exclude or ""], "docstatus": 1},
+		fields=["name", "creation", "technician"],
+		order_by="creation desc",
+		limit=5,
+	)
 
 
 @frappe.whitelist()
