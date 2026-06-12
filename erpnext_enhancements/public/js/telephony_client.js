@@ -340,6 +340,30 @@ erpnext_enhancements.telephony = {
             console.log('Twilio Device Registered to handle incoming calls');
         });
 
+        // The access token expires after 1 hour, after which Twilio silently
+        // unregisters the device — desk tabs stay open all day here, so
+        // without this refresh the softphone looked "Registered" in the
+        // morning but never rang in the afternoon (panel without
+        // Accept/Decline). The SDK fires this ~10s before expiry.
+        this.device.on('tokenWillExpire', () => {
+            this.fetch_token()
+                .then((token) => {
+                    if (token) {
+                        this.device.updateToken(token);
+                        console.log('[telephony] Softphone token refreshed');
+                    } else {
+                        // User was removed from softphone_users since page load.
+                        console.log('[telephony] Softphone disabled for this user; releasing device.');
+                        this.device.destroy();
+                        this.device = null;
+                        this.is_ready = false;
+                    }
+                })
+                .catch((err) => {
+                    console.error('[telephony] Softphone token refresh failed:', err);
+                });
+        });
+
         // Required for Twilio Voice v2.x to receive incoming connections
         this.device.register();
 
