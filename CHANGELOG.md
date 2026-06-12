@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **/wall TV display crashed with "SQL functions are not allowed as strings in SELECT"** — frappe 16 rejects aggregate functions passed as `get_all` field strings. Rewrote the wall's per-project task-stats query with the query builder, plus the three other sites with the same latent pattern (Travel Trip claim/advance rollups in `travel_trip.py` and `integrations.py`, and the Trip Cost Summary traveler counts). Both query shapes verified against the live frappe build.
 - **Console spam "Failed to execute 'clone' on 'Response'" on every desk page** — the kiosk service worker (whose scope covers the whole site) cloned asset responses inside an async `caches.open()` callback, by which time the page had usually consumed the body. The clone now happens synchronously before the response is handed back.
 - **Squished avatars in the Comments App** — profile photos that aren't square stretched to fill the round frame (which is why only some users looked squished). Avatar images now use `object-fit: cover` and the frames no longer flex-shrink.
+## [1.23.1] - 2026-06-12
+
+### Fixed
+- **"New Note" crashed with `'EmployeeProject' object has no attribute 'add_note'` on Project** (and would equally crash on Customer, Supplier, Master Project, Contact). `unified_tab_controller.js` mounted ERPNext's stock CRMNotes widget on `custom_comments_field` for every wired doctype, but the widget's buttons call the `add_note`/`edit_note`/`delete_note` document methods that only the CRM doctypes (Lead/Opportunity/Prospect) implement — and the mount also fought the threaded Comments App for the same field, which is why the Notes tab sometimes showed the wrong UI. CRMNotes is now mounted only on the CRM doctypes (Opportunity keeps its 852 existing CRM Notes); everything else renders the Comments App.
 
 ## [1.23.0] - 2026-06-12
 
