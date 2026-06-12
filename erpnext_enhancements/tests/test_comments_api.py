@@ -20,14 +20,22 @@ class TestCommentsAPI(unittest.TestCase):
 		self.assertEqual(comments.get_comments("Account", None), [])
 		self.assertEqual(comments.get_comments(None, "Acc-001"), [])
 
+	@patch('frappe.db')
 	@patch('frappe.get_all')
 	@patch('frappe.has_permission', return_value=True)
-	def test_get_comments_success(self, mock_has_perm, mock_get_all):
-		"""get_comments filters by reference and enriches each comment with author full_name."""
-		mock_comment = {"name": "c1", "content": "test", "owner": "user1", "creation": "2023-01-01"}
+	def test_get_comments_success(self, mock_has_perm, mock_get_all, mock_db):
+		"""get_comments filters by reference, requests the thread-parent field
+		(column present) and enriches each comment with author full_name."""
+		mock_db.has_column.return_value = True
+		mock_comment = {
+			"name": "c1", "content": "test", "owner": "user1",
+			"creation": "2023-01-01", "custom_parent_comment": "root1",
+		}
+		requested_fields = {}
 
 		def get_all_side_effect(doctype, filters=None, fields=None, order_by=None):
 			if doctype == "Comment":
+				requested_fields["comment"] = fields
 				# verify filters
 				if filters.get("reference_doctype") == "Account" and filters.get("reference_name") == "Acc-001":
 					return [mock_comment]
@@ -39,6 +47,30 @@ class TestCommentsAPI(unittest.TestCase):
 		result = comments.get_comments("Account", "Acc-001")
 		self.assertEqual(len(result), 1)
 		self.assertEqual(result[0]['full_name'], "Test User")
+		self.assertIn("custom_parent_comment", requested_fields["comment"])
+		self.assertEqual(result[0]['custom_parent_comment'], "root1")
+
+	@patch('frappe.db')
+	@patch('frappe.get_all')
+	@patch('frappe.has_permission', return_value=True)
+	def test_get_comments_before_migrate(self, mock_has_perm, mock_get_all, mock_db):
+		"""Without the migrated column, get_comments must not request the
+		thread-parent field (deploy-before-migrate safety)."""
+		mock_db.has_column.return_value = False
+		requested_fields = {}
+
+		def get_all_side_effect(doctype, filters=None, fields=None, order_by=None):
+			if doctype == "Comment":
+				requested_fields["comment"] = fields
+				return [{"name": "c1", "content": "t", "owner": "user1", "creation": "2023-01-01"}]
+			if doctype == "User":
+				return [{"name": "user1", "full_name": "Test User", "user_image": None}]
+			return []
+		mock_get_all.side_effect = get_all_side_effect
+
+		result = comments.get_comments("Account", "Acc-001")
+		self.assertEqual(len(result), 1)
+		self.assertNotIn("custom_parent_comment", requested_fields["comment"])
 
 	@patch('frappe.get_doc')
 	@patch('frappe.new_doc')
@@ -69,6 +101,80 @@ class TestCommentsAPI(unittest.TestCase):
 		self.assertEqual(mock_comment_doc.reference_doctype, "Account")
 		self.assertEqual(mock_comment_doc.reference_name, "Acc-001")
 
+	def _reply_mocks(self, mock_new_doc, mock_get_doc):
+		"""Shared scaffolding for the reply tests: a fresh Comment doc mock and a
+		User lookup for the author-enrichment refetch."""
+		mock_comment_doc = MagicMock()
+		mock_comment_doc.name = "reply1"
+		mock_comment_doc.owner = "test_user"
+		mock_new_doc.return_value = mock_comment_doc
+
+		mock_user_doc = MagicMock()
+		mock_user_doc.full_name = "Test User"
+		mock_user_doc.user_image = None
+		mock_get_doc.return_value = mock_user_doc
+		return mock_comment_doc
+
+	@patch('frappe.db')
+	@patch('frappe.get_doc')
+	@patch('frappe.new_doc')
+	@patch('frappe.has_permission', return_value=True)
+	def test_add_reply_sets_parent(self, mock_has_perm, mock_new_doc, mock_get_doc, mock_db):
+		"""add_comment(parent_comment=<top-level>) stores the parent and inserts
+		with ignore_links (the root may be a dangling name for orphan threads)."""
+		mock_db.get_value.return_value = frappe._dict(
+			name="parent1", comment_type="Comment",
+			reference_doctype="Account", reference_name="Acc-001",
+			custom_parent_comment=None,
+		)
+		mock_comment_doc = self._reply_mocks(mock_new_doc, mock_get_doc)
+
+		comments.add_comment("Account", "Acc-001", "a reply", parent_comment="parent1")
+
+		self.assertEqual(mock_comment_doc.custom_parent_comment, "parent1")
+		mock_comment_doc.insert.assert_called_once_with(ignore_permissions=True, ignore_links=True)
+
+	@patch('frappe.db')
+	@patch('frappe.get_doc')
+	@patch('frappe.new_doc')
+	@patch('frappe.has_permission', return_value=True)
+	def test_add_reply_to_reply_resolves_root(self, mock_has_perm, mock_new_doc, mock_get_doc, mock_db):
+		"""Replying to a reply attaches to the thread ROOT (single-level threads)."""
+		mock_db.get_value.return_value = frappe._dict(
+			name="reply0", comment_type="Comment",
+			reference_doctype="Account", reference_name="Acc-001",
+			custom_parent_comment="root1",
+		)
+		mock_comment_doc = self._reply_mocks(mock_new_doc, mock_get_doc)
+
+		comments.add_comment("Account", "Acc-001", "a nested reply", parent_comment="reply0")
+
+		self.assertEqual(mock_comment_doc.custom_parent_comment, "root1")
+
+	@patch('frappe.db')
+	@patch('frappe.new_doc')
+	@patch('frappe.has_permission', return_value=True)
+	def test_add_reply_missing_parent(self, mock_has_perm, mock_new_doc, mock_db):
+		"""Replying to a nonexistent comment throws."""
+		mock_db.get_value.return_value = None
+		with self.assertRaises(frappe.ValidationError):
+			comments.add_comment("Account", "Acc-001", "a reply", parent_comment="gone")
+		mock_new_doc.assert_not_called()
+
+	@patch('frappe.db')
+	@patch('frappe.new_doc')
+	@patch('frappe.has_permission', return_value=True)
+	def test_add_reply_wrong_document(self, mock_has_perm, mock_new_doc, mock_db):
+		"""A parent on a different document (or non-Comment type) is rejected."""
+		mock_db.get_value.return_value = frappe._dict(
+			name="parent1", comment_type="Comment",
+			reference_doctype="Account", reference_name="Acc-OTHER",
+			custom_parent_comment=None,
+		)
+		with self.assertRaises(frappe.ValidationError):
+			comments.add_comment("Account", "Acc-001", "a reply", parent_comment="parent1")
+		mock_new_doc.assert_not_called()
+
 	@patch('frappe.get_doc')
 	@patch('frappe.session')
 	def test_delete_comment_success(self, mock_session, mock_get_doc):
@@ -97,6 +203,12 @@ class TestCommentsAPI(unittest.TestCase):
 		mock_comment_doc.name = "note1"
 		mock_comment_doc.owner = "test_user"
 		mock_comment_doc.content = "old content"
+		# Guards the "edited reply jumps to top level" regression: the client
+		# splices this response over its array entry, so the thread-parent key
+		# must survive an update round-trip.
+		mock_comment_doc.get.side_effect = (
+			lambda key, default=None: "root1" if key == "custom_parent_comment" else default
+		)
 
 		def get_doc_side_effect(doctype, name):
 			if doctype == "Comment" and name == "note1":
@@ -111,6 +223,7 @@ class TestCommentsAPI(unittest.TestCase):
 		result = comments.update_comment("note1", "new content")
 		self.assertEqual(mock_comment_doc.content, "new content")
 		self.assertEqual(result['full_name'], "Updated User")
+		self.assertEqual(result['custom_parent_comment'], "root1")
 
 	@patch('frappe.has_permission', return_value=False)
 	def test_permission_denied(self, mock_has_perm):
