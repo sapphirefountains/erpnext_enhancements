@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-06-12
+
+### Fixed
+- **Per-user desk softphone identities** (pairs with Triton >= 0.8.0; fixes Answer/Decline never appearing on the desk call panel). All desk sessions previously registered ONE shared Twilio identity, so with several `softphone_users` configured only the most recently opened desk could ever ring — and whether the desk rang at all depended on a Triton env var matching the hard-coded identity. Now each configured answerer registers their own `erpnext_<email>` identity, and the new `get_telephony_routing` webhook (Bearer/`token`-guarded) hands Triton the identity list plus the business caller-ID number (`Triton Settings.primary_twilio_number`) — Triton dials every answerer in parallel and no env configuration is needed. With `softphone_users` empty, the legacy shared identity is kept for backward compatibility. (1.22.0 is the threaded-comments release on PR #420.)
 ## [1.22.0] - 2026-06-12
 
 ### Added
