@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.2] - 2026-06-12
+
+### Fixed
+- **Sending an SMS from the desk crashed** ("Missing or Invalid Authorization Header" masked by an `UnboundLocalError`). Two stacked bugs: (1) `send_sms` called the whitelisted `get_caller_info`, whose `@validate_webhook_secret` guard reads the request's Authorization header — desk sessions authenticate by cookie and have none, so the internal call threw; the same flaw silently broke **inbound MMS** (`receive_mms` is Twilio-signature-guarded, also no Authorization header). The caller-lookup logic now lives in an auth-free internal `_get_caller_info` used by every server-side call site; the guarded wrapper remains the HTTP boundary for the Triton gateway. (2) A function-local `import requests` inside `send_sms` made `requests` a local name for the whole function, so the `except requests.exceptions...` clause raised `UnboundLocalError` when anything threw before the import line — both stray local imports removed (the module-level import is in scope).
+
 ## [1.24.1] - 2026-06-12
 
 ### Fixed
