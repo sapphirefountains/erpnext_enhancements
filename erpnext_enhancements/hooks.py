@@ -238,7 +238,11 @@ doc_events = {
 	},
 	"Supplier": {
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
-		"validate": "erpnext_enhancements.supplier_query.sync_supplier_groups",
+		"validate": [
+			"erpnext_enhancements.supplier_query.sync_supplier_groups",
+			# Primary Address display text = Address.custom_full_address
+			"erpnext_enhancements.sync_contact.set_supplier_primary_address_display",
+		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Customer": {

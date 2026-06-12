@@ -74,6 +74,30 @@ erpnext_enhancements.unified_controller = {
 		}
 	},
 
+	// The Address LINK field differs per doctype: stock Customer/Supplier keep
+	// the docname in customer_primary_address / supplier_primary_address —
+	// their `primary_address` is the read-only TEXT display (HTML), which is
+	// why the map used to show "Invalid address reference format" there —
+	// while Project / Master Project use the app's custom `primary_address`
+	// Link field.
+	primary_address_link_field: function () {
+		const frm = this.frm;
+		if (frm.fields_dict.customer_primary_address) return "customer_primary_address";
+		if (frm.fields_dict.supplier_primary_address) return "supplier_primary_address";
+		const df = frm.fields_dict.primary_address && frm.fields_dict.primary_address.df;
+		if (df && df.fieldtype === "Link") return "primary_address";
+		return null;
+	},
+
+	primary_address_name: function () {
+		const link_field = this.primary_address_link_field();
+		return (
+			(link_field && this.frm.doc[link_field]) ||
+			this.frm.doc.customer_address ||
+			this.frm.doc.supplier_address
+		);
+	},
+
 	setup_queries: function () {
 		const frm = this.frm;
 		const sources = this.get_all_party_sources();
@@ -88,8 +112,9 @@ erpnext_enhancements.unified_controller = {
 			});
 		}
 
-		if (frm.fields_dict.primary_address) {
-			frm.set_query("primary_address", () => {
+		const address_link_field = this.primary_address_link_field();
+		if (address_link_field) {
+			frm.set_query(address_link_field, () => {
 				return {
 					filters: [["Dynamic Link", "link_name", "in", sources.map((s) => s.name)]],
 				};
@@ -340,12 +365,13 @@ erpnext_enhancements.unified_controller = {
 						<tbody>
 				`;
 
+						const primary_address_name = this.primary_address_name();
 				r.message.forEach((a) => {
 					const full_address =
 						a.custom_full_address ||
 						[a.address_line1, a.address_line2].filter(Boolean).join(", ");
 					const is_primary =
-						a.name === frm.doc.primary_address || a.is_primary_address
+						a.name === primary_address_name || a.is_primary_address
 							? `<span class="badge badge-info" style="font-size: 10px; margin-left: 8px; vertical-align: middle;">Primary</span>`
 							: "";
 					const address_url = frappe.urllib.get_full_url(`/app/address/${a.name}`);
@@ -373,7 +399,7 @@ erpnext_enhancements.unified_controller = {
 									<i class="fa fa-pencil"></i>
 								</button>
 								${
-									frm.doc.primary_address !== a.name
+									primary_address_name !== a.name
 										? `
 								<button class="btn btn-xs btn-primary set-primary-address" data-name="${a.name}" style="margin-left: 5px;">
 									Set Primary
@@ -461,15 +487,25 @@ erpnext_enhancements.unified_controller = {
 					address_name: address_name,
 				},
 				callback: (r) => {
-					frm.set_value("primary_address", address_name);
-					frm.save().done(() => {
+					// Write the docname into the doctype's actual Address LINK
+					// field — on Customer/Supplier `primary_address` is the
+					// read-only TEXT display, which the server fills on save
+					// (for Supplier: Address.custom_full_address).
+					const link_field = this.primary_address_link_field();
+					const done = () => {
 						this.render_address_table();
 						this.render_google_map();
 						frappe.show_alert({
 							message: __("Primary address updated"),
 							indicator: "green",
 						});
-					});
+					};
+					if (link_field) {
+						frm.set_value(link_field, address_name);
+						frm.save().done(done);
+					} else {
+						done();
+					}
 				},
 			});
 		});
@@ -546,10 +582,9 @@ erpnext_enhancements.unified_controller = {
 		const wrapper = $(frm.fields_dict.location_map_html.wrapper);
 		wrapper.empty();
 
-		const address_name =
-			frm.doc.primary_address ||
-			frm.doc.customer_address ||
-			frm.doc.supplier_address;
+		// Resolve the Address DOCNAME from the per-doctype Link field; the
+		// fetched Address's custom_full_address is what feeds the embed below.
+		const address_name = this.primary_address_name();
 		if (!address_name) {
 			wrapper.append(
 				'<div class="alert alert-secondary">Select a Primary Address to view the map.</div>',

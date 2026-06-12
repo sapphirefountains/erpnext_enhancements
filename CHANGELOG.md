@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-06-12
+
+### Fixed
+- **Supplier (and Customer) primary address + Google Maps box in the unified Contacts & Addresses tab.** The directory widget read `frm.doc.primary_address` as if it were the Address docname — but on stock Customer/Supplier that field is the read-only TEXT display (HTML), so the map box always showed "Invalid address reference format" and Set Primary wrote a docname into the display field. The widget now resolves the real Link field per doctype (`customer_primary_address` / `supplier_primary_address` / the custom `primary_address` Link on Project/Master Project) for the map, the Primary badge, the Set Primary action, and the link-field query.
+
+### Changed
+- **Supplier's read-only "Primary Address" text now shows the Address's `custom_full_address`** (new Supplier `validate` hook) instead of frappe's multi-line address-template rendering, falling back to the stock text when the custom field is empty. The Google Maps embed feeds from the same `custom_full_address` (existing behavior, now actually reachable on Supplier since the docname resolves).
 ## [1.23.2] - 2026-06-12
 
 ### Fixed
