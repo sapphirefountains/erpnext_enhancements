@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ai_governance.json` lacked the mandatory `type` field (its synced DB row had `type` NULL, so any save of the workspace failed with a MandatoryError) and its two shortcuts (Pending Confirmations / Action Log) were defined but never rendered because the content had no shortcut blocks. Now ships `"type": "Workspace"` and a shortcuts row.
   - `sapphire_maintenance.json` sat directly in `workspace/` instead of the required `workspace/<name>/<name>.json` layout, so module sync never imported it — the workspace didn't exist on the live site at all. Moved to the correct path and rebuilt with content blocks, "Maintenance" and "Tools" cards (now also linking Service Plan, Visit Wizard, and Day Board), shortcuts (Visit Wizard / Day Board / Add Maintenance Record), and the `type` field.
   - Both live rows were hot-patched/created to the same state so the workspaces work before the deploy; fixture `modified` stamps are later so `bench migrate` still re-syncs them.
+## [1.19.0] - 2026-06-12
+
+### Fixed
+- **Travel workspace crashed on open** (`/desk/travel` rendered blank with a `Cannot read properties of null (reading 'length')` console error). The shipped Workspace JSON had no `content` blocks and no Card Break grouping its links, so the synced DB row's `content` was NULL and Frappe's workspace renderer threw. The fixture now ships proper content (shortcuts row + "Travel" records card + "Reports" card) and re-syncs on migrate; the live row was also hot-patched so the page works before the deploy.
+
+### Added
+- **Google Maps for Travel POIs.** The Travel POI form gains an "Open in Google Maps" button (uses the Geolocation pin's coordinates; falls back to a text search on the linked Address). The Travel Trip itinerary map and the /itinerary day map marker popups now include a Google Maps link per stop (tiles stay Leaflet/OSM — multi-marker embeds need an API key; the external links are Google Maps, matching the itinerary's existing "Open in Maps" links).
+## [1.18.0] - 2026-06-12
+
+### Added
+- **Projects Dashboard: "Completed On" column on the Completed Projects tab, sorted newest-first by default.** `Project.actual_end_date` turned out to be empty on every inactive project in production, so `get_project_data` now derives each inactive project's completion date from its Version history — the most recent moment `is_active` flipped Yes → No (100% coverage today; falls back to the project's last-modified date if no flip was ever recorded). Both dashboard variants show the date and default-sort by it:
+  - Desk page (`completed_projects.js`): the tab's table headers are now clickable to sort (the page variant previously had no sorting at all — sort styles ship with the component, themed via Frappe CSS vars).
+  - Custom HTML Block (`projects_dashboard.js`): new column wired into the existing sortable headers and column selector; first click on the date column sorts newest-first, and dateless projects sink to the bottom in either direction.
 
 ## [1.17.0] - 2026-06-11
 

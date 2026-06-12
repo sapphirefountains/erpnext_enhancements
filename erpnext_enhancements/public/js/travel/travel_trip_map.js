@@ -54,11 +54,13 @@
 
 				const bounds = [];
 				pois.forEach((poi) => {
+					const gmaps = `https://maps.google.com/?q=${poi.lat},${poi.lng}`;
 					const popup = `
 						<b>${frappe.utils.escape_html(poi.label)}</b><br>
 						${frappe.utils.escape_html(poi.category || '')}<br>
 						${(poi.agenda_dates || []).map(frappe.utils.escape_html).join(', ')}<br>
-						<a href="/app/travel-poi/${encodeURIComponent(poi.poi)}">${__('Open POI')}</a>`;
+						<a href="/app/travel-poi/${encodeURIComponent(poi.poi)}">${__('Open POI')}</a>
+						&middot; <a href="${gmaps}" target="_blank" rel="noopener">${__('Google Maps')}</a>`;
 					L.marker([poi.lat, poi.lng]).addTo(map).bindPopup(popup);
 					bounds.push([poi.lat, poi.lng]);
 				});
