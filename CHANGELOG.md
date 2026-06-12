@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-06-12
+
+### Added
+- **Call recordings + voicemails mirrored to Google Drive** (`api/call_recording_export.py`). Every recording ingested by `process_unified_recording` and every Twilio voicemail ingested by `process_call_intelligence` is uploaded in a background job to the folder configured in the new `Triton Settings.call_recordings_drive_folder` (empty = feature off), organised into monthly `YYYY_MM` subfolders. Filenames: `2026-06-12 1530 — Inbound — Caller Name (+1801…) — <CallSid>.wav`, voicemails prefixed `Voicemail — `. Auth reuses the project-folders service account (Project Folder Google Drive Settings) with Shared Drive support; uploads are idempotent per Call SID (webhook retries dedupe against Drive); answered-call audio is read from the already-saved private File, voicemail audio is fetched from Twilio with the stored credentials. Export failures only log to Error Log ("Call Recording Export") — webhooks are never affected.
+
+
 ## [1.25.0] - 2026-06-12
 
 ### Changed

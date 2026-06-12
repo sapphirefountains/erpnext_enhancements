@@ -342,6 +342,23 @@ def process_call_intelligence(**kwargs):
             communication=val("communication"),
         )
 
+        # Voicemails also get mirrored into the Operations Shared Drive's
+        # monthly folder (the audio is fetched from Twilio in the background
+        # job — its bytes never reach ERPNext otherwise). Gated on
+        # Triton Settings.call_recordings_drive_folder.
+        if val("voicemail_url"):
+            from erpnext_enhancements.api.call_recording_export import enqueue_recording_export
+
+            enqueue_recording_export(
+                call_sid=call_sid,
+                when=val("start_time"),
+                direction=direction,
+                caller_name=val("caller_name") or display_name,
+                caller_number=customer_phone or from_number,
+                twilio_audio_url=val("voicemail_url"),
+                is_voicemail=True,
+            )
+
         frappe.db.commit()
         return {"status": "success", "call_log": name}
     except Exception as e:

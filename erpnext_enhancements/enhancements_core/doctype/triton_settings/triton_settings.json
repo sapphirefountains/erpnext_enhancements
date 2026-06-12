@@ -131,6 +131,12 @@
    "label": "Softphone Users (answer device)"
   },
   {
+   "description": "Google Drive folder ID that receives every call recording and voicemail, organised into monthly YYYY_MM subfolders. Uses the project-folders service account (Project Folder Google Drive Settings) — that account must be a member of the Shared Drive containing this folder. Leave empty to disable the export.",
+   "fieldname": "call_recordings_drive_folder",
+   "fieldtype": "Data",
+   "label": "Call Recordings Drive Folder ID"
+  },
+  {
    "fieldname": "webhook_section",
    "fieldtype": "Section Break",
    "label": "Webhook configuration"
@@ -151,7 +157,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-12 18:00:00.000000",
+ "modified": "2026-06-12 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Triton Settings",
