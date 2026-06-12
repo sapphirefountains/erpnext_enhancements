@@ -282,7 +282,14 @@ self.addEventListener('fetch', (event) => {
       // an update is mid-flight.
       const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
-        if (res && res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
+        if (res && res.ok) {
+          // Clone synchronously, BEFORE the response is returned — by the
+          // time the async caches.open() resolved, the page had often already
+          // consumed the body, throwing "Response body is already used" on
+          // every desk page load.
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       }).catch(() => null);
       return cached || (await network) || new Response('', { status: 504 });

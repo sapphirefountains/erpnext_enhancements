@@ -16,6 +16,7 @@ hooks cost nothing on unrelated documents.
 """
 
 import frappe
+from frappe.query_builder.functions import Sum
 from frappe.utils import flt
 
 # Travel Trip child tables that carry an expense_claim stamp.
@@ -98,10 +99,12 @@ def _refresh_linked_total(trip, doctype, amount_field, trip_field):
 		return  # fixture-managed back-link field not applied yet
 	if not frappe.db.exists("Travel Trip", trip):
 		return  # trip is mid-deletion; on_trash already unlinked us
-	rows = frappe.get_all(
-		doctype,
-		filters={"custom_travel_trip": trip, "docstatus": ["<", 2]},
-		fields=[f"sum({amount_field}) as total"],
-	)
+	# Query builder: frappe 16 rejects SQL functions as get_all field strings.
+	table = frappe.qb.DocType(doctype)
+	rows = (
+		frappe.qb.from_(table)
+		.select(Sum(table[amount_field]).as_("total"))
+		.where((table.custom_travel_trip == trip) & (table.docstatus < 2))
+	).run(as_dict=True)
 	total = flt(rows[0].total) if rows else 0
 	frappe.db.set_value("Travel Trip", trip, trip_field, total, update_modified=False)
