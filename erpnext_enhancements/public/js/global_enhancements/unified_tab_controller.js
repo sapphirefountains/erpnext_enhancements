@@ -49,14 +49,28 @@ erpnext_enhancements.unified_controller = {
 
 	setup_comments: function () {
 		const frm = this.frm;
-		if (frm.fields_dict.custom_comments_field && window.erpnext && erpnext.utils.CRMNotes) {
-			if (!frm.crm_notes) {
-				frm.crm_notes = new erpnext.utils.CRMNotes({
-					frm: frm,
-					notes_wrapper: $(frm.fields_dict.custom_comments_field.wrapper),
-				});
+		if (!frm.fields_dict.custom_comments_field || frm.is_new()) return;
+
+		// ERPNext's CRMNotes widget needs the controller-side CRMNote mixin
+		// (the add_note/edit_note/delete_note doc methods + the `notes` child
+		// table), which only the CRM doctypes have. Mounting it on the other
+		// wired doctypes crashed its New Note button with e.g.
+		// "'EmployeeProject' object has no attribute 'add_note'" on Project —
+		// and stomped the same field the threaded Comments App renders into.
+		const CRM_NOTE_DOCTYPES = ["Lead", "Opportunity", "Prospect"];
+		if (CRM_NOTE_DOCTYPES.includes(frm.doctype)) {
+			if (window.erpnext && window.erpnext.utils && window.erpnext.utils.CRMNotes) {
+				if (!frm.crm_notes) {
+					frm.crm_notes = new window.erpnext.utils.CRMNotes({
+						frm: frm,
+						notes_wrapper: $(frm.fields_dict.custom_comments_field.wrapper),
+					});
+				}
+				frm.crm_notes.refresh();
 			}
-			frm.crm_notes.refresh();
+		} else if (window.erpnext_enhancements && erpnext_enhancements.render_comments_app) {
+			// Everything else gets the app's own Comments App (threaded notes).
+			erpnext_enhancements.render_comments_app(frm, "custom_comments_field");
 		}
 	},
 
