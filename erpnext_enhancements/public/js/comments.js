@@ -15,6 +15,14 @@
  * linked via link_files_to_comment), and renders an avatar + content + actions
  * list. Styling lives in desk_enhancements.bundle.css (.project-comments-*).
  *
+ * Threads: comments with `custom_parent_comment` render as replies indented
+ * under their thread root (single-level, Slack-style — grouping happens in the
+ * `threads` computed; the flat `comments` array stays the source of truth).
+ * The Reply action reuses the composer pre-filled with a Quill mention blot of
+ * the target comment's author — frappe core notifies mentioned users on
+ * insert, so the tagged person gets the native bell/email notification.
+ * Replies whose root was deleted render under a "(deleted note)" stub.
+ *
  * Related files: comments_auto.js (auto-mounts this on many doctypes),
  * global_comments.js (patches the *native* timeline to add an attach button).
  */
@@ -91,15 +99,36 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                         }
                     });
                 },
-                showAddCommentDialog() {
+                showReplyDialog(comment) {
+                    this.showAddCommentDialog(comment);
+                },
+                showAddCommentDialog(reply_to = null) {
                     let uploaded_files = [];
+
+                    // Pre-fill a real Quill mention blot for the person being
+                    // replied to. ControlTextEditor.set_input round-trips it via
+                    // clipboard.convert, which rebuilds the registered mention
+                    // embed from the data-* attributes; frappe core's
+                    // Comment.after_insert -> notify_mentions then notifies the
+                    // tagged user automatically. The trailing &nbsp; gives Quill
+                    // a text node so the cursor lands after the mention.
+                    const esc = (t) => frappe.utils.escape_html
+                        ? frappe.utils.escape_html(t || '')
+                        : $('<div>').text(t || '').html();
+                    let prefill;
+                    if (reply_to) {
+                        const display = esc(reply_to.full_name || reply_to.owner);
+                        prefill = `<p><span class="mention" data-id="${esc(reply_to.owner)}" data-value="${display}" data-denotation-char="@" data-is-group="false">${display}</span>&nbsp;</p>`;
+                    }
+
                     let dialog = new frappe.ui.Dialog({
-                        title: 'New Note',
+                        title: reply_to ? 'Reply' : 'New Note',
                         fields: [
                             {
                                 label: 'Note',
                                 fieldname: 'comment_text',
                                 fieldtype: 'Text Editor',
+                                default: prefill || undefined,
                                 reqd: 1,
                                 enable_mentions: true
                             },
@@ -133,6 +162,13 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                                     reference_doctype: frm.doc.doctype,
                                     reference_name: frm.doc.name,
                                     comment_text: comment_text,
+                                    // Client resolves to the thread root too (the
+                                    // server re-validates); frappe.call drops
+                                    // undefined args, so top-level adds are
+                                    // identical to before.
+                                    parent_comment: reply_to
+                                        ? (reply_to.custom_parent_comment || reply_to.name)
+                                        : undefined,
                                 },
                                 callback: (r) => {
                                     if (r.message) {
@@ -183,6 +219,16 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     }, 'fa fa-paperclip');
 
                     dialog.show();
+
+                    if (reply_to) {
+                        // Drop the cursor after the pre-filled mention.
+                        setTimeout(() => {
+                            const ed = dialog.get_field('comment_text');
+                            if (ed && ed.quill) {
+                                ed.quill.setSelection(ed.quill.getLength(), 0);
+                            }
+                        }, 200);
+                    }
                 },
                 showEditCommentDialog(comment) {
                     let uploaded_files = [];
@@ -300,10 +346,49 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     });
                 },
             },
+            computed: {
+                /**
+                 * Groups the flat comments array into single-level threads:
+                 * top-level notes newest-first (API order), replies oldest-first
+                 * within each thread. Replies whose root no longer exists group
+                 * under a deleted-stub thread sorted by their newest reply.
+                 * frappe creation strings (YYYY-MM-DD HH:MM:SS.ffffff) compare
+                 * lexicographically, so no Date parsing is needed.
+                 */
+                threads() {
+                    const threads = [];
+                    const byRoot = {};
+                    for (const c of this.comments) {
+                        if (!c.custom_parent_comment) {
+                            const t = { key: c.name, parent: c, replies: [], deleted: false };
+                            byRoot[c.name] = t;
+                            threads.push(t);
+                        }
+                    }
+                    for (const c of this.comments) {
+                        if (!c.custom_parent_comment) continue;
+                        let t = byRoot[c.custom_parent_comment];
+                        if (!t) {
+                            t = { key: 'deleted-' + c.custom_parent_comment, parent: null, replies: [], deleted: true };
+                            byRoot[c.custom_parent_comment] = t;
+                            threads.push(t);
+                        }
+                        t.replies.push(c);
+                    }
+                    for (const t of threads) {
+                        t.replies.sort((a, b) => String(a.creation).localeCompare(String(b.creation)));
+                    }
+                    const sortKey = (t) => String(
+                        t.parent ? t.parent.creation : t.replies[t.replies.length - 1].creation
+                    );
+                    threads.sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
+                    return threads;
+                },
+            },
             template: `
             <div class="project-comments-container">
                 <div class="comments-header text-right mb-3" style="display: flex; justify-content: flex-end; padding-bottom: 10px;">
-                    <button class="btn btn-default btn-sm" @click="showAddCommentDialog">
+                    <button class="btn btn-default btn-sm" @click="showAddCommentDialog()">
                         <span style="font-size: 14px; margin-right: 4px;">+</span> New Note
                     </button>
                 </div>
@@ -312,29 +397,63 @@ erpnext_enhancements.render_comments_app = function(frm, field_name) {
                     No notes yet.
                 </div>
                 <div v-else class="comments-list">
-                    <div v-for="comment in comments" :key="comment.name" class="comment-item d-flex border-bottom py-3" style="display: flex; padding: 15px; border-bottom: 1px solid var(--border-color);">
-                        <div class="comment-sidebar mr-4" style="width: 250px; min-width: 250px; margin-right: 20px;">
-                            <div class="d-flex align-items-center mb-2" style="display: flex; align-items: center; margin-bottom: 5px;">
-                                <span class="avatar avatar-medium mr-2 comment-avatar" :title="comment.full_name" style="margin-right: 10px; flex-shrink: 0;">
-                                    <img :src="comment.user_image" v-if="comment.user_image">
-                                    <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: get_palette(comment.full_name) }">
-                                        {{ get_abbr(comment.full_name) }}
-                                    </div>
-                                </span>
-                                <div class="font-weight-bold text-truncate" :title="comment.full_name" style="font-weight: 600;">{{ comment.full_name }}</div>
+                    <div v-for="thread in threads" :key="thread.key" class="comment-thread">
+                        <div v-if="thread.parent" class="comment-item d-flex py-3" style="display: flex; padding: 15px;">
+                            <div class="comment-sidebar mr-4" style="width: 250px; min-width: 250px; margin-right: 20px;">
+                                <div class="d-flex align-items-center mb-2" style="display: flex; align-items: center; margin-bottom: 5px;">
+                                    <span class="avatar avatar-medium mr-2 comment-avatar" :title="thread.parent.full_name" style="margin-right: 10px; flex-shrink: 0;">
+                                        <img :src="thread.parent.user_image" v-if="thread.parent.user_image">
+                                        <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: get_palette(thread.parent.full_name) }">
+                                            {{ get_abbr(thread.parent.full_name) }}
+                                        </div>
+                                    </span>
+                                    <div class="font-weight-bold text-truncate" :title="thread.parent.full_name" style="font-weight: 600;">{{ thread.parent.full_name }}</div>
+                                </div>
+                                <div class="text-muted small" style="color: var(--text-muted); font-size: 12px; margin-left: 45px;">
+                                    {{ formatDateTime(thread.parent.creation) }}
+                                </div>
                             </div>
-                            <div class="text-muted small" style="color: var(--text-muted); font-size: 12px; margin-left: 45px;">
-                                {{ formatDateTime(comment.creation) }}
+                            <div class="comment-content flex-grow-1 text-break" v-html="thread.parent.content" style="flex: 1; margin-right: 15px;"></div>
+                            <div class="comment-actions ml-3">
+                                <button @click="showReplyDialog(thread.parent)" class="btn btn-link btn-xs text-muted" title="Reply">
+                                    <i class="fa fa-reply"></i>
+                                </button>
+                                <button @click="showEditCommentDialog(thread.parent)" class="btn btn-link btn-xs text-muted" title="Edit Note">
+                                    <i class="fa fa-pencil"></i>
+                                </button>
+                                <button @click="deleteComment(thread.parent.name)" class="btn btn-link btn-xs text-muted" title="Delete Note">
+                                    <i class="fa fa-trash"></i>
+                                </button>
                             </div>
                         </div>
-                        <div class="comment-content flex-grow-1 text-break" v-html="comment.content" style="flex: 1; margin-right: 15px;"></div>
-                        <div class="comment-actions ml-3">
-                            <button @click="showEditCommentDialog(comment)" class="btn btn-link btn-xs text-muted" title="Edit Note">
-                                <i class="fa fa-pencil"></i>
-                            </button>
-                            <button @click="deleteComment(comment.name)" class="btn btn-link btn-xs text-muted" title="Delete Note">
-                                <i class="fa fa-trash"></i>
-                            </button>
+                        <div v-else class="comment-deleted-stub">(deleted note)</div>
+                        <div v-if="thread.replies.length" class="comment-replies">
+                            <div v-for="reply in thread.replies" :key="reply.name" class="comment-reply-item">
+                                <span class="avatar avatar-small comment-avatar" :title="reply.full_name">
+                                    <img :src="reply.user_image" v-if="reply.user_image">
+                                    <div class="avatar-frame standard-image" v-else :style="{ backgroundColor: get_palette(reply.full_name) }">
+                                        {{ get_abbr(reply.full_name) }}
+                                    </div>
+                                </span>
+                                <div class="comment-reply-main">
+                                    <div class="comment-reply-header">
+                                        <span class="commenter-name">{{ reply.full_name }}</span>
+                                        <span class="comment-time">{{ formatDateTime(reply.creation) }}</span>
+                                    </div>
+                                    <div class="comment-content text-break" v-html="reply.content"></div>
+                                </div>
+                                <div class="comment-actions">
+                                    <button @click="showReplyDialog(reply)" class="btn btn-link btn-xs text-muted" title="Reply">
+                                        <i class="fa fa-reply"></i>
+                                    </button>
+                                    <button @click="showEditCommentDialog(reply)" class="btn btn-link btn-xs text-muted" title="Edit Note">
+                                        <i class="fa fa-pencil"></i>
+                                    </button>
+                                    <button @click="deleteComment(reply.name)" class="btn btn-link btn-xs text-muted" title="Delete Note">
+                                        <i class="fa fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

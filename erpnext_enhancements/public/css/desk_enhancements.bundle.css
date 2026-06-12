@@ -943,6 +943,63 @@ mark {
     color: var(--text-muted);
 }
 
+/* --- Threaded replies (Comments App) --- */
+/* The thread wrapper carries the divider; the parent row's old inline
+   border-bottom was removed so parent + its replies read as one block. */
+.project-comments-container .comment-thread {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.project-comments-container .comment-thread:last-child {
+    border-bottom: none;
+}
+
+/* Replies rail: clears the parent avatar column, vertical thread line */
+.project-comments-container .comment-replies {
+    margin: 0 15px 12px 55px;
+    padding-left: 14px;
+    border-left: 2px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Compact single-row reply layout (no 250px author sidebar) */
+.project-comments-container .comment-reply-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--border-radius-md);
+    transition: background-color 0.2s ease;
+}
+
+.project-comments-container .comment-reply-item:hover {
+    background-color: var(--background-color-ext);
+}
+
+.project-comments-container .comment-reply-item:hover .comment-actions {
+    opacity: 1;
+}
+
+.project-comments-container .comment-reply-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.project-comments-container .comment-reply-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.project-comments-container .comment-deleted-stub {
+    padding: 12px 15px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 /* ==========================================================================
    FIX: Restore Missing Comment Box on All Doctypes
    ========================================================================== */
