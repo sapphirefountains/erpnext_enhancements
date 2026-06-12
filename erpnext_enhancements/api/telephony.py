@@ -900,12 +900,21 @@ def trigger_outbound_call(doctype, docname, target_number):
         user = frappe.session.user
         employee_map = frappe.get_all("Employee", filters={"user_id": user, "status": "Active"}, fields=["name", "cell_number"])
 
-        if not employee_map:
-            frappe.throw(_("No active Employee record found for your user. Cannot determine your cell phone number."))
-
-        employee_number = employee_map[0].cell_number
+        # The rep's own number to ring first. Employee Cell Number is the
+        # source of truth (kept synced onto User.phone by
+        # sync_contact.sync_employee_phone_to_user); the User fields cover
+        # users without an Employee record or whose sync hasn't run yet.
+        employee_number = (employee_map[0].cell_number or "").strip() if employee_map else ""
         if not employee_number:
-            frappe.throw(_("Your Employee record does not have a Cell Number configured. Cannot initiate call."))
+            user_phone, user_mobile = frappe.db.get_value(
+                "User", user, ["phone", "mobile_no"]
+            ) or (None, None)
+            employee_number = (user_phone or "").strip() or (user_mobile or "").strip()
+        if not employee_number:
+            frappe.throw(_(
+                "No phone number found for your user. Set the Cell Number on your "
+                "Employee profile (it syncs to your User profile) before placing calls."
+            ))
 
         settings = frappe.get_doc("Triton Settings")
         
