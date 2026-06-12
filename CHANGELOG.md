@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-06-12
+
+### Changed
+- **"Call via Triton" resolves the rep's number from Employee OR User profile.** The button rang only `Employee.cell_number` and threw for anyone without it. Now: Employee Cell Number (source of truth) → `User.phone` → `User.mobile_no`, with a clearer error when none is set. A new Employee `on_update` hook keeps the linked User's `phone` synced from the Employee Cell Number (erpnext core syncs name/DOB/image but not phone), and a one-time patch backfills existing Employees so the sync holds immediately after deploy.
+
 ## [1.24.2] - 2026-06-12
 
 ### Fixed

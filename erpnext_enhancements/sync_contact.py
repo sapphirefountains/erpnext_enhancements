@@ -175,6 +175,23 @@ def set_primary_address(account_doctype, account_name, address_name):
     frappe.db.set_value("Address", address_name, "is_primary_address", 1)
 
 
+def sync_employee_phone_to_user(doc, method=None):
+    """Employee ``on_update`` doc_event: keep the linked User's ``phone`` equal
+    to the Employee's Cell Number, so "Call via Triton"
+    (``telephony.trigger_outbound_call``) can resolve the rep's number from
+    either record. One-way — Employee is the source of truth; erpnext core's
+    ``Employee.update_user`` syncs name/DOB/image but not the phone.
+    """
+    user_id = (doc.get("user_id") or "").strip()
+    cell = (doc.get("cell_number") or "").strip()
+    if not user_id or not cell:
+        return
+    if not frappe.db.exists("User", user_id):
+        return
+    if (frappe.db.get_value("User", user_id, "phone") or "") != cell:
+        frappe.db.set_value("User", user_id, "phone", cell, update_modified=False)
+
+
 def set_supplier_primary_address_display(doc, method=None):
     """Supplier ``validate`` doc_event: show the linked Address's
     ``custom_full_address`` as the read-only Primary Address text.

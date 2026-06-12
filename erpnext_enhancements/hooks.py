@@ -236,6 +236,10 @@ doc_events = {
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
+	"Employee": {
+		# Cell Number -> linked User.phone (Call via Triton dials it)
+		"on_update": "erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
+	},
 	"Supplier": {
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		"validate": [
