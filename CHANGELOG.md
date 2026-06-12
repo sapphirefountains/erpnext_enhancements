@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-06-12
+
+### Fixed
+- **Desk SMS crashed with "Cannot select a Group type Customer Group"** — the unknown-caller auto-create hard-coded `customer_group: "All Customer Groups"` and `territory: "All Territories"`, both GROUP tree nodes that erpnext v16 rejects, breaking every auto-create path (desk SMS, inbound-call caller creation). Auto-created callers now use the Selling Settings defaults when they're leaf nodes, else the first leaf (e.g. "Individual"). Desk SMS additionally stops auto-creating Customers entirely (`create_if_missing=False`) — texting an arbitrary number links existing CRM records but never mints an "Unknown Caller" Customer.
+
+### Changed
+- **Google Drive settings consolidated on "Project Folder Google Drive Settings"** — now the single home for all Drive automation: the service account + Shared Drive ID (projects), a new **Create Customer Folders on Customer Creation** toggle (auto-provisions the customer's top-level Shared Drive folder on insert — the same folder project trees nest under — storing its ID on the new hidden `Customer.custom_drive_folder_id` field), and a new **Call Recordings Folder ID** field that the recordings/voicemail export (1.26.0) reads first (the Triton Settings field remains as fallback).
+
 ## [1.26.0] - 2026-06-12
 
 ### Added

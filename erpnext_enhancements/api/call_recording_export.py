@@ -41,6 +41,14 @@ from erpnext_enhancements.crm_enhancements.drive_utils import (
 
 
 def _configured_folder():
+	"""The recordings parent folder — configured on Project Folder Google
+	Drive Settings (the app's Google Drive home, alongside the service account
+	and the customer/project folder options); the original Triton Settings
+	field is honoured as a fallback."""
+	drive_settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+	folder = (drive_settings.get("call_recordings_folder_id") or "").strip()
+	if folder:
+		return folder
 	settings = frappe.get_cached_doc("Triton Settings")
 	return (settings.get("call_recordings_drive_folder") or "").strip()
 

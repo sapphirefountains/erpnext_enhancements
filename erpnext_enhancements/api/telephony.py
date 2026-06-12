@@ -177,6 +177,26 @@ def get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tru
     )
 
 
+def _default_customer_group():
+    """A NON-GROUP Customer Group for auto-created callers. erpnext v16
+    rejects group nodes ("Cannot select a Group type Customer Group"), which
+    broke every unknown-caller auto-create while it hard-coded
+    "All Customer Groups". Selling Settings' default wins when it's a leaf;
+    otherwise the first leaf group (e.g. "Individual")."""
+    default = frappe.db.get_single_value("Selling Settings", "customer_group")
+    if default and not frappe.db.get_value("Customer Group", default, "is_group"):
+        return default
+    return frappe.db.get_value("Customer Group", {"is_group": 0}, "name") or default
+
+
+def _default_territory():
+    """Same leaf-node rule for Territory ("All Territories" is a group)."""
+    default = frappe.db.get_single_value("Selling Settings", "territory")
+    if default and not frappe.db.get_value("Territory", default, "is_group"):
+        return default
+    return frappe.db.get_value("Territory", {"is_group": 0}, "name") or default
+
+
 def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=True):
     """Internal, auth-free implementation of ``get_caller_info`` — call THIS
     from server-side code. The whitelisted wrapper above exists for the Triton
@@ -229,8 +249,8 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
             "doctype": "Customer",
             "customer_name": fallback_name,
             "customer_type": "Residential",
-            "customer_group": "All Customer Groups",
-            "territory": "All Territories",
+            "customer_group": _default_customer_group(),
+            "territory": _default_territory(),
             "custom_accounts_phone_number": phone_number
         })
         cust.insert(ignore_permissions=True)
@@ -1334,7 +1354,10 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         clean_number = re.sub(r'\D', '', target_number)
         match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
 
-        info = _get_caller_info(target_number)
+        # create_if_missing=False: texting an arbitrary number must not mint a
+        # junk "Unknown Caller" Customer — link the CRM records when they
+        # exist, otherwise just log the Communication unlinked.
+        info = _get_caller_info(target_number, create_if_missing=False)
         customer_name = info.get('customer')
         contact_name = info.get('contact')
         display_name = info.get('display_name') or target_number
