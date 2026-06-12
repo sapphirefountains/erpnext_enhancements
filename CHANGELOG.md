@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-06-12
+
+### Fixed
+- **"New Note" crashed with `'EmployeeProject' object has no attribute 'add_note'` on Project** (and would equally crash on Customer, Supplier, Master Project, Contact). `unified_tab_controller.js` mounted ERPNext's stock CRMNotes widget on `custom_comments_field` for every wired doctype, but the widget's buttons call the `add_note`/`edit_note`/`delete_note` document methods that only the CRM doctypes (Lead/Opportunity/Prospect) implement — and the mount also fought the threaded Comments App for the same field, which is why the Notes tab sometimes showed the wrong UI. CRMNotes is now mounted only on the CRM doctypes (Opportunity keeps its 852 existing CRM Notes); everything else renders the Comments App.
+
 ## [1.23.0] - 2026-06-12
 
 ### Fixed
