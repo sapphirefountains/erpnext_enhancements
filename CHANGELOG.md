@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.1] - 2026-06-12
+
+### Fixed
+- **Desk softphone stopped ringing in tabs older than an hour** — the Twilio access token expires after 1h and the device silently unregisters, so a desk tab opened in the morning showed "Registered" in the console but never received the incoming-call leg in the afternoon (the call panel appeared without Answer/Decline). The client now refreshes the token on the SDK's `tokenWillExpire` event (`device.updateToken`); if the user has been removed from `softphone_users` meanwhile, the device is released instead.
+
 ## [1.24.0] - 2026-06-12
 
 ### Fixed
