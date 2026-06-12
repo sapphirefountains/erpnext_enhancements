@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-06-12
+
+### Added
+- **Projects Dashboard: "Completed On" column on the Completed Projects tab, sorted newest-first by default.** `Project.actual_end_date` turned out to be empty on every inactive project in production, so `get_project_data` now derives each inactive project's completion date from its Version history — the most recent moment `is_active` flipped Yes → No (100% coverage today; falls back to the project's last-modified date if no flip was ever recorded). Both dashboard variants show the date and default-sort by it:
+  - Desk page (`completed_projects.js`): the tab's table headers are now clickable to sort (the page variant previously had no sorting at all — sort styles ship with the component, themed via Frappe CSS vars).
+  - Custom HTML Block (`projects_dashboard.js`): new column wired into the existing sortable headers and column selector; first click on the date column sorts newest-first, and dateless projects sink to the bottom in either direction.
+
 ## [1.17.0] - 2026-06-11
 
 Maintenance UX follow-ups to v1.16.0: readable template names, a much larger ready-made catalog, and a way for techs to pull a future visit forward.

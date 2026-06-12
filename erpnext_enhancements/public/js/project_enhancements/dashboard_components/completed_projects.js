@@ -9,7 +9,9 @@ frappe.provide("erpnext_enhancements.dashboard_components");
  * name; render()/unmount() called on tab show/hide).
  *
  * Fetches inactive projects (`is_active = "No"`) and renders a read-only table
- * with a column selector. Notable for its exponential-backoff retry on timeout /
+ * with a column selector. Sorted by "Completed On" (derived server-side from the
+ * Version history of the is_active flag), newest first, with clickable column
+ * headers to re-sort. Notable for its exponential-backoff retry on timeout /
  * fetch errors (up to 3 attempts) before surfacing an error card. AbortController
  * cancels in-flight work on tab switch.
  */
@@ -17,6 +19,8 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
 	constructor(wrapper) {
 		this.wrapper = $(wrapper);
 		this.abortController = null;
+		this.projects = null;
+		this.sort_state = { col: "completed_on", order: "desc" };
 		this.columnSelector = new erpnext_enhancements.dashboard_components.ColumnSelector(
 			"project_dashboard_completed_columns",
 			[
@@ -25,6 +29,7 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
 				{ key: "status", label: "Status" },
 				{ key: "project_type", label: "Type" },
 				{ key: "assigned_to", label: "Assigned To" },
+				{ key: "completed_on", label: "Completed On" },
 			]
 		);
 	}
@@ -111,6 +116,9 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
 			return;
 		}
 
+		this.projects = projects;
+		this._inject_sort_styles();
+
 		const toolbar = $('<div class="dashboard-list-toolbar"></div>').appendTo(this.wrapper);
 		this.columnSelector.render_button(toolbar, () =>
 			this.columnSelector.apply(this.wrapper)
@@ -122,20 +130,23 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
             <table class="table table-bordered table-hover">
                 <thead class="thead-light">
                     <tr>
-                        <th class="dashcol dashcol-project_name">Project Name</th>
+                        ${this.sortable_th("project_name", "Project Name")}
                         <th class="dashcol dashcol-project_id">Project ID</th>
-                        <th class="dashcol dashcol-status">Status</th>
-                        <th class="dashcol dashcol-project_type">Type</th>
-                        <th class="dashcol dashcol-assigned_to">Assigned To</th>
+                        ${this.sortable_th("status", "Status")}
+                        ${this.sortable_th("project_type", "Type")}
+                        ${this.sortable_th("assigned_to", "Assigned To")}
+                        ${this.sortable_th("completed_on", "Completed On")}
                     </tr>
                 </thead>
                 <tbody></tbody>
             </table>
         `).appendTo(listContainer);
 
+		this.bind_sortable_headers(table);
+
 		const tbody = table.find("tbody");
 
-		projects.forEach((p) => {
+		this.sort_projects(projects).forEach((p) => {
 			const row = $(`
                 <tr data-project="${p.name}">
                     <td class="dashcol dashcol-project_name project-name-cell"><a href="/app/project/${
@@ -153,6 +164,11 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
                     <td class="dashcol dashcol-assigned_to text-muted">${
 						p.project_user || "Unassigned"
 					}</td>
+                    <td class="dashcol dashcol-completed_on">${
+						p.completed_on
+							? frappe.datetime.str_to_user(p.completed_on)
+							: '<span class="text-muted">—</span>'
+					}</td>
                 </tr>
             `);
 
@@ -167,6 +183,75 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
 		this.columnSelector.apply(this.wrapper);
 	}
 
+	/** Returns a copy of `projects` ordered by the current sort state. */
+	sort_projects(projects) {
+		const { col, order } = this.sort_state;
+		const dir = order === "asc" ? 1 : -1;
+		const by_name = (a, b) =>
+			String(a.project_name || "").localeCompare(String(b.project_name || ""));
+
+		return [...projects].sort((a, b) => {
+			if (col === "completed_on") {
+				// Projects without a completion date sink to the bottom either way
+				if (!a.completed_on && !b.completed_on) return by_name(a, b);
+				if (!a.completed_on) return 1;
+				if (!b.completed_on) return -1;
+				const diff = String(a.completed_on).localeCompare(String(b.completed_on));
+				return diff !== 0 ? diff * dir : by_name(a, b);
+			}
+
+			const text_of = (p) => {
+				if (col === "status") return p.status || "";
+				if (col === "project_type") return p.project_type || "Uncategorized";
+				if (col === "assigned_to") return p.project_user || "";
+				return p.project_name || "";
+			};
+			const diff = text_of(a).localeCompare(text_of(b));
+			if (diff !== 0) return diff * dir;
+			return col !== "project_name" ? by_name(a, b) : 0;
+		});
+	}
+
+	sortable_th(key, label) {
+		const { col, order } = this.sort_state;
+		const active = col === key ? ` active-sort sort-${order}` : "";
+		return `<th class="sortable-header dashcol dashcol-${key}${active}" data-sort="${key}">${label}</th>`;
+	}
+
+	bind_sortable_headers(table) {
+		table.find(".sortable-header").on("click", (e) => {
+			const key = $(e.currentTarget).attr("data-sort");
+			if (this.sort_state.col === key) {
+				this.sort_state.order = this.sort_state.order === "asc" ? "desc" : "asc";
+			} else {
+				// Dates read best newest-first; text columns A->Z
+				this.sort_state = {
+					col: key,
+					order: key === "completed_on" ? "desc" : "asc",
+				};
+			}
+			this.render_list_view(this.projects);
+		});
+	}
+
+	/**
+	 * Ships the sortable-header styles with the component (same approach as
+	 * ColumnSelector) since the dashboard tabs have no dedicated stylesheet.
+	 * Matches the Custom HTML Block dashboard's sort affordance.
+	 */
+	_inject_sort_styles() {
+		if (document.getElementById("dashboard-sortable-header-styles")) {
+			return;
+		}
+		$("<style id='dashboard-sortable-header-styles'>").html(`
+			.sortable-header { cursor: pointer; user-select: none; transition: background-color 0.2s; white-space: nowrap; }
+			.sortable-header:hover { background-color: var(--fg-hover-color) !important; }
+			.sortable-header.active-sort { background-color: var(--control-bg) !important; color: var(--primary); }
+			.sortable-header.active-sort.sort-asc::after { content: " \\f0de"; font-family: "FontAwesome"; margin-left: 6px; }
+			.sortable-header.active-sort.sort-desc::after { content: " \\f0dd"; font-family: "FontAwesome"; margin-left: 6px; }
+		`).appendTo("head");
+	}
+
 	get_status_badge(status) {
 		switch (status) {
 			case "Active":
@@ -177,7 +262,6 @@ erpnext_enhancements.dashboard_components.CompletedProjects = class CompletedPro
 				return "badge-success";
 			case "Overdue":
 				return "badge-danger";
-			case "Canceled":
 			case "Canceled":
 				return "badge-danger";
 			case "Working":

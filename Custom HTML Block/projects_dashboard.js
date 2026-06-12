@@ -62,7 +62,7 @@
     let sort_state = {
         'priority-overview': { col: 'company_priority', order: 'asc' },
         'active-internal-projects': { col: 'project_name', order: 'asc' },
-        'completed-projects': { col: 'project_name', order: 'asc' }
+        'completed-projects': { col: 'completed_on', order: 'desc' }
     };
 
     const ColumnSelector = erpnext_enhancements.dashboard_components.ColumnSelector;
@@ -88,7 +88,8 @@
             { key: 'project_id', label: 'Project ID' },
             { key: 'status', label: 'Status' },
             { key: 'project_type', label: 'Type' },
-            { key: 'project_user', label: 'Assigned To' }
+            { key: 'project_user', label: 'Assigned To' },
+            { key: 'completed_on', label: 'Completed On' }
         ])
     };
 
@@ -758,7 +759,8 @@
                 state.order = state.order === 'asc' ? 'desc' : 'asc';
             } else {
                 state.col = sort_col;
-                state.order = 'asc';
+                // Dates read best newest-first; text columns A->Z
+                state.order = sort_col === 'completed_on' ? 'desc' : 'asc';
             }
             
             render_current_tab();
@@ -1022,7 +1024,13 @@
             else if (state.col === 'status') diff = String(a.status||"").localeCompare(String(b.status||""));
             else if (state.col === 'project_type') diff = String(a.project_type||"").localeCompare(String(b.project_type||""));
             else if (state.col === 'project_user') diff = String(a.project_user||"").localeCompare(String(b.project_user||""));
-            
+            else if (state.col === 'completed_on') {
+                // Projects without a completion date sink to the bottom either way
+                if (!a.completed_on && b.completed_on) return 1;
+                if (a.completed_on && !b.completed_on) return -1;
+                diff = String(a.completed_on||"").localeCompare(String(b.completed_on||""));
+            }
+
             if (diff === 0 && state.col !== 'project_name') diff = String(a.project_name||"").localeCompare(String(b.project_name||""));
             return state.order === 'asc' ? diff : -diff;
         });
@@ -1037,6 +1045,7 @@
                         ${th('status', 'Status')}
                         ${th('project_type', 'Type')}
                         ${th('project_user', 'Assigned To')}
+                        ${th('completed_on', 'Completed On', 'When the project was marked inactive')}
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -1056,6 +1065,7 @@
                     <td class="dashcol dashcol-status" style="min-width: 120px;"><span class="badge badge-${status_badge}">${p.status}</span></td>
                     <td class="dashcol dashcol-project_type" style="min-width: 150px;">${p.project_type || "Uncategorized"}</td>
                     <td class="dashcol dashcol-project_user text-muted" style="min-width: 150px;">${p.project_user || "Unassigned"}</td>
+                    <td class="dashcol dashcol-completed_on" style="min-width: 130px;">${p.completed_on ? frappe.datetime.str_to_user(p.completed_on) : '<span class="text-muted">—</span>'}</td>
                 </tr>
             `);
         });
