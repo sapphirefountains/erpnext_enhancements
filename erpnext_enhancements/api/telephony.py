@@ -266,6 +266,61 @@ def get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tru
 
 @frappe.whitelist(allow_guest=True)
 @validate_webhook_secret
+def notify_incoming_call(event=None, call_sid=None, from_number=None, caller_name=None,
+                         intent=None, stage=None, agent_name=None, answered_via=None,
+                         reason=None, **kwargs):
+    """Realtime call-lifecycle fan-out from the Triton gateway to desk users.
+
+    Guest endpoint guarded by ``@validate_webhook_secret``. The Triton voice
+    gateway POSTs one of these per call state change:
+
+    - ``ringing`` (stage ``menu`` while the caller is in the IVR, then stage
+      ``agents`` once browsers/phones are being rung, with the chosen intent)
+    - ``caller_resolved`` (Triton's CRM fuzzy-match finished — name update)
+    - ``answered`` (someone picked up; ``agent_name``/``answered_via``)
+    - ``ended`` (terminal; ``reason`` of no-answer/busy means it was missed)
+
+    Each event is republished as the ``triton_incoming_call`` realtime event
+    (broadcast — telephony_client.js renders/dismisses the floating call panel
+    on every open desk). On the first ``ringing`` event with a number, the
+    caller is enriched against the CRM via get_caller_info with
+    ``create_if_missing=False`` — a merely-ringing robocall must not mint a
+    junk Customer; auto-create still happens later in the recording/SMS
+    pipelines for calls that actually connect.
+    """
+    frappe.set_user("triton@sapphirefountains.com")
+    if not call_sid or not event:
+        return {"status": "ignored"}
+
+    payload = {
+        "event": event,
+        "call_sid": call_sid,
+        "from_number": from_number,
+        "caller_name": caller_name,
+        "intent": intent,
+        "stage": stage,
+        "agent_name": agent_name,
+        "answered_via": answered_via,
+        "reason": reason,
+    }
+
+    if event == "ringing" and from_number:
+        try:
+            info = get_caller_info(
+                from_number, twilio_caller_name=caller_name, create_if_missing=False
+            )
+            payload["caller_name"] = info.get("display_name") or caller_name
+            payload["customer"] = info.get("customer")
+            payload["contact"] = info.get("contact")
+            payload["context"] = (info.get("context") or [])[:5]
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "notify_incoming_call enrich failed")
+
+    frappe.publish_realtime("triton_incoming_call", payload)
+    return {"status": "ok"}
+
+@frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
 def update_caller_info(phone_number, new_name):
     """Rename the Customer/Contact for a number, unless it's already established.
 
@@ -669,9 +724,25 @@ def get_softphone_token():
     Settings (with fallbacks to ``frappe.conf`` / env for the account SID);
     ``frappe.throw`` if any are missing. Grants both outgoing (via the TwiML
     app) and incoming voice. NOTE: the Twilio ``identity`` is hard-coded to
-    "nikolas_erpnext". Returns the JWT as a string.
+    "nikolas_erpnext" — every desk softphone registers the same identity, and
+    Twilio delivers the incoming leg to the most recent registration only.
+    ``Triton Settings.softphone_users`` therefore limits WHO registers the
+    answer device: when set (comma/newline-separated emails), other users get
+    ``None`` and the client skips device setup (realtime call notifications
+    still work for them). Empty = everyone registers (legacy behavior).
+    Returns the JWT as a string, or None for non-answerer users.
     """
     settings = frappe.get_doc("Triton Settings")
+
+    allowed = (getattr(settings, "softphone_users", "") or "").strip()
+    if allowed:
+        users = {
+            u.strip().lower()
+            for u in allowed.replace("\n", ",").split(",")
+            if u.strip()
+        }
+        if frappe.session.user.lower() not in users:
+            return None
     twilio_api_key_sid = getattr(settings, "twilio_api_key_sid", None)
     twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
     twilio_twiml_app_sid = getattr(settings, "twilio_twiml_app_sid", None)

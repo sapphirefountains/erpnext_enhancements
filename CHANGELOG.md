@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-06-12
+
+### Added
+- **Real-time incoming-call notifications + answer from the desk** (pairs with Triton >= 0.7.0; each side degrades gracefully without the other):
+  - New `notify_incoming_call` webhook (`api/telephony.py`, Bearer/`token`-guarded): the Triton voice gateway POSTs every call state change (ringing in IVR → ringing agents → caller resolved → answered → ended/missed) and the endpoint republishes it as the `triton_incoming_call` realtime event to every open desk. On the first ringing event the caller is enriched against the CRM (`get_caller_info` with `create_if_missing=False` — a ringing robocall must not mint a junk Customer) including customer/contact links and open Opportunity/Project context.
+  - `telephony_client.js`: the blocking incoming-call modal is replaced by a non-blocking floating call panel (Frappe CSS vars, light + dark themes) that shows the enriched caller, IVR stage/intent, Accept/Decline/End when this browser's softphone leg rings, and "Answered by X" / "Missed Call" outcomes; plus a desktop Notification per call. The real caller number/name is read from the TwiML `<Parameter>`s (Twilio's `<Dial callerId>` rewrites the leg's `From` to the business number — the old dialog showed the company's own number for every call).
+  - `Triton Settings.softphone_users` (new field): limits which users register the shared desk answer device — every desk session registers the same Twilio identity and only the most recent registration rings, so unrestricted registration let any open desk tab silently steal the answer device. Listed users register; everyone else still gets the realtime call notifications. Empty = legacy behavior (everyone registers); `get_softphone_token` now returns null for non-answerers instead of a token.
+
 ## [1.20.0] - 2026-06-12
 
 ### Fixed
