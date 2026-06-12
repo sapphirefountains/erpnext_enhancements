@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-06-12
+
+### Added
+- **Google Drive sync subsystem** (`crm_enhancements/drive_sync.py` + Drive Sync Log doctype). Building on the linked folders:
+  - **Two-way attachment sync** (opt-in: settings → Enable Attachment Sync). ERPNext → Drive: every new attachment on a Drive-linked Project/Customer/Opportunity is uploaded to its folder in the background (`File.custom_drive_file_id` stamps the mirror and prevents echo loops). Drive → ERPNext: an hourly job creates **link-only shadow attachments** (File rows opening the Drive file — no bytes copied) for Drive files ERPNext doesn't know. **Deletions never propagate**; a shadow whose Drive file vanished is flagged Stale in the log.
+  - **Drive Sync Log** — desk-visible audit of every provision/upload/shadow/export/backfill with status and error; Failed rows carry a retry payload that a nightly job re-enqueues (max 3 attempts).
+  - **Test Connection button** on the Drive settings page — validates the service-account JSON, Drive API reachability, and access to each configured Drive/folder, surfacing the service-account email to add as a Shared Drive member.
+  - **Link Existing Folders button** — backfill that connects pre-existing Customers and Projects to their already-existing Drive folders by name (never creates anything).
+  - **Open Drive Folder buttons** on Project, Customer and Opportunity forms (the folder-ID fields stay hidden).
+  - **Opportunity folders** (opt-in toggle): each new Customer-party Opportunity gets `<Customer>/<Opportunity — Title>`, stored on the new `Opportunity.custom_drive_folder_id`.
+  - **Configurable project folder template** — the subfolder tree is now a settings child table (paths nest with `/`, rows optionally scoped to a Project Type); empty table keeps the legacy defaults.
+  - **Transcript companions** — every exported call recording/voicemail now gets a sibling `.txt` with the summary + transcript in the monthly folder.
+
 ## [1.27.0] - 2026-06-12
 
 ### Fixed

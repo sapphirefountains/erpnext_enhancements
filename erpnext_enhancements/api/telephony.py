@@ -686,6 +686,8 @@ def process_unified_recording(**kwargs):
                 caller_name=caller_name or display_name,
                 caller_number=customer_phone,
                 file_docname=recording_file_docname,
+                summary=summary,
+                transcript=transcript,
             )
 
         # --- Call Intelligence: upsert the stock Call Log for this call -----

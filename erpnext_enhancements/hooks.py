@@ -51,6 +51,7 @@ doctype_js = {
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
 		"public/js/contracts.js",
+		"public/js/global_enhancements/drive_folder_button.js",
 	],
 	"Communication": ["public/js/communication.js"],
 	"Project": [
@@ -66,6 +67,7 @@ doctype_js = {
 		"public/js/project_migrated_scripts.js",
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
+		"public/js/global_enhancements/drive_folder_button.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
@@ -81,6 +83,7 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/customer.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/drive_folder_button.js",
 	],
 	"Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
 	"Sales Order": [
@@ -230,7 +233,14 @@ doc_events = {
 			"erpnext_enhancements.status_alerts.notify_closed_won",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
 		],
+		# Drive folder per Customer-party opportunity (settings opt-in)
+		"after_insert": "erpnext_enhancements.crm_enhancements.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
+	},
+	"File": {
+		# ERPNext -> Drive half of the attachment sync (settings opt-in;
+		# cheap bail-out for files not attached to a Drive-linked document)
+		"after_insert": "erpnext_enhancements.crm_enhancements.drive_sync.on_file_attached",
 	},
 	"Contact": {
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
@@ -284,6 +294,8 @@ scheduler_events = {
 		"erpnext_enhancements.travel_management.reminders.send_post_trip_expense_nudges",
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
+		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
+		"erpnext_enhancements.crm_enhancements.drive_sync.retry_failed_syncs",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
@@ -291,6 +303,8 @@ scheduler_events = {
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
+		# Drive -> ERPNext half of the attachment sync (link-only shadows)
+		"erpnext_enhancements.crm_enhancements.drive_sync.sync_shadow_attachments",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",

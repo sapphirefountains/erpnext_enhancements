@@ -341,7 +341,9 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 					project_folder_name = f"{project.name} {project.project_name}"
 					party_name = project.customer or opp.party_name or "Unknown Customer"
 
-					folder_id, web_view_link = provision_project_folders(project_folder_name, party_name)
+					folder_id, web_view_link = provision_project_folders(
+						project_folder_name, party_name, project_type=project.get("project_type")
+					)
 
 					# Update Project
 					project.db_set("custom_drive_folder_id", folder_id)

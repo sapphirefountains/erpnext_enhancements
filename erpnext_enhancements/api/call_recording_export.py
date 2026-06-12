@@ -156,11 +156,19 @@ def export_call_recording(
 	file_docname=None,
 	twilio_audio_url=None,
 	is_voicemail=False,
+	summary=None,
+	transcript=None,
+	attempts=1,
 ):
 	"""Background job: upload one call recording / voicemail to the monthly
-	Drive folder. Audio comes from the saved ERPNext File (answered calls) or
-	straight from Twilio (voicemails). Failures land in the Error Log under
-	"Call Recording Export"."""
+	Drive folder, plus a companion ``.txt`` with the summary + transcript so
+	the month folder is browsable without opening ERPNext. Audio comes from
+	the saved ERPNext File (answered calls) or straight from Twilio
+	(voicemails). Failures land in the Error Log and as a Failed Drive Sync
+	Log row whose payload the nightly retry job re-enqueues."""
+	from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+
+	name = None
 	try:
 		parent_id = _configured_folder()
 		if not parent_id or not call_sid:
@@ -187,15 +195,58 @@ def export_call_recording(
 
 		name = _drive_filename(call_sid, when, direction, caller_name, caller_number, is_voicemail)
 		media = MediaIoBaseUpload(io.BytesIO(audio), mimetype="audio/wav", resumable=True)
-		service.files().create(
+		created = service.files().create(
 			body={"name": name, "parents": [folder_id]},
 			media_body=media,
 			supportsAllDrives=True,
-			fields="id",
+			fields="id, webViewLink",
 		).execute()
+
+		# Companion text file: summary + transcript next to the audio.
+		text_parts = []
+		if (summary or "").strip():
+			text_parts.append(f"Summary\n-------\n{summary.strip()}")
+		if (transcript or "").strip():
+			text_parts.append(f"Transcript\n----------\n{transcript.strip()}")
+		if text_parts:
+			txt_media = MediaIoBaseUpload(
+				io.BytesIO("\n\n".join(text_parts).encode("utf-8")),
+				mimetype="text/plain",
+				resumable=False,
+			)
+			service.files().create(
+				body={"name": name.rsplit(".", 1)[0] + ".txt", "parents": [folder_id]},
+				media_body=txt_media,
+				supportsAllDrives=True,
+				fields="id",
+			).execute()
+
+		log_sync(
+			"Recording Export", "Success",
+			reference_doctype="Call Log", reference_name=call_sid,
+			file_name=name, drive_file_id=created.get("id"),
+			drive_link=created.get("webViewLink"), attempts=attempts,
+		)
 	except Exception:
 		frappe.log_error(
 			f"Drive export failed for {call_sid} (voicemail={bool(is_voicemail)})\n"
 			f"{frappe.get_traceback()}",
 			"Call Recording Export",
+		)
+		log_sync(
+			"Recording Export", "Failed",
+			reference_doctype="Call Log", reference_name=call_sid,
+			file_name=name, error=frappe.get_traceback(),
+			payload={
+				"method": "erpnext_enhancements.api.call_recording_export.export_call_recording",
+				"kwargs": {
+					"call_sid": call_sid, "when": str(when) if when else None,
+					"direction": direction, "caller_name": caller_name,
+					"caller_number": caller_number, "file_docname": file_docname,
+					"twilio_audio_url": twilio_audio_url,
+					"is_voicemail": bool(is_voicemail), "summary": summary,
+					"transcript": transcript, "attempts": attempts + 1,
+				},
+			},
+			attempts=attempts,
 		)

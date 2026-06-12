@@ -357,6 +357,8 @@ def process_call_intelligence(**kwargs):
                 caller_number=customer_phone or from_number,
                 twilio_audio_url=val("voicemail_url"),
                 is_voicemail=True,
+                # for voicemails the payload "summary" carries the VM transcript
+                summary=val("summary"),
             )
 
         frappe.db.commit()
