@@ -7,14 +7,19 @@
  "field_order": [
   "service_account_json",
   "shared_drive_id",
+  "folder_template_section",
+  "project_folder_template",
   "customer_folders_section",
   "create_customer_folders",
+  "create_opportunity_folders",
+  "attachment_sync_section",
+  "attachment_sync_enabled",
   "call_recordings_section",
   "call_recordings_folder_id"
  ],
  "fields": [
   {
-   "description": "The full JSON key of the Google Cloud service account used for ALL Drive automation (project folders, customer folders, call-recording exports). The account's client_email must be added as a Content Manager on the Shared Drive(s) below.",
+   "description": "The full JSON key of the Google Cloud service account used for ALL Drive automation (project/customer/opportunity folders, attachment sync, call-recording exports). The account's client_email must be added as a Content Manager on the Shared Drive(s) below. Use the Test Connection button after changing this.",
    "fieldname": "service_account_json",
    "fieldtype": "Code",
    "label": "Service Account JSON",
@@ -28,9 +33,21 @@
    "reqd": 1
   },
   {
+   "fieldname": "folder_template_section",
+   "fieldtype": "Section Break",
+   "label": "Project Folder Template"
+  },
+  {
+   "description": "Subfolders created inside every new project folder. Rows may be limited to a Project Type; paths nest with / (e.g. \"Project Manager/Pictures\"). Empty table = the default set (Accounting & Legal, Build, Design, Project Manager/Pictures).",
+   "fieldname": "project_folder_template",
+   "fieldtype": "Table",
+   "label": "Subfolders",
+   "options": "Drive Folder Template Item"
+  },
+  {
    "fieldname": "customer_folders_section",
    "fieldtype": "Section Break",
-   "label": "Customer Folders"
+   "label": "Customer & Opportunity Folders"
   },
   {
    "default": "0",
@@ -40,12 +57,31 @@
    "label": "Create Customer Folders on Customer Creation"
   },
   {
+   "default": "0",
+   "description": "Create a Drive folder inside the customer's folder for every new Customer-party Opportunity (named \"<Opportunity> — <Title>\").",
+   "fieldname": "create_opportunity_folders",
+   "fieldtype": "Check",
+   "label": "Create Opportunity Folders on Opportunity Creation"
+  },
+  {
+   "fieldname": "attachment_sync_section",
+   "fieldtype": "Section Break",
+   "label": "Attachment Sync"
+  },
+  {
+   "default": "0",
+   "description": "Two-way sync between ERPNext attachments and the linked Drive folders of Projects, Customers and Opportunities: new ERPNext attachments are uploaded to Drive; new Drive files appear as link-only shadow attachments (hourly). Deletions never propagate. Every action is recorded in the Drive Sync Log.",
+   "fieldname": "attachment_sync_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Attachment Sync"
+  },
+  {
    "fieldname": "call_recordings_section",
    "fieldtype": "Section Break",
    "label": "Call Recordings"
   },
   {
-   "description": "Google Drive folder ID that receives every call recording and Twilio voicemail, organised into monthly YYYY_MM subfolders (e.g. the Operations Share Drive folder). The service account above must be a member of the Shared Drive containing this folder. Leave empty to disable the export.",
+   "description": "Google Drive folder ID that receives every call recording and Twilio voicemail (plus a companion transcript .txt), organised into monthly YYYY_MM subfolders (e.g. the Operations Share Drive folder). The service account above must be a member of the Shared Drive containing this folder. Leave empty to disable the export.",
    "fieldname": "call_recordings_folder_id",
    "fieldtype": "Data",
    "label": "Call Recordings Folder ID"
@@ -54,7 +90,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-12 22:00:00.000000",
+ "modified": "2026-06-12 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "Project Folder Google Drive Settings",

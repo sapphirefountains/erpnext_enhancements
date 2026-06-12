@@ -66,6 +66,13 @@ def provision_customer_folder(customer):
 			frappe.db.set_value(
 				"Customer", customer, "custom_drive_folder_id", folder_id, update_modified=False
 			)
+		from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+
+		log_sync(
+			"Provision Folder", "Success",
+			reference_doctype="Customer", reference_name=customer,
+			file_name=customer_name, drive_file_id=folder_id,
+		)
 	except Exception:
 		frappe.log_error(
 			f"Customer Drive folder failed for {customer}\n{frappe.get_traceback()}",
@@ -193,7 +200,7 @@ def find_folder(service, name, parent_id, shared_drive_id=None):
 		raise error
 
 
-def provision_project_folders(project_name_full, party_name):
+def provision_project_folders(project_name_full, party_name, project_type=None):
 	"""Create the full Drive folder tree for a new project and return its root.
 
 	Layout created inside the configured Shared Drive::
@@ -242,14 +249,103 @@ def provision_project_folders(project_name_full, party_name):
 		service, project_name_full, customer_folder_id, shared_drive_id
 	)
 
-	# 3. Create Subfolders
-	subfolders = ["Accounting & Legal", "Build", "Design", "Project Manager"]
+	# 3. Create subfolders — from the settings template table when configured
+	# (rows optionally scoped to a project type), else the legacy defaults.
+	# Paths support nesting via "/" (e.g. "Project Manager/Pictures").
+	default_template = [
+		"Accounting & Legal",
+		"Build",
+		"Design",
+		"Project Manager",
+		"Project Manager/Pictures",
+	]
+	settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+	rows = settings.get("project_folder_template") or []
+	paths = [
+		(row.folder_path or "").strip()
+		for row in rows
+		if (row.folder_path or "").strip()
+		and (not row.project_type or (project_type and row.project_type == project_type))
+	] or default_template
 
-	for subfolder_name in subfolders:
-		subfolder_id, _ = create_folder(service, subfolder_name, project_folder_id, shared_drive_id)
-
-		# Nested Pictures folder inside Project Manager
-		if subfolder_name == "Project Manager":
-			create_folder(service, "Pictures", subfolder_id, shared_drive_id)
+	created = {}
+	for path in paths:
+		parent = project_folder_id
+		partial = []
+		for part in [p.strip() for p in path.split("/") if p.strip()]:
+			partial.append(part)
+			key = "/".join(partial)
+			if key not in created:
+				folder_id, _ = create_folder(service, part, parent, shared_drive_id)
+				created[key] = folder_id
+			parent = created[key]
 
 	return project_folder_id, web_view_link
+
+
+def enqueue_opportunity_folder(doc, method=None):
+	"""Opportunity ``after_insert`` doc_event: queue Drive folder creation when
+	enabled (Project Folder Google Drive Settings → Create Opportunity
+	Folders). Only Customer-party opportunities get folders (Leads have no
+	customer folder to nest under). Best-effort — never blocks the insert."""
+	try:
+		if (doc.get("opportunity_from") or "") != "Customer" or not doc.get("party_name"):
+			return
+		settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+		if not cint(settings.get("create_opportunity_folders")):
+			return
+		if not (settings.get("service_account_json") and settings.get("shared_drive_id")):
+			return
+		frappe.enqueue(
+			"erpnext_enhancements.crm_enhancements.drive_utils.provision_opportunity_folder",
+			queue="long",
+			opportunity=doc.name,
+			enqueue_after_commit=True,
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Opportunity Drive Folder enqueue")
+
+
+def provision_opportunity_folder(opportunity):
+	"""Background job: find-or-create ``<Customer>/<Opportunity — Title>`` in
+	the Shared Drive and store its id on ``Opportunity.custom_drive_folder_id``."""
+	from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+
+	try:
+		if not frappe.db.exists("Opportunity", opportunity):
+			return
+		opp = frappe.db.get_value(
+			"Opportunity", opportunity, ["party_name", "title", "opportunity_from"], as_dict=True
+		)
+		if opp.opportunity_from != "Customer" or not opp.party_name:
+			return
+		customer_label = (
+			frappe.db.get_value("Customer", opp.party_name, "customer_name") or opp.party_name
+		)
+		service, shared_drive_id = get_drive_service()
+		if not shared_drive_id:
+			return
+		customer_folder_id = find_folder(service, customer_label, shared_drive_id, shared_drive_id)
+		if not customer_folder_id:
+			customer_folder_id, _ = create_folder(
+				service, customer_label, shared_drive_id, shared_drive_id
+			)
+		folder_name = f"{opportunity} — {opp.title}".strip(" —") if opp.title else opportunity
+		folder_id = find_folder(service, folder_name, customer_folder_id, shared_drive_id)
+		if not folder_id:
+			folder_id, _ = create_folder(service, folder_name, customer_folder_id, shared_drive_id)
+		if folder_id and frappe.db.has_column("Opportunity", "custom_drive_folder_id"):
+			frappe.db.set_value(
+				"Opportunity", opportunity, "custom_drive_folder_id", folder_id,
+				update_modified=False,
+			)
+		log_sync(
+			"Provision Folder", "Success",
+			reference_doctype="Opportunity", reference_name=opportunity,
+			file_name=folder_name, drive_file_id=folder_id,
+		)
+	except Exception:
+		frappe.log_error(
+			f"Opportunity Drive folder failed for {opportunity}\n{frappe.get_traceback()}",
+			"Opportunity Drive Folder",
+		)
