@@ -346,11 +346,15 @@ class TravelTrip(Document):
 	def _linked_total(self, doctype, amount_field):
 		if not frappe.db.has_column(doctype, "custom_travel_trip"):
 			return 0  # fixture-managed back-link field not applied yet
-		rows = frappe.get_all(
-			doctype,
-			filters={"custom_travel_trip": self.name, "docstatus": ["<", 2]},
-			fields=[f"sum({amount_field}) as total"],
-		)
+		# Query builder: frappe 16 rejects SQL functions as get_all field strings.
+		from frappe.query_builder.functions import Sum
+
+		table = frappe.qb.DocType(doctype)
+		rows = (
+			frappe.qb.from_(table)
+			.select(Sum(table[amount_field]).as_("total"))
+			.where((table.custom_travel_trip == self.name) & (table.docstatus < 2))
+		).run(as_dict=True)
 		return flt(rows[0].total) if rows else 0
 
 	# ----------------------------------------------------------------- status
