@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-06-12
+
+### Fixed
+- **AI Governance & Sapphire Maintenance workspace fixtures** — same defect class as the Travel workspace crash fixed in 1.19.0:
+  - `ai_governance.json` lacked the mandatory `type` field (its synced DB row had `type` NULL, so any save of the workspace failed with a MandatoryError) and its two shortcuts (Pending Confirmations / Action Log) were defined but never rendered because the content had no shortcut blocks. Now ships `"type": "Workspace"` and a shortcuts row.
+  - `sapphire_maintenance.json` sat directly in `workspace/` instead of the required `workspace/<name>/<name>.json` layout, so module sync never imported it — the workspace didn't exist on the live site at all. Moved to the correct path and rebuilt with content blocks, "Maintenance" and "Tools" cards (now also linking Service Plan, Visit Wizard, and Day Board), shortcuts (Visit Wizard / Day Board / Add Maintenance Record), and the `type` field.
+  - Both live rows were hot-patched/created to the same state so the workspaces work before the deploy; fixture `modified` stamps are later so `bench migrate` still re-syncs them.
+
 ## [1.17.0] - 2026-06-11
 
 Maintenance UX follow-ups to v1.16.0: readable template names, a much larger ready-made catalog, and a way for techs to pull a future visit forward.

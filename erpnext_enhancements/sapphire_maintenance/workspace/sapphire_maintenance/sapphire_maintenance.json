@@ -1,0 +1,149 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"maint_shortcuts_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"maint_sc_wizard\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Visit Wizard\",\"col\":4}},{\"id\":\"maint_sc_day_board\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Day Board\",\"col\":4}},{\"id\":\"maint_sc_records\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Add Maintenance Record\",\"col\":4}},{\"id\":\"maint_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"maint_masters_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Masters</b></span>\",\"col\":12}},{\"id\":\"maint_card_records\",\"type\":\"card\",\"data\":{\"card_name\":\"Maintenance\",\"col\":4}},{\"id\":\"maint_card_tools\",\"type\":\"card\",\"data\":{\"card_name\":\"Tools\",\"col\":4}}]",
+ "creation": "2024-04-20 10:40:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "service",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Sapphire Maintenance",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance",
+   "link_count": 6,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Profile",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Profile"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Contract",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Contract"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Service Plan",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Service Plan"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Template",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Template"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Form Section",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Section"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Record",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sapphire Maintenance Record"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tools",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Visit Wizard",
+   "link_count": 0,
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "visit-wizard"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Day Board",
+   "link_count": 0,
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "maintenance-day-board"
+  }
+ ],
+ "modified": "2026-06-12 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Sapphire Maintenance",
+ "name": "Sapphire Maintenance",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 10,
+ "shortcuts": [
+  {
+   "label": "Visit Wizard",
+   "link_to": "visit-wizard",
+   "type": "Page"
+  },
+  {
+   "label": "Maintenance Day Board",
+   "link_to": "maintenance-day-board",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Add Maintenance Record",
+   "link_to": "Sapphire Maintenance Record",
+   "type": "DocType"
+  }
+ ],
+ "title": "Sapphire Maintenance",
+ "type": "Workspace"
+}
