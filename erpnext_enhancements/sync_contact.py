@@ -174,6 +174,26 @@ def set_primary_address(account_doctype, account_name, address_name):
     # Check the new one
     frappe.db.set_value("Address", address_name, "is_primary_address", 1)
 
+
+def set_supplier_primary_address_display(doc, method=None):
+    """Supplier ``validate`` doc_event: show the linked Address's
+    ``custom_full_address`` as the read-only Primary Address text.
+
+    Stock erpnext fills ``Supplier.primary_address`` (a read-only Text Editor
+    display, NOT the Link — that's ``supplier_primary_address``) from the
+    address template via ``get_address_display``. This site's canonical
+    one-line address lives in ``Address.custom_full_address``, so prefer it;
+    when the custom field is empty the stock template text is left alone.
+    """
+    if not doc.get("supplier_primary_address"):
+        return
+    full_address = frappe.db.get_value(
+        "Address", doc.supplier_primary_address, "custom_full_address"
+    )
+    if full_address:
+        doc.primary_address = full_address
+
+
 @frappe.whitelist()
 def link_existing_record(doctype, docname, link_doctype=None, link_name=None, links=None):
     """Links an existing Contact or Address to a document(s)."""
