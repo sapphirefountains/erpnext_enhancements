@@ -170,7 +170,23 @@ def get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tru
     Side effects: may insert Customer + Contact docs and commits the transaction.
     """
     frappe.set_user("triton@sapphirefountains.com")
+    return _get_caller_info(
+        phone_number,
+        twilio_caller_name=twilio_caller_name,
+        create_if_missing=create_if_missing,
+    )
 
+
+def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=True):
+    """Internal, auth-free implementation of ``get_caller_info`` — call THIS
+    from server-side code. The whitelisted wrapper above exists for the Triton
+    gateway HTTP boundary only: its ``@validate_webhook_secret`` reads the
+    REQUEST's Authorization header, so calling the wrapper from a
+    session-authenticated endpoint (desk ``send_sms``) or a Twilio-signature
+    webhook (``receive_mms`` → ``locate_customer``) threw "Missing or Invalid
+    Authorization Header". Runs as the CURRENT user — callers that need the
+    Triton service user set it themselves.
+    """
     if isinstance(create_if_missing, str):
         create_if_missing = create_if_missing.strip().lower() not in ("0", "false", "no", "")
 
@@ -306,7 +322,7 @@ def notify_incoming_call(event=None, call_sid=None, from_number=None, caller_nam
 
     if event == "ringing" and from_number:
         try:
-            info = get_caller_info(
+            info = _get_caller_info(
                 from_number, twilio_caller_name=caller_name, create_if_missing=False
             )
             payload["caller_name"] = info.get("display_name") or caller_name
@@ -332,7 +348,7 @@ def update_caller_info(phone_number, new_name):
     """
     frappe.set_user("triton@sapphirefountains.com")
 
-    info = get_caller_info(phone_number)
+    info = _get_caller_info(phone_number)
     customer_name = info.get("customer")
     contact_name = info.get("contact")
 
@@ -385,7 +401,7 @@ def locate_customer(phone_number):
     Thin wrapper over ``get_caller_info`` (so it may also create records as a
     side effect). Not whitelisted.
     """
-    info = get_caller_info(phone_number)
+    info = _get_caller_info(phone_number)
     return info.get("customer")
 
 @frappe.whitelist()
@@ -410,7 +426,7 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
     try:
         customer_name, contact_name = None, None
         if caller_number:
-            info = get_caller_info(caller_number)
+            info = _get_caller_info(caller_number)
             customer_name = info.get('customer')
             contact_name = info.get('contact')
 
@@ -509,7 +525,7 @@ def process_unified_recording(**kwargs):
         voicemail_url = val("voicemail_url")
 
         is_missed = str(call_status).strip().lower() == "missed"
-        info = get_caller_info(
+        info = _get_caller_info(
             customer_phone, twilio_caller_name=caller_name, create_if_missing=not is_missed
         )
         customer_name = info.get('customer')
@@ -1056,7 +1072,7 @@ def process_unified_sms(**kwargs):
         is_urgent = kwargs.get("is_urgent") or frappe.form_dict.get("is_urgent") in [True, "true", "True", 1, "1"]
         ai_analysis = kwargs.get("ai_analysis") or frappe.form_dict.get("ai_analysis")
 
-        info = get_caller_info(from_number)
+        info = _get_caller_info(from_number)
         customer_name = info.get('customer')
         contact_name = info.get('contact')
         display_name = info.get('display_name')
@@ -1251,7 +1267,6 @@ def send_system_sms(target_number, message):
     if api_secret:
         headers["Authorization"] = f"Bearer {api_secret}"
 
-    import requests
     response = requests.post(
         f"{triton_url.rstrip('/')}/api/send-sms",
         json={"to_number": target_number, "content": message, "media_urls": []},
@@ -1291,7 +1306,7 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         clean_number = re.sub(r'\D', '', target_number)
         match_suffix = clean_number[-10:] if len(clean_number) >= 10 else clean_number
 
-        info = get_caller_info(target_number)
+        info = _get_caller_info(target_number)
         customer_name = info.get('customer')
         contact_name = info.get('contact')
         display_name = info.get('display_name') or target_number
@@ -1344,7 +1359,11 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         if api_secret:
             headers["Authorization"] = f"Bearer {api_secret}"
 
-        import requests
+        # NOTE: no local `import requests` here — the module-level import is in
+        # scope, and a function-local import made `requests` a local name for
+        # the WHOLE function, so the `except requests.exceptions...` below
+        # raised UnboundLocalError whenever an exception fired before this
+        # line (e.g. the get_caller_info auth throw this masked).
         response = requests.post(endpoint, json=payload, headers=headers)
         response.raise_for_status()
 
