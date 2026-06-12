@@ -80,14 +80,20 @@ def get_data(filters):
 	if not trips:
 		return []
 
+	# Query builder: frappe 16 rejects SQL functions as get_all field strings.
+	from frappe.query_builder.functions import Count
+
+	traveler = frappe.qb.DocType("Trip Traveler")
 	counts = dict(
-		frappe.get_all(
-			"Trip Traveler",
-			filters={"parenttype": "Travel Trip", "parent": ["in", [t.name for t in trips]]},
-			fields=["parent", "count(name) as travelers"],
-			group_by="parent",
-			as_list=True,
-		)
+		(
+			frappe.qb.from_(traveler)
+			.select(traveler.parent, Count(traveler.name))
+			.where(
+				(traveler.parenttype == "Travel Trip")
+				& (traveler.parent.isin([t.name for t in trips]))
+			)
+			.groupby(traveler.parent)
+		).run()
 	)
 
 	for trip in trips:

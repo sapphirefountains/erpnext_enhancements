@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.2] - 2026-06-12
+
+### Fixed
+- **/wall TV display crashed with "SQL functions are not allowed as strings in SELECT"** — frappe 16 rejects aggregate functions passed as `get_all` field strings. Rewrote the wall's per-project task-stats query with the query builder, plus the three other sites with the same latent pattern (Travel Trip claim/advance rollups in `travel_trip.py` and `integrations.py`, and the Trip Cost Summary traveler counts). Both query shapes verified against the live frappe build.
+- **Console spam "Failed to execute 'clone' on 'Response'" on every desk page** — the kiosk service worker (whose scope covers the whole site) cloned asset responses inside an async `caches.open()` callback, by which time the page had usually consumed the body. The clone now happens synchronously before the response is handed back.
+- **Squished avatars in the Comments App** — profile photos that aren't square stretched to fill the round frame (which is why only some users looked squished). Avatar images now use `object-fit: cover` and the frames no longer flex-shrink.
+
 ## [1.23.0] - 2026-06-12
 
 ### Fixed

@@ -32,6 +32,7 @@ safety against future option edits).
 import json
 
 import frappe
+from frappe.query_builder.functions import Count
 from frappe.utils import cint, date_diff, nowdate
 
 CLOSED_TASK_STATUSES = ("Completed", "Canceled", "Cancelled", "Template", "Invoiced")
@@ -261,12 +262,16 @@ def _project_task_stats(project_ids):
 	one GROUP BY query for all projects."""
 	if not project_ids:
 		return {}
-	rows = frappe.get_all(
-		"Task",
-		filters={"project": ("in", list(project_ids))},
-		fields=["project", "status", "count(name) as qty"],
-		group_by="project, status",
-	)
+	# Query builder rather than get_all: frappe 16 rejects SQL functions
+	# passed as field strings ("SQL functions are not allowed as strings in
+	# SELECT"), which 500'd the whole /wall page.
+	task = frappe.qb.DocType("Task")
+	rows = (
+		frappe.qb.from_(task)
+		.select(task.project, task.status, Count(task.name).as_("qty"))
+		.where(task.project.isin(list(project_ids)))
+		.groupby(task.project, task.status)
+	).run(as_dict=True)
 	stats = {}
 	for row in rows:
 		if row.status in WALL_SKIP_STATUSES:
