@@ -120,7 +120,8 @@
 			var bounds = [];
 			stops.forEach(function (stop) {
 				L.marker([stop.lat, stop.lng]).addTo(map)
-					.bindPopup('<b>' + stop.label + '</b>' + (stop.sub ? '<br>' + stop.sub : ''));
+					.bindPopup('<b>' + stop.label + '</b>' + (stop.sub ? '<br>' + stop.sub : '') +
+						'<br><a href="' + mapsLink(stop.lat, stop.lng) + '" target="_blank" rel="noopener">Google Maps</a>');
 				bounds.push([stop.lat, stop.lng]);
 			});
 			if (bounds.length > 1) map.fitBounds(bounds, { padding: [24, 24] });

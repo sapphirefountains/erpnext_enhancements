@@ -1,13 +1,28 @@
 {
  "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"travel_shortcuts_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"travel_sc_calendar\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Calendar\",\"col\":3}},{\"id\":\"travel_sc_new_trip\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"New Travel Trip\",\"col\":3}},{\"id\":\"travel_sc_itinerary\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My Itinerary\",\"col\":3}},{\"id\":\"travel_sc_guidelines\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Travel Guidelines\",\"col\":3}},{\"id\":\"travel_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"travel_masters_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports & Masters</b></span>\",\"col\":12}},{\"id\":\"travel_card_records\",\"type\":\"card\",\"data\":{\"card_name\":\"Travel\",\"col\":4}},{\"id\":\"travel_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
  "creation": "2026-06-11 10:00:00.000000",
  "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
  "icon": "milestone",
+ "is_hidden": 0,
  "is_standard": 1,
  "label": "Travel",
  "links": [
   {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Travel",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Travel Trip",
    "link_count": 0,
    "link_type": "DocType",
@@ -17,6 +32,8 @@
   },
   {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Travel POI",
    "link_count": 0,
    "link_type": "DocType",
@@ -26,6 +43,8 @@
   },
   {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Travel Settings",
    "link_count": 0,
    "link_type": "DocType",
@@ -34,44 +53,58 @@
    "link_to": "Travel Settings"
   },
   {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
    "label": "Trip Cost Summary",
    "link_count": 0,
    "link_type": "Report",
    "onboard": 0,
    "type": "Link",
-   "link_to": "Travel Trip Cost Summary",
-   "is_query_report": 1
+   "link_to": "Travel Trip Cost Summary"
   },
   {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
    "label": "Spend by Category",
    "link_count": 0,
    "link_type": "Report",
    "onboard": 0,
    "type": "Link",
-   "link_to": "Travel Spend by Category",
-   "is_query_report": 1
+   "link_to": "Travel Spend by Category"
   },
   {
    "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
    "label": "Unclaimed Travel Expenses",
    "link_count": 0,
    "link_type": "Report",
    "onboard": 0,
    "type": "Link",
-   "link_to": "Unclaimed Travel Expenses",
-   "is_query_report": 1
+   "link_to": "Unclaimed Travel Expenses"
   }
  ],
- "modified": "2026-06-11 10:00:00.000000",
+ "modified": "2026-06-12 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Travel Management",
  "name": "Travel",
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
+ "quick_lists": [],
+ "roles": [],
  "sequence_id": 11,
+ "type": "Workspace",
  "shortcuts": [
   {
    "doc_view": "Calendar",

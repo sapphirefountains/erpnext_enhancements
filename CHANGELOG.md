@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-06-12
+
+### Fixed
+- **Travel workspace crashed on open** (`/desk/travel` rendered blank with a `Cannot read properties of null (reading 'length')` console error). The shipped Workspace JSON had no `content` blocks and no Card Break grouping its links, so the synced DB row's `content` was NULL and Frappe's workspace renderer threw. The fixture now ships proper content (shortcuts row + "Travel" records card + "Reports" card) and re-syncs on migrate; the live row was also hot-patched so the page works before the deploy.
+
+### Added
+- **Google Maps for Travel POIs.** The Travel POI form gains an "Open in Google Maps" button (uses the Geolocation pin's coordinates; falls back to a text search on the linked Address). The Travel Trip itinerary map and the /itinerary day map marker popups now include a Google Maps link per stop (tiles stay Leaflet/OSM — multi-marker embeds need an API key; the external links are Google Maps, matching the itinerary's existing "Open in Maps" links).
+
 ## [1.17.0] - 2026-06-11
 
 Maintenance UX follow-ups to v1.16.0: readable template names, a much larger ready-made catalog, and a way for techs to pull a future visit forward.
