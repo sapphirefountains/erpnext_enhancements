@@ -715,6 +715,28 @@ def process_unified_recording(**kwargs):
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
+# The single shared desk identity from before per-user identities existed.
+# Still used when Triton Settings.softphone_users is empty, and dialed by older
+# Triton builds via their TWILIO_CLIENT_IDENTITY env fallback.
+LEGACY_SOFTPHONE_IDENTITY = "nikolas_erpnext"
+
+
+def _softphone_users(settings):
+    """The configured answerer emails from ``Triton Settings.softphone_users``
+    (comma/newline separated), original case preserved, [] when unset."""
+    allowed = (getattr(settings, "softphone_users", "") or "").strip()
+    if not allowed:
+        return []
+    return [u.strip() for u in allowed.replace("\n", ",").split(",") if u.strip()]
+
+
+def _softphone_identity(user_email):
+    """Stable per-user Twilio Client identity for a desk softphone, e.g.
+    ``erpnext_jane_doe_sapphirefountains_com`` (Twilio identities allow only
+    alphanumerics and a few safe characters, so everything else becomes ``_``)."""
+    return "erpnext_" + re.sub(r"[^A-Za-z0-9_]", "_", (user_email or "").strip().lower())
+
+
 @frappe.whitelist()
 def get_softphone_token():
     """Mint a short-lived Twilio Voice access-token JWT for the browser softphone.
@@ -723,26 +745,27 @@ def get_softphone_token():
     Reads Twilio API key SID/secret, TwiML app SID, and account SID from Triton
     Settings (with fallbacks to ``frappe.conf`` / env for the account SID);
     ``frappe.throw`` if any are missing. Grants both outgoing (via the TwiML
-    app) and incoming voice. NOTE: the Twilio ``identity`` is hard-coded to
-    "nikolas_erpnext" — every desk softphone registers the same identity, and
-    Twilio delivers the incoming leg to the most recent registration only.
-    ``Triton Settings.softphone_users`` therefore limits WHO registers the
-    answer device: when set (comma/newline-separated emails), other users get
-    ``None`` and the client skips device setup (realtime call notifications
-    still work for them). Empty = everyone registers (legacy behavior).
-    Returns the JWT as a string, or None for non-answerer users.
+    app) and incoming voice.
+
+    Identity: when ``Triton Settings.softphone_users`` is set, each listed user
+    registers their OWN identity (``_softphone_identity``) so every answerer's
+    desk rings independently — the Triton gateway fetches the identity list via
+    ``get_telephony_routing`` and dials them all in parallel. Users not in the
+    list get ``None`` and the client skips device setup (realtime call
+    notifications still work for them). When the field is empty, everyone
+    shares the legacy single identity (last registration wins) for backward
+    compatibility. Returns the JWT as a string, or None for non-answerers.
     """
     settings = frappe.get_doc("Triton Settings")
 
-    allowed = (getattr(settings, "softphone_users", "") or "").strip()
-    if allowed:
-        users = {
-            u.strip().lower()
-            for u in allowed.replace("\n", ",").split(",")
-            if u.strip()
-        }
-        if frappe.session.user.lower() not in users:
+    users = _softphone_users(settings)
+    if users:
+        if frappe.session.user.lower() not in {u.lower() for u in users}:
             return None
+        identity = _softphone_identity(frappe.session.user)
+    else:
+        identity = LEGACY_SOFTPHONE_IDENTITY
+
     twilio_api_key_sid = getattr(settings, "twilio_api_key_sid", None)
     twilio_api_secret = settings.get_password("twilio_api_secret", raise_exception=False)
     twilio_twiml_app_sid = getattr(settings, "twilio_twiml_app_sid", None)
@@ -754,13 +777,37 @@ def get_softphone_token():
     if not account_sid:
         frappe.throw("Twilio Account SID is missing. Please configure it in Triton Settings.")
 
-    identity = "nikolas_erpnext"
     token = AccessToken(account_sid, twilio_api_key_sid, twilio_api_secret, identity=identity)
     voice_grant = VoiceGrant(outgoing_application_sid=twilio_twiml_app_sid, incoming_allow=True)
     token.add_grant(voice_grant)
 
     jwt_token = token.to_jwt()
     return jwt_token.decode("utf-8") if isinstance(jwt_token, bytes) else str(jwt_token)
+
+
+@frappe.whitelist(allow_guest=True)
+@validate_webhook_secret
+def get_telephony_routing():
+    """Routing config for the Triton voice gateway (Bearer/``token``-guarded).
+
+    Returns the Twilio Client identities the gateway should dial for the
+    ERPNext desk softphone(s) — per-user identities for every configured
+    ``softphone_users`` entry, or the legacy shared identity when the field is
+    empty — plus the business caller-ID number (``primary_twilio_number``)
+    outbound calls and SMS should present. Triton caches this briefly and
+    falls back to its env config if the fetch fails, so editing Triton
+    Settings is the only configuration step needed on this side.
+    """
+    settings = frappe.get_doc("Triton Settings")
+    users = _softphone_users(settings)
+    if users:
+        identities = [_softphone_identity(u) for u in users]
+    else:
+        identities = [LEGACY_SOFTPHONE_IDENTITY]
+    return {
+        "erpnext_client_identities": identities,
+        "primary_number": (getattr(settings, "primary_twilio_number", "") or "").strip() or None,
+    }
 
 @frappe.whitelist(allow_guest=True)
 @validate_twilio_request
