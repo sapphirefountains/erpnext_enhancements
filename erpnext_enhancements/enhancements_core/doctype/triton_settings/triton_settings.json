@@ -23,6 +23,7 @@
   "twilio_api_secret",
   "twilio_twiml_app_sid",
   "primary_twilio_number",
+  "softphone_users",
   "webhook_section",
   "admin_webhook_secret",
   "send_call_email_digest"
@@ -124,6 +125,12 @@
    "label": "Primary Twilio Number"
   },
   {
+   "description": "Comma or newline separated user emails allowed to register the desk softphone (answer device). All desk sessions share one Twilio identity and only the most recent registration rings, so list only the people who actually answer calls. Leave empty to let every desk session register (legacy behavior). Incoming-call notifications are unaffected and show for everyone.",
+   "fieldname": "softphone_users",
+   "fieldtype": "Small Text",
+   "label": "Softphone Users (answer device)"
+  },
+  {
    "fieldname": "webhook_section",
    "fieldtype": "Section Break",
    "label": "Webhook configuration"
@@ -144,7 +151,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2024-05-23 10:00:00.000000",
+ "modified": "2026-06-12 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "Triton Settings",
