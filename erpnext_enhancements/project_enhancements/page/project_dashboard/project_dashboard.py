@@ -109,6 +109,7 @@ def get_project_data(is_active=None):
 				"custom_project_priority", "custom_company_priority", "is_active",
 				"percent_complete", "expected_start_date", "expected_end_date",
 				"custom_project_dollar_amount", "estimated_costing", "custom_master_project",
+				"modified",
 			],
 			filters=filters,
 			order_by="creation desc",
@@ -155,11 +156,34 @@ def get_project_data(is_active=None):
 			if email and email in user_map:
 				assignee_map[proj].append({"email": email, "full_name": user_map[email]})
 
-		# 3. Map data back to projects
+		# 3. Completion dates for inactive projects. Project.actual_end_date is not
+		# maintained in practice (empty on every inactive project), so the moment
+		# is_active last flipped Yes -> No in the Version history serves as the
+		# "completed on" date, falling back to the last-modified date for inactive
+		# projects with no recorded flip (e.g. created inactive).
+		inactive_names = [p["name"] for p in projects if p.get("is_active") == "No"]
+		completed_on_map = {}
+		if inactive_names:
+			version_rows = frappe.db.sql("""
+				SELECT docname, DATE(MAX(creation)) AS completed_on
+				FROM `tabVersion`
+				WHERE ref_doctype = 'Project'
+					AND docname IN %s
+					AND data LIKE %s
+				GROUP BY docname
+			""", (inactive_names, '%["is_active","Yes","No"]%'), as_dict=1)
+			completed_on_map = {v["docname"]: v["completed_on"] for v in version_rows}
+
+		# 4. Map data back to projects
 		for project in projects:
 			p_name = project["name"]
 			project["total_tasks"] = task_map.get(p_name, {}).get("total", 0)
 			project["completed_tasks"] = task_map.get(p_name, {}).get("completed", 0)
+
+			if project.get("is_active") == "No":
+				project["completed_on"] = completed_on_map.get(p_name) or getdate(project.get("modified"))
+			else:
+				project["completed_on"] = None
 			
 			assignees = assignee_map.get(p_name, [])
 			project["assignees"] = assignees

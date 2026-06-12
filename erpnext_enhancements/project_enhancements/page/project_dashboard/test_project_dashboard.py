@@ -7,6 +7,7 @@ functions located in `project_dashboard.py`.
 """
 
 import unittest
+from datetime import date, datetime
 from unittest.mock import patch
 
 import frappe
@@ -128,6 +129,61 @@ class TestProjectDashboard(unittest.TestCase):
 		self.assertEqual(projects_call.args[0], "Project")
 		self.assertEqual(projects_call.kwargs["filters"], {"status": ["!=", "Canceled"]})
 		self.assertEqual(projects_call.kwargs["order_by"], "creation desc")
+
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard._get_assignee_names"
+	)
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
+	)
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.db.sql"
+	)
+	@patch(
+		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all"
+	)
+	def test_get_project_data_completed_on(
+		self, mock_get_all, mock_db_sql, mock_check_permission, mock_get_assignee_names
+	):
+		"""Inactive projects get a completed_on date from Version history, falling
+		back to the last-modified date; active projects get None."""
+		mock_check_permission.return_value = True
+		mock_projects = [
+			{
+				"name": "PROJ-001",
+				"project_name": "Done (tracked)",
+				"is_active": "No",
+				"modified": datetime(2026, 6, 1, 9, 0, 0),
+			},
+			{
+				"name": "PROJ-002",
+				"project_name": "Done (no version row)",
+				"is_active": "No",
+				"modified": datetime(2026, 4, 2, 9, 0, 0),
+			},
+			{
+				"name": "PROJ-003",
+				"project_name": "Still active",
+				"is_active": "Yes",
+				"modified": datetime(2026, 6, 10, 9, 0, 0),
+			},
+		]
+		mock_get_all.side_effect = [mock_projects, [], []]
+		# db.sql is called twice: task counts, then completion dates from Version.
+		mock_db_sql.side_effect = [
+			[],
+			[{"docname": "PROJ-001", "completed_on": date(2026, 5, 22)}],
+		]
+		mock_get_assignee_names.return_value = []
+
+		result = get_project_data()
+
+		self.assertEqual(result[0]["completed_on"], date(2026, 5, 22))
+		self.assertEqual(result[1]["completed_on"], date(2026, 4, 2))
+		self.assertIsNone(result[2]["completed_on"])
+		# The Version query is scoped to the inactive projects only.
+		version_call = mock_db_sql.call_args_list[1]
+		self.assertEqual(version_call.args[1][0], ["PROJ-001", "PROJ-002"])
 
 	@patch(
 		"erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.check_permission"
