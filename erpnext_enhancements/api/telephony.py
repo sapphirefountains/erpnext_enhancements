@@ -605,6 +605,7 @@ def process_unified_recording(**kwargs):
 
         email_attachments = []
         recording_file_url = None
+        recording_file_docname = None
 
         file_content_b64 = kwargs.get("file_content")
         if file_content_b64:
@@ -620,6 +621,7 @@ def process_unified_recording(**kwargs):
                 })
                 file_doc.save(ignore_permissions=True)
                 recording_file_url = file_doc.file_url
+                recording_file_docname = file_doc.name
 
                 email_attachments.append({
                     "fname": file_doc.file_name,
@@ -641,6 +643,7 @@ def process_unified_recording(**kwargs):
                 })
                 file_doc.save(ignore_permissions=True)
                 recording_file_url = file_doc.file_url
+                recording_file_docname = file_doc.name
 
                 email_attachments.append({
                     "fname": file_doc.file_name,
@@ -648,6 +651,22 @@ def process_unified_recording(**kwargs):
                 })
             except Exception as fe:
                 frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Triton File Error")
+
+        # Mirror the recording into the Operations Shared Drive (monthly
+        # YYYY_MM folders). Queued in the background and gated on
+        # Triton Settings.call_recordings_drive_folder, so Drive latency or
+        # misconfiguration never affects this webhook.
+        if recording_file_docname:
+            from erpnext_enhancements.api.call_recording_export import enqueue_recording_export
+
+            enqueue_recording_export(
+                call_sid=call_sid,
+                when=start_time,
+                direction=direction,
+                caller_name=caller_name or display_name,
+                caller_number=customer_phone,
+                file_docname=recording_file_docname,
+            )
 
         # --- Call Intelligence: upsert the stock Call Log for this call -----
         # Never lets an intelligence failure break the webhook (the
