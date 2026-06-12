@@ -252,6 +252,8 @@ doc_events = {
 	"Customer": {
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
+		# Drive folder per customer (Project Folder Google Drive Settings opt-in)
+		"after_insert": "erpnext_enhancements.crm_enhancements.drive_utils.enqueue_customer_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"*": {

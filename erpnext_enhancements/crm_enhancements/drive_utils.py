@@ -18,11 +18,59 @@ import json
 import time
 
 import frappe
+from frappe.utils import cint
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+
+def enqueue_customer_folder(doc, method=None):
+	"""Customer ``after_insert`` doc_event: queue Drive folder creation when
+	enabled (Project Folder Google Drive Settings → Create Customer Folders).
+	Best-effort — never blocks Customer creation."""
+	try:
+		settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+		if not cint(settings.get("create_customer_folders")):
+			return
+		if not (settings.get("service_account_json") and settings.get("shared_drive_id")):
+			return
+		frappe.enqueue(
+			"erpnext_enhancements.crm_enhancements.drive_utils.provision_customer_folder",
+			queue="long",
+			customer=doc.name,
+			enqueue_after_commit=True,
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Customer Drive Folder enqueue")
+
+
+def provision_customer_folder(customer):
+	"""Background job: find-or-create the customer's top-level folder in the
+	Shared Drive (the same folder :func:`provision_project_folders` nests
+	project trees under) and store its id on
+	``Customer.custom_drive_folder_id``. Failures land in Error Log under
+	"Customer Drive Folder"."""
+	try:
+		if not frappe.db.exists("Customer", customer):
+			return
+		customer_name = frappe.db.get_value("Customer", customer, "customer_name") or customer
+		service, shared_drive_id = get_drive_service()
+		if not shared_drive_id:
+			return
+		folder_id = find_folder(service, customer_name, shared_drive_id, shared_drive_id)
+		if not folder_id:
+			folder_id, _link = create_folder(service, customer_name, shared_drive_id, shared_drive_id)
+		if folder_id and frappe.db.has_column("Customer", "custom_drive_folder_id"):
+			frappe.db.set_value(
+				"Customer", customer, "custom_drive_folder_id", folder_id, update_modified=False
+			)
+	except Exception:
+		frappe.log_error(
+			f"Customer Drive folder failed for {customer}\n{frappe.get_traceback()}",
+			"Customer Drive Folder",
+		)
 
 
 def get_drive_service():

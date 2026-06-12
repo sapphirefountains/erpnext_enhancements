@@ -6,26 +6,55 @@
  "engine": "InnoDB",
  "field_order": [
   "service_account_json",
-  "shared_drive_id"
+  "shared_drive_id",
+  "customer_folders_section",
+  "create_customer_folders",
+  "call_recordings_section",
+  "call_recordings_folder_id"
  ],
  "fields": [
   {
+   "description": "The full JSON key of the Google Cloud service account used for ALL Drive automation (project folders, customer folders, call-recording exports). The account's client_email must be added as a Content Manager on the Shared Drive(s) below.",
    "fieldname": "service_account_json",
    "fieldtype": "Code",
    "label": "Service Account JSON",
    "reqd": 1
   },
   {
+   "description": "The Shared Drive that holds the per-customer folders and the project folder trees (the ID is the part of the Shared Drive's URL after /folders/ or /drive/).",
    "fieldname": "shared_drive_id",
    "fieldtype": "Data",
    "label": "Shared Drive ID",
    "reqd": 1
+  },
+  {
+   "fieldname": "customer_folders_section",
+   "fieldtype": "Section Break",
+   "label": "Customer Folders"
+  },
+  {
+   "default": "0",
+   "description": "Create a top-level Drive folder (named after the customer) in the Shared Drive whenever a Customer is created. Project provisioning reuses the same folder, and its ID is stored on the Customer record.",
+   "fieldname": "create_customer_folders",
+   "fieldtype": "Check",
+   "label": "Create Customer Folders on Customer Creation"
+  },
+  {
+   "fieldname": "call_recordings_section",
+   "fieldtype": "Section Break",
+   "label": "Call Recordings"
+  },
+  {
+   "description": "Google Drive folder ID that receives every call recording and Twilio voicemail, organised into monthly YYYY_MM subfolders (e.g. the Operations Share Drive folder). The service account above must be a member of the Shared Drive containing this folder. Leave empty to disable the export.",
+   "fieldname": "call_recordings_folder_id",
+   "fieldtype": "Data",
+   "label": "Call Recordings Folder ID"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2024-05-15 00:00:00.000000",
+ "modified": "2026-06-12 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "Project Folder Google Drive Settings",
