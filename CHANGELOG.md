@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-06-12
+
+### Added
+- **Threaded replies in the Comments App ("Notes" tab).** Every note gains a **Reply** button that opens the composer pre-filled with an @mention of that note's author — frappe core notifies mentioned users on insert, so the tagged person automatically gets the native bell/email notification. Replies render indented and chronological under their top-level note; threads are single-level (Slack-style): replying to a reply @tags that reply's author but joins the same thread (the server resolves any parent to the thread root). Implementation: new hidden `Comment.custom_parent_comment` custom field (fixtures), `add_comment(parent_comment=...)` with parent validation + root resolution, thread grouping in a Vue computed (`comments.js`), compact reply rows + thread rail styles (`desk_enhancements.bundle.css`, both themes). Deleting a note that has replies keeps the replies, shown under a "(deleted note)" placeholder. `get_comments` guards the new column behind `has_column` so a code deploy that beats `bench migrate` degrades to the old flat list.
+
 ## [1.21.0] - 2026-06-12
 
 ### Added

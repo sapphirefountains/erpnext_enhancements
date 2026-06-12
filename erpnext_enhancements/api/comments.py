@@ -4,6 +4,16 @@ Whitelisted API consumed by ``public/js/comments.js``,
 ``public/js/global_comments.js``, and ``public/js/crm_note_enhancements.js``
 to render, add, edit, delete, and attach files to comments on any document.
 
+Threading: a reply is a normal Comment whose ``custom_parent_comment``
+(Custom Field, fixtures) points at its thread ROOT. Threads are single-level
+(Slack-style) — ``add_comment`` resolves any supplied parent to the root, so
+replying to a reply joins the same thread. Deleting a parent leaves its
+replies in place (replies may belong to other users; ``Comment`` is in frappe
+core's ``ignore_links_on_delete`` so the dangling link is allowed) — the
+client renders such orphans under a "(deleted note)" stub. Mention
+notifications need no code here: frappe core ``Comment.after_insert`` calls
+``notify_mentions`` over the content's ``span.mention[data-id]`` blots.
+
 Security model:
         - Read/add require an explicit ``frappe.has_permission(..., "read")``
           check on the referenced document; the Comment itself is then written
@@ -28,7 +38,14 @@ def get_comments(reference_doctype, reference_name):
 	if not frappe.has_permission(reference_doctype, "read", reference_name):
 		frappe.throw(_("You do not have permission to view this document."))
 
-	# Fetch standard comments linked to the document
+	# Fetch standard comments linked to the document. The thread-parent custom
+	# field is requested only once the fixture has been migrated, so a code
+	# deploy that beats `bench migrate` degrades to the flat list instead of
+	# erroring on every form.
+	fields = ["name", "content", "owner", "creation"]
+	if frappe.db.has_column("Comment", "custom_parent_comment"):
+		fields.append("custom_parent_comment")
+
 	comments = frappe.get_all(
 		"Comment",
 		filters={
@@ -36,7 +53,7 @@ def get_comments(reference_doctype, reference_name):
 			"reference_name": reference_name,
 			"comment_type": "Comment"
 		},
-		fields=["name", "content", "owner", "creation"],
+		fields=fields,
 		order_by="creation desc"
 	)
 
@@ -66,9 +83,13 @@ def get_comments(reference_doctype, reference_name):
 
 
 @frappe.whitelist()
-def add_comment(reference_doctype, reference_name, comment_text):
+def add_comment(reference_doctype, reference_name, comment_text, parent_comment=None):
 	"""
-	Adds a new comment to a document.
+	Adds a new comment to a document, optionally as a reply in a thread.
+
+	``parent_comment`` may be any comment in the thread; it is resolved to the
+	thread ROOT server-side (single-level threads), after validating that it is
+	a real Comment on the same document.
 	"""
 	if not reference_doctype or not reference_name or not comment_text:
 		frappe.throw(_("Reference document and comment text are required."))
@@ -76,12 +97,39 @@ def add_comment(reference_doctype, reference_name, comment_text):
 	if not frappe.has_permission(reference_doctype, "read", reference_name):
 		frappe.throw(_("You do not have permission to view this document."))
 
+	resolved_parent = None
+	if parent_comment:
+		parent = frappe.db.get_value(
+			"Comment",
+			parent_comment,
+			["name", "comment_type", "reference_doctype", "reference_name", "custom_parent_comment"],
+			as_dict=True,
+		)
+		if not parent:
+			frappe.throw(_("The note you are replying to no longer exists."))
+		if (
+			parent.comment_type != "Comment"
+			or parent.reference_doctype != reference_doctype
+			or parent.reference_name != reference_name
+		):
+			frappe.throw(_("Invalid parent note for this document."))
+		# Single-level threads: always attach to the thread root.
+		resolved_parent = parent.custom_parent_comment or parent.name
+
 	doc = frappe.new_doc("Comment")
 	doc.comment_type = "Comment"
 	doc.reference_doctype = reference_doctype
 	doc.reference_name = reference_name
 	doc.content = comment_text
-	doc.insert(ignore_permissions=True)
+	if resolved_parent:
+		doc.custom_parent_comment = resolved_parent
+		# ignore_links: the resolved root may itself already be deleted
+		# (replying inside an orphaned "(deleted note)" thread) and Link
+		# validation would reject the dangling name. Safe — the parent's
+		# existence on this same document was validated above.
+		doc.insert(ignore_permissions=True, ignore_links=True)
+	else:
+		doc.insert(ignore_permissions=True)
 
 	# Refetch the comment to include user details for the frontend
 	user_details = frappe.get_doc("User", doc.owner)
@@ -91,6 +139,7 @@ def add_comment(reference_doctype, reference_name, comment_text):
 		"content": doc.content,
 		"owner": doc.owner,
 		"creation": doc.creation,
+		"custom_parent_comment": doc.get("custom_parent_comment"),
 		"full_name": user_details.full_name,
 		"user_image": user_details.user_image
 	}
@@ -185,11 +234,15 @@ def update_comment(comment_name, comment_text):
 
 		user_details = frappe.get_doc("User", comment.owner)
 
+		# custom_parent_comment is load-bearing here: the client splices this
+		# response over its array entry, so dropping the key would make an
+		# edited reply jump out of its thread to the top level.
 		return {
 			"name": comment.name,
 			"content": comment.content,
 			"owner": comment.owner,
 			"creation": comment.creation,
+			"custom_parent_comment": comment.get("custom_parent_comment"),
 			"full_name": user_details.full_name,
 			"user_image": user_details.user_image
 		}
