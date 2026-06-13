@@ -40,5 +40,158 @@
         "card": "Avg CSAT"
       }
     ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Project Delivery",
+    "dashboard_name": "Project Delivery",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Projects by Type",
+        "width": "Half"
+      },
+      {
+        "chart": "Projects by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Project Tasks by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Avg Completion by Project Type",
+        "width": "Half"
+      },
+      {
+        "chart": "New Projects (Weekly)",
+        "width": "Full"
+      }
+    ],
+    "cards": [
+      {
+        "card": "Active Projects"
+      },
+      {
+        "card": "Overdue Tasks"
+      },
+      {
+        "card": "Avg Project Completion %"
+      },
+      {
+        "card": "Projects Completed"
+      }
+    ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Sales Pipeline",
+    "dashboard_name": "Sales Pipeline",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Opportunities by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Opportunity Value by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Leads by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Opportunities by Territory",
+        "width": "Half"
+      },
+      {
+        "chart": "Weekly Opportunity Inflow",
+        "width": "Full"
+      }
+    ],
+    "cards": [
+      {
+        "card": "Open Opportunities"
+      },
+      {
+        "card": "Open Pipeline Value"
+      },
+      {
+        "card": "Closed-Won Opportunities"
+      },
+      {
+        "card": "Active Leads"
+      }
+    ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Procurement",
+    "dashboard_name": "Procurement",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Purchase Orders by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Material Requests by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Monthly PO Value",
+        "width": "Full"
+      }
+    ],
+    "cards": [
+      {
+        "card": "Open Purchase Orders"
+      },
+      {
+        "card": "Open PO Value"
+      },
+      {
+        "card": "Pending Material Requests"
+      }
+    ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Executive Summary",
+    "dashboard_name": "Executive Summary",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Projects by Type",
+        "width": "Half"
+      },
+      {
+        "chart": "Opportunities by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Purchase Orders by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "Project Tasks by Status",
+        "width": "Half"
+      }
+    ],
+    "cards": [
+      {
+        "card": "Active Projects"
+      },
+      {
+        "card": "Open Pipeline Value"
+      },
+      {
+        "card": "Overdue Tasks"
+      },
+      {
+        "card": "Open PO Value"
+      }
+    ]
   }
 ]

@@ -428,15 +428,29 @@ fixtures = [
 					"AI Tokens per Day",
 					"AI Actions by Status",
 					"AI Mutations by Risk",
+					# Operational dashboards (Project Delivery / Sales Pipeline / Procurement / Executive)
+					"Projects by Type",
+					"Projects by Status",
+					"Project Tasks by Status",
+					"New Projects (Weekly)",
+					"Avg Completion by Project Type",
+					"Opportunities by Status",
+					"Opportunity Value by Status",
+					"Opportunities by Territory",
+					"Weekly Opportunity Inflow",
+					"Leads by Status",
+					"Purchase Orders by Status",
+					"Monthly PO Value",
+					"Material Requests by Status",
 				],
 			]
 		],
 	},
 	{
 		"dt": "Number Card",
-		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT"]]],
+		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests"]]],
 	},
-	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center"]]]},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary"]]]},
 ]
 
 override_whitelisted_methods = {
