@@ -129,7 +129,14 @@ def get_task_dashboard_data():
 	today = nowdate()
 
 	# --- Top 10 priority projects, with PM + tech lead resolved ---------------
-	top_projects = frappe.get_all(
+	# custom_company_priority is a Select field, so it is stored as text: a SQL
+	# "ORDER BY custom_company_priority asc" sorts it lexically ("1","10","11",
+	# …,"2"), which floats every 1x rank above rank 2 and — because the LIMIT
+	# runs after that sort — surfaces the wrong ten projects, not merely the
+	# right ten mis-ordered. Sort numerically (matching priority_overview.js's
+	# get_priority_weight) before slicing. Fetch ordered by modified desc so the
+	# stable sort below keeps that as the within-rank tiebreaker.
+	eligible_projects = frappe.get_all(
 		"Project",
 		filters={
 			"status": "Active",
@@ -144,9 +151,10 @@ def get_task_dashboard_data():
 			"custom_technical_lead",
 			"percent_complete",
 		],
-		order_by="custom_company_priority asc, modified desc",
-		limit_page_length=TOP_PROJECT_LIMIT,
+		order_by="modified desc",
 	)
+	eligible_projects.sort(key=lambda p: cint(p["custom_company_priority"]))
+	top_projects = eligible_projects[:TOP_PROJECT_LIMIT]
 
 	employee_ids = {
 		p[field] for p in top_projects for field in ("custom_project_owner", "custom_technical_lead") if p[field]

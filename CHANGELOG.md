@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.1] - 2026-06-12
+
+### Fixed
+- **Morning Task Dashboard top-10 sorting** (`api/task_dashboard.py`). `custom_company_priority` is a Select field, so it is stored as text; the top-projects query sorted it lexically (`1, 10, 11, 12, …, 2`), which not only mis-ordered the list but — because the `LIMIT 10` ran after the bad sort — surfaced the *wrong* ten projects, burying ranks 2–9 under every `1x` rank. Now sorted numerically (matching `priority_overview.js`'s `get_priority_weight`) before slicing, with `modified desc` preserved as the within-rank tiebreaker. The wall display inherits the fix via `get_wall_dashboard_data`.
+
 ## [1.28.0] - 2026-06-12
 
 ### Added
