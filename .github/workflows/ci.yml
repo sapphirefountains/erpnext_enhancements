@@ -38,7 +38,9 @@ jobs:
   # (assistant_tools/_gate.py), the FAC assistant-tool contract, and the
   # Integrations Health tone helpers. The latter three import their tool
   # modules under the sys.modules stubs installed by test_assistant_tools_schema
-  # (no live frappe / FAC), so they run here as plain unittest.
+  # (no live frappe / FAC), so they run here as plain unittest. A final check
+  # (test_doctype_modules) asserts every custom DocType sits in its declared
+  # module — pure filesystem, no stubs.
   # ---------------------------------------------------------------------------
   unit-tests:
     name: Standalone unit tests
@@ -60,6 +62,8 @@ jobs:
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration -v
+      - name: DocType module placement
+        run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

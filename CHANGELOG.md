@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.1] - 2026-06-13
+
+### Changed
+- **CI now guards DocType module placement** (`.github/workflows/ci.yml` + `tests/test_doctype_modules.py`). A new bench-free unit test asserts every custom DocType's `module` field matches both its on-disk directory (Frappe's `scrub(module)` mapping) *and* an entry in `modules.txt` — so a DocType created in the wrong module folder, or with a stale/typo'd `module`, fails CI before merge instead of silently migrating into the wrong module. Green across all current app DocTypes.
+
 ## [1.32.0] - 2026-06-13
 
 ### Added
