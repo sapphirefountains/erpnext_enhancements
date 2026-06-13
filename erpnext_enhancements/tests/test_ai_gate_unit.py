@@ -56,13 +56,25 @@ class TestClassification(unittest.TestCase):
         self.assertEqual(_gate.classify_risk("some_unknown_writer"), "Medium")
         self.assertEqual(_gate.classify_risk("create_document"), "Low")
         self.assertEqual(_gate.classify_risk("create_dashboard"), "Low")
+        # this app's own write tool — a create, so Low
+        self.assertEqual(_gate.classify_risk("create_followup_task"), "Low")
 
     def test_explicit_sets_are_disjoint(self):
         self.assertFalse(_gate.EXPLICIT_MUTATING & _gate.EXPLICIT_READONLY)
+        # app write tools must never be misclassified as read-only
+        self.assertFalse(_gate.APP_MUTATING & _gate.EXPLICIT_READONLY)
 
     def test_own_tools_are_explicit_readonly(self):
         for name in ("workforce_time_status", "check_ai_pending_action", "run_database_query"):
             self.assertIn(name, _gate.EXPLICIT_READONLY)
+
+    def test_app_write_tool_is_mutating(self):
+        # An app write tool gates without relying on FAC's category detector:
+        # is_mutating() returns True from APP_MUTATING alone (no _tool_category
+        # call, so no FAC import needed here).
+        fake = type("T", (), {"name": "create_followup_task"})()
+        self.assertTrue(_gate.is_mutating(fake))
+        self.assertIn("create_followup_task", _gate.APP_MUTATING)
 
     def test_exemptable_is_subset_of_mutating(self):
         self.assertTrue(_gate.EXEMPTABLE_TOOLS <= _gate.EXPLICIT_MUTATING)
@@ -87,6 +99,27 @@ class TestSummaries(unittest.TestCase):
         self.assertEqual(
             _gate.summarize_tool_call("some_custom_writer", {}), "Some custom writer"
         )
+
+    def test_followup_task_summary(self):
+        plain = _gate.summarize_tool_call(
+            "create_followup_task", {"description": "Call the customer back"}
+        )
+        self.assertEqual(plain, "Create follow-up task “Call the customer back”")
+        linked = _gate.summarize_tool_call(
+            "create_followup_task",
+            {
+                "description": "Order the pump",
+                "reference_doctype": "Project",
+                "reference_name": "PROJ-0042",
+            },
+        )
+        self.assertIn("on Project PROJ-0042", linked)
+        # long descriptions are trimmed for the desk card
+        long_summary = _gate.summarize_tool_call(
+            "create_followup_task", {"description": "x" * 200}
+        )
+        self.assertIn("…", long_summary)
+        self.assertLess(len(long_summary), 120)
 
 
 class TestEnvelope(unittest.TestCase):

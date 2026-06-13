@@ -53,7 +53,7 @@ EXPLICIT_MUTATING = {
 # (utils/read_only_db.py), so confirmation would be pure friction.
 EXPLICIT_READONLY = {
     "run_database_query",
-    # this app's own tools are all read-only by design
+    # this app's read-only tools (the write tools live in APP_MUTATING below)
     "maintenance_day_board",
     "maintenance_contract_status",
     "maintenance_visit_history",
@@ -64,8 +64,15 @@ EXPLICIT_READONLY = {
     "check_ai_pending_action",
 }
 
+# This app's own *write* tools (assistant_tools/<name>.py). They must gate even
+# though FAC's category detector has never seen them — listed here so the gate
+# never depends on the fail-closed fallback to confirm them.
+APP_MUTATING = {
+    "create_followup_task",
+}
+
 HIGH_RISK = {"delete_document", "submit_document", "run_workflow", "run_python_code"}
-LOW_RISK = {"create_document", "create_dashboard", "create_dashboard_chart"}
+LOW_RISK = {"create_document", "create_dashboard", "create_dashboard_chart", "create_followup_task"}
 
 # Only plain-document create/update may use the settings exempt-doctype
 # allowlist; privileged/irreversible tools never skip confirmation.
@@ -108,6 +115,13 @@ def summarize_tool_call(tool_name, arguments):
         return "Create a dashboard"
     if tool_name == "create_dashboard_chart":
         return "Create a dashboard chart"
+    if tool_name == "create_followup_task":
+        text = (args.get("description") or "").strip()
+        snippet = (text[:60] + "…") if len(text) > 60 else text
+        on = ""
+        if args.get("reference_doctype") and args.get("reference_name"):
+            on = f" on {args['reference_doctype']} {args['reference_name']}"
+        return (f"Create follow-up task “{snippet}”{on}").strip()
     return tool_name.replace("_", " ").capitalize()
 
 
@@ -206,7 +220,7 @@ def _tool_category(tool):
 
 def is_mutating(tool):
     name = getattr(tool, "name", "")
-    if name in EXPLICIT_MUTATING:
+    if name in EXPLICIT_MUTATING or name in APP_MUTATING:
         return True
     if name in EXPLICIT_READONLY:
         return False
