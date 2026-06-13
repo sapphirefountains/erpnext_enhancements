@@ -1,0 +1,168 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:shortcut_label",
+ "creation": "2026-06-13 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "shortcut_label",
+  "enabled",
+  "sequence",
+  "link_section",
+  "link_type",
+  "link_to",
+  "url",
+  "doc_view",
+  "appearance_section",
+  "icon",
+  "color",
+  "visibility_section",
+  "visible_to_all",
+  "visibility_help",
+  "roles",
+  "users"
+ ],
+ "fields": [
+  {
+   "fieldname": "shortcut_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Text shown under the icon on the desk. Must be unique."
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Lower numbers appear first.",
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sequence"
+  },
+  {
+   "fieldname": "link_section",
+   "fieldtype": "Section Break",
+   "label": "Link"
+  },
+  {
+   "default": "Page",
+   "fieldname": "link_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Link Type",
+   "options": "Page\nDocType\nReport\nURL",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.link_type!='URL'",
+   "description": "Page route (e.g. time-kiosk), DocType name, or Report name — matching the Link Type.",
+   "fieldname": "link_to",
+   "fieldtype": "Data",
+   "label": "Link To",
+   "mandatory_depends_on": "eval:doc.link_type!='URL'"
+  },
+  {
+   "depends_on": "eval:doc.link_type=='URL'",
+   "description": "Destination for the URL type (e.g. /kiosk, /wall, or an external https URL).",
+   "fieldname": "url",
+   "fieldtype": "Data",
+   "label": "URL",
+   "mandatory_depends_on": "eval:doc.link_type=='URL'"
+  },
+  {
+   "depends_on": "eval:doc.link_type=='DocType'",
+   "description": "Optional default view for a DocType link, e.g. List or New.",
+   "fieldname": "doc_view",
+   "fieldtype": "Data",
+   "label": "Doc View"
+  },
+  {
+   "fieldname": "appearance_section",
+   "fieldtype": "Section Break",
+   "label": "Appearance"
+  },
+  {
+   "description": "An emoji shown as the tile icon (e.g. ⏱️). Emoji are used because the desk block renders inside a shadow DOM where Frappe's SVG icons cannot resolve.",
+   "fieldname": "icon",
+   "fieldtype": "Data",
+   "label": "Icon (emoji)"
+  },
+  {
+   "default": "Gray",
+   "description": "Accent color for the tile's icon badge.",
+   "fieldname": "color",
+   "fieldtype": "Select",
+   "label": "Color",
+   "options": "Gray\nBlue\nGreen\nRed\nOrange\nYellow\nPurple\nTeal\nPink"
+  },
+  {
+   "fieldname": "visibility_section",
+   "fieldtype": "Section Break",
+   "label": "Visibility"
+  },
+  {
+   "default": "1",
+   "description": "When ticked, every desk user sees this shortcut and the Roles / Users below are ignored.",
+   "fieldname": "visible_to_all",
+   "fieldtype": "Check",
+   "label": "Visible to all"
+  },
+  {
+   "depends_on": "eval:!doc.visible_to_all",
+   "fieldname": "visibility_help",
+   "fieldtype": "HTML",
+   "label": "Visibility Help",
+   "options": "<p class=\"text-muted small\">Show this shortcut to anyone who has <b>any</b> of the selected Roles, <b>or</b> is one of the selected Users. System Manager and Administrator always see every enabled shortcut. This only curates the desk — each target page still enforces its own permissions.</p>"
+  },
+  {
+   "depends_on": "eval:!doc.visible_to_all",
+   "fieldname": "roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Roles",
+   "options": "Enhancement Desk Shortcut Role"
+  },
+  {
+   "depends_on": "eval:!doc.visible_to_all",
+   "fieldname": "users",
+   "fieldtype": "Table MultiSelect",
+   "label": "Users",
+   "options": "Enhancement Desk Shortcut User"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Enhancement Desk Shortcut",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "sequence",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

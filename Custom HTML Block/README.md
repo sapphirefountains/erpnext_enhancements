@@ -1,6 +1,6 @@
 # Custom HTML Block — exported block sources
 
-This folder is the **exported source** of the Frappe **Custom HTML Blocks** — dashboard widgets that are authored and stored **in the Frappe UI** (Custom HTML Block doctype) and embedded on workspaces. Two blocks live here: *Projects Dashboard* and *Task Dashboard*.
+This folder is the **exported source** of the Frappe **Custom HTML Blocks** — dashboard widgets that are authored and stored **in the Frappe UI** (Custom HTML Block doctype) and embedded on workspaces. The blocks here are *Projects Dashboard*, *Task Dashboard*, *Morning Briefing*, and *Desk Shortcuts*.
 
 > ⚠️ **Source-of-truth caveat.** The live widgets live in the database, edited through the Frappe UI. These files are the version-controlled **backup / source copy**. The two can drift: edit here and paste back into the UI to deploy, or export from the UI after editing there. Keep them in sync manually. (Exception: *Task Dashboard* is **created** from these files by the `seed_task_dashboard_block` patch if the block doesn't exist yet — insert-only, so UI edits after creation still win until you paste.)
 
@@ -32,6 +32,33 @@ event (debounced) plus a 5-minute kiosk fallback; timers/subscriptions are store
 
 **Install:** `bench migrate` creates the block (patch above); then edit the target
 Workspace once and add the "Task Dashboard" Custom HTML Block.
+
+## Files — Desk Shortcuts (configurable Home icons, v1.30.0)
+
+A grid of clickable icon tiles for the custom tools (Time Kiosk, Inventory Scanner,
+Maintenance Wizard, …), shown on the **Home** workspace. Unlike native workspace
+shortcuts — which can only be gated whole-workspace by role — these are **per-user**:
+the tile list is curated in the **Enhancement Desk Shortcut** doctype (System Manager
+only; per icon: enabled, roles, *and* specific users) and computed for the session user
+in `erpnext_enhancements.api.desk_shortcuts.get_visible_shortcuts_for_user`, shipped as
+`frappe.boot.ee_desk_shortcuts` by `boot.py`. The block just paints that list, so each
+user sees only their applicable tools and config edits apply on the next desk load.
+
+The gating is **cosmetic** — every target page enforces its own permissions, so an
+unauthorized click still gets "not permitted." The whole block hides itself when the
+user has no visible shortcuts.
+
+| File | Role |
+|---|---|
+| `desk_shortcuts.html` | Shell: a `Quick Access` header + an empty `#eds-grid` the JS fills (hidden until populated). |
+| `desk_shortcuts.js` | Block-sandbox script: reads `frappe.boot.ee_desk_shortcuts`, builds icon tiles, routes on click (Page/DocType/Report via `frappe.set_route`, URL via `window.location`/`window.open`). |
+| `desk_shortcuts.css` | Shadow-root styles from Frappe CSS variables (both themes). Icons are **emoji** — `frappe.utils.icon` SVG-sprite icons can't resolve `<use href="#…">` across the shadow boundary. |
+
+**Install:** `bench migrate` creates the block (`patches.seed_desk_shortcuts_block`), seeds
+the seven default shortcut rows (`patches.seed_desk_shortcuts`, insert-only), and places the
+block on Home (`patches.place_desk_shortcuts_on_home`, idempotent) — no manual placement
+step, unlike the other blocks. Add more tools later by creating an **Enhancement Desk
+Shortcut** row (no code change).
 
 ## Relationship to the desk Project Dashboard
 
