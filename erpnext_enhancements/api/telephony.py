@@ -38,6 +38,7 @@ import json
 import re
 import os
 import base64
+import functools
 from twilio.request_validator import RequestValidator
 from urllib.parse import urlparse, quote
 from twilio.jwt.access_token import AccessToken
@@ -77,6 +78,7 @@ def validate_twilio_request(func):
     PermissionError)`` on mismatch. Used to authenticate Twilio's own webhooks
     (e.g. ``receive_mms``) since they arrive with no Frappe session.
     """
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         settings = frappe.get_doc("Triton Settings")
         validator = RequestValidator(settings.get_password("twilio_auth_token", raise_exception=False) or "")
@@ -99,6 +101,7 @@ def validate_webhook_secret(func):
     Bearer secret does not match. Authenticates the guest-accessible Triton
     gateway endpoints.
     """
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             settings = frappe.get_doc("Triton Settings")
