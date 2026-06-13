@@ -65,6 +65,8 @@ erpnext_enhancements.patches.create_inventory_clerk_role
 erpnext_enhancements.patches.seed_desk_shortcuts_block
 erpnext_enhancements.patches.seed_desk_shortcuts
 erpnext_enhancements.patches.place_desk_shortcuts_on_home
+# v1.31.0 device management (MDM/EMM): device manager role
+erpnext_enhancements.patches.create_device_manager_role
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link

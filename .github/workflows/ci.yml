@@ -52,12 +52,14 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip httpx
       - run: python -m unittest test_sync_time_kiosk.py -v
-      - name: AI gate + assistant-tool contract + integrations health
+      - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
           python -m unittest
           erpnext_enhancements.tests.test_assistant_tools_schema
           erpnext_enhancements.tests.test_ai_gate_unit
-          erpnext_enhancements.tests.test_integrations_health -v
+          erpnext_enhancements.tests.test_integrations_health
+          erpnext_enhancements.tests.test_device_management
+          erpnext_enhancements.tests.test_mdm_integration -v
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

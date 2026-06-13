@@ -8,3 +8,5 @@ Task Enhancements
 QuickBooks Time Integration
 AI Governance
 Inventory Enhancements
+Device Management
+MDM Integration

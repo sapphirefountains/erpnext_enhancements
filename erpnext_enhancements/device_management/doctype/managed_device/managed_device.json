@@ -1,0 +1,440 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-06-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "device_section",
+  "device_name",
+  "asset_tag",
+  "status",
+  "column_break_ident",
+  "ownership",
+  "device_type",
+  "platform",
+  "manufacturer",
+  "model",
+  "naming_series",
+  "identifiers_section",
+  "serial_number",
+  "imei",
+  "barcode",
+  "column_break_hw",
+  "mac_address",
+  "phone_number",
+  "assignment_section",
+  "assigned_to_employee",
+  "assigned_to_user",
+  "assigned_on",
+  "column_break_assign",
+  "assignment_history",
+  "procurement_section",
+  "purchase_date",
+  "supplier",
+  "purchase_cost",
+  "column_break_proc",
+  "warranty_expiry_date",
+  "cost_center",
+  "last_warranty_reminder_on",
+  "compliance_section",
+  "compliance_status",
+  "compliance_source",
+  "last_checked_on",
+  "column_break_comp",
+  "screen_lock_enabled",
+  "encryption_enabled",
+  "os_version",
+  "last_attestation_nudge_on",
+  "compliance_notes",
+  "mdm_section",
+  "mdm_provider",
+  "mdm_provider_device_id",
+  "mdm_link_state",
+  "mdm_last_seen",
+  "notes_section",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "device_section",
+   "fieldtype": "Section Break",
+   "label": "Device"
+  },
+  {
+   "fieldname": "device_name",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Device Name",
+   "reqd": 1
+  },
+  {
+   "description": "Human-readable asset label (sticker/engraving). Stays stable if the device is re-tagged.",
+   "fieldname": "asset_tag",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Asset Tag",
+   "unique": 1
+  },
+  {
+   "default": "In Stock",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "In Stock\nAssigned\nIn Repair\nLost/Stolen\nRetired",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ident",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Company",
+   "description": "BYOD (personally owned) devices expose fewer fields and can never be full-wiped by the Phase-2 provider layer.",
+   "fieldname": "ownership",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Ownership",
+   "options": "Company\nBYOD",
+   "reqd": 1
+  },
+  {
+   "fieldname": "device_type",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Device Type",
+   "options": "Phone\nTablet\nLaptop\nDesktop\nOther"
+  },
+  {
+   "fieldname": "platform",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Platform",
+   "options": "Android\niOS\niPadOS\nWindows\nmacOS\nLinux\nOther"
+  },
+  {
+   "fieldname": "manufacturer",
+   "fieldtype": "Data",
+   "label": "Manufacturer"
+  },
+  {
+   "fieldname": "model",
+   "fieldtype": "Data",
+   "label": "Model"
+  },
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Naming Series",
+   "no_copy": 1,
+   "options": "DEV-.YYYY.-.#####"
+  },
+  {
+   "description": "Hardware identifiers — visible to Device Managers only (System Manager / Device Manager). Hidden from the assignee, which matters for BYOD privacy.",
+   "fieldname": "identifiers_section",
+   "fieldtype": "Section Break",
+   "label": "Hardware Identifiers"
+  },
+  {
+   "fieldname": "serial_number",
+   "fieldtype": "Data",
+   "label": "Serial Number",
+   "permlevel": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "imei",
+   "fieldtype": "Data",
+   "label": "IMEI",
+   "permlevel": 1,
+   "unique": 1
+  },
+  {
+   "description": "Printed barcode/QR for scan-based check-in on the Device Console. Defaults to the Asset Tag.",
+   "fieldname": "barcode",
+   "fieldtype": "Data",
+   "label": "Barcode",
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_hw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mac_address",
+   "fieldtype": "Data",
+   "label": "MAC Address",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "label": "Phone Number (SIM)",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "assignment_section",
+   "fieldtype": "Section Break",
+   "label": "Assignment"
+  },
+  {
+   "description": "Current holder. Set only while Status is Assigned; check-in/transfer manage it.",
+   "fieldname": "assigned_to_employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Assigned To (Employee)",
+   "options": "Employee",
+   "search_index": 1
+  },
+  {
+   "description": "Derived from the assigned Employee's linked User; scopes the self-service \"my devices\" view.",
+   "fieldname": "assigned_to_user",
+   "fieldtype": "Link",
+   "label": "Assigned To (User)",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_on",
+   "fieldtype": "Date",
+   "label": "Assigned On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_assign",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Append-only custody history. The open row (no Returned On) is the current holder.",
+   "fieldname": "assignment_history",
+   "fieldtype": "Table",
+   "label": "Assignment History",
+   "options": "Device Assignment Log"
+  },
+  {
+   "fieldname": "procurement_section",
+   "fieldtype": "Section Break",
+   "label": "Procurement & Warranty"
+  },
+  {
+   "fieldname": "purchase_date",
+   "fieldtype": "Date",
+   "label": "Purchase Date"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "purchase_cost",
+   "fieldtype": "Currency",
+   "label": "Purchase Cost",
+   "permlevel": 1
+  },
+  {
+   "fieldname": "column_break_proc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "warranty_expiry_date",
+   "fieldtype": "Date",
+   "in_standard_filter": 1,
+   "label": "Warranty Expiry"
+  },
+  {
+   "fieldname": "cost_center",
+   "fieldtype": "Link",
+   "label": "Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "description": "Stamp guarding the warranty-expiry reminder so it nags at most once per warranty period.",
+   "fieldname": "last_warranty_reminder_on",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Last Warranty Reminder On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "compliance_section",
+   "fieldtype": "Section Break",
+   "label": "Compliance"
+  },
+  {
+   "default": "Unknown",
+   "fieldname": "compliance_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Compliance Status",
+   "options": "Compliant\nNon-Compliant\nUnknown",
+   "read_only": 1
+  },
+  {
+   "default": "Manual",
+   "description": "Manual = self-attested. Phase 2 sets Provider when a live MDM feed overwrites the posture below.",
+   "fieldname": "compliance_source",
+   "fieldtype": "Select",
+   "label": "Compliance Source",
+   "options": "Manual\nProvider",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_checked_on",
+   "fieldtype": "Date",
+   "label": "Last Checked On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_comp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "screen_lock_enabled",
+   "fieldtype": "Check",
+   "label": "Screen Lock Enabled"
+  },
+  {
+   "fieldname": "encryption_enabled",
+   "fieldtype": "Check",
+   "label": "Encryption Enabled"
+  },
+  {
+   "fieldname": "os_version",
+   "fieldtype": "Data",
+   "label": "OS Version"
+  },
+  {
+   "fieldname": "last_attestation_nudge_on",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Last Attestation Nudge On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "compliance_notes",
+   "fieldtype": "Small Text",
+   "label": "Compliance Notes"
+  },
+  {
+   "collapsible": 1,
+   "description": "Managed by the Phase-2 mdm_integration provider sync (Miradore / Action1). Read-only here.",
+   "fieldname": "mdm_section",
+   "fieldtype": "Section Break",
+   "label": "MDM / Provider"
+  },
+  {
+   "fieldname": "mdm_provider",
+   "fieldtype": "Select",
+   "label": "MDM Provider",
+   "options": "\nMiradore\nAction1\nMock",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mdm_provider_device_id",
+   "fieldtype": "Data",
+   "label": "Provider Device ID",
+   "read_only": 1
+  },
+  {
+   "default": "Unmanaged",
+   "description": "Managed = matched to a live provider device; Discovered = created from a provider feed, awaiting confirmation; Unmanaged = not seen by any provider.",
+   "fieldname": "mdm_link_state",
+   "fieldtype": "Select",
+   "label": "Link State",
+   "options": "Unmanaged\nManaged\nDiscovered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mdm_last_seen",
+   "fieldtype": "Datetime",
+   "label": "Last Seen by Provider",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Device Management",
+ "name": "Managed Device",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Device Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Device Manager",
+   "write": 1
+  },
+  {
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager"
+  },
+  {
+   "delete": 0,
+   "read": 1,
+   "role": "Employee"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

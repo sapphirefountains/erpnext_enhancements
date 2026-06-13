@@ -353,12 +353,64 @@ def _tile(key, label, status, headline, *, configured, metrics=None, links=None,
 	}
 
 
+def _mdm_provider_tile(key, label, route, *, provider, enabled_field, status_field, last_sync_field):
+	"""Shared tile for an MDM provider (Miradore mobile MDM / Action1 computer RMM)."""
+	mode = _single("MDM Settings", "provider_mode") or "Mock"
+	enabled = bool(_single("MDM Settings", enabled_field))
+	status = _single("MDM Settings", status_field) or "Not Configured"
+	links = [{"label": "Settings", "route": route}, {"label": "Sync Log", "route": "/app/mdm-sync-log"}]
+	if not enabled:
+		return _tile(key, label, "neutral", "Disabled", configured=False, links=links,
+			notes=["Enable this provider in MDM Settings to sync its devices."])
+
+	tones, metrics = [], []
+	metrics.append(_metric("Mode", mode, "amber" if mode == "Mock" else "green"))
+	if mode == "Mock":
+		tones.append("amber")
+	status_tone = {"Connected": "green", "Syncing": "amber", "Failed": "red",
+		"Not Configured": "amber"}.get(status, "neutral")
+	tones.append(status_tone)
+	metrics.append(_metric("Connection", status, status_tone))
+
+	secs = _seconds_since(_single("MDM Settings", last_sync_field))
+	sync_tone = age_tone(secs, amber_after=2 * 3600, red_after=24 * 3600)
+	tones.append(sync_tone)
+	metrics.append(_metric("Last sync", humanize_age(secs), sync_tone))
+
+	metrics.append(_metric("Devices", _count("Managed Device", {"mdm_provider": provider})))
+	failed = _count("MDM Sync Log", {"provider": provider, "status": "Failed",
+		"creation": (">", add_days(nowdate(), -7))})
+	fail_tone = "red" if failed else "green"
+	tones.append(fail_tone)
+	metrics.append(_metric("Failed syncs (7d)", failed, fail_tone))
+
+	noncompliant = _count("Managed Device", {"mdm_provider": provider, "compliance_status": "Non-Compliant"})
+	if noncompliant:
+		metrics.append(_metric("Non-compliant", noncompliant, "amber"))
+		tones.append("amber")
+
+	headline = "Mock mode" if mode == "Mock" else status
+	return _tile(key, label, worst_tone(tones), headline, configured=True, metrics=metrics, links=links)
+
+
+def _check_miradore(key, label, route):
+	return _mdm_provider_tile(key, label, route, provider="Miradore",
+		enabled_field="miradore_enabled", status_field="miradore_status", last_sync_field="miradore_last_sync")
+
+
+def _check_action1(key, label, route):
+	return _mdm_provider_tile(key, label, route, provider="Action1",
+		enabled_field="action1_enabled", status_field="action1_status", last_sync_field="action1_last_sync")
+
+
 _INTEGRATIONS = [
 	("quickbooks", "QuickBooks Online", "/app/quickbooks-online-settings", _check_quickbooks),
 	("drive", "Google Drive", "/app/project-folder-google-drive-settings", _check_drive),
 	("triton", "Telephony (Triton / Twilio)", "/app/triton-settings", _check_triton),
 	("gemini", "AI Drafting (Vertex / Gemini)", "/app/triton-settings", _check_gemini),
 	("ga4", "Analytics (GA4 / Search Console)", "/app/ga4-settings", _check_ga4),
+	("miradore", "MDM — Miradore (mobile)", "/app/mdm-settings", _check_miradore),
+	("action1", "RMM — Action1 (computers)", "/app/mdm-settings", _check_action1),
 ]
 
 

@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "creation": "2026-06-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cadence_section",
+  "attestation_interval_days",
+  "warranty_reminder_lead_days",
+  "column_break_cadence",
+  "require_attestation_for_byod",
+  "notify_device_manager_on_noncompliance",
+  "behaviour_section",
+  "enable_camera_scan"
+ ],
+ "fields": [
+  {
+   "fieldname": "cadence_section",
+   "fieldtype": "Section Break",
+   "label": "Compliance & Reminders"
+  },
+  {
+   "default": "90",
+   "description": "An assigned device whose posture has not been re-attested within this many days is flagged stale and its holder is nudged.",
+   "fieldname": "attestation_interval_days",
+   "fieldtype": "Int",
+   "label": "Attestation Interval (days)"
+  },
+  {
+   "default": "30",
+   "description": "Remind Device Managers this many days before a device's warranty expires.",
+   "fieldname": "warranty_reminder_lead_days",
+   "fieldtype": "Int",
+   "label": "Warranty Reminder Lead (days)"
+  },
+  {
+   "fieldname": "column_break_cadence",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "require_attestation_for_byod",
+   "fieldtype": "Check",
+   "label": "Require Attestation for BYOD Devices"
+  },
+  {
+   "default": "1",
+   "fieldname": "notify_device_manager_on_noncompliance",
+   "fieldtype": "Check",
+   "label": "Notify Device Manager on Non-Compliance"
+  },
+  {
+   "fieldname": "behaviour_section",
+   "fieldtype": "Section Break",
+   "label": "Device Console"
+  },
+  {
+   "default": "1",
+   "description": "Show the camera scan button on the Device Console (device camera via the BarcodeDetector API where supported).",
+   "fieldname": "enable_camera_scan",
+   "fieldtype": "Check",
+   "label": "Enable In-Page Camera Scanning"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Device Management",
+ "name": "Device Compliance Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "delete": 0,
+   "print": 1,
+   "read": 1,
+   "role": "Device Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
