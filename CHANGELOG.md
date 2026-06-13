@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.1] - 2026-06-13
+
+### Fixed
+- **Triton/Twilio webhook endpoints crashed with `TypeError: ... got an unexpected keyword argument 'cmd'`** (`api/telephony.py`). The `@validate_webhook_secret` and `@validate_twilio_request` decorators defined their `wrapper(*args, **kwargs)` *without* `functools.wraps(func)`, which breaks the `__wrapped__` chain. Frappe dispatches `/api/method/...` calls via `frappe.call(method, **frappe.form_dict)` — and `form_dict` carries the `cmd` key Frappe injects (`handle_rpc_call` sets `frappe.form_dict.cmd = method`). `frappe.call` normally drops form keys the target doesn't declare by inspecting its signature, but with the chain broken it inspected the bare wrapper, saw `**kwargs`, and forwarded the entire `form_dict` — `cmd` included — into the real handler. Endpoints with no `**kwargs` of their own to absorb it raised `TypeError`. Adding `@functools.wraps(func)` to both decorators lets `frappe.call` see each endpoint's true signature and filter `cmd` as it always should. Fixes six affected endpoints: `get_telephony_routing`, `append_call_transcript`, `get_call_transcript`, `get_caller_info`, `update_caller_info` (Triton gateway), and `receive_mms` (Twilio MMS webhook). Handlers that already declared `**kwargs` (`notify_incoming_call`, `process_unified_recording`, `process_unified_sms`, `process_call_intelligence`) were never affected and behave identically after the fix.
+
 ## [1.30.0] - 2026-06-13
 
 ### Added
