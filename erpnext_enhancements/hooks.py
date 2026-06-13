@@ -475,6 +475,9 @@ assistant_tools = [
 	# round-trip (see assistant_tools/_gate.py — there is deliberately no MCP
 	# confirm tool).
 	"erpnext_enhancements.assistant_tools.check_ai_pending_action.CheckAiPendingAction",
+	# v1.29.0 — the first AI *write* tool. Mutating: gated by _gate.py
+	# (APP_MUTATING) so it proposes an AI Pending Action when write gating is on.
+	"erpnext_enhancements.assistant_tools.create_followup_task.CreateFollowupTask",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

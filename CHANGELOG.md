@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-06-13
+
+### Added
+- **Integrations Health dashboard** (`/app/integrations-health`, System Manager only — `api/integrations_health.py` + the Enhancements Core page). This app depends on a lot of third parties (QuickBooks Online, Google Drive, Twilio/"Triton", Vertex AI/Gemini, GA4/Search Console) and each fails *quietly* in its own corner — a QuickBooks OAuth token lapses, the Drive service account was never pasted in, an hourly sync errors into the Error Log. The new page rolls all of it into one green/amber/red tile per integration plus two panels:
+  - **Per-integration tiles** — QuickBooks (connection status, OAuth-token countdown, last CDC poll age, failed syncs in 7 days), Google Drive (service account configured?, attachment-sync on/off, Drive Sync Log failures in 24 h + Stale shadows), Telephony (gateway URL / Twilio creds / caller-ID number / softphone-answerer count), AI Drafting (Gemini key present?), Analytics (GA4 property + credentials + GSC). Each tile's overall colour is the worst of its metrics, with deep links to the relevant Settings + log.
+  - **Background jobs** panel — Frappe scheduler enabled? (red if disabled — the #1 silent failure), this app's registered job count, failed Scheduled Job Logs in 24 h, and the most recent failures.
+  - **Errors (24 h)** panel — Error Log volume + the top categories by count.
+  - Cheap and **DB-only on load** (no outbound API calls); the Drive tile's **Test connection** button runs the one live check on demand (proxied to the existing `drive_sync.test_connection`). Secrets (`service_account_json`, tokens, Twilio/Gemini keys, webhook secrets) are read **only as `configured: true/false`** and never returned. Per-section try/except so one missing Single doctype can't blank the page; themed with Frappe CSS vars for Light + Timeless Night.
+- **First gated AI *write* tool — `create_followup_task`** (`assistant_tools/create_followup_task.py`). The MCP assistant tools were read-only by design ("out of scope until a dedicated write-tools batch"); this opens that batch. The tool proposes a ToDo follow-up — optionally linked to a record (Opportunity / Project / Customer / Contact / Sapphire Maintenance Record) and assigned to a user with a due date and priority — so the assistant can *act on* a next step the Morning Briefing / Call Intelligence / maintenance read tools surface. It is wired into the existing **AI write-confirmation gate** (`_gate.py`): added to the new `APP_MUTATING` set (so it gates deterministically, not via the fail-closed fallback), classified **Low** risk (a create), and given a `summarize_tool_call` template so the desk confirmation card reads "Create follow-up task “…” on Project PROJ-0042". With AI write gating **on**, the tool returns the `awaiting_user_confirmation` envelope and an **AI Pending Action** instead of writing; the ToDo is created only after a human clicks *Confirm & Execute* (the gate re-runs `execute` as the confirming user, so its permission checks — `has_permission("ToDo", "create")` + `require_doc_read` on any linked record — bind to the human, not the AI). With gating off it creates the ToDo immediately (still FAC-audited). The `ee-ai-write-confirmation` skill now names it.
+
+### Changed
+- **CI now runs the bench-free unit suites** (`.github/workflows/ci.yml`). The `unit-tests` job previously ran only the Time Kiosk consolidation test; it now also runs the AI write-gate classifier (`test_ai_gate_unit`), the FAC assistant-tool contract (`test_assistant_tools_schema`), and the Integrations Health tone helpers (`test_integrations_health`) as plain `unittest` (they import their tool modules under the existing `sys.modules` stubs — no live frappe/FAC). This actually gates the security-sensitive write gate on every push, where before its tests only ran locally.
+
 ## [1.28.1] - 2026-06-12
 
 ### Fixed

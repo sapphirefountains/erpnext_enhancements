@@ -3,7 +3,8 @@
 This site can gate AI-initiated writes behind human confirmation ("AI
 Governance"). When the gate is on, mutating tools (`create_document`,
 `update_document`, `delete_document`, `submit_document`, `run_workflow`,
-`run_python_code`, dashboard creation) do **not** execute immediately.
+`run_python_code`, dashboard creation) — and this app's own write tools such as
+`create_followup_task` — do **not** execute immediately.
 
 ## What a gated response looks like
 

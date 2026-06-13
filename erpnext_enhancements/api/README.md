@@ -4,7 +4,7 @@ This package holds the app's Frappe **whitelisted endpoints** (`@frappe.whitelis
 
 Every function is documented inline. This README is the map.
 
-> ⚠️ **Mixed indentation:** most files in this folder use 4-space indentation, but `analytics.py`, `collab.py`, `comments.py`, and `user_drafts.py` use **tabs**. Match the file you are editing.
+> ⚠️ **Mixed indentation:** most files in this folder use 4-space indentation, but `analytics.py`, `collab.py`, `comments.py`, `user_drafts.py`, and `integrations_health.py` use **tabs**. Match the file you are editing.
 
 ## File map
 
@@ -19,6 +19,7 @@ Every function is documented inline. This README is the map.
 | `comments.py` | Custom comment CRUD + file linking (backs the Vue Comments App) | `get_comments`, `add_comment`, `update_comment`, `delete_comment`, `link_files_to_comment` | `comments.js`, `global_comments.js`, `crm_note_enhancements.js` | — |
 | `communication.py` | AI email/SMS reply drafting | `suggest_sms_reply`; hook `after_insert_communication`; worker `generate_draft_response` | `communication.js`; `Communication` `after_insert` hook | Vertex AI (via `gemini.py`) |
 | `gemini.py` | Vertex AI Gemini REST client (internal helper) | `generate_content_with_vertex_ai` | imported by `communication.py` | Vertex AI `generateContent` |
+| `integrations_health.py` | System-Manager-only health snapshot of every external integration (QuickBooks token/CDC/failed-syncs, Drive configured?/sync-log failures, Triton/Twilio, Gemini, GA4/GSC) + scheduler liveness + 24 h Error Log digest; secrets read only as "configured?" booleans. DB-only on load; the one live check (`run_drive_test`) is opt-in | `get_health`, `run_drive_test` | `enhancements_core/page/integrations_health/integrations_health.js` | — (live check proxies `crm_enhancements.drive_sync.test_connection` → Google Drive API) |
 | `logger.py` | Client-side error reporting sink | `log_client_error` | browser JS | — |
 | `maintenance_scheduling.py` | Predictive next-visit dating: rolls Sapphire Contract Feature dates forward and mirrors them to Sales Order Items | `update_next_visit_dates` (on_submit hook), `calculate_next_date` | `Sapphire Maintenance Record` `on_submit` hook | — |
 | `maintenance_visit.py` | Visit Wizard backend: bootstrap (load + server-side template instantiation), autosave with field allowlist + optimistic locking, workflow-aware finish, forward-looking "pull a future visit forward" list + create — session permissions throughout | `get_visit_bootstrap`, `save_visit`, `finish_visit`, `get_upcoming_visits` (un-drafted features due in 8–30 days), `create_visit_today` (extra one-off, `EXTRA_VISIT_LABEL`) | `sapphire_maintenance/page/visit_wizard` | — |
@@ -43,7 +44,7 @@ Every function is documented inline. This README is the map.
   - `telephony.append_call_transcript` / `get_call_transcript` / `get_caller_info` / `update_caller_info` / `process_unified_recording` / `process_unified_sms` and `call_intelligence.process_call_intelligence` — guarded by `@validate_webhook_secret` (Bearer shared secret).
   - `telephony.receive_mms` — guarded by `@validate_twilio_request` (HMAC signature).
 - **Session-trust:** `time_kiosk` derives the Employee from `frappe.session.user` and rejects a mismatched claimed employee (`_resolve_employee`). The legacy single-point `log_geolocation` still trusts the supplied `employee` for back-compat. `travel.py` uses the same model: `get_my_trips`/`get_itinerary_bootstrap` derive the employee from the session; `get_trip_itinerary`/`get_trip_pois` gate via `frappe.has_permission`, which the Travel Trip permission hooks scope to owner/crew/coordinators; `send_itinerary_email` lets non-coordinators send only to themselves.
-- **Role-gated:** `time_kiosk.get_location_history` — only `System Manager` / `HR Manager` may view *another* employee's history; everyone else sees only their own.
+- **Role-gated:** `time_kiosk.get_location_history` — only `System Manager` / `HR Manager` may view *another* employee's history; everyone else sees only their own. `integrations_health.get_health` / `run_drive_test` — `System Manager` only (`frappe.only_for`), and they return integration secrets only as `configured: true/false`, never the values.
 - **Owner-gated:** `comments.update_comment` / `delete_comment` allow edits/deletes only when `comment.owner == frappe.session.user`.
 - **Write-permission-gated broadcasts:** `collab.broadcast_field_update` / `broadcast_focus` require **write** permission on the specific document, enforce the settings-driven doctype allowlist (`get_collab_doctypes()` — master switch + child table on ERPNext Enhancements Settings) plus field validation and a value-size cap, and only re-publish to the doc's realtime room (whose membership Frappe's socket.io already permission-checks) — they never persist anything.
 - **Permission-checked reads:** `activity_log`, `comments` read endpoints, and `search` re-check `frappe.has_permission` / filter with `ignore_permissions=False` before returning data.
