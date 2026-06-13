@@ -1,0 +1,169 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:DEV-ACT-{YYYY}-{######}",
+ "creation": "2026-06-13 13:00:00.000000",
+ "description": "Append-only record of every remote device action attempt (lock/wipe/locate/reboot/run-script/deploy), via the manager UI or a gated AI assistant tool. The single source of truth for who did what to which device, and whether a BYOD wipe was forced selective.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "device",
+  "action",
+  "mode",
+  "success",
+  "column_break_meta",
+  "provider",
+  "provider_device_id",
+  "ownership",
+  "source",
+  "requested_by",
+  "timestamp",
+  "pending_action",
+  "payload_section",
+  "result",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "device",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Device",
+   "options": "Managed Device",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Action",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "mode",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mode",
+   "read_only": 1
+  },
+  {
+   "fieldname": "success",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Success",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Provider",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_device_id",
+   "fieldtype": "Data",
+   "label": "Provider Device ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ownership",
+   "fieldtype": "Data",
+   "label": "Ownership",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "UI\nAssistant\nWebhook\nScheduler",
+   "read_only": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timestamp",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Timestamp",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "pending_action",
+   "fieldtype": "Link",
+   "label": "AI Pending Action",
+   "options": "AI Pending Action",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "payload_section",
+   "fieldtype": "Section Break",
+   "label": "Payload"
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Code",
+   "label": "Result",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-13 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "MDM Integration",
+ "name": "Device Action Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Device Manager"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "AI Auditor"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "action"
+}

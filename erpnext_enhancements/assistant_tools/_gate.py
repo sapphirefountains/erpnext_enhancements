@@ -69,9 +69,28 @@ EXPLICIT_READONLY = {
 # never depends on the fail-closed fallback to confirm them.
 APP_MUTATING = {
     "create_followup_task",
+    # mdm_integration remote device actions — all gated (lock/wipe/locate the
+    # mobile fleet via Miradore; reboot/run-script/deploy patches via Action1).
+    "remote_lock_device",
+    "remote_wipe_device",
+    "locate_device",
+    "reboot_device",
+    "run_device_script",
+    "deploy_device_patch",
 }
 
-HIGH_RISK = {"delete_document", "submit_document", "run_workflow", "run_python_code"}
+HIGH_RISK = {
+    "delete_document",
+    "submit_document",
+    "run_workflow",
+    "run_python_code",
+    # irreversible / arbitrary-remote-code device actions: a wipe is irreversible,
+    # a remote lock can lock a user out of their device, and run_device_script is
+    # arbitrary remote code (as dangerous as run_python_code).
+    "remote_wipe_device",
+    "remote_lock_device",
+    "run_device_script",
+}
 LOW_RISK = {"create_document", "create_dashboard", "create_dashboard_chart", "create_followup_task"}
 
 # Only plain-document create/update may use the settings exempt-doctype
@@ -122,6 +141,18 @@ def summarize_tool_call(tool_name, arguments):
         if args.get("reference_doctype") and args.get("reference_name"):
             on = f" on {args['reference_doctype']} {args['reference_name']}"
         return (f"Create follow-up task “{snippet}”{on}").strip()
+    if tool_name == "remote_lock_device":
+        return f"Remote LOCK device {args.get('device') or ''}".strip()
+    if tool_name == "remote_wipe_device":
+        return f"Remote WIPE ({args.get('mode') or 'selective'}) device {args.get('device') or ''}".strip()
+    if tool_name == "locate_device":
+        return f"Locate device {args.get('device') or ''}".strip()
+    if tool_name == "reboot_device":
+        return f"Reboot device {args.get('device') or ''}".strip()
+    if tool_name == "run_device_script":
+        return f"Run a script on device {args.get('device') or ''}".strip()
+    if tool_name == "deploy_device_patch":
+        return f"Deploy patch {args.get('patch') or ''} to device {args.get('device') or ''}".strip()
     return tool_name.replace("_", " ").capitalize()
 
 

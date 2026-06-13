@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "creation": "2026-06-13 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "user",
+  "action",
+  "assigned_on",
+  "returned_on",
+  "assigned_by",
+  "condition_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "Checked Out\nChecked In\nTransferred",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Assigned On",
+   "read_only": 1
+  },
+  {
+   "description": "Empty while the employee still holds the device; stamped on check-in/transfer.",
+   "fieldname": "returned_on",
+   "fieldtype": "Datetime",
+   "label": "Returned On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assigned_by",
+   "fieldtype": "Link",
+   "label": "Actioned By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "condition_note",
+   "fieldtype": "Small Text",
+   "label": "Condition / Note"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Device Management",
+ "name": "Device Assignment Log",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

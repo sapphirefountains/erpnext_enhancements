@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:MDM-SYNC-{YYYY}-{#####}",
+ "creation": "2026-06-13 13:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "provider",
+  "status",
+  "started_at",
+  "finished_at",
+  "created_count",
+  "updated_count",
+  "discovered_count",
+  "unmanaged_count",
+  "failed_count",
+  "retry_count",
+  "error_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "provider",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Provider",
+   "options": "Miradore\nAction1\nMock",
+   "reqd": 1
+  },
+  {
+   "default": "Running",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Running\nCompleted\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "default": "0",
+   "fieldname": "created_count",
+   "fieldtype": "Int",
+   "label": "Discovered (created)"
+  },
+  {
+   "default": "0",
+   "fieldname": "updated_count",
+   "fieldtype": "Int",
+   "label": "Updated Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "discovered_count",
+   "fieldtype": "Int",
+   "label": "Newly Discovered"
+  },
+  {
+   "default": "0",
+   "fieldname": "unmanaged_count",
+   "fieldtype": "Int",
+   "label": "Registry-only (unmanaged)"
+  },
+  {
+   "default": "0",
+   "fieldname": "failed_count",
+   "fieldtype": "Int",
+   "label": "Failed Count"
+  },
+  {
+   "default": "0",
+   "fieldname": "retry_count",
+   "fieldtype": "Int",
+   "label": "Retry Count"
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Long Text",
+   "label": "Error Message"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-13 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "MDM Integration",
+ "name": "MDM Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "delete": 0,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Device Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

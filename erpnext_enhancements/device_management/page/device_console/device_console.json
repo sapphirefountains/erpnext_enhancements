@@ -1,0 +1,21 @@
+{
+ "content": "",
+ "creation": "2026-06-13 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "Device Management",
+ "name": "device-console",
+ "owner": "Administrator",
+ "page_name": "device-console",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Device Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Device Console"
+}

@@ -76,7 +76,12 @@ doctype_js = {
 	# only their non-comments form scripts.
 	"Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item.js"],
 	"Process Document": ["public/js/process_document.js"],
-	"Employee": ["public/js/vue.global.js", "public/js/comments.js", "public/js/employee.js"],
+	"Employee": [
+		"public/js/vue.global.js",
+		"public/js/comments.js",
+		"public/js/employee.js",
+		"public/js/device_management/employee_devices.js",
+	],
 	"Account": ["public/js/vue.global.js", "public/js/comments.js", "public/js/account.js"],
 	"Customer": [
 		"public/js/vue.global.js",
@@ -128,6 +133,8 @@ doctype_js = {
 		"public/js/comments.js",
 		"project_enhancements/doctype/address/address.js",
 	],
+	# device_management (MDM/EMM)
+	"Managed Device": "device_management/doctype/managed_device/managed_device.js",
 	# quickbooks_time_integration
 	"QuickBooks Online Settings": "quickbooks_time_integration/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
 }
@@ -296,6 +303,9 @@ scheduler_events = {
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.crm_enhancements.drive_sync.retry_failed_syncs",
+		# device_management (MDM/EMM): warranty lead-time + stale-attestation nudges
+		"erpnext_enhancements.device_management.tasks.send_device_warranty_reminders",
+		"erpnext_enhancements.device_management.tasks.nudge_stale_device_attestations",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
@@ -305,6 +315,11 @@ scheduler_events = {
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# Drive -> ERPNext half of the attachment sync (link-only shadows)
 		"erpnext_enhancements.crm_enhancements.drive_sync.sync_shadow_attachments",
+		# mdm_integration: pull Miradore/Action1 device inventory + keep the
+		# Action1 OAuth token alive + retry failed syncs (each throttled/guarded)
+		"erpnext_enhancements.mdm_integration.tasks.refresh_action1_token",
+		"erpnext_enhancements.mdm_integration.tasks.sync_devices",
+		"erpnext_enhancements.mdm_integration.tasks.retry_failed_syncs",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -322,6 +337,8 @@ after_migrate = [
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
+	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
+	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -439,10 +456,13 @@ override_doctype_dashboards = {
 # owners only; Travel Coordinator / HR Manager / System Manager see all.
 permission_query_conditions = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.get_permission_query_conditions",
+	# Managed Device: employees see only the device assigned to them (BYOD privacy)
+	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
 }
 
 has_permission = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
+	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]
@@ -478,6 +498,15 @@ assistant_tools = [
 	# v1.29.0 — the first AI *write* tool. Mutating: gated by _gate.py
 	# (APP_MUTATING) so it proposes an AI Pending Action when write gating is on.
 	"erpnext_enhancements.assistant_tools.create_followup_task.CreateFollowupTask",
+	# v1.32.0 — mdm_integration remote device actions. All mutating + gated; wipe/
+	# lock/run-script are HIGH risk (see _gate.py). Each routes to the device's
+	# provider (Miradore mobile / Action1 computers) via mdm_integration.actions.
+	"erpnext_enhancements.assistant_tools.remote_lock_device.RemoteLockDevice",
+	"erpnext_enhancements.assistant_tools.remote_wipe_device.RemoteWipeDevice",
+	"erpnext_enhancements.assistant_tools.locate_device.LocateDevice",
+	"erpnext_enhancements.assistant_tools.reboot_device.RebootDevice",
+	"erpnext_enhancements.assistant_tools.run_device_script.RunDeviceScript",
+	"erpnext_enhancements.assistant_tools.deploy_device_patch.DeployDevicePatch",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

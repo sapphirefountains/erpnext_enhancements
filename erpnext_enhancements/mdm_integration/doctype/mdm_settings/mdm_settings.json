@@ -1,0 +1,244 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-13 13:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "mode_section",
+  "provider_mode",
+  "column_break_mode",
+  "status",
+  "status_message",
+  "miradore_section",
+  "miradore_enabled",
+  "miradore_instance_name",
+  "miradore_api_key",
+  "column_break_mir",
+  "miradore_status",
+  "miradore_last_sync",
+  "action1_section",
+  "action1_enabled",
+  "action1_org_id",
+  "action1_client_id",
+  "action1_client_secret",
+  "column_break_a1",
+  "action1_access_token",
+  "action1_token_expires_at",
+  "action1_status",
+  "action1_last_sync",
+  "behaviour_section",
+  "sync_poll_minutes",
+  "retry_limit",
+  "webhook_secret",
+  "column_break_beh",
+  "allow_full_wipe_corporate",
+  "block_full_wipe_byod"
+ ],
+ "fields": [
+  {
+   "fieldname": "mode_section",
+   "fieldtype": "Section Break",
+   "label": "Mode"
+  },
+  {
+   "default": "Mock",
+   "description": "Mock = both adapters return canned data and record actions (safe to use with no credentials). Live = call the real Miradore / Action1 APIs.",
+   "fieldname": "provider_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Provider Mode",
+   "options": "Mock\nLive",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_mode",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Configured",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Not Configured\nConnected\nSyncing\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "description": "Miradore manages the mobile segment (Phone/Tablet). REST API v2; auth via X-API-Key + X-Instance-Name.",
+   "fieldname": "miradore_section",
+   "fieldtype": "Section Break",
+   "label": "Miradore (Mobile MDM)"
+  },
+  {
+   "default": "0",
+   "fieldname": "miradore_enabled",
+   "fieldtype": "Check",
+   "label": "Miradore Sync Enabled"
+  },
+  {
+   "description": "Your Miradore site / instance name (the X-Instance-Name header).",
+   "fieldname": "miradore_instance_name",
+   "fieldtype": "Data",
+   "label": "Instance Name"
+  },
+  {
+   "fieldname": "miradore_api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "column_break_mir",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Configured",
+   "fieldname": "miradore_status",
+   "fieldtype": "Select",
+   "label": "Miradore Status",
+   "options": "Not Configured\nConnected\nSyncing\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "miradore_last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Sync",
+   "read_only": 1
+  },
+  {
+   "description": "Action1 manages the computer segment (Laptop/Desktop). REST api/3.0; OAuth2 client-credentials.",
+   "fieldname": "action1_section",
+   "fieldtype": "Section Break",
+   "label": "Action1 (Computer RMM)"
+  },
+  {
+   "default": "0",
+   "fieldname": "action1_enabled",
+   "fieldtype": "Check",
+   "label": "Action1 Sync Enabled"
+  },
+  {
+   "fieldname": "action1_org_id",
+   "fieldtype": "Data",
+   "label": "Organization ID"
+  },
+  {
+   "fieldname": "action1_client_id",
+   "fieldtype": "Data",
+   "label": "Client ID"
+  },
+  {
+   "fieldname": "action1_client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret"
+  },
+  {
+   "fieldname": "column_break_a1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "action1_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "action1_token_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Token Expires At",
+   "read_only": 1
+  },
+  {
+   "default": "Not Configured",
+   "fieldname": "action1_status",
+   "fieldtype": "Select",
+   "label": "Action1 Status",
+   "options": "Not Configured\nConnected\nSyncing\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "action1_last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "behaviour_section",
+   "fieldtype": "Section Break",
+   "label": "Behaviour & Safety"
+  },
+  {
+   "default": "30",
+   "description": "Minimum minutes between automatic syncs per provider (the scheduler fires hourly but throttles to this).",
+   "fieldname": "sync_poll_minutes",
+   "fieldtype": "Int",
+   "label": "Sync Poll Minutes"
+  },
+  {
+   "default": "3",
+   "fieldname": "retry_limit",
+   "fieldtype": "Int",
+   "label": "Retry Limit"
+  },
+  {
+   "description": "Shared secret required (Bearer) on inbound provider webhooks.",
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Secret"
+  },
+  {
+   "fieldname": "column_break_beh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Allow a FULL wipe of a Company-owned device. BYOD devices are never full-wiped regardless of this.",
+   "fieldname": "allow_full_wipe_corporate",
+   "fieldtype": "Check",
+   "label": "Allow Full Wipe (Company Devices)"
+  },
+  {
+   "default": "1",
+   "description": "Hard guard: refuse any full wipe of a BYOD (personally owned) device — only selective (corporate-data) wipe is ever sent.",
+   "fieldname": "block_full_wipe_byod",
+   "fieldtype": "Check",
+   "label": "Block Full Wipe of BYOD Devices"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-13 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "MDM Integration",
+ "name": "MDM Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "delete": 0,
+   "print": 1,
+   "read": 1,
+   "role": "Device Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
