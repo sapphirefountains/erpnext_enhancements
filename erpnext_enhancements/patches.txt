@@ -58,6 +58,8 @@ erpnext_enhancements.patches.rename_maintenance_templates
 erpnext_enhancements.patches.seed_maintenance_catalog
 # v1.25.0 Call via Triton: backfill Employee Cell Number -> User.phone
 erpnext_enhancements.patches.sync_employee_phone_to_user
+# v1.29.0 inventory scanner audit: warehouse-count clerk role
+erpnext_enhancements.patches.create_inventory_clerk_role
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link
