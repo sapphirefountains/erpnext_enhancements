@@ -1,0 +1,76 @@
+/* Desk Shortcuts block — Frappe CSS variables pierce the shadow boundary, so
+   both Frappe Light and Timeless Night render correctly without hard-coded
+   structural colors. Tile icons are emoji (SVG-sprite icons can't cross the
+   shadow boundary); per-tile accent tints are applied inline by the JS. */
+
+.eds-root {
+    padding: 0.25rem 0 0.75rem;
+    color: var(--text-color);
+    font-family: var(--font-stack, inherit);
+}
+
+.eds-header {
+    margin: 0 0 0.6rem;
+}
+
+.eds-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.eds-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+    gap: 0.75rem;
+}
+
+.eds-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding: 1rem 0.5rem;
+    background: var(--card-bg, var(--fg-color));
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg, 10px);
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+}
+
+.eds-tile:hover {
+    border-color: var(--text-muted);
+    box-shadow: var(--shadow-sm, 0 1px 4px rgba(0, 0, 0, 0.08));
+}
+
+.eds-tile:active {
+    transform: translateY(1px);
+}
+
+.eds-tile:focus-visible {
+    outline: 2px solid var(--primary, #2490ef);
+    outline-offset: 2px;
+}
+
+.eds-badge {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    line-height: 1;
+    border-radius: 50%;
+    border: 1px solid transparent;
+}
+
+.eds-label {
+    font-size: var(--text-sm);
+    color: var(--text-color);
+    line-height: 1.25;
+    word-break: break-word;
+}

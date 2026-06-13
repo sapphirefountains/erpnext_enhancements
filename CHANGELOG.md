@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-06-13
+
+### Added
+- **Configurable desk shortcut icons on Home** — a new **Enhancement Desk Shortcut** config doctype (System Manager only) lets an admin curate the icon tiles shown on the desk **Home** workspace and control, **per icon**, who sees it: everyone (`visible_to_all`), specific **roles**, and/or specific **users**. The tiles render from a per-user boot payload (`frappe.boot.ee_desk_shortcuts`, built in `api/desk_shortcuts.py` and shipped via `boot.py`) inside a new **"Desk Shortcuts"** Custom HTML Block placed on Home — so each user sees only the tools relevant to them, and config edits apply on the user's next desk load with no deploy.
+  - Seeded with seven defaults (`patches.seed_desk_shortcuts`, insert-only so admin edits persist): **Time Kiosk** and **Project Dashboard** (everyone); **Inventory Scanner** (Stock Manager / Inventory Clerk / System Manager); **Maintenance Wizard** and **Maintenance Day Board** (Maintenance User/Supervisor / Projects Manager); **Sales Pipeline** (Sales + Projects roles); **Integrations Health** (System Manager). System Manager / Administrator always see every enabled shortcut.
+  - The gating is **cosmetic, not a security boundary**: every target page enforces its own role permissions, so an unauthorized click still gets "not permitted" — this only keeps each user's desk tidy and relevant. Adding more tools later (e.g. Wall Display, Travel Itinerary, Daily Briefing) is just a new config row, no code change.
+  - Block sources live in repo-root `Custom HTML Block/desk_shortcuts.{html,js,css}` (seeded by `patches.seed_desk_shortcuts_block`, insert-only) and are placed on Home by `patches.place_desk_shortcuts_on_home` (idempotent). Icons are emoji glyphs (robust inside the block's shadow-DOM sandbox, where Frappe's SVG-sprite icons can't resolve) and are editable per shortcut; tiles are themed with Frappe CSS variables for Light + Timeless Night.
+
 ## [1.29.0] - 2026-06-13
 
 ### Added

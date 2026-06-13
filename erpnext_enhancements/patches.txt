@@ -60,6 +60,11 @@ erpnext_enhancements.patches.seed_maintenance_catalog
 erpnext_enhancements.patches.sync_employee_phone_to_user
 # v1.29.0 inventory scanner audit: warehouse-count clerk role
 erpnext_enhancements.patches.create_inventory_clerk_role
+# v1.30.0 configurable desk shortcut icons: create the block, seed the default
+# shortcut rows (insert-only), then place the block on Home (idempotent)
+erpnext_enhancements.patches.seed_desk_shortcuts_block
+erpnext_enhancements.patches.seed_desk_shortcuts
+erpnext_enhancements.patches.place_desk_shortcuts_on_home
 # NOTE: the legacy "delete_master_project" and "rename_master_projects" patches from
 # the original project_enhancements app are intentionally NOT carried over. Master
 # Project is now a first-class, actively-used doctype (shipped doctype + Project link
