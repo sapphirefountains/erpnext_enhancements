@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "creation": "2026-06-13 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "behaviour_section",
+  "default_warehouse",
+  "require_variance_reason",
+  "block_negative_counts",
+  "allow_unknown_item",
+  "column_break_scan",
+  "enable_camera_scan"
+ ],
+ "fields": [
+  {
+   "fieldname": "behaviour_section",
+   "fieldtype": "Section Break",
+   "label": "Scanner Behaviour"
+  },
+  {
+   "description": "Used when an item is scanned before any location has set the active warehouse.",
+   "fieldname": "default_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "default": "1",
+   "description": "Block saving a counted line whose variance is non-zero unless a reason is given.",
+   "fieldname": "require_variance_reason",
+   "fieldtype": "Check",
+   "label": "Require Reason for Variance"
+  },
+  {
+   "default": "1",
+   "fieldname": "block_negative_counts",
+   "fieldtype": "Check",
+   "label": "Block Negative Counts"
+  },
+  {
+   "default": "0",
+   "description": "If off, scanning a barcode that matches no Item is rejected instead of allowing a manual pick.",
+   "fieldname": "allow_unknown_item",
+   "fieldtype": "Check",
+   "label": "Allow Unmatched Item Barcodes"
+  },
+  {
+   "fieldname": "column_break_scan",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Show the camera scan button (uses the device camera where the browser supports the BarcodeDetector API).",
+   "fieldname": "enable_camera_scan",
+   "fieldtype": "Check",
+   "label": "Enable In-Page Camera Scanning"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-13 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Inventory Scanner Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

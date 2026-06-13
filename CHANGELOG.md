@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-06-13
+
+### Added
+- **Inventory Scanner Audit** — a mobile-friendly desk page (`/app/inventory-scanner-audit`) for warehouse clerks to run physical stock counts by scanning shelf/bin and item barcodes (USB/Bluetooth keyboard-wedge scanner, or the device camera via the `BarcodeDetector` API) and typing the counted quantity. Ships as a new **Inventory Enhancements** module.
+  - **Storage Location** doctype — scannable shelf/bin sub-locations beneath a Warehouse, each with its own barcode. A location scan resolves the bin to its stock-bearing warehouse (stock is tracked at warehouse granularity).
+  - **Inventory Count Session** (+ Inventory Count Line) — a resumable, per-clerk audit record. Each counted line snapshots the system on-hand quantity (`erpnext.stock.utils.get_stock_balance`) and its variance at scan time; one open session per clerk.
+  - **Finalize → draft Stock Reconciliation** — counts aggregate per (item, warehouse) into a *draft* Stock Reconciliation (never auto-submitted) for a Stock Manager to review and submit, so valuation/ledger changes always get a second set of eyes. Counts across several bins of one warehouse sum into a single reconciliation row.
+  - **Inventory Scanner Settings** (single) — fallback default warehouse, require-variance-reason, block-negative-counts, allow-unknown-item (manual item search), and enable-camera-scan.
+  - New **Inventory Clerk** role (seeded by `patches.create_inventory_clerk_role`) gates the page alongside `Stock Manager` / `System Manager`.
+  - API in `api/inventory_scanner.py` (whitelisted scan resolution + session lifecycle + finalize); tests in `tests/test_inventory_scanner.py`. Serialized/batch items are flagged but reconcile at plain warehouse qty in this version.
+
 ## [1.28.1] - 2026-06-12
 
 ### Fixed

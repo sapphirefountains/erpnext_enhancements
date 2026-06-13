@@ -1,0 +1,24 @@
+{
+ "content": "",
+ "creation": "2026-06-13 10:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "Inventory Enhancements",
+ "name": "inventory-scanner-audit",
+ "owner": "Administrator",
+ "page_name": "inventory-scanner-audit",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Inventory Clerk"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Inventory Scanner Audit"
+}
