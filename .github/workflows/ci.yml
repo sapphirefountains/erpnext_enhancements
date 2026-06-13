@@ -33,7 +33,12 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Standalone unit tests — no Frappe/bench required, so they run fast on every
-  # push. Covers the time-kiosk consolidation algorithm in isolation.
+  # push. Covers the time-kiosk consolidation algorithm, plus the bench-free
+  # suites that guard the security-sensitive AI write gate
+  # (assistant_tools/_gate.py), the FAC assistant-tool contract, and the
+  # Integrations Health tone helpers. The latter three import their tool
+  # modules under the sys.modules stubs installed by test_assistant_tools_schema
+  # (no live frappe / FAC), so they run here as plain unittest.
   # ---------------------------------------------------------------------------
   unit-tests:
     name: Standalone unit tests
@@ -47,6 +52,12 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip httpx
       - run: python -m unittest test_sync_time_kiosk.py -v
+      - name: AI gate + assistant-tool contract + integrations health
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_assistant_tools_schema
+          erpnext_enhancements.tests.test_ai_gate_unit
+          erpnext_enhancements.tests.test_integrations_health -v
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

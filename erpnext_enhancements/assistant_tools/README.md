@@ -69,13 +69,20 @@ For the same reason, do **not** add `frappe_assistant_core` to
 - `source_app = "erpnext_enhancements"`, a non-empty `description`, a
   `requires_permission` DocType (gates both execution and per-user tool
   visibility), and a valid JSON Schema `inputSchema` are required.
-- Every *tool* in this package is **read-only** (including
-  `check_ai_pending_action`). Reused app functions were audited for writes;
-  write-capable functions (`update_next_visit_dates`, `log_time`, dashboard
-  `update_*`, …) are out of scope until a dedicated write-tools batch. The
-  write *gate* (`_gate.py`/`gating_api.py`) does write — AI Pending Action /
-  AI Action Log rows — but never business documents; confirmed executions run
-  FAC's own built-ins.
+- **Read tools vs. write tools.** Most tools here are **read-only** (including
+  `check_ai_pending_action`). The exception is `create_followup_task`
+  (v1.29.0) — the first *write* tool. **Every write tool MUST be added to
+  `_gate.py`'s `APP_MUTATING` set** so the AI write gate confirms it through a
+  human (when gating is on) instead of relying on the fail-closed fallback;
+  give it a `summarize_tool_call` case and a `LOW_RISK`/`HIGH_RISK`
+  classification too, so the desk confirmation card reads well. A write tool
+  must permission-check before it writes (create/`has_permission`, plus
+  `require_doc_read` on any referenced record) — the gate re-runs `execute`
+  as the *confirming* user, so those checks bind to the human, not the AI's
+  identity. Reused app write functions still out of scope (`update_next_visit_dates`,
+  `log_time`, dashboard `update_*`, …) until a follow-on batch. The write
+  *gate* itself (`_gate.py`/`gating_api.py`) writes AI Pending Action / AI
+  Action Log rows but never business documents.
 - Permission model: list queries go through `frappe.get_list` (role + user
   permissions enforced); anything that reaches raw SQL or `frappe.get_all`
   inside a reused function is gated first with an explicit
@@ -97,6 +104,8 @@ For the same reason, do **not** add `frappe_assistant_core` to
 | `project_status_overview` | Projects | Project Dashboard `get_project_data` / health / gantt / master-project feeds |
 | `project_procurement_status` | Projects | `project_enhancements::get_procurement_status` / `get_procurement_documents` |
 | `workforce_time_status` | Time Kiosk | fresh perm-enforced Job Interval queries + `time_kiosk.get_current_status` |
+| `check_ai_pending_action` | AI Governance | read-only status/result lookup of gated AI Pending Actions |
+| `create_followup_task` | Productivity | **write (gated)** — creates a ToDo follow-up, optionally linked + assigned |
 
 ## Deployment notes
 

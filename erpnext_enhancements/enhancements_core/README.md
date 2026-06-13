@@ -1,6 +1,6 @@
 # Enhancements Core
 
-The catch-all module. It holds the app's **Single settings doctypes**, the **Time Kiosk** data doctypes (the back-end of the `/kiosk` PWA), **Asset Booking**, and three desk **Pages** (GA4 dashboard, Location Timeline map, and a legacy time-kiosk redirect).
+The catch-all module. It holds the app's **Single settings doctypes**, the **Time Kiosk** data doctypes (the back-end of the `/kiosk` PWA), **Asset Booking**, and four desk **Pages** (GA4 dashboard, Location Timeline map, Integrations Health, and a legacy time-kiosk redirect).
 
 ## File map
 
@@ -21,6 +21,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | `doctype/process_document/…py` | Mermaid.js process documentation (ported from a DB-only custom DocType in v0.8.0; form script: `public/js/process_document.js` — brand-themed preview + Visual Builder dialog since v1.12.0; chart content version-controlled in `setup/process_documents.py` and upserted on every migrate since v1.11.0) | (stub) |
 | `page/ga4_dashboard/ga4_dashboard.js` | GA4 + GSC charts page | `on_page_load` |
 | `page/location_timeline/location_timeline.js` | Leaflet map replay of kiosk points | `on_page_load` |
+| `page/integrations_health/integrations_health.js` | Green/amber/red tiles for every external integration + scheduler/errors; data from [`api/integrations_health.py`](../api/README.md) | `on_page_load` |
 | `page/time_kiosk/time_kiosk.js` | Legacy redirect to the `/kiosk` PWA | `on_page_load`/`on_page_show` |
 
 ## Single settings doctypes
@@ -45,6 +46,7 @@ Logs are pushed in batches by [`api/time_kiosk.py`](../api/README.md), replayed 
 
 - **`ga4-dashboard`** (System Manager / Sales roles) — parallel GA4 + GSC fetch, per-section error isolation, `frappe.Chart`s + escaped HTML tables. Setup below.
 - **`location-timeline`** (System Manager / HR Manager) — Leaflet map of Time Kiosk Log points via `api.time_kiosk.get_location_history`.
+- **`integrations-health`** (System Manager) — one ops screen for every external service (QuickBooks, Google Drive, Telephony/Triton, Gemini, GA4/GSC) plus Frappe scheduler liveness and a 24 h Error Log digest. Each integration is a green/amber/red tile; data comes from `api.integrations_health.get_health` (DB-only, no outbound calls on load — the Drive tile's *Test connection* button runs the one live check on demand via `run_drive_test`). Secrets are read only as "configured?" booleans, never returned. Use it to spot a lapsed QuickBooks OAuth token, an unconfigured Drive service account, or a stalled hourly job at a glance.
 - **`time-kiosk`** — the retired in-desk kiosk UI; now just `location.replace('/kiosk')` to the standalone PWA (the Page record is kept solely as the redirect target).
 
 ## Google Analytics 4 & Search Console dashboard
