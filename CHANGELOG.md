@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-06-15
+
+### Fixed
+- **Google Drive → ERPNext shadow sync now brings in added files *and* folders, and no longer crashes on a stale folder link** (`crm_enhancements/drive_sync.py`). Three problems were stopping inbound sync entirely:
+  - **Hourly job crashed on a deleted/moved Drive folder.** When a linked document's `custom_drive_folder_id` pointed at a Drive folder that no longer exists (or is no longer shared with the service account), `_drive_id_of` raised `HttpError 404` and aborted that document's sync every hour (observed continuously on `PRJ-00694`). The job now catches the 404, records it **once** as a `Stale` Drive Sync Log row, and moves on — one bad link can't break the run.
+  - **Subfolders were never scanned.** The folder listing was non-recursive (`'<folder>' in parents`), so any file dropped inside a provisioned subfolder (Build, Design, Project Manager, …) was invisible. The sync now **walks the full folder tree** (`_walk_drive_folder`), depth-capped at 10 with a cycle guard for Drive shortcuts.
+  - **Folders were excluded outright.** The query filtered out `mimeType = folder`. Subfolders are now mirrored as **link-only `File` shadows** too (`file_url` = the folder's Drive link), so the folder structure is visible on the Project/Customer/Opportunity. Nested item names are path-prefixed (e.g. `Design/Renderings/front.png`) and folders carry a trailing slash, keeping the flat attachment list legible.
+- Sync remains **link-only and de-duplicated** — no bytes are copied (Drive stays the source of truth) and shadows are keyed on `custom_drive_file_id`, so re-runs never create duplicate links. Deletions still never propagate; a vanished file/folder is flagged `Stale`, never removed.
+
 ## [1.32.1] - 2026-06-13
 
 ### Changed

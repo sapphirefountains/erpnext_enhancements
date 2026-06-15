@@ -7,12 +7,14 @@ backfill below), this module keeps attachments and Drive files in step:
 * **ERPNext → Drive** — a ``File`` ``after_insert`` hook uploads every new
   attachment on a linked document into its Drive folder (background job).
   The Drive file id is stamped on ``File.custom_drive_file_id``.
-* **Drive → ERPNext** — an hourly job lists every linked folder and creates
-  **link-only shadow attachments** for Drive files ERPNext doesn't know yet:
-  a ``File`` row whose ``file_url`` is the Drive ``webViewLink`` (no bytes
-  copied — Drive stays the source of truth). Shadows are recognised by their
-  stamped ``custom_drive_file_id``, which also prevents echo loops with the
-  upload hook.
+* **Drive → ERPNext** — an hourly job walks every linked folder's whole tree
+  (files **and** subfolders, nested) and creates **link-only shadow
+  attachments** for Drive items ERPNext doesn't know yet: a ``File`` row whose
+  ``file_url`` is the Drive ``webViewLink`` (no bytes copied — Drive stays the
+  source of truth). Subfolders are mirrored as link-only ``File`` rows too, so
+  the folder structure is visible on the document; nested file names are
+  path-prefixed. Shadows are recognised by their stamped
+  ``custom_drive_file_id``, which also prevents echo loops with the upload hook.
 * **Deletions never propagate** in either direction: a shadow whose Drive
   file disappeared is flagged ``Stale`` in the Drive Sync Log, nothing is
   deleted automatically.
@@ -34,6 +36,7 @@ import mimetypes
 
 import frappe
 from frappe.utils import cint
+from googleapiclient.errors import HttpError
 
 from erpnext_enhancements.crm_enhancements.drive_utils import (
 	find_folder,
@@ -198,9 +201,11 @@ def upload_attachment_to_drive(file_docname, attempts=1):
 
 
 def sync_shadow_attachments():
-	"""Hourly scheduler job: for every linked document, create link-only
-	shadow attachments for Drive files ERPNext doesn't have yet, and flag
-	shadows whose Drive file vanished as Stale (never deleting anything)."""
+	"""Hourly scheduler job: for every linked document, walk its Drive folder
+	tree and create link-only shadow attachments for the files *and subfolders*
+	ERPNext doesn't have yet, and flag shadows whose Drive item vanished as Stale
+	(never deleting anything). One document's failure (e.g. its linked folder was
+	deleted) is logged and skipped — it never aborts the whole run."""
 	settings = _settings()
 	if not _sync_enabled(settings):
 		return
@@ -229,14 +234,18 @@ def sync_shadow_attachments():
 	frappe.db.commit()
 
 
-def _list_folder_files(service, folder_id, drive_id):
-	"""All non-folder, non-trashed files directly inside ``folder_id``."""
-	files, page_token = [], None
+# Google Drive's folder mime type, and a hard cap on how deep the shadow walk
+# recurses — a guard against Drive-shortcut cycles and pathological nesting.
+FOLDER_MIME = "application/vnd.google-apps.folder"
+MAX_SHADOW_DEPTH = 10
+
+
+def _list_folder_children(service, folder_id, drive_id):
+	"""All non-trashed children — files **and** subfolders — directly inside
+	``folder_id`` (following ``nextPageToken`` across pages)."""
+	children, page_token = [], None
 	kwargs = {
-		"q": (
-			f"'{folder_id}' in parents and trashed=false "
-			"and mimeType != 'application/vnd.google-apps.folder'"
-		),
+		"q": f"'{folder_id}' in parents and trashed=false",
 		"fields": "nextPageToken, files(id, name, webViewLink, mimeType)",
 		"pageSize": 200,
 	}
@@ -251,19 +260,87 @@ def _list_folder_files(service, folder_id, drive_id):
 		if page_token:
 			kwargs["pageToken"] = page_token
 		result = service.files().list(**kwargs).execute()
-		files.extend(result.get("files", []))
+		children.extend(result.get("files", []))
 		page_token = result.get("nextPageToken")
 		if not page_token:
-			return files
+			return children
+
+
+def _walk_drive_folder(service, folder_id, drive_id, rel_path, depth, visited, items):
+	"""Depth-first walk of ``folder_id``'s tree. Every descendant — files and
+	subfolders alike — is appended to ``items`` as a ``(drive_file, rel_path)``
+	pair, where ``rel_path`` is the "/"-joined names of the parent folders below
+	the linked root ("" at the top level). Guards against Drive-shortcut cycles
+	(``visited``) and runaway nesting (``MAX_SHADOW_DEPTH``); a subfolder that
+	404s mid-walk (moved/deleted) is skipped, not fatal."""
+	if depth > MAX_SHADOW_DEPTH or folder_id in visited:
+		return
+	visited.add(folder_id)
+	try:
+		children = _list_folder_children(service, folder_id, drive_id)
+	except HttpError as exc:
+		if exc.resp.status == 404:
+			return
+		raise
+	for child in children:
+		items.append((child, rel_path))
+		if child.get("mimeType") == FOLDER_MIME:
+			_walk_drive_folder(
+				service, child["id"], drive_id,
+				f"{rel_path}{child.get('name')}/", depth + 1, visited, items,
+			)
+
+
+def _flag_missing_drive_item(doctype, docname, drive_file_id, file_name, message):
+	"""Record a single ``Stale`` Drive Sync Log row for a Drive item that can no
+	longer be reached (a linked root folder, or a shadow's target). Idempotent —
+	keyed on the Drive id, so the hourly job doesn't spam duplicate rows."""
+	if frappe.db.exists("Drive Sync Log", {
+		"action": "Shadow Attachment",
+		"status": "Stale",
+		"drive_file_id": drive_file_id,
+	}):
+		return
+	log_sync(
+		"Shadow Attachment", "Stale",
+		reference_doctype=doctype, reference_name=docname,
+		file_name=file_name, drive_file_id=drive_file_id, error=message,
+	)
 
 
 def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
+	missing_msg = (
+		"The linked Drive folder no longer exists or is not shared with the "
+		"service account."
+	)
+	# Resolve the Shared Drive id once per root folder. A 404 here means the
+	# linked folder itself was deleted or moved out of the service account's
+	# reach — flag it once and bail for this document rather than letting the
+	# error abort the hourly run (this is what crashed PRJ-00694 every hour).
 	if folder_id not in drive_id_cache:
-		drive_id_cache[folder_id] = _drive_id_of(service, folder_id)
-	drive_files = _list_folder_files(service, folder_id, drive_id_cache[folder_id])
-	drive_ids = [f["id"] for f in drive_files]
+		try:
+			drive_id_cache[folder_id] = _drive_id_of(service, folder_id)
+		except HttpError as exc:
+			if exc.resp.status == 404:
+				_flag_missing_drive_item(doctype, docname, folder_id, None, missing_msg)
+				return
+			raise
+	drive_id = drive_id_cache[folder_id]
 
-	# Everything ERPNext already knows about (uploads we mirrored + shadows).
+	# Walk the whole tree under the linked folder — files and subfolders, nested.
+	items = []
+	try:
+		_walk_drive_folder(service, folder_id, drive_id, "", 0, set(), items)
+	except HttpError as exc:
+		if exc.resp.status == 404:
+			_flag_missing_drive_item(doctype, docname, folder_id, None, missing_msg)
+			return
+		raise
+
+	drive_ids = [f["id"] for f, _rel in items]
+
+	# Everything ERPNext already knows about (uploads we mirrored + shadows),
+	# keyed on the stamped Drive id — covers both files and folders.
 	known_ids = set(
 		frappe.get_all(
 			"File",
@@ -274,12 +351,16 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 		else []
 	)
 
-	for drive_file in drive_files:
+	for drive_file, rel_path in items:
 		if drive_file["id"] in known_ids:
 			continue
+		is_folder = drive_file.get("mimeType") == FOLDER_MIME
+		# Path-prefixed so the flat attachment list stays legible; a trailing
+		# slash marks folders. Link-only either way — no bytes are copied.
+		display_name = f"{rel_path}{drive_file.get('name')}" + ("/" if is_folder else "")
 		shadow = frappe.get_doc({
 			"doctype": "File",
-			"file_name": drive_file.get("name"),
+			"file_name": display_name,
 			"file_url": drive_file.get("webViewLink"),
 			"attached_to_doctype": doctype,
 			"attached_to_name": docname,
@@ -291,12 +372,12 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 		log_sync(
 			"Shadow Attachment", "Success",
 			reference_doctype=doctype, reference_name=docname,
-			file_name=drive_file.get("name"), drive_file_id=drive_file["id"],
+			file_name=display_name, drive_file_id=drive_file["id"],
 			drive_link=drive_file.get("webViewLink"),
 		)
 
-	# Stale detection: shadows pointing at Drive files no longer in the folder.
-	# Flag once (deletions never propagate).
+	# Stale detection: shadows pointing at Drive items no longer anywhere in the
+	# tree. Flag once (deletions never propagate).
 	shadows = frappe.get_all(
 		"File",
 		filters={
@@ -311,18 +392,9 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 	for shadow_row in shadows:
 		if shadow_row.custom_drive_file_id in listed:
 			continue
-		if frappe.db.exists("Drive Sync Log", {
-			"action": "Shadow Attachment",
-			"status": "Stale",
-			"drive_file_id": shadow_row.custom_drive_file_id,
-		}):
-			continue
-		log_sync(
-			"Shadow Attachment", "Stale",
-			reference_doctype=doctype, reference_name=docname,
-			file_name=shadow_row.file_name,
-			drive_file_id=shadow_row.custom_drive_file_id,
-			error="The Drive file behind this shadow attachment was moved or deleted.",
+		_flag_missing_drive_item(
+			doctype, docname, shadow_row.custom_drive_file_id, shadow_row.file_name,
+			"The Drive file behind this shadow attachment was moved or deleted.",
 		)
 
 
