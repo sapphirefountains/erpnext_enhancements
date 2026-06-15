@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.2] - 2026-06-15
+
+### Fixed
+- **Opportunity "Description" field is no longer mandatory** (`fixtures/custom_field.json`, `Opportunity-custom_description`). The field carried `reqd: 1` while living under the hidden `Opportunity Description` section break — a hidden-yet-mandatory combination that makes Frappe block saving an Opportunity on a field nobody can see. Set `reqd: 0` and made the field explicitly `hidden: 1` so it stays hidden and can never block a save. Applies on `bench migrate` (re-syncs the Custom Field from the fixture).
+
+## [1.34.1] - 2026-06-15
+
+### Changed
+- **Opportunity Drive folders now use an `ID - Name` schema** — e.g. `CRM-OPP-2026-00112 - Pool Reno` — replacing the previous em-dash form (`… — …`) in `drive_utils.provision_opportunity_folder`. Applies to newly provisioned Opportunity folders, including the Drive Link Manager's "Create New" action (which calls the same provisioner). Existing folders are not renamed.
+
+## [1.34.0] - 2026-06-15
+
+### Added
+- **Drive Link Manager — a System-Manager dashboard for bulk-linking existing Google Drive folders to ERPNext records** before the two-way sync runs (new Desk page `/app/drive-link-manager`, route gated to System Manager). Turns the one-time onboarding chore of matching hundreds of Customer / Project / Opportunity records to their already-existing Drive folders into a reviewed, fault-tolerant flow.
+  - **Fuzzy auto-matching, human-reviewed before anything links.** A *Scan* lists the whole Shared Drive's folders once (one flat, paginated listing) and ranks candidate folders for every *unlinked* record. Matching is **hierarchy-aware** — customers match Shared-Drive-root folders; projects/opportunities are scored against the children of their customer's folder first, widening to the whole drive only when that yields no confident match — and reuses the same `<id> <name>` naming conventions the provisioner mints. Scoring (`crm_enhancements/drive_match.py`) blends difflib ratio + token-set overlap + a containment bonus, strips record-id prefixes (so `PRJ-00694 Smith Residence` matches a plain `Smith Residence` folder), and buckets into **High / Medium / Low / None** tiers.
+  - **Staging layer (`Drive Link Candidate` doctype), not direct writes.** Scan results are staged as candidate rows — suggested folder + ranked alternatives + tier + the reviewer's decision + processing status. **High-confidence matches arrive pre-approved**; everything else waits as Pending. The dashboard lets you accept a suggestion, pick a ranked alternative, **search Drive live** for a manual override, mark a record **Create New** (provision a fresh folder), or reject — with confidence bars, per-type grouping, filters, bulk "approve all suggested" / "reject remaining", and **conflict flagging** when one folder is chosen for two records.
+  - **Robust Apply — one row at a time.** Applying writes `custom_drive_folder_id` (or provisions a new folder via the existing retry-hardened `drive_utils` provisioning) **each in its own try/except**, so a single failure is recorded to Drive Sync Log and the rest still link. Re-scanning is safe (clears prior un-applied rows, keeps `Linked` ones for audit). After linking, the existing upload hook + recursive shadow sync take over automatically.
+  - Backend is whitelisted + `System Manager`-only throughout (`crm_enhancements/drive_link_manager.py`); the pure matcher is unit-tested bench-free (`tests/test_drive_match.py`, wired into the CI `unit-tests` job).
+
+## [1.33.0] - 2026-06-15
+
+### Fixed
+- **Google Drive → ERPNext shadow sync now brings in added files *and* folders, and no longer crashes on a stale folder link** (`crm_enhancements/drive_sync.py`). Three problems were stopping inbound sync entirely:
+  - **Hourly job crashed on a deleted/moved Drive folder.** When a linked document's `custom_drive_folder_id` pointed at a Drive folder that no longer exists (or is no longer shared with the service account), `_drive_id_of` raised `HttpError 404` and aborted that document's sync every hour (observed continuously on `PRJ-00694`). The job now catches the 404, records it **once** as a `Stale` Drive Sync Log row, and moves on — one bad link can't break the run.
+  - **Subfolders were never scanned.** The folder listing was non-recursive (`'<folder>' in parents`), so any file dropped inside a provisioned subfolder (Build, Design, Project Manager, …) was invisible. The sync now **walks the full folder tree** (`_walk_drive_folder`), depth-capped at 10 with a cycle guard for Drive shortcuts.
+  - **Folders were excluded outright.** The query filtered out `mimeType = folder`. Subfolders are now mirrored as **link-only `File` shadows** too (`file_url` = the folder's Drive link), so the folder structure is visible on the Project/Customer/Opportunity. Nested item names are path-prefixed (e.g. `Design/Renderings/front.png`) and folders carry a trailing slash, keeping the flat attachment list legible.
+- Sync remains **link-only and de-duplicated** — no bytes are copied (Drive stays the source of truth) and shadows are keyed on `custom_drive_file_id`, so re-runs never create duplicate links. Deletions still never propagate; a vanished file/folder is flagged `Stale`, never removed.
 ## [1.32.2] - 2026-06-15
 
 ### Fixed
