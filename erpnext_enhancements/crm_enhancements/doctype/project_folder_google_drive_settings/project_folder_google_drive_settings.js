@@ -4,12 +4,14 @@
  * Targets: this Single doctype's form.
  * Loaded via: standard doctype form script (same-folder .js).
  *
- * Adds two buttons backed by crm_enhancements.drive_sync:
+ * Adds buttons backed by crm_enhancements.drive_sync:
  *  - Test Connection: validates the service-account JSON, the Drive API, and
  *    access to each configured Drive/folder; shows per-check results with the
  *    service-account email to add as a Shared Drive member when missing.
- *  - Link Existing Folders: queues the backfill that links pre-existing
- *    Customers/Projects to their already-existing Drive folders by name.
+ *  - Link Existing Folders: queues the blind by-name backfill that links
+ *    pre-existing Customers/Projects to their Drive folders.
+ *  - Drive Link Manager: opens the reviewed bulk-linking dashboard
+ *    (/app/drive-link-manager) — fuzzy-matched, manual-review, fault-tolerant.
  */
 frappe.ui.form.on("Project Folder Google Drive Settings", {
 	refresh(frm) {
@@ -52,5 +54,10 @@ frappe.ui.form.on("Project Folder Google Drive Settings", {
 				}
 			);
 		});
+
+		// The reviewed, fuzzy-matched alternative to the blind backfill above.
+		frm.add_custom_button(__("Drive Link Manager"), () => {
+			frappe.set_route("drive-link-manager");
+		}).addClass("btn-primary");
 	},
 });

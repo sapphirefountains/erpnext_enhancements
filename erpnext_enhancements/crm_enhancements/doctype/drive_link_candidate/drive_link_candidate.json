@@ -1,0 +1,159 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-06-15 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "reference_doctype",
+  "reference_name",
+  "record_label",
+  "context",
+  "column_break_main",
+  "match_tier",
+  "score",
+  "suggested_folder_id",
+  "suggested_folder_label",
+  "alternatives",
+  "decision_section",
+  "decision",
+  "chosen_folder_id",
+  "chosen_folder_label",
+  "column_break_decision",
+  "status",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Reference DocType",
+   "options": "Customer\nProject\nOpportunity",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Reference Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "record_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Record Label"
+  },
+  {
+   "description": "Parent context shown in the dashboard (e.g. the customer a project/opportunity belongs to).",
+   "fieldname": "context",
+   "fieldtype": "Data",
+   "label": "Context"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "match_tier",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Match Tier",
+   "options": "High\nMedium\nLow\nNone"
+  },
+  {
+   "description": "Confidence score (0-100) of the top suggestion.",
+   "fieldname": "score",
+   "fieldtype": "Float",
+   "label": "Score",
+   "precision": "1"
+  },
+  {
+   "fieldname": "suggested_folder_id",
+   "fieldtype": "Data",
+   "label": "Suggested Folder ID"
+  },
+  {
+   "fieldname": "suggested_folder_label",
+   "fieldtype": "Data",
+   "label": "Suggested Folder"
+  },
+  {
+   "description": "Ranked alternative folders as JSON ([{id, name, label, score}]).",
+   "fieldname": "alternatives",
+   "fieldtype": "Code",
+   "label": "Alternatives",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "decision_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "decision",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Decision",
+   "options": "Pending\nApprove\nReject\nCreate New"
+  },
+  {
+   "description": "The folder that will actually be linked when this row is approved (defaults to the suggestion; overridable in the dashboard).",
+   "fieldname": "chosen_folder_id",
+   "fieldtype": "Data",
+   "label": "Chosen Folder ID"
+  },
+  {
+   "fieldname": "chosen_folder_label",
+   "fieldtype": "Data",
+   "label": "Chosen Folder"
+  },
+  {
+   "fieldname": "column_break_decision",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Suggested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Suggested\nLinked\nFailed\nSkipped"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CRM Enhancements",
+ "name": "Drive Link Candidate",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -61,7 +61,8 @@ jobs:
           erpnext_enhancements.tests.test_ai_gate_unit
           erpnext_enhancements.tests.test_integrations_health
           erpnext_enhancements.tests.test_device_management
-          erpnext_enhancements.tests.test_mdm_integration -v
+          erpnext_enhancements.tests.test_mdm_integration
+          erpnext_enhancements.tests.test_drive_match -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
 
