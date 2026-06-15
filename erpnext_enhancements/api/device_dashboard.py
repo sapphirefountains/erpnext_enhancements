@@ -9,6 +9,7 @@ Manager only; no outbound calls.
 """
 
 import frappe
+from frappe.query_builder.functions import Count
 from frappe.utils import add_days, today
 
 from erpnext_enhancements.api.device_management import MANAGER_ROLES
@@ -32,7 +33,9 @@ def _count(filters):
 def _by(field, values=None):
 	"""Return [(value, count), …] for a Select/Link field, in ``values`` order
 	when given (else by descending count)."""
-	rows = frappe.get_all("Managed Device", fields=[field, "count(name) as n"], group_by=field)
+	md = frappe.qb.DocType("Managed Device")
+	col = md[field]
+	rows = frappe.qb.from_(md).select(col, Count(md.name).as_("n")).groupby(col).run(as_dict=True)
 	counts = {row.get(field): row.n for row in rows if row.get(field)}
 	if values:
 		return [(v, counts.get(v, 0)) for v in values]
