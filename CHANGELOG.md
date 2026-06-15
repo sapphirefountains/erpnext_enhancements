@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.4] - 2026-06-15
+
+### Fixed
+- **Drive Link Manager scan timed out** (`net::ERR_CONNECTION_CLOSED`) on real data (`crm_enhancements/drive_link_manager.py`). The scan listed the entire Shared Drive and fuzzy-matched every unlinked Customer / Project / Opportunity (hundreds of records — ~780 opportunities alone) **inline in one HTTP request**, exceeding the gateway timeout. It now runs on the **long background queue** (`_run_scan_job`): `scan_drive_links` enqueues and returns immediately, and the dashboard polls a new `scan_status` endpoint (`queued → running → done/error`, tracked in the Frappe cache), reloading when it completes. Re-running stays safe (clears prior un-applied rows; `Linked` kept).
+
 ## [1.34.3] - 2026-06-15
 
 ### Fixed
