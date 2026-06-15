@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.6] - 2026-06-15
+
+### Fixed
+- **Device Fleet Dashboard failed to load** (`/app/device-fleet-dashboard`) with `SQL functions are not allowed as strings in SELECT: count(name) as n. Use dict syntax like {'COUNT': '*'} instead.` (`api/device_dashboard.py`, `_by()`). The per-field grouped-count helper passed a raw `"count(name) as n"` aggregate **string** in the `frappe.get_all` `fields` list, which Frappe's query builder rejects (the same SELECT/ORDER-BY restriction behind the v1.34.3 Drive Link Manager fix). Rewrote the query with the pypika builder — `frappe.qb.from_(md).select(col, Count(md.name).as_("n")).groupby(col)` — the idiom already used in `task_dashboard.py` and `travel_management/integrations.py`; the surrounding `_by()` contract (result keys, `values` ordering) is unchanged, so every tile that calls it (status, compliance, platforms, ownership) renders again.
+
 ## [1.34.5] - 2026-06-15
 
 ### Fixed
