@@ -178,16 +178,18 @@ def _customer_label_map():
 	return labels, folders
 
 
-def _resolve_customer_folder(party, cust_labels, cust_folder_ids, by_id, root_folders):
+def _resolve_customer_folder(party, cust_labels, cust_folder_ids, by_id, root_token_index):
 	"""Best guess at a customer's Drive folder: the already-linked id if present,
-	else a confident fuzzy match among the Shared Drive's root folders."""
+	else a confident fuzzy match among the root folders sharing a word with the
+	customer name."""
 	if not party:
 		return None
 	linked = cust_folder_ids.get(party)
 	if linked and linked in by_id:
 		return by_id[linked]
 	label = cust_labels.get(party, party)
-	ranked = drive_match.best_matches([label, party], root_folders, limit=1)
+	pool = drive_match.blocked_candidates([label, party], root_token_index)
+	ranked = drive_match.best_matches([label, party], pool, limit=1)
 	if ranked and ranked[0]["score"] >= drive_match.TIER_MEDIUM:
 		return ranked[0]["folder"]
 	return None
@@ -258,38 +260,66 @@ def _run_scan():
 	folders = _list_all_folders(service, drive_id)
 	by_id, root_folders, nested_folders, children_index = _index_folders(folders, drive_id)
 	cust_labels, cust_folder_ids = _customer_label_map()
+	# Inverted token indexes: score each record only against folders that share a
+	# word with it (not every folder). Essential at scale — thousands of records
+	# × thousands of folders would otherwise be millions of comparisons and peg
+	# the server (the cause of the scan overwhelming the box).
+	root_token_index = drive_match.token_index(root_folders)
+	nested_token_index = drive_match.token_index(nested_folders)
 
 	# Safe to re-run: drop everything not already applied, keep Linked for audit.
 	frappe.db.delete(CANDIDATE, {"status": ["!=", "Linked"]})
 
 	counts = {"Customer": 0, "Project": 0, "Opportunity": 0}
 	skipped = 0
+	staged = 0
+
+	def commit_batch():
+		# Commit periodically so we never hold one giant transaction across
+		# thousands of inserts (which starves other DB connections → 502s).
+		nonlocal staged
+		staged += 1
+		if staged % 200 == 0:
+			frappe.db.commit()
+
+	# Resolve each customer's folder once — many projects/opportunities share a
+	# customer, so this avoids re-fuzzy-matching the same customer repeatedly.
+	customer_folder_cache = {}
 
 	def scoped_pool(party):
-		folder = _resolve_customer_folder(party, cust_labels, cust_folder_ids, by_id, root_folders)
+		if party not in customer_folder_cache:
+			customer_folder_cache[party] = _resolve_customer_folder(
+				party, cust_labels, cust_folder_ids, by_id, root_token_index
+			)
+		folder = customer_folder_cache[party]
 		return children_index.get(folder["id"], []) if folder else []
 
-	# Customers → root-level folders.
+	# Customers → root-level folders sharing a word with the customer name.
 	for cust in _unlinked("Customer", ["name", "customer_name"]):
 		try:
 			label = cust.customer_name or cust.name
-			ranked = drive_match.best_matches([label, cust.name], root_folders)
+			pool = drive_match.blocked_candidates([label, cust.name], root_token_index)
+			ranked = drive_match.best_matches([label, cust.name], pool)
 			_make_candidate("Customer", cust.name, label, None, ranked)
 			counts["Customer"] += 1
+			commit_batch()
 		except Exception:
 			skipped += 1
 			frappe.log_error(frappe.get_traceback(), "Drive Link Scan (Customer)")
 
-	# Projects → children of the customer folder, widening to the whole drive.
+	# Projects → children of the customer folder, widening to a word-blocked
+	# subset of the whole drive when that yields no confident match.
 	for proj in _unlinked("Project", ["name", "project_name", "customer"]):
 		try:
 			label = f"{proj.name} {proj.project_name}".strip()
 			aliases = [label, proj.project_name, proj.name]
 			ranked = drive_match.best_matches(aliases, scoped_pool(proj.customer))
 			if not ranked or ranked[0]["score"] < drive_match.TIER_MEDIUM:
-				ranked = _merge_ranked(ranked, drive_match.best_matches(aliases, nested_folders))
+				ranked = _merge_ranked(ranked, drive_match.best_matches(
+					aliases, drive_match.blocked_candidates(aliases, nested_token_index)))
 			_make_candidate("Project", proj.name, label, cust_labels.get(proj.customer), ranked)
 			counts["Project"] += 1
+			commit_batch()
 		except Exception:
 			skipped += 1
 			frappe.log_error(frappe.get_traceback(), "Drive Link Scan (Project)")
@@ -302,9 +332,11 @@ def _run_scan():
 			aliases = [label, opp.title, opp.name]
 			ranked = drive_match.best_matches(aliases, scoped_pool(opp.party_name))
 			if not ranked or ranked[0]["score"] < drive_match.TIER_MEDIUM:
-				ranked = _merge_ranked(ranked, drive_match.best_matches(aliases, nested_folders))
+				ranked = _merge_ranked(ranked, drive_match.best_matches(
+					aliases, drive_match.blocked_candidates(aliases, nested_token_index)))
 			_make_candidate("Opportunity", opp.name, label, cust_labels.get(opp.party_name), ranked)
 			counts["Opportunity"] += 1
+			commit_batch()
 		except Exception:
 			skipped += 1
 			frappe.log_error(frappe.get_traceback(), "Drive Link Scan (Opportunity)")
