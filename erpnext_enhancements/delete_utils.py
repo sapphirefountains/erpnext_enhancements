@@ -21,18 +21,36 @@ from frappe.model.dynamic_links import get_dynamic_link_map
 from frappe.model.rename_doc import get_link_fields
 
 
+def _resolve_doctype(doctype: str) -> str:
+	"""Map a doctype identifier to its real DocType name.
+
+	The "Unlink and Delete" frontend reads the doctype out of a desk URL, so it
+	arrives as the route *slug* — lowercased with spaces turned into hyphens
+	(e.g. "sapphire-maintenance-contract" for "Sapphire Maintenance Contract").
+	A bare DocType lookup only corrects casing (the name column collates
+	case-insensitively, which is why "task" already resolved to "Task"); it does
+	*not* undo the space→hyphen swap, so ``frappe.get_doc`` then failed to import
+	the controller (``No module named '…sapphire_maintenance_contract'``). Try an
+	exact (case-insensitive) match first — which also covers doctypes whose real
+	name legitimately contains a hyphen — then retry with hyphens turned back
+	into spaces. Fall back to the input unchanged (e.g. a virtual doctype not in
+	the table)."""
+	for candidate in (doctype, doctype.replace("-", " ")):
+		real = frappe.db.get_value("DocType", {"name": candidate}, "name")
+		if real:
+			return real
+	return doctype
+
+
 @frappe.whitelist()
 def get_blocking_links(doctype, name):
 	"""
 	Returns a detailed list of documents blocking the deletion of the target document.
 	"""
-	# Ensure proper casing (e.g. 'task' -> 'Task')
-	real_doctype = frappe.db.get_value("DocType", {"name": doctype}, "name")
-	if not real_doctype:
-		# Maybe it's already correct or it's a virtual doctype not in DB
-		real_doctype = doctype
-	
-	doctype = real_doctype
+	# The frontend extracts the doctype from a desk URL, so it arrives as the
+	# route slug (e.g. 'sapphire-maintenance-contract'). Resolve it to the real
+	# DocType name before loading anything (see _resolve_doctype).
+	doctype = _resolve_doctype(doctype)
 
 	try:
 		doc = frappe.get_doc(doctype, name)
@@ -173,11 +191,14 @@ def unlink_and_delete(doctype, name):
 	not abort the others. Finally force-deletes the target with permissions
 	ignored. Returns ``{"success": True}``.
 	"""
+	# Resolve the route slug / casing to the real DocType name *before* the
+	# permission check and delete — the frontend passes the desk URL slug (see
+	# _resolve_doctype), so checking permission or loading the doc against the
+	# raw slug would fail to resolve the doctype and abort the whole flow.
+	doctype = _resolve_doctype(doctype)
+
 	if not frappe.has_permission(doctype, "delete", name):
 		frappe.throw(_("You do not have permission to delete {0} {1}").format(doctype, name))
-
-	# Ensure proper casing
-	doctype = frappe.db.get_value("DocType", {"name": doctype}, "name") or doctype
 
 	links = get_blocking_links(doctype, name)
 	

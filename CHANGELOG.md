@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.2] - 2026-06-15
+
+### Fixed
+- **"Unlink and Delete" crashed on multi-word doctypes** (`delete_utils.py`). The flow reads the target doctype out of a desk URL, so it arrives as the route *slug* — lowercased with spaces turned into hyphens (e.g. `sapphire-maintenance-contract` for `Sapphire Maintenance Contract`). The server only corrected *casing* (via the case-insensitive `name` collation, which is why single-word `task`→`Task` worked) but never undid the space→hyphen swap, so `frappe.get_doc()` failed to import the controller and raised `ModuleNotFoundError: No module named 'frappe.core.doctype.sapphire_maintenance_contract'` / `ImportError … the DocType you're trying to open might be deleted`. A new `_resolve_doctype()` helper now matches the real DocType name in two steps (exact case-insensitive match, then hyphens→spaces), used by both `get_blocking_links` and `unlink_and_delete` — and in `unlink_and_delete` it runs *before* the permission check (which previously also ran against the unresolved slug). Single-word and already-correct doctype names are unaffected.
+
 ## [1.32.1] - 2026-06-13
 
 ### Changed
