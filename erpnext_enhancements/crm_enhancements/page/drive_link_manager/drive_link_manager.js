@@ -100,28 +100,51 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 		frappe.confirm(
 			__('Re-scan the Shared Drive and rebuild match suggestions? Existing un-applied reviews will be replaced (already-linked rows are kept).'),
 			() => {
-				frappe.dom.freeze(__('Scanning Drive folders and ranking matches…'));
+				frappe.dom.freeze(__('Scanning Drive folders and ranking matches… this runs in the background and can take a minute.'));
 				frappe.call({
 					method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.scan_drive_links',
-					callback: (r) => {
-						frappe.dom.unfreeze();
-						const m = r && r.message;
-						if (m) {
-							frappe.show_alert({
-								message: __('Scanned {0} folders — {1} records to review ({2} skipped).',
-									[m.folders_scanned, m.total, m.skipped || 0]),
-								indicator: 'green',
-							});
-						}
-						load();
-					},
+					callback: () => pollScan(0),
 					error: () => {
 						frappe.dom.unfreeze();
-						frappe.msgprint({ title: __('Scan failed'), message: __('See the Error Log. Check the Drive service account and Shared Drive ID in settings.'), indicator: 'red' });
+						frappe.msgprint({ title: __('Scan failed to start'), message: __('See the Error Log. Check the Drive service account and Shared Drive ID in settings.'), indicator: 'red' });
 					},
 				});
 			}
 		);
+	}
+
+	// The scan runs on a background worker; poll its status until it finishes
+	// (or give up after ~6 min — the job keeps running and a reload shows it).
+	const SCAN_POLL_MS = 2500;
+	const SCAN_POLL_MAX = 150;
+	function pollScan(attempt) {
+		frappe.call({
+			method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.scan_status',
+			callback: (r) => {
+				const s = (r && r.message) || {};
+				if (s.state === 'done') {
+					frappe.dom.unfreeze();
+					const m = s.result || {};
+					frappe.show_alert({
+						message: __('Scanned {0} folders — {1} records to review ({2} skipped).', [m.folders_scanned || 0, m.total || 0, m.skipped || 0]),
+						indicator: 'green',
+					});
+					load();
+				} else if (s.state === 'error') {
+					frappe.dom.unfreeze();
+					frappe.msgprint({ title: __('Scan failed'), message: __('The scan hit an error — see the Error Log.'), indicator: 'red' });
+				} else if (attempt >= SCAN_POLL_MAX) {
+					frappe.dom.unfreeze();
+					frappe.msgprint({ title: __('Still scanning'), message: __('The scan is taking longer than expected; it is still running in the background. Reload this page in a minute to see the results.'), indicator: 'orange' });
+				} else {
+					setTimeout(() => pollScan(attempt + 1), SCAN_POLL_MS);
+				}
+			},
+			error: () => {
+				frappe.dom.unfreeze();
+				frappe.msgprint({ title: __('Lost connection'), message: __('Could not check scan status — it may still be running. Reload the page shortly.'), indicator: 'orange' });
+			},
+		});
 	}
 
 	// ------------------------------------------------------------------- render

@@ -193,13 +193,64 @@ def _resolve_customer_folder(party, cust_labels, cust_folder_ids, by_id, root_fo
 	return None
 
 
+SCAN_STATUS_KEY = "drive_link_scan_status"
+
+
+def _set_scan_status(state, **extra):
+	frappe.cache().set_value(
+		SCAN_STATUS_KEY, {"state": state, "at": frappe.utils.now(), **extra}, expires_in_sec=3600
+	)
+
+
 @frappe.whitelist()
 def scan_drive_links():
+	"""Kick off a Shared-Drive scan in the background and return immediately.
+	The work (list folders → fuzzy-rank → stage candidates) can take a while at
+	scale — hundreds of records, one Drive listing — so it would blow the HTTP
+	timeout if run inline. It runs on the long queue instead; the dashboard polls
+	:func:`scan_status`. Re-running is safe — the job clears prior non-``Linked``
+	rows first."""
+	_require_admin()
+	_set_scan_status("queued")
+	frappe.enqueue(
+		"erpnext_enhancements.crm_enhancements.drive_link_manager._run_scan_job",
+		queue="long",
+		timeout=1500,
+	)
+	return {"state": "queued"}
+
+
+@frappe.whitelist()
+def scan_status():
+	"""Background-scan state for the dashboard poller:
+	``idle`` | ``queued`` | ``running`` | ``done`` (carries ``result``) | ``error``."""
+	_require_admin()
+	data = frappe.cache().get_value(SCAN_STATUS_KEY)
+	if isinstance(data, (str, bytes)):
+		try:
+			data = json.loads(data)
+		except (ValueError, TypeError):
+			data = None
+	return data or {"state": "idle"}
+
+
+def _run_scan_job():
+	"""Background entry point: run the scan, recording state for the poller so the
+	dashboard can show progress and reload when it finishes."""
+	_set_scan_status("running")
+	try:
+		result = _run_scan()
+		_set_scan_status("done", result=result)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Drive Link Scan")
+		_set_scan_status("error", error=str(frappe.get_traceback())[:400])
+
+
+def _run_scan():
 	"""Rebuild the Drive Link Candidate set from the current Shared Drive folders
 	and unlinked records. Clears prior non-``Linked`` rows first so it is safe to
 	re-run. Per-record failures are logged and skipped — the scan always finishes
-	what it can."""
-	_require_admin()
+	what it can. Returns a summary dict."""
 	service, drive_id = get_drive_service()
 	if not drive_id:
 		frappe.throw("Shared Drive ID not configured in Project Folder Google Drive Settings")
