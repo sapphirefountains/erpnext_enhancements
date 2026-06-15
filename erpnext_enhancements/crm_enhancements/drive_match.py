@@ -111,3 +111,41 @@ def best_matches(aliases, folders, limit=3):
 		ranked.append({"folder": folder, "score": best})
 	ranked.sort(key=lambda row: row["score"], reverse=True)
 	return ranked[:limit]
+
+
+def token_index(folders):
+	"""Build a ``{token: [folders]}`` inverted index over folder names, stamping
+	a normalized ``_tokens`` set on each folder dict along the way. Pairs with
+	:func:`blocked_candidates` so a record need only be fuzzy-scored against
+	folders that share a word with it — without this, matching every record
+	against every folder is O(records × folders) and unworkable on a large drive.
+	"""
+	index = {}
+	for folder in folders:
+		tokens = folder.get("_tokens")
+		if tokens is None:
+			tokens = set(normalize(folder.get("name", "")).split())
+			folder["_tokens"] = tokens
+		for token in tokens:
+			index.setdefault(token, []).append(folder)
+	return index
+
+
+def blocked_candidates(aliases, index, cap=200):
+	"""The folders worth fuzzy-scoring for a record: those whose name shares at
+	least one word with any alias, de-duped. Rarest tokens are walked first so
+	the most distinctive — and most likely correct — folders are gathered before
+	``cap`` trims very common words. ``index`` comes from :func:`token_index`."""
+	wanted = set()
+	for alias in aliases:
+		wanted |= set(normalize(alias or "").split())
+	seen, out = set(), []
+	for token in sorted(wanted, key=lambda t: len(index.get(t, ()))):
+		for folder in index.get(token, ()):
+			fid = folder.get("id")
+			if fid not in seen:
+				seen.add(fid)
+				out.append(folder)
+				if len(out) >= cap:
+					return out
+	return out

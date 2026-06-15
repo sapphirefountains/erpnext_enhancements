@@ -95,5 +95,58 @@ class TestBestMatches(unittest.TestCase):
 		self.assertEqual(ranked[0]["folder"]["id"], "f2")
 
 
+class TestTokenBlocking(unittest.TestCase):
+	def setUp(self):
+		self.folders = [
+			{"id": "f1", "name": "Smith Residence"},
+			{"id": "f2", "name": "Smith Pool"},
+			{"id": "f3", "name": "Jones Residence"},
+			{"id": "f4", "name": "Acme Industrial"},
+		]
+		self.index = dm.token_index(self.folders)
+
+	def test_index_stamps_tokens(self):
+		self.assertEqual(self.folders[0]["_tokens"], {"smith", "residence"})
+
+	def test_index_groups_by_token(self):
+		self.assertEqual({f["id"] for f in self.index["smith"]}, {"f1", "f2"})
+		self.assertEqual({f["id"] for f in self.index["residence"]}, {"f1", "f3"})
+
+	def test_blocked_returns_only_word_sharing_folders(self):
+		# "Smith Residence" shares 'smith' (f1,f2) and 'residence' (f1,f3); not f4.
+		got = {f["id"] for f in dm.blocked_candidates(["Smith Residence"], self.index)}
+		self.assertEqual(got, {"f1", "f2", "f3"})
+
+	def test_blocked_excludes_unrelated(self):
+		self.assertEqual([f["id"] for f in dm.blocked_candidates(["Acme"], self.index)], ["f4"])
+
+	def test_blocked_empty_when_no_overlap(self):
+		self.assertEqual(dm.blocked_candidates(["Zzz Nothing"], self.index), [])
+
+	def test_blocked_strips_id_prefix(self):
+		# Normalizes to "smith residence" → still blocks in f1.
+		got = {f["id"] for f in dm.blocked_candidates(["PRJ-00694 Smith Residence"], self.index)}
+		self.assertIn("f1", got)
+
+	def test_blocked_respects_cap(self):
+		many = [{"id": f"x{i}", "name": "Common Word"} for i in range(10)]
+		idx = dm.token_index(many)
+		self.assertEqual(len(dm.blocked_candidates(["common"], idx, cap=3)), 3)
+
+	def test_blocked_rarest_token_first(self):
+		# 'smith' is rarer (2 folders) than nothing here; the distinctive token's
+		# folders are gathered before the cap would trim. With a cap of 1 and a
+		# query sharing both a rare and common token, the rare token wins.
+		folders = [
+			{"id": "rare", "name": "Zebra Alpha"},
+			{"id": "c1", "name": "Common Alpha"},
+			{"id": "c2", "name": "Common Beta"},
+		]
+		idx = dm.token_index(folders)
+		# 'zebra' appears once, 'common'/'alpha' more; rarest-first surfaces 'zebra'.
+		first = dm.blocked_candidates(["Zebra Common"], idx, cap=1)
+		self.assertEqual(first[0]["id"], "rare")
+
+
 if __name__ == "__main__":
 	unittest.main()

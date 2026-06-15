@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.5] - 2026-06-15
+
+### Fixed
+- **Drive Link Manager scan overwhelmed the server** (intermittent `502 Bad Gateway` on socket.io and `scan_status` while a scan ran) on a real-size dataset — ~1,350 customers, ~600 projects, ~770 opportunities against the whole Shared Drive. The matcher compared every record against every folder (O(records × folders) — millions of `SequenceMatcher` calls), re-resolved each record's customer folder, and committed thousands of inserts in one transaction, pegging CPU/DB so other requests couldn't get a worker. Now: an **inverted token index** (`drive_match.token_index` / `blocked_candidates`) scores each record only against folders that share a word with it (rarest token first, capped); each **customer's folder is resolved once** and cached; and inserts **commit in batches of 200**. Pure indexing/blocking logic is unit-tested bench-free (`tests/test_drive_match.py`).
+
 ## [1.34.4] - 2026-06-15
 
 ### Fixed
