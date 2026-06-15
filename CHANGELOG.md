@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.2] - 2026-06-15
+
+### Fixed
+- **Opportunity "Description" field is no longer mandatory** (`fixtures/custom_field.json`, `Opportunity-custom_description`). The field carried `reqd: 1` while living under the hidden `Opportunity Description` section break — a hidden-yet-mandatory combination that makes Frappe block saving an Opportunity on a field nobody can see. Set `reqd: 0` and made the field explicitly `hidden: 1` so it stays hidden and can never block a save. Applies on `bench migrate` (re-syncs the Custom Field from the fixture).
+
 ## [1.34.1] - 2026-06-15
 
 ### Changed
