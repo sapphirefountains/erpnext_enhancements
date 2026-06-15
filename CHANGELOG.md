@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.3] - 2026-06-15
+
+### Fixed
+- **Drive Link Manager dashboard failed to load** with `417 Expectation Failed` — `ValidationError: Invalid field format in Order By` (`crm_enhancements/drive_link_manager.py`, `get_candidates`). The candidate query ordered by a raw SQL `FIELD(reference_doctype, 'Customer', 'Project', 'Opportunity')` expression, which Frappe's query builder rejects (it validates `order_by` against real field names — SQL functions aren't allowed). Now orders by `score desc` and applies the Customer → Project → Opportunity group ordering in Python (the dashboard groups in that order regardless), and returns the summary tallies as plain dicts. Verified against the live Frappe build.
+
 ## [1.34.2] - 2026-06-15
 
 ### Fixed

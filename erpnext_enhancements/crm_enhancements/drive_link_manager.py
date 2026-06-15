@@ -296,9 +296,15 @@ def get_candidates():
 			"alternatives", "decision", "chosen_folder_id", "chosen_folder_label",
 			"status", "error",
 		],
-		order_by="field(reference_doctype, 'Customer', 'Project', 'Opportunity'), score desc",
+		order_by="score desc",
 		limit_page_length=0,
 	)
+
+	# Group order the dashboard expects — Customer → Project → Opportunity, each
+	# by score desc. Done in Python because Frappe's query builder rejects SQL
+	# functions like FIELD() in order_by (it validates field names).
+	_priority = {"Customer": 0, "Project": 1, "Opportunity": 2}
+	rows.sort(key=lambda r: (_priority.get(r.reference_doctype, 99), -(r.score or 0)))
 
 	# Conflict = a folder targeted by >1 approved row that isn't linked yet.
 	folder_users = defaultdict(list)
@@ -316,6 +322,8 @@ def get_candidates():
 		if row.decision in ("Approve", "Create New") and row.status != "Linked":
 			summary["approved"] += 1
 
+	summary["by_status"] = dict(summary["by_status"])
+	summary["by_tier"] = dict(summary["by_tier"])
 	return {"candidates": rows, "summary": summary, "conflicts": len(conflicts)}
 
 
