@@ -307,8 +307,9 @@ def enqueue_opportunity_folder(doc, method=None):
 
 
 def provision_opportunity_folder(opportunity):
-	"""Background job: find-or-create ``<Customer>/<Opportunity — Title>`` in
-	the Shared Drive and store its id on ``Opportunity.custom_drive_folder_id``."""
+	"""Background job: find-or-create ``<Customer>/<Opportunity ID - Title>`` in
+	the Shared Drive (e.g. ``CRM-OPP-2026-00112 - Pool Reno``) and store its id on
+	``Opportunity.custom_drive_folder_id``."""
 	from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
 
 	try:
@@ -330,7 +331,7 @@ def provision_opportunity_folder(opportunity):
 			customer_folder_id, _ = create_folder(
 				service, customer_label, shared_drive_id, shared_drive_id
 			)
-		folder_name = f"{opportunity} — {opp.title}".strip(" —") if opp.title else opportunity
+		folder_name = f"{opportunity} - {opp.title}".strip(" -") if opp.title else opportunity
 		folder_id = find_folder(service, folder_name, customer_folder_id, shared_drive_id)
 		if not folder_id:
 			folder_id, _ = create_folder(service, folder_name, customer_folder_id, shared_drive_id)

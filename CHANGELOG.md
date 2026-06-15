@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.1] - 2026-06-15
+
+### Changed
+- **Opportunity Drive folders now use an `ID - Name` schema** — e.g. `CRM-OPP-2026-00112 - Pool Reno` — replacing the previous em-dash form (`… — …`) in `drive_utils.provision_opportunity_folder`. Applies to newly provisioned Opportunity folders, including the Drive Link Manager's "Create New" action (which calls the same provisioner). Existing folders are not renamed.
+
 ## [1.34.0] - 2026-06-15
 
 ### Added
