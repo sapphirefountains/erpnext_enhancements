@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.48.0] - 2026-06-16
+
+### Removed
+- **Dropped the orphaned `Project Note` child-table doctype.** "Project Note" (singular, `istable`) was a leftover with **no parent** — a repo-wide grep for `"options": "Project Note"` is empty, and nothing imports or references it by name. The in-use project-notes child table is **`Project Notes`** (plural, on the Project Custom Field), which is untouched. Removed the `enhancements_core/doctype/project_note/` folder and added a **guarded, idempotent** patch (`drop_orphan_project_note`, post-model-sync) that deletes the DocType + its table — skipping (and logging) if `tabProject Note` somehow holds rows, so data is never silently dropped.
+
+> Version note: this independent cleanup is numbered 1.48.0 to sit above the in-flight 1.47.0 PR (#458, Travel/Expense Claim Type); merge that first to keep the changelog ordered.
 ## [1.47.0] - 2026-06-16
 
 ### Added
