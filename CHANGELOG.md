@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.46.0] - 2026-06-16
+
+### Changed
+- **New `Process Documentation` module** (module-reorganization PR 11) — the **Process Document** doctype (mermaid process diagrams) moves out of Enhancements Core into its own module + sidebar (`/app/process-documentation`):
+  - Doctype moved `enhancements_core` → `process_documentation`. **No code changes** — it's referenced only by doctype name (hooks `doctype_js`, the `setup/process_documents.py` seeder, and a Link field on Process Step Template), and its form JS / public asset paths are unchanged.
+  - Distinct from the **PRO-0204 hand-off engine** (`process_steps.py` / Process Step Template in Project Enhancements), which is untouched — Process Step Template's Link to "Process Document" resolves by name.
+  - Sidebar: Process Document shortcut; a Documentation card (Process Document).
+- Idempotent backstop patch `move_process_document_to_process_documentation` (post-model-sync) reassigns the `module` on existing installs — no data moves.
+
 ## [1.45.0] - 2026-06-16
 
 ### Changed
