@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.1] - 2026-06-16
+
+### Changed
+- **Moved the `Job Interval` doctype `enhancements_core` → `workforce`** — follow-up to the Workforce module (v1.38.0). Job Interval is the Time Kiosk clock-in *session*, so it now sits with the other time-tracking doctypes instead of in Core. No code changes were needed (it's referenced only by doctype name and via the `job_interval` Link field on Time Kiosk Log); the Workforce sidebar already linked it. Idempotent backstop patch `move_job_interval_to_workforce` (post-model-sync) reassigns the `module` on existing installs — no data moves.
+
 ## [1.38.0] - 2026-06-16
 
 ### Changed

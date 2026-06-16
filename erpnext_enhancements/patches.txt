@@ -12,6 +12,8 @@ erpnext_enhancements.patches.rename_quickbooks_module
 # Patches added in this section will be executed after doctypes are migrated
 # v1.38.0 Workforce module: reassign Time Kiosk doctypes/pages out of Enhancements Core
 erpnext_enhancements.patches.move_time_tracking_to_workforce
+# v1.38.1 Workforce: also move the Job Interval (clock-in session) doctype out of Core
+erpnext_enhancements.patches.move_job_interval_to_workforce
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons

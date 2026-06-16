@@ -21,7 +21,7 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
 - [x] **PR 4** — Workforce — v1.38.0
   - Moved Time Kiosk Log + Time Kiosk Settings doctypes and the Time Kiosk + Location Timeline pages `enhancements_core` → `workforce`; only `api/time_kiosk.py` needed an import-path fix (everything else refs doctypes by name / `api.time_kiosk`, which stays).
   - `/kiosk` PWA + `api.time_kiosk` stay app-level; sidebar links them. Idempotent backstop patch `move_time_tracking_to_workforce`.
-  - **Open:** `Job Interval` (clock-in session doctype) stays in Core but is cross-linked from the Workforce sidebar — candidate to also move to Workforce in a follow-up for full coherence.
+  - Follow-up done (v1.38.1): `Job Interval` (clock-in session doctype) also moved Core → Workforce — no code changes needed (refs are by name / Link field), backstop patch `move_job_interval_to_workforce`.
 - [ ] PR 5 — Integrations · PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
