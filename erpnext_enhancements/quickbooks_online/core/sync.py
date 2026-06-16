@@ -21,14 +21,16 @@ before transactions so reference links resolve.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import frappe
-from frappe.utils import add_to_date, now_datetime
+from frappe.utils import add_to_date, get_datetime, now_datetime
 
 from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
 from erpnext_enhancements.quickbooks_online.core.constants import (
 	ACCOUNTING_ENTITIES,
 	CDC_ENTITIES,
+	CDC_MAX_LOOKBACK_DAYS,
 	MASTER_ENTITIES,
 	TRANSACTION_ENTITIES,
 )
@@ -192,7 +194,10 @@ def run_cdc():
 	ensure_connected(settings)
 	log = start_log("CDC")
 	# Cursor: changes since the last successful CDC; first run looks back 24h.
+	# Clamp it into QBO's 30-day CDC window so a stale cursor (paused integration)
+	# degrades to a recent window instead of a hard 400.
 	changed_since = settings.last_cdc_sync or add_to_date(now_datetime(), days=-1, as_datetime=True)
+	changed_since = _clamp_cdc_cursor(get_datetime(changed_since), get_datetime(now_datetime()))
 	try:
 		response = QuickBooksClient(settings).cdc(CDC_ENTITIES, changed_since)
 		for cdc_response in response.get("CDCResponse", []):
@@ -253,20 +258,41 @@ def retry_failed(log_name=None):
 	return True
 
 
+def _clamp_cdc_cursor(changed_since, now):
+	"""Clamp a CDC ``changedSince`` cursor into QBO's 30-day lookback window.
+
+	QBO rejects a cursor older than ~30 days; if the stored cursor predates that
+	(the integration was paused longer than the window), return the earliest
+	timestamp QBO still accepts -- a 1-day safety margin inside the limit to
+	tolerate clock skew with Intuit's servers. Otherwise the cursor is unchanged.
+	"""
+	earliest = now - timedelta(days=CDC_MAX_LOOKBACK_DAYS - 1)
+	if changed_since is None or changed_since < earliest:
+		return earliest
+	return changed_since
+
+
 def query_all(entity_type, settings=None):
 	"""Yield every QBO record of a type, paging through the query endpoint.
 
 	Generator that walks QBO's ``startposition``/``maxresults`` pagination (100
 	per page) until a short page signals the end. Each page is a separate HTTP
 	call via ``client.query``.
+
+	Master entities add ``where Active in (true, false)`` because QBO's query
+	endpoint returns only active records by default; without it, transactions
+	referencing deactivated accounts/items/parties (common in historical data)
+	would have unresolvable references and import incomplete or unbalanced.
 	"""
 	settings = settings or get_settings()
 	client = QuickBooksClient(settings)
 	start_position = 1
 	max_results = 100
+	# QBO syntax: the WHERE clause precedes startposition/maxresults paging.
+	condition = " where Active in (true, false)" if entity_type in MASTER_ENTITIES else ""
 	while True:
 		response = client.query(
-			f"select * from {entity_type} startposition {start_position} maxresults {max_results}"
+			f"select * from {entity_type}{condition} startposition {start_position} maxresults {max_results}"
 		)
 		query_response = response.get("QueryResponse") or {}
 		records = query_response.get(entity_type) or []

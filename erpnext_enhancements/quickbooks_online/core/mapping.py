@@ -50,12 +50,18 @@ def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str |
 		"Vendor": _map_supplier,
 		"Item": _map_item,
 		"Invoice": _map_sales_invoice,
+		"SalesReceipt": _map_sales_receipt,
 		"Bill": _map_purchase_invoice,
 		"Payment": _map_payment_entry,
 		"JournalEntry": _map_journal_entry,
 		"Estimate": _map_quotation,
 		"PurchaseOrder": _map_purchase_order,
-		"Deposit": _map_payment_entry,
+		"Purchase": _map_purchase,
+		"Transfer": _map_transfer,
+		"BillPayment": _map_bill_payment,
+		"CreditCardPayment": _map_credit_card_payment,
+		"VendorCredit": _map_vendor_credit,
+		"Deposit": _map_deposit,
 		"TaxCode": _map_tax_code,
 	}
 	mapper = mappers.get(entity_type)
@@ -432,6 +438,9 @@ def validate_mapped_values(
 			issues.append(f"Missing required field: {fieldname}")
 	for account in _blocked_stock_accounts(entity_type, values):
 		issues.append(f"Stock account requires a stock transaction: {account}")
+	imbalance = _journal_imbalance(entity_type, values)
+	if imbalance:
+		issues.append(imbalance)
 	return issues
 
 
@@ -446,10 +455,20 @@ def _required_mapped_fields(
 	"""
 	fields = {
 		"Invoice": {"company", "customer", "items"},
+		"SalesReceipt": {"company", "customer", "items"},
 		"Bill": {"company", "supplier", "items"},
 		"Estimate": {"company", "party_name", "items"},
 		"PurchaseOrder": {"company", "supplier", "items"},
 		"JournalEntry": {"company", "accounts"},
+		# Cash-movement types mapped to Journal Entries: an empty accounts table
+		# means none of their account references resolved -> manual review rather
+		# than an opaque insert failure.
+		"Purchase": {"company", "accounts"},
+		"Transfer": {"company", "accounts"},
+		"BillPayment": {"company", "accounts"},
+		"CreditCardPayment": {"company", "accounts"},
+		"VendorCredit": {"company", "accounts"},
+		"Deposit": {"company", "accounts"},
 	}.get(entity_type, set())
 	if not include_doc_required:
 		return fields
@@ -468,12 +487,26 @@ def _required_mapped_fields(
 def _can_validate_required_field(df, values: dict) -> bool:
 	"""Whether a DocType required field is one we can pre-validate.
 
-	True if we mapped it, False if it has a default (ERPNext will fill it).
-	Otherwise only data-bearing field types are checked -- layout/virtual types
-	are ignored so we don't flag fields ERPNext populates itself.
+	True if we mapped it. Otherwise we skip the fields ERPNext fills for us on
+	insert, so a record is not parked for manual review over values its
+	controller computes anyway:
+
+	  * ``naming_series`` -- assigned by autoname.
+	  * ``read_only``     -- computed totals (grand_total, base_*_amount, ...).
+	  * ``fetch_from``    -- pulled from a linked doc (e.g. account currency).
+	  * has a ``default`` -- ERPNext applies the field default.
+
+	Everything else is checked, but only for data-bearing field types (layout/
+	virtual types are ignored).
 	"""
 	if df.fieldname in values:
 		return True
+	if df.fieldname == "naming_series":
+		return False
+	if getattr(df, "read_only", 0):
+		return False
+	if getattr(df, "fetch_from", None):
+		return False
 	if getattr(df, "default", None):
 		return False
 	return getattr(df, "fieldtype", None) in {
@@ -517,6 +550,31 @@ def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
 		if account and frappe.db.get_value("Account", account, "account_type") == "Stock":
 			stock_accounts.append(account)
 	return stock_accounts
+
+
+def _journal_imbalance(entity_type: str, values: dict) -> str | None:
+	"""Return an issue string if a Journal Entry's debits and credits don't match.
+
+	Applies to every entity mapped onto a Journal Entry (native JournalEntry plus
+	the cash-movement types: Purchase/Transfer/BillPayment/Deposit/...). A lopsided
+	total almost always means a line referenced a QBO account that isn't mapped
+	into ERPNext yet (e.g. an inactive account that wasn't imported), so it is
+	routed to manual review with a clear reason instead of failing on insert with
+	ERPNext's opaque "Total Debit must equal Total Credit" error.
+	"""
+	if get_erpnext_doctype(entity_type) != "Journal Entry":
+		return None
+	rows = values.get("accounts") or []
+	if not rows:
+		return None
+	debit = sum(_to_amount(row.get("debit_in_account_currency")) for row in rows)
+	credit = sum(_to_amount(row.get("credit_in_account_currency")) for row in rows)
+	if round(debit - credit, 2) == 0:
+		return None
+	return (
+		f"Journal Entry is unbalanced (debit {debit:.2f} vs credit {credit:.2f}); "
+		"some lines may reference QuickBooks accounts not yet imported into ERPNext."
+	)
 
 
 def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
@@ -590,10 +648,17 @@ def _normalize(value):
 
 
 def _display_name(payload):
-	"""Best human-readable label for a QBO record (DisplayName/Name/.../Id)."""
+	"""Best human-readable label for a QBO record.
+
+	``FullyQualifiedName`` is preferred over ``DisplayName`` so QBO sub-customers
+	and sub-vendors (jobs like ``Landmark Aquatics:100023 - Daybreak Splash Pad``)
+	keep their parent context and stay unique -- a bare ``DisplayName`` is only
+	the leaf and can collide across different parents. For top-level records the
+	two are identical, so this is a no-op there.
+	"""
 	return (
-		payload.get("DisplayName")
-		or payload.get("FullyQualifiedName")
+		payload.get("FullyQualifiedName")
+		or payload.get("DisplayName")
 		or payload.get("Name")
 		or payload.get("Id")
 	)
@@ -701,75 +766,287 @@ def _map_item(payload, settings):
 
 
 def _map_sales_invoice(payload, settings):
-	"""Map a QBO Invoice to an ERPNext Sales Invoice (customer + line items)."""
+	"""Map a QBO Invoice to an ERPNext Sales Invoice (customer + line items).
+
+	Sets the currency/exchange and receivable account ERPNext otherwise can't
+	infer from the minimal payload, so the invoice is insertable rather than
+	parked for missing required fields. ``base_*``/``grand_total`` are left for
+	ERPNext to compute.
+	"""
+	currency, rate = _txn_currency(payload, settings)
 	return "Sales Invoice", {
 		"company": settings.company,
-		"customer": _linked_name("Customer", "Customer", payload.get("CustomerRef", {}).get("value")),
+		"customer": _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value")),
 		"posting_date": payload.get("TxnDate"),
 		"set_posting_time": 1,
+		"currency": currency,
+		"conversion_rate": rate,
+		"debit_to": _company_value(settings, "default_receivable_account"),
+		"selling_price_list": _default_price_list(selling=True),
+		"price_list_currency": currency,
+		"plc_conversion_rate": 1,
 		"items": _sales_items(payload),
 		"remarks": f"Imported from QuickBooks Online Invoice {payload.get('DocNumber') or payload.get('Id')}",
 	}
 
 
+def _map_sales_receipt(payload, settings):
+	"""Map a QBO SalesReceipt to an ERPNext Sales Invoice.
+
+	A Sales Receipt is an invoice paid at the point of sale; it is imported as a
+	Sales Invoice (so revenue and the item income accounts post correctly). The
+	cash side is not linked here -- see the migration notes on reconciling the
+	deposit account.
+	"""
+	doctype, values = _map_sales_invoice(payload, settings)
+	values["remarks"] = (
+		f"Imported from QuickBooks Online Sales Receipt {payload.get('DocNumber') or payload.get('Id')}"
+	)
+	return doctype, values
+
+
 def _map_purchase_invoice(payload, settings):
-	"""Map a QBO Bill to an ERPNext Purchase Invoice (supplier + line items)."""
+	"""Map a QBO Bill to an ERPNext Purchase Invoice (supplier + line items).
+
+	Sets the payable account (``credit_to``) and currency/exchange ERPNext can't
+	infer from the payload so the bill is insertable.
+	"""
+	currency, rate = _txn_currency(payload, settings)
 	return "Purchase Invoice", {
 		"company": settings.company,
-		"supplier": _linked_name("Vendor", "Supplier", payload.get("VendorRef", {}).get("value")),
+		"supplier": _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value")),
 		"posting_date": payload.get("TxnDate"),
 		"set_posting_time": 1,
+		"currency": currency,
+		"conversion_rate": rate,
+		"credit_to": _company_value(settings, "default_payable_account"),
 		"items": _purchase_items(payload),
 		"remarks": f"Imported from QuickBooks Online Bill {payload.get('DocNumber') or payload.get('Id')}",
 	}
 
 
 def _map_payment_entry(payload, settings):
-	"""Map a QBO Payment or Deposit to an ERPNext Payment Entry.
+	"""Map a QBO Payment to an ERPNext Payment Entry.
 
 	Returns ``(None, {})`` if the referenced party (Customer or Vendor) is not yet
-	mapped, since a Payment Entry requires a party.
+	mapped, since a Payment Entry requires a party. Populates the bank/party
+	accounts and amounts ERPNext requires: a customer Payment is a "Receive"
+	(debit the company's default bank/cash, credit the receivable); a vendor
+	Payment is a "Pay" (the reverse). Single-currency exchange rates are 1.
 	"""
 	party_type, party = _payment_party(payload)
 	if not party_type or not party:
 		return None, {}
+	currency, rate = _txn_currency(payload, settings)
+	amount = _to_amount(payload.get("TotalAmt"))
+	bank = _company_value(settings, "default_bank_account") or _company_value(settings, "default_cash_account")
+	if party_type == "Customer":
+		payment_type, paid_from, paid_to = "Receive", _company_value(settings, "default_receivable_account"), bank
+	else:
+		payment_type, paid_from, paid_to = "Pay", bank, _company_value(settings, "default_payable_account")
 	return "Payment Entry", {
 		"company": settings.company,
 		"posting_date": payload.get("TxnDate"),
-		"payment_type": "Receive",
+		"payment_type": payment_type,
 		"party_type": party_type,
 		"party": party,
-		"remarks": f"Imported from QuickBooks Online payment/deposit {payload.get('Id')}",
+		"paid_from": paid_from,
+		"paid_to": paid_to,
+		"paid_amount": amount,
+		"received_amount": amount,
+		"source_exchange_rate": rate,
+		"target_exchange_rate": rate,
+		"remarks": f"Imported from QuickBooks Online payment {payload.get('Id')}",
 	}
 
 
 def _map_journal_entry(payload, settings):
 	"""Map a QBO JournalEntry to an ERPNext Journal Entry (debit/credit lines)."""
-	return "Journal Entry", {
-		"company": settings.company,
-		"posting_date": payload.get("TxnDate"),
-		"accounts": _journal_accounts(payload),
-		"remark": f"Imported from QuickBooks Online Journal Entry {payload.get('DocNumber') or payload.get('Id')}",
-	}
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		_journal_accounts(payload),
+		f"Imported from QuickBooks Online Journal Entry {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _map_purchase(payload, settings):
+	"""Map a QBO Purchase (Expense / Check / Credit Card charge) to a Journal Entry.
+
+	A normal purchase credits the funding account (bank or credit card,
+	``AccountRef``) and debits each expense line's account; a ``Credit`` (refund /
+	credit-card credit) reverses both sides. Item-based lines are skipped -- their
+	GL account lives on the Item, not the line -- which the balance guard catches.
+	"""
+	is_credit = bool(payload.get("Credit"))
+	total = _to_amount(payload.get("TotalAmt"))
+	accounts = []
+	source = _ledger_line(
+		_resolve_account(settings, (payload.get("AccountRef") or {}).get("value")),
+		debit=total if is_credit else 0,
+		credit=0 if is_credit else total,
+	)
+	if source:
+		accounts.append(source)
+	for line in payload.get("Line") or []:
+		detail = line.get("AccountBasedExpenseLineDetail") or {}
+		amount = _to_amount(line.get("Amount"))
+		row = _ledger_line(
+			_resolve_account(settings, (detail.get("AccountRef") or {}).get("value")),
+			debit=0 if is_credit else amount,
+			credit=amount if is_credit else 0,
+		)
+		if row:
+			accounts.append(row)
+	label = payload.get("PaymentType") or "Purchase"
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online {label} {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _map_transfer(payload, settings):
+	"""Map a QBO Transfer to a Journal Entry (debit the destination, credit the source)."""
+	amount = _to_amount(payload.get("Amount"))
+	accounts = [
+		_ledger_line(_resolve_account(settings, (payload.get("ToAccountRef") or {}).get("value")), debit=amount),
+		_ledger_line(_resolve_account(settings, (payload.get("FromAccountRef") or {}).get("value")), credit=amount),
+	]
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		[row for row in accounts if row],
+		f"Imported from QuickBooks Online Transfer {payload.get('Id')}",
+	)
+
+
+def _map_bill_payment(payload, settings):
+	"""Map a QBO BillPayment to a Journal Entry (debit A/P, credit the funding account).
+
+	The funds come from a bank account (Check) or a credit card (CreditCard); the
+	A/P account falls back to the company default when the payload omits it.
+	"""
+	total = _to_amount(payload.get("TotalAmt"))
+	funding_ref = (
+		(payload.get("CheckPayment") or {}).get("BankAccountRef")
+		or (payload.get("CreditCardPayment") or {}).get("CCAccountRef")
+		or {}
+	).get("value")
+	accounts = [
+		_ledger_line(
+			_resolve_account(settings, (payload.get("APAccountRef") or {}).get("value"), "default_payable_account"),
+			debit=total,
+		),
+		_ledger_line(_resolve_account(settings, funding_ref), credit=total),
+	]
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		[row for row in accounts if row],
+		f"Imported from QuickBooks Online Bill Payment {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _map_credit_card_payment(payload, settings):
+	"""Map a QBO CreditCardPayment to a Journal Entry (debit the card, credit the bank)."""
+	amount = _to_amount(payload.get("Amount") or payload.get("TotalAmt"))
+	accounts = [
+		_ledger_line(
+			_resolve_account(settings, (payload.get("CreditCardAccountRef") or {}).get("value")), debit=amount
+		),
+		_ledger_line(_resolve_account(settings, (payload.get("BankAccountRef") or {}).get("value")), credit=amount),
+	]
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		[row for row in accounts if row],
+		f"Imported from QuickBooks Online Credit Card Payment {payload.get('Id')}",
+	)
+
+
+def _map_vendor_credit(payload, settings):
+	"""Map a QBO VendorCredit to a Journal Entry (debit A/P, credit each expense line)."""
+	total = _to_amount(payload.get("TotalAmt"))
+	accounts = []
+	ap = _ledger_line(
+		_resolve_account(settings, (payload.get("APAccountRef") or {}).get("value"), "default_payable_account"),
+		debit=total,
+	)
+	if ap:
+		accounts.append(ap)
+	for line in payload.get("Line") or []:
+		detail = line.get("AccountBasedExpenseLineDetail") or {}
+		row = _ledger_line(
+			_resolve_account(settings, (detail.get("AccountRef") or {}).get("value")),
+			credit=_to_amount(line.get("Amount")),
+		)
+		if row:
+			accounts.append(row)
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online Vendor Credit {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _map_deposit(payload, settings):
+	"""Map a QBO Deposit to a Journal Entry (debit the deposited-to account, credit sources).
+
+	A bank deposit moves money into ``DepositToAccountRef`` from each line's source
+	account (commonly Undeposited Funds), preserving QBO's clearing-account flow.
+	"""
+	total = _to_amount(payload.get("TotalAmt"))
+	accounts = []
+	deposit_to = _ledger_line(
+		_resolve_account(settings, (payload.get("DepositToAccountRef") or {}).get("value")), debit=total
+	)
+	if deposit_to:
+		accounts.append(deposit_to)
+	for line in payload.get("Line") or []:
+		detail = line.get("DepositLineDetail") or {}
+		row = _ledger_line(
+			_resolve_account(settings, (detail.get("AccountRef") or {}).get("value")),
+			credit=_to_amount(line.get("Amount")),
+		)
+		if row:
+			accounts.append(row)
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online Deposit {payload.get('Id')}",
+	)
 
 
 def _map_quotation(payload, settings):
 	"""Map a QBO Estimate to an ERPNext Quotation (to a Customer)."""
+	currency, rate = _txn_currency(payload, settings)
 	return "Quotation", {
 		"company": settings.company,
 		"quotation_to": "Customer",
-		"party_name": _linked_name("Customer", "Customer", payload.get("CustomerRef", {}).get("value")),
+		"party_name": _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value")),
 		"transaction_date": payload.get("TxnDate"),
+		"currency": currency,
+		"conversion_rate": rate,
+		"selling_price_list": _default_price_list(selling=True),
+		"price_list_currency": currency,
+		"plc_conversion_rate": 1,
 		"items": _sales_items(payload),
 	}
 
 
 def _map_purchase_order(payload, settings):
 	"""Map a QBO PurchaseOrder to an ERPNext Purchase Order (supplier + items)."""
+	currency, rate = _txn_currency(payload, settings)
 	return "Purchase Order", {
 		"company": settings.company,
-		"supplier": _linked_name("Vendor", "Supplier", payload.get("VendorRef", {}).get("value")),
+		"supplier": _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value")),
 		"transaction_date": payload.get("TxnDate"),
+		"currency": currency,
+		"conversion_rate": rate,
 		"items": _purchase_items(payload),
 	}
 
@@ -831,6 +1108,80 @@ def _select_option(doctype: str, fieldname: str, preferred):
 		if value in options:
 			return value
 	return options[0] if options else preferred[0]
+
+
+def _to_amount(value):
+	"""Coerce a QBO numeric (str/None/number) to a float, defaulting to 0."""
+	try:
+		return float(value)
+	except (TypeError, ValueError):
+		return 0.0
+
+
+def _company_value(settings, fieldname: str):
+	"""Read a field off the configured ERPNext Company (e.g. a default account)."""
+	if not settings.company:
+		return None
+	return frappe.db.get_value("Company", settings.company, fieldname)
+
+
+def _company_currency(settings):
+	"""Return the company's default currency (the home currency for postings)."""
+	return _company_value(settings, "default_currency")
+
+
+def _default_price_list(selling: bool = True):
+	"""Return an enabled selling/buying Price List name, or None if none exists."""
+	field = "selling" if selling else "buying"
+	return frappe.db.get_value("Price List", {field: 1, "enabled": 1}, "name")
+
+
+def _txn_currency(payload, settings):
+	"""Resolve a transaction's (currency, conversion_rate) from its QBO CurrencyRef.
+
+	Falls back to the company currency and a rate of 1 -- the common case for a
+	single-currency company, where every QBO transaction is in the home currency.
+	"""
+	currency = (payload.get("CurrencyRef") or {}).get("value") or _company_currency(settings)
+	rate = _to_amount(payload.get("ExchangeRate")) or 1
+	return currency, rate
+
+
+def _resolve_account(settings, qbo_id, company_default_field: str | None = None):
+	"""Resolve a QBO account reference to an ERPNext Account name.
+
+	Prefers the account the QBO id was mapped to; when the payload omits the ref
+	(QBO often leaves A/P implicit) an optional Company default field is used as a
+	fallback. Returns None when neither resolves -- the caller's balance guard
+	then routes the transaction to manual review.
+	"""
+	account = _linked_name("Account", "Account", qbo_id)
+	if account:
+		return account
+	if company_default_field:
+		return _company_value(settings, company_default_field)
+	return None
+
+
+def _ledger_line(account, debit=0, credit=0):
+	"""Build one Journal Entry account row, or None if the account didn't resolve."""
+	if not account:
+		return None
+	return {
+		"account": account,
+		"debit_in_account_currency": _to_amount(debit),
+		"credit_in_account_currency": _to_amount(credit),
+	}
+
+
+def _journal_entry_doc(settings, posting_date, accounts, remark):
+	"""Assemble the ``(\"Journal Entry\", values)`` tuple shared by the JE mappers."""
+	return "Journal Entry", {
+		"company": settings.company,
+		"posting_date": posting_date,
+		"accounts": accounts,
+		"remark": remark,
+	}
 
 
 def _qbo_parent_account(payload, settings):
@@ -944,6 +1295,7 @@ def _account_type(qbo_account_type):
 		"Other Expense": "Expense Account",
 		"Income": "Income Account",
 		"Other Income": "Income Account",
+		"Cost of Goods Sold": "Cost of Goods Sold",
 	}
 	return account_type_map.get(qbo_account_type)
 

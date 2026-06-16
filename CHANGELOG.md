@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-06-16
+
+### Fixed
+- **QuickBooks Online CDC poll no longer fails with `400 ValidationFault` on `changedSince`.** `run_cdc` passed a raw Python `datetime` into the query param, which serialized as `2026-06-09 13:01:02.412672` (space separator, microseconds, no timezone) — QBO rejects that as an invalid/unsupported `changedSince`. A new `utils.format_qbo_datetime` converts the cursor (a naive system-tz datetime) to the ISO-8601 UTC form QBO requires (`2026-06-09T20:01:02Z`), and the client uses it for CDC. The cursor is additionally **clamped into QBO's 30-day CDC window** (`_clamp_cdc_cursor`, `CDC_MAX_LOOKBACK_DAYS`) so a long pause degrades to a recent window instead of a hard error; anything older is reconciled by the next full import.
+- **Transactions no longer get parked in manual review over fields ERPNext fills itself.** The create-time required-field check now skips `naming_series` (autoname), `read_only` computed fields (`grand_total`, `base_*_amount`, …) and `fetch_from` fields (e.g. account currencies). This was blocking **every** Estimate/Invoice/Bill/Payment/Journal Entry/Purchase Order with spurious "Missing required field" issues.
+
+### Changed
+- **Transaction mappers now populate the fields ERPNext can't infer**, so records insert instead of failing: Sales Invoice/Quotation get `currency`/`conversion_rate`/`selling_price_list`/`price_list_currency`/`plc_conversion_rate` and a `debit_to` (company default receivable); Purchase Invoice gets `credit_to` (default payable); Payment Entry gets `paid_from`/`paid_to`/`paid_amount`/`received_amount` and exchange rates (Receive for customers, Pay for vendors). Single-currency companies resolve everything from Company defaults.
+- **Master imports now include inactive QBO records** (`where Active in (true, false)`). Historical transactions frequently reference **deactivated accounts/items/parties** (15 deactivated accounts appear in this company's journal); without them those references couldn't resolve and journal entries imported unbalanced.
+- **Sub-customers/sub-vendors use their fully-qualified name** (`Parent:Job`) instead of the bare leaf, so QBO "jobs" stay unique across parents.
+- Account-type mapping now recognises **Cost of Goods Sold**.
+
+### Added
+- **New QBO transaction types are imported** (previously skipped — together the bulk of a real company's journal): **Purchase** (Expense/Check/Credit Card charge), **Transfer**, **Bill Payment**, **Credit Card Payment**, **Vendor Credit** → balanced **Journal Entries**; **Sales Receipt** → Sales Invoice; **Deposit** is now a Journal Entry (was an unparty-able Payment Entry that silently skipped). Posting directions were verified against the real QBO Journal export.
+- **Journal-balance guard:** any entity mapped to a Journal Entry whose debits/credits don't tie is routed to **manual review** with a clear reason ("some lines may reference accounts not yet imported") instead of failing on insert with ERPNext's opaque balance error.
+- **`quickbooks_online/MIGRATION_NOTES.md`** — data-migration readiness guide (config prerequisites incl. Fiscal Years back to 2008, import order, volume/rate-limit guidance, Undeposited-Funds double-count caveat, and post-import Trial-Balance reconciliation).
+
 ## [1.41.0] - 2026-06-16
 
 ### Changed
