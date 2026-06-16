@@ -458,6 +458,8 @@ fixtures = [
 		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review"]]],
 	},
 	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online"]]]},
+	# Public legal pages (guest-accessible Web Pages at /eula and /privacy-policy).
+	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy"]]]},
 ]
 
 override_whitelisted_methods = {
