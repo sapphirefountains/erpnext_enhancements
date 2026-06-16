@@ -24,7 +24,7 @@ frappe.ui.form.on('Asset Booking', {
     check_availability: function(frm) {
         if (frm.doc.asset && frm.doc.from_datetime && frm.doc.to_datetime) {
             frappe.call({
-                method: "erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.check_availability",
+                method: "erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.check_availability",
                 args: {
                     asset: frm.doc.asset,
                     from_datetime: frm.doc.from_datetime,
