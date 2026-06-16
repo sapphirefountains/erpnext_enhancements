@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-06-15
+
+### Added
+- **Devices workspace (sidebar)** — Device Management now has its own desk workspace at `/app/devices` (`device_management/workspace/devices/`), the first sidebar of the module-reorganization effort. Shortcuts to the **Device Console** and **Device Fleet Dashboard** pages plus the **Managed Device** list; cards group **Devices** (Managed Device, Device Assignment Log), **Compliance** (Device Compliance Settings) and **MDM** (MDM Settings, MDM Sync Log, Device Action Log, MDM Raw Payload) — so the native registry and the MDM provider layer share one navigation home. Roadmap for the full reorg is in `erpnext_enhancements/MODULE_PLAN.md`.
+
 ## [1.34.6] - 2026-06-15
 
 ### Fixed

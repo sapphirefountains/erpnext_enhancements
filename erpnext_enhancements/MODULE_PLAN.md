@@ -1,0 +1,202 @@
+# Module Reorganization Plan
+
+Goal: every custom page/app belongs to a clearly-named module, and every module
+with a user-facing surface gets its own **workspace (sidebar)**. Today only 3 of
+12 modules have a sidebar.
+
+This is a working/tracking doc for a multi-PR effort. Delete once complete.
+
+## Decisions (locked)
+
+| # | Decision | Outcome |
+|---|---|---|
+| 1 | Time-tracking surfaces in Core | **New `Workforce` module** |
+| 2 | "QuickBooks Time Integration" is really QBO accounting | **Split → `QuickBooks Online` + `QuickBooks Time`** (keep both) |
+| 3 | integrations_health + GA4 in Core | **New `Integrations` module** |
+| 4 | Triton split across Core/Global; AI Governance separate | **Consolidate Triton into AI Governance** |
+| 5 | Drive Link Manager + drive_* in CRM | **New `Google Drive` module** |
+| 6 | /wall + Daily Briefing in Core | **New `Morning Briefing` module** |
+| 7 | project_note + project_reminder_email in Core | **Move to Project Enhancements** |
+| 8 | Global Enhancements near-empty after Triton leaves | **Fold into Enhancements Core (retire)** |
+| 9 | Device Management + MDM Integration | **One shared `Devices` sidebar** (modules stay separate; MDM has no own sidebar) |
+| 10 | training_insight, expense_claim_type in Core | **training_insight → AI Governance; expense_claim_type → Travel** |
+| 11 | asset_booking, process_document, collab_doctype in Core | **asset_booking → new `Asset Management`; process_document → new `Process Documentation`; collab_doctype stays Core (child table)** |
+
+## Target module list (18; was 12)
+
+`modules.txt` ends up as:
+
+```
+Enhancements Core
+Travel Management
+Sapphire Maintenance
+CRM Enhancements
+Project Enhancements
+Task Enhancements
+QuickBooks Online          # renamed from "QuickBooks Time Integration"
+QuickBooks Time            # new (split out)
+AI Governance
+Inventory Enhancements
+Device Management
+MDM Integration
+Workforce                  # new
+Integrations               # new
+Google Drive               # new
+Morning Briefing           # new
+Asset Management           # new (asset_booking)
+Process Documentation      # new (process_document)
+```
+Removed: **Global Enhancements** (retired).
+
+**Sidebars:** 17 (every module except MDM Integration, which is covered by the
+Devices sidebar). 3 exist today (AI Governance, Sapphire Maintenance, Travel
+Management) → **14 new to build + AI Governance updated**.
+
+## Per-module contents & sidebar
+
+Legend: 🆕 new module · ✅ workspace exists · 🔧 workspace to build · ➡️ moving in · ⬅️ moving out
+
+### Device Management 🔧  *(first to build — hosts the shared "Devices" sidebar)*
+- Doctypes: managed_device, device_assignment_log, device_compliance_settings
+- Pages: device_console, device_fleet_dashboard
+- **Devices sidebar** (covers Device Management **and** MDM Integration):
+  - **Shortcuts** Device Console · Device Fleet Dashboard · Managed Device
+  - **Cards** Devices (Managed Device, Device Assignment Log) · Compliance (Device Compliance Settings) · MDM (MDM Settings, MDM Sync Log, Device Action Log, MDM Raw Payload)
+
+### MDM Integration 🆕no-sidebar
+- Doctypes: mdm_settings, mdm_sync_log, mdm_raw_payload, device_action_log
+- Stays a separate module for code org; surfaced through the Devices sidebar above (no own workspace).
+
+### Inventory Enhancements 🔧
+- Doctypes: inventory_count_session, inventory_count_line, storage_location, inventory_scanner_settings
+- Pages: inventory_scanner_audit
+- Sidebar: **Shortcuts** Inventory Scanner Audit · Inventory Count Session — **Cards** Counts (Session, Line) · Masters (Storage Location, Inventory Scanner Settings)
+
+### Task Enhancements 🔧
+- Doctypes: task, hierarchical_task_view
+- Pages: hierarchical_task_view
+- Sidebar: **Shortcuts** Hierarchical Task View · Task — **Cards** Tasks (Task, Hierarchical Task View)
+
+### CRM Enhancements 🔧  ⬅️ drive_* + drive_link_manager leave (→ Google Drive)
+- Doctypes (after): accounts_lead, accounts_opportunity, accounts_project, lead_source, opportunity_contributor, sales_activity_settings, value_stream, value_streams
+- Pages: sales_pipeline
+- Sidebar: **Shortcuts** Sales Pipeline · Lead · Opportunity — **Cards** Sales (Lead, Opportunity, Lead Source, Opportunity Contributor, Value Stream) · Settings (Sales Activity Settings)
+
+### Project Enhancements 🔧  ➡️ project_note + project_reminder_email (from Core)
+- Doctypes: master_project, project, project_contract, project_stakeholder, contract_* family, *_deliverables/*_customer_requests family, process_step_template, project_process_step, project_dashboard_settings, project_dashboard_permitted_role, project_notes, opportunity, address, **+ project_note, project_reminder_email**
+- Pages: project_dashboard
+- Sidebar: **Shortcuts** Project Dashboard · Master Project · Project Contract — **Cards** Projects (Master Project, Project, Project Stakeholder) · Contracts (Contract Template, Milestone, Phase, Service Option) · Notes (project_note, project_reminder_email) · Settings (Project Dashboard Settings)
+
+### QuickBooks Online 🔧  *(renamed from "QuickBooks Time Integration")*
+- Code: quickbooks_online/ (api, client, mapping, sync, webhooks, tasks)
+- Doctypes: quickbooks_online_settings, quickbooks_sync_log, quickbooks_sync_mapping, quickbooks_raw_payload
+- Pages: quickbooks_online_dashboard
+- Sidebar: **Shortcuts** QuickBooks Online Dashboard · QuickBooks Online Settings — **Cards** Sync (Sync Log, Sync Mapping, Raw Payload) · Settings (QuickBooks Online Settings)
+
+### QuickBooks Time 🆕🔧  *(thin — webhook only for now)*
+- Code: the `qb_timesheet_webhook` (move out of QBO module root api.py)
+- Doctypes/pages: none yet
+- Sidebar (minimal): **Cards** Timesheets (webhook docs / future settings + link to Workforce)
+
+### AI Governance ✅→update  ➡️ triton_settings (Core), triton_assistant_settings + triton_allowed_user (Global), training_insight (Core)
+- Doctypes: ai_action_log, ai_pending_action, ai_model_usage, ai_confirmation_exempt_doctype, **+ triton_settings, triton_assistant_settings, triton_allowed_user, training_insight**
+- Sidebar update: **Cards** Governance (AI Action Log, AI Pending Action, AI Model Usage, AI Confirmation Exempt DocType, Training Insight) · Triton Assistant (Triton Settings, Triton Assistant Settings, Triton Allowed User)
+
+### Workforce 🆕🔧  ➡️ time_kiosk_log, time_kiosk_settings (from Core)
+- Doctypes: time_kiosk_log, time_kiosk_settings
+- Pages: time_kiosk, location_timeline · Web: `/kiosk` (stays in www/, linked)
+- Sidebar: **Shortcuts** Time Kiosk · Location Timeline · Kiosk (/kiosk) — **Cards** Time Tracking (Time Kiosk Log, Time Kiosk Settings)
+- (Cross-links to QuickBooks Time for timesheet export.)
+
+### Integrations 🆕🔧  ➡️ ga4_settings (from Core)
+- Doctypes: ga4_settings · Pages: integrations_health, ga4_dashboard
+- Sidebar: **Shortcuts** Integrations Health · GA4 Dashboard — **Cards** Monitoring (Integrations Health) · Analytics (GA4 Dashboard, GA4 Settings) · Connected Services → cross-links to QuickBooks Online Settings, MDM Settings, Google Drive Settings, Triton Settings
+
+### Google Drive 🆕🔧  ➡️ from CRM
+- Code: drive_link_manager.py, drive_match.py, drive_sync.py, drive_utils.py
+- Doctypes: drive_link_candidate, drive_sync_log, drive_folder_template_item, project_folder_google_drive_settings
+- Pages: drive_link_manager
+- Sidebar: **Shortcuts** Drive Link Manager — **Cards** Drive (Drive Link Candidate, Drive Sync Log) · Templates & Settings (Drive Folder Template Item, Project Folder Google Drive Settings)
+
+### Morning Briefing 🆕🔧  ➡️ from Core
+- Doctypes: daily_briefing, briefing_recipient · Web: `/wall` (stays in www/, linked)
+- Sidebar: **Shortcuts** Wall / TV Display (/wall) · Daily Briefing — **Cards** Briefing (Daily Briefing, Briefing Recipient)
+
+### Asset Management 🆕🔧  ➡️ asset_booking (from Core)
+- Code: api/booking.py · Doctypes: asset_booking (submittable; asset/location/booking_type/from–to datetime + map)
+- Sidebar: **Shortcuts** Asset Booking (New) · Asset Booking (List) — **Cards** Bookings (Asset Booking) · (future: booking calendar page)
+- Note: `patches/migrate_assets_to_serial_no.py` and hooks.py reference it — fix on move.
+
+### Process Documentation 🆕🔧  ➡️ process_document (from Core)
+- Doctypes: process_document (title, mermaid_code, diagram)
+- Sidebar: **Shortcuts** Process Document — **Cards** Documentation (Process Document)
+- Note: distinct from Project's PRO-0204 hand-off engine (`process_steps.py` / Process Step Template) which stays in Project Enhancements.
+
+### Travel Management ✅  ➡️ expense_claim_type (from Core)
+- Existing workspace; add an Expense Claim Type link. Keeps itinerary/travel_guidelines www + 3 reports.
+
+### Sapphire Maintenance ✅
+- Existing workspace; no structural change.
+
+### Enhancements Core 🔧  ⬅️ many leave  ➡️ additional_supplier_group, directory_link_exclusion (from Global)
+- Doctypes (after): erpnext_enhancements_settings, enhancement_desk_shortcut (+role,+user), process_step references stay in Project, job_interval, status_alert_recipient, collab_doctype, user_form_draft, **+ additional_supplier_group, directory_link_exclusion**
+- Pages: none (becomes the settings/infra home)
+- Sidebar: **Shortcuts** ERPNext Enhancements Settings — **Cards** Settings (Settings) · Desk Shortcuts (Enhancement Desk Shortcut) · Automation (Job Interval, Status Alert Recipient) · Misc (User Form Draft, Additional Supplier Group, Directory Link Exclusion)
+- (collab_doctype is a child table of Settings — no own link.)
+
+## Moves summary
+
+**Doctypes**
+- Core → Project: project_note, project_reminder_email *(no external importers — clean)*
+- Core → AI Governance: triton_settings *(self-ref only)*, training_insight
+- Core → Workforce: time_kiosk_log, time_kiosk_settings *(1 importer: api/time_kiosk.py)*
+- Core → Integrations: ga4_settings *(clean)*
+- Core → Morning Briefing: daily_briefing, briefing_recipient
+- Core → Travel: expense_claim_type
+- Core → Asset Management: asset_booking *(importers: api/booking.py, hooks.py, patches/migrate_assets_to_serial_no.py)*
+- Core → Process Documentation: process_document
+- Global → AI Governance: triton_assistant_settings, triton_allowed_user
+- Global → Core: additional_supplier_group, directory_link_exclusion
+- CRM → Google Drive: drive_link_candidate, drive_sync_log, drive_folder_template_item, project_folder_google_drive_settings *(heaviest — importers in hooks.py, api/, tests, drive_*.py)*
+
+**Pages**
+- Core → Workforce: time_kiosk, location_timeline
+- Core → Integrations: ga4_dashboard, integrations_health
+- CRM → Google Drive: drive_link_manager
+
+**Web pages (www/) stay put** — `/kiosk`, `/wall`, `/itinerary`, `/travel_guidelines` are app-level routes; only *linked* from the relevant sidebar.
+
+**Stays in Core:** collab_doctype (child table of Settings).
+
+## Migration mechanics (per move)
+
+For each DocType/Page moved between modules:
+1. Edit the `"module"` field in its `.json`.
+2. Move the folder to the destination module dir.
+3. Fix controller **import dotted paths** wherever referenced (grep first — see Moves summary hotspots).
+4. Add a **patch** to update existing installs: `frappe.db.set_value` on `tabDocType.module` / `tabPage.module`, then `frappe.reload_doc`; register in `patches.txt`.
+5. Verify `hooks.py` (doc_events, scheduler_events, overrides, website routes) still resolves.
+
+New modules: add to `modules.txt`; create `<module>/__init__.py` + `doctype/`, `page/`, `workspace/` dirs; Module Def auto-creates on migrate.
+
+Workspaces: create `<module>/workspace/<slug>/<slug>.json` (Workspace doctype, `is_standard: 1`) — pattern in `sapphire_maintenance/workspace/`. Links reference page route-slugs and doctype names — both stable across module moves.
+
+Retire Global Enhancements: after its 4 doctypes move out, remove from `modules.txt` + patch to delete the orphaned Module Def.
+
+Fixtures: workspaces are `is_standard` (module folders), not in `fixtures/`. Check `fixtures/number_card.json` / `dashboard*.json` for `module` references to renamed modules.
+
+## Suggested PR sequence (each: moves + workspace + version bump)
+
+1. **Devices sidebar** (your example; no moves) — one workspace under Device Management covering MDM too.
+2. **No-move sidebars** — Inventory, Task, CRM (pre-drive-split).
+3. **QuickBooks split** — rename → QuickBooks Online; create QuickBooks Time; 2 sidebars.
+4. **Workforce** — move time_kiosk/location_timeline pages + 2 doctypes; sidebar.
+5. **Integrations** — move ga4_dashboard/integrations_health + ga4_settings; sidebar + hub links.
+6. **Google Drive** — move page + 4 doctypes + drive_*.py; fix importers; sidebar. *(heaviest)*
+7. **Morning Briefing** — move daily_briefing/briefing_recipient; sidebar.
+8. **Project consolidation** — move project_note/reminder; Project sidebar.
+9. **AI consolidation** — move Triton doctypes + training_insight; update AI Governance sidebar.
+10. **Asset Management** — move asset_booking + api/booking.py; sidebar.
+11. **Process Documentation** — move process_document; sidebar.
+12. **Travel** — move expense_claim_type; add link to existing Travel sidebar.
+13. **Retire Global → Core** — move 2 doctypes; remove module; final Core sidebar.
