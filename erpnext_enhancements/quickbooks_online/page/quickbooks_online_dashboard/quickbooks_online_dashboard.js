@@ -89,17 +89,24 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	refresh(root);
 };
 
+// Keep in sync with ACCOUNTING_ENTITIES in quickbooks_online/core/constants.py.
 const QBO_ENTITIES = [
 	"Account",
 	"Customer",
 	"Vendor",
 	"Item",
 	"TaxCode",
-	"Invoice",
-	"Bill",
-	"Payment",
-	"JournalEntry",
 	"Estimate",
+	"Invoice",
+	"SalesReceipt",
+	"Bill",
+	"VendorCredit",
+	"Payment",
+	"BillPayment",
+	"Purchase",
+	"Transfer",
+	"CreditCardPayment",
+	"JournalEntry",
 	"PurchaseOrder",
 	"Deposit",
 ];

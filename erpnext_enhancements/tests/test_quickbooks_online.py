@@ -27,6 +27,7 @@ def install_frappe_stub():
 	frappe_utils.now_datetime = lambda: None
 	frappe_utils.get_datetime = lambda value: value
 	frappe_utils.add_to_date = lambda value=None, **kwargs: value
+	frappe_utils.get_system_timezone = lambda: "UTC"
 	frappe.utils = frappe_utils
 
 	def get_value(doctype, filters=None, fieldname=None, **kwargs):
@@ -435,3 +436,458 @@ def test_failed_result_error_message_is_capped():
 	assert "Item 19: ValidationError: Row 19" in log.error_message
 	assert "Additional failures omitted" in log.error_message
 	assert "Item 21: ValidationError: Row 21" not in log.error_message
+
+
+# ---------------------------------------------------------------------------
+# CDC changedSince formatting + window clamp (the reported 400 ValidationFault).
+# ---------------------------------------------------------------------------
+
+
+def test_format_qbo_datetime_renders_iso_utc_with_z():
+	"""format_qbo_datetime turns a naive (system-tz=UTC) datetime into ISO-8601 Z."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.utils import format_qbo_datetime
+
+	assert format_qbo_datetime(datetime(2026, 6, 9, 20, 1, 2, 412672)) == "2026-06-09T20:01:02Z"
+	assert format_qbo_datetime(None) is None
+
+
+def test_format_qbo_datetime_converts_system_timezone_to_utc(monkeypatch):
+	"""A naive datetime in a non-UTC system timezone is shifted to UTC before formatting."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import utils
+
+	monkeypatch.setattr(utils, "get_system_timezone", lambda: "America/Denver")
+	# 13:01:02 in Denver (MDT, -06:00 in June) is 19:01:02 UTC.
+	assert utils.format_qbo_datetime(datetime(2026, 6, 9, 13, 1, 2)) == "2026-06-09T19:01:02Z"
+
+
+def test_cdc_sends_iso_changed_since(monkeypatch):
+	"""client.cdc serializes the cursor as ISO-8601 UTC (not a raw datetime string)."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_module
+
+	client = client_module.QuickBooksClient(types.SimpleNamespace(realm_id="42", environment="Production"))
+	captured = {}
+	monkeypatch.setattr(
+		client, "request", lambda method, path, **kwargs: captured.update(method=method, path=path, **kwargs) or {}
+	)
+
+	client.cdc(["Account", "Invoice"], datetime(2026, 6, 9, 20, 1, 2, 412672))
+
+	assert captured["params"]["changedSince"] == "2026-06-09T20:01:02Z"
+	assert captured["params"]["entities"] == "Account,Invoice"
+	assert captured["path"].endswith("/cdc")
+
+
+def test_clamp_cdc_cursor_limits_stale_cursor():
+	"""_clamp_cdc_cursor keeps a recent cursor but pulls a stale/None one into the window."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.sync import _clamp_cdc_cursor
+
+	now = datetime(2026, 6, 15, 12, 0, 0)
+	earliest = datetime(2026, 5, 17, 12, 0, 0)  # now - 29 days (30-day limit, 1-day margin)
+
+	recent = datetime(2026, 6, 14, 12, 0, 0)
+	assert _clamp_cdc_cursor(recent, now) == recent
+	assert _clamp_cdc_cursor(datetime(2026, 1, 1, 0, 0, 0), now) == earliest
+	assert _clamp_cdc_cursor(None, now) == earliest
+
+
+def test_query_all_includes_inactive_for_master_entities(monkeypatch):
+	"""query_all adds the Active in (true,false) clause for masters only, not transactions."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	captured = []
+
+	class FakeClient:
+		def __init__(self, settings=None):
+			pass
+
+		def query(self, query):
+			captured.append(query)
+			return {"QueryResponse": {}}
+
+	monkeypatch.setattr(sync, "QuickBooksClient", FakeClient)
+
+	list(sync.query_all("Account", settings=types.SimpleNamespace()))
+	list(sync.query_all("Invoice", settings=types.SimpleNamespace()))
+
+	assert "from Account where Active in (true, false) startposition 1 maxresults 100" in captured[0]
+	assert "where Active" not in captured[1]
+	assert "from Invoice startposition 1 maxresults 100" in captured[1]
+
+
+# ---------------------------------------------------------------------------
+# Validation no longer flags fields ERPNext auto-populates (the missing-field
+# errors reported for every transaction type).
+# ---------------------------------------------------------------------------
+
+
+def test_required_field_check_skips_autofilled_fields():
+	"""naming_series, read_only totals and fetch_from fields are not flagged as missing."""
+	frappe = install_frappe_stub()
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(
+		fields=[
+			types.SimpleNamespace(fieldname="naming_series", fieldtype="Select", reqd=1, default=None, read_only=0, fetch_from=None),
+			types.SimpleNamespace(fieldname="grand_total", fieldtype="Currency", reqd=1, default=None, read_only=1, fetch_from=None),
+			types.SimpleNamespace(
+				fieldname="paid_from_account_currency", fieldtype="Link", reqd=1, default=None, read_only=0,
+				fetch_from="paid_from.account_currency",
+			),
+			types.SimpleNamespace(fieldname="custom_audit_tag", fieldtype="Data", reqd=1, default=None, read_only=0, fetch_from=None),
+		],
+		has_field=lambda fieldname: False,
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
+
+	# Only the genuinely-unfillable custom field survives; the rest ERPNext fills itself.
+	assert validate_mapped_values(
+		"Invoice", "Sales Invoice", {"company": "X", "customer": "Y", "items": [{}]}
+	) == ["Missing required field: custom_audit_tag"]
+
+
+def test_sales_invoice_sets_currency_exchange_and_receivable(monkeypatch):
+	"""Sales Invoice mapping fills currency/conversion_rate/debit_to/price list from defaults."""
+	frappe = install_frappe_stub()
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {"default_receivable_account": "Debtors - SF", "default_currency": "USD"}.get(fieldname)
+		if doctype == "Price List":
+			return "Standard Selling"
+		if doctype == "QuickBooks Sync Mapping" and filters.get("qbo_entity_type") == "Customer":
+			return "Acme Supply"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", get_value)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Invoice",
+		{"Id": "5", "TxnDate": "2026-06-06", "CustomerRef": {"value": "1"}},
+		types.SimpleNamespace(company="Sapphire Fountains LLC"),
+	)
+
+	assert doctype == "Sales Invoice"
+	assert values["customer"] == "Acme Supply"
+	assert values["currency"] == "USD"
+	assert values["conversion_rate"] == 1
+	assert values["debit_to"] == "Debtors - SF"
+	assert values["selling_price_list"] == "Standard Selling"
+	assert values["price_list_currency"] == "USD"
+
+
+def test_purchase_invoice_sets_payable_account(monkeypatch):
+	"""Purchase Invoice mapping fills credit_to from the company default payable account."""
+	frappe = install_frappe_stub()
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {"default_payable_account": "Creditors - SF", "default_currency": "USD"}.get(fieldname)
+		if doctype == "QuickBooks Sync Mapping" and filters.get("qbo_entity_type") == "Vendor":
+			return "ICS Supply"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", get_value)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Bill",
+		{"Id": "6", "TxnDate": "2026-06-06", "VendorRef": {"value": "2"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Purchase Invoice"
+	assert values["supplier"] == "ICS Supply"
+	assert values["credit_to"] == "Creditors - SF"
+	assert values["currency"] == "USD"
+
+
+def test_payment_entry_sets_accounts_amounts_and_rates(monkeypatch):
+	"""A customer Payment becomes a Receive PE with bank/receivable accounts and amounts."""
+	frappe = install_frappe_stub()
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {
+				"default_receivable_account": "Debtors - SF",
+				"default_bank_account": "US Bank - SF",
+				"default_currency": "USD",
+			}.get(fieldname)
+		if doctype == "QuickBooks Sync Mapping" and filters.get("qbo_entity_type") == "Customer":
+			return "Acme Supply"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", get_value)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Payment",
+		{"Id": "9", "TxnDate": "2026-06-06", "TotalAmt": "3000", "CustomerRef": {"value": "1"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Payment Entry"
+	assert values["payment_type"] == "Receive"
+	assert values["paid_from"] == "Debtors - SF"
+	assert values["paid_to"] == "US Bank - SF"
+	assert values["paid_amount"] == 3000.0
+	assert values["received_amount"] == 3000.0
+	assert values["source_exchange_rate"] == 1
+
+
+# ---------------------------------------------------------------------------
+# New cash-movement mappers -> balanced Journal Entries. Directions are verified
+# against the real QBO Journal export (Sapphire Fountains LLC).
+# ---------------------------------------------------------------------------
+
+
+def _account_resolver(account_map):
+	"""Build a frappe.db.get_value that resolves QBO account ids to ERPNext names."""
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("qbo_entity_type") == "Account":
+			return account_map.get(str(filters.get("qbo_id")))
+		return None
+
+	return get_value
+
+
+def _rows_by_account(values):
+	return {row["account"]: row for row in values["accounts"]}
+
+
+def test_purchase_maps_to_balanced_journal_entry(monkeypatch):
+	"""A QBO Expense credits the funding account and debits the expense account."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"30": "Amex - SF", "61": "Office Expense - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase",
+		{
+			"Id": "7",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "1064.20",
+			"PaymentType": "CreditCard",
+			"AccountRef": {"value": "30"},
+			"Line": [{"Amount": "1064.20", "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "61"}}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Journal Entry"
+	rows = _rows_by_account(values)
+	assert rows["Amex - SF"]["credit_in_account_currency"] == 1064.20
+	assert rows["Office Expense - SF"]["debit_in_account_currency"] == 1064.20
+	assert sum(r["debit_in_account_currency"] for r in values["accounts"]) == sum(
+		r["credit_in_account_currency"] for r in values["accounts"]
+	)
+
+
+def test_credit_card_credit_reverses_journal_entry(monkeypatch):
+	"""A QBO Credit (refund) debits the card and credits the expense account."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"22": "Capital One - SF", "60": "R&D - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"Purchase",
+		{
+			"Id": "8",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "16.54",
+			"Credit": True,
+			"AccountRef": {"value": "22"},
+			"Line": [{"Amount": "16.54", "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "60"}}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["Capital One - SF"]["debit_in_account_currency"] == 16.54
+	assert rows["R&D - SF"]["credit_in_account_currency"] == 16.54
+
+
+def test_transfer_debits_destination_credits_source(monkeypatch):
+	"""A QBO Transfer debits ToAccountRef and credits FromAccountRef."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"13": "Checking - SF", "99": "Equity - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"Transfer",
+		{"Id": "3", "TxnDate": "2026-06-06", "Amount": "300", "ToAccountRef": {"value": "13"}, "FromAccountRef": {"value": "99"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["Checking - SF"]["debit_in_account_currency"] == 300
+	assert rows["Equity - SF"]["credit_in_account_currency"] == 300
+
+
+def test_bill_payment_debits_payable_credits_bank(monkeypatch):
+	"""A QBO BillPayment (Check) debits A/P and credits the bank account."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"20": "Creditors - SF", "13": "Checking - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"BillPayment",
+		{
+			"Id": "4",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "2628.93",
+			"APAccountRef": {"value": "20"},
+			"CheckPayment": {"BankAccountRef": {"value": "13"}},
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["Creditors - SF"]["debit_in_account_currency"] == 2628.93
+	assert rows["Checking - SF"]["credit_in_account_currency"] == 2628.93
+
+
+def test_credit_card_payment_debits_card_credits_bank(monkeypatch):
+	"""A QBO CreditCardPayment debits the card liability and credits the funding bank."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"22": "Spark Card - SF", "13": "Key Bank - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"CreditCardPayment",
+		{"Id": "5", "TxnDate": "2026-06-06", "Amount": "4613.33", "CreditCardAccountRef": {"value": "22"}, "BankAccountRef": {"value": "13"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["Spark Card - SF"]["debit_in_account_currency"] == 4613.33
+	assert rows["Key Bank - SF"]["credit_in_account_currency"] == 4613.33
+
+
+def test_deposit_debits_bank_credits_source_lines(monkeypatch):
+	"""A QBO Deposit debits the deposited-to account and credits each source line."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"13": "Checking - SF", "138": "Undeposited - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Deposit",
+		{
+			"Id": "6",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "3000",
+			"DepositToAccountRef": {"value": "13"},
+			"Line": [{"Amount": "3000", "DepositLineDetail": {"AccountRef": {"value": "138"}}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Journal Entry"
+	rows = _rows_by_account(values)
+	assert rows["Checking - SF"]["debit_in_account_currency"] == 3000
+	assert rows["Undeposited - SF"]["credit_in_account_currency"] == 3000
+
+
+def test_vendor_credit_debits_payable_credits_expense(monkeypatch):
+	"""A QBO VendorCredit debits A/P and credits the expense account line."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _account_resolver({"20": "Creditors - SF", "51": "Build Materials - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"VendorCredit",
+		{
+			"Id": "7",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "168.54",
+			"APAccountRef": {"value": "20"},
+			"Line": [{"Amount": "168.54", "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "51"}}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["Creditors - SF"]["debit_in_account_currency"] == 168.54
+	assert rows["Build Materials - SF"]["credit_in_account_currency"] == 168.54
+
+
+def test_sales_receipt_maps_to_sales_invoice(monkeypatch):
+	"""A QBO SalesReceipt is imported as a Sales Invoice with a receipt remark."""
+	frappe = install_frappe_stub()
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {"default_receivable_account": "Debtors - SF", "default_currency": "USD"}.get(fieldname)
+		if doctype == "QuickBooks Sync Mapping" and filters.get("qbo_entity_type") == "Customer":
+			return "Acme Supply"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", get_value)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"SalesReceipt",
+		{"Id": "5", "TxnDate": "2026-06-06", "CustomerRef": {"value": "1"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Sales Invoice"
+	assert "Sales Receipt" in values["remarks"]
+	assert values["debit_to"] == "Debtors - SF"
+
+
+def test_journal_imbalance_routes_to_manual_review():
+	"""A Journal Entry whose lines don't balance reports an 'unbalanced' issue."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
+
+	balanced = {
+		"company": "SF",
+		"accounts": [
+			{"account": "A", "debit_in_account_currency": 100, "credit_in_account_currency": 0},
+			{"account": "B", "debit_in_account_currency": 0, "credit_in_account_currency": 100},
+		],
+	}
+	assert validate_mapped_values("Transfer", "Journal Entry", balanced) == []
+
+	unbalanced = {
+		"company": "SF",
+		"accounts": [{"account": "A", "debit_in_account_currency": 100, "credit_in_account_currency": 0}],
+	}
+	assert any("unbalanced" in issue for issue in validate_mapped_values("Transfer", "Journal Entry", unbalanced))
+
+
+def test_unresolved_cash_transaction_flags_missing_accounts():
+	"""A Purchase whose account refs don't resolve yields empty lines -> manual review."""
+	install_frappe_stub()  # default stub resolves no account mappings
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_, values = map_qbo_to_erpnext(
+		"Purchase",
+		{
+			"Id": "7",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": "100",
+			"AccountRef": {"value": "30"},
+			"Line": [{"Amount": "100", "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "61"}}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert values["accounts"] == []
+	assert validate_mapped_values("Purchase", "Journal Entry", values, include_doc_required=False) == [
+		"Missing required field: accounts"
+	]
+
+
+def test_display_name_prefers_fully_qualified_name():
+	"""_display_name uses FullyQualifiedName so sub-customers keep parent context."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _display_name
+
+	assert _display_name({"FullyQualifiedName": "Landmark Aquatics:Job 1", "DisplayName": "Job 1"}) == "Landmark Aquatics:Job 1"
+	assert _display_name({"DisplayName": "Top Co"}) == "Top Co"

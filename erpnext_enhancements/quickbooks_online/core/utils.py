@@ -14,9 +14,10 @@ import hmac
 import json
 import base64
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import frappe
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import get_datetime, get_system_timezone, now_datetime
 
 
 def utcnow():
@@ -92,6 +93,26 @@ def set_secret(settings, fieldname: str, value: str | None):
 		settings.set_password(fieldname, value)
 	else:
 		settings.set(fieldname, value)
+
+
+def format_qbo_datetime(value) -> str | None:
+	"""Format a datetime/timestamp as an ISO-8601 UTC string QBO will accept.
+
+	QBO query params such as CDC's ``changedSince`` require ISO-8601 *with* a
+	timezone, e.g. ``2026-06-09T20:01:02Z``. Frappe stores naive datetimes in the
+	system timezone, and letting ``requests`` stringify one yields
+	``2026-06-09 20:01:02.412672`` (space separator, microseconds, no offset),
+	which QBO rejects with a ``ValidationFault`` ("invalid or unsupported
+	property ... changedSince"). This converts a naive (system-tz) datetime --
+	or any value ``get_datetime`` understands -- to UTC and formats it the way
+	QBO expects. Returns None for empty input.
+	"""
+	if not value:
+		return None
+	parsed = get_datetime(value)
+	if getattr(parsed, "tzinfo", None) is None:
+		parsed = parsed.replace(tzinfo=ZoneInfo(get_system_timezone()))
+	return parsed.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_qbo_datetime(value):

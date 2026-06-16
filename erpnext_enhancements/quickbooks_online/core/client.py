@@ -28,6 +28,7 @@ from erpnext_enhancements.quickbooks_online.core.constants import (
 	TOKEN_URL,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import (
+	format_qbo_datetime,
 	get_secret,
 	get_settings,
 	set_secret,
@@ -221,14 +222,17 @@ class QuickBooksClient:
 	def cdc(self, entities: list[str], changed_since):
 		"""Call the Change Data Capture endpoint for entities changed since a cursor.
 
-		``changed_since`` is the ISO timestamp cursor (Settings.last_cdc_sync).
-		QBO returns every record of the given entity types modified or deleted
-		since then. Invoked by ``sync.run_cdc`` on the hourly scheduler poll.
+		``changed_since`` is the cursor (Settings.last_cdc_sync), a datetime or
+		timestamp string. It is normalized to the ISO-8601 UTC form QBO requires
+		(see ``format_qbo_datetime``) -- passing a raw datetime makes QBO reject
+		the request as an invalid ``changedSince``. QBO returns every record of
+		the given entity types modified or deleted since then. Invoked by
+		``sync.run_cdc`` on the hourly scheduler poll.
 		"""
 		return self.request(
 			"GET",
 			f"/v3/company/{self.settings.realm_id}/cdc",
-			params={"entities": ",".join(entities), "changedSince": changed_since},
+			params={"entities": ",".join(entities), "changedSince": format_qbo_datetime(changed_since)},
 			content_type="text/plain",
 		)
 
