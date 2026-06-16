@@ -7,7 +7,7 @@
  * (approve / override the folder / search Drive / ask for a new folder) → Apply
  * (writes custom_drive_folder_id, or provisions a fresh folder, one row at a
  * time so a single failure never stops the rest). All data comes from
- * crm_enhancements.drive_link_manager (whitelisted, System-Manager only).
+ * google_drive.drive_link_manager (whitelisted, System-Manager only).
  *
  * Theming follows the app convention: Frappe CSS vars for surfaces/text (works
  * in Frappe Light + Timeless Night); confidence/status colors are semantic and
@@ -82,7 +82,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 		const $content = $body.find('.dlm-content');
 		$content.html(`<div class="dlm-loading">${__('Loading…')}</div>`);
 		frappe.call({
-			method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.get_candidates',
+			method: 'erpnext_enhancements.google_drive.drive_link_manager.get_candidates',
 			callback: (r) => {
 				if (!r || !r.message) {
 					$content.html(`<div class="dlm-empty">${__('No data returned.')}</div>`);
@@ -102,7 +102,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 			() => {
 				frappe.dom.freeze(__('Scanning Drive folders and ranking matches… this runs in the background and can take a minute.'));
 				frappe.call({
-					method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.scan_drive_links',
+					method: 'erpnext_enhancements.google_drive.drive_link_manager.scan_drive_links',
 					callback: () => pollScan(0),
 					error: () => {
 						frappe.dom.unfreeze();
@@ -119,7 +119,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 	const SCAN_POLL_MAX = 150;
 	function pollScan(attempt) {
 		frappe.call({
-			method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.scan_status',
+			method: 'erpnext_enhancements.google_drive.drive_link_manager.scan_status',
 			callback: (r) => {
 				const s = (r && r.message) || {};
 				if (s.state === 'done') {
@@ -304,7 +304,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 
 	function setDecision(name, decision, folderId, folderLabel) {
 		frappe.call({
-			method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.set_decision',
+			method: 'erpnext_enhancements.google_drive.drive_link_manager.set_decision',
 			args: { name, decision, chosen_folder_id: folderId || null, chosen_folder_label: folderLabel || null },
 			callback: () => {
 				const c = local(name);
@@ -330,7 +330,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 		const names = targets.map((c) => c.name);
 		if (!names.length) { frappe.show_alert(__('Nothing to update.')); return; }
 		frappe.call({
-			method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.bulk_decision',
+			method: 'erpnext_enhancements.google_drive.drive_link_manager.bulk_decision',
 			args: { names: JSON.stringify(names), decision },
 			callback: () => load(),
 		});
@@ -350,7 +350,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 			if (!q) return;
 			d.fields_dict.results.$wrapper.html(`<div class="text-muted">${__('Searching…')}</div>`);
 			frappe.call({
-				method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.search_folders',
+				method: 'erpnext_enhancements.google_drive.drive_link_manager.search_folders',
 				args: { query: q },
 				callback: (r) => {
 					const items = (r && r.message) || [];
@@ -386,7 +386,7 @@ frappe.pages['drive-link-manager'].on_page_load = function (wrapper) {
 			() => {
 				frappe.dom.freeze(__('Linking records…'));
 				frappe.call({
-					method: 'erpnext_enhancements.crm_enhancements.drive_link_manager.apply_links',
+					method: 'erpnext_enhancements.google_drive.drive_link_manager.apply_links',
 					callback: (r) => {
 						frappe.dom.unfreeze();
 						const m = (r && r.message) || {};

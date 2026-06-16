@@ -2,7 +2,7 @@
  * "Open Drive Folder" button for documents linked to a Google Drive folder.
  *
  * Targets: Project, Customer and Opportunity forms (the doctypes whose
- *   `custom_drive_folder_id` is set by crm_enhancements.drive_utils
+ *   `custom_drive_folder_id` is set by google_drive.drive_utils
  *   provisioning or the settings-page backfill).
  * Loaded via: hooks.py `doctype_js` for each of those doctypes.
  *

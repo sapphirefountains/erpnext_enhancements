@@ -2,7 +2,7 @@
 # For license information, please see license.txt
 
 """Staging row for the Drive Link Manager dashboard
-(``crm_enhancements.drive_link_manager``).
+(``google_drive.drive_link_manager``).
 
 One row per unlinked Project / Customer / Opportunity proposed for linking to an
 existing Google Drive folder: the fuzzy-ranked suggestion + alternatives, the

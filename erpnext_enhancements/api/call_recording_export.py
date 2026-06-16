@@ -11,7 +11,7 @@ background job, to Google Drive under monthly folders::
 			Voicemail — 2026-06-12 0907 — Inbound — +13855022007 — CAyyyy.wav
 
 Authentication reuses the project-folders **service account**
-(``crm_enhancements.drive_utils`` / "Project Folder Google Drive Settings");
+(``google_drive.drive_utils`` / "Project Folder Google Drive Settings");
 that account must be a member (Content Manager) of the Shared Drive that
 contains the configured folder. The export is OFF until
 ``Triton Settings.call_recordings_drive_folder`` is filled in — that field is
@@ -33,7 +33,7 @@ import frappe
 import requests
 from frappe.utils import get_datetime
 
-from erpnext_enhancements.crm_enhancements.drive_utils import (
+from erpnext_enhancements.google_drive.drive_utils import (
 	create_folder,
 	find_folder,
 	get_drive_service,
@@ -166,7 +166,7 @@ def export_call_recording(
 	the saved ERPNext File (answered calls) or straight from Twilio
 	(voicemails). Failures land in the Error Log and as a Failed Drive Sync
 	Log row whose payload the nightly retry job re-enqueues."""
-	from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+	from erpnext_enhancements.google_drive.drive_sync import log_sync
 
 	name = None
 	try:

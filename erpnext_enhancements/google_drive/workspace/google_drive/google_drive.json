@@ -1,0 +1,88 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"gd_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"gd_sc_mgr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Drive Link Manager\",\"col\":4}},{\"id\":\"gd_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Drive Settings\",\"col\":4}},{\"id\":\"gd_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"gd_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Drive &amp; Settings</b></span>\",\"col\":12}},{\"id\":\"gd_card_drive\",\"type\":\"card\",\"data\":{\"card_name\":\"Drive\",\"col\":4}},{\"id\":\"gd_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "file",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Google Drive",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Drive",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Drive Link Candidate",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Drive Link Candidate"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Drive Sync Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Drive Sync Log"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Project Folder Google Drive Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Project Folder Google Drive Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Google Drive",
+ "name": "Google Drive",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 28,
+ "shortcuts": [
+  {
+   "label": "Drive Link Manager",
+   "link_to": "drive-link-manager",
+   "type": "Page"
+  },
+  {
+   "label": "Drive Settings",
+   "link_to": "Project Folder Google Drive Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Google Drive",
+ "type": "Workspace"
+}

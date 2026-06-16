@@ -1,5 +1,5 @@
 """Bench-free unit tests for the Drive Link Manager fuzzy matcher
-(``crm_enhancements/drive_match.py``).
+(``google_drive/drive_match.py``).
 
 The scoring/normalization/ranking is pure Python (no frappe, no network), so it
 runs as plain unittest in CI — guarding the behaviour the dashboard relies on:
@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.crm_enhancements import drive_match as dm  # noqa: E402
+from erpnext_enhancements.google_drive import drive_match as dm  # noqa: E402
 
 
 class TestNormalize(unittest.TestCase):

@@ -25,7 +25,9 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
 - [x] **PR 5** — Integrations — v1.39.0
   - Moved GA4 Settings doctype + GA4 Dashboard / Integrations Health pages `enhancements_core` → `integrations` (adopted the empty `integrations/` placeholder as the module folder). No code changes (pure-JS pages; refs by name + `api.analytics`/`api.integrations_health`). Backstop patch `move_analytics_to_integrations`.
   - Hub sidebar: Analytics card + Connected Services card cross-linking QuickBooks Online / MDM / Google Drive / Triton settings Singles.
-- [ ] PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 6** — Google Drive — v1.40.0 (heaviest move)
+  - Moved drive_link_manager/drive_match/drive_sync/drive_utils + 4 drive doctypes + Drive Link Manager page `crm_enhancements` → `google_drive`. ~19 files: dotted imports, page/settings JS RPC strings, 5 hooks entries, external importers (api/, tests). `crm_enhancements.api` stays in CRM (drive_utils import repointed). Backstop patch `move_drive_to_google_drive`. READMEs split. CRM sidebar already excluded Drive (built that way in PR 2) — no sidebar change.
+- [ ] PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 

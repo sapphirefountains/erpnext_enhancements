@@ -452,6 +452,6 @@ def run_drive_test():
 	existing settings-form button so the dashboard can verify access without the
 	user leaving the page. System-Manager-only (the proxied call re-checks too)."""
 	frappe.only_for("System Manager")
-	from erpnext_enhancements.crm_enhancements.drive_sync import test_connection
+	from erpnext_enhancements.google_drive.drive_sync import test_connection
 
 	return test_connection()

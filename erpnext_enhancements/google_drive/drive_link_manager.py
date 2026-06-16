@@ -6,7 +6,7 @@ Workflow (all whitelisted, System-Manager only):
 
 1. :func:`scan_drive_links` — list the whole Shared Drive's folders once, then
    fuzzy-rank candidate folders for every *unlinked* record (see
-   :mod:`erpnext_enhancements.crm_enhancements.drive_match`). Results land as
+   :mod:`erpnext_enhancements.google_drive.drive_match`). Results land as
    **Drive Link Candidate** rows; ``High``-tier matches are pre-approved with
    their suggested folder, everything else waits as ``Pending``.
 2. :func:`get_candidates` / :func:`set_decision` / :func:`search_folders` — the
@@ -20,7 +20,7 @@ Matching is hierarchy-aware: customers match Shared-Drive-root folders; projects
 and opportunities are scored against the children of their customer's folder
 first, widening to the whole drive only when that yields no confident match.
 The actual folder writes reuse the existing, retry-hardened provisioning in
-:mod:`erpnext_enhancements.crm_enhancements.drive_utils`.
+:mod:`erpnext_enhancements.google_drive.drive_utils`.
 """
 
 import json
@@ -29,9 +29,9 @@ from collections import defaultdict
 import frappe
 from frappe.utils import cint
 
-from erpnext_enhancements.crm_enhancements import drive_match
-from erpnext_enhancements.crm_enhancements.drive_sync import SYNCED_DOCTYPES, log_sync
-from erpnext_enhancements.crm_enhancements.drive_utils import (
+from erpnext_enhancements.google_drive import drive_match
+from erpnext_enhancements.google_drive.drive_sync import SYNCED_DOCTYPES, log_sync
+from erpnext_enhancements.google_drive.drive_utils import (
 	get_drive_service,
 	provision_customer_folder,
 	provision_opportunity_folder,
@@ -215,7 +215,7 @@ def scan_drive_links():
 	_require_admin()
 	_set_scan_status("queued")
 	frappe.enqueue(
-		"erpnext_enhancements.crm_enhancements.drive_link_manager._run_scan_job",
+		"erpnext_enhancements.google_drive.drive_link_manager._run_scan_job",
 		queue="long",
 		timeout=1500,
 	)
