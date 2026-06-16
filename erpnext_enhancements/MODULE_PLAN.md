@@ -38,7 +38,9 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
   - Global Enhancements now holds only `additional_supplier_group` + `directory_link_exclusion` → PR 13 retires it.
 - [x] **PR 10** — Asset Management — v1.45.0
   - Moved Asset Booking doctype `enhancements_core` → `asset_management`; repointed the self-enqueue (`update_asset_status`), `check_availability`, and the calendar `get_events_method` (`public/js/asset_booking_calendar.js`) paths. `api/booking.py` stays app-level (creates by name). Sidebar (Asset Booking, Asset). Backstop patch `move_asset_booking_to_asset_management`.
-- [ ] PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 11** — Process Documentation — v1.46.0
+  - Moved Process Document doctype `enhancements_core` → `process_documentation`. No code changes (refs by name: hooks doctype_js, setup/process_documents.py seeder, Process Step Template Link). Distinct from PRO-0204 `process_steps.py`/Process Step Template (untouched). Backstop patch `move_process_document_to_process_documentation`. Sidebar (Process Document).
+- [ ] PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 

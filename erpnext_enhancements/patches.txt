@@ -24,6 +24,8 @@ erpnext_enhancements.patches.move_briefing_to_morning_briefing
 erpnext_enhancements.patches.move_triton_to_ai_governance
 # v1.45.0 Asset Management module: reassign the Asset Booking doctype out of Core
 erpnext_enhancements.patches.move_asset_booking_to_asset_management
+# v1.46.0 Process Documentation module: reassign the Process Document doctype out of Core
+erpnext_enhancements.patches.move_process_document_to_process_documentation
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons
