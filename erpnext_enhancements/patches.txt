@@ -32,6 +32,10 @@ erpnext_enhancements.patches.drop_orphan_project_note
 erpnext_enhancements.patches.rename_quickbooks_module
 # v1.49.0 retire Global Enhancements: fold its 2 doctypes into Core + delete the Module Def
 erpnext_enhancements.patches.retire_global_enhancements
+# v1.50.1 CRITICAL: the "Integrations" module name collided with Frappe core's, causing
+# Frappe's OAuth/Webhook/Google/LDAP/etc. doctypes to be deleted as orphans. Renamed to
+# "Integration Hub"; this reassigns our surfaces + restores Frappe's Integrations module.
+erpnext_enhancements.patches.fix_integrations_module_collision
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons

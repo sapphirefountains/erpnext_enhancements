@@ -11,7 +11,7 @@ Inventory Enhancements
 Device Management
 MDM Integration
 Workforce
-Integrations
+Integration Hub
 Google Drive
 Morning Briefing
 Asset Management

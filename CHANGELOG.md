@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.50.1] - 2026-06-16
+
+### Fixed
+- **CRITICAL — `bench migrate` deleted Frappe's built-in integration doctypes.** The module added in v1.39.0 was named **`Integrations`**, which **collides with Frappe core's own `Integrations` module**. On migrate, Frappe resolved its OWN integration doctypes (OAuth Settings/Client, Webhook, Integration Request, Google Calendar/Contacts/Settings, LDAP Settings, Social Login Key, Connected App, Token Cache, Geolocation/Push Notification Settings, …) to `erpnext_enhancements/integrations/`, didn't find them, and **deleted them as "orphaned"** — breaking login/website with 500 errors.
+  - **Fix:** renamed the module **`Integrations` → `Integration Hub`** (folder `integrations/` → `integration_hub/`; GA4 Settings doctype + GA4 Dashboard / Integrations Health pages + the hub workspace reassigned). Patch `fix_integrations_module_collision` reassigns our surfaces and restores the `Integrations` Module Def to the `frappe` app; Frappe **re-creates its deleted integration doctypes** from `frappe/integrations/` on the next sync.
+  - **⚠️ Deploy:** apply this **before** re-running migrate on any site whose integration doctypes are still intact (e.g. a site whose earlier migrate aborted before the orphan step). On a site already hit, re-running migrate restores the doctype *structure*, but rows in those tables (OAuth tokens, Social Login Keys, Connected Apps, Webhooks, Google creds) are lost and must be reconfigured.
+
 ## [1.50.0] - 2026-06-16
 
 ### Fixed
