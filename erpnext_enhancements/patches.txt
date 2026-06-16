@@ -26,6 +26,9 @@ erpnext_enhancements.patches.move_triton_to_ai_governance
 erpnext_enhancements.patches.move_asset_booking_to_asset_management
 # v1.46.0 Process Documentation module: reassign the Process Document doctype out of Core
 erpnext_enhancements.patches.move_process_document_to_process_documentation
+# v1.48.0 cleanup: drop the orphaned "Project Note" child-table doctype (unused; the
+# in-use child table is "Project Notes" plural)
+erpnext_enhancements.patches.drop_orphan_project_note
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons
