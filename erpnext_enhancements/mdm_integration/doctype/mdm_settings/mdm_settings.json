@@ -18,6 +18,7 @@
   "column_break_mir",
   "miradore_status",
   "miradore_last_sync",
+  "miradore_auth_blocked",
   "action1_section",
   "action1_enabled",
   "action1_org_id",
@@ -28,6 +29,7 @@
   "action1_token_expires_at",
   "action1_status",
   "action1_last_sync",
+  "action1_auth_blocked",
   "behaviour_section",
   "sync_poll_minutes",
   "retry_limit",
@@ -112,6 +114,16 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "description": "Set automatically when Miradore returns a non-retryable error (e.g. 401). Scheduled sync/retry is paused until the credentials are re-saved or Test Connection passes.",
+   "fieldname": "miradore_auth_blocked",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Sync Paused (Auth Failed)",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "description": "Action1 manages the computer segment (Laptop/Desktop). REST api/3.0; OAuth2 client-credentials.",
    "fieldname": "action1_section",
    "fieldtype": "Section Break",
@@ -167,6 +179,16 @@
    "fieldname": "action1_last_sync",
    "fieldtype": "Datetime",
    "label": "Last Sync",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set automatically when Action1 returns a non-retryable error (e.g. 401). Scheduled sync/retry is paused until the credentials are re-saved or Test Connection passes.",
+   "fieldname": "action1_auth_blocked",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Sync Paused (Auth Failed)",
+   "no_copy": 1,
    "read_only": 1
   },
   {

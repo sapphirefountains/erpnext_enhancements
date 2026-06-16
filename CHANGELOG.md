@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.52.1] - 2026-06-16
+
+### Fixed
+- **MDM Integration spammed the Error Log with a retry storm on a standing Miradore `401 Unauthorized`.** A persistently-failing provider fanned out into an unbounded pile of failed syncs (and a `frappe.log_error` traceback for each): `sync.retry_failed` re-ran failed logs by calling `run_device_sync`, which **created a brand-new `MDM Sync Log` every time** instead of re-running the existing one — so the per-log `retry_limit` cap was defeated and the number of failed runs roughly *doubled each cycle*. A bad/expired API key (401) can never be fixed by retrying, so this never converged.
+  - **Errors are now classified.** `MDMProviderError` carries the HTTP `status_code`; `routing.is_retryable_status` marks **400/401/403/404 as permanent** (auth/permission/not-found/bad-request) and everything else (5xx, 429, network timeouts) as transient. Missing-credential guards are flagged permanent too.
+  - **Permanent failures pause the provider instead of retrying.** A non-retryable error sets a per-provider `*_auth_blocked` flag on **MDM Settings**; `sync_devices`, `retry_failed`, and `refresh_action1_token` all skip a paused provider. The pause **self-heals**: it clears on the next successful sync, on a passing **Test Connection**, or when the provider's credentials are re-saved in MDM Settings.
+  - **Retries no longer fan out.** `run_device_sync(provider, log=…)` re-runs a failed log **in place** (resetting its run state, preserving `retry_count`) rather than spawning a new row.
+  - **Handled provider errors no longer hit the Error Log.** Auth/API failures are recorded on the `MDM Sync Log` and the provider `status_message`; only genuinely unexpected exceptions are written to the Frappe Error Log.
+  - Deploy: `bench migrate` (adds the two hidden `*_auth_blocked` fields). Existing piled-up *Failed* `MDM Sync Log` rows and old Error Log entries are inert after deploy and can be bulk-deleted; once Miradore's API key is corrected, run **Test Connection** (or re-save MDM Settings) to lift the pause.
+
 ## [1.52.0] - 2026-06-16
 
 ### Changed

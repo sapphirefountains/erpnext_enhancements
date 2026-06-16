@@ -12,7 +12,7 @@ from frappe import _
 from erpnext_enhancements.api.device_management import MANAGER_ROLES
 from erpnext_enhancements.mdm_integration.actions import execute_device_action
 from erpnext_enhancements.mdm_integration.client import get_provider
-from erpnext_enhancements.mdm_integration.sync import run_device_sync
+from erpnext_enhancements.mdm_integration.sync import clear_provider_auth_block, run_device_sync
 from erpnext_enhancements.mdm_integration.utils import get_settings
 
 
@@ -28,6 +28,9 @@ def test_connection(provider):
 	settings = get_settings()
 	try:
 		devices = get_provider(provider, settings).list_devices()
+		# A passing test means the credentials work now — lift any auth pause so
+		# the scheduler resumes automatic syncs.
+		clear_provider_auth_block(settings, provider)
 		return {
 			"ok": True,
 			"provider": provider,

@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
 	sys.path.insert(0, str(REPO_ROOT))
 
-from erpnext_enhancements.mdm_integration import routing  # noqa: E402
+from erpnext_enhancements.mdm_integration import routing
 
 
 class TestProviderRouting(unittest.TestCase):
@@ -52,6 +52,25 @@ class TestCapabilities(unittest.TestCase):
 
 	def test_unknown_provider_supports_nothing(self):
 		self.assertFalse(routing.provider_supports("Nope", "lock"))
+
+
+class TestRetryClassification(unittest.TestCase):
+	"""Auth/permission/not-found/bad-request are permanent (a scheduled retry can't
+	fix a bad key); 5xx / 429 / network errors (no status) stay retryable. This is
+	what stops a standing Miradore 401 from being retried — and re-logged — every
+	cycle."""
+
+	def test_auth_and_client_config_errors_are_permanent(self):
+		for code in (400, 401, 403, 404):
+			self.assertFalse(routing.is_retryable_status(code), f"{code} should not be retryable")
+
+	def test_transient_errors_stay_retryable(self):
+		for code in (429, 500, 502, 503, 504):
+			self.assertTrue(routing.is_retryable_status(code), f"{code} should be retryable")
+
+	def test_no_status_is_retryable(self):
+		# A network/transport error carries no HTTP status — treat as transient.
+		self.assertTrue(routing.is_retryable_status(None))
 
 
 class TestWipeGuard(unittest.TestCase):

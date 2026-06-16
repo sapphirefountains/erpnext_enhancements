@@ -32,6 +32,7 @@ from frappe.utils import add_to_date, now_datetime
 
 from erpnext_enhancements.mdm_integration.routing import (
 	CAPABILITIES,
+	is_retryable_status,
 	provider_key_for_device,
 	provider_supports,
 )
@@ -39,7 +40,27 @@ from erpnext_enhancements.mdm_integration.utils import get_secret, get_settings,
 
 
 class MDMProviderError(Exception):
-	"""Raised on a provider API/transport error or an unsupported action."""
+	"""Raised on a provider API/transport error or an unsupported action.
+
+	``status_code`` is the HTTP status when the error came from a provider
+	response (``None`` for transport/timeout/local errors). ``retryable`` tells the
+	sync layer whether re-running on a schedule could ever help: auth/permission/
+	not-found/bad-request responses are permanent until the operator fixes the
+	config, so they pause the provider instead of being retried every cycle. Pass
+	``retryable=`` to override the status-based default (e.g. a missing-credential
+	guard that has no HTTP status but is still permanent).
+	"""
+
+	def __init__(self, message, status_code=None, *, retryable=None):
+		super().__init__(message)
+		self.status_code = status_code
+		self._retryable = retryable
+
+	@property
+	def retryable(self):
+		if self._retryable is not None:
+			return self._retryable
+		return is_retryable_status(self.status_code)
 
 
 @dataclasses.dataclass
@@ -132,7 +153,7 @@ class MiradoreProvider(MDMProvider):
 		api_key = get_secret(self.settings, "miradore_api_key")
 		instance = self.settings.get("miradore_instance_name")
 		if not api_key or not instance:
-			raise MDMProviderError("Miradore instance name and API key are required.")
+			raise MDMProviderError("Miradore instance name and API key are required.", retryable=False)
 		return {"X-API-Key": api_key, "X-Instance-Name": instance, "Accept": "application/json"}
 
 	def _request(self, method, path, **kwargs):
@@ -141,7 +162,10 @@ class MiradoreProvider(MDMProvider):
 		url = f"https://online.miradore.com/api/v2{path}"
 		resp = requests.request(method, url, headers=self._headers(), timeout=kwargs.pop("timeout", 60), **kwargs)
 		if resp.status_code >= 400:
-			raise MDMProviderError(f"Miradore {method} {path} failed: {resp.status_code} {resp.text}")
+			raise MDMProviderError(
+				f"Miradore {method} {path} failed: {resp.status_code} {resp.text}",
+				status_code=resp.status_code,
+			)
 		return resp.json() if resp.text else {}
 
 	def list_devices(self):
@@ -195,7 +219,7 @@ class Action1Provider(MDMProvider):
 	def _org(self):
 		org = self.settings.get("action1_org_id")
 		if not org:
-			raise MDMProviderError("Action1 Organization ID is required.")
+			raise MDMProviderError("Action1 Organization ID is required.", retryable=False)
 		return org
 
 	def _ensure_token(self):
@@ -215,7 +239,7 @@ class Action1Provider(MDMProvider):
 		client_id = self.settings.get("action1_client_id")
 		client_secret = get_secret(self.settings, "action1_client_secret")
 		if not client_id or not client_secret:
-			raise MDMProviderError("Action1 Client ID and Client Secret are required.")
+			raise MDMProviderError("Action1 Client ID and Client Secret are required.", retryable=False)
 		resp = requests.post(
 			f"{self.BASE}/oauth2/token",
 			data={"client_id": client_id, "client_secret": client_secret},
@@ -223,7 +247,10 @@ class Action1Provider(MDMProvider):
 			timeout=60,
 		)
 		if resp.status_code >= 400:
-			raise MDMProviderError(f"Action1 token request failed: {resp.status_code} {resp.text}")
+			raise MDMProviderError(
+				f"Action1 token request failed: {resp.status_code} {resp.text}",
+				status_code=resp.status_code,
+			)
 		data = resp.json()
 		token = data.get("access_token")
 		if not token:
@@ -252,7 +279,10 @@ class Action1Provider(MDMProvider):
 			self._refresh_token()
 			return self._request(method, path, _retry=False, **kwargs)
 		if resp.status_code >= 400:
-			raise MDMProviderError(f"Action1 {method} {path} failed: {resp.status_code} {resp.text}")
+			raise MDMProviderError(
+				f"Action1 {method} {path} failed: {resp.status_code} {resp.text}",
+				status_code=resp.status_code,
+			)
 		return resp.json() if resp.text else {}
 
 	def list_devices(self):
