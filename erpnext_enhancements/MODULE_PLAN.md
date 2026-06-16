@@ -30,7 +30,10 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
 - [x] **PR 7** — Morning Briefing — v1.41.0
   - Moved Daily Briefing doctype `enhancements_core` → `morning_briefing` (refs by name; `api.briefing` + `/wall` www stay app-level). Backstop patch `move_briefing_to_morning_briefing`. Sidebar links Daily Briefing + `/wall` URL + Enhancements Settings (recipients).
   - `Briefing Recipient` kept in Core — child table of ERPNext Enhancements Settings (same call as `collab_doctype`).
-- [ ] PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 8** — Project Enhancements sidebar — v1.43.0
+  - Built the module's first sidebar (Project Dashboard, Master Project, Project Contract, Contract Template, Process Step Template, Project Dashboard Settings + standard Project).
+  - **Reframed:** the planned `project_note`/`project_reminder_email` move was dropped — both are child tables. `Project Reminder Email` is a child table of ERPNext Enhancements Settings (stays in Core, like `collab_doctype`). `Project Note` (singular) is an **orphan** (no Table field references it; the in-use one is `Project Notes` plural, already here) — flagged for cleanup, not relocated.
+- [ ] PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 
