@@ -6,7 +6,7 @@
  *
  * Registers the calendar field-map (start/end/id/title) and points the view at
  * the server-side event source
- * erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.get_events.
+ * erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.get_events.
  */
 frappe.views.calendar["Asset Booking"] = {
 	field_map: {
@@ -16,5 +16,5 @@ frappe.views.calendar["Asset Booking"] = {
 		"title": "title",
 		"allDay": "allDay"
 	},
-    get_events_method: "erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.get_events"
+    get_events_method: "erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.get_events"
 };

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.45.0] - 2026-06-16
+
+### Changed
+- **New `Asset Management` module** (module-reorganization PR 10) — the **Asset Booking** doctype (a submittable booking doc with a calendar view + map) moves out of Enhancements Core into its own module + sidebar (`/app/asset-management`):
+  - Doctype moved `enhancements_core` → `asset_management`. The self-referencing enqueue paths (`update_asset_status`), the `check_availability` form call, and the calendar's `get_events_method` (`public/js/asset_booking_calendar.js`) were repointed to `asset_management.doctype.asset_booking.*`.
+  - The app-level **`api/booking.py`** stays in `api/` (it creates Asset Booking docs by name) — consistent with the other app-level API modules.
+  - Sidebar: Asset Booking + Asset shortcuts; a Bookings card (Asset Booking, Asset).
+- Idempotent backstop patch `move_asset_booking_to_asset_management` (post-model-sync) reassigns the `module` on existing installs — no data moves; submitted bookings carry across.
+
 ## [1.44.0] - 2026-06-16
 
 ### Changed

@@ -36,7 +36,9 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
 - [x] **PR 9** — AI/Triton consolidation — v1.44.0
   - Moved Triton Settings + Training Insight (from Core) and Triton Assistant Settings + Triton Allowed User (child table, from Global) → `ai_governance`. Only 2 path fixes (self-ref in triton_settings.py, RPC string in triton_assistant_settings.js); rest by name. `triton_chat`/`utils.triton_sync` app-level, unchanged. Updated AI Governance sidebar (Triton Assistant card + Triton shortcut + Training Insight). Backstop patch `move_triton_to_ai_governance`.
   - Global Enhancements now holds only `additional_supplier_group` + `directory_link_exclusion` → PR 13 retires it.
-- [ ] PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 10** — Asset Management — v1.45.0
+  - Moved Asset Booking doctype `enhancements_core` → `asset_management`; repointed the self-enqueue (`update_asset_status`), `check_availability`, and the calendar `get_events_method` (`public/js/asset_booking_calendar.js`) paths. `api/booking.py` stays app-level (creates by name). Sidebar (Asset Booking, Asset). Backstop patch `move_asset_booking_to_asset_management`.
+- [ ] PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 

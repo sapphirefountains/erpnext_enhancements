@@ -1,0 +1,71 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"am_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"am_sc_booking\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset Booking\",\"col\":4}},{\"id\":\"am_sc_asset\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset\",\"col\":4}},{\"id\":\"am_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"am_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Bookings</b></span>\",\"col\":12}},{\"id\":\"am_card_bookings\",\"type\":\"card\",\"data\":{\"card_name\":\"Bookings\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "tool",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Asset Management",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Bookings",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Asset Booking",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Asset Booking"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Asset",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Asset"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Asset Management",
+ "name": "Asset Management",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 31,
+ "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "Asset Booking",
+   "link_to": "Asset Booking",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Asset",
+   "link_to": "Asset",
+   "type": "DocType"
+  }
+ ],
+ "title": "Asset Management",
+ "type": "Workspace"
+}

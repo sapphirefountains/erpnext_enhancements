@@ -22,6 +22,8 @@ erpnext_enhancements.patches.move_drive_to_google_drive
 erpnext_enhancements.patches.move_briefing_to_morning_briefing
 # v1.44.0 AI consolidation: move Triton + Training Insight doctypes into AI Governance
 erpnext_enhancements.patches.move_triton_to_ai_governance
+# v1.45.0 Asset Management module: reassign the Asset Booking doctype out of Core
+erpnext_enhancements.patches.move_asset_booking_to_asset_management
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons

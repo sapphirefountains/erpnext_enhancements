@@ -27,19 +27,19 @@ class AssetBooking(Document):
 
     def on_update(self):
         """Lifecycle hook: refresh the Asset's status in the background after save."""
-        frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
+        frappe.enqueue('erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def on_submit(self):
         """Lifecycle hook: refresh the Asset's status in the background on submit."""
-        frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
+        frappe.enqueue('erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def on_cancel(self):
         """Lifecycle hook: refresh the Asset's status in the background on cancel."""
-        frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
+        frappe.enqueue('erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def after_delete(self):
         """Lifecycle hook: refresh the Asset's status in the background after delete."""
-        frappe.enqueue('erpnext_enhancements.enhancements_core.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
+        frappe.enqueue('erpnext_enhancements.asset_management.doctype.asset_booking.asset_booking.update_asset_status', asset_name=self.asset)
 
     def check_overlap(self):
         """Throw a ValidationError if this booking overlaps another for the Asset.
