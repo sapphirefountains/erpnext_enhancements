@@ -40,7 +40,9 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
   - Moved Asset Booking doctype `enhancements_core` → `asset_management`; repointed the self-enqueue (`update_asset_status`), `check_availability`, and the calendar `get_events_method` (`public/js/asset_booking_calendar.js`) paths. `api/booking.py` stays app-level (creates by name). Sidebar (Asset Booking, Asset). Backstop patch `move_asset_booking_to_asset_management`.
 - [x] **PR 11** — Process Documentation — v1.46.0
   - Moved Process Document doctype `enhancements_core` → `process_documentation`. No code changes (refs by name: hooks doctype_js, setup/process_documents.py seeder, Process Step Template Link). Distinct from PRO-0204 `process_steps.py`/Process Step Template (untouched). Backstop patch `move_process_document_to_process_documentation`. Sidebar (Process Document).
-- [ ] PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 12** — Travel / Expense Claim Type — v1.47.0
+  - **Reframed (no move):** "Expense Claim Type" is a standard ERPNext (HR) doctype — the `enhancements_core/doctype/expense_claim_type/` folder is a logic-free controller stub with no JSON, and nothing sets its module. A standard doctype can't be cleanly re-moduled (ERPNext re-syncs it each migrate). So instead added an **Expense Claim Type** link to the existing Travel sidebar (masters card). Stub left untouched.
+- [ ] PR 13 — Retire Global + build slimmed Enhancements Core sidebar (final)
 
 ## Decisions (locked)
 
