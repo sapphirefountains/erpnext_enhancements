@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dropped the orphaned `Project Note` child-table doctype.** "Project Note" (singular, `istable`) was a leftover with **no parent** — a repo-wide grep for `"options": "Project Note"` is empty, and nothing imports or references it by name. The in-use project-notes child table is **`Project Notes`** (plural, on the Project Custom Field), which is untouched. Removed the `enhancements_core/doctype/project_note/` folder and added a **guarded, idempotent** patch (`drop_orphan_project_note`, post-model-sync) that deletes the DocType + its table — skipping (and logging) if `tabProject Note` somehow holds rows, so data is never silently dropped.
 
 > Version note: this independent cleanup is numbered 1.48.0 to sit above the in-flight 1.47.0 PR (#458, Travel/Expense Claim Type); merge that first to keep the changelog ordered.
+## [1.47.0] - 2026-06-16
+
+### Added
+- **Expense Claim Type on the Travel sidebar** (module-reorganization PR 12) — added an **Expense Claim Type** link to the Travel workspace's masters card (alongside Travel Trip / POI / Settings), since Travel's `trip_expense` and the six `Travel Settings` per-category fields all reference it.
+
+### Notes
+- The planned *move* of `expense_claim_type` Core → Travel was **not** done: "Expense Claim Type" is a **standard ERPNext (HR) doctype**, not a custom one — the `enhancements_core/doctype/expense_claim_type/` folder is a logic-free controller stub with no JSON, and nothing in the app sets the doctype's module. A standard ERPNext doctype can't be cleanly re-moduled (ERPNext re-syncs its JSON on every migrate and would reset it), so it's surfaced on the Travel sidebar instead. The vestigial stub in Core is left untouched.
 
 ## [1.46.0] - 2026-06-16
 
