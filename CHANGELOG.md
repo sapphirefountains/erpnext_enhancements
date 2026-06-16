@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-06-16
+
+### Changed
+- **New `Workforce` module** (module-reorganization PR 4) — the time-tracking surfaces move out of the Enhancements Core grab-bag into their own module + sidebar (`/app/workforce`):
+  - Doctypes **Time Kiosk Log** and **Time Kiosk Settings** and desk pages **Time Kiosk** (`time-kiosk`) and **Location Timeline** (`location-timeline`) moved `enhancements_core` → `workforce`.
+  - The `/kiosk` PWA and the `api.time_kiosk` endpoints are app-level (in `www/` and `api/`) and do **not** move; only one import path needed updating (`api/time_kiosk.py`).
+  - Workforce sidebar: shortcuts to Time Kiosk, Location Timeline, and the `/kiosk` PWA; a Time Tracking card linking **Job Interval** (the clock-in session doctype, still in Core), Time Kiosk Log, and Time Kiosk Settings.
+- Idempotent backstop patch (`move_time_tracking_to_workforce`, post-model-sync) reassigns the four records' `module` on existing installs (no data moves — records are keyed by name).
+
 ## [1.37.1] - 2026-06-16
 
 ### Fixed

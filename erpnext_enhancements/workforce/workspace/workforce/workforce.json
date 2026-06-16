@@ -1,0 +1,85 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"wf_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"wf_sc_kiosk\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Time Kiosk\",\"col\":4}},{\"id\":\"wf_sc_loc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Location Timeline\",\"col\":4}},{\"id\":\"wf_sc_pwa\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Kiosk PWA\",\"col\":4}},{\"id\":\"wf_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"wf_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Time Tracking</b></span>\",\"col\":12}},{\"id\":\"wf_card_tt\",\"type\":\"card\",\"data\":{\"card_name\":\"Time Tracking\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "hr",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Workforce",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Time Tracking",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Job Interval",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Job Interval"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Time Kiosk Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Time Kiosk Log"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Time Kiosk Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Time Kiosk Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workforce",
+ "name": "Workforce",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 26,
+ "shortcuts": [
+  {
+   "label": "Time Kiosk",
+   "link_to": "time-kiosk",
+   "type": "Page"
+  },
+  {
+   "label": "Location Timeline",
+   "link_to": "location-timeline",
+   "type": "Page"
+  },
+  {
+   "label": "Kiosk PWA",
+   "type": "URL",
+   "url": "/kiosk"
+  }
+ ],
+ "title": "Workforce",
+ "type": "Workspace"
+}
