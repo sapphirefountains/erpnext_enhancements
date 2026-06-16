@@ -63,6 +63,9 @@ def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str |
 		"VendorCredit": _map_vendor_credit,
 		"Deposit": _map_deposit,
 		"TaxCode": _map_tax_code,
+		"Term": _map_term,
+		"PaymentMethod": _map_payment_method,
+		"Class": _map_class,
 	}
 	mapper = mappers.get(entity_type)
 	if not mapper:
@@ -627,9 +630,10 @@ def apply_blank_values(doc, values: dict) -> dict:
 def find_existing_match(entity_type: str, payload: dict, settings):
 	"""Find a pre-existing ERPNext record to link a master entity to.
 
-	Dispatches to a per-entity matcher (only master types: Account/Customer/
-	Vendor/Item/TaxCode). Returns a match dict (matched/ambiguous) or None.
-	Transactions are never auto-matched -- they are always created fresh.
+	Dispatches to a per-entity matcher (master types only: Account/Customer/
+	Vendor/Item/TaxCode/Term/PaymentMethod/Class). Returns a match dict
+	(matched/ambiguous) or None. Transactions are never auto-matched -- they are
+	always created fresh.
 	"""
 	matchers = {
 		"Account": _match_account,
@@ -637,6 +641,9 @@ def find_existing_match(entity_type: str, payload: dict, settings):
 		"Vendor": _match_supplier,
 		"Item": _match_item,
 		"TaxCode": _match_tax_code,
+		"Term": _match_term,
+		"PaymentMethod": _match_payment_method,
+		"Class": _match_class,
 	}
 	matcher = matchers.get(entity_type)
 	return matcher(payload, settings) if matcher else None
@@ -737,6 +744,11 @@ def _map_customer(payload, settings):
 		),
 		"customer_group": _default_group("Customer Group", "All Customer Groups"),
 		"territory": _default_group("Territory", "All Territories"),
+		# Links to an already-imported Payment Terms Template when QBO assigns the
+		# customer a sales term (Term is imported before Customer); None otherwise.
+		"payment_terms": _linked_name(
+			"Term", "Payment Terms Template", (payload.get("SalesTermRef") or {}).get("value")
+		),
 	}
 
 
@@ -750,6 +762,11 @@ def _map_supplier(payload, settings):
 			("Company", "Commercial") if payload.get("CompanyName") else ("Individual", "Residential"),
 		),
 		"supplier_group": _default_group("Supplier Group", "All Supplier Groups"),
+		# Links to an already-imported Payment Terms Template when QBO assigns the
+		# vendor a term (Term is imported before Vendor); None otherwise.
+		"payment_terms": _linked_name(
+			"Term", "Payment Terms Template", (payload.get("TermRef") or {}).get("value")
+		),
 	}
 
 
@@ -1070,6 +1087,63 @@ def _map_tax_code(payload, settings):
 	}
 
 
+def _map_term(payload, settings):
+	"""Map a QBO Term to an ERPNext Payment Terms Template (single 100% term).
+
+	QBO ``STANDARD`` terms are "net N days" (``DueDays`` after the invoice date);
+	``DATE_DRIVEN`` terms ("due the Nth of the month") are approximated as due a
+	number of days after the end of the invoice month. ERPNext requires a
+	template's portions to sum to 100%, so one full-portion term row carries the
+	schedule.
+	"""
+	name = payload.get("Name") or f"QBO Term {payload.get('Id')}"
+	if payload.get("Type") == "DATE_DRIVEN":
+		due_date_based_on = "Day(s) after the end of the invoice month"
+		credit_days = int(_to_amount(payload.get("DayOfMonthDue")))
+	else:
+		due_date_based_on = "Day(s) after invoice date"
+		credit_days = int(_to_amount(payload.get("DueDays")))
+	return "Payment Terms Template", {
+		"template_name": name,
+		"terms": [
+			{
+				"due_date_based_on": due_date_based_on,
+				"invoice_portion": 100,
+				"credit_days": credit_days,
+				"description": name,
+			}
+		],
+	}
+
+
+def _map_payment_method(payload, settings):
+	"""Map a QBO PaymentMethod to an ERPNext Mode of Payment.
+
+	QBO credit-card methods become a Bank-type mode; everything else defaults to
+	Cash. The mode is enabled so it is immediately selectable on payments.
+	"""
+	return "Mode of Payment", {
+		"mode_of_payment": payload.get("Name") or f"QBO Payment Method {payload.get('Id')}",
+		"enabled": 1,
+		"type": "Bank" if payload.get("Type") == "CREDIT_CARD" else "Cash",
+	}
+
+
+def _map_class(payload, settings):
+	"""Map a QBO Class to an ERPNext Cost Center under the company's root.
+
+	QBO tracking classes are the closest analogue to ERPNext cost centers. Parent
+	classes (those with children) become group cost centers so their children can
+	nest; a leaf class is a postable ledger cost center.
+	"""
+	return "Cost Center", {
+		"cost_center_name": payload.get("Name"),
+		"company": settings.company,
+		"parent_cost_center": _qbo_parent_cost_center(payload, settings),
+		"is_group": 1 if payload.get("_qbo_has_children") else 0,
+	}
+
+
 def _linked_name(qbo_entity_type: str, erpnext_doctype: str, qbo_id: str | None):
 	"""Resolve a QBO reference id to the ERPNext record name it was mapped to.
 
@@ -1257,6 +1331,39 @@ def _root_account_for_type(root_type, settings):
 	return accounts[0].name if accounts else None
 
 
+def _qbo_parent_cost_center(payload, settings):
+	"""Resolve a Class's parent Cost Center: the mapped ParentRef, else the root."""
+	parent_qbo_id = (payload.get("ParentRef") or {}).get("value")
+	if parent_qbo_id:
+		parent = _linked_name("Class", "Cost Center", parent_qbo_id)
+		if parent:
+			return parent
+	return _root_cost_center(settings)
+
+
+def _root_cost_center(settings):
+	"""Return the company's root (group) Cost Center, or None.
+
+	The root carries no parent; falls back to the lowest-``lft`` group cost center
+	so a non-standard parent value (``""`` vs NULL) still resolves.
+	"""
+	if not settings.company:
+		return None
+	root = frappe.db.get_value(
+		"Cost Center", {"company": settings.company, "is_group": 1, "parent_cost_center": ""}, "name"
+	)
+	if root:
+		return root
+	roots = frappe.get_all(
+		"Cost Center",
+		filters={"company": settings.company, "is_group": 1},
+		fields=["name"],
+		order_by="lft asc",
+		limit_page_length=1,
+	)
+	return roots[0].name if roots else None
+
+
 def _payment_party(payload):
 	"""Resolve a payment's party: a mapped Customer, else a mapped Vendor, else (None, None)."""
 	customer = _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value"))
@@ -1384,6 +1491,39 @@ def _match_item(payload, settings):
 		if match:
 			return match
 	return None
+
+
+def _match_term(payload, settings):
+	"""Match a QBO Term to an existing Payment Terms Template by name."""
+	return _single_or_ambiguous(
+		"Payment Terms Template",
+		{"template_name": payload.get("Name")},
+		"template_name",
+		payload,
+		confidence=90,
+	)
+
+
+def _match_payment_method(payload, settings):
+	"""Match a QBO PaymentMethod to an existing Mode of Payment by name."""
+	return _single_or_ambiguous(
+		"Mode of Payment",
+		{"mode_of_payment": payload.get("Name")},
+		"mode_of_payment",
+		payload,
+		confidence=90,
+	)
+
+
+def _match_class(payload, settings):
+	"""Match a QBO Class to an existing Cost Center by name + company."""
+	return _single_or_ambiguous(
+		"Cost Center",
+		{"cost_center_name": payload.get("Name"), "company": settings.company},
+		"cost_center_name + company",
+		payload,
+		confidence=90,
+	)
 
 
 def _single_or_ambiguous(doctype, filters, rule, payload, confidence):

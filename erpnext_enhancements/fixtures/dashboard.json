@@ -193,5 +193,39 @@
         "card": "Open PO Value"
       }
     ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "QuickBooks Online",
+    "dashboard_name": "QuickBooks Online",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "QuickBooks Sync Runs (Daily)",
+        "width": "Full"
+      },
+      {
+        "chart": "QuickBooks Syncs by Type",
+        "width": "Half"
+      },
+      {
+        "chart": "QuickBooks Syncs by Status",
+        "width": "Half"
+      }
+    ],
+    "cards": [
+      {
+        "card": "QuickBooks Failed Syncs"
+      },
+      {
+        "card": "QuickBooks Records Mapped"
+      },
+      {
+        "card": "QuickBooks Open Conflicts"
+      },
+      {
+        "card": "QuickBooks Pending Review"
+      }
+    ]
   }
 ]

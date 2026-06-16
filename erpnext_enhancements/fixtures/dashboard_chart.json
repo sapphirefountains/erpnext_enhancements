@@ -280,5 +280,45 @@
     "type": "Donut",
     "filters_json": "[]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "QuickBooks Sync Runs (Daily)",
+    "chart_name": "QuickBooks Sync Runs (Daily)",
+    "chart_type": "Count",
+    "document_type": "QuickBooks Sync Log",
+    "based_on": "creation",
+    "timeseries": 1,
+    "timespan": "Last Month",
+    "time_interval": "Daily",
+    "type": "Bar",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "QuickBooks Syncs by Type",
+    "chart_name": "QuickBooks Syncs by Type",
+    "chart_type": "Group By",
+    "document_type": "QuickBooks Sync Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "sync_type",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "QuickBooks Syncs by Status",
+    "chart_name": "QuickBooks Syncs by Status",
+    "chart_type": "Group By",
+    "document_type": "QuickBooks Sync Log",
+    "group_by_type": "Count",
+    "group_by_based_on": "status",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[]",
+    "is_public": 1
   }
 ]

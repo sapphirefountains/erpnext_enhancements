@@ -29,7 +29,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Sync Type",
-   "options": "Import All\nPreview Resync\nRun Resync\nEntity Sync\nWebhook\nCDC\nRetry",
+   "options": "Import All\nPreview Resync\nRun Resync\nEntity Sync\nWebhook\nCDC\nRetry\nOpening Balances",
    "reqd": 1
   },
   {

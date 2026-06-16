@@ -33,6 +33,11 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	page.add_action_item(__("Link Existing Records"), () => previewExistingMatches());
 	page.add_action_item(__("Preview Resync"), () => previewResync());
 	page.add_action_item(__("Retry Failed"), () => retryFailed());
+	page.add_action_item(__("Compare Balances"), () =>
+		frappe.set_route("query-report", "QuickBooks Balance Comparison"),
+	);
+	page.add_action_item(__("Reconcile Transactions"), () => reconcileTransactions());
+	page.add_action_item(__("Import Opening Balances"), () => importOpeningBalances());
 
 	const root = $(`
 		<div class="qbo-dashboard">
@@ -91,11 +96,14 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 
 // Keep in sync with ACCOUNTING_ENTITIES in quickbooks_online/core/constants.py.
 const QBO_ENTITIES = [
+	"Term",
+	"PaymentMethod",
 	"Account",
 	"Customer",
 	"Vendor",
 	"Item",
 	"TaxCode",
+	"Class",
 	"Estimate",
 	"Invoice",
 	"SalesReceipt",
@@ -334,4 +342,92 @@ function syncEntity(entity, qboId) {
 			frappe.msgprint(__("{0} synced in log {1}", [entity, response.message.sync_log]));
 		},
 	});
+}
+
+function reconcileTransactions() {
+	frappe.call({
+		method: "erpnext_enhancements.quickbooks_online.core.api.reconcile_transactions",
+		freeze: true,
+		freeze_message: __("Reconciling imported transactions against QuickBooks..."),
+		callback(response) {
+			const summary = (response.message || {}).summary || {};
+			frappe.msgprint({
+				title: __("Transaction Reconciliation"),
+				indicator: summary.mismatched || summary.missing ? "orange" : "green",
+				message: __(
+					"{0} matched, {1} amount mismatch(es), {2} missing ERPNext document(s).",
+					[summary.matched || 0, summary.mismatched || 0, summary.missing || 0],
+				),
+			});
+		},
+	});
+}
+
+function importOpeningBalances() {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Import Opening Balances from QuickBooks"),
+		fields: [
+			{
+				fieldname: "as_of_date",
+				label: __("As of Date"),
+				fieldtype: "Date",
+				default: frappe.datetime.get_today(),
+				reqd: 1,
+			},
+			{
+				fieldname: "auto_submit",
+				label: __("Submit the Journal Entry (otherwise leave as a draft to review)"),
+				fieldtype: "Check",
+				default: 0,
+			},
+			{
+				fieldname: "note",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Builds one balanced opening Journal Entry from the QuickBooks Trial Balance and open customer/vendor balances. Review the draft before submitting.",
+				)}</p>`,
+			},
+		],
+		primary_action_label: __("Build Opening Entry"),
+		primary_action(values) {
+			dialog.hide();
+			frappe.call({
+				method: "erpnext_enhancements.quickbooks_online.core.api.sync_opening_balances",
+				args: { as_of_date: values.as_of_date, auto_submit: values.auto_submit ? 1 : 0 },
+				freeze: true,
+				freeze_message: __("Building opening balances..."),
+				callback(response) {
+					const result = response.message || {};
+					if (!result.journal_entry) {
+						frappe.msgprint(__("No opening balances were found to import."));
+						return;
+					}
+					let message = __("Opening Journal Entry {0} created ({1} lines).", [
+						result.journal_entry,
+						result.line_count || 0,
+					]);
+					if ((result.skipped_stock || []).length) {
+						message +=
+							"<br>" +
+							__("Stock accounts excluded (post opening stock via Stock Reconciliation): {0}", [
+								result.skipped_stock.join(", "),
+							]);
+					}
+					if ((result.unmapped || []).length) {
+						message +=
+							"<br>" +
+							__("{0} QuickBooks account(s) had a balance but no linked ERPNext account.", [
+								result.unmapped.length,
+							]);
+					}
+					frappe.msgprint({
+						title: __("Opening Balances"),
+						indicator: (result.skipped_stock || []).length || (result.unmapped || []).length ? "orange" : "green",
+						message,
+					});
+				},
+			});
+		},
+	});
+	dialog.show();
 }

@@ -219,6 +219,27 @@ class QuickBooksClient:
 		"""Fetch a single QBO entity by id (used for webhook/manual entity syncs)."""
 		return self.request("GET", f"/v3/company/{self.settings.realm_id}/{entity_type.lower()}/{qbo_id}")
 
+	def report(self, report_name: str, params: dict | None = None):
+		"""Fetch a QBO Reports-API report (TrialBalance, GeneralLedger, ...) by name.
+
+		Reports live under ``/v3/company/{realm}/reports/{ReportName}`` and return a
+		nested ``Columns``/``Rows`` structure (not the entity envelope ``query`` and
+		``get_entity`` return). ``params`` carries the report controls QBO expects --
+		``date_macro``/``start_date``/``end_date``, ``accounting_method``,
+		``account``, etc. -- and is merged with the pinned ``minorversion`` by
+		``request``. Used by ``core.reconcile`` (balance comparison) and
+		``core.opening_balances`` (point-in-time balances for the opening JE).
+
+		The Reports API returns computed ledger balances even for companies whose
+		transaction/statement exports come back empty, which is why reconciliation
+		and opening balances source from here rather than from ``query``.
+		"""
+		return self.request(
+			"GET",
+			f"/v3/company/{self.settings.realm_id}/reports/{report_name}",
+			params=dict(params or {}),
+		)
+
 	def cdc(self, entities: list[str], changed_since):
 		"""Call the Change Data Capture endpoint for entities changed since a cursor.
 

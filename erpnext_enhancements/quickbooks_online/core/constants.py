@@ -11,11 +11,14 @@ it is pure data imported by ``client.py`` (URLs/OAuth scope), ``sync.py``
 # All QBO accounting entities this integration knows how to import. Used as the
 # default selection for a full "Import All" run.
 ACCOUNTING_ENTITIES = [
+	"Term",
+	"PaymentMethod",
 	"Account",
 	"Customer",
 	"Vendor",
 	"Item",
 	"TaxCode",
+	"Class",
 	"Estimate",
 	"Invoice",
 	"SalesReceipt",
@@ -34,7 +37,10 @@ ACCOUNTING_ENTITIES = [
 # Master-data entities are imported first so that transactions (below) can
 # resolve their references (e.g. an Invoice's CustomerRef) to already-mapped
 # ERPNext records. See sync.ordered_entities for how this ordering is applied.
-MASTER_ENTITIES = ["Account", "Customer", "Vendor", "Item", "TaxCode"]
+# Term/PaymentMethod precede Customer/Vendor so a party's SalesTermRef resolves
+# to an already-imported Payment Terms Template; Class (-> Cost Center) is a
+# hierarchical master like Account.
+MASTER_ENTITIES = ["Term", "PaymentMethod", "Account", "Customer", "Vendor", "Item", "TaxCode", "Class"]
 TRANSACTION_ENTITIES = [
 	"Estimate",
 	"Invoice",
@@ -58,10 +64,13 @@ TRANSACTION_ENTITIES = [
 # for the same reason (it is a newer entity outside QBO's CDC catalogue), so it
 # is incremental-synced only via a periodic full import.
 CDC_ENTITIES = [
+	"Term",
+	"PaymentMethod",
 	"Account",
 	"Customer",
 	"Vendor",
 	"Item",
+	"Class",
 	"Estimate",
 	"Invoice",
 	"SalesReceipt",
@@ -108,6 +117,11 @@ ENTITY_DOCTYPE_MAP = {
 	"Vendor": "Supplier",
 	"Item": "Item",
 	"TaxCode": "Account",
+	# Additional master data: payment terms, payment methods and tracking classes
+	# map onto their native ERPNext equivalents (Class -> Cost Center dimension).
+	"Term": "Payment Terms Template",
+	"PaymentMethod": "Mode of Payment",
+	"Class": "Cost Center",
 	"Invoice": "Sales Invoice",
 	"SalesReceipt": "Sales Invoice",
 	"Bill": "Purchase Invoice",

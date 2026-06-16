@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.53.0] - 2026-06-16
+
+### Added
+- **QuickBooks Online balance reconciliation (Reports API).** New `core/reconcile.py` plus a **"QuickBooks Balance Comparison"** script report (Accounts roles) that pulls QBO's **Trial Balance** report as of a date and compares it, account by account, against each linked ERPNext account's General Ledger balance — bucketing accounts as matched / mismatched / QuickBooks-only / ERPNext-only. This automates the post-import Trial Balance reconciliation in `MIGRATION_NOTES.md`. The Reports API returns computed ledger balances even when transaction/statement exports come back empty, which is what made the manual cut-over hard. `client.report()` is the new generic Reports-API helper (`/v3/company/{realm}/reports/{name}`); `reconcile_transactions()` additionally cross-checks each imported transaction's amount against its stored QBO raw payload. Surfaced on the dashboard as **Compare Balances** and **Reconcile Transactions**.
+- **Opening-balance import from QuickBooks.** New `core/opening_balances.py` builds one balanced **Opening Entry** Journal Entry from the QBO Trial Balance and open customer/vendor balances: a line per leaf account, A/R and A/P broken out by party (ERPNext requires a party on Receivable/Payable lines), stock accounts excluded (post via Stock Reconciliation — reported back), and any residual squared off against the company's **Temporary Opening** account. Created as a **draft by default** for review; the dashboard **Import Opening Balances** action takes an as-of date and an opt-in submit. Audited via a new **Opening Balances** `QuickBooks Sync Log` type.
+- **Three new master entities are now imported and synced:** QBO **Term → Payment Terms Template**, **PaymentMethod → Mode of Payment**, and **Class → Cost Center** (hierarchical, parents become group cost centers like Accounts). Terms/Payment Methods are imported before Customers/Vendors so a party's `SalesTermRef`/`TermRef` links to its Payment Terms Template, and all three auto-link to pre-existing ERPNext records by name. Added to `ACCOUNTING_ENTITIES`, `CDC_ENTITIES`, the dashboard entity list, and the import order.
+- **QuickBooks Online operational dashboard** — native Number Cards (Failed Syncs, Records Mapped, Open Conflicts, Pending Review) and Dashboard Charts (Sync Runs daily, Syncs by Type, Syncs by Status) over the Sync Log / Sync Mapping doctypes, plus a "QuickBooks Online" Dashboard. Shipped as version-controlled fixtures.
+
+### Notes
+- All additions are read-only except the opening-balance Journal Entry, which is a reviewable draft unless explicitly submitted. No schema migration beyond the new "Opening Balances" Sync Log option and the new report/cards/charts; run `bench migrate` and `bench --site <site> export-fixtures` is not required (fixtures ship in-repo).
+
 ## [1.52.1] - 2026-06-16
 
 ### Fixed
