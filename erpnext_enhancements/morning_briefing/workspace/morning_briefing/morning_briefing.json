@@ -1,0 +1,78 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"mb_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"mb_sc_wall\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Wall / TV Display\",\"col\":4}},{\"id\":\"mb_sc_brief\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daily Briefing\",\"col\":4}},{\"id\":\"mb_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"mb_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Briefing &amp; Settings</b></span>\",\"col\":12}},{\"id\":\"mb_card_brief\",\"type\":\"card\",\"data\":{\"card_name\":\"Briefing\",\"col\":4}},{\"id\":\"mb_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "dashboard",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Morning Briefing",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Briefing",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Daily Briefing",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Daily Briefing"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Recipients (Enhancements Settings)",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "ERPNext Enhancements Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Morning Briefing",
+ "name": "Morning Briefing",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 29,
+ "shortcuts": [
+  {
+   "label": "Wall / TV Display",
+   "type": "URL",
+   "url": "/wall"
+  },
+  {
+   "doc_view": "List",
+   "label": "Daily Briefing",
+   "link_to": "Daily Briefing",
+   "type": "DocType"
+  }
+ ],
+ "title": "Morning Briefing",
+ "type": "Workspace"
+}
