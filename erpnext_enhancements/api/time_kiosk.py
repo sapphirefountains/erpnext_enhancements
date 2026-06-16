@@ -34,7 +34,7 @@ from frappe import _
 from frappe.utils import now_datetime, get_datetime, flt, cint, add_days
 from datetime import datetime, timedelta
 
-from erpnext_enhancements.enhancements_core.doctype.time_kiosk_settings.time_kiosk_settings import (
+from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
 
