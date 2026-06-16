@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"aigov_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>AI Governance</b></span>\",\"col\":12}},{\"id\":\"aigov_sc_pending\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Pending Confirmations\",\"col\":4}},{\"id\":\"aigov_sc_log\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Action Log\",\"col\":4}},{\"id\":\"aigov_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"aigov_links\",\"type\":\"card\",\"data\":{\"card_name\":\"Records\",\"col\":4}}]",
+ "content": "[{\"id\":\"aigov_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>AI Governance</b></span>\",\"col\":12}},{\"id\":\"aigov_sc_pending\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Pending Confirmations\",\"col\":4}},{\"id\":\"aigov_sc_log\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Action Log\",\"col\":4}},{\"id\":\"aigov_sc_triton\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Triton Settings\",\"col\":4}},{\"id\":\"aigov_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"aigov_links\",\"type\":\"card\",\"data\":{\"card_name\":\"Records\",\"col\":4}},{\"id\":\"aigov_triton\",\"type\":\"card\",\"data\":{\"card_name\":\"Triton Assistant\",\"col\":4}}]",
  "creation": "2026-06-11 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Records",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -23,7 +23,6 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "AI Pending Action",
-   "link_count": 0,
    "link_to": "AI Pending Action",
    "link_type": "DocType",
    "onboard": 0,
@@ -33,7 +32,6 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "AI Action Log",
-   "link_count": 0,
    "link_to": "AI Action Log",
    "link_type": "DocType",
    "onboard": 0,
@@ -43,7 +41,6 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "AI Model Usage",
-   "link_count": 0,
    "link_to": "AI Model Usage",
    "link_type": "DocType",
    "onboard": 0,
@@ -53,14 +50,48 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Assistant Audit Log (FAC)",
-   "link_count": 0,
    "link_to": "Assistant Audit Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Insight",
+   "link_to": "Training Insight",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Triton Assistant",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Triton Settings",
+   "link_to": "Triton Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Triton Assistant Settings",
+   "link_to": "Triton Assistant Settings",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
   }
  ],
- "modified": "2026-06-12 18:00:00.000000",
+ "modified": "2026-06-15 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "AI Governance",
  "name": "AI Governance",
@@ -70,7 +101,6 @@
  "quick_lists": [],
  "roles": [],
  "sequence_id": 99.0,
- "type": "Workspace",
  "shortcuts": [
   {
    "color": "Orange",
@@ -86,7 +116,13 @@
    "label": "Action Log",
    "link_to": "AI Action Log",
    "type": "DocType"
+  },
+  {
+   "label": "Triton Settings",
+   "link_to": "Triton Settings",
+   "type": "DocType"
   }
  ],
- "title": "AI Governance"
+ "title": "AI Governance",
+ "type": "Workspace"
 }

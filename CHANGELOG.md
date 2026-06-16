@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.44.0] - 2026-06-16
+
+### Changed
+- **AI/Triton consolidation** (module-reorganization PR 9) — the Triton assistant config and AI training doctypes are pulled into the **AI Governance** module so the AI surface lives in one place:
+  - From Enhancements Core: **Triton Settings** (Single), **Training Insight**.
+  - From Global Enhancements: **Triton Assistant Settings** (Single), **Triton Allowed User** (child table of Triton Assistant Settings).
+  - Only two path references needed fixing (everything else is by doctype name): a self-referencing enqueue path in `triton_settings.py` and the `test_connection` RPC method string in `triton_assistant_settings.js`. The app-level `triton_chat.py` / `utils.triton_sync` are unchanged.
+  - **AI Governance sidebar updated:** added a Triton Settings shortcut, a **Triton Assistant** card (Triton Settings, Triton Assistant Settings), and Training Insight to the Records card.
+- After this, **Global Enhancements** holds only `additional_supplier_group` + `directory_link_exclusion` (to be folded into Core when Global is retired).
+- Idempotent backstop patch `move_triton_to_ai_governance` (post-model-sync) reassigns the four doctypes' `module` on existing installs — no data moves; the Triton Singles' gateway URL / secrets / prompts / Twilio creds / allowed users carry across.
+
 ## [1.43.0] - 2026-06-16
 
 ### Added
