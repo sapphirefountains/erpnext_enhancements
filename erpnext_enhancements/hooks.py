@@ -42,6 +42,9 @@ app_include_js = [
 # Bundle reference (was "/assets/erpnext_enhancements/css/login_enhancements.css",
 # which 404s — public/css only contains login_enhancements.bundle.css).
 web_include_css = "login_enhancements.bundle.css"
+# Login page legal footer (Privacy Policy + EULA links). Loads on website pages
+# but only injects on /login; styled by login_enhancements.bundle.css.
+web_include_js = "login_enhancements.bundle.js"
 
 doctype_js = {
 	"Opportunity": [
