@@ -1,0 +1,59 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"task_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"task_sc_hier\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Hierarchical Task View\",\"col\":4}},{\"id\":\"task_sc_task\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":4}},{\"id\":\"task_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"task_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Tasks</b></span>\",\"col\":12}},{\"id\":\"task_card_tasks\",\"type\":\"card\",\"data\":{\"card_name\":\"Tasks\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "project",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Task Enhancements",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tasks",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Task",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Task"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Task Enhancements",
+ "name": "Task Enhancements",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 22,
+ "shortcuts": [
+  {
+   "label": "Hierarchical Task View",
+   "link_to": "hierarchical-task-view",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Task",
+   "link_to": "Task",
+   "type": "DocType"
+  }
+ ],
+ "title": "Task Enhancements",
+ "type": "Workspace"
+}

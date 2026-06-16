@@ -1,0 +1,117 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"crm_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"crm_sc_pipeline\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Pipeline\",\"col\":4}},{\"id\":\"crm_sc_lead\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":4}},{\"id\":\"crm_sc_opp\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Opportunity\",\"col\":4}},{\"id\":\"crm_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"crm_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Pipeline &amp; Enhancements</b></span>\",\"col\":12}},{\"id\":\"crm_card_pipeline\",\"type\":\"card\",\"data\":{\"card_name\":\"Pipeline\",\"col\":4}},{\"id\":\"crm_card_enh\",\"type\":\"card\",\"data\":{\"card_name\":\"Enhancements\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "crm",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "CRM Enhancements",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Pipeline",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Lead",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Lead"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Opportunity",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Opportunity"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Customer",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Customer"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Enhancements",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Value Streams",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Value Streams"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sales Activity Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Sales Activity Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CRM Enhancements",
+ "name": "CRM Enhancements",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 23,
+ "shortcuts": [
+  {
+   "label": "Sales Pipeline",
+   "link_to": "sales-pipeline",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Lead",
+   "link_to": "Lead",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Opportunity",
+   "link_to": "Opportunity",
+   "type": "DocType"
+  }
+ ],
+ "title": "CRM Enhancements",
+ "type": "Workspace"
+}
