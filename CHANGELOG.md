@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.1] - 2026-06-16
+
+### Fixed
+- **Removed a stray Page definition misfiled under a DocType folder.** `task_enhancements/doctype/hierarchical_task_view/` held a `"doctype": "Page"` JSON (a byte-for-byte duplicate of the real page) plus an `__init__.py`, sitting in a `doctype/` directory that `bench migrate` scans for DocTypes. Frappe imports by the JSON's `doctype` field, so it was redundantly upserting the same `hierarchical-task-view` Page that the canonical `task_enhancements/page/hierarchical_task_view/` (with `.js`/`.py`) already manages. Deleted the stray folder; nothing referenced it, and the real page is unaffected (no DB patch needed — the Page record is keyed by name and still synced from `page/`).
+
 ## [1.37.0] - 2026-06-15
 
 ### Changed
