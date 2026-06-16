@@ -250,6 +250,9 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
 	"Contact": {
+		# Title field custom_full_name_and_role = "First Last-Party" (ported from a
+		# disabled Server Script; see script_migrations/contact.py)
+		"validate": "erpnext_enhancements.script_migrations.contact.set_full_name_and_role",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
