@@ -200,6 +200,105 @@ def find_folder(service, name, parent_id, shared_drive_id=None):
 		raise error
 
 
+def rename_folder(service, file_id, new_name, shared_drive_id=None):
+	"""Rename an existing Drive folder (or file) by id and return its id and link.
+
+	Args:
+		service: Authenticated Drive v3 service (from :func:`get_drive_service`).
+		file_id: Drive id of the folder to rename.
+		new_name: New folder name.
+		shared_drive_id: When set, enables Shared Drive support on the request
+			(``supportsAllDrives``).
+
+	Returns:
+		tuple: ``(file_id, web_view_link)`` for the renamed folder.
+
+	Raises:
+		googleapiclient.errors.HttpError: if the API call ultimately fails — in
+			particular a 404 when the folder no longer exists (deleted/moved).
+
+	Side effects:
+		Patches the folder's name via the Google Drive API. Retries up to 5 times
+		with exponential backoff on 403/429 (rate-limit / quota) responses.
+	"""
+	kwargs = {
+		"fileId": file_id,
+		"body": {"name": new_name},
+		"fields": "id, webViewLink",
+	}
+
+	if shared_drive_id:
+		kwargs["supportsAllDrives"] = True
+
+	max_retries = 5
+	for attempt in range(max_retries):
+		try:
+			folder = service.files().update(**kwargs).execute()
+			return folder.get("id"), folder.get("webViewLink")
+		except HttpError as error:
+			if error.resp.status in [403, 429]:
+				if attempt < max_retries - 1:
+					time.sleep((2**attempt) + 1)
+					continue
+			raise error
+
+
+def create_project_subfolders(service, project_folder_id, shared_drive_id, project_type=None):
+	"""Find-or-create the standard project subfolder tree inside a project folder.
+
+	The set of subfolders comes from the ``Project Folder Google Drive Settings``
+	template table when configured (rows optionally scoped to a Project Type),
+	otherwise a built-in default set. Paths nest via ``/`` (e.g.
+	``"Project Management/Pictures"``). Each path segment is **find-or-created**,
+	so the call is idempotent and safe to run against a folder that already holds
+	some structure or files — e.g. a renamed Opportunity folder.
+
+	Args:
+		service: Authenticated Drive v3 service.
+		project_folder_id: Drive id of the project folder to populate.
+		shared_drive_id: Configured Shared Drive id (enables Shared Drive support).
+		project_type: When set, includes template rows scoped to this Project Type
+			in addition to the unscoped rows.
+
+	Returns:
+		dict: Mapping of each path (e.g. ``"Project Management/Pictures"``) to its
+		Drive folder id.
+
+	Side effects:
+		Multiple Google Drive API calls (list / create folders).
+	"""
+	default_template = [
+		"Accounting & Legal",
+		"Build",
+		"Design",
+		"Project Management",
+		"Project Management/Pictures",
+	]
+	settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+	rows = settings.get("project_folder_template") or []
+	paths = [
+		(row.folder_path or "").strip()
+		for row in rows
+		if (row.folder_path or "").strip()
+		and (not row.project_type or (project_type and row.project_type == project_type))
+	] or default_template
+
+	created = {}
+	for path in paths:
+		parent = project_folder_id
+		partial = []
+		for part in [p.strip() for p in path.split("/") if p.strip()]:
+			partial.append(part)
+			key = "/".join(partial)
+			if key not in created:
+				folder_id = find_folder(service, part, parent, shared_drive_id)
+				if not folder_id:
+					folder_id, _ = create_folder(service, part, parent, shared_drive_id)
+				created[key] = folder_id
+			parent = created[key]
+	return created
+
+
 def provision_project_folders(project_name_full, party_name, project_type=None):
 	"""Create the full Drive folder tree for a new project and return its root.
 
@@ -211,7 +310,7 @@ def provision_project_folders(project_name_full, party_name, project_type=None):
 		      Accounting & Legal/
 		      Build/
 		      Design/
-		      Project Manager/
+		      Project Management/
 		        Pictures/
 
 	The customer folder is looked up first and only created if missing; the
@@ -249,38 +348,64 @@ def provision_project_folders(project_name_full, party_name, project_type=None):
 		service, project_name_full, customer_folder_id, shared_drive_id
 	)
 
-	# 3. Create subfolders — from the settings template table when configured
-	# (rows optionally scoped to a project type), else the legacy defaults.
-	# Paths support nesting via "/" (e.g. "Project Manager/Pictures").
-	default_template = [
-		"Accounting & Legal",
-		"Build",
-		"Design",
-		"Project Manager",
-		"Project Manager/Pictures",
-	]
-	settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
-	rows = settings.get("project_folder_template") or []
-	paths = [
-		(row.folder_path or "").strip()
-		for row in rows
-		if (row.folder_path or "").strip()
-		and (not row.project_type or (project_type and row.project_type == project_type))
-	] or default_template
-
-	created = {}
-	for path in paths:
-		parent = project_folder_id
-		partial = []
-		for part in [p.strip() for p in path.split("/") if p.strip()]:
-			partial.append(part)
-			key = "/".join(partial)
-			if key not in created:
-				folder_id, _ = create_folder(service, part, parent, shared_drive_id)
-				created[key] = folder_id
-			parent = created[key]
+	# 3. Create the standard project subfolder tree inside the project folder.
+	create_project_subfolders(service, project_folder_id, shared_drive_id, project_type=project_type)
 
 	return project_folder_id, web_view_link
+
+
+def provision_project_folder_for_opportunity(
+	opp_folder_id, project_folder_name, party_name, project_type=None
+):
+	"""Provision the Drive folder for a Project created from an Opportunity.
+
+	When the source Opportunity already has a Drive folder (``opp_folder_id`` —
+	its ``custom_drive_folder_id``), that folder is **renamed in place** to
+	``project_folder_name`` (e.g. ``CRM-OPP-2026-00112 - Smith Residence`` →
+	``PRJ-00123 - Smith Residence``) so any files uploaded during the opportunity
+	stage stay put, then the standard project subfolder tree is added inside it.
+	If the Opportunity has no folder — or its stored id is stale (the folder was
+	deleted/moved, surfacing as a 404) — a fresh project folder tree is created
+	under the customer instead via :func:`provision_project_folders`.
+
+	Args:
+		opp_folder_id: The Opportunity's ``custom_drive_folder_id`` (may be falsy).
+		project_folder_name: Target folder name (``"<Project ID> - <Name>"``).
+		party_name: Customer name, used as the top-level grouping folder when a
+			fresh folder must be created.
+		project_type: Optional Project Type for subfolder-template scoping.
+
+	Returns:
+		tuple: ``(folder_id, web_view_link)`` for the project folder.
+
+	Side effects:
+		Google Drive API calls (rename / list / create folders).
+	"""
+	service, shared_drive_id = get_drive_service()
+	if not shared_drive_id:
+		frappe.throw("Shared Drive ID not configured in Project Folder Google Drive Settings")
+
+	if opp_folder_id:
+		try:
+			folder_id, web_view_link = rename_folder(
+				service, opp_folder_id, project_folder_name, shared_drive_id
+			)
+			create_project_subfolders(
+				service, folder_id, shared_drive_id, project_type=project_type
+			)
+			return folder_id, web_view_link
+		except HttpError as error:
+			# 404 = the opportunity folder was deleted/moved; fall back to a fresh
+			# project folder. Anything else is a real error — re-raise it.
+			if error.resp.status != 404:
+				raise
+			frappe.log_error(
+				f"Opportunity Drive folder {opp_folder_id} not found (404); "
+				"creating a new project folder instead.",
+				"Project Drive Folder",
+			)
+
+	return provision_project_folders(project_folder_name, party_name, project_type=project_type)
 
 
 def enqueue_opportunity_folder(doc, method=None):
@@ -307,7 +432,7 @@ def enqueue_opportunity_folder(doc, method=None):
 
 
 def provision_opportunity_folder(opportunity):
-	"""Background job: find-or-create ``<Customer>/<Opportunity ID - Title>`` in
+	"""Background job: find-or-create ``<Customer>/<Opportunity ID - Name>`` in
 	the Shared Drive (e.g. ``CRM-OPP-2026-00112 - Pool Reno``) and store its id on
 	``Opportunity.custom_drive_folder_id``."""
 	from erpnext_enhancements.google_drive.drive_sync import log_sync
@@ -316,7 +441,7 @@ def provision_opportunity_folder(opportunity):
 		if not frappe.db.exists("Opportunity", opportunity):
 			return
 		opp = frappe.db.get_value(
-			"Opportunity", opportunity, ["party_name", "title", "opportunity_from"], as_dict=True
+			"Opportunity", opportunity, ["party_name", "title", "custom_opportunity_name", "opportunity_from"], as_dict=True
 		)
 		if opp.opportunity_from != "Customer" or not opp.party_name:
 			return
@@ -331,7 +456,11 @@ def provision_opportunity_folder(opportunity):
 			customer_folder_id, _ = create_folder(
 				service, customer_label, shared_drive_id, shared_drive_id
 			)
-		folder_name = f"{opportunity} - {opp.title}".strip(" -") if opp.title else opportunity
+		# Folder name: "<Opportunity ID> - <Opportunity Name>", e.g.
+		# "CRM-OPP-2026-00112 - Smith Residence". Prefer the custom Opportunity
+		# Name, falling back to the built-in title, then the bare ID.
+		opp_label = opp.custom_opportunity_name or opp.title
+		folder_name = f"{opportunity} - {opp_label}".strip(" -") if opp_label else opportunity
 		folder_id = find_folder(service, folder_name, customer_folder_id, shared_drive_id)
 		if not folder_id:
 			folder_id, _ = create_folder(service, folder_name, customer_folder_id, shared_drive_id)

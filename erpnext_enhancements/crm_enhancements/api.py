@@ -151,11 +151,13 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		   Open" errors, then force ``status = "Active"`` if a Workflow overrode it.
 		4. Re-attach the Opportunity's File attachments to the Project.
 		5. Stamp ``Opportunity.custom_created_project`` and commit.
-		6. Provision Google Drive folders via
-		   :func:`~erpnext_enhancements.google_drive.drive_utils.provision_project_folders`,
-		   store the returned folder id on ``Project.custom_drive_folder_id`` and
-		   attach the web view link as a File. Drive failures are caught/logged so
-		   they never abort Project creation.
+		6. Provision the Google Drive folder via
+		   :func:`~erpnext_enhancements.google_drive.drive_utils.provision_project_folder_for_opportunity`
+		   — renaming the source Opportunity's existing folder in place to
+		   ``<Project ID> - <Name>`` (so its files carry over) when it has one, else
+		   creating a fresh project folder tree — store the returned folder id on
+		   ``Project.custom_drive_folder_id`` and attach the web view link as a File.
+		   Drive failures are caught/logged so they never abort Project creation.
 
 	Args:
 		opportunity_name: Name (ID) of the source Opportunity.
@@ -336,13 +338,25 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			# Provision Google Drive Folders
 			if not project.get("custom_drive_folder_id"):
 				try:
-					from erpnext_enhancements.google_drive.drive_utils import provision_project_folders
+					from erpnext_enhancements.google_drive.drive_utils import (
+						provision_project_folder_for_opportunity,
+					)
 
-					project_folder_name = f"{project.name} {project.project_name}"
+					# Project folder name "<Project ID> - <Opportunity Name>", e.g.
+					# "PRJ-00123 - Smith Residence" (project_name was set above from the
+					# Opportunity's custom_opportunity_name). .strip(" -") leaves just the
+					# ID if the name is blank.
+					project_folder_name = f"{project.name} - {project.project_name}".strip(" -")
 					party_name = project.customer or opp.party_name or "Unknown Customer"
 
-					folder_id, web_view_link = provision_project_folders(
-						project_folder_name, party_name, project_type=project.get("project_type")
+					# Reuse the Opportunity's Drive folder when it has one: rename it in
+					# place (its files come along) and add the project subfolders; else
+					# create a fresh project folder tree under the customer.
+					folder_id, web_view_link = provision_project_folder_for_opportunity(
+						opp.get("custom_drive_folder_id"),
+						project_folder_name,
+						party_name,
+						project_type=project.get("project_type"),
 					)
 
 					# Update Project
@@ -356,6 +370,15 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 					drive_link_doc.attached_to_name = project.name
 					drive_link_doc.is_private = 0
 					drive_link_doc.insert(ignore_permissions=True)
+
+					# Audit trail (the opportunity/customer provisioning logs too).
+					from erpnext_enhancements.google_drive.drive_sync import log_sync
+
+					log_sync(
+						"Provision Folder", "Success",
+						reference_doctype="Project", reference_name=project.name,
+						file_name=project_folder_name, drive_file_id=folder_id,
+					)
 
 					frappe.db.commit()
 					drive_success = True

@@ -38,7 +38,7 @@
    "label": "Project Folder Template"
   },
   {
-   "description": "Subfolders created inside every new project folder. Rows may be limited to a Project Type; paths nest with / (e.g. \"Project Manager/Pictures\"). Empty table = the default set (Accounting & Legal, Build, Design, Project Manager/Pictures).",
+   "description": "Subfolders created inside every new project folder. Rows may be limited to a Project Type; paths nest with / (e.g. \"Project Management/Pictures\"). Empty table = the default set (Accounting & Legal, Build, Design, Project Management/Pictures).",
    "fieldname": "project_folder_template",
    "fieldtype": "Table",
    "label": "Subfolders",

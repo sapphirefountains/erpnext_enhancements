@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.52.0] - 2026-06-16
+
+### Changed
+- **Creating a Project from an Opportunity now renames the Opportunity's Drive folder in place** instead of creating a separate one. When the source Opportunity already has a Drive folder (`Opportunity.custom_drive_folder_id`), the "Create Project" flow renames that folder from `CRM-OPP-YYYY-##### - <name>` to `PRJ-##### - <name>` (e.g. `CRM-OPP-2026-00112 - Smith Residence` → `PRJ-00123 - Smith Residence`) and find-or-creates the standard project subfolders inside it — so any files uploaded during the opportunity stage carry straight over to the project, and no duplicate folder is left behind. If the Opportunity has no folder (folders were off, a Lead-party opportunity, or provisioning had failed) — or its stored id is stale (the folder was deleted/moved, surfacing as a 404) — it falls back to creating a fresh project folder tree under the customer, as before. New orchestrator `drive_utils.provision_project_folder_for_opportunity` (with `rename_folder`); the project-folder name format also changed from `PRJ-##### <name>` (space) to `PRJ-##### - <name>` (hyphen) to match the swapped opportunity prefix.
+- **Opportunity Drive folder name now uses the Opportunity Name, not the built-in title.** `provision_opportunity_folder` names the folder `<Opportunity ID> - <custom_opportunity_name>` (falling back to `title`, then the bare ID) — e.g. `CRM-OPP-2026-00112 - Smith Residence`.
+- **Default project subfolder renamed `Project Manager` → `Project Management`** (with its nested `Pictures`). Affects newly provisioned project folders that use the built-in template. ⚠️ If a custom subfolder template is configured on the live instance (`Project Folder Google Drive Settings → Subfolders`), update its `Project Manager` row to `Project Management` there too — that table is data, not code, and overrides the default when present. Existing project folders are **not** renamed retroactively.
+
+### Added
+- **Project Drive-folder provisioning is now recorded in the Drive Sync Log** (action `Provision Folder`, reference `Project`), matching the existing Opportunity/Customer provisioning entries — so the rename/create is visible in the audit log used to debug "didn't sync".
+
 ## [1.51.0] - 2026-06-16
 
 ### Added
