@@ -22,13 +22,32 @@ import frappe
 from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
 from erpnext_enhancements.quickbooks_online.core.mapping import (
 	link_existing_record as run_link_existing_record,
+)
+from erpnext_enhancements.quickbooks_online.core.mapping import (
 	preview_existing_matches as run_preview_existing_matches,
+)
+from erpnext_enhancements.quickbooks_online.core.opening_balances import (
+	sync_opening_balances as run_sync_opening_balances,
+)
+from erpnext_enhancements.quickbooks_online.core.reconcile import (
+	compare_account_balances as run_compare_account_balances,
+)
+from erpnext_enhancements.quickbooks_online.core.reconcile import (
+	reconcile_transactions as run_reconcile_transactions,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
 	import_all as run_import_all,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	preview_resync as run_preview_resync,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	retry_failed as run_retry_failed,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	run_resync as run_run_resync,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	sync_entity as run_sync_entity,
 )
 from erpnext_enhancements.quickbooks_online.core.webhooks import handle_webhook
@@ -135,6 +154,30 @@ def quickbooks_webhook():
 	verifies the HMAC signature before doing anything.
 	"""
 	return handle_webhook()
+
+
+@frappe.whitelist()
+def compare_account_balances(as_of_date=None, tolerance=0.01):
+	"""RPC: compare QBO Trial Balance against ERPNext GL balances (read-only).
+
+	Backs the "QuickBooks Balance Comparison" report and the dashboard "Compare
+	Balances" action. Returns matched/mismatched/qb_only/erp_only buckets.
+	"""
+	return run_compare_account_balances(as_of_date=as_of_date, tolerance=float(tolerance or 0.01))
+
+
+@frappe.whitelist()
+def reconcile_transactions(entity_types=None, tolerance=1.0):
+	"""RPC: compare imported transaction amounts against their QBO payloads (read-only)."""
+	if isinstance(entity_types, str):
+		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
+	return run_reconcile_transactions(entity_types=entity_types, tolerance=float(tolerance or 1.0))
+
+
+@frappe.whitelist()
+def sync_opening_balances(as_of_date=None, auto_submit=0):
+	"""RPC: build an opening Journal Entry from QBO balances (draft unless auto_submit)."""
+	return run_sync_opening_balances(as_of_date=as_of_date, auto_submit=auto_submit)
 
 
 @frappe.whitelist()

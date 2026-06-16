@@ -9,11 +9,16 @@ logic to run deterministically. ``monkeypatch`` is used where a test needs to
 stub a module-level function (e.g. ``sync.query_all``).
 """
 import base64
-from datetime import datetime
 import hashlib
 import hmac
 import sys
 import types
+from datetime import datetime
+
+
+def _stub_throw(message=None, *args, **kwargs):
+	"""Stand-in for ``frappe.throw`` that raises a plain exception in tests."""
+	raise Exception(message if isinstance(message, str) else "frappe.throw")
 
 
 def install_frappe_stub():
@@ -28,6 +33,18 @@ def install_frappe_stub():
 	frappe_utils.get_datetime = lambda value: value
 	frappe_utils.add_to_date = lambda value=None, **kwargs: value
 	frappe_utils.get_system_timezone = lambda: "UTC"
+
+	def _flt(value=0, precision=None):
+		try:
+			number = float(value or 0)
+		except (TypeError, ValueError):
+			return 0.0
+		return round(number, precision) if precision is not None else number
+
+	frappe_utils.flt = _flt
+	frappe_utils.cint = lambda value=0, *args, **kwargs: int(_flt(value))
+	frappe_utils.getdate = lambda value=None: value
+	frappe_utils.today = lambda: "2026-06-16"
 	frappe.utils = frappe_utils
 
 	def get_value(doctype, filters=None, fieldname=None, **kwargs):
@@ -66,6 +83,10 @@ def install_frappe_stub():
 	frappe.get_all = get_all
 	frappe.get_meta = lambda doctype: types.SimpleNamespace(has_field=lambda fieldname: False)
 	frappe.get_traceback = lambda: "Traceback\nValidationError: Missing required field"
+	frappe._ = lambda message=None, *args, **kwargs: message
+	frappe.throw = _stub_throw
+	# Passthrough decorator so the @frappe.whitelist() RPC layer is importable.
+	frappe.whitelist = lambda *args, **kwargs: (lambda fn: fn)
 	sys.modules.setdefault("frappe", frappe)
 	sys.modules.setdefault("frappe.utils", frappe_utils)
 	sys.modules.setdefault("requests", types.ModuleType("requests"))
@@ -894,3 +915,302 @@ def test_display_name_prefers_fully_qualified_name():
 
 	assert _display_name({"FullyQualifiedName": "Landmark Aquatics:Job 1", "DisplayName": "Job 1"}) == "Landmark Aquatics:Job 1"
 	assert _display_name({"DisplayName": "Top Co"}) == "Top Co"
+
+
+# ---------------------------------------------------------------------------
+# New master entities: Payment Terms, Payment Methods and tracking Classes.
+# ---------------------------------------------------------------------------
+
+
+def test_term_maps_to_payment_terms_template_with_full_portion():
+	"""A QBO STANDARD Term becomes a Payment Terms Template with one 100% term row."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Term", {"Id": "3", "Name": "Net 30", "Type": "STANDARD", "DueDays": 30}, types.SimpleNamespace(company="SF")
+	)
+
+	assert doctype == "Payment Terms Template"
+	assert values["template_name"] == "Net 30"
+	assert len(values["terms"]) == 1
+	term = values["terms"][0]
+	assert term["invoice_portion"] == 100
+	assert term["credit_days"] == 30
+	assert term["due_date_based_on"] == "Day(s) after invoice date"
+
+
+def test_date_driven_term_uses_end_of_month_basis():
+	"""A QBO DATE_DRIVEN Term maps to the end-of-invoice-month due basis."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"Term",
+		{"Id": "4", "Name": "Due 15th", "Type": "DATE_DRIVEN", "DayOfMonthDue": 15},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert values["terms"][0]["due_date_based_on"] == "Day(s) after the end of the invoice month"
+	assert values["terms"][0]["credit_days"] == 15
+
+
+def test_payment_method_maps_type_by_credit_card_flag():
+	"""QBO CREDIT_CARD methods become Bank-type Modes of Payment; others default to Cash."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	card_doctype, card = map_qbo_to_erpnext(
+		"PaymentMethod", {"Id": "1", "Name": "Visa", "Type": "CREDIT_CARD"}, types.SimpleNamespace(company="SF")
+	)
+	_, cash = map_qbo_to_erpnext(
+		"PaymentMethod", {"Id": "2", "Name": "Check", "Type": "NON_CREDIT_CARD"}, types.SimpleNamespace(company="SF")
+	)
+
+	assert card_doctype == "Mode of Payment"
+	assert card["mode_of_payment"] == "Visa"
+	assert card["type"] == "Bank"
+	assert card["enabled"] == 1
+	assert cash["type"] == "Cash"
+
+
+def test_class_maps_to_cost_center_under_root(monkeypatch):
+	"""A leaf QBO Class maps to a ledger Cost Center under the company root."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, filters=None, fieldname=None, **kwargs: "Main - SF" if doctype == "Cost Center" else None,
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Class", {"Id": "5", "Name": "Residential"}, types.SimpleNamespace(company="SF")
+	)
+
+	assert doctype == "Cost Center"
+	assert values["cost_center_name"] == "Residential"
+	assert values["company"] == "SF"
+	assert values["parent_cost_center"] == "Main - SF"
+	assert values["is_group"] == 0
+
+
+def test_class_with_children_is_group(monkeypatch):
+	"""A QBO Class flagged as a parent maps to a group Cost Center."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, filters=None, fieldname=None, **kwargs: "Main - SF" if doctype == "Cost Center" else None,
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"Class", {"Id": "6", "Name": "Divisions", "_qbo_has_children": True}, types.SimpleNamespace(company="SF")
+	)
+
+	assert values["is_group"] == 1
+
+
+def test_customer_links_payment_terms_when_term_is_mapped(monkeypatch):
+	"""A QBO Customer's SalesTermRef links to the already-imported Payment Terms Template."""
+	frappe = install_frappe_stub()
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("qbo_entity_type") == "Term":
+			return "Net 30"
+		if doctype == "Customer Group" and filters == {"is_group": 0}:
+			return "Commercial"
+		if doctype == "Territory" and filters == {"is_group": 0}:
+			return "United States"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", get_value)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext(
+		"Customer",
+		{"Id": "7", "DisplayName": "Acme", "CompanyName": "Acme", "SalesTermRef": {"value": "3"}},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert values["payment_terms"] == "Net 30"
+
+
+def test_ordered_entities_places_new_masters_before_transactions():
+	"""ordered_entities sorts Term/PaymentMethod/Account/Class ahead of transactions."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.sync import ordered_entities
+
+	assert ordered_entities(["Invoice", "Class", "Term", "Account", "PaymentMethod"]) == [
+		"Term",
+		"PaymentMethod",
+		"Account",
+		"Class",
+		"Invoice",
+	]
+
+
+def test_class_payload_query_marks_parents():
+	"""query_entity_payloads flags parent Classes with _qbo_has_children like Accounts."""
+	install_frappe_stub()
+	import pytest
+
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	original = sync.query_all
+	sync.query_all = lambda entity_type, settings=None: iter(
+		[{"Id": "10", "Name": "Divisions"}, {"Id": "11", "Name": "East", "ParentRef": {"value": "10"}}]
+	)
+	try:
+		payloads = list(sync.query_entity_payloads("Class"))
+	finally:
+		sync.query_all = original
+
+	assert payloads[0]["_qbo_has_children"] is True
+	assert payloads[1]["_qbo_has_children"] is False
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: Trial Balance parsing and transaction-total extraction.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_trial_balance_reads_signed_balances_and_recurses():
+	"""_parse_trial_balance yields signed (debit-credit) balances and walks sections."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.reconcile import _parse_trial_balance
+
+	response = {
+		"Rows": {
+			"Row": [
+				{"ColData": [{"value": "Checking", "id": "35"}, {"value": "1000.00"}, {"value": ""}]},
+				{
+					# A section: its child rows are data, its own header is ignored.
+					"Header": {"ColData": [{"value": "Liabilities"}]},
+					"Rows": {
+						"Row": [{"ColData": [{"value": "Loan", "id": "40"}, {"value": ""}, {"value": "500.00"}]}]
+					},
+				},
+				{"ColData": [{"value": "Total"}, {"value": "1000.00"}, {"value": "500.00"}]},
+			]
+		}
+	}
+
+	balances = _parse_trial_balance(response)
+
+	assert balances["35"]["qb_balance"] == 1000.0
+	assert balances["40"]["qb_balance"] == -500.0
+	# The "Total" summary row has no account id and is excluded.
+	assert len(balances) == 2
+
+
+def test_extract_total_prefers_header_amount_then_sums_journal_debits():
+	"""_extract_total reads TotalAmt/Amount, falling back to summed JE debit lines."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.reconcile import _extract_total
+
+	assert _extract_total("Invoice", {"TotalAmt": "500.00"}) == 500.0
+	assert _extract_total("Transfer", {"Amount": "300"}) == 300.0
+	assert (
+		_extract_total(
+			"JournalEntry",
+			{
+				"Line": [
+					{"Amount": "100", "JournalEntryLineDetail": {"PostingType": "Debit"}},
+					{"Amount": "100", "JournalEntryLineDetail": {"PostingType": "Credit"}},
+				]
+			},
+		)
+		== 100.0
+	)
+
+
+# ---------------------------------------------------------------------------
+# Opening balances: pure line builders and the balancing plug.
+# ---------------------------------------------------------------------------
+
+
+def test_opening_account_line_places_signed_balance():
+	"""_opening_account_line debits a positive balance and credits a negative one."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.opening_balances import _opening_account_line
+
+	debit = _opening_account_line("Checking - SF", 1000)
+	assert debit["debit_in_account_currency"] == 1000
+	assert debit["credit_in_account_currency"] == 0
+
+	credit = _opening_account_line("Loan - SF", -500)
+	assert credit["credit_in_account_currency"] == 500
+	assert credit["debit_in_account_currency"] == 0
+
+
+def test_party_opening_line_honours_side_and_sign():
+	"""_party_opening_line debits customer balances, credits vendor balances, flips negatives."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.opening_balances import _party_opening_line
+
+	customer = _party_opening_line("Debtors - SF", "Customer", "Acme", 300, "debit")
+	assert customer["party"] == "Acme"
+	assert customer["party_type"] == "Customer"
+	assert customer["debit_in_account_currency"] == 300
+
+	vendor = _party_opening_line("Creditors - SF", "Supplier", "ICS", 200, "credit")
+	assert vendor["credit_in_account_currency"] == 200
+
+	credit_balance = _party_opening_line("Debtors - SF", "Customer", "Acme", -50, "debit")
+	assert credit_balance["credit_in_account_currency"] == 50
+	assert credit_balance["debit_in_account_currency"] == 0
+
+
+def test_plug_line_returns_none_when_balanced_and_offsets_when_not(monkeypatch):
+	"""_plug_line is a no-op for balanced rows and otherwise squares off via Temporary Opening."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.opening_balances import _plug_line
+
+	balanced = [
+		{"debit_in_account_currency": 100, "credit_in_account_currency": 0},
+		{"debit_in_account_currency": 0, "credit_in_account_currency": 100},
+	]
+	assert _plug_line(balanced, "SF") is None
+
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, filters=None, fieldname=None, **kwargs: "Temporary Opening - SF"
+		if doctype == "Account"
+		else None,
+	)
+	unbalanced = [{"debit_in_account_currency": 100, "credit_in_account_currency": 0}]
+	plug = _plug_line(unbalanced, "SF")
+	assert plug["account"] == "Temporary Opening - SF"
+	# More debits than credits => the plug must be a credit.
+	assert plug["credit_in_account_currency"] == 100
+	assert plug["debit_in_account_currency"] == 0
+
+
+def test_client_report_builds_reports_endpoint_path(monkeypatch):
+	"""client.report targets /reports/{name} and passes report params through."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_module
+
+	client = client_module.QuickBooksClient(types.SimpleNamespace(realm_id="42", environment="Production"))
+	captured = {}
+	monkeypatch.setattr(
+		client, "request", lambda method, path, **kwargs: captured.update(method=method, path=path, **kwargs) or {}
+	)
+
+	client.report("TrialBalance", {"end_date": "2026-06-16"})
+
+	assert captured["method"] == "GET"
+	assert captured["path"].endswith("/reports/TrialBalance")
+	assert captured["params"]["end_date"] == "2026-06-16"
+
+
+def test_api_exposes_reconcile_and_opening_endpoints():
+	"""The whitelisted RPC layer surfaces the new reconcile / opening-balance endpoints."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	for endpoint in ("compare_account_balances", "reconcile_transactions", "sync_opening_balances"):
+		assert callable(getattr(api, endpoint))

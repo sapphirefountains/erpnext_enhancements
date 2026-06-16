@@ -445,15 +445,19 @@ fixtures = [
 					"Purchase Orders by Status",
 					"Monthly PO Value",
 					"Material Requests by Status",
+					# QuickBooks Online sync health (v1.53.0)
+					"QuickBooks Sync Runs (Daily)",
+					"QuickBooks Syncs by Type",
+					"QuickBooks Syncs by Status",
 				],
 			]
 		],
 	},
 	{
 		"dt": "Number Card",
-		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests"]]],
+		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review"]]],
 	},
-	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary"]]]},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online"]]]},
 ]
 
 override_whitelisted_methods = {

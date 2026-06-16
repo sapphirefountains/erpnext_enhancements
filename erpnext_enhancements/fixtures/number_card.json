@@ -182,5 +182,53 @@
     "is_public": 1,
     "show_percentage_stats": 1,
     "stats_time_interval": "Monthly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "QuickBooks Failed Syncs",
+    "label": "QuickBooks Failed Syncs",
+    "type": "Document Type",
+    "document_type": "QuickBooks Sync Log",
+    "function": "Count",
+    "filters_json": "[[\"QuickBooks Sync Log\",\"status\",\"=\",\"Failed\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "QuickBooks Records Mapped",
+    "label": "QuickBooks Records Mapped",
+    "type": "Document Type",
+    "document_type": "QuickBooks Sync Mapping",
+    "function": "Count",
+    "filters_json": "[[\"QuickBooks Sync Mapping\",\"deleted\",\"=\",0,false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "QuickBooks Open Conflicts",
+    "label": "QuickBooks Open Conflicts",
+    "type": "Document Type",
+    "document_type": "QuickBooks Sync Mapping",
+    "function": "Count",
+    "filters_json": "[[\"QuickBooks Sync Mapping\",\"conflict_status\",\"=\",\"Conflict\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "QuickBooks Pending Review",
+    "label": "QuickBooks Pending Review",
+    "type": "Document Type",
+    "document_type": "QuickBooks Sync Mapping",
+    "function": "Count",
+    "filters_json": "[[\"QuickBooks Sync Mapping\",\"match_status\",\"=\",\"Pending Review\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Weekly"
   }
 ]

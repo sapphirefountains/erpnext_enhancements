@@ -304,20 +304,21 @@ def query_all(entity_type, settings=None):
 
 
 def query_entity_payloads(entity_type, settings=None):
-	"""Yield payloads for an entity, enriching Accounts with a children flag.
+	"""Yield payloads for an entity, enriching hierarchical types with a children flag.
 
-	For most entities this is a passthrough to ``query_all``. For "Account" it
-	first materializes the full list to detect which accounts are parents of
-	others, tagging each with a transient ``_qbo_has_children`` flag so the
-	mapper can correctly mark group (parent) accounts as ``is_group``. The flag
-	is stripped before persistence by ``_clean_payload``.
+	For most entities this is a passthrough to ``query_all``. For the hierarchical
+	types ("Account" and "Class", both of which use ``ParentRef``) it first
+	materializes the full list to detect which records are parents of others,
+	tagging each with a transient ``_qbo_has_children`` flag so the mapper can
+	correctly mark parents as a group (``is_group``) Account / Cost Center. The
+	flag is stripped before persistence by ``_clean_payload``.
 	"""
-	if entity_type != "Account":
+	if entity_type not in ("Account", "Class"):
 		yield from query_all(entity_type, settings=settings)
 		return
 
 	payloads = list(query_all(entity_type, settings=settings))
-	# Collect every account id referenced as a parent so children imply a group.
+	# Collect every id referenced as a parent so children imply a group.
 	parent_ids = {
 		str(parent_id)
 		for parent_id in ((payload.get("ParentRef") or {}).get("value") for payload in payloads)

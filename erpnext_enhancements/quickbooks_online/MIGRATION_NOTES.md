@@ -15,6 +15,9 @@ should verify after import.
 |---|---|---|
 | Account | Account | Hierarchy preserved via `ParentRef`; group vs ledger inferred. **Inactive accounts are now imported** so historical postings resolve. |
 | Customer / Vendor / Item / TaxCode | Customer / Supplier / Item / Account | Sub-customers ("jobs") import as flat records using their **fully-qualified name** to stay unique. |
+| **Term** | Payment Terms Template | Single 100%-portion term (`DueDays` → credit days); linked onto Customer/Supplier `payment_terms`. |
+| **Payment Method** | Mode of Payment | Credit-card → Bank type, otherwise Cash. |
+| **Class** | Cost Center | Hierarchy preserved via `ParentRef`; parents become group cost centers. |
 | Estimate | Quotation | |
 | Invoice | Sales Invoice | |
 | **Sales Receipt** | Sales Invoice | Cash side not linked — see §4. |
@@ -125,6 +128,29 @@ interruptions rather than restarting from scratch.
 - **Inactive entities** import as **enabled** so historical transactions can post.
   Disable them in ERPNext after import if you don't want them selectable.
 
+---
+
+## 5. Reconcile & opening balances
+
+- **Automated reconciliation.** After importing (and submitting) transactions, run the
+  **QuickBooks Balance Comparison** report (or the dashboard **Compare Balances**
+  action). It pulls QBO's Trial Balance via the Reports API and compares it, account by
+  account, against each linked ERPNext account's GL balance as of a date — flagging
+  mismatches, QuickBooks-only and ERPNext-only accounts. This is the automated form of
+  the manual Trial Balance tie-out below. The Reports API returns computed balances even
+  when QBO's transaction/statement exports come back empty. **Reconcile Transactions**
+  additionally checks each imported document's total against its stored QBO payload.
+- **Opening balances (alternative to importing full history).** If you don't import every
+  historical transaction, use the dashboard **Import Opening Balances** action to build a
+  single balanced *Opening Entry* Journal Entry as of a cutoff date: one line per account
+  from the QBO Trial Balance, A/R and A/P broken out **per party** from open
+  customer/vendor balances, with any residual squared off against the company's
+  **Temporary Opening** account. It is created as a **draft** — review it before
+  submitting, paying attention to the reported **stock accounts** (post opening stock via
+  a Stock Reconciliation, not the JE) and any **unmapped** QBO accounts. Don't both import
+  full history *and* opening balances for the same period.
+
 **Post-import check:** run ERPNext's Trial Balance and compare to the QBO Trial
-Balance (`Trial_balance.xlsx`). They should tie out per account; investigate any row
-in the sync log's manual-review/failed counters first.
+Balance (`Trial_balance.xlsx`) — or simply run the **QuickBooks Balance Comparison**
+report, which does this per account automatically. Investigate any manual-review/failed
+rows in the sync log first.

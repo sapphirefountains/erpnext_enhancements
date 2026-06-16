@@ -1,6 +1,6 @@
 # QuickBooks Online
 
-This module is the **QuickBooks Online (QBO) accounting integration** (OAuth2, REST client, entity mapping, idempotent sync, audit log, CDC polling, webhooks, retries).
+This module is the **QuickBooks Online (QBO) accounting integration** (OAuth2, REST client, entity mapping, idempotent sync, audit log, CDC polling, webhooks, retries, balance reconciliation, opening-balance import).
 
 > The QBO engine lives under `core/`; `api.py` at the module root re-exports its whitelisted endpoints so the dashboard JS and the Intuit webhook URL resolve at `...quickbooks_online.api.*`. The separate **QuickBooks Time** timesheet webhook now lives in its own `quickbooks_time` module.
 
@@ -28,12 +28,15 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `quickbooks_webhook`, `get_dashboard_status` |
-| `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `request`, `query`, `get_entity`, `cdc`), `QuickBooksAPIError` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status` |
+| `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `request`, `query`, `get_entity`, `cdc`, `report`), `QuickBooksAPIError` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
 | `core/mapping.py` | Transform / match / idempotent upsert | `map_qbo_to_erpnext`, `upsert_entity`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
 | `core/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
+| `core/reconcile.py` | Read-only balance/transaction reconciliation (Reports API) | `compare_account_balances`, `reconcile_transactions`, `_parse_trial_balance` |
+| `core/opening_balances.py` | Build a balanced opening Journal Entry from QBO balances | `sync_opening_balances`, `_opening_account_line`, `_party_opening_line`, `_plug_line` |
 | `core/tasks.py` | Hourly scheduler hooks | `refresh_token_if_needed`, `cdc_poll`, `retry_failed_syncs` |
+| `report/quickbooks_balance_comparison/*` | QBO vs ERPNext account-balance report | `execute` (filters: as-of date, tolerance, only-discrepancies) |
 | `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
@@ -60,8 +63,10 @@ OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens
 
 ## Gotchas
 
-- **Idempotency** hinges on the (entity_type, qbo_id) Sync Mapping; re-running import/webhook/CDC is safe. Transactions are never fuzzy-matched (always created); only master entities (Account/Customer/Vendor/Item/TaxCode) auto-link.
-- **CDC cursor** advances only on a clean run, so failures reprocess the same window. The first run looks back 24h. `TaxCode` is excluded from CDC.
+- **Idempotency** hinges on the (entity_type, qbo_id) Sync Mapping; re-running import/webhook/CDC is safe. Transactions are never fuzzy-matched (always created); only master entities (Account/Customer/Vendor/Item/TaxCode/Term/PaymentMethod/Class) auto-link.
+- **Reconciliation is read-only.** `compare_account_balances` (Trial Balance vs GL) and `reconcile_transactions` (payload total vs document total) never write — they surface discrepancies for you to act on. Run the **QuickBooks Balance Comparison** report after an import.
+- **Opening balances are a draft by default.** `sync_opening_balances` creates one balanced Opening Entry; review it before submitting (pass `auto_submit` to post it). A/R and A/P are broken out per party from QBO's *current* open balances (correct for a present-day cut-over; for a historical cutoff, check the draft against QBO's aging). Stock accounts are excluded — post opening stock via a Stock Reconciliation — and any residual squares off against the company's **Temporary Opening** account.
+- **CDC cursor** advances only on a clean run, so failures reprocess the same window. The first run looks back 24h. `TaxCode` is excluded from CDC (Term/PaymentMethod/Class are included).
 - **Conflict policy:** user edits to QBO-owned fields are preserved unless an overwrite resync (`run_resync`) is run; a preview is required first.
 - **Per-record resilience:** batch ops use `safe_upsert`, so one bad record can't abort a run; inline failure notes are capped at 20 (full tracebacks go to the Frappe Error Log).
 - **No rate-limit/backoff handling:** QBO 429/throttling responses aren't specifically handled — any ≥400 (other than 401) raises `QuickBooksAPIError`.
