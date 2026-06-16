@@ -144,7 +144,7 @@ See [`www/README.md`](../www/README.md) for the service-worker / offline side.
 | `kiosk/kiosk.css` | Standalone Time Kiosk PWA shell | `www/kiosk.html` `<link>` (not hooks) |
 | `project_enhancements/frappe-gantt.css` | **Vendored** frappe-gantt styles | `desk_addons.bundle.scss` |
 | `project_enhancements/task_tree.css` | Hierarchical task grid + dashboard column selector | `desk_addons.bundle.scss` |
-| `quickbooks_time_integration/qb_time_integration.css` | QBO status dashboard | `desk_addons.bundle.scss` |
+| `quickbooks_online/qbo_dashboard.css` | QBO status dashboard | `desk_addons.bundle.scss` |
 | `task_enhancements/task_enhancements.css` | Hierarchical task tree connectors | `desk_addons.bundle.scss` |
 
 ## Gotchas

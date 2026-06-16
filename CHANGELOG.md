@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-06-15
+
+### Changed
+- **QuickBooks module split** (module-reorganization effort). The module historically (mis)named **"QuickBooks Time Integration"** was really the QuickBooks **Online** (QBO) accounting integration. It is now two correctly-named modules:
+  - **QuickBooks Online** — renamed from `quickbooks_time_integration` → `quickbooks_online`; its QBO engine subpackage moved from the doubled `quickbooks_online/quickbooks_online/` to `quickbooks_online/core/`. All four QBO doctypes (QuickBooks Online Settings, Sync Log, Sync Mapping, Raw Payload) and the dashboard Page are reassigned to the `QuickBooks Online` module. Adds a **QuickBooks Online** workspace (`/app/quickbooks-online`).
+  - **QuickBooks Time** — new module holding the standalone `qb_timesheet_webhook` (moved out of the shared `api.py`). Adds a thin **QuickBooks Time** workspace.
+- A pre-model-sync patch (`rename_quickbooks_module`) renames the `Module Def` so existing installs carry the QBO doctypes/page (and the stored OAuth tokens on the Settings Single) across cleanly; idempotent and a no-op on fresh installs.
+
+### Deploy notes (webhook URLs changed)
+- The QBO Intuit webhook + OAuth-callback now resolve at `...quickbooks_online.api.*` (was `...quickbooks_time_integration.api.*`).
+- The QuickBooks **Time** webhook is now `/api/method/erpnext_enhancements.quickbooks_time.api.qb_timesheet_webhook`. **Update the endpoint configured in QuickBooks Time / Intuit after deploying.**
+
 ## [1.36.0] - 2026-06-15
 
 ### Added

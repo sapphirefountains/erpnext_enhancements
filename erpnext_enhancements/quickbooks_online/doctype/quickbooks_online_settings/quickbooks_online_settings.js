@@ -11,7 +11,7 @@
  *    Sync Log so the user can review changes before running an overwrite resync.
  *
  * All buttons delegate to whitelisted methods under
- * erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.
+ * erpnext_enhancements.quickbooks_online.core.api.
  */
 frappe.ui.form.on("QuickBooks Online Settings", {
 	refresh(frm) {
@@ -19,7 +19,7 @@ frappe.ui.form.on("QuickBooks Online Settings", {
 		frm.add_custom_button(__("Link Existing Records"), () => frappe.set_route("quickbooks-online-dashboard"));
 		frm.add_custom_button(__("Connect QuickBooks"), () => {
 			frappe.call({
-				method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.start_oauth",
+				method: "erpnext_enhancements.quickbooks_online.core.api.start_oauth",
 				args: { environment: frm.doc.environment },
 				callback(response) {
 					const url = response.message && response.message.authorization_url;
@@ -31,7 +31,7 @@ frappe.ui.form.on("QuickBooks Online Settings", {
 		});
 		frm.add_custom_button(__("Import All"), () => {
 			frappe.call({
-				method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.import_all",
+				method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
 				freeze: true,
 				freeze_message: __("Importing QuickBooks Online data..."),
 				callback(response) {
@@ -41,7 +41,7 @@ frappe.ui.form.on("QuickBooks Online Settings", {
 		});
 		frm.add_custom_button(__("Preview Resync"), () => {
 			frappe.call({
-				method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.preview_resync",
+				method: "erpnext_enhancements.quickbooks_online.core.api.preview_resync",
 				freeze: true,
 				freeze_message: __("Building resync preview..."),
 				callback(response) {

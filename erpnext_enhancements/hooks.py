@@ -135,8 +135,8 @@ doctype_js = {
 	],
 	# device_management (MDM/EMM)
 	"Managed Device": "device_management/doctype/managed_device/managed_device.js",
-	# quickbooks_time_integration
-	"QuickBooks Online Settings": "quickbooks_time_integration/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
+	# quickbooks_online
+	"QuickBooks Online Settings": "quickbooks_online/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
 }
 
 doctype_list_js = {
@@ -308,9 +308,9 @@ scheduler_events = {
 		"erpnext_enhancements.device_management.tasks.nudge_stale_device_attestations",
 	],
 	"hourly": [
-		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.refresh_token_if_needed",
-		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.cdc_poll",
-		"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.tasks.retry_failed_syncs",
+		"erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed",
+		"erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll",
+		"erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs",
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# Drive -> ERPNext half of the attachment sync (link-only shadows)

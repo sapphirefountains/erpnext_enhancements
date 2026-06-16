@@ -5,7 +5,8 @@ CRM Enhancements
 Global Enhancements
 Project Enhancements
 Task Enhancements
-QuickBooks Time Integration
+QuickBooks Online
+QuickBooks Time
 AI Governance
 Inventory Enhancements
 Device Management

@@ -19,19 +19,19 @@ import secrets
 
 import frappe
 
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.client import QuickBooksClient
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
+from erpnext_enhancements.quickbooks_online.core.mapping import (
 	link_existing_record as run_link_existing_record,
 	preview_existing_matches as run_preview_existing_matches,
 )
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import (
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	import_all as run_import_all,
 	preview_resync as run_preview_resync,
 	retry_failed as run_retry_failed,
 	run_resync as run_run_resync,
 	sync_entity as run_sync_entity,
 )
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.webhooks import handle_webhook
+from erpnext_enhancements.quickbooks_online.core.webhooks import handle_webhook
 
 
 @frappe.whitelist()

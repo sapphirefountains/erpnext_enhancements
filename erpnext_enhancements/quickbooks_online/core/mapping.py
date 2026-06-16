@@ -23,8 +23,8 @@ from __future__ import annotations
 import frappe
 from frappe.utils import now_datetime
 
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.constants import ENTITY_DOCTYPE_MAP
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import (
+from erpnext_enhancements.quickbooks_online.core.constants import ENTITY_DOCTYPE_MAP
+from erpnext_enhancements.quickbooks_online.core.utils import (
 	json_dumps,
 	json_loads,
 	parse_qbo_datetime,

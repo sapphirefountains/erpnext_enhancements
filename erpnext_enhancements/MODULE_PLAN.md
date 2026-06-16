@@ -13,7 +13,12 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
   - Correction: `task_enhancements/doctype/task` is a script customization of the standard **Task** (no custom doctype); the sidebar links standard Task.
   - Correction: most CRM doctypes are **child tables** (not linkable). CRM sidebar surfaces Sales Pipeline (page), Value Streams, Sales Activity Settings + convenience links to standard Lead/Opportunity/Customer.
   - Noted (out of scope): a stray **Page** JSON lives at `task_enhancements/doctype/hierarchical_task_view/` (real page is under `page/`).
-- [ ] PR 3 — QuickBooks split · PR 4 — Workforce · PR 5 — Integrations · PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 3** — QuickBooks split — v1.37.0
+  - `quickbooks_time_integration` → `quickbooks_online` (module + folder); inner engine subpackage `quickbooks_online/` → `core/` (avoids doubled path).
+  - New `quickbooks_time` module holds the `qb_timesheet_webhook` (extracted from the shared `api.py`).
+  - Module Def rename patch (`rename_quickbooks_module`, pre-model-sync). Both sidebars built.
+  - **Deploy:** QBO + QB Time webhook URLs change — update the endpoints in Intuit / QuickBooks Time.
+- [ ] PR 4 — Workforce · PR 5 — Integrations · PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 
