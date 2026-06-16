@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.51.0] - 2026-06-16
+
+### Added
+- **Contact "Full Name and Role" title restored as app code.** The `custom_full_name_and_role` field (the Contact's `read_only`, `unique` title) was left **blank on every new Contact** after its source Server Script ("Contact - Set Full Name and Role Title", Contact / Before Save) was **disabled during the script migration and never ported**. Re-implemented as `erpnext_enhancements.script_migrations.contact.set_full_name_and_role`, wired to Contact **`validate`** (same trigger as the original), producing **`First Last-Party`** — the linked Customer/Supplier name as the suffix, no suffix for internal Sapphire Fountains contacts — with ` (2)`/` (3)` … disambiguation so the unique index never blocks a save.
+  - Implemented as a **`doc_events` hook, not `override_doctype_class`** — the active Contact controller is the `crm` app's `CustomContact`, so overriding the class would collide. The field does **not** drive the record `name` (Frappe core `Contact.autoname` owns that: full name + `-N`); this only populates the title.
+  - Context: preparing the QBO → ERPNext contact import, whose contacts carry this value explicitly so the load is independent of when this change deploys.
+
 ## [1.50.1] - 2026-06-16
 
 ### Fixed
