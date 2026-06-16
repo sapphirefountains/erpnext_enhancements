@@ -74,7 +74,7 @@ def install_frappe_stub():
 def test_ordered_entities_imports_masters_before_transactions():
 	"""ordered_entities sorts master records (Account/Customer/Item) before transactions."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import ordered_entities
+	from erpnext_enhancements.quickbooks_online.core.sync import ordered_entities
 
 	assert ordered_entities(["Invoice", "Customer", "Item", "Account"]) == [
 		"Account",
@@ -87,7 +87,7 @@ def test_ordered_entities_imports_masters_before_transactions():
 def test_verify_intuit_signature_accepts_valid_hmac():
 	"""verify_intuit_signature accepts a correct HMAC-SHA256 and rejects a wrong one."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import (
+	from erpnext_enhancements.quickbooks_online.core.utils import (
 		verify_intuit_signature,
 	)
 
@@ -102,7 +102,7 @@ def test_verify_intuit_signature_accepts_valid_hmac():
 def test_parse_qbo_datetime_converts_offset_to_naive_utc():
 	"""parse_qbo_datetime converts an offset timestamp to naive UTC."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import parse_qbo_datetime
+	from erpnext_enhancements.quickbooks_online.core.utils import parse_qbo_datetime
 
 	assert parse_qbo_datetime("2025-04-28 10:25:02-07:00") == datetime(2025, 4, 28, 17, 25, 2)
 
@@ -110,7 +110,7 @@ def test_parse_qbo_datetime_converts_offset_to_naive_utc():
 def test_customer_mapping_uses_native_erpnext_fields():
 	"""A QBO Customer maps onto native ERPNext Customer fields (name/type/group)."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	doctype, values = map_qbo_to_erpnext(
 		"Customer",
@@ -137,7 +137,7 @@ def test_customer_type_resolves_against_customized_select_options(monkeypatch):
 			),
 		),
 	)
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	_, company_values = map_qbo_to_erpnext(
 		"Customer",
@@ -165,7 +165,7 @@ def test_ensure_group_parent_promotes_ledger_parent(monkeypatch):
 		lambda doctype, name=None, fieldname=None, **kwargs: 0 if doctype == "Account" else None,
 	)
 	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: parent, raising=False)
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+	from erpnext_enhancements.quickbooks_online.core.mapping import (
 		_ensure_group_parent,
 	)
 
@@ -191,7 +191,7 @@ def test_ensure_group_parent_leaves_groups_and_other_doctypes_alone(monkeypatch)
 		lambda doctype, name: (_ for _ in ()).throw(AssertionError("should not load the parent")),
 		raising=False,
 	)
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+	from erpnext_enhancements.quickbooks_online.core.mapping import (
 		_ensure_group_parent,
 	)
 
@@ -208,7 +208,7 @@ def test_clear_account_type_for_group_conversion(monkeypatch):
 		"get_value",
 		lambda doctype, name=None, fieldname=None, **kwargs: 0,
 	)
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+	from erpnext_enhancements.quickbooks_online.core.mapping import (
 		_clear_account_type_for_group_conversion,
 	)
 
@@ -246,7 +246,7 @@ def test_clear_account_type_for_group_conversion(monkeypatch):
 def test_account_mapping_uses_existing_root_as_parent():
 	"""A QBO Account maps under the matching ERPNext root account as a leaf."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	doctype, values = map_qbo_to_erpnext(
 		"Account",
@@ -263,7 +263,7 @@ def test_account_mapping_uses_existing_root_as_parent():
 def test_account_parent_with_qbo_children_is_group():
 	"""A QBO Account flagged as having children maps to an ERPNext group account."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	doctype, values = map_qbo_to_erpnext(
 		"Account",
@@ -288,7 +288,7 @@ def test_account_parent_with_qbo_children_is_group():
 def test_account_payload_query_marks_parents_without_polluting_raw_payload(monkeypatch):
 	"""query_entity_payloads tags parents with _qbo_has_children but strips it from clean payloads."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online import sync
+	from erpnext_enhancements.quickbooks_online.core import sync
 
 	monkeypatch.setattr(
 		sync,
@@ -311,7 +311,7 @@ def test_account_payload_query_marks_parents_without_polluting_raw_payload(monke
 def test_payment_mapping_sets_customer_party():
 	"""A QBO Payment maps to a Payment Entry with the resolved Customer party."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	doctype, values = map_qbo_to_erpnext(
 		"Payment",
@@ -327,7 +327,7 @@ def test_payment_mapping_sets_customer_party():
 def test_payment_without_mapped_party_is_skipped():
 	"""A QBO Payment with no resolvable party is skipped (returns None / empty values)."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import map_qbo_to_erpnext
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
 
 	doctype, values = map_qbo_to_erpnext(
 		"Payment",
@@ -349,7 +349,7 @@ def test_preflight_flags_site_required_customer_fields_without_defaults():
 		],
 		has_field=lambda fieldname: False,
 	)
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import validate_mapped_values
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
 
 	assert validate_mapped_values("Customer", "Customer", {"customer_name": "Weiskopf Consulting"}) == [
 		"Missing required field: custom_lead_source"
@@ -368,7 +368,7 @@ def test_preflight_flags_site_required_customer_fields_without_defaults():
 def test_preflight_flags_transactions_with_missing_links_and_rows():
 	"""validate_mapped_values reports each missing required link/child-row on a transaction."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import validate_mapped_values
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
 
 	assert validate_mapped_values("Bill", "Purchase Invoice", {"company": "Demo", "supplier": None, "items": []}) == [
 		"Missing required field: items",
@@ -379,7 +379,7 @@ def test_preflight_flags_transactions_with_missing_links_and_rows():
 def test_customer_auto_match_uses_existing_customer_name():
 	"""find_existing_match auto-matches a QBO customer to an existing one by name."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import find_existing_match
+	from erpnext_enhancements.quickbooks_online.core.mapping import find_existing_match
 
 	match = find_existing_match(
 		"Customer",
@@ -395,7 +395,7 @@ def test_customer_auto_match_uses_existing_customer_name():
 def test_failed_result_updates_sync_log_error_message():
 	"""_track_result increments failed_count and appends a concise entity error line."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import _track_result
+	from erpnext_enhancements.quickbooks_online.core.sync import _track_result
 
 	log = types.SimpleNamespace(failed_count=0, error_message=None, entity_type=None)
 
@@ -416,7 +416,7 @@ def test_failed_result_updates_sync_log_error_message():
 def test_failed_result_error_message_is_capped():
 	"""_track_result caps the accumulated error message, omitting overflow entries."""
 	install_frappe_stub()
-	from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import _track_result
+	from erpnext_enhancements.quickbooks_online.core.sync import _track_result
 
 	log = types.SimpleNamespace(failed_count=0, error_message=None, entity_type=None)
 

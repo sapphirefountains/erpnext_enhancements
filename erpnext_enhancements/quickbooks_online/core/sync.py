@@ -25,18 +25,18 @@ import json
 import frappe
 from frappe.utils import add_to_date, now_datetime
 
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.client import QuickBooksClient
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.constants import (
+from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
+from erpnext_enhancements.quickbooks_online.core.constants import (
 	ACCOUNTING_ENTITIES,
 	CDC_ENTITIES,
 	MASTER_ENTITIES,
 	TRANSACTION_ENTITIES,
 )
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.mapping import (
+from erpnext_enhancements.quickbooks_online.core.mapping import (
 	mark_deleted,
 	upsert_entity,
 )
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import get_settings, json_dumps
+from erpnext_enhancements.quickbooks_online.core.utils import get_settings, json_dumps
 
 
 def import_all(entity_types=None):

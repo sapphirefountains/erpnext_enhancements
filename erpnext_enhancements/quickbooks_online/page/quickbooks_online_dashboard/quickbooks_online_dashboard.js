@@ -3,7 +3,7 @@
  *
  * Renders the operator console for the QBO accounting integration and wires its
  * controls to the whitelisted RPC endpoints under
- * erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api:
+ * erpnext_enhancements.quickbooks_online.core.api:
  *
  *  - Status tiles (connection, environment, realm id, failed-log count) and a
  *    recent-sync-logs list, populated from `get_dashboard_status` (refresh()).
@@ -120,7 +120,7 @@ function renderEntities(root) {
 
 function refresh(root) {
 	frappe.call({
-		method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.get_dashboard_status",
+		method: "erpnext_enhancements.quickbooks_online.core.api.get_dashboard_status",
 		callback(response) {
 			const data = response.message || {};
 			const settings = data.settings || {};
@@ -162,7 +162,7 @@ function renderLogs(root, logs) {
 function connectQuickBooks() {
 	frappe.db.get_single_value("QuickBooks Online Settings", "environment").then((environment) => {
 		frappe.call({
-			method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.start_oauth",
+			method: "erpnext_enhancements.quickbooks_online.core.api.start_oauth",
 			args: { environment },
 			callback(response) {
 				const url = response.message && response.message.authorization_url;
@@ -177,7 +177,7 @@ function connectQuickBooks() {
 function runImportAll() {
 	frappe.confirm(__("Import accounting-core QuickBooks Online data now?"), () => {
 		frappe.call({
-			method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.import_all",
+			method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
 			freeze: true,
 			freeze_message: __("Importing QuickBooks Online data..."),
 			callback(response) {
@@ -190,7 +190,7 @@ function runImportAll() {
 
 function previewResync() {
 	frappe.call({
-		method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.preview_resync",
+		method: "erpnext_enhancements.quickbooks_online.core.api.preview_resync",
 		freeze: true,
 		freeze_message: __("Building resync preview..."),
 		callback(response) {
@@ -208,7 +208,7 @@ function previewResync() {
 			);
 			frappe.confirm(message + "<br>" + __("Run overwrite resync for QuickBooks-owned fields?"), () => {
 				frappe.call({
-					method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.run_resync",
+					method: "erpnext_enhancements.quickbooks_online.core.api.run_resync",
 					args: { preview_id: result.preview_id },
 					freeze: true,
 					freeze_message: __("Running resync..."),
@@ -223,7 +223,7 @@ function previewResync() {
 
 function retryFailed() {
 	frappe.call({
-		method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.retry_failed",
+		method: "erpnext_enhancements.quickbooks_online.core.api.retry_failed",
 		freeze: true,
 		freeze_message: __("Retrying failed syncs..."),
 		callback() {
@@ -234,7 +234,7 @@ function retryFailed() {
 
 function previewExistingMatches() {
 	frappe.call({
-		method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.preview_existing_matches",
+		method: "erpnext_enhancements.quickbooks_online.core.api.preview_existing_matches",
 		freeze: true,
 		freeze_message: __("Scanning existing ERPNext records..."),
 		callback(response) {
@@ -298,7 +298,7 @@ function showMatchDialog(matches) {
 			return;
 		}
 		frappe.call({
-			method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.link_existing_record",
+			method: "erpnext_enhancements.quickbooks_online.core.api.link_existing_record",
 			args: {
 				entity_type: match.entity_type,
 				qbo_id: match.qbo_id,
@@ -319,7 +319,7 @@ function showMatchDialog(matches) {
 
 function syncEntity(entity, qboId) {
 	frappe.call({
-		method: "erpnext_enhancements.quickbooks_time_integration.quickbooks_online.api.sync_entity",
+		method: "erpnext_enhancements.quickbooks_online.core.api.sync_entity",
 		args: { entity_type: entity, qbo_id: qboId },
 		freeze: true,
 		freeze_message: __("Syncing {0}...", [entity]),

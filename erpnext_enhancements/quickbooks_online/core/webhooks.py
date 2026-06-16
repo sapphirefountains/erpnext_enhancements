@@ -15,8 +15,8 @@ import json
 import frappe
 from frappe.utils import now_datetime
 
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync import store_raw_payload, sync_entity
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import (
+from erpnext_enhancements.quickbooks_online.core.sync import store_raw_payload, sync_entity
+from erpnext_enhancements.quickbooks_online.core.utils import (
 	get_secret,
 	get_settings,
 	verify_intuit_signature,
@@ -55,7 +55,7 @@ def handle_webhook():
 		if event.get("realm_id") != settings.realm_id:
 			continue
 		frappe.enqueue(
-			"erpnext_enhancements.quickbooks_time_integration.quickbooks_online.sync.sync_entity",
+			"erpnext_enhancements.quickbooks_online.core.sync.sync_entity",
 			queue="short",
 			entity_type=event["entity_type"],
 			qbo_id=event["qbo_id"],

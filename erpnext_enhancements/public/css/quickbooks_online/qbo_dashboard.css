@@ -6,7 +6,7 @@
  * collapses to a single column on narrow screens). Rendered by the
  * quickbooks_online_settings form/page script.
  * Loaded via: hooks.py `app_include_css`
- *   (".../css/quickbooks_time_integration/qb_time_integration.css").
+ *   (".../css/quickbooks_online/qbo_dashboard.css").
  */
 .qbo-dashboard {
 	padding: 16px 0;

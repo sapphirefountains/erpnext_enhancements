@@ -4,6 +4,9 @@
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
 # v1.15.0 travel management redesign: clear legacy drafts before the schema flip
 erpnext_enhancements.patches.drop_legacy_travel_trips
+# v1.37.0 QuickBooks module split: rename "QuickBooks Time Integration" Module Def
+# -> "QuickBooks Online" before the QBO doctypes/page reconcile to the new module
+erpnext_enhancements.patches.rename_quickbooks_module
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated

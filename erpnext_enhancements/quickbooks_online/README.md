@@ -1,8 +1,8 @@
-# QuickBooks Time Integration
+# QuickBooks Online
 
-This module hosts a **QuickBooks Online (QBO) accounting integration** (OAuth2, REST client, entity mapping, idempotent sync, audit log, CDC polling, webhooks, retries) plus a small, separate **QuickBooks Time** timesheet webhook.
+This module is the **QuickBooks Online (QBO) accounting integration** (OAuth2, REST client, entity mapping, idempotent sync, audit log, CDC polling, webhooks, retries).
 
-> The module folder is named `quickbooks_time_integration` for historical reasons; the bulk of the code is the QBO **accounting** integration under `quickbooks_online/`.
+> The QBO engine lives under `core/`; `api.py` at the module root re-exports its whitelisted endpoints so the dashboard JS and the Intuit webhook URL resolve at `...quickbooks_online.api.*`. The separate **QuickBooks Time** timesheet webhook now lives in its own `quickbooks_time` module.
 
 ## Data flow
 
@@ -27,15 +27,15 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 
 | File | Purpose | Key functions / classes |
 |---|---|---|
-| `api.py` (module root) | Re-exports QBO endpoints; QB **Time** timesheet webhook | `qb_timesheet_webhook`, `get_erpnext_employee`/`project` |
-| `quickbooks_online/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `quickbooks_webhook`, `get_dashboard_status` |
-| `quickbooks_online/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `request`, `query`, `get_entity`, `cdc`), `QuickBooksAPIError` |
-| `quickbooks_online/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
-| `quickbooks_online/mapping.py` | Transform / match / idempotent upsert | `map_qbo_to_erpnext`, `upsert_entity`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
-| `quickbooks_online/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
-| `quickbooks_online/tasks.py` | Hourly scheduler hooks | `refresh_token_if_needed`, `cdc_poll`, `retry_failed_syncs` |
-| `quickbooks_online/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
-| `quickbooks_online/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
+| `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `quickbooks_webhook`, `get_dashboard_status` |
+| `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `request`, `query`, `get_entity`, `cdc`), `QuickBooksAPIError` |
+| `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
+| `core/mapping.py` | Transform / match / idempotent upsert | `map_qbo_to_erpnext`, `upsert_entity`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
+| `core/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
+| `core/tasks.py` | Hourly scheduler hooks | `refresh_token_if_needed`, `cdc_poll`, `retry_failed_syncs` |
+| `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
+| `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
 | `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh/match-dialog |
 
@@ -53,7 +53,6 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 - `tasks.retry_failed_syncs` (hourly) — re-run Failed logs, capped by `retry_limit`.
 - `api.quickbooks_webhook` (guest) — Intuit push → `handle_webhook` (verify signature → archive → enqueue `sync_entity`).
 - `api.oauth_callback` (guest) — OAuth2 redirect target.
-- `api.qb_timesheet_webhook` (guest) — separate QB **Time** → ERPNext Time Log.
 
 ## Auth & secrets
 
@@ -66,5 +65,4 @@ OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens
 - **Conflict policy:** user edits to QBO-owned fields are preserved unless an overwrite resync (`run_resync`) is run; a preview is required first.
 - **Per-record resilience:** batch ops use `safe_upsert`, so one bad record can't abort a run; inline failure notes are capped at 20 (full tracebacks go to the Frappe Error Log).
 - **No rate-limit/backoff handling:** QBO 429/throttling responses aren't specifically handled — any ≥400 (other than 401) raises `QuickBooksAPIError`.
-- **Security note:** the QB **Time** webhook (`qb_timesheet_webhook`) does **not** verify a signature (unlike the QBO webhook). Flagged with an inline `SECURITY:` comment in the code.
 - Sandbox vs Production is chosen via `environment`; only the base URL differs (OAuth endpoints are shared).

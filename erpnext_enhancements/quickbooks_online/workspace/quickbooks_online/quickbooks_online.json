@@ -1,0 +1,100 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"qbo_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qbo_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Dashboard\",\"col\":4}},{\"id\":\"qbo_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"QuickBooks Online Settings\",\"col\":4}},{\"id\":\"qbo_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qbo_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Sync &amp; Settings</b></span>\",\"col\":12}},{\"id\":\"qbo_card_sync\",\"type\":\"card\",\"data\":{\"card_name\":\"Sync\",\"col\":4}},{\"id\":\"qbo_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "money",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "QuickBooks Online",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sync",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Sync Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Sync Log"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Sync Mapping",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Sync Mapping"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Raw Payload",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Raw Payload"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Online Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Online Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "QuickBooks Online",
+ "name": "QuickBooks Online",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 24,
+ "shortcuts": [
+  {
+   "label": "QuickBooks Online Dashboard",
+   "link_to": "quickbooks-online-dashboard",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "QuickBooks Online Settings",
+   "link_to": "QuickBooks Online Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "QuickBooks Online",
+ "type": "Workspace"
+}

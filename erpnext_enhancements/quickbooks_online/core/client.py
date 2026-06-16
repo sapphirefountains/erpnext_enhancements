@@ -20,14 +20,14 @@ import frappe
 import requests
 from frappe.utils import add_to_date, now_datetime
 
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.constants import (
+from erpnext_enhancements.quickbooks_online.core.constants import (
 	AUTHORIZATION_URL,
 	ENVIRONMENT_BASE_URLS,
 	MINOR_VERSION,
 	OAUTH_SCOPE,
 	TOKEN_URL,
 )
-from erpnext_enhancements.quickbooks_time_integration.quickbooks_online.utils import (
+from erpnext_enhancements.quickbooks_online.core.utils import (
 	get_secret,
 	get_settings,
 	set_secret,

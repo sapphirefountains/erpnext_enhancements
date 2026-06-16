@@ -1,0 +1,65 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"qbt_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"qbt_sc_ts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Timesheet\",\"col\":4}},{\"id\":\"qbt_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qbt_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Related</b></span>\",\"col\":12}},{\"id\":\"qbt_card_rel\",\"type\":\"card\",\"data\":{\"card_name\":\"Related\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "hr",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "QuickBooks Time",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Related",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Timesheet",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Timesheet"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Online Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Online Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "QuickBooks Time",
+ "name": "QuickBooks Time",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 25,
+ "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "Timesheet",
+   "link_to": "Timesheet",
+   "type": "DocType"
+  }
+ ],
+ "title": "QuickBooks Time",
+ "type": "Workspace"
+}
