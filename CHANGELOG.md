@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.54.0] - 2026-06-16
+
+### Added
+- **Public legal pages: End-User License Agreement (`/eula`) and Privacy Policy (`/privacy-policy`).** Two guest-accessible **Web Page** records shipped as version-controlled fixtures (`fixtures/web_page.json`, registered in `hooks.py`) — not authored on the site, so they deploy via `bench migrate` and round-trip through `export-fixtures`. Content is grounded in the app's actual data practices (customer/contact data, field-staff GPS via the Time Kiosk, call recordings/transcripts, MDM device identifiers + remote lock/wipe incl. BYOD, QuickBooks financial sync, and AI/LLM processing via Google Vertex AI and Anthropic). The Privacy Policy includes the **Google API Services Limited Use** disclosure (for Google verification), **A2P/Twilio SMS** consent + STOP/HELP terms, and **CCPA/CPRA** and **GDPR** sections; the EULA covers both customer-portal end-users and internal employees/contractors, governed by Utah law. Naming the entity **Sapphire Fountains LLC** with contact `info@sapphirefountains.com`.
+  - Contact details: Sapphire Fountains LLC, 85 W 300 S, Bountiful, UT 84010, +1 (801) 837-2199, info@sapphirefountains.com.
+  - **Login page footer links.** The login screen now shows "Privacy Policy · End-User License Agreement" links beneath the sign-in card, injected on `/login` by a new `login_enhancements.bundle.js` (registered via `web_include_js`) and styled (theme-aware) in `login_enhancements.bundle.css`. No Frappe template override.
+  - Post-deploy: `bench migrate` publishes both pages, and `bench build` compiles the login bundles. Have counsel review before relying on the documents for any formal verification (e.g. submitting the URLs to Google/Intuit/Twilio).
+
 ## [1.53.0] - 2026-06-16
 
 ### Added

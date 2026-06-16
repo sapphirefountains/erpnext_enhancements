@@ -104,3 +104,39 @@
     box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25) !important;
     color: var(--sapphire-input-text) !important;
 }
+
+/* --------------------------------------------------------------------------
+   LEGAL FOOTER — Privacy Policy + EULA links beneath the login card.
+   Inserted by login_enhancements.bundle.js on /login.
+   -------------------------------------------------------------------------- */
+:root, [data-theme="light"] {
+    --sapphire-login-footer-text: rgba(0, 0, 0, 0.55);
+    --sapphire-login-footer-hover: #007bff;
+}
+
+[data-theme="dark"] {
+    --sapphire-login-footer-text: rgba(224, 224, 224, 0.7);
+    --sapphire-login-footer-hover: #4dabf7;
+}
+
+.ee-login-legal-footer {
+    margin: 1.25rem auto 0;
+    text-align: center;
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+.ee-login-legal-footer a {
+    color: var(--sapphire-login-footer-text);
+    text-decoration: none;
+}
+
+.ee-login-legal-footer a:hover {
+    color: var(--sapphire-login-footer-hover);
+    text-decoration: underline;
+}
+
+.ee-login-legal-sep {
+    margin: 0 0.5rem;
+    color: var(--sapphire-login-footer-text);
+}

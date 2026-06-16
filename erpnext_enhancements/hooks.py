@@ -42,6 +42,9 @@ app_include_js = [
 # Bundle reference (was "/assets/erpnext_enhancements/css/login_enhancements.css",
 # which 404s — public/css only contains login_enhancements.bundle.css).
 web_include_css = "login_enhancements.bundle.css"
+# Login page legal footer (Privacy Policy + EULA links). Loads on website pages
+# but only injects on /login; styled by login_enhancements.bundle.css.
+web_include_js = "login_enhancements.bundle.js"
 
 doctype_js = {
 	"Opportunity": [
@@ -458,6 +461,8 @@ fixtures = [
 		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review"]]],
 	},
 	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online"]]]},
+	# Public legal pages (guest-accessible Web Pages at /eula and /privacy-policy).
+	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy"]]]},
 ]
 
 override_whitelisted_methods = {
