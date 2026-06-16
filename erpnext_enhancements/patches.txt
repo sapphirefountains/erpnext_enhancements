@@ -16,6 +16,8 @@ erpnext_enhancements.patches.move_time_tracking_to_workforce
 erpnext_enhancements.patches.move_job_interval_to_workforce
 # v1.39.0 Integrations module: reassign GA4 Settings + GA4 Dashboard / Integrations Health out of Core
 erpnext_enhancements.patches.move_analytics_to_integrations
+# v1.40.0 Google Drive module: reassign the Drive doctypes + Drive Link Manager page out of CRM
+erpnext_enhancements.patches.move_drive_to_google_drive
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons

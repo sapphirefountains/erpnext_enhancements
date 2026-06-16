@@ -38,7 +38,7 @@ import frappe
 from frappe.utils import cint
 from googleapiclient.errors import HttpError
 
-from erpnext_enhancements.crm_enhancements.drive_utils import (
+from erpnext_enhancements.google_drive.drive_utils import (
 	find_folder,
 	get_drive_service,
 )
@@ -125,7 +125,7 @@ def on_file_attached(doc, method=None):
 		if not folder_id:
 			return
 		frappe.enqueue(
-			"erpnext_enhancements.crm_enhancements.drive_sync.upload_attachment_to_drive",
+			"erpnext_enhancements.google_drive.drive_sync.upload_attachment_to_drive",
 			queue="long",
 			file_docname=doc.name,
 			enqueue_after_commit=True,
@@ -190,7 +190,7 @@ def upload_attachment_to_drive(file_docname, attempts=1):
 			reference_doctype=reference_doctype, reference_name=reference_name,
 			file_name=file_name, error=frappe.get_traceback(),
 			payload={
-				"method": "erpnext_enhancements.crm_enhancements.drive_sync.upload_attachment_to_drive",
+				"method": "erpnext_enhancements.google_drive.drive_sync.upload_attachment_to_drive",
 				"kwargs": {"file_docname": file_docname, "attempts": attempts + 1},
 			},
 			attempts=attempts,
@@ -487,7 +487,7 @@ def backfill_drive_links():
 	creates folders)."""
 	frappe.only_for("System Manager")
 	frappe.enqueue(
-		"erpnext_enhancements.crm_enhancements.drive_sync.run_backfill_drive_links",
+		"erpnext_enhancements.google_drive.drive_sync.run_backfill_drive_links",
 		queue="long",
 	)
 	return {"status": "queued"}

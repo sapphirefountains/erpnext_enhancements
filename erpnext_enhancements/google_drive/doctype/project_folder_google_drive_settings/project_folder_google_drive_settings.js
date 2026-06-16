@@ -4,7 +4,7 @@
  * Targets: this Single doctype's form.
  * Loaded via: standard doctype form script (same-folder .js).
  *
- * Adds buttons backed by crm_enhancements.drive_sync:
+ * Adds buttons backed by google_drive.drive_sync:
  *  - Test Connection: validates the service-account JSON, the Drive API, and
  *    access to each configured Drive/folder; shows per-check results with the
  *    service-account email to add as a Shared Drive member when missing.
@@ -17,7 +17,7 @@ frappe.ui.form.on("Project Folder Google Drive Settings", {
 	refresh(frm) {
 		frm.add_custom_button(__("Test Connection"), () => {
 			frappe.call({
-				method: "erpnext_enhancements.crm_enhancements.drive_sync.test_connection",
+				method: "erpnext_enhancements.google_drive.drive_sync.test_connection",
 				freeze: true,
 				freeze_message: __("Checking Google Drive access..."),
 			}).then((r) => {
@@ -44,7 +44,7 @@ frappe.ui.form.on("Project Folder Google Drive Settings", {
 				__("Scan Drive and link existing Customers and Projects to their folders by name? (Nothing is created or modified in Drive.)"),
 				() => {
 					frappe.call({
-						method: "erpnext_enhancements.crm_enhancements.drive_sync.backfill_drive_links",
+						method: "erpnext_enhancements.google_drive.drive_sync.backfill_drive_links",
 					}).then(() => {
 						frappe.show_alert({
 							message: __("Backfill queued — results land in the Drive Sync Log."),

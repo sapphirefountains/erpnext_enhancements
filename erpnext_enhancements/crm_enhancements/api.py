@@ -9,7 +9,7 @@ This module backs the custom Opportunity workflow used by Sapphire Fountains:
   :func:`enqueue_project_creation` (whitelisted), which enqueues
   :func:`create_project_from_opportunity_background` on the ``long`` queue. That
   background worker creates a Project from the Opportunity, copies its
-  attachments, and (via :mod:`erpnext_enhancements.crm_enhancements.drive_utils`)
+  attachments, and (via :mod:`erpnext_enhancements.google_drive.drive_utils`)
   provisions a Google Drive folder tree, then notifies the requesting users in
   real time and by email.
 
@@ -152,7 +152,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		4. Re-attach the Opportunity's File attachments to the Project.
 		5. Stamp ``Opportunity.custom_created_project`` and commit.
 		6. Provision Google Drive folders via
-		   :func:`~erpnext_enhancements.crm_enhancements.drive_utils.provision_project_folders`,
+		   :func:`~erpnext_enhancements.google_drive.drive_utils.provision_project_folders`,
 		   store the returned folder id on ``Project.custom_drive_folder_id`` and
 		   attach the web view link as a File. Drive failures are caught/logged so
 		   they never abort Project creation.
@@ -336,7 +336,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			# Provision Google Drive Folders
 			if not project.get("custom_drive_folder_id"):
 				try:
-					from erpnext_enhancements.crm_enhancements.drive_utils import provision_project_folders
+					from erpnext_enhancements.google_drive.drive_utils import provision_project_folders
 
 					project_folder_name = f"{project.name} {project.project_name}"
 					party_name = project.customer or opp.party_name or "Unknown Customer"

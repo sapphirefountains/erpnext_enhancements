@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-06-16
+
+### Changed
+- **New `Google Drive` module** (module-reorganization PR 6 — the heaviest move) — the Google Drive integration is split out of CRM Enhancements into its own module + sidebar (`/app/google-drive`):
+  - Moved `crm_enhancements` → `google_drive`: the code modules `drive_link_manager.py`, `drive_match.py`, `drive_sync.py`, `drive_utils.py`; the doctypes **Drive Link Candidate**, **Drive Sync Log**, **Drive Folder Template Item**, **Project Folder Google Drive Settings**; and the **Drive Link Manager** page.
+  - ~19 files updated: all dotted import paths, the page + settings JS RPC method strings (`drive_link_manager.*`, `drive_sync.*`), 5 `hooks.py` doc_events/scheduler entries, and external importers (`api/call_recording_export.py`, `api/integrations_health.py`, `tests/test_drive_match.py`). `crm_enhancements.api` **stays in CRM** but its `drive_utils` import was repointed (CRM still triggers provisioning).
+  - **Drive sidebar:** Drive Link Manager + Drive Settings shortcuts; Drive card (Drive Link Candidate, Drive Sync Log) + Settings card (Project Folder Google Drive Settings).
+  - READMEs split: the Drive docs moved to `google_drive/README.md`; the CRM README trimmed to CRM + Sales Pipeline.
+- Idempotent backstop patch `move_drive_to_google_drive` (post-model-sync) reassigns the records' `module` on existing installs — no data moves; the settings Single's service-account JSON / shared-drive id carry across.
+
 ## [1.39.0] - 2026-06-16
 
 ### Changed

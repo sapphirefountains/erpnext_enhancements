@@ -241,13 +241,13 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
 		],
 		# Drive folder per Customer-party opportunity (settings opt-in)
-		"after_insert": "erpnext_enhancements.crm_enhancements.drive_utils.enqueue_opportunity_folder",
+		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"File": {
 		# ERPNext -> Drive half of the attachment sync (settings opt-in;
 		# cheap bail-out for files not attached to a Drive-linked document)
-		"after_insert": "erpnext_enhancements.crm_enhancements.drive_sync.on_file_attached",
+		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
 	"Contact": {
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
@@ -270,7 +270,7 @@ doc_events = {
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		# Drive folder per customer (Project Folder Google Drive Settings opt-in)
-		"after_insert": "erpnext_enhancements.crm_enhancements.drive_utils.enqueue_customer_folder",
+		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_customer_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"*": {
@@ -302,7 +302,7 @@ scheduler_events = {
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
-		"erpnext_enhancements.crm_enhancements.drive_sync.retry_failed_syncs",
+		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
 		# device_management (MDM/EMM): warranty lead-time + stale-attestation nudges
 		"erpnext_enhancements.device_management.tasks.send_device_warranty_reminders",
 		"erpnext_enhancements.device_management.tasks.nudge_stale_device_attestations",
@@ -314,7 +314,7 @@ scheduler_events = {
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# Drive -> ERPNext half of the attachment sync (link-only shadows)
-		"erpnext_enhancements.crm_enhancements.drive_sync.sync_shadow_attachments",
+		"erpnext_enhancements.google_drive.drive_sync.sync_shadow_attachments",
 		# mdm_integration: pull Miradore/Action1 device inventory + keep the
 		# Action1 OAuth token alive + retry failed syncs (each throttled/guarded)
 		"erpnext_enhancements.mdm_integration.tasks.refresh_action1_token",

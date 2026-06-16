@@ -37,7 +37,7 @@ def enqueue_customer_folder(doc, method=None):
 		if not (settings.get("service_account_json") and settings.get("shared_drive_id")):
 			return
 		frappe.enqueue(
-			"erpnext_enhancements.crm_enhancements.drive_utils.provision_customer_folder",
+			"erpnext_enhancements.google_drive.drive_utils.provision_customer_folder",
 			queue="long",
 			customer=doc.name,
 			enqueue_after_commit=True,
@@ -66,7 +66,7 @@ def provision_customer_folder(customer):
 			frappe.db.set_value(
 				"Customer", customer, "custom_drive_folder_id", folder_id, update_modified=False
 			)
-		from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+		from erpnext_enhancements.google_drive.drive_sync import log_sync
 
 		log_sync(
 			"Provision Folder", "Success",
@@ -297,7 +297,7 @@ def enqueue_opportunity_folder(doc, method=None):
 		if not (settings.get("service_account_json") and settings.get("shared_drive_id")):
 			return
 		frappe.enqueue(
-			"erpnext_enhancements.crm_enhancements.drive_utils.provision_opportunity_folder",
+			"erpnext_enhancements.google_drive.drive_utils.provision_opportunity_folder",
 			queue="long",
 			opportunity=doc.name,
 			enqueue_after_commit=True,
@@ -310,7 +310,7 @@ def provision_opportunity_folder(opportunity):
 	"""Background job: find-or-create ``<Customer>/<Opportunity ID - Title>`` in
 	the Shared Drive (e.g. ``CRM-OPP-2026-00112 - Pool Reno``) and store its id on
 	``Opportunity.custom_drive_folder_id``."""
-	from erpnext_enhancements.crm_enhancements.drive_sync import log_sync
+	from erpnext_enhancements.google_drive.drive_sync import log_sync
 
 	try:
 		if not frappe.db.exists("Opportunity", opportunity):
