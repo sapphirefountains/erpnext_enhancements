@@ -44,22 +44,37 @@ skipped cleanly ("No native ERPNext mapping"), not failed.
 ## 2. Configuration prerequisites (do these first)
 
 The mappers fill required fields from **Company defaults**. Set these on the ERPNext
-Company before importing or transactions will land in **manual review**:
+Company before importing or transactions will land in **manual review** (or fail to
+insert). Every item below was validated live against the Sapphire Fountains instance
+by inserting a sample of each document type; the ones marked ✅ have already been set.
 
-- **Default Receivable Account** — used as Sales Invoice `debit_to` and customer
-  Payment `paid_from`.
-- **Default Payable Account** — used as Purchase Invoice `credit_to`, Bill Payment /
-  Vendor Credit A/P, and vendor Payment `paid_to`.
-- **Default Bank Account** (and/or **Default Cash Account**) — the bank side of
+- ✅ **Default Receivable Account** — Sales Invoice `debit_to` and customer Payment
+  `paid_from`.
+- ✅ **Default Payable Account** — Purchase Invoice `credit_to`, Bill Payment / Vendor
+  Credit A/P, and vendor Payment `paid_to`.
+- ✅ **Default Bank Account** (and/or **Default Cash Account**) — the bank side of
   Payment Entries.
-- **Default Currency** = USD.
-- A default **selling Price List** (enabled) for Sales Invoices/Quotations.
+- ✅ **Default Cost Center** (`Main - SF`) — auto-applied to Sales Invoice / Journal
+  Entry P&L lines; without it ERPNext throws "Cost Center is mandatory".
+- ✅ **Default Expense Account** (Cost of Goods Sold) — fallback expense account for
+  Purchase Invoice item lines (imported items carry none).
+- ✅ **Default Income Account** — was already set (`4110 - Sales`).
+- **Default Currency** = USD (already correct).
+- A default **selling Price List** (enabled) — already present (`Standard Selling`).
+- ✅ **Perpetual inventory accounts.** This company has perpetual inventory enabled,
+  so ERPNext demands the company's stock accounts be configured **even for non-stock
+  Purchase Invoices** ("Please set default Stock Received But Not Billed…"). Set
+  **Stock Received But Not Billed**, **Default Inventory** (Stock In Hand), and
+  **Stock Adjustment**. (`Expenses Included In Valuation` is only used for stock
+  landed-cost valuation, which the non-stock import never triggers, and the Company
+  doctype resets it on save — leave it unset.)
 
 Other prerequisites:
 
-- **Fiscal Years back to the oldest transaction (2008).** ERPNext rejects a posting
-  whose date has no Fiscal Year. Create yearly Fiscal Years 2008→present, or set the
-  company "Books Begin" date appropriately, before importing transactions.
+- ✅ **Fiscal Years back to the oldest transaction (2008).** Already present (2008→2026).
+  ERPNext rejects a posting whose date has no Fiscal Year.
+- **Imported transactions are created as drafts** (`docstatus = 0`) — they do not hit
+  the GL/Trial Balance until submitted. Review, then bulk-submit when ready.
 - **Chart of Accounts mismatch.** QBO account names carry numeric prefixes
   (`13000 US Bank Checking`). If you let the integration create accounts, expect a
   large COA. If you pre-built a COA, use the dashboard's **Link Existing Records** to

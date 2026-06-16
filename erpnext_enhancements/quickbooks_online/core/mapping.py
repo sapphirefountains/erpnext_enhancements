@@ -833,6 +833,11 @@ def _map_payment_entry(payload, settings):
 	accounts and amounts ERPNext requires: a customer Payment is a "Receive"
 	(debit the company's default bank/cash, credit the receivable); a vendor
 	Payment is a "Pay" (the reverse). Single-currency exchange rates are 1.
+
+	``reference_no``/``reference_date`` are always set because ERPNext makes them
+	mandatory once a bank account is involved ("Reference No and Reference Date is
+	mandatory for Bank transaction"); the QBO payment reference is used, falling
+	back to the QBO id so the field is never empty.
 	"""
 	party_type, party = _payment_party(payload)
 	if not party_type or not party:
@@ -856,6 +861,8 @@ def _map_payment_entry(payload, settings):
 		"received_amount": amount,
 		"source_exchange_rate": rate,
 		"target_exchange_rate": rate,
+		"reference_no": payload.get("PaymentRefNum") or payload.get("DocNumber") or payload.get("Id"),
+		"reference_date": payload.get("TxnDate"),
 		"remarks": f"Imported from QuickBooks Online payment {payload.get('Id')}",
 	}
 

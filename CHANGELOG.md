@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Same hazard pre-empted in `retire_global_enhancements`** (v1.49.0): switched its Module Def removal from `frappe.delete_doc` to `frappe.db.delete` — `delete_doc`'s `on_trash` would try to delete the already-removed module folder and can balk on non-custom modules. (`move_*` backstop patches were already safe — they only use `db.set_value`.)
 
 > Deploy: re-run `bench migrate`. The QB patch failed before being logged, so it re-runs cleanly (now in the post-model-sync phase).
+- **QuickBooks Online customer/vendor Payments now import.** Live verification against the production ERPNext company surfaced that `Payment Entry` insert fails with "Reference No and Reference Date is mandatory for Bank transaction" — ERPNext requires those once a bank account is involved, and the mapper (added in v1.42.0) didn't set them. `_map_payment_entry` now sets `reference_no` (QBO `PaymentRefNum`/`DocNumber`/`Id`) and `reference_date` (`TxnDate`).
+
+### Changed
+- **`quickbooks_online/MIGRATION_NOTES.md` prerequisites expanded** from the live verification (a sample Journal Entry, Sales Invoice, Purchase Invoice and Payment Entry were inserted against the real company): documents the Company **default cost center** and **default expense account**, and — because this company runs **perpetual inventory** — the **Stock Received But Not Billed / Inventory / Stock Adjustment** accounts ERPNext demands even for non-stock Purchase Invoices. Also notes imported transactions are created as drafts (`docstatus = 0`).
 
 ## [1.49.0] - 2026-06-16
 
