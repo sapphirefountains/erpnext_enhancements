@@ -32,6 +32,9 @@ def execute():
             frappe.db.set_value(dt, name, "module", NEW_MODULE)
 
     if frappe.db.exists("Module Def", OLD_MODULE):
-        frappe.delete_doc("Module Def", OLD_MODULE, force=True, ignore_permissions=True)
+        # App-owned (non-custom) modules can't be removed via the controller (and
+        # its on_trash would try to delete the already-removed folder), so delete
+        # the orphaned Module Def row directly.
+        frappe.db.delete("Module Def", {"name": OLD_MODULE})
 
     frappe.clear_cache()

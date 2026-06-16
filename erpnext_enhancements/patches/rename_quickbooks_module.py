@@ -1,21 +1,19 @@
-"""One-time migration: rename the QuickBooks module (pre_model_sync).
+"""One-time migration: retire the legacy "QuickBooks Time Integration" module
+(post_model_sync).
 
-The module historically named "QuickBooks Time Integration" is really the
-QuickBooks **Online** (QBO) accounting integration. This renames the Module Def
-"QuickBooks Time Integration" -> "QuickBooks Online" before the model sync, so
-the four QBO doctypes + the dashboard Page (whose JSON now declares module
-"QuickBooks Online") reconcile onto the existing records instead of orphaning the
-old module. ``frappe.rename_doc`` cascades the ``module`` Link on
-tabDocType / tabPage / tabWorkspace.
+The QuickBooks module was renamed to "QuickBooks Online" (plus a thin "QuickBooks
+Time" module). App-owned (non-custom) Module Defs **cannot be renamed** via the
+controller (``frappe.rename_doc`` raises "Only Custom Modules can be renamed"), so
+the original rename approach failed at migrate.
 
-The new "QuickBooks Time" module (the timesheet webhook) has no doctypes/pages,
-so its Module Def is created normally from modules.txt during sync -- nothing to
-do here for it.
+Instead this runs AFTER model sync -- by which point sync has created the
+"QuickBooks Online" Module Def from modules.txt and the four QBO doctypes + the
+dashboard Page have reconciled to it via their JSON ``module`` field -- and simply
+drops the orphaned legacy Module Def (reassigning any stragglers first).
 
-Idempotent: a no-op on fresh installs (old module absent) and on re-run (already
-renamed). The doctype data itself (e.g. the QuickBooks Online Settings Single
-with stored OAuth tokens) is keyed by doctype name, which does not change, so no
-configuration is lost.
+No data is lost: doctypes are keyed by name; only the module link changes (done by
+sync). The QuickBooks Online Settings Single (OAuth tokens etc.) carries across.
+Idempotent: a no-op on fresh installs and on re-run.
 """
 import frappe
 
@@ -25,19 +23,21 @@ NEW = "QuickBooks Online"
 
 def execute():
     if not frappe.db.exists("Module Def", OLD):
-        # Fresh install or already renamed.
+        return
+    if not frappe.db.exists("Module Def", NEW):
+        # NEW is created from modules.txt during model sync; if it isn't there yet,
+        # leave OLD in place rather than orphan its doctypes (a later migrate
+        # completes it).
         return
 
-    if frappe.db.exists("Module Def", NEW):
-        # Both present (e.g. NEW was already created by a prior partial sync).
-        # Reassign anything still pointing at OLD, then drop the orphan.
-        for dt in ("DocType", "Page", "Workspace", "Report"):
-            for name in frappe.get_all(dt, filters={"module": OLD}, pluck="name"):
-                frappe.db.set_value(dt, name, "module", NEW)
-        frappe.delete_doc("Module Def", OLD, force=True, ignore_permissions=True)
-        frappe.clear_cache()
-        return
+    # Backstop: reassign anything still pointing at the legacy module (model sync
+    # already moved the QBO doctypes/page via their JSON).
+    for dt in ("DocType", "Page", "Report", "Workspace"):
+        for name in frappe.get_all(dt, filters={"module": OLD}, pluck="name"):
+            frappe.db.set_value(dt, name, "module", NEW)
 
-    # Clean rename: carries the four QBO doctypes + dashboard Page across.
-    frappe.rename_doc("Module Def", OLD, NEW, force=True)
+    # Drop the orphaned legacy Module Def. App-owned modules can't be renamed or
+    # removed via the controller (and its on_trash would try to delete the already-
+    # renamed folder), so delete the row directly.
+    frappe.db.delete("Module Def", {"name": OLD})
     frappe.clear_cache()

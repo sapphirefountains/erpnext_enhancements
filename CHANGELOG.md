@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.50.0] - 2026-06-16
+
+### Fixed
+- **`bench migrate` crashed in the QuickBooks-split patch** — `rename_quickbooks_module` (v1.37.0) called `frappe.rename_doc("Module Def", …)`, but Frappe **forbids renaming app-owned (non-custom) Module Defs** (`ValidationError: Only Custom Modules can be renamed`), aborting the whole migration. Rewrote the patch to **not rename**: it now runs **post-model-sync** (after sync has created the `QuickBooks Online` Module Def from `modules.txt` and the QBO doctypes/page have reconciled to it via their JSON) and simply drops the orphaned `QuickBooks Time Integration` Module Def via a direct `frappe.db.delete` (reassigning any stragglers first). No data is touched — the QuickBooks Online Settings Single carries across.
+- **Same hazard pre-empted in `retire_global_enhancements`** (v1.49.0): switched its Module Def removal from `frappe.delete_doc` to `frappe.db.delete` — `delete_doc`'s `on_trash` would try to delete the already-removed module folder and can balk on non-custom modules. (`move_*` backstop patches were already safe — they only use `db.set_value`.)
+
+> Deploy: re-run `bench migrate`. The QB patch failed before being logged, so it re-runs cleanly (now in the post-model-sync phase).
+
 ## [1.49.0] - 2026-06-16
 
 ### Changed
