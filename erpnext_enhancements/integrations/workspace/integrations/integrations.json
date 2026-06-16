@@ -1,0 +1,121 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"int_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"int_sc_health\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Integrations Health\",\"col\":4}},{\"id\":\"int_sc_ga4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"GA4 Dashboard\",\"col\":4}},{\"id\":\"int_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"int_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Analytics &amp; Connected Services</b></span>\",\"col\":12}},{\"id\":\"int_card_analytics\",\"type\":\"card\",\"data\":{\"card_name\":\"Analytics\",\"col\":4}},{\"id\":\"int_card_services\",\"type\":\"card\",\"data\":{\"card_name\":\"Connected Services\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "integration",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Integrations",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Analytics",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GA4 Dashboard",
+   "link_count": 0,
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "ga4-dashboard"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "GA4 Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "GA4 Settings"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Connected Services",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "QuickBooks Online",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "QuickBooks Online Settings"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "MDM",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "MDM Settings"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Google Drive",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Project Folder Google Drive Settings"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Triton Assistant",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Triton Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Integrations",
+ "name": "Integrations",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 27,
+ "shortcuts": [
+  {
+   "label": "Integrations Health",
+   "link_to": "integrations-health",
+   "type": "Page"
+  },
+  {
+   "label": "GA4 Dashboard",
+   "link_to": "ga4-dashboard",
+   "type": "Page"
+  }
+ ],
+ "title": "Integrations",
+ "type": "Workspace"
+}
