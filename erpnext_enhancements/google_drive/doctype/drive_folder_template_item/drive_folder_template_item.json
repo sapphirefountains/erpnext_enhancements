@@ -9,7 +9,7 @@
  ],
  "fields": [
   {
-   "description": "Subfolder to create inside each new project folder. Use / for nesting, e.g. \"Project Manager/Pictures\".",
+   "description": "Subfolder to create inside each new project folder. Use / for nesting, e.g. \"Project Management/Pictures\".",
    "fieldname": "folder_path",
    "fieldtype": "Data",
    "in_list_view": 1,

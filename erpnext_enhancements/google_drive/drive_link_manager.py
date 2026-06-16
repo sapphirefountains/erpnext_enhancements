@@ -591,7 +591,7 @@ def _provision_for(doctype, name):
 		proj = frappe.db.get_value(
 			"Project", name, ["project_name", "customer", "project_type"], as_dict=True
 		)
-		folder_name = f"{name} {proj.project_name}".strip()
+		folder_name = f"{name} - {proj.project_name}".strip(" -")
 		party = proj.customer or "Unknown Customer"
 		folder_id, _link = provision_project_folders(
 			folder_name, party, project_type=proj.get("project_type")
