@@ -4,9 +4,6 @@
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
 # v1.15.0 travel management redesign: clear legacy drafts before the schema flip
 erpnext_enhancements.patches.drop_legacy_travel_trips
-# v1.37.0 QuickBooks module split: rename "QuickBooks Time Integration" Module Def
-# -> "QuickBooks Online" before the QBO doctypes/page reconcile to the new module
-erpnext_enhancements.patches.rename_quickbooks_module
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -29,6 +26,10 @@ erpnext_enhancements.patches.move_process_document_to_process_documentation
 # v1.48.0 cleanup: drop the orphaned "Project Note" child-table doctype (unused; the
 # in-use child table is "Project Notes" plural)
 erpnext_enhancements.patches.drop_orphan_project_note
+# v1.50.0 QuickBooks split fix: drop the orphaned "QuickBooks Time Integration" Module Def
+# AFTER sync reassigns the QBO doctypes (app-owned modules can't be renamed, so the
+# v1.37.0 pre-sync rename_doc is replaced by this post-sync cleanup)
+erpnext_enhancements.patches.rename_quickbooks_module
 # v1.49.0 retire Global Enhancements: fold its 2 doctypes into Core + delete the Module Def
 erpnext_enhancements.patches.retire_global_enhancements
 erpnext_enhancements.patches.remove_google_calendar_fields
