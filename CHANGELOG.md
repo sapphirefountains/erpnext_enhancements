@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-06-16
+
+### Changed
+- **New `Morning Briefing` module** (module-reorganization PR 7) — the morning-briefing surfaces move out of Enhancements Core into their own module + sidebar (`/app/morning-briefing`):
+  - **Daily Briefing** doctype moved `enhancements_core` → `morning_briefing`. No code changes — it's referenced only by doctype name, and the generator/scheduler (`api.briefing`) and the `/wall` TV display (`www/wall`) are app-level and don't move.
+  - **`Briefing Recipient` stays in Core** — it's a child table of `ERPNext Enhancements Settings` (the `briefing_recipients` field), so it stays with its parent (same call as `collab_doctype`).
+  - Sidebar: Wall / TV Display (`/wall` URL shortcut) + Daily Briefing shortcuts; a Briefing card (Daily Briefing) and a Settings card linking ERPNext Enhancements Settings (where the recipient opt-in lives).
+- Idempotent backstop patch `move_briefing_to_morning_briefing` (post-model-sync) reassigns the Daily Briefing `module` on existing installs (no data moves).
+
 ## [1.40.0] - 2026-06-16
 
 ### Changed

@@ -14,3 +14,4 @@ MDM Integration
 Workforce
 Integrations
 Google Drive
+Morning Briefing
