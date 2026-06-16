@@ -1,0 +1,146 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"dev_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"dev_sc_console\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Device Console\",\"col\":4}},{\"id\":\"dev_sc_fleet\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Device Fleet Dashboard\",\"col\":4}},{\"id\":\"dev_sc_managed\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Managed Device\",\"col\":4}},{\"id\":\"dev_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"dev_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Devices, Compliance &amp; MDM</b></span>\",\"col\":12}},{\"id\":\"dev_card_devices\",\"type\":\"card\",\"data\":{\"card_name\":\"Devices\",\"col\":4}},{\"id\":\"dev_card_compliance\",\"type\":\"card\",\"data\":{\"card_name\":\"Compliance\",\"col\":4}},{\"id\":\"dev_card_mdm\",\"type\":\"card\",\"data\":{\"card_name\":\"MDM\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "mobile",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Devices",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Devices",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Managed Device",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Managed Device"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Device Assignment Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Device Assignment Log"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Compliance",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Device Compliance Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Device Compliance Settings"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "MDM",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "MDM Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "MDM Settings"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "MDM Sync Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "MDM Sync Log"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Device Action Log",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Device Action Log"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "MDM Raw Payload",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "MDM Raw Payload"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Device Management",
+ "name": "Devices",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 20,
+ "shortcuts": [
+  {
+   "label": "Device Console",
+   "link_to": "device-console",
+   "type": "Page"
+  },
+  {
+   "label": "Device Fleet Dashboard",
+   "link_to": "device-fleet-dashboard",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Managed Device",
+   "link_to": "Managed Device",
+   "type": "DocType"
+  }
+ ],
+ "title": "Devices",
+ "type": "Workspace"
+}
