@@ -9,7 +9,7 @@
  "icon": "integration",
  "is_hidden": 0,
  "is_standard": 1,
- "label": "Integrations",
+ "label": "Integration Hub",
  "links": [
   {
    "hidden": 0,
@@ -96,8 +96,8 @@
  ],
  "modified": "2026-06-15 00:00:00.000000",
  "modified_by": "Administrator",
- "module": "Integrations",
- "name": "Integrations",
+ "module": "Integration Hub",
+ "name": "Integration Hub",
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
@@ -116,6 +116,6 @@
    "type": "Page"
   }
  ],
- "title": "Integrations",
+ "title": "Integration Hub",
  "type": "Workspace"
 }
