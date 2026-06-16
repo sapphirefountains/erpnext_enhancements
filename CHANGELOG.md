@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.43.0] - 2026-06-16
+
+### Added
+- **Project Enhancements workspace (sidebar)** at `/app/project-enhancements` (module-reorganization PR 8) — the module's first sidebar: shortcuts to **Project Dashboard**, **Master Project**, **Project Contract**; cards for **Projects** (Master Project, Project), **Contracts** (Project Contract, Contract Template), and **Process and Settings** (Process Step Template, Project Dashboard Settings).
+
+### Notes
+- The planned move of `project_note` / `project_reminder_email` out of Enhancements Core was **dropped** after inspection: both are **child tables**, not standalone doctypes.
+  - `Project Reminder Email` is a child table of `ERPNext Enhancements Settings`, so it stays in Core with its parent (same call as `collab_doctype` / `briefing_recipient`).
+  - `Project Note` (singular) is an apparent **orphan** — no Table field references it; the in-use child table is `Project Notes` (plural, already in Project Enhancements). Flagged for separate cleanup rather than relocating dead code.
+
 ## [1.42.0] - 2026-06-16
 
 ### Fixed
