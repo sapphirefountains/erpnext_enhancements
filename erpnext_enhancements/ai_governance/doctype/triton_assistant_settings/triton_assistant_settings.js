@@ -15,7 +15,7 @@ frappe.ui.form.on("Triton Assistant Settings", {
 	refresh(frm) {
 		frm.add_custom_button(__("Test Connection"), () => {
 			frm.call({
-				method: "erpnext_enhancements.global_enhancements.doctype.triton_assistant_settings.triton_assistant_settings.test_connection",
+				method: "erpnext_enhancements.ai_governance.doctype.triton_assistant_settings.triton_assistant_settings.test_connection",
 				freeze: true,
 				freeze_message: __("Contacting Triton…"),
 			}).then((r) => {

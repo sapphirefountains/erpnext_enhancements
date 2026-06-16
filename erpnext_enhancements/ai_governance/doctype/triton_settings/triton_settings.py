@@ -24,7 +24,7 @@ class TritonSettings(Document):
         and decrypted admin webhook secret so the external service re-pulls config.
         """
         frappe.enqueue(
-            "erpnext_enhancements.enhancements_core.doctype.triton_settings.triton_settings.trigger_refresh_webhook",
+            "erpnext_enhancements.ai_governance.doctype.triton_settings.triton_settings.trigger_refresh_webhook",
             gateway_url=self.gateway_url,
             admin_webhook_secret=self.get_password("admin_webhook_secret", raise_exception=False),
             timeout=10,

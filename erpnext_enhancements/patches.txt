@@ -20,6 +20,8 @@ erpnext_enhancements.patches.move_analytics_to_integrations
 erpnext_enhancements.patches.move_drive_to_google_drive
 # v1.41.0 Morning Briefing module: reassign the Daily Briefing doctype out of Core
 erpnext_enhancements.patches.move_briefing_to_morning_briefing
+# v1.44.0 AI consolidation: move Triton + Training Insight doctypes into AI Governance
+erpnext_enhancements.patches.move_triton_to_ai_governance
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons

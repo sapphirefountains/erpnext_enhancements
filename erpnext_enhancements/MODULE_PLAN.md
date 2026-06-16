@@ -33,7 +33,10 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
 - [x] **PR 8** — Project Enhancements sidebar — v1.43.0
   - Built the module's first sidebar (Project Dashboard, Master Project, Project Contract, Contract Template, Process Step Template, Project Dashboard Settings + standard Project).
   - **Reframed:** the planned `project_note`/`project_reminder_email` move was dropped — both are child tables. `Project Reminder Email` is a child table of ERPNext Enhancements Settings (stays in Core, like `collab_doctype`). `Project Note` (singular) is an **orphan** (no Table field references it; the in-use one is `Project Notes` plural, already here) — flagged for cleanup, not relocated.
-- [ ] PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 9** — AI/Triton consolidation — v1.44.0
+  - Moved Triton Settings + Training Insight (from Core) and Triton Assistant Settings + Triton Allowed User (child table, from Global) → `ai_governance`. Only 2 path fixes (self-ref in triton_settings.py, RPC string in triton_assistant_settings.js); rest by name. `triton_chat`/`utils.triton_sync` app-level, unchanged. Updated AI Governance sidebar (Triton Assistant card + Triton shortcut + Training Insight). Backstop patch `move_triton_to_ai_governance`.
+  - Global Enhancements now holds only `additional_supplier_group` + `directory_link_exclusion` → PR 13 retires it.
+- [ ] PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 
