@@ -1,0 +1,89 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"inv_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"inv_sc_audit\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Scanner Audit\",\"col\":4}},{\"id\":\"inv_sc_session\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Inventory Count Session\",\"col\":4}},{\"id\":\"inv_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"inv_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Counts &amp; Masters</b></span>\",\"col\":12}},{\"id\":\"inv_card_counts\",\"type\":\"card\",\"data\":{\"card_name\":\"Counts\",\"col\":4}},{\"id\":\"inv_card_masters\",\"type\":\"card\",\"data\":{\"card_name\":\"Masters\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "stock",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Inventory Enhancements",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Counts",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inventory Count Session",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Inventory Count Session"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Masters",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Storage Location",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Storage Location"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Inventory Scanner Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Inventory Scanner Settings"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Inventory Enhancements",
+ "name": "Inventory Enhancements",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 21,
+ "shortcuts": [
+  {
+   "label": "Inventory Scanner Audit",
+   "link_to": "inventory-scanner-audit",
+   "type": "Page"
+  },
+  {
+   "doc_view": "List",
+   "label": "Inventory Count Session",
+   "link_to": "Inventory Count Session",
+   "type": "DocType"
+  }
+ ],
+ "title": "Inventory Enhancements",
+ "type": "Workspace"
+}

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-06-15
+
+### Added
+- **Workspaces (sidebars) for Inventory, Task, and CRM Enhancements** — batch 2 of the module-reorganization effort (no doctype moves):
+  - **Inventory Enhancements** (`/app/inventory-enhancements`): shortcuts to Inventory Scanner Audit + Inventory Count Session; cards Counts (Inventory Count Session) and Masters (Storage Location, Inventory Scanner Settings).
+  - **Task Enhancements** (`/app/task-enhancements`): shortcuts to the Hierarchical Task View page + Task list; card Tasks. (`task_enhancements/doctype/task` is a script customization of the standard ERPNext Task — there is no custom Task doctype — so the sidebar links the standard Task.)
+  - **CRM Enhancements** (`/app/crm-enhancements`): shortcuts to Sales Pipeline + Lead + Opportunity; cards Pipeline (Lead, Opportunity, Customer) and Enhancements (Value Streams, Sales Activity Settings). The module's other doctypes (Accounts Lead/Opportunity/Project, Lead Source, Opportunity Contributor, Value Stream) are **child tables** and can't be sidebar links; Drive Link Manager + `drive_*` are intentionally left off here as they move to a dedicated Google Drive module in a later PR.
+
 ## [1.35.0] - 2026-06-15
 
 ### Added
