@@ -12,3 +12,4 @@ Inventory Enhancements
 Device Management
 MDM Integration
 Workforce
+Integrations

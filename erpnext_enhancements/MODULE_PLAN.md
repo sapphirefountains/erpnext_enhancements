@@ -22,7 +22,10 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
   - Moved Time Kiosk Log + Time Kiosk Settings doctypes and the Time Kiosk + Location Timeline pages `enhancements_core` → `workforce`; only `api/time_kiosk.py` needed an import-path fix (everything else refs doctypes by name / `api.time_kiosk`, which stays).
   - `/kiosk` PWA + `api.time_kiosk` stay app-level; sidebar links them. Idempotent backstop patch `move_time_tracking_to_workforce`.
   - Follow-up done (v1.38.1): `Job Interval` (clock-in session doctype) also moved Core → Workforce — no code changes needed (refs are by name / Link field), backstop patch `move_job_interval_to_workforce`.
-- [ ] PR 5 — Integrations · PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
+- [x] **PR 5** — Integrations — v1.39.0
+  - Moved GA4 Settings doctype + GA4 Dashboard / Integrations Health pages `enhancements_core` → `integrations` (adopted the empty `integrations/` placeholder as the module folder). No code changes (pure-JS pages; refs by name + `api.analytics`/`api.integrations_health`). Backstop patch `move_analytics_to_integrations`.
+  - Hub sidebar: Analytics card + Connected Services card cross-linking QuickBooks Online / MDM / Google Drive / Triton settings Singles.
+- [ ] PR 6 — Google Drive (updates CRM sidebar) · PR 7 — Morning Briefing · PR 8 — Project · PR 9 — AI · PR 10 — Asset Management · PR 11 — Process Documentation · PR 12 — Travel (expense_claim_type) · PR 13 — Retire Global
 
 ## Decisions (locked)
 

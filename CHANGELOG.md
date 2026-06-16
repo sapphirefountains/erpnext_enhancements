@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-06-16
+
+### Changed
+- **New `Integrations` module** (module-reorganization PR 5) — the integration monitoring + analytics surfaces move out of Enhancements Core into a dedicated hub module + sidebar (`/app/integrations`):
+  - **GA4 Settings** doctype and the **GA4 Dashboard** (`ga4-dashboard`) + **Integrations Health** (`integrations-health`) desk pages moved `enhancements_core` → `integrations` (adopting the previously-empty `integrations/` placeholder package as the module folder).
+  - No code changes: the pages are pure-JS, and everything references GA4 Settings by name and the `api.analytics` / `api.integrations_health` endpoints (app-level, unchanged). Page/doctype routes are unchanged (route = name, not module).
+  - **Integrations hub sidebar:** shortcuts to Integrations Health + GA4 Dashboard; an **Analytics** card (GA4 Dashboard, GA4 Settings) and a **Connected Services** card cross-linking the QuickBooks Online, MDM, Google Drive, and Triton settings Singles.
+- Idempotent backstop patch `move_analytics_to_integrations` (post-model-sync) reassigns the records' `module` on existing installs (no data moves; GA4 credentials carry across).
+
 ## [1.38.1] - 2026-06-16
 
 ### Changed

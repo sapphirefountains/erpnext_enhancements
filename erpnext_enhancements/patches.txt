@@ -14,6 +14,8 @@ erpnext_enhancements.patches.rename_quickbooks_module
 erpnext_enhancements.patches.move_time_tracking_to_workforce
 # v1.38.1 Workforce: also move the Job Interval (clock-in session) doctype out of Core
 erpnext_enhancements.patches.move_job_interval_to_workforce
+# v1.39.0 Integrations module: reassign GA4 Settings + GA4 Dashboard / Integrations Health out of Core
+erpnext_enhancements.patches.move_analytics_to_integrations
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons
