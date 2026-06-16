@@ -23,6 +23,22 @@ _PLATFORM_TO_PROVIDER = {
 	"Linux": "Action1",
 }
 
+# HTTP statuses a scheduled retry can never fix on its own — the operator has to
+# change the configuration (bad/expired key, revoked permission, wrong org/path).
+# The sync layer stops retrying these and *pauses* the provider until its
+# credentials are re-saved, instead of hammering the provider API (and the Error
+# Log) every cycle. Everything else — 5xx, 429 rate-limits, network timeouts (no
+# status at all) — is treated as transient and stays retryable.
+NON_RETRYABLE_STATUSES = {400, 401, 403, 404}
+
+
+def is_retryable_status(status_code):
+	"""False for permanent provider failures (bad-request/auth/permission/not-found)
+	that re-running on a schedule cannot fix; True for transient ones and for
+	``None`` (a network/transport error that carried no HTTP status)."""
+	return status_code not in NON_RETRYABLE_STATUSES
+
+
 # What each provider's API can actually do. The executor rejects any action a
 # provider's set does not contain (so "wipe" can never reach an Action1 computer).
 CAPABILITIES = {
