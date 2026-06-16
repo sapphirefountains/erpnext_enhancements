@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.49.0] - 2026-06-16
+
+### Changed
+- **Retired the `Global Enhancements` module** (module-reorganization PR 13 — the capstone). After Triton left for AI Governance (v1.44.0), Global held only two doctypes; both fold into Enhancements Core and the empty module is deleted:
+  - **Additional Supplier Group** (child table) and **Directory Link Exclusion** moved `global_enhancements` → `enhancements_core`. No code changes — both are referenced only by name (`setup/supplier_groups.py`, `sync_contact.py`), and the `global_enhancements` Python module was imported nowhere.
+  - Removed the `global_enhancements/` folder and the module from `modules.txt`.
+  - Patch `retire_global_enhancements` (post-model-sync) reassigns the doctypes (+ any stragglers) to Enhancements Core and deletes the orphaned `Global Enhancements` Module Def. Idempotent; no data moves.
+- **Enhancements Core workspace (sidebar)** added at `/app/enhancements-core` — the last module to get one: shortcuts to Enhancements Settings + Desk Shortcuts; a Settings card (ERPNext Enhancements Settings) and a Tools card (Enhancement Desk Shortcut, User Form Draft, Directory Link Exclusion).
+
+### Module reorganization complete
+- Every page/app now lives in a clearly-named module, and every user-facing module has its own sidebar (PRs 1–13, v1.35.0–1.49.0). Net: **12 → 18 modules** (Global Enhancements retired; QuickBooks split; Workforce, Integrations, Google Drive, Morning Briefing, Asset Management, Process Documentation added). `MODULE_PLAN.md` can be deleted.
+
 ## [1.48.0] - 2026-06-16
 
 ### Removed

@@ -2,7 +2,6 @@ Enhancements Core
 Travel Management
 Sapphire Maintenance
 CRM Enhancements
-Global Enhancements
 Project Enhancements
 Task Enhancements
 QuickBooks Online

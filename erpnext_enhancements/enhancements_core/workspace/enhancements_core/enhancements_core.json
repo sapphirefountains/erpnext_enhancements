@@ -1,0 +1,100 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"ec_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"ec_sc_settings\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Enhancements Settings\",\"col\":4}},{\"id\":\"ec_sc_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Desk Shortcuts\",\"col\":4}},{\"id\":\"ec_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"ec_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Settings &amp; Tools</b></span>\",\"col\":12}},{\"id\":\"ec_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}},{\"id\":\"ec_card_tools\",\"type\":\"card\",\"data\":{\"card_name\":\"Tools\",\"col\":4}}]",
+ "creation": "2026-06-15 00:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "setting",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Enhancements Core",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "ERPNext Enhancements Settings",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "ERPNext Enhancements Settings"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tools",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Enhancement Desk Shortcut",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Enhancement Desk Shortcut"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "User Form Draft",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "User Form Draft"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Directory Link Exclusion",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Directory Link Exclusion"
+  }
+ ],
+ "modified": "2026-06-15 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Enhancements Core",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 5,
+ "shortcuts": [
+  {
+   "label": "Enhancements Settings",
+   "link_to": "ERPNext Enhancements Settings",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Desk Shortcuts",
+   "link_to": "Enhancement Desk Shortcut",
+   "type": "DocType"
+  }
+ ],
+ "title": "Enhancements Core",
+ "type": "Workspace"
+}

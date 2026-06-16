@@ -42,7 +42,15 @@ This is a working/tracking doc for a multi-PR effort. Delete once complete.
   - Moved Process Document doctype `enhancements_core` → `process_documentation`. No code changes (refs by name: hooks doctype_js, setup/process_documents.py seeder, Process Step Template Link). Distinct from PRO-0204 `process_steps.py`/Process Step Template (untouched). Backstop patch `move_process_document_to_process_documentation`. Sidebar (Process Document).
 - [x] **PR 12** — Travel / Expense Claim Type — v1.47.0
   - **Reframed (no move):** "Expense Claim Type" is a standard ERPNext (HR) doctype — the `enhancements_core/doctype/expense_claim_type/` folder is a logic-free controller stub with no JSON, and nothing sets its module. A standard doctype can't be cleanly re-moduled (ERPNext re-syncs it each migrate). So instead added an **Expense Claim Type** link to the existing Travel sidebar (masters card). Stub left untouched.
-- [ ] PR 13 — Retire Global + build slimmed Enhancements Core sidebar (final)
+- [x] **PR 13** — Retire Global Enhancements + Enhancements Core sidebar — v1.49.0 (capstone)
+  - Moved Additional Supplier Group (child table) + Directory Link Exclusion `global_enhancements` → `enhancements_core` (refs by name; module not imported). Removed the `global_enhancements/` folder + modules.txt entry; patch `retire_global_enhancements` reassigns + deletes the orphaned Module Def. Built the Enhancements Core sidebar (Settings + Tools) — the last module to get one.
+
+**✅ Module reorganization complete (PRs 1–13, v1.35.0–1.49.0).** Every page/app lives in a clearly-named module with its own sidebar; 12 → 18 modules. Plus follow-ups: Job Interval→Workforce (#449), stray Page cleanup (#447), Project Note orphan removed (#459). This doc can be deleted once PR 13 merges.
+
+### Also handled (separate cleanups)
+- #447 — removed a stray Page JSON misfiled under `task_enhancements/doctype/hierarchical_task_view/`.
+- #449 — moved Job Interval Core → Workforce (completing PR 4).
+- #459 — dropped the orphaned `Project Note` child-table doctype.
 
 ## Decisions (locked)
 

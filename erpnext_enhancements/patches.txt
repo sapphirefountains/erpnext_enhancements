@@ -29,6 +29,8 @@ erpnext_enhancements.patches.move_process_document_to_process_documentation
 # v1.48.0 cleanup: drop the orphaned "Project Note" child-table doctype (unused; the
 # in-use child table is "Project Notes" plural)
 erpnext_enhancements.patches.drop_orphan_project_note
+# v1.49.0 retire Global Enhancements: fold its 2 doctypes into Core + delete the Module Def
+erpnext_enhancements.patches.retire_global_enhancements
 erpnext_enhancements.patches.remove_google_calendar_fields
 erpnext_enhancements.patches.rename_poseidon_service_user
 erpnext_enhancements.patches.add_project_procurement_buttons
