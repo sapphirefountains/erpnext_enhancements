@@ -636,6 +636,9 @@ def test_payment_entry_sets_accounts_amounts_and_rates(monkeypatch):
 	assert values["paid_amount"] == 3000.0
 	assert values["received_amount"] == 3000.0
 	assert values["source_exchange_rate"] == 1
+	# ERPNext requires a reference no/date for bank transactions; falls back to the QBO id.
+	assert values["reference_no"] == "9"
+	assert values["reference_date"] == "2026-06-06"
 
 
 # ---------------------------------------------------------------------------

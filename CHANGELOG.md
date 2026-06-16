@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.50.0] - 2026-06-16
+
+### Fixed
+- **QuickBooks Online customer/vendor Payments now import.** Live verification against the production ERPNext company surfaced that `Payment Entry` insert fails with "Reference No and Reference Date is mandatory for Bank transaction" — ERPNext requires those once a bank account is involved, and the mapper (added in v1.42.0) didn't set them. `_map_payment_entry` now sets `reference_no` (QBO `PaymentRefNum`/`DocNumber`/`Id`) and `reference_date` (`TxnDate`).
+
+### Changed
+- **`quickbooks_online/MIGRATION_NOTES.md` prerequisites expanded** from the live verification (a sample Journal Entry, Sales Invoice, Purchase Invoice and Payment Entry were inserted against the real company): documents the Company **default cost center** and **default expense account**, and — because this company runs **perpetual inventory** — the **Stock Received But Not Billed / Inventory / Stock Adjustment** accounts ERPNext demands even for non-stock Purchase Invoices. Also notes imported transactions are created as drafts (`docstatus = 0`).
+
 ## [1.49.0] - 2026-06-16
 
 ### Changed
