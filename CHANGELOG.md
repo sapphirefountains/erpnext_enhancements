@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.57.0] - 2026-06-16
+
+### Added
+- **Accounting Document Intake — posting handlers + filing (E3).** Approving a Document Intake now creates the draft ERPNext record and files the source document.
+  - **Posting dispatch** (`actions/base.py`): `review.approve_document` enqueues `post_document`, which routes by `proposed_action`, creates a **draft** (docstatus 0 — never submitted), records `created_doctype`/`created_docname`, moves the document to **Posted**, then files it. Idempotent.
+  - **Vendor Bill → Purchase Invoice** (`actions/vendor_bill.py`): invoices a matched Purchase Order (creating a draft Purchase Receipt first when the PO carries stock items — 3-way match), or builds a standalone PO-less PI from the line items. Also serves company-card receipts (`Create Purchase Invoice`). Field recipe mirrors `quickbooks_online/core/mapping.py`.
+  - **Receipt / Expense → Expense Claim** (`actions/receipt_expense.py`): a draft Expense Claim for the reviewer's Employee.
+  - **Filing** (`filing.py`): attaches the scan to the created record and (when enabled) pushes it to the party's Google Drive folder — find-or-creating an "Accounting & Legal" subfolder, provisioning per-supplier folders under a configurable Shared Drive + parent. Drive filing is best-effort and never fails the posting.
+  - Adds `custom_drive_folder_id` to Supplier (via `after_migrate`) + a `Supplier` `after_insert` hook to provision its Drive folder.
+
 ## [1.56.0] - 2026-06-16
 
 ### Added
