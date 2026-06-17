@@ -40,7 +40,12 @@ def post_document(docname):
 	"""Background job: create the draft ERPNext record for an Approved Document
 	Intake, then file the source document. Idempotent — no-op if already posted."""
 	# Import handlers so they register (also makes the enqueued worker register).
-	from erpnext_enhancements.accounting_intake.actions import receipt_expense, vendor_bill  # noqa: F401
+	from erpnext_enhancements.accounting_intake.actions import (  # noqa: F401
+		customer_remittance,
+		packing_slip,
+		receipt_expense,
+		vendor_bill,
+	)
 
 	doc = frappe.get_doc("Document Intake", docname)
 	if doc.status != "Approved" or doc.created_docname:
