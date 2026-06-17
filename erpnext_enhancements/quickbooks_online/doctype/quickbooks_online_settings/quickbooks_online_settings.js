@@ -5,6 +5,8 @@
  *  - "Dashboard" / "Link Existing Records": route to the QBO dashboard page.
  *  - "Connect QuickBooks": calls the `start_oauth` RPC and redirects the browser
  *    to the returned Intuit authorization URL to begin the OAuth2 connect flow.
+ *  - "Disconnect QuickBooks" (only once connected): confirms, then calls the
+ *    `disconnect` RPC to revoke the grant at Intuit and clear the stored tokens.
  *  - "Import All": calls the `import_all` RPC (freezing the UI) and reports the
  *    resulting sync log.
  *  - "Preview Resync": calls `preview_resync` and opens the generated preview
@@ -29,6 +31,30 @@ frappe.ui.form.on("QuickBooks Online Settings", {
 				},
 			});
 		});
+		// Only offer Disconnect once connected (a realm id has been stored).
+		if (frm.doc.realm_id) {
+			frm.add_custom_button(__("Disconnect QuickBooks"), () => {
+				frappe.confirm(
+					__(
+						"Disconnect from QuickBooks Online? This revokes the connection at Intuit and clears the stored tokens. You can reconnect at any time.",
+					),
+					() => {
+						frappe.call({
+							method: "erpnext_enhancements.quickbooks_online.core.api.disconnect",
+							freeze: true,
+							freeze_message: __("Disconnecting from QuickBooks Online..."),
+							callback() {
+								frappe.show_alert({
+									message: __("Disconnected from QuickBooks Online."),
+									indicator: "orange",
+								});
+								frm.reload_doc();
+							},
+						});
+					},
+				);
+			});
+		}
 		frm.add_custom_button(__("Import All"), () => {
 			frappe.call({
 				method: "erpnext_enhancements.quickbooks_online.core.api.import_all",

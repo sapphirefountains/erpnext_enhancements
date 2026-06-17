@@ -101,6 +101,9 @@ ENVIRONMENT_BASE_URLS = {
 # Intuit OAuth2 endpoints (shared across Sandbox and Production).
 AUTHORIZATION_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+# Token revocation endpoint: revoking the refresh token tears down the whole
+# OAuth2 grant. Used by client.revoke_tokens on an explicit Disconnect.
+REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
 OAUTH_SCOPE = "com.intuit.quickbooks.accounting"
 # Pinned QBO API minor version sent as the "minorversion" query param on every
 # data request to lock the response schema this mapping code was written for.

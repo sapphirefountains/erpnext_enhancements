@@ -28,8 +28,8 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | File | Purpose | Key functions / classes |
 |---|---|---|
 | `api.py` (module root) | Re-exports the QBO whitelisted endpoints (browser + Intuit webhook URL) | re-exports from `core/api.py` |
-| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status` |
-| `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `request`, `query`, `get_entity`, `cdc`, `report`), `QuickBooksAPIError` |
+| `core/api.py` | Whitelisted RPC surface (browser + Intuit) | `start_oauth`, `oauth_callback`, `disconnect`, `disconnect_callback`, `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `retry_failed`, `preview_existing_matches`, `link_existing_record`, `compare_account_balances`, `reconcile_transactions`, `sync_opening_balances`, `quickbooks_webhook`, `get_dashboard_status` |
+| `core/client.py` | OAuth2 + REST transport | `QuickBooksClient` (`build_authorization_url`, `exchange_code`, `refresh_access_token`, `revoke_tokens`, `request`, `query`, `get_entity`, `cdc`, `report`), `QuickBooksAPIError` |
 | `core/constants.py` | Endpoints, entity catalogue, DocType map | `ENTITY_DOCTYPE_MAP`, `*_ENTITIES`, `ENVIRONMENT_BASE_URLS`, `OAUTH_SCOPE`, `MINOR_VERSION` |
 | `core/mapping.py` | Transform / match / idempotent upsert | `map_qbo_to_erpnext`, `upsert_entity`, `find_existing_match`, `detect_conflicts`, `save_mapping`, `link_existing_record`, `_map_*`, `_match_*` |
 | `core/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
@@ -37,7 +37,7 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/opening_balances.py` | Build a balanced opening Journal Entry from QBO balances | `sync_opening_balances`, `_opening_account_line`, `_party_opening_line`, `_plug_line` |
 | `core/tasks.py` | Hourly scheduler hooks | `refresh_token_if_needed`, `cdc_poll`, `retry_failed_syncs` |
 | `report/quickbooks_balance_comparison/*` | QBO vs ERPNext account-balance report | `execute` (filters: as-of date, tolerance, only-discrepancies) |
-| `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
+| `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `clear_oauth_tokens`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
 | `core/webhooks.py` | Inbound webhook handling | `handle_webhook`, `_iter_events` |
 | `doctype/*/*.py` | Doctype controllers | `QuickBooksOnlineSettings` (has `validate`), `QuickBooksRawPayload`, `QuickBooksSyncLog`, `QuickBooksSyncMapping` |
 | `page/quickbooks_online_dashboard/*.py` / `*.js` | Status dashboard page | `get_context`; render/refresh/match-dialog |
@@ -51,15 +51,16 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 
 ## Scheduler / webhook entry points
 
-- `tasks.refresh_token_if_needed` (hourly) — refresh the access token if expiring within 10 min (no-op when disconnected).
+- `tasks.refresh_token_if_needed` (hourly) — refresh the access token if expiring within 10 min (no-op when disconnected). On `invalid_grant` (refresh token revoked/expired — e.g. the user disconnected the app from Intuit's side) it clears the dead tokens and marks the connection Not Connected instead of erroring every run.
 - `tasks.cdc_poll` (hourly) — run CDC if `cdc_poll_minutes` elapsed since `last_cdc_sync`.
 - `tasks.retry_failed_syncs` (hourly) — re-run Failed logs, capped by `retry_limit`.
 - `api.quickbooks_webhook` (guest) — Intuit push → `handle_webhook` (verify signature → archive → enqueue `sync_entity`).
 - `api.oauth_callback` (guest) — OAuth2 redirect target.
+- `api.disconnect_callback` (**login required**, not guest) — the app's Intuit **Disconnect URL** target: clears the local tokens (Intuit has already revoked the grant) and redirects to the dashboard. Not guest, so it can't be used to force a disconnect anonymously.
 
 ## Auth & secrets
 
-OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens, client secret, and webhook verifier are stored in **encrypted Password fields** on the Settings Single and read/written only via `utils.get_secret`/`set_secret`. `token_expires_at` is deliberately backdated 5 minutes vs QBO's `expires_in`; refresh happens proactively (scheduler, 10-min window) and reactively (401 retry). Refresh-token rotation is honored. Webhook authenticity is enforced by constant-time HMAC-SHA256 verification of the raw body against `webhook_verifier_token`.
+OAuth2 authorization-code flow with `client_secret_basic` token requests. Tokens, client secret, and webhook verifier are stored in **encrypted Password fields** on the Settings Single and read/written only via `utils.get_secret`/`set_secret`. `token_expires_at` is deliberately backdated 5 minutes vs QBO's `expires_in`; refresh happens proactively (scheduler, 10-min window) and reactively (401 retry). Refresh-token rotation is honored. Webhook authenticity is enforced by constant-time HMAC-SHA256 verification of the raw body against `webhook_verifier_token`. **Disconnect** (`api.disconnect`, the Settings/dashboard button) best-effort revokes the grant at Intuit (`client.revoke_tokens` → Intuit's revoke endpoint) and then forgets the stored tokens/realm via `utils.clear_oauth_tokens` (which deletes the encrypted token rows directly — `set_secret` can't clear a Password field — but keeps the client id/secret/verifier so reconnect is one click).
 
 ## Gotchas
 
