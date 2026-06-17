@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.60.0] - 2026-06-17
+
+### Added
+- **Accounting Document Intake → QuickBooks write-back (Phase 2, part 1).** A **"Push to QuickBooks"** button on a *submitted*, intake-created **Purchase Invoice** or **Payment Entry** creates the matching **Bill** / **Payment** in QuickBooks Online and links it back. New `quickbooks_online/core/writeback.py::push_to_qbo`:
+  - Builds the QBO payload (inverse of the importer's `_map_purchase_invoice` / `_map_payment_entry`), resolving the Vendor/Customer/Account QBO ids via reverse `QuickBooks Sync Mapping` lookups.
+  - **Loop-guard:** immediately seeds the Sync Mapping ledger for the new QBO id, so the hourly CDC importer's "already mapped → update" branch links the echoed transaction to the existing ERPNext record instead of importing a duplicate.
+  - **Fails clearly** (never auto-creates QBO masters) if the supplier/customer or an expense account isn't yet linked to a QBO Vendor/Customer/Account.
+  - Gated by `Accounting Intake Settings.qbo_writeback_enabled` (default off); restricted to Accounts Manager / System Manager; only intake-created docs, never re-pushed.
+  - Adds `custom_source_document_intake` + `custom_qbo_id` to Purchase Invoice / Payment Entry (via `after_migrate`); the posting handler stamps the back-reference.
+
+### Notes
+- Scope: Purchase Invoice → Bill, Payment Entry (Receive) → Payment. **Attaching the scanned document onto the QBO transaction (Attachable/Upload API) is the next change (Phase 2, part 2).** Verify on the QBO **Sandbox** before production. Requires `bench migrate` (adds the custom fields) + `bench build` (the form button).
+
 ## [1.59.0] - 2026-06-16
 
 ### Added

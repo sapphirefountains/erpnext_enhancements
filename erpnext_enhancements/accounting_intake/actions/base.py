@@ -64,6 +64,12 @@ def post_document(docname):
 		doc.created_docname = target_name
 		doc.status = "Posted"
 		doc.save(ignore_permissions=True)
+		# Back-reference for the QBO write-back button (Phase 2): mark the created
+		# PI/Payment Entry as intake-sourced so "Push to QuickBooks" appears there.
+		if target_dt in ("Purchase Invoice", "Payment Entry") and frappe.db.has_column(
+			target_dt, "custom_source_document_intake"
+		):
+			frappe.db.set_value(target_dt, target_name, "custom_source_document_intake", docname, update_modified=False)
 		log_intake("Post", "Success", accounting_document=docname, reference_doctype=target_dt, reference_name=target_name)
 
 		from erpnext_enhancements.accounting_intake import filing
