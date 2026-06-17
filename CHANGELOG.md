@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.58.0] - 2026-06-16
+
+### Added
+- **Accounting Document Intake — customer remittance & packing-slip handlers (E4).** Completes the four document-type posting handlers (Approved → draft, never submitted).
+  - **Customer Remittance → Payment Entry** (`actions/customer_remittance.py`): a draft "Receive" Payment Entry for the customer, allocated against the reviewer-selected Sales Invoice when there is one (otherwise left on-account for the accountant to allocate). Recipe mirrors `quickbooks_online/core/mapping.py::_map_payment_entry`.
+  - **Packing Slip → Purchase Receipt** (`actions/packing_slip.py`): a draft Purchase Receipt against the matched Purchase Order (ERPNext-only — packing slips have no QuickBooks counterpart). Requires a matched PO.
+  - Both register with the `post_document` dispatcher (`actions/base.py`).
+
 ## [1.57.0] - 2026-06-16
 
 ### Added
