@@ -153,6 +153,7 @@ doctype_list_js = {
 	"File": "public/js/global_enhancements/file_list.js",
 	"Item": "public/js/item_list.js",
 	"Call Log": "public/js/global_enhancements/call_log_list.js",
+	"Document Intake": "public/js/accounting_intake/document_intake_list.js",
 }
 doctype_calendar_js = {
 	"Asset Booking": "public/js/asset_booking_calendar.js",

@@ -1,0 +1,467 @@
+{
+ "actions": [],
+ "autoname": "format:ACC-DOC-{YYYY}-{#####}",
+ "creation": "2026-06-16 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "naming_rule": "Expression",
+ "field_order": [
+  "source_section",
+  "status",
+  "document_type",
+  "source_channel",
+  "column_break_src",
+  "received_on",
+  "source_reference",
+  "content_hash",
+  "source_file",
+  "extraction_section",
+  "extraction_confidence",
+  "processor_used",
+  "column_break_ex",
+  "raw_text",
+  "extracted_json",
+  "field_confidence",
+  "header_section",
+  "party_name_text",
+  "document_number",
+  "document_date",
+  "due_date",
+  "column_break_hdr",
+  "po_number_text",
+  "currency",
+  "net_total",
+  "tax_total",
+  "grand_total",
+  "proposals_section",
+  "proposed_party_type",
+  "proposed_party",
+  "party",
+  "party_match_confidence",
+  "column_break_prop",
+  "proposed_action",
+  "selected_match_doctype",
+  "selected_match_name",
+  "matches_section",
+  "proposed_matches",
+  "lines_section",
+  "line_items",
+  "outcome_section",
+  "created_doctype",
+  "created_docname",
+  "column_break_out",
+  "drive_file_id",
+  "drive_link",
+  "error",
+  "attempts",
+  "review_section",
+  "reviewed_by",
+  "reviewed_on",
+  "item_reviewed_by",
+  "column_break_rev",
+  "review_notes",
+  "phase2_section",
+  "qbo_pushed",
+  "qbo_mapping",
+  "title"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "default": "Received",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Received\nExtracting\nNeeds Item Review\nNeeds Review\nApproved\nPosting\nPosted\nFailed\nRejected\nDuplicate",
+   "reqd": 1
+  },
+  {
+   "default": "Unknown",
+   "fieldname": "document_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Document Type",
+   "options": "Vendor Bill\nCustomer Remittance\nReceipt / Expense\nPacking Slip\nUnknown"
+  },
+  {
+   "fieldname": "source_channel",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source Channel",
+   "options": "Email\nUpload\nGoogle Drive\nMobile\nChat",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_src",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "received_on",
+   "fieldtype": "Datetime",
+   "label": "Received On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reference",
+   "fieldtype": "Small Text",
+   "label": "Source Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File",
+   "reqd": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "extraction_section",
+   "fieldtype": "Section Break",
+   "label": "Extraction"
+  },
+  {
+   "fieldname": "extraction_confidence",
+   "fieldtype": "Percent",
+   "label": "Extraction Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processor_used",
+   "fieldtype": "Data",
+   "label": "Processor Used",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ex",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "raw_text",
+   "fieldtype": "Long Text",
+   "label": "Raw OCR Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extracted_json",
+   "fieldtype": "Code",
+   "label": "Extracted Data",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "field_confidence",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Field Confidence",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "header_section",
+   "fieldtype": "Section Break",
+   "label": "Document Header"
+  },
+  {
+   "fieldname": "party_name_text",
+   "fieldtype": "Data",
+   "label": "Party Name (extracted)"
+  },
+  {
+   "fieldname": "document_number",
+   "fieldtype": "Data",
+   "label": "Document Number"
+  },
+  {
+   "fieldname": "document_date",
+   "fieldtype": "Date",
+   "label": "Document Date"
+  },
+  {
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "label": "Due Date"
+  },
+  {
+   "fieldname": "column_break_hdr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "po_number_text",
+   "fieldtype": "Data",
+   "label": "PO Number (extracted)"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency"
+  },
+  {
+   "fieldname": "net_total",
+   "fieldtype": "Currency",
+   "label": "Net Total"
+  },
+  {
+   "fieldname": "tax_total",
+   "fieldtype": "Currency",
+   "label": "Tax Total"
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "label": "Grand Total"
+  },
+  {
+   "fieldname": "proposals_section",
+   "fieldtype": "Section Break",
+   "label": "Proposed Party & Action"
+  },
+  {
+   "fieldname": "proposed_party_type",
+   "fieldtype": "Select",
+   "label": "Party Type",
+   "options": "\nSupplier\nCustomer\nContact"
+  },
+  {
+   "fieldname": "proposed_party",
+   "fieldtype": "Data",
+   "label": "Proposed Party (suggested)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "party",
+   "fieldtype": "Dynamic Link",
+   "label": "Party",
+   "options": "proposed_party_type"
+  },
+  {
+   "fieldname": "party_match_confidence",
+   "fieldtype": "Percent",
+   "label": "Party Match Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_prop",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "proposed_action",
+   "fieldtype": "Select",
+   "label": "Proposed Action",
+   "options": "\nCreate Purchase Invoice\nCreate Purchase Receipt\nCreate Payment Entry\nCreate Expense Claim\nStandalone (no match)\nIgnore"
+  },
+  {
+   "fieldname": "selected_match_doctype",
+   "fieldtype": "Data",
+   "label": "Selected Match DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selected_match_name",
+   "fieldtype": "Data",
+   "label": "Selected Match Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "matches_section",
+   "fieldtype": "Section Break",
+   "label": "Match Candidates"
+  },
+  {
+   "fieldname": "proposed_matches",
+   "fieldtype": "Table",
+   "label": "Proposed Matches",
+   "options": "Document Intake Match"
+  },
+  {
+   "fieldname": "lines_section",
+   "fieldtype": "Section Break",
+   "label": "Line Items"
+  },
+  {
+   "fieldname": "line_items",
+   "fieldtype": "Table",
+   "label": "Line Items",
+   "options": "Document Intake Line"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "Outcome"
+  },
+  {
+   "fieldname": "created_doctype",
+   "fieldtype": "Link",
+   "label": "Created DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_docname",
+   "fieldtype": "Dynamic Link",
+   "label": "Created Document",
+   "options": "created_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_out",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "drive_file_id",
+   "fieldtype": "Data",
+   "label": "Drive File ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "drive_link",
+   "fieldtype": "Data",
+   "label": "Drive Link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Items Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_rev",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "review_notes",
+   "fieldtype": "Small Text",
+   "label": "Review Notes"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "phase2_section",
+   "fieldtype": "Section Break",
+   "label": "QuickBooks (Phase 2)"
+  },
+  {
+   "default": "0",
+   "fieldname": "qbo_pushed",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Pushed to QBO",
+   "read_only": 1
+  },
+  {
+   "fieldname": "qbo_mapping",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "QBO Mapping",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounting Intake",
+ "name": "Document Intake",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

@@ -1,0 +1,82 @@
+{
+ "actions": [],
+ "creation": "2026-06-16 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "match_doctype",
+  "match_name",
+  "label",
+  "score",
+  "tier",
+  "match_rule",
+  "selected"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "match_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Match DocType",
+   "options": "DocType"
+  },
+  {
+   "columns": 3,
+   "fieldname": "match_name",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Match Name",
+   "options": "match_doctype"
+  },
+  {
+   "columns": 2,
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "columns": 1,
+   "fieldname": "score",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Score",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tier",
+   "fieldtype": "Select",
+   "label": "Tier",
+   "options": "High\nMedium\nLow",
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_rule",
+   "fieldtype": "Data",
+   "label": "Match Rule",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "fieldname": "selected",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Selected"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounting Intake",
+ "name": "Document Intake Match",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
