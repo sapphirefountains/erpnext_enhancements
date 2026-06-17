@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.61.0] - 2026-06-17
+
+### Added
+- **Accounting Document Intake → QuickBooks write-back (Phase 2, part 2): attach the scan.** When the **"Push to QuickBooks"** button creates the QBO **Bill** / **Payment**, the original scanned document is now uploaded to that transaction as a QuickBooks **Attachable**, so the source paperwork lives alongside the entry in QBO (mirroring the attachment we already file in ERPNext + Drive).
+  - New `QuickBooksClient.upload_attachable(...)`: a `multipart/form-data` POST to `/v3/company/{realm}/upload` (a JSON `file_metadata_0` part carrying the `AttachableRef → EntityRef` link + the binary `file_content_0`). Unlike `request`, it lets `requests` set the multipart boundary; refreshes the token once on 401, like the other calls.
+  - `writeback.py::_attach_scan` resolves the scan from the originating **Document Intake** (`source_file`, falling back to a File attached to the posted doc), reads its bytes, and uploads it. **Best-effort:** any failure is logged and the push still succeeds — the Bill/Payment is already created and mapped, so attachment is never allowed to undo it.
+
+### Notes
+- Completes Phase 2 of the Accounting Document Intake → QBO write-back. Still gated by `Accounting Intake Settings.qbo_writeback_enabled`; verify on the QBO **Sandbox** before production.
+
 ## [1.60.0] - 2026-06-17
 
 ### Added
