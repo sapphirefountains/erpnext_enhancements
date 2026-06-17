@@ -267,6 +267,7 @@ doc_events = {
 		"on_update": "erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
 	},
 	"Supplier": {
+		"after_insert": "erpnext_enhancements.accounting_intake.filing.enqueue_supplier_folder",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		"validate": [
 			"erpnext_enhancements.supplier_query.sync_supplier_groups",
@@ -348,6 +349,8 @@ after_migrate = [
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
+	# accounting_intake: Supplier Drive folder id (document filing)
+	"erpnext_enhancements.accounting_intake.setup.create_supplier_drive_field",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

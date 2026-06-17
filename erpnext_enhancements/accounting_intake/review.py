@@ -96,6 +96,12 @@ def approve_document(docname):
 	doc.reviewed_on = frappe.utils.now_datetime()
 	doc.status = "Approved"
 	doc.save(ignore_permissions=True)
+	frappe.enqueue(
+		"erpnext_enhancements.accounting_intake.actions.base.post_document",
+		queue="long",
+		enqueue_after_commit=True,
+		docname=docname,
+	)
 	log_intake("Approve", "Success", accounting_document=docname, detail=doc.proposed_action)
 	return {"status": doc.status}
 
