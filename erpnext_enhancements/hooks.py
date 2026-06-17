@@ -208,7 +208,10 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {
-		"after_insert": "erpnext_enhancements.api.communication.after_insert_communication",
+		"after_insert": [
+			"erpnext_enhancements.api.communication.after_insert_communication",
+			"erpnext_enhancements.accounting_intake.channels.email_from_communication",
+		],
 	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
@@ -316,6 +319,9 @@ scheduler_events = {
 		# device_management (MDM/EMM): warranty lead-time + stale-attestation nudges
 		"erpnext_enhancements.device_management.tasks.send_device_warranty_reminders",
 		"erpnext_enhancements.device_management.tasks.nudge_stale_device_attestations",
+		# accounting_intake: retry failed intake steps + purge old logs
+		"erpnext_enhancements.accounting_intake.channels.retry_failed_intakes",
+		"erpnext_enhancements.accounting_intake.channels.purge_old_intake_logs",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed",
@@ -330,6 +336,8 @@ scheduler_events = {
 		"erpnext_enhancements.mdm_integration.tasks.refresh_action1_token",
 		"erpnext_enhancements.mdm_integration.tasks.sync_devices",
 		"erpnext_enhancements.mdm_integration.tasks.retry_failed_syncs",
+		# accounting_intake: ingest new files dropped into the Drive watched folder
+		"erpnext_enhancements.accounting_intake.channels.poll_watched_folder",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
