@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.56.0] - 2026-06-16
+
+### Added
+- **Accounting Document Intake — extraction wiring + review (E2).** Builds on v1.55.0: a received document is now extracted via Triton and staged for human review.
+  - **Extraction mapping** (`extraction.py`): maps Triton's normalized Document AI output onto the Document Intake — header fields (party, number, dates, totals, PO number), line items, and `field_confidence`. `intake.run_extraction` now delegates here.
+  - **Advisory matching** (`matching.py`, reusing `google_drive/drive_match.py`): suggests the Supplier/Customer and the source Purchase Order / Sales Invoice. Suggestions never block — the reviewer always decides.
+  - **Item generation with review**: line items resolve to existing Items (by code/name); unmatched lines propose a new Item and route the document to **Needs Item Review** for the inventory clerk (Stock Manager) to approve before the Item is created (`review.approve_items`).
+  - **Accountant review form** (`document_intake.js`): a document preview (PDF/image), an extraction-confidence indicator, and role-gated **Approve / Reject / Create Approved Items / Re-extract** actions (`review.py`). Approval moves the document to **Approved**; the per-type posting handler that creates the draft ERPNext record lands in the next PR.
+  - The Triton client now authenticates with `Authorization: Bearer <ERPNEXT_GATEWAY_SECRET>`, matching Triton's `POST /api/v1/document-ai/extract`.
+
+### Changed
+- `Document Intake Line.item_review_status` is now editable (the inventory clerk sets Approved/Rejected); added a `Document Preview` HTML field to Document Intake.
+
 ## [1.55.0] - 2026-06-16
 
 ### Added

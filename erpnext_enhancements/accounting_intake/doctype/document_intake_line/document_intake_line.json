@@ -118,8 +118,7 @@
    "fieldname": "item_review_status",
    "fieldtype": "Select",
    "label": "Item Review Status",
-   "options": "\nPending\nApproved\nRejected",
-   "read_only": 1
+   "options": "\nPending\nApproved\nRejected"
   },
   {
    "depends_on": "new_item_proposed",

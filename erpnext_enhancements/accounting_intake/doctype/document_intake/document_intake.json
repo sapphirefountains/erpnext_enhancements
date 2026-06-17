@@ -15,6 +15,8 @@
   "source_reference",
   "content_hash",
   "source_file",
+  "preview_section",
+  "document_preview",
   "extraction_section",
   "extraction_confidence",
   "processor_used",
@@ -126,6 +128,16 @@
    "fieldtype": "Attach",
    "label": "Source File",
    "reqd": 1
+  },
+  {
+   "fieldname": "preview_section",
+   "fieldtype": "Section Break",
+   "label": "Document"
+  },
+  {
+   "fieldname": "document_preview",
+   "fieldtype": "HTML",
+   "label": "Document Preview"
   },
   {
    "collapsible": 1,

@@ -140,6 +140,8 @@ doctype_js = {
 	"Managed Device": "device_management/doctype/managed_device/managed_device.js",
 	# quickbooks_online
 	"QuickBooks Online Settings": "quickbooks_online/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
+	# accounting_intake
+	"Document Intake": "public/js/accounting_intake/document_intake.js",
 }
 
 doctype_list_js = {

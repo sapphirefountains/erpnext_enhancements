@@ -123,12 +123,13 @@ def ingest_upload(file_url, document_type=None):
 
 def run_extraction(docname):
 	"""Background job: extract a received document via Triton and stage it for
-	review. Matching and proposal logic arrive in a later PR; for now this
-	stores the raw extraction and routes the document to ``Needs Review``.
+	review — populating header fields, line items (with Item resolution), and
+	advisory party/document matches, then routing to ``Needs Item Review`` or
+	``Needs Review``.
 
 	Gated by Accounting Intake Settings (``intake_enabled`` + ``auto_extract``)
 	at the ingest call site, so it is inert until Triton is configured."""
-	from erpnext_enhancements.accounting_intake import triton_client
+	from erpnext_enhancements.accounting_intake import extraction, triton_client
 
 	doc = frappe.get_doc("Document Intake", docname)
 	if doc.status not in ("Received", "Failed"):
@@ -145,15 +146,9 @@ def run_extraction(docname):
 		)
 
 		doc.reload()
-		doc.extracted_json = frappe.as_json(result.get("entities") or result)
-		doc.raw_text = (result.get("text") or "")[:100000]
-		confidence = result.get("confidence")
-		if confidence is not None:
-			doc.extraction_confidence = float(confidence) * 100 if float(confidence) <= 1 else float(confidence)
-		doc.processor_used = result.get("processor")
-		doc.status = "Needs Review"
+		extraction.apply_extraction(doc, result)
 		doc.save(ignore_permissions=True)
-		log_intake("Extract", "Success", accounting_document=docname)
+		log_intake("Extract", "Success", accounting_document=docname, detail=f"-> {doc.status}")
 	except Exception:
 		frappe.db.rollback()
 		failed = frappe.get_doc("Document Intake", docname)

@@ -40,7 +40,7 @@ def extract_document(content, mime_type, document_type, *, filename="document", 
 
 	headers = {}
 	if secret:
-		headers["X-Triton-Service-Secret"] = secret
+		headers["Authorization"] = f"Bearer {secret}"
 
 	resp = requests.post(
 		f"{gateway}{EXTRACT_PATH}",
