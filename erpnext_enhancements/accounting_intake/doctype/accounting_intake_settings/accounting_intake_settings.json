@@ -1,0 +1,223 @@
+{
+ "actions": [],
+ "creation": "2026-06-16 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "intake_enabled",
+  "triton_section",
+  "triton_gateway_url",
+  "triton_service_secret",
+  "auto_extract",
+  "confidence_threshold",
+  "channels_section",
+  "email_account",
+  "column_break_ch",
+  "watched_drive_id",
+  "watched_folder_id",
+  "processed_folder_id",
+  "drive_cursor",
+  "filing_section",
+  "attach_to_party_drive",
+  "filing_subfolder",
+  "column_break_fl",
+  "supplier_drive_id",
+  "supplier_parent_folder_id",
+  "provision_supplier_folders",
+  "defaults_section",
+  "default_company",
+  "phase2_section",
+  "qbo_writeback_enabled",
+  "status_section",
+  "status",
+  "status_message"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "description": "Master switch. When off, documents still queue but are not auto-extracted.",
+   "fieldname": "intake_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Intake Processing"
+  },
+  {
+   "fieldname": "triton_section",
+   "fieldtype": "Section Break",
+   "label": "Triton Extraction Service"
+  },
+  {
+   "description": "Leave blank to use the gateway from Triton Settings.",
+   "fieldname": "triton_gateway_url",
+   "fieldtype": "Data",
+   "label": "Triton Gateway URL"
+  },
+  {
+   "fieldname": "triton_service_secret",
+   "fieldtype": "Password",
+   "label": "Triton Service Secret"
+  },
+  {
+   "default": "1",
+   "fieldname": "auto_extract",
+   "fieldtype": "Check",
+   "label": "Auto-extract on Intake"
+  },
+  {
+   "default": "70",
+   "description": "Extracted fields below this confidence are flagged for the reviewer.",
+   "fieldname": "confidence_threshold",
+   "fieldtype": "Percent",
+   "label": "Low-confidence Threshold"
+  },
+  {
+   "fieldname": "channels_section",
+   "fieldtype": "Section Break",
+   "label": "Intake Channels"
+  },
+  {
+   "fieldname": "email_account",
+   "fieldtype": "Link",
+   "label": "Intake Email Account",
+   "options": "Email Account"
+  },
+  {
+   "fieldname": "column_break_ch",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "watched_drive_id",
+   "fieldtype": "Data",
+   "label": "Watched Shared Drive ID"
+  },
+  {
+   "fieldname": "watched_folder_id",
+   "fieldtype": "Data",
+   "label": "Watched Folder ID"
+  },
+  {
+   "fieldname": "processed_folder_id",
+   "fieldtype": "Data",
+   "label": "Processed Folder ID"
+  },
+  {
+   "fieldname": "drive_cursor",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Drive Cursor",
+   "read_only": 1
+  },
+  {
+   "fieldname": "filing_section",
+   "fieldtype": "Section Break",
+   "label": "Document Filing"
+  },
+  {
+   "default": "1",
+   "fieldname": "attach_to_party_drive",
+   "fieldtype": "Check",
+   "label": "Also File to Google Drive"
+  },
+  {
+   "default": "Accounting & Legal",
+   "fieldname": "filing_subfolder",
+   "fieldtype": "Data",
+   "label": "Filing Subfolder"
+  },
+  {
+   "fieldname": "column_break_fl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Shared Drive used for supplier document filing.",
+   "fieldname": "supplier_drive_id",
+   "fieldtype": "Data",
+   "label": "Supplier Shared Drive ID"
+  },
+  {
+   "description": "Parent folder under which per-supplier folders are created.",
+   "fieldname": "supplier_parent_folder_id",
+   "fieldtype": "Data",
+   "label": "Supplier Parent Folder ID"
+  },
+  {
+   "default": "0",
+   "fieldname": "provision_supplier_folders",
+   "fieldtype": "Check",
+   "label": "Provision Supplier Folders"
+  },
+  {
+   "fieldname": "defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Defaults"
+  },
+  {
+   "fieldname": "default_company",
+   "fieldtype": "Link",
+   "label": "Default Company",
+   "options": "Company"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "phase2_section",
+   "fieldtype": "Section Break",
+   "label": "QuickBooks Online (Phase 2)"
+  },
+  {
+   "default": "0",
+   "description": "Phase 2 — not yet implemented.",
+   "fieldname": "qbo_writeback_enabled",
+   "fieldtype": "Check",
+   "label": "Enable QBO Write-back"
+  },
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "default": "Not Configured",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Not Configured\nReady\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounting Intake",
+ "name": "Accounting Intake Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

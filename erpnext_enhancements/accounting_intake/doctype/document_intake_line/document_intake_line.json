@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "creation": "2026-06-16 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "description",
+  "matched_item",
+  "qty",
+  "uom",
+  "rate",
+  "amount",
+  "confidence",
+  "new_item_section",
+  "new_item_proposed",
+  "proposed_item_name",
+  "proposed_item_group",
+  "proposed_uom",
+  "is_stock_item",
+  "item_review_column",
+  "item_review_status",
+  "item_reviewed_by"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Description"
+  },
+  {
+   "columns": 2,
+   "fieldname": "matched_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Matched Item",
+   "options": "Item"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Qty"
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM"
+  },
+  {
+   "columns": 1,
+   "fieldname": "rate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Rate"
+  },
+  {
+   "columns": 2,
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount"
+  },
+  {
+   "fieldname": "confidence",
+   "fieldtype": "Percent",
+   "label": "Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_item_section",
+   "fieldtype": "Section Break",
+   "label": "Proposed New Item"
+  },
+  {
+   "default": "0",
+   "fieldname": "new_item_proposed",
+   "fieldtype": "Check",
+   "label": "New Item Proposed"
+  },
+  {
+   "depends_on": "new_item_proposed",
+   "fieldname": "proposed_item_name",
+   "fieldtype": "Data",
+   "label": "Proposed Item Name"
+  },
+  {
+   "depends_on": "new_item_proposed",
+   "fieldname": "proposed_item_group",
+   "fieldtype": "Link",
+   "label": "Proposed Item Group",
+   "options": "Item Group"
+  },
+  {
+   "depends_on": "new_item_proposed",
+   "fieldname": "proposed_uom",
+   "fieldtype": "Link",
+   "label": "Proposed UOM",
+   "options": "UOM"
+  },
+  {
+   "default": "0",
+   "depends_on": "new_item_proposed",
+   "fieldname": "is_stock_item",
+   "fieldtype": "Check",
+   "label": "Is Stock Item"
+  },
+  {
+   "fieldname": "item_review_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "new_item_proposed",
+   "fieldname": "item_review_status",
+   "fieldtype": "Select",
+   "label": "Item Review Status",
+   "options": "\nPending\nApproved\nRejected",
+   "read_only": 1
+  },
+  {
+   "depends_on": "new_item_proposed",
+   "fieldname": "item_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Item Reviewed By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounting Intake",
+ "name": "Document Intake Line",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

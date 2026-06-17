@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.55.0] - 2026-06-16
+
+### Added
+- **Accounting Document Intake — foundation (new `Accounting Intake` module).** First PR of a multi-PR feature: scan a document once, extract it with Google Document AI (via Triton), file it against the right party, and create the correct ERPNext record — with humans reviewing everything before anything is saved or submitted. This PR lays the spine:
+  - **`Document Intake`** — the review-queue doctype (non-submittable) with a guarded status state machine (`Received → Extracting → Needs Item Review → Needs Review → Approved → Posting → Posted`, plus `Failed`/`Rejected`/`Duplicate`). Holds the source file, extracted header fields + raw JSON, proposed party/matches/action, line items, and outcome — built to honour **review-everything** (no auto-posting) and a two-stage review (inventory clerk approves new Items, accountant approves the transaction).
+  - **`Document Intake Line`** (line items + advisory `matched_item` + a proposed-new-Item block gated by `item_review_status` for the inventory clerk) and **`Document Intake Match`** (advisory candidates with fuzzy score/tier) child tables.
+  - **`Accounting Intake Settings`** (single) — Triton extraction-service connection (gateway + service secret, falling back to `Triton Settings`), intake-channel config, and Google Drive filing targets including a **configurable Shared Drive + parent folder** for per-supplier folders. **`Accounting Intake Log`** — audit + retry-payload log (same contract as `Drive Sync Log`).
+  - **`triton_client.py`** — posts document bytes to Triton's `/api/v1/document-ai/extract`; extraction runs on Triton (which holds the GCP credentials and processor map), so ERPNext takes **no `google-cloud-documentai` dependency**.
+  - **Intake door + dedup + manual upload** — one `ingest_document()` entry point with sha256 content-hash dedup, plus an "Upload Document" button on the Document Intake list view (`ingest_upload`).
+  - Extraction wiring is gated by `intake_enabled` (default off) and inert until Triton is configured; the accountant review form, inventory-clerk Item review, per-type posting handlers, Drive filing, and the email/Drive/mobile/chat channels land in subsequent PRs.
+
 ## [1.54.0] - 2026-06-16
 
 ### Added
