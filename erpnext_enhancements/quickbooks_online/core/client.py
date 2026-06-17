@@ -202,6 +202,41 @@ class QuickBooksClient:
 			raise QuickBooksAPIError(f"QuickBooks API request failed: {response.status_code} {response.text}")
 		return response.json() if response.text else {}
 
+	def upload_attachable(self, *, file_bytes, file_name, mime_type, entity_type, qbo_id):
+		"""Upload a file to QBO and attach it to ``entity_type``/``qbo_id`` (a Bill
+		or Payment) via the Attachable batch-upload endpoint. Sent as
+		multipart/form-data (a JSON metadata part + the binary), so — unlike
+		``request`` — the Content-Type header is left for ``requests`` to set with
+		the multipart boundary. Refreshes the token once on 401, like ``request``."""
+		import json as _json
+
+		access_token = get_secret(self.settings, "access_token")
+		if not access_token:
+			frappe.throw("QuickBooks Online access token is missing. Connect the integration first.")
+		metadata = {
+			"AttachableRef": [{"EntityRef": {"type": entity_type, "value": str(qbo_id)}}],
+			"FileName": file_name,
+			"ContentType": mime_type,
+		}
+		response = requests.post(
+			f"{self.get_base_url()}/v3/company/{self.settings.realm_id}/upload",
+			headers={"Accept": "application/json", "Authorization": f"Bearer {access_token}"},
+			files={
+				"file_metadata_0": ("metadata.json", _json.dumps(metadata), "application/json"),
+				"file_content_0": (file_name, file_bytes, mime_type or "application/octet-stream"),
+			},
+			params={"minorversion": MINOR_VERSION},
+			timeout=120,
+		)
+		if response.status_code == 401:
+			self.refresh_access_token()
+			return self.upload_attachable(
+				file_bytes=file_bytes, file_name=file_name, mime_type=mime_type, entity_type=entity_type, qbo_id=qbo_id
+			)
+		if response.status_code >= 400:
+			raise QuickBooksAPIError(f"QuickBooks upload failed: {response.status_code} {response.text}")
+		return response.json() if response.text else {}
+
 	def query(self, query: str):
 		"""Run a QBO SQL-like query (the ``/query`` endpoint, text/plain body).
 

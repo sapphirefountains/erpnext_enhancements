@@ -22,6 +22,8 @@ scanned document is attached to the QBO transaction by a follow-up change."""
 
 from __future__ import annotations
 
+import mimetypes
+
 import frappe
 from frappe import _
 from frappe.utils import flt, getdate
@@ -114,7 +116,36 @@ def push_to_qbo(doctype: str, name: str):
 			update_modified=False,
 		)
 
-	return {"qbo_entity": entity_type, "qbo_id": qbo_id}
+	# Best-effort: attach the scanned document to the QBO transaction. A failure
+	# here never undoes the (already created + mapped) Bill/Payment.
+	attached = _attach_scan(doctype, name, entity_type, qbo_id, settings)
+	return {"qbo_entity": entity_type, "qbo_id": qbo_id, "attached": attached}
+
+
+def _attach_scan(doctype: str, name: str, entity_type: str, qbo_id: str, settings) -> bool:
+	"""Upload the source scan to the new QBO Bill/Payment as an Attachable. Best-
+	effort: logs and returns False on any failure, so the push still succeeds."""
+	source = frappe.db.get_value(
+		"Document Intake", {"created_doctype": doctype, "created_docname": name}, "source_file"
+	) or frappe.db.get_value(
+		"File", {"attached_to_doctype": doctype, "attached_to_name": name, "file_url": ["is", "set"]}, "file_url"
+	)
+	if not source:
+		return False
+	try:
+		file_doc = frappe.get_doc("File", {"file_url": source})
+		content = file_doc.get_content()
+		if isinstance(content, str):
+			content = content.encode("utf-8")
+		file_name = file_doc.file_name or name
+		mime = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+		QuickBooksClient(settings).upload_attachable(
+			file_bytes=content, file_name=file_name, mime_type=mime, entity_type=entity_type, qbo_id=qbo_id
+		)
+		return True
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "QBO Attachment Upload")
+		return False
 
 
 def _build_bill(pi) -> dict:
