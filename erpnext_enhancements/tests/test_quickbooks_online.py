@@ -1271,3 +1271,49 @@ def test_api_exposes_disconnect_endpoints():
 
 	for endpoint in ("disconnect", "disconnect_callback"):
 		assert callable(getattr(api, endpoint))
+
+
+# ---------------------------------------------------------------------------
+# Access control: privileged RPCs are gated on the QBO operator roles, and
+# API error bodies are bounded so QuickBooks data can't spill into logs.
+# ---------------------------------------------------------------------------
+
+
+def test_require_qbo_operator_enforces_operator_roles():
+	"""_require_qbo_operator gates the privileged RPCs on the QBO operator roles."""
+	frappe = install_frappe_stub()
+	captured = {}
+	frappe.only_for = lambda roles, *args, **kwargs: captured.update(roles=roles)
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	api._require_qbo_operator()
+
+	assert "System Manager" in captured["roles"]
+	assert "Accounts Manager" in captured["roles"]
+
+
+def test_import_all_enforces_role_before_running(monkeypatch):
+	"""A privileged RPC calls the operator guard *before* delegating to the engine."""
+	frappe = install_frappe_stub()
+	order = []
+	frappe.only_for = lambda roles, *args, **kwargs: order.append("guard")
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	monkeypatch.setattr(api, "run_import_all", lambda: order.append("run") or "LOG-1")
+	result = api.import_all()
+
+	assert result == "LOG-1"
+	assert order == ["guard", "run"]
+
+
+def test_error_snippet_bounds_response_bodies():
+	"""_error_snippet truncates long API error bodies and tolerates an empty body."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.client import _error_snippet
+
+	assert _error_snippet("short") == "short"
+	assert _error_snippet(None) == ""
+	long_body = "x" * 600
+	snippet = _error_snippet(long_body)
+	assert snippet.endswith("(truncated)")
+	assert len(snippet) < len(long_body)
