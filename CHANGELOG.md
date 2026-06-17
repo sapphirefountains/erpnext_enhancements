@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.59.0] - 2026-06-16
+
+### Added
+- **Accounting Document Intake — intake channels (E5).** Documents now flow in automatically, all funneling through the single `intake.ingest_document` door:
+  - **Email** (`channels.email_from_communication`, on Communication `after_insert`): PDF/image attachments of inbound emails received at the configured intake Email Account are ingested.
+  - **Google Drive watched folder** (`channels.poll_watched_folder`, hourly): new files dropped into the configured Drive folder are downloaded, ingested, and (optionally) moved to a processed folder. Deduped by Drive file id.
+  - **Mobile** (`channels.ingest_mobile_photo`, whitelisted): a phone-captured photo/scan ingested as the Mobile channel.
+  - **Scheduler maintenance**: `retry_failed_intakes` (daily — re-enqueue Failed extraction/posting steps from their retry payloads) and `purge_old_intake_logs` (daily, 90-day retention).
+  - Chat-origin documents are created directly by Triton (the `Document Intake` doctype already supports the Chat channel); that tool lands in the Triton T2 change.
+
+### Notes
+- The email channel needs an inbound **Email Account** configured + selected in Accounting Intake Settings; the Drive channel needs the watched-folder id set. Both are gated by `intake_enabled` (master switch, default off). Scheduler changes take effect after a `bench restart`.
+
 ## [1.58.0] - 2026-06-16
 
 ### Added
