@@ -142,6 +142,9 @@ doctype_js = {
 	"QuickBooks Online Settings": "quickbooks_online/doctype/quickbooks_online_settings/quickbooks_online_settings.js",
 	# accounting_intake
 	"Document Intake": "public/js/accounting_intake/document_intake.js",
+	# quickbooks_online write-back button (intake-created PI / Payment Entry)
+	"Purchase Invoice": "public/js/quickbooks_online/qbo_writeback_button.js",
+	"Payment Entry": "public/js/quickbooks_online/qbo_writeback_button.js",
 }
 
 doctype_list_js = {
@@ -359,6 +362,8 @@ after_migrate = [
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)
 	"erpnext_enhancements.accounting_intake.setup.create_supplier_drive_field",
+	# accounting_intake: QBO write-back fields on Purchase Invoice / Payment Entry
+	"erpnext_enhancements.accounting_intake.setup.create_qbo_writeback_fields",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
