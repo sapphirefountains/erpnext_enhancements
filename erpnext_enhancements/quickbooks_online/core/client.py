@@ -25,6 +25,7 @@ from erpnext_enhancements.quickbooks_online.core.constants import (
 	ENVIRONMENT_BASE_URLS,
 	MINOR_VERSION,
 	OAUTH_SCOPE,
+	REVOKE_URL,
 	TOKEN_URL,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import (
@@ -115,6 +116,38 @@ class QuickBooksClient:
 		data = self._token_request({"grant_type": "refresh_token", "refresh_token": refresh_token})
 		self._store_tokens(data)
 		return data
+
+	def revoke_tokens(self):
+		"""Revoke the OAuth2 grant at Intuit (best-effort). Return True on success.
+
+		POSTs the refresh token -- falling back to the access token -- to Intuit's
+		revocation endpoint with the same ``client_secret_basic`` auth the token
+		endpoint uses; revoking the refresh token tears down the whole grant.
+		Deliberately swallows every failure and returns False (nothing stored,
+		missing client credentials, a non-200, or a network exception) so an
+		explicit Disconnect can still clear local state and end up disconnected.
+		Does not itself touch Settings -- the caller pairs this with
+		``utils.clear_oauth_tokens``.
+		"""
+		token = get_secret(self.settings, "refresh_token") or get_secret(self.settings, "access_token")
+		client_secret = get_secret(self.settings, "client_secret")
+		if not token or not self.settings.client_id or not client_secret:
+			return False
+		basic = base64.b64encode(f"{self.settings.client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
+		try:
+			response = requests.post(
+				REVOKE_URL,
+				headers={
+					"Accept": "application/json",
+					"Authorization": f"Basic {basic}",
+					"Content-Type": "application/json",
+				},
+				json={"token": token},
+				timeout=30,
+			)
+		except Exception:
+			return False
+		return response.status_code == 200
 
 	def _token_request(self, payload):
 		"""POST to the Intuit token endpoint with HTTP Basic client auth.

@@ -12,28 +12,43 @@ from __future__ import annotations
 import frappe
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
-from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient
+from erpnext_enhancements.quickbooks_online.core.client import QuickBooksAPIError, QuickBooksClient
 from erpnext_enhancements.quickbooks_online.core.sync import retry_failed, run_cdc
-from erpnext_enhancements.quickbooks_online.core.utils import get_settings
+from erpnext_enhancements.quickbooks_online.core.utils import clear_oauth_tokens, get_settings
 
 
 def refresh_token_if_needed():
 	"""Hourly scheduler hook: refresh the OAuth access token before it expires.
 
-	No-op when the integration is not connected (no realm id). Forces a refresh
-	if no expiry is recorded, otherwise refreshes when the token expires within
-	the next 10 minutes (a wider window than the 5-min margin baked into
-	``token_expires_at`` so the hourly job never lets a token lapse between runs).
-	Side effect: HTTP token POST + Settings write via ``client.refresh_access_token``.
+	No-op when the integration is not connected (no realm id) or when a recorded
+	expiry is still more than 10 minutes away. Otherwise (no expiry recorded, or
+	the token lapses within the next 10 minutes -- a wider window than the 5-min
+	margin baked into ``token_expires_at`` so the hourly job never lets a token
+	lapse between runs) it refreshes via ``client.refresh_access_token``.
+
+	If the refresh fails with ``invalid_grant`` -- the refresh token was revoked
+	or expired (e.g. the user disconnected the app from Intuit's My Apps page) --
+	the grant is gone on Intuit's side, so the now-dead tokens are cleared and the
+	connection is marked Not Connected rather than failing this job every hour.
+	Any other error propagates.
 	"""
 	settings = get_settings()
 	if not settings.realm_id:
 		return
-	if not settings.token_expires_at:
-		QuickBooksClient(settings).refresh_access_token()
+	if settings.token_expires_at and get_datetime(settings.token_expires_at) > add_to_date(
+		now_datetime(), minutes=10, as_datetime=True
+	):
 		return
-	if get_datetime(settings.token_expires_at) <= add_to_date(now_datetime(), minutes=10, as_datetime=True):
+	try:
 		QuickBooksClient(settings).refresh_access_token()
+	except QuickBooksAPIError as exc:
+		if "invalid_grant" in str(exc):
+			clear_oauth_tokens(
+				get_settings(),
+				message="QuickBooks disconnected: the refresh token was revoked or expired. Reconnect to resume sync.",
+			)
+		else:
+			raise
 
 
 def cdc_poll():

@@ -50,6 +50,7 @@ from erpnext_enhancements.quickbooks_online.core.sync import (
 from erpnext_enhancements.quickbooks_online.core.sync import (
 	sync_entity as run_sync_entity,
 )
+from erpnext_enhancements.quickbooks_online.core.utils import clear_oauth_tokens
 from erpnext_enhancements.quickbooks_online.core.webhooks import handle_webhook
 
 
@@ -90,6 +91,39 @@ def oauth_callback(code=None, realmId=None, realm_id=None, state=None):
 	frappe.cache().delete_value(_state_key(state))
 	settings = frappe.get_single("QuickBooks Online Settings")
 	QuickBooksClient(settings).exchange_code(code, realmId or realm_id)
+	frappe.local.response["type"] = "redirect"
+	frappe.local.response["location"] = "/app/quickbooks-online-dashboard"
+
+
+@frappe.whitelist()
+def disconnect():
+	"""Disconnect from QuickBooks Online: revoke at Intuit, then clear local state.
+
+	User-initiated (the Settings / dashboard "Disconnect QuickBooks" button).
+	Best-effort revokes the OAuth2 grant at Intuit, then forgets the stored
+	tokens/realm and marks the connection Not Connected so the next Connect is a
+	clean re-consent. Returns ``{"revoked": bool}`` -- whether Intuit acknowledged
+	the revoke; local state is cleared either way.
+	"""
+	settings = frappe.get_single("QuickBooks Online Settings")
+	revoked = QuickBooksClient(settings).revoke_tokens()
+	clear_oauth_tokens(settings)
+	return {"revoked": bool(revoked)}
+
+
+@frappe.whitelist()
+def disconnect_callback():
+	"""Intuit "Disconnect URL" landing target: forget local tokens, then redirect.
+
+	Register this as the app's Disconnect URL in the Intuit developer portal. When
+	a user disconnects the app from Intuit's side (My Apps), Intuit has already
+	revoked the grant, so this only clears the now-dead local tokens and marks the
+	connection Not Connected, then redirects to the dashboard. Unlike
+	``oauth_callback`` it is NOT ``allow_guest`` -- requiring a logged-in session
+	keeps the endpoint from being used to force a disconnect anonymously.
+	"""
+	settings = frappe.get_single("QuickBooks Online Settings")
+	clear_oauth_tokens(settings, message="Disconnected from the Intuit side. Reconnect to resume sync.")
 	frappe.local.response["type"] = "redirect"
 	frappe.local.response["location"] = "/app/quickbooks-online-dashboard"
 

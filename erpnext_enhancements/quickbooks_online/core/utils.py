@@ -184,3 +184,31 @@ def update_settings_status(status: str, message: str | None = None, **fields):
 	settings.save(ignore_permissions=True)
 	frappe.db.commit()
 	return settings
+
+
+def clear_oauth_tokens(settings, message="Disconnected from QuickBooks Online."):
+	"""Forget all stored OAuth state and mark the connection Not Connected.
+
+	Deletes the encrypted access/refresh tokens (``set_secret`` cannot clear a
+	Password field -- it no-ops on empty -- so the ``__Auth`` rows are removed
+	directly), clears the realm id and token expiry, disables sync, and writes
+	``status``/``status_message``, then saves and commits. The client
+	id/secret and webhook verifier are intentionally kept so the operator can
+	reconnect in one click. Idempotent: safe to call when already disconnected.
+	"""
+	from frappe.utils.password import remove_encrypted_password
+
+	for fieldname in ("access_token", "refresh_token"):
+		try:
+			remove_encrypted_password(settings.doctype, settings.name, fieldname)
+		except Exception:
+			pass
+		settings.set(fieldname, None)
+	settings.realm_id = None
+	settings.token_expires_at = None
+	settings.sync_enabled = 0
+	settings.status = "Not Connected"
+	settings.status_message = message[:1000] if message else None
+	settings.save(ignore_permissions=True)
+	frappe.db.commit()
+	return settings

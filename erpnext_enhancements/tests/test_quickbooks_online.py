@@ -1214,3 +1214,60 @@ def test_api_exposes_reconcile_and_opening_endpoints():
 
 	for endpoint in ("compare_account_balances", "reconcile_transactions", "sync_opening_balances"):
 		assert callable(getattr(api, endpoint))
+
+
+# ---------------------------------------------------------------------------
+# Disconnect / revoke: the OAuth2 grant teardown at Intuit.
+# ---------------------------------------------------------------------------
+
+
+def test_revoke_tokens_posts_refresh_token_to_revoke_endpoint(monkeypatch):
+	"""client.revoke_tokens POSTs the refresh token to Intuit's revoke endpoint with basic auth."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_module
+	from erpnext_enhancements.quickbooks_online.core.constants import REVOKE_URL
+
+	settings = types.SimpleNamespace(realm_id="42", environment="Production", client_id="abc")
+	# get_secret reads via the doc's get_password; stub it to supply the secrets.
+	settings.get_password = lambda fieldname, *args, **kwargs: {
+		"refresh_token": "rt-1",
+		"client_secret": "cs",
+	}.get(fieldname)
+
+	captured = {}
+
+	class FakeResponse:
+		status_code = 200
+		text = ""
+
+	def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
+		captured.update(url=url, headers=headers, json=json)
+		return FakeResponse()
+
+	monkeypatch.setattr(client_module.requests, "post", fake_post, raising=False)
+
+	client = client_module.QuickBooksClient(settings)
+	assert client.revoke_tokens() is True
+	assert captured["url"] == REVOKE_URL
+	assert captured["json"] == {"token": "rt-1"}
+	assert captured["headers"]["Authorization"].startswith("Basic ")
+
+
+def test_revoke_tokens_returns_false_when_no_token_stored():
+	"""client.revoke_tokens is a no-op (False) when there is nothing to revoke."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_module
+
+	settings = types.SimpleNamespace(realm_id=None, environment="Sandbox", client_id="abc")
+	settings.get_password = lambda fieldname, *args, **kwargs: None
+
+	assert client_module.QuickBooksClient(settings).revoke_tokens() is False
+
+
+def test_api_exposes_disconnect_endpoints():
+	"""The whitelisted RPC layer surfaces the disconnect + Intuit Disconnect-URL endpoints."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	for endpoint in ("disconnect", "disconnect_callback"):
+		assert callable(getattr(api, endpoint))

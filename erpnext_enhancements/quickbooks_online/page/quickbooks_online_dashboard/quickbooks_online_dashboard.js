@@ -11,6 +11,8 @@
  *    `sync_entity` (syncEntity()).
  *  - Toolbar/page actions:
  *      * Connect QuickBooks  -> `start_oauth` then redirect to Intuit (connectQuickBooks()).
+ *      * Disconnect QuickBooks -> confirm, then `disconnect` (revoke at Intuit + clear
+ *                               tokens), then reload (disconnectQuickBooks()).
  *      * Import All          -> confirm, then `import_all` (runImportAll()).
  *      * Preview Resync      -> `preview_resync`, show a summary, then optionally
  *                               `run_resync` to overwrite QBO-owned fields (previewResync()).
@@ -61,6 +63,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 			</div>
 			<div class="qbo-toolbar">
 				<button class="btn btn-default" data-action="connect">${__("Connect QuickBooks")}</button>
+					<button class="btn btn-default" data-action="disconnect">${__("Disconnect QuickBooks")}</button>
 				<button class="btn btn-default" data-action="matches">${__("Link Existing Records")}</button>
 				<button class="btn btn-default" data-action="preview">${__("Preview Resync")}</button>
 				<button class="btn btn-primary" data-action="import">${__("Import All")}</button>
@@ -77,6 +80,7 @@ frappe.pages["quickbooks-online-dashboard"].on_page_load = function (wrapper) {
 	`).appendTo(page.body);
 
 	root.on("click", "[data-action='connect']", () => connectQuickBooks());
+	root.on("click", "[data-action='disconnect']", () => disconnectQuickBooks());
 	root.on("click", "[data-action='matches']", () => previewExistingMatches());
 	root.on("click", "[data-action='preview']", () => previewResync());
 	root.on("click", "[data-action='import']", () => runImportAll());
@@ -187,6 +191,25 @@ function connectQuickBooks() {
 			},
 		});
 	});
+}
+
+function disconnectQuickBooks() {
+	frappe.confirm(
+		__(
+			"Disconnect from QuickBooks Online? This revokes the connection at Intuit and clears the stored tokens. You can reconnect at any time.",
+		),
+		() => {
+			frappe.call({
+				method: "erpnext_enhancements.quickbooks_online.core.api.disconnect",
+				freeze: true,
+				freeze_message: __("Disconnecting from QuickBooks Online..."),
+				callback() {
+					frappe.show_alert({ message: __("Disconnected from QuickBooks Online."), indicator: "orange" });
+					location.reload();
+				},
+			});
+		},
+	);
 }
 
 function runImportAll() {

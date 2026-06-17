@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.62.0] - 2026-06-17
+
+### Added
+- **QuickBooks Online — Disconnect / revoke + Intuit Disconnect-URL handler.** The integration can now cleanly tear down a connection in both directions, which production-keys setup needs (Intuit's app profile asks for a Disconnect URL):
+  - **Disconnect button** on the QuickBooks Online Settings form (shown once connected) and the dashboard toolbar → new `api.disconnect` RPC. It best-effort revokes the OAuth2 grant at Intuit via new `QuickBooksClient.revoke_tokens()` (POST the refresh token to Intuit's `…/v2/oauth2/tokens/revoke`, `client_secret_basic` auth; new `REVOKE_URL` constant), then forgets the stored tokens/realm and marks the connection **Not Connected**.
+  - **`api.disconnect_callback`** — register as the app's **Disconnect URL** in the Intuit developer portal (`…/api/method/erpnext_enhancements.quickbooks_online.api.disconnect_callback`). When a user disconnects the app from Intuit's My Apps page, this clears the now-dead local tokens and redirects to the dashboard. **Requires login** (not `allow_guest`), so it can't be used to force a disconnect anonymously.
+  - New `utils.clear_oauth_tokens()` deletes the encrypted access/refresh token rows directly (`set_secret` no-ops on empty, so it can't clear a Password field), clears realm id / expiry, disables sync, and sets status — but keeps the client id/secret + webhook verifier so reconnect is one click. **Reconnect** is simply the existing Connect flow run again (same Redirect URI).
+  - **Resilience:** the hourly `tasks.refresh_token_if_needed` now treats an `invalid_grant` refresh failure (refresh token revoked/expired — e.g. disconnected from Intuit's side) as a disconnect, clearing the dead tokens instead of erroring every run.
+
+### Notes
+- No schema/migration change (the Settings doc already holds these fields). `bench build` to ship the form/dashboard JS. After taking production keys, set the Intuit app's **Disconnect URL** to the `disconnect_callback` method URL above.
+
 ## [1.61.0] - 2026-06-17
 
 ### Added
