@@ -42,6 +42,18 @@ class QuickBooksAPIError(Exception):
 	pass
 
 
+def _error_snippet(text, limit=500):
+	"""Bound a QBO error body so large payloads never spill into logs.
+
+	QBO error responses are usually fault descriptors, but a failed write can
+	echo submitted field values; capping the body keeps the diagnostic without
+	dumping QuickBooks data wholesale into the Error Log / Sync Log (Intuit's
+	"do not log QuickBooks data" requirement). Returns "" for an empty body.
+	"""
+	text = text or ""
+	return text if len(text) <= limit else text[:limit] + "… (truncated)"
+
+
 class QuickBooksClient:
 	"""Thin wrapper around the QBO OAuth2 + REST endpoints.
 
@@ -172,7 +184,7 @@ class QuickBooksClient:
 			timeout=60,
 		)
 		if response.status_code >= 400:
-			raise QuickBooksAPIError(f"QuickBooks token request failed: {response.status_code} {response.text}")
+			raise QuickBooksAPIError(f"QuickBooks token request failed: {response.status_code} {_error_snippet(response.text)}")
 		return response.json()
 
 	def _store_tokens(self, data, realm_id=None):
@@ -232,7 +244,7 @@ class QuickBooksClient:
 			self.refresh_access_token()
 			return self.request(method, path, **kwargs, params=params)
 		if response.status_code >= 400:
-			raise QuickBooksAPIError(f"QuickBooks API request failed: {response.status_code} {response.text}")
+			raise QuickBooksAPIError(f"QuickBooks API request failed: {response.status_code} {_error_snippet(response.text)}")
 		return response.json() if response.text else {}
 
 	def upload_attachable(self, *, file_bytes, file_name, mime_type, entity_type, qbo_id):

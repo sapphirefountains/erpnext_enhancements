@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.63.0] - 2026-06-17
+
+### Security
+- **QuickBooks Online — access-control hardening on the whitelisted RPCs** (readiness for Intuit's app security review, which tests functional-level access control). The sync engine runs with `ignore_permissions=True`, so the `@frappe.whitelist()` entry points are the only access-control boundary — and they previously enforced none, meaning **any logged-in user** could invoke `import_all`, `disconnect`, `run_resync`, `sync_entity`, `sync_opening_balances`, etc. directly via `/api/method`. Each privileged endpoint now calls a new `_require_qbo_operator()` guard (`frappe.only_for(("System Manager", "Accounts Manager"))`) before doing any work. The two guest callbacks (`oauth_callback`, `quickbooks_webhook`) stay exempt by necessity — they remain gated by the one-time OAuth `state` token and the webhook HMAC signature.
+- **Bounded API error bodies in logs.** `QuickBooksClient` now passes failed-response bodies through a new `_error_snippet()` (caps at 500 chars) before putting them in `QuickBooksAPIError` messages, so a failed write can't dump QuickBooks data wholesale into the Error Log / Sync Log (Intuit's "do not log QuickBooks data" requirement).
+
+### Notes
+- No schema/migration change; `bench build` not required (Python-only). Behavior is unchanged for System Manager / Accounts Manager users; other roles now receive a `PermissionError` from the QBO RPCs (as intended).
+
 ## [1.62.0] - 2026-06-17
 
 ### Added

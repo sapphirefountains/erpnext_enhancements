@@ -7,6 +7,15 @@ coercion, then delegate to the implementation modules:
 ``client`` (OAuth), ``sync`` (import/resync/entity/retry), ``mapping``
 (link/preview existing matches) and ``webhooks`` (inbound notifications).
 
+Access control: the sync engine runs with ``ignore_permissions=True``, so these
+RPC entry points are the *only* access-control boundary. Every privileged
+endpoint therefore calls ``_require_qbo_operator`` first; without it any
+logged-in user could invoke connect/disconnect/import/resync directly via
+``/api/method``. The two guest callbacks (``oauth_callback`` /
+``quickbooks_webhook``) are intentionally exempt -- they are unauthenticated by
+necessity and gated instead by the one-time OAuth ``state`` token and the
+webhook HMAC signature respectively.
+
 OAuth note: ``start_oauth`` mints a one-time ``state`` token cached for 10
 minutes; ``oauth_callback`` (guest-accessible, as Intuit redirects the browser
 to it) validates and consumes that token to prevent CSRF before exchanging the
@@ -53,6 +62,20 @@ from erpnext_enhancements.quickbooks_online.core.sync import (
 from erpnext_enhancements.quickbooks_online.core.utils import clear_oauth_tokens
 from erpnext_enhancements.quickbooks_online.core.webhooks import handle_webhook
 
+# Roles permitted to operate the QuickBooks Online integration. Mirrors the
+# Settings doc's access (System Manager full, Accounts Manager read) -- the
+# accounting operators -- and excludes ordinary authenticated users.
+QBO_OPERATOR_ROLES = ("System Manager", "Accounts Manager")
+
+
+def _require_qbo_operator():
+	"""Throw ``frappe.PermissionError`` unless the user holds a QBO operator role.
+
+	The single access-control gate for the privileged RPCs below (the engine
+	itself runs with ``ignore_permissions``). Administrator passes implicitly.
+	"""
+	frappe.only_for(QBO_OPERATOR_ROLES)
+
 
 @frappe.whitelist()
 def start_oauth(environment=None):
@@ -63,6 +86,7 @@ def start_oauth(environment=None):
 	browser is sent to the returned ``authorization_url``. Invoked by the
 	"Connect QuickBooks" buttons on the Settings form and dashboard.
 	"""
+	_require_qbo_operator()
 	settings = frappe.get_single("QuickBooks Online Settings")
 	if environment:
 		settings.environment = environment
@@ -105,6 +129,7 @@ def disconnect():
 	clean re-consent. Returns ``{"revoked": bool}`` -- whether Intuit acknowledged
 	the revoke; local state is cleared either way.
 	"""
+	_require_qbo_operator()
 	settings = frappe.get_single("QuickBooks Online Settings")
 	revoked = QuickBooksClient(settings).revoke_tokens()
 	clear_oauth_tokens(settings)
@@ -119,9 +144,10 @@ def disconnect_callback():
 	a user disconnects the app from Intuit's side (My Apps), Intuit has already
 	revoked the grant, so this only clears the now-dead local tokens and marks the
 	connection Not Connected, then redirects to the dashboard. Unlike
-	``oauth_callback`` it is NOT ``allow_guest`` -- requiring a logged-in session
-	keeps the endpoint from being used to force a disconnect anonymously.
+	``oauth_callback`` it is NOT ``allow_guest`` and is operator-gated -- requiring
+	a logged-in operator keeps the endpoint from being used to force a disconnect.
 	"""
+	_require_qbo_operator()
 	settings = frappe.get_single("QuickBooks Online Settings")
 	clear_oauth_tokens(settings, message="Disconnected from the Intuit side. Reconnect to resume sync.")
 	frappe.local.response["type"] = "redirect"
@@ -131,12 +157,14 @@ def disconnect_callback():
 @frappe.whitelist()
 def import_all():
 	"""RPC: run a full QBO import (dashboard/Settings "Import All"). Returns log name."""
+	_require_qbo_operator()
 	return run_import_all()
 
 
 @frappe.whitelist()
 def preview_resync(entity_types=None):
 	"""RPC: build a dry-run resync preview. ``entity_types`` may be a CSV string."""
+	_require_qbo_operator()
 	if isinstance(entity_types, str):
 		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
 	return run_preview_resync(entity_types=entity_types)
@@ -145,24 +173,28 @@ def preview_resync(entity_types=None):
 @frappe.whitelist()
 def run_resync(preview_id):
 	"""RPC: apply a previously generated preview (overwrite resync)."""
+	_require_qbo_operator()
 	return run_run_resync(preview_id)
 
 
 @frappe.whitelist()
 def sync_entity(entity_type, qbo_id):
 	"""RPC: fetch and upsert a single QBO entity (dashboard per-entity Sync)."""
+	_require_qbo_operator()
 	return run_sync_entity(entity_type, qbo_id)
 
 
 @frappe.whitelist()
 def retry_failed(log_name=None):
 	"""RPC: re-run failed sync logs (dashboard "Retry Failed"); optionally one log."""
+	_require_qbo_operator()
 	return run_retry_failed(log_name=log_name)
 
 
 @frappe.whitelist()
 def preview_existing_matches(entity_types=None, limit=100):
 	"""RPC: suggest ERPNext records to link for unmapped QBO entities (CSV-tolerant)."""
+	_require_qbo_operator()
 	if isinstance(entity_types, str):
 		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
 	return run_preview_existing_matches(entity_types=entity_types, limit=int(limit or 100))
@@ -171,6 +203,7 @@ def preview_existing_matches(entity_types=None, limit=100):
 @frappe.whitelist()
 def link_existing_record(entity_type, qbo_id, erpnext_doctype, erpnext_name, apply_qbo_data=0):
 	"""RPC: manually link a QBO entity to a chosen ERPNext record (link dialog)."""
+	_require_qbo_operator()
 	return run_link_existing_record(
 		entity_type,
 		qbo_id,
@@ -197,12 +230,14 @@ def compare_account_balances(as_of_date=None, tolerance=0.01):
 	Backs the "QuickBooks Balance Comparison" report and the dashboard "Compare
 	Balances" action. Returns matched/mismatched/qb_only/erp_only buckets.
 	"""
+	_require_qbo_operator()
 	return run_compare_account_balances(as_of_date=as_of_date, tolerance=float(tolerance or 0.01))
 
 
 @frappe.whitelist()
 def reconcile_transactions(entity_types=None, tolerance=1.0):
 	"""RPC: compare imported transaction amounts against their QBO payloads (read-only)."""
+	_require_qbo_operator()
 	if isinstance(entity_types, str):
 		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
 	return run_reconcile_transactions(entity_types=entity_types, tolerance=float(tolerance or 1.0))
@@ -211,6 +246,7 @@ def reconcile_transactions(entity_types=None, tolerance=1.0):
 @frappe.whitelist()
 def sync_opening_balances(as_of_date=None, auto_submit=0):
 	"""RPC: build an opening Journal Entry from QBO balances (draft unless auto_submit)."""
+	_require_qbo_operator()
 	return run_sync_opening_balances(as_of_date=as_of_date, auto_submit=auto_submit)
 
 
@@ -221,6 +257,7 @@ def get_dashboard_status():
 	Read-only aggregate consumed by the dashboard page to render status tiles and
 	the recent-sync-logs list.
 	"""
+	_require_qbo_operator()
 	settings = frappe.get_single("QuickBooks Online Settings")
 	failed_records = frappe.db.count("QuickBooks Sync Log", {"status": "Failed"})
 	latest_logs = frappe.get_all(
