@@ -1331,6 +1331,58 @@ def test_import_all_skips_when_already_running():
 	assert enqueued == []
 
 
+def test_preview_resync_enqueues_with_pending_log(monkeypatch):
+	"""preview_resync guards, pre-creates a log, and enqueues the dry run on the long queue."""
+	frappe = install_frappe_stub()
+	order = []
+	captured = {}
+	frappe.only_for = lambda roles, *args, **kwargs: order.append("guard")
+	frappe.enqueue = lambda method, **kwargs: order.append("enqueue") or captured.update(
+		method=method, kwargs=kwargs
+	)
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	monkeypatch.setattr(
+		api, "create_pending_log", lambda sync_type: order.append("log:" + sync_type) or "QBO-PREVIEW-1"
+	)
+	result = api.preview_resync(entity_types="Account,Customer")
+
+	assert order == ["guard", "log:Preview Resync", "enqueue"]
+	assert result == {"preview_id": "QBO-PREVIEW-1", "status": "queued"}
+	assert captured["method"] is api.run_preview_resync
+	assert captured["kwargs"].get("queue") == "long"
+	assert captured["kwargs"].get("log_name") == "QBO-PREVIEW-1"
+	assert captured["kwargs"].get("entity_types") == ["Account", "Customer"]
+
+
+def test_get_sync_log_summary_maps_counters(monkeypatch):
+	"""get_sync_log_summary returns the log status and its per-action counters."""
+	frappe = install_frappe_stub()
+	frappe.only_for = lambda *args, **kwargs: None
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name, fields, as_dict=False: types.SimpleNamespace(
+			status="Completed",
+			created_count=3,
+			updated_count=1,
+			linked_count=0,
+			deleted_count=0,
+			conflict_count=2,
+			manual_review_count=0,
+			failed_count=0,
+			error_message=None,
+		),
+	)
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	out = api.get_sync_log_summary("QBO-PREVIEW-1")
+
+	assert out["status"] == "Completed"
+	assert out["summary"]["created"] == 3
+	assert out["summary"]["conflicts"] == 2
+
+
 def test_error_snippet_bounds_response_bodies():
 	"""_error_snippet truncates long API error bodies and tolerates an empty body."""
 	install_frappe_stub()

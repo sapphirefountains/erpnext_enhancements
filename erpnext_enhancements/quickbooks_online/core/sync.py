@@ -82,7 +82,7 @@ def import_all(entity_types=None):
 		raise
 
 
-def preview_resync(entity_types=None):
+def preview_resync(entity_types=None, log_name=None):
 	"""Dry-run resync: fetch QBO data and compute changes without writing.
 
 	Mirrors ``import_all`` but calls ``safe_upsert(..., preview=True)`` so no
@@ -91,10 +91,14 @@ def preview_resync(entity_types=None):
 	``preview_id`` is then passed to ``run_resync`` to actually apply the
 	overwrite. Raw payloads ARE stored (so ``run_resync`` can replay them).
 	Returns ``{preview_id, summary, changes}``.
+
+	When ``log_name`` is supplied (the API pre-creates a Queued log so the
+	dashboard has a stable id to poll while this runs as a background job) that
+	log is reused; otherwise a fresh one is opened.
 	"""
 	settings = get_settings()
 	ensure_connected(settings)
-	log = start_log("Preview Resync")
+	log = _resume_or_start_log(log_name, "Preview Resync")
 	preview = []
 	try:
 		for entity_type in ordered_entities(entity_types):
@@ -400,6 +404,34 @@ def start_log(sync_type, entity_type=None):
 	log.status = "Running"
 	log.started_at = now_datetime()
 	log.insert(ignore_permissions=True)
+	return log
+
+
+def create_pending_log(sync_type):
+	"""Insert a Queued ``QuickBooks Sync Log`` for a background job to populate.
+
+	Lets the web request return a stable log name immediately (for the UI to
+	poll) while the heavy work runs on a worker and fills this same row in via
+	``_resume_or_start_log``. Returns the new log's name.
+	"""
+	log = frappe.new_doc("QuickBooks Sync Log")
+	log.sync_type = sync_type
+	log.status = "Queued"
+	log.started_at = now_datetime()
+	log.insert(ignore_permissions=True)
+	return log.name
+
+
+def _resume_or_start_log(log_name, sync_type):
+	"""Return a Running log: reuse a pre-created (Queued) one, else open a fresh one."""
+	if not log_name:
+		return start_log(sync_type)
+	log = frappe.get_doc("QuickBooks Sync Log", log_name)
+	if log.status != "Running":
+		log.status = "Running"
+		if not log.started_at:
+			log.started_at = now_datetime()
+		log.save(ignore_permissions=True)
 	return log
 
 

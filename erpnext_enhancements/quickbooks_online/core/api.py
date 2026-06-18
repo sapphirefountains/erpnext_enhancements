@@ -45,6 +45,9 @@ from erpnext_enhancements.quickbooks_online.core.reconcile import (
 	reconcile_transactions as run_reconcile_transactions,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
+	create_pending_log,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	import_all as run_import_all,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
@@ -179,11 +182,28 @@ def import_all():
 
 @frappe.whitelist()
 def preview_resync(entity_types=None):
-	"""RPC: build a dry-run resync preview. ``entity_types`` may be a CSV string."""
+	"""RPC: enqueue a dry-run resync preview on the long queue (returns immediately).
+
+	The preview pages the QBO API like a full import, so running it inline timed
+	out (504); it is now backgrounded. A Queued sync log is created up front and
+	its name returned as ``preview_id`` so the dashboard can poll
+	``get_sync_log_summary`` until it completes, then offer ``run_resync``.
+	``entity_types`` may be a CSV string. Returns
+	``{"preview_id": <log>, "status": "queued"}``.
+	"""
 	_require_qbo_operator()
 	if isinstance(entity_types, str):
 		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
-	return run_preview_resync(entity_types=entity_types)
+	preview_id = create_pending_log("Preview Resync")
+	frappe.enqueue(
+		run_preview_resync,
+		queue="long",
+		timeout=QBO_JOB_TIMEOUT,
+		enqueue_after_commit=True,
+		entity_types=entity_types,
+		log_name=preview_id,
+	)
+	return {"preview_id": preview_id, "status": "queued"}
 
 
 @frappe.whitelist()
@@ -323,6 +343,47 @@ def get_dashboard_status():
 		},
 		"failed_records": failed_records,
 		"latest_logs": latest_logs,
+	}
+
+
+@frappe.whitelist()
+def get_sync_log_summary(name):
+	"""RPC: status + per-action counters for one sync log (poll a background run).
+
+	The dashboard uses this to watch an enqueued Preview Resync and, once it is
+	Completed, render its summary before offering Run Resync. Read-only.
+	"""
+	_require_qbo_operator()
+	log = frappe.db.get_value(
+		"QuickBooks Sync Log",
+		name,
+		[
+			"status",
+			"created_count",
+			"updated_count",
+			"linked_count",
+			"deleted_count",
+			"conflict_count",
+			"manual_review_count",
+			"failed_count",
+			"error_message",
+		],
+		as_dict=True,
+	)
+	if not log:
+		return {"status": "Failed", "summary": {}, "error_message": "Sync log not found."}
+	return {
+		"status": log.status,
+		"summary": {
+			"created": log.created_count or 0,
+			"updated": log.updated_count or 0,
+			"linked": log.linked_count or 0,
+			"deleted": log.deleted_count or 0,
+			"conflicts": log.conflict_count or 0,
+			"manual_review": log.manual_review_count or 0,
+			"failed": log.failed_count or 0,
+		},
+		"error_message": log.error_message,
 	}
 
 
