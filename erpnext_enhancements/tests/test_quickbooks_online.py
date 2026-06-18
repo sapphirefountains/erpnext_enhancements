@@ -1292,18 +1292,43 @@ def test_require_qbo_operator_enforces_operator_roles():
 	assert "Accounts Manager" in captured["roles"]
 
 
-def test_import_all_enforces_role_before_running(monkeypatch):
-	"""A privileged RPC calls the operator guard *before* delegating to the engine."""
+def test_import_all_enqueues_after_role_guard(monkeypatch):
+	"""import_all runs the operator guard, then enqueues the import on the long queue.
+
+	The import is backgrounded (it pages the QBO API for minutes; running it inline
+	returned a 504), so the guard must still fire *before* the work is dispatched.
+	"""
 	frappe = install_frappe_stub()
 	order = []
+	captured = {}
 	frappe.only_for = lambda roles, *args, **kwargs: order.append("guard")
+	frappe.db.exists = lambda *args, **kwargs: False  # no import already running
+	frappe.enqueue = lambda method, **kwargs: order.append("enqueue") or captured.update(
+		method=method, kwargs=kwargs
+	)
 	from erpnext_enhancements.quickbooks_online.core import api
 
-	monkeypatch.setattr(api, "run_import_all", lambda: order.append("run") or "LOG-1")
 	result = api.import_all()
 
-	assert result == "LOG-1"
-	assert order == ["guard", "run"]
+	assert order == ["guard", "enqueue"]
+	assert result == {"status": "queued"}
+	assert captured["method"] is api.run_import_all
+	assert captured["kwargs"].get("queue") == "long"
+
+
+def test_import_all_skips_when_already_running():
+	"""import_all no-ops (no enqueue) when an Import All is already running."""
+	frappe = install_frappe_stub()
+	frappe.only_for = lambda roles, *args, **kwargs: None
+	frappe.db.exists = lambda *args, **kwargs: True  # an import is in progress
+	enqueued = []
+	frappe.enqueue = lambda method, **kwargs: enqueued.append(method)
+	from erpnext_enhancements.quickbooks_online.core import api
+
+	result = api.import_all()
+
+	assert result == {"status": "already_running"}
+	assert enqueued == []
 
 
 def test_error_snippet_bounds_response_bodies():

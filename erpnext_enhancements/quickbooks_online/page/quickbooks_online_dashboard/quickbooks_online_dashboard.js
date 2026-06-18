@@ -213,17 +213,31 @@ function disconnectQuickBooks() {
 }
 
 function runImportAll() {
-	frappe.confirm(__("Import accounting-core QuickBooks Online data now?"), () => {
-		frappe.call({
-			method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
-			freeze: true,
-			freeze_message: __("Importing QuickBooks Online data..."),
-			callback(response) {
-				frappe.msgprint(__("Import started/completed in log {0}", [response.message]));
-				frappe.pages["quickbooks-online-dashboard"].page.wrapper && location.reload();
-			},
-		});
-	});
+	frappe.confirm(
+		__(
+			"Import accounting-core QuickBooks Online data now? This runs in the background and can take a while for large companies.",
+		),
+		() => {
+			frappe.call({
+				method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
+				callback(response) {
+					const status = (response.message || {}).status;
+					if (status === "already_running") {
+						frappe.msgprint(
+							__("A QuickBooks import is already running. Watch its progress under Recent Sync Logs."),
+						);
+						return;
+					}
+					frappe.msgprint(
+						__(
+							"QuickBooks import started in the background. Progress appears under Recent Sync Logs (this can take a while for large companies).",
+						),
+					);
+					setTimeout(() => location.reload(), 2500);
+				},
+			});
+		},
+	);
 }
 
 function previewResync() {
@@ -248,10 +262,10 @@ function previewResync() {
 				frappe.call({
 					method: "erpnext_enhancements.quickbooks_online.core.api.run_resync",
 					args: { preview_id: result.preview_id },
-					freeze: true,
-					freeze_message: __("Running resync..."),
-					callback(runResponse) {
-						frappe.msgprint(__("Resync completed in log {0}", [runResponse.message.sync_log]));
+					callback() {
+						frappe.msgprint(
+							__("Resync started in the background. Progress appears under Recent Sync Logs."),
+						);
 					},
 				});
 			});
@@ -262,10 +276,10 @@ function previewResync() {
 function retryFailed() {
 	frappe.call({
 		method: "erpnext_enhancements.quickbooks_online.core.api.retry_failed",
-		freeze: true,
-		freeze_message: __("Retrying failed syncs..."),
 		callback() {
-			frappe.msgprint(__("Retry requested."));
+			frappe.msgprint(
+				__("Retry started in the background. Progress appears under Recent Sync Logs."),
+			);
 		},
 	});
 }
