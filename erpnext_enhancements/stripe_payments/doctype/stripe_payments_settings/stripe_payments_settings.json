@@ -1,0 +1,300 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_section",
+  "environment",
+  "enabled",
+  "company",
+  "column_break_conn",
+  "status",
+  "status_message",
+  "last_webhook_at",
+  "keys_section",
+  "publishable_key",
+  "secret_key",
+  "column_break_keys",
+  "webhook_signing_secret",
+  "webhook_url",
+  "routing_section",
+  "deposit_account",
+  "card_mode_of_payment",
+  "ach_mode_of_payment",
+  "column_break_routing",
+  "enable_card",
+  "enable_ach",
+  "statement_descriptor",
+  "urls_section",
+  "success_route",
+  "cancel_route",
+  "surcharge_section",
+  "surcharge_enabled",
+  "card_surcharge_percent",
+  "card_surcharge_flat",
+  "ach_fee_percent",
+  "ach_fee_flat",
+  "column_break_surcharge",
+  "surcharge_income_account",
+  "surcharge_label",
+  "surcharge_disclosure",
+  "autopay_section",
+  "autopay_consent"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "default": "Test",
+   "description": "Sandbox-only for now. Live is gated until the Stripe account is activated.",
+   "fieldname": "environment",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Environment",
+   "options": "Test\nLive",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Master switch. When off, all payment-creation endpoints refuse.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Stripe Payments"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "column_break_conn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Configured",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Not Configured\nConnected\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_webhook_at",
+   "fieldtype": "Datetime",
+   "label": "Last Webhook At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "keys_section",
+   "fieldtype": "Section Break",
+   "label": "API Keys"
+  },
+  {
+   "description": "Publishable key (pk_test_... in sandbox).",
+   "fieldname": "publishable_key",
+   "fieldtype": "Data",
+   "label": "Publishable Key"
+  },
+  {
+   "description": "Secret key (sk_test_... in sandbox). Stored encrypted.",
+   "fieldname": "secret_key",
+   "fieldtype": "Password",
+   "label": "Secret Key"
+  },
+  {
+   "fieldname": "column_break_keys",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Signing secret from the Stripe webhook endpoint (whsec_...). Stored encrypted.",
+   "fieldname": "webhook_signing_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Signing Secret"
+  },
+  {
+   "description": "Point your Stripe webhook endpoint here.",
+   "fieldname": "webhook_url",
+   "fieldtype": "Data",
+   "label": "Webhook URL (read-only)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "routing_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Routing"
+  },
+  {
+   "description": "Bank/clearing GL account that Stripe funds post to. Required before going live.",
+   "fieldname": "deposit_account",
+   "fieldtype": "Link",
+   "label": "Deposit / Clearing Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "card_mode_of_payment",
+   "fieldtype": "Link",
+   "label": "Card Mode of Payment",
+   "options": "Mode of Payment"
+  },
+  {
+   "fieldname": "ach_mode_of_payment",
+   "fieldtype": "Link",
+   "label": "ACH Mode of Payment",
+   "options": "Mode of Payment"
+  },
+  {
+   "fieldname": "column_break_routing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_card",
+   "fieldtype": "Check",
+   "label": "Accept Cards"
+  },
+  {
+   "default": "0",
+   "description": "ACH (us_bank_account) settles slower; payments post on the delayed success webhook.",
+   "fieldname": "enable_ach",
+   "fieldtype": "Check",
+   "label": "Accept ACH Bank Debit"
+  },
+  {
+   "description": "Shown on the customer's bank/card statement (max 22 chars).",
+   "fieldname": "statement_descriptor",
+   "fieldtype": "Data",
+   "label": "Statement Descriptor"
+  },
+  {
+   "fieldname": "urls_section",
+   "fieldtype": "Section Break",
+   "label": "Redirect Routes"
+  },
+  {
+   "default": "/stripe-return",
+   "fieldname": "success_route",
+   "fieldtype": "Data",
+   "label": "Success Route"
+  },
+  {
+   "default": "/stripe-return",
+   "fieldname": "cancel_route",
+   "fieldtype": "Data",
+   "label": "Cancel Route"
+  },
+  {
+   "description": "Pass card/ACH processing fees to customers. OFF by default. Card surcharging is legally regulated — read docs/stripe_surcharging_compliance.md before enabling.",
+   "fieldname": "surcharge_section",
+   "fieldtype": "Section Break",
+   "label": "Surcharge / Fee Pass-Through"
+  },
+  {
+   "default": "0",
+   "fieldname": "surcharge_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Surcharge / Fees"
+  },
+  {
+   "default": "0",
+   "description": "Credit-card surcharge percent. US network cap is 3% (and must be ≤ your cost of acceptance; some states cap lower or ban it). Debit cards must never be surcharged.",
+   "fieldname": "card_surcharge_percent",
+   "fieldtype": "Float",
+   "label": "Card Surcharge %"
+  },
+  {
+   "default": "0",
+   "fieldname": "card_surcharge_flat",
+   "fieldtype": "Currency",
+   "label": "Card Surcharge (flat)"
+  },
+  {
+   "default": "0",
+   "fieldname": "ach_fee_percent",
+   "fieldtype": "Float",
+   "label": "ACH Fee %"
+  },
+  {
+   "default": "0",
+   "fieldname": "ach_fee_flat",
+   "fieldtype": "Currency",
+   "label": "ACH Fee (flat)"
+  },
+  {
+   "fieldname": "column_break_surcharge",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Income account the collected surcharge/fee posts to.",
+   "fieldname": "surcharge_income_account",
+   "fieldtype": "Link",
+   "label": "Surcharge Income Account",
+   "options": "Account"
+  },
+  {
+   "default": "Card processing fee",
+   "fieldname": "surcharge_label",
+   "fieldtype": "Data",
+   "label": "Surcharge Line Label"
+  },
+  {
+   "default": "A processing fee applies to card payments and is itemized below. To avoid it, go back and choose bank (ACH) payment.",
+   "fieldname": "surcharge_disclosure",
+   "fieldtype": "Small Text",
+   "label": "Surcharge Disclosure (shown before payment)"
+  },
+  {
+   "fieldname": "autopay_section",
+   "fieldtype": "Section Break",
+   "label": "Saved Cards / Autopay"
+  },
+  {
+   "default": "By saving your payment method you authorize Sapphire Fountains to charge it for future maintenance and amounts due, in the amounts and on the schedule shown on each invoice, until you cancel. You can cancel anytime by contacting us.",
+   "description": "Consent text shown before a customer saves a payment method for future (off-session) charges.",
+   "fieldname": "autopay_consent",
+   "fieldtype": "Small Text",
+   "label": "Autopay Consent Text"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Stripe Payments",
+ "name": "Stripe Payments Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

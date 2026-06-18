@@ -1,0 +1,114 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("Pay Invoices") }}{% endblock %}
+
+{% block page_content %}
+<div class="pay-portal">
+	<h1 class="mb-4">{{ _("Pay Invoices") }}</h1>
+
+	{% if not enabled %}
+		<div class="alert alert-warning">{{ _("Online payments are not available right now. Please contact us.") }}</div>
+	{% elif not invoices %}
+		<div class="alert alert-info">{{ _("You have no outstanding invoices. Thank you!") }}</div>
+	{% else %}
+		<p class="text-muted">{{ _("Select an invoice to pay securely by card or bank (ACH).") }}</p>
+		<div class="table-responsive">
+			<table class="table table-bordered">
+				<thead>
+					<tr>
+						<th>{{ _("Invoice") }}</th>
+						<th>{{ _("Due Date") }}</th>
+						<th class="text-right">{{ _("Amount Due") }}</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{% for inv in invoices %}
+					<tr>
+						<td>{{ inv.name }}</td>
+						<td>{{ inv.due_display }}</td>
+						<td class="text-right">{{ inv.amount_display }}</td>
+						<td class="text-right">
+							{% if inv.custom_stripe_payment_status == "Processing" %}
+								<span class="text-muted">{{ _("Processing…") }}</span>
+							{% elif surcharge_enabled %}
+								{% if enable_card %}
+								<button class="btn btn-primary btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="card">
+									{{ _("Card") }}{{ card_fee_label }}
+								</button>
+								{% endif %}
+								{% if enable_ach %}
+								<button class="btn btn-default btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="ach">
+									{{ _("Bank") }}{{ ach_fee_label }}
+								</button>
+								{% endif %}
+							{% else %}
+								<button class="btn btn-primary btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="">
+									{{ _("Pay now") }}
+								</button>
+							{% endif %}
+						</td>
+					</tr>
+					{% endfor %}
+				</tbody>
+			</table>
+		</div>
+	{% endif %}
+
+	{% if enabled %}
+	<p style="margin-top:16px;">
+		<button class="btn btn-default btn-sm" id="stripe-setup-autopay">{{ _("Set up autopay") }}</button>
+		<span class="text-muted">{{ _("Save a card or bank account to auto-pay future maintenance invoices.") }}</span>
+	</p>
+	{% endif %}
+</div>
+
+<script>
+	frappe.csrf_token = "{{ csrf_token }}";
+	document.querySelectorAll(".pay-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			const invoice = btn.getAttribute("data-invoice");
+			const method = btn.getAttribute("data-method") || null;
+			const original = btn.textContent;
+			btn.disabled = true;
+			btn.textContent = "{{ _('Starting…') }}";
+			const restore = function () {
+				btn.disabled = false;
+				btn.textContent = original;
+			};
+			frappe.call({
+				method: "erpnext_enhancements.stripe_payments.core.api.portal_create_payment",
+				args: { sales_invoice: invoice, method: method },
+				callback: function (r) {
+					if (!r.exc && r.message && r.message.checkout_url) {
+						window.location.href = r.message.checkout_url;
+					} else {
+						restore();
+					}
+				},
+				error: restore,
+			});
+		});
+	});
+
+	const setup = document.getElementById("stripe-setup-autopay");
+	if (setup) {
+		setup.addEventListener("click", function () {
+			setup.disabled = true;
+			frappe.call({
+				method: "erpnext_enhancements.stripe_payments.core.api.portal_enroll_autopay",
+				callback: function (r) {
+					if (!r.exc && r.message && r.message.checkout_url) {
+						window.location.href = r.message.checkout_url;
+					} else {
+						setup.disabled = false;
+					}
+				},
+				error: function () {
+					setup.disabled = false;
+				},
+			});
+		});
+	}
+</script>
+{% endblock %}
