@@ -153,6 +153,11 @@ def retrieve_payment_method(payment_method_id: str):
 	return _request("GET", f"/payment_methods/{payment_method_id}")
 
 
+def detach_payment_method(payment_method_id: str):
+	"""Detach a saved PaymentMethod from its customer (used when autopay is revoked)."""
+	return _request("POST", f"/payment_methods/{payment_method_id}/detach")
+
+
 def verify_and_parse_event(payload: bytes | str, sig_header: str | None, settings=None) -> dict:
 	"""Verify the ``Stripe-Signature`` header and return the parsed event dict.
 

@@ -26,5 +26,33 @@
     "show_sidebar": 0,
     "meta_title": "End-User License Agreement | Sapphire Fountains",
     "meta_description": "The terms governing use of Sapphire Fountains LLC online services, customer portal and internal systems."
+  },
+  {
+    "doctype": "Web Page",
+    "name": "payment-terms",
+    "title": "Payment & Surcharge Terms",
+    "route": "payment-terms",
+    "published": 1,
+    "content_type": "HTML",
+    "main_section_html": "<!-- DRAFT — pending legal counsel review. Not legal advice. -->\n<div class='legal-document' style='max-width: 820px; margin: 0 auto;'>\n<p><em>Last updated: June 18, 2026</em></p>\n<p>These Payment Terms govern payments you make to Sapphire Fountains LLC ('Sapphire Fountains', 'we', 'us') online or by a saved payment method. By making a payment or saving a payment method, you agree to these terms and to our <a href='/refund-policy'>Refund &amp; Cancellation Policy</a> and <a href='/privacy-policy'>Privacy Policy</a>.</p>\n<h2>1. Payment methods</h2>\n<p>We accept credit and debit cards and U.S. bank-account (ACH) payments through our payment processor, Stripe. We do not receive or store your full card or bank-account numbers; they are handled by Stripe.</p>\n<h2>2. Card processing surcharge</h2>\n<p>Where permitted, we apply a surcharge to <strong>credit card</strong> payments that does not exceed our cost of acceptance or the applicable legal maximum. <strong>We do not surcharge debit cards.</strong> Any surcharge is disclosed before you pay and itemized separately on your receipt. <strong>You can avoid the surcharge by paying via bank/ACH.</strong> Surcharging is not offered where prohibited by law.</p>\n<h2>3. Bank (ACH) debits</h2>\n<p>ACH payments are processed as electronic debits from the account you provide and may take several business days to settle. By providing bank-account details you authorize the debit shown at checkout.</p>\n<h2>4. Saved payment methods &amp; recurring authorization (autopay)</h2>\n<p>If you choose autopay, you authorize us to charge your saved card or bank account for amounts you owe (including maintenance and service invoices) in the amount shown on each invoice, on or after its due date, on a recurring basis until you revoke the authorization. Charge frequency varies with your service schedule. <strong>You may cancel autopay at any time</strong> in the customer portal or by contacting us, and we retain authorization records as required by applicable rules. This authorization covers card-on-file and, where applicable, ACH debits.</p>\n<h2>5. Taxes</h2>\n<p>Applicable sales tax is determined by the invoice and the rules of the applicable jurisdiction.</p>\n<h2>6. Receipts &amp; security</h2>\n<p>Stripe issues an emailed receipt for each successful payment, itemizing any surcharge. Card data is handled within Stripe's PCI-compliant systems.</p>\n<h2>7. Refunds</h2>\n<p>Refunds, including the return of any surcharge, are governed by our <a href='/refund-policy'>Refund &amp; Cancellation Policy</a>.</p>\n<h2>8. Changes</h2>\n<p>We may update these terms; we will revise the date above and, where appropriate, provide notice.</p>\n<h2>9. Contact</h2>\n<p>Sapphire Fountains LLC<br>85 W 300 S, Bountiful, UT 84010<br>Phone: <a href='tel:+18018372199'>+1 (801) 837-2199</a><br>Email: <a href='mailto:info@sapphirefountains.com'>info@sapphirefountains.com</a></p>\n<p><em>Governed by the laws of the State of Utah.</em></p>\n</div>",
+    "show_title": 1,
+    "full_width": 0,
+    "show_sidebar": 0,
+    "meta_title": "Payment & Surcharge Terms | Sapphire Fountains",
+    "meta_description": "How Sapphire Fountains LLC accepts payments, applies credit-card surcharges, and handles ACH and saved payment methods."
+  },
+  {
+    "doctype": "Web Page",
+    "name": "refund-policy",
+    "title": "Refund & Cancellation Policy",
+    "route": "refund-policy",
+    "published": 1,
+    "content_type": "HTML",
+    "main_section_html": "<!-- DRAFT — pending legal counsel review. Not legal advice. -->\n<div class='legal-document' style='max-width: 820px; margin: 0 auto;'>\n<p><em>Last updated: June 18, 2026</em></p>\n<p>This Refund &amp; Cancellation Policy applies to payments made to Sapphire Fountains LLC and supplements our <a href='/payment-terms'>Payment Terms</a>.</p>\n<h2>1. Refunds</h2>\n<p>If a payment is refunded, we process it to the original payment method through Stripe. Refunds may take several business days to appear depending on your bank or card issuer.</p>\n<h2>2. Surcharges on refunds</h2>\n<p>When we issue a full refund, any card surcharge collected is refunded in full. For a partial refund, the surcharge is refunded on a prorated basis.</p>\n<h2>3. Service cancellations</h2>\n<p>Cancellation of services or scheduled work is governed by your service agreement or quote. Contact us to discuss a cancellation.</p>\n<h2>4. Cancelling autopay / revoking authorization</h2>\n<p>You may cancel autopay or revoke a stored-payment (including ACH) authorization at any time in the customer portal or by contacting us. Cancellation applies to future charges; it does not reverse charges already processed.</p>\n<h2>5. Disputes</h2>\n<p>If you believe a charge is incorrect, please contact us first so we can resolve it promptly.</p>\n<h2>6. Contact</h2>\n<p>Sapphire Fountains LLC<br>85 W 300 S, Bountiful, UT 84010<br>Phone: <a href='tel:+18018372199'>+1 (801) 837-2199</a><br>Email: <a href='mailto:info@sapphirefountains.com'>info@sapphirefountains.com</a></p>\n<p><em>Governed by the laws of the State of Utah.</em></p>\n</div>",
+    "show_title": 1,
+    "full_width": 0,
+    "show_sidebar": 0,
+    "meta_title": "Refund & Cancellation Policy | Sapphire Fountains",
+    "meta_description": "How Sapphire Fountains LLC handles refunds (including surcharges), cancellations, and revoking autopay/ACH authorization."
   }
 ]

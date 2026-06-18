@@ -62,6 +62,29 @@ frappe.ui.form.on("Customer", {
 				},
 				__("Stripe"),
 			);
+
+			frm.add_custom_button(
+				__("Revoke Autopay"),
+				() => {
+					frappe.confirm(
+						__("Cancel autopay and remove the saved payment method for this customer?"),
+						() => {
+							frappe.call({
+								method: "erpnext_enhancements.stripe_payments.core.api.revoke_autopay",
+								args: { customer: frm.doc.name },
+								freeze: true,
+								freeze_message: __("Revoking autopay…"),
+								callback(r) {
+									if (r.exc) return;
+									frappe.show_alert({ message: __("Autopay revoked."), indicator: "orange" });
+									frm.reload_doc();
+								},
+							});
+						},
+					);
+				},
+				__("Stripe"),
+			);
 		}
 	},
 });

@@ -245,6 +245,28 @@ def charge_saved_method(customer, amount=None, sales_invoice=None, description=N
 
 
 @frappe.whitelist()
+def revoke_autopay(customer):
+	"""RPC (desk): cancel a customer's autopay — detach the method, clear flags, revoke consent."""
+	_require_stripe_operator()
+	from erpnext_enhancements.stripe_payments.core.saved_methods import revoke_autopay as _revoke
+
+	return _revoke(customer)
+
+
+@frappe.whitelist()
+def portal_revoke_autopay():
+	"""RPC (portal): a logged-in customer cancels their own autopay."""
+	if frappe.session.user == "Guest":
+		frappe.throw(frappe._("Please log in."), frappe.PermissionError)
+	customers = get_portal_customers()
+	if not customers:
+		frappe.throw(frappe._("No customer is linked to your account."), frappe.PermissionError)
+	from erpnext_enhancements.stripe_payments.core.saved_methods import revoke_autopay as _revoke
+
+	return _revoke(customers[0])
+
+
+@frappe.whitelist()
 def refund_payment(stripe_payment, amount=None):
 	"""RPC (desk): refund a Stripe Payment in Stripe (full unless ``amount`` given).
 

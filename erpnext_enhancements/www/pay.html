@@ -56,15 +56,34 @@
 	{% endif %}
 
 	{% if enabled %}
-	<p style="margin-top:16px;">
-		<button class="btn btn-default btn-sm" id="stripe-setup-autopay">{{ _("Set up autopay") }}</button>
-		<span class="text-muted">{{ _("Save a card or bank account to auto-pay future maintenance invoices.") }}</span>
+	<div class="stripe-autopay" style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border-color, #d1d8dd);">
+		<h5>{{ _("Autopay") }}</h5>
+		{% if autopay_enrolled %}
+			<p class="text-muted">{{ _("Autopay is on") }}{% if autopay_label %} — {{ autopay_label }}{% endif %}.</p>
+			<button class="btn btn-default btn-sm" id="stripe-cancel-autopay">{{ _("Cancel autopay") }}</button>
+		{% else %}
+			<p class="text-muted">{{ _("Save a card or bank account to automatically pay future maintenance invoices.") }}</p>
+			{% if autopay_consent %}
+			<p class="small text-muted" style="white-space: pre-line;">{{ autopay_consent }}</p>
+			{% endif %}
+			<label style="display:block; margin-bottom:8px;">
+				<input type="checkbox" id="stripe-autopay-consent">
+				{{ _("I authorize Sapphire Fountains to charge my saved payment method as described above and in the Payment Terms.") }}
+			</label>
+			<button class="btn btn-default btn-sm" id="stripe-setup-autopay" disabled>{{ _("Set up autopay") }}</button>
+		{% endif %}
+	</div>
+
+	<p class="small text-muted" style="margin-top:24px;">
+		<a href="/payment-terms" target="_blank">{{ _("Payment & Surcharge Terms") }}</a> ·
+		<a href="/refund-policy" target="_blank">{{ _("Refund & Cancellation Policy") }}</a>
 	</p>
 	{% endif %}
 </div>
 
 <script>
 	frappe.csrf_token = "{{ csrf_token }}";
+
 	document.querySelectorAll(".pay-btn").forEach(function (btn) {
 		btn.addEventListener("click", function () {
 			const invoice = btn.getAttribute("data-invoice");
@@ -91,9 +110,17 @@
 		});
 	});
 
+	// Autopay enrollment requires the consent checkbox.
+	const consent = document.getElementById("stripe-autopay-consent");
 	const setup = document.getElementById("stripe-setup-autopay");
+	if (consent && setup) {
+		consent.addEventListener("change", function () {
+			setup.disabled = !consent.checked;
+		});
+	}
 	if (setup) {
 		setup.addEventListener("click", function () {
+			if (consent && !consent.checked) return;
 			setup.disabled = true;
 			frappe.call({
 				method: "erpnext_enhancements.stripe_payments.core.api.portal_enroll_autopay",
@@ -106,6 +133,26 @@
 				},
 				error: function () {
 					setup.disabled = false;
+				},
+			});
+		});
+	}
+
+	const cancelAutopay = document.getElementById("stripe-cancel-autopay");
+	if (cancelAutopay) {
+		cancelAutopay.addEventListener("click", function () {
+			cancelAutopay.disabled = true;
+			frappe.call({
+				method: "erpnext_enhancements.stripe_payments.core.api.portal_revoke_autopay",
+				callback: function (r) {
+					if (!r.exc) {
+						window.location.reload();
+					} else {
+						cancelAutopay.disabled = false;
+					}
+				},
+				error: function () {
+					cancelAutopay.disabled = false;
 				},
 			});
 		});

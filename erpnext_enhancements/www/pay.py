@@ -58,6 +58,16 @@ def get_context(context):
 	context.card_fee_label = _fee_label(settings, "card")
 	context.ach_fee_label = _fee_label(settings, "ach")
 
+	# Autopay / saved-method (Phase 2): consent text + current enrollment state.
+	context.autopay_consent = settings.autopay_consent
+	context.autopay_enrolled = False
+	context.autopay_label = None
+	for cust in customers:
+		if frappe.db.get_value("Customer", cust, "custom_stripe_autopay_enabled"):
+			context.autopay_enrolled = True
+			context.autopay_label = frappe.db.get_value("Customer", cust, "custom_stripe_payment_method_label")
+			break
+
 	return context
 
 

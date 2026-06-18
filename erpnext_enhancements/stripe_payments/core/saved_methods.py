@@ -17,8 +17,10 @@ post Payment Entries:
 
 from __future__ import annotations
 
+import hashlib
+
 import frappe
-from frappe.utils import flt, get_url
+from frappe.utils import flt, get_url, now_datetime
 
 from erpnext_enhancements.stripe_payments.core.checkout import _payment_method_types, _resolve_target
 from erpnext_enhancements.stripe_payments.core.client import (
@@ -64,6 +66,7 @@ def create_setup_session(customer: str, channel: str = "Desk") -> dict:
 		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: create_setup_session failed")
 		frappe.throw(f"Could not start autopay setup: {error_snippet(str(exc), 200)}")
 
+	_record_consent(customer, channel, settings, session["id"])
 	return {"checkout_url": session["url"], "session_id": session["id"], "customer": customer}
 
 
@@ -181,3 +184,68 @@ def auto_charge_on_invoice_submit(doc, method=None):
 		sales_invoice=doc.name,
 		channel="Auto",
 	)
+
+
+def _record_consent(customer, channel, settings, setup_session):
+	"""Record a proof-of-authorization (Stripe Autopay Consent) at enrollment.
+
+	Captures the exact consent text shown, a fingerprint of it, who initiated, their
+	IP/user-agent, the channel and the setup session — the Nacha/card-network record
+	of authorization. Activated when the setup-mode Checkout completes. Best-effort:
+	never blocks enrollment (the consent text is also shown on the Stripe page).
+	"""
+	try:
+		text = settings.autopay_consent or ""
+		version = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else None
+		user_agent = None
+		if getattr(frappe, "request", None):
+			user_agent = frappe.request.headers.get("User-Agent")
+		frappe.get_doc(
+			{
+				"doctype": "Stripe Autopay Consent",
+				"customer": customer,
+				"status": "Pending",
+				"channel": channel,
+				"methods": ",".join(_payment_method_types(settings)),
+				"accepted_by": frappe.session.user,
+				"ip_address": getattr(frappe.local, "request_ip", None),
+				"user_agent": user_agent,
+				"setup_session": setup_session,
+				"consent_version": version,
+				"consent_text": text,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: consent record failed")
+
+
+def revoke_autopay(customer):
+	"""Cancel autopay for a customer: detach the saved method, clear the flags, and
+	mark the active consent Revoked (the record is retained for the required period).
+	Provides the customer-facing revocation path the authorization promises.
+	"""
+	pm = frappe.db.get_value("Customer", customer, "custom_stripe_default_payment_method")
+	if pm:
+		try:
+			from erpnext_enhancements.stripe_payments.core.client import detach_payment_method
+
+			detach_payment_method(pm)
+		except Exception:
+			frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: detach payment method failed")
+
+	frappe.db.set_value(
+		"Customer",
+		customer,
+		{
+			"custom_stripe_autopay_enabled": 0,
+			"custom_stripe_default_payment_method": None,
+			"custom_stripe_payment_method_label": None,
+		},
+	)
+	for name in frappe.get_all(
+		"Stripe Autopay Consent", filters={"customer": customer, "status": "Active"}, pluck="name"
+	):
+		frappe.db.set_value("Stripe Autopay Consent", name, {"status": "Revoked", "revoked_on": now_datetime()})
+	frappe.db.commit()
+	return {"customer": customer, "revoked": True}
