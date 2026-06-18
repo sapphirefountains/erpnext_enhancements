@@ -213,59 +213,115 @@ function disconnectQuickBooks() {
 }
 
 function runImportAll() {
-	frappe.confirm(__("Import accounting-core QuickBooks Online data now?"), () => {
-		frappe.call({
-			method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
-			freeze: true,
-			freeze_message: __("Importing QuickBooks Online data..."),
-			callback(response) {
-				frappe.msgprint(__("Import started/completed in log {0}", [response.message]));
-				frappe.pages["quickbooks-online-dashboard"].page.wrapper && location.reload();
-			},
-		});
-	});
+	frappe.confirm(
+		__(
+			"Import accounting-core QuickBooks Online data now? This runs in the background and can take a while for large companies.",
+		),
+		() => {
+			frappe.call({
+				method: "erpnext_enhancements.quickbooks_online.core.api.import_all",
+				callback(response) {
+					const status = (response.message || {}).status;
+					if (status === "already_running") {
+						frappe.msgprint(
+							__("A QuickBooks import is already running. Watch its progress under Recent Sync Logs."),
+						);
+						return;
+					}
+					frappe.msgprint(
+						__(
+							"QuickBooks import started in the background. Progress appears under Recent Sync Logs (this can take a while for large companies).",
+						),
+					);
+					setTimeout(() => location.reload(), 2500);
+				},
+			});
+		},
+	);
 }
 
 function previewResync() {
+	// The preview pages the whole company (like a full import), so it runs as a
+	// background job; we poll its Sync Log and, once complete, offer Run Resync.
 	frappe.call({
 		method: "erpnext_enhancements.quickbooks_online.core.api.preview_resync",
-		freeze: true,
-		freeze_message: __("Building resync preview..."),
 		callback(response) {
-			const result = response.message || {};
-			const summary = result.summary || {};
-			const message = __(
-				"Preview {0}: {1} creates, {2} updates, {3} deletes, {4} conflicts.",
-				[
-					result.preview_id,
-					summary.created || 0,
-					summary.updated || 0,
-					summary.deleted || 0,
-					summary.conflicts || 0,
-				],
+			const previewId = (response.message || {}).preview_id;
+			if (!previewId) {
+				frappe.msgprint(__("Could not start the resync preview."));
+				return;
+			}
+			frappe.show_alert(
+				{
+					message: __("Resync preview building in the background (Sync Log {0})...", [previewId]),
+					indicator: "blue",
+				},
+				7,
 			);
-			frappe.confirm(message + "<br>" + __("Run overwrite resync for QuickBooks-owned fields?"), () => {
-				frappe.call({
-					method: "erpnext_enhancements.quickbooks_online.core.api.run_resync",
-					args: { preview_id: result.preview_id },
-					freeze: true,
-					freeze_message: __("Running resync..."),
-					callback(runResponse) {
-						frappe.msgprint(__("Resync completed in log {0}", [runResponse.message.sync_log]));
-					},
-				});
-			});
+			pollResyncPreview(previewId, 0);
 		},
+	});
+}
+
+function pollResyncPreview(previewId, attempts) {
+	// ~3s cadence, ~30 min cap; the job keeps running even if we stop polling.
+	if (attempts > 600) {
+		frappe.msgprint(
+			__(
+				"The resync preview is still running. Review Sync Log {0} and re-run Preview Resync once it has completed.",
+				[previewId],
+			),
+		);
+		return;
+	}
+	frappe.call({
+		method: "erpnext_enhancements.quickbooks_online.core.api.get_sync_log_summary",
+		args: { name: previewId },
+		callback(response) {
+			const data = response.message || {};
+			if (data.status === "Completed") {
+				offerRunResync(previewId, data.summary || {});
+			} else if (data.status === "Failed") {
+				frappe.msgprint({
+					title: __("Resync preview failed"),
+					indicator: "red",
+					message: frappe.utils.escape_html(data.error_message || __("See Sync Log {0}.", [previewId])),
+				});
+			} else {
+				setTimeout(() => pollResyncPreview(previewId, attempts + 1), 3000);
+			}
+		},
+	});
+}
+
+function offerRunResync(previewId, summary) {
+	const message = __("Preview {0}: {1} creates, {2} updates, {3} deletes, {4} conflicts.", [
+		previewId,
+		summary.created || 0,
+		summary.updated || 0,
+		summary.deleted || 0,
+		summary.conflicts || 0,
+	]);
+	frappe.confirm(message + "<br>" + __("Run overwrite resync for QuickBooks-owned fields?"), () => {
+		frappe.call({
+			method: "erpnext_enhancements.quickbooks_online.core.api.run_resync",
+			args: { preview_id: previewId },
+			callback() {
+				frappe.msgprint(
+					__("Resync started in the background. Progress appears under Recent Sync Logs."),
+				);
+			},
+		});
 	});
 }
 
 function retryFailed() {
 	frappe.call({
 		method: "erpnext_enhancements.quickbooks_online.core.api.retry_failed",
-		freeze: true,
-		freeze_message: __("Retrying failed syncs..."),
 		callback() {
-			frappe.msgprint(__("Retry requested."));
+			frappe.msgprint(
+				__("Retry started in the background. Progress appears under Recent Sync Logs."),
+			);
 		},
 	});
 }

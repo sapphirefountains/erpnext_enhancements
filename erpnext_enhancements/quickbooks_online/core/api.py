@@ -45,6 +45,9 @@ from erpnext_enhancements.quickbooks_online.core.reconcile import (
 	reconcile_transactions as run_reconcile_transactions,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
+	create_pending_log,
+)
+from erpnext_enhancements.quickbooks_online.core.sync import (
 	import_all as run_import_all,
 )
 from erpnext_enhancements.quickbooks_online.core.sync import (
@@ -66,6 +69,12 @@ from erpnext_enhancements.quickbooks_online.core.webhooks import handle_webhook
 # Settings doc's access (System Manager full, Accounts Manager read) -- the
 # accounting operators -- and excludes ordinary authenticated users.
 QBO_OPERATOR_ROLES = ("System Manager", "Accounts Manager")
+
+# RQ timeout (seconds) for the long-running background syncs enqueued below. A
+# full first import of a large company pages through tens of thousands of records
+# sequentially; this is set generously (10h) so the worker can't kill it mid-run.
+# The work is idempotent, so letting an over-long run finish is safe.
+QBO_JOB_TIMEOUT = 36000
 
 
 def _require_qbo_operator():
@@ -156,25 +165,61 @@ def disconnect_callback():
 
 @frappe.whitelist()
 def import_all():
-	"""RPC: run a full QBO import (dashboard/Settings "Import All"). Returns log name."""
+	"""RPC: enqueue a full QBO import on the long queue (returns immediately).
+
+	The import pages through every QBO record sequentially and can run for many
+	minutes on a real company -- far longer than the HTTP gateway/worker timeout,
+	which surfaced as a 504 when this ran inline. It now runs as a background job;
+	progress is tracked in QuickBooks Sync Log. Returns ``{"status": "queued"}``,
+	or ``{"status": "already_running"}`` when an import is already in progress.
+	"""
 	_require_qbo_operator()
-	return run_import_all()
+	if frappe.db.exists("QuickBooks Sync Log", {"sync_type": "Import All", "status": "Running"}):
+		return {"status": "already_running"}
+	frappe.enqueue(run_import_all, queue="long", timeout=QBO_JOB_TIMEOUT)
+	return {"status": "queued"}
 
 
 @frappe.whitelist()
 def preview_resync(entity_types=None):
-	"""RPC: build a dry-run resync preview. ``entity_types`` may be a CSV string."""
+	"""RPC: enqueue a dry-run resync preview on the long queue (returns immediately).
+
+	The preview pages the QBO API like a full import, so running it inline timed
+	out (504); it is now backgrounded. A Queued sync log is created up front and
+	its name returned as ``preview_id`` so the dashboard can poll
+	``get_sync_log_summary`` until it completes, then offer ``run_resync``.
+	``entity_types`` may be a CSV string. Returns
+	``{"preview_id": <log>, "status": "queued"}``.
+	"""
 	_require_qbo_operator()
 	if isinstance(entity_types, str):
 		entity_types = [entity.strip() for entity in entity_types.split(",") if entity.strip()]
-	return run_preview_resync(entity_types=entity_types)
+	preview_id = create_pending_log("Preview Resync")
+	frappe.enqueue(
+		run_preview_resync,
+		queue="long",
+		timeout=QBO_JOB_TIMEOUT,
+		enqueue_after_commit=True,
+		entity_types=entity_types,
+		log_name=preview_id,
+	)
+	return {"preview_id": preview_id, "status": "queued"}
 
 
 @frappe.whitelist()
 def run_resync(preview_id):
-	"""RPC: apply a previously generated preview (overwrite resync)."""
+	"""RPC: enqueue applying a previously generated preview (overwrite resync).
+
+	Replays the preview's stored payloads, which can be a large batch, so it runs
+	on the long queue like ``import_all`` to avoid a gateway timeout. The preview
+	id is validated synchronously for immediate feedback. Returns
+	``{"status": "queued"}``.
+	"""
 	_require_qbo_operator()
-	return run_run_resync(preview_id)
+	if not preview_id or not frappe.db.exists("QuickBooks Sync Log", preview_id):
+		frappe.throw("A valid Preview Resync log is required before running overwrite resync.")
+	frappe.enqueue(run_run_resync, queue="long", timeout=QBO_JOB_TIMEOUT, preview_id=preview_id)
+	return {"status": "queued"}
 
 
 @frappe.whitelist()
@@ -186,9 +231,14 @@ def sync_entity(entity_type, qbo_id):
 
 @frappe.whitelist()
 def retry_failed(log_name=None):
-	"""RPC: re-run failed sync logs (dashboard "Retry Failed"); optionally one log."""
+	"""RPC: enqueue re-running failed sync logs (dashboard "Retry Failed").
+
+	Re-running can replay a full import or CDC pass, so it is backgrounded on the
+	long queue like ``import_all``. Returns ``{"status": "queued"}``.
+	"""
 	_require_qbo_operator()
-	return run_retry_failed(log_name=log_name)
+	frappe.enqueue(run_retry_failed, queue="long", timeout=QBO_JOB_TIMEOUT, log_name=log_name)
+	return {"status": "queued"}
 
 
 @frappe.whitelist()
@@ -293,6 +343,47 @@ def get_dashboard_status():
 		},
 		"failed_records": failed_records,
 		"latest_logs": latest_logs,
+	}
+
+
+@frappe.whitelist()
+def get_sync_log_summary(name):
+	"""RPC: status + per-action counters for one sync log (poll a background run).
+
+	The dashboard uses this to watch an enqueued Preview Resync and, once it is
+	Completed, render its summary before offering Run Resync. Read-only.
+	"""
+	_require_qbo_operator()
+	log = frappe.db.get_value(
+		"QuickBooks Sync Log",
+		name,
+		[
+			"status",
+			"created_count",
+			"updated_count",
+			"linked_count",
+			"deleted_count",
+			"conflict_count",
+			"manual_review_count",
+			"failed_count",
+			"error_message",
+		],
+		as_dict=True,
+	)
+	if not log:
+		return {"status": "Failed", "summary": {}, "error_message": "Sync log not found."}
+	return {
+		"status": log.status,
+		"summary": {
+			"created": log.created_count or 0,
+			"updated": log.updated_count or 0,
+			"linked": log.linked_count or 0,
+			"deleted": log.deleted_count or 0,
+			"conflicts": log.conflict_count or 0,
+			"manual_review": log.manual_review_count or 0,
+			"failed": log.failed_count or 0,
+		},
+		"error_message": log.error_message,
 	}
 
 

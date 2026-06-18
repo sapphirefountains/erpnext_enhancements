@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.63.1] - 2026-06-18
+
+### Fixed
+- **QuickBooks "Import All" and "Preview Resync" returned a 504 Gateway Timeout on real-sized companies.** `import_all`, `preview_resync`, `run_resync` and `retry_failed` ran the full multi-thousand-record sync **synchronously inside the HTTP request**, which exceeded the gateway/worker timeout (they page the QBO API sequentially and can run for many minutes). They now **enqueue a background job on the `long` queue** (10h timeout) and return immediately; progress is tracked in QuickBooks Sync Log exactly as before.
+  - `import_all` no-ops with `{"status": "already_running"}` when an import is already running.
+  - `preview_resync` pre-creates a Queued sync log and returns its id; the dashboard polls a new read-only `get_sync_log_summary` endpoint until the preview completes, then shows the change summary and offers Run Resync (`run_resync`, validated synchronously and also backgrounded). Enqueued with `enqueue_after_commit` so the worker never races the un-committed log row.
+  - The dashboard "Import All" / "Preview Resync" / "Retry Failed" actions now report that work started in the background (watch Recent Sync Logs) instead of freezing the browser until completion.
+  - Deploy: `bench build` (dashboard JS) and ensure a worker is serving the `long` queue.
+
 ## [1.63.0] - 2026-06-17
 
 ### Security
