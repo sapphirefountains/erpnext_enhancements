@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deploy:** `bench migrate` (new doctypes + custom fields + Modes of Payment) and `bench build` (form/portal/dashboard JS). **No new Python dependency** — uses `requests` (already a Frappe dependency), so no `pip install` is required (the host is a managed server).
 - **Config before use:** enter test keys (`sk_test_`/`pk_test_`), set a **Deposit / Clearing Account**, and register the webhook endpoint (shown read-only on Settings; locally use `stripe listen --forward-to …/api/method/erpnext_enhancements.stripe_payments.api.stripe_webhook`) and paste its `whsec_…` signing secret. Verify on the Stripe **sandbox** before the account goes live.
 - **Phase 2 (next):** saved payment methods + off-session/recurring charging for maintenance contracts (Stripe SetupIntents, ACH mandates, consent) and refund-initiation UI. This phase records refunds but does not yet reverse the Payment Entry.
+## [1.63.1] - 2026-06-18
+
+### Fixed
+- **QuickBooks "Import All" and "Preview Resync" returned a 504 Gateway Timeout on real-sized companies.** `import_all`, `preview_resync`, `run_resync` and `retry_failed` ran the full multi-thousand-record sync **synchronously inside the HTTP request**, which exceeded the gateway/worker timeout (they page the QBO API sequentially and can run for many minutes). They now **enqueue a background job on the `long` queue** (10h timeout) and return immediately; progress is tracked in QuickBooks Sync Log exactly as before.
+  - `import_all` no-ops with `{"status": "already_running"}` when an import is already running.
+  - `preview_resync` pre-creates a Queued sync log and returns its id; the dashboard polls a new read-only `get_sync_log_summary` endpoint until the preview completes, then shows the change summary and offers Run Resync (`run_resync`, validated synchronously and also backgrounded). Enqueued with `enqueue_after_commit` so the worker never races the un-committed log row.
+  - The dashboard "Import All" / "Preview Resync" / "Retry Failed" actions now report that work started in the background (watch Recent Sync Logs) instead of freezing the browser until completion.
+  - Deploy: `bench build` (dashboard JS) and ensure a worker is serving the `long` queue.
 
 ## [1.63.0] - 2026-06-17
 
