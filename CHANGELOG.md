@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.66.0] - 2026-06-18
+
+### Added
+- **Stripe Payments — payment authorization records + legal policy pages.** Compliance groundwork for surcharging and stored-payment/recurring charging:
+  - **Autopay authorization (proof of authorization).** New **Stripe Autopay Consent** doctype records each stored-payment authorization — the exact consent text + a fingerprint, who accepted it, their IP/user-agent, channel, the Stripe setup session, and the saved method — captured at enrollment and activated when the setup-mode Checkout completes. Mirrors Nacha/card-network requirements (amount or how determined, timing/frequency, revocation) and retention. The autopay consent text is strengthened accordingly, and the customer portal now requires an explicit **consent checkbox** before enrolling.
+  - **Revoke autopay.** A **"Revoke Autopay"** button (Customer form) and a portal **"Cancel autopay"** action detach the saved method at Stripe, clear the customer's autopay flags, and mark the consent **Revoked** (record retained) — the revocation path the authorization promises. New `client.detach_payment_method`, `saved_methods.revoke_autopay`, and `api.revoke_autopay` / `api.portal_revoke_autopay`.
+  - **Policy pages** (guest-accessible Web Page fixtures, **counsel-review-pending**): **/payment-terms** (payment methods; credit-card surcharge — credit-only, ≤ cost/cap, debit excluded, ACH-to-avoid, disclosed + itemized; ACH debits; stored-payment & recurring authorization; taxes; receipts/PCI) and **/refund-policy** (refunds incl. surcharge returned full/prorated, cancellations, revoking autopay/ACH). Linked from the **/pay** portal; registered in `hooks.fixtures`.
+
+### Notes
+- Requires `bench migrate` (new doctype + Web Pages) and `bench build` (portal/Customer JS). No new dependency. **Surcharge sales tax is intentionally not applied to the fee** in this setup — confirm taxability with your CPA. The legal wording in the policy pages and the autopay authorization is **draft pending counsel review**, and surcharging remains gated by the go-live checklist in `docs/stripe_surcharging_compliance.md`.
+
 ## [1.65.0] - 2026-06-18
 
 ### Added

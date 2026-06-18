@@ -262,11 +262,11 @@
    "label": "Saved Cards / Autopay"
   },
   {
-   "default": "By saving your payment method you authorize Sapphire Fountains to charge it for future maintenance and amounts due, in the amounts and on the schedule shown on each invoice, until you cancel. You can cancel anytime by contacting us.",
-   "description": "Consent text shown before a customer saves a payment method for future (off-session) charges.",
+   "default": "By saving your card or bank account, you authorize Sapphire Fountains LLC to charge it for amounts you owe (including maintenance and service invoices) in the amount shown on each invoice, on or after that invoice's due date, on a recurring basis. Charge frequency varies with your service schedule. This authorization stays in effect until you revoke it — cancel anytime in the customer portal or by contacting us at (801) 837-2199 or info@sapphirefountains.com. For bank (ACH) debits you also authorize electronic debits from the account provided, per these terms.",
+   "description": "Recurring/stored-payment authorization shown before a customer saves a method for off-session charges. Should state the amount (or how determined), timing/frequency, and how to revoke (Nacha/card-network requirement).",
    "fieldname": "autopay_consent",
    "fieldtype": "Small Text",
-   "label": "Autopay Consent Text"
+   "label": "Autopay Consent / Authorization Text"
   }
  ],
  "index_web_pages_for_search": 1,

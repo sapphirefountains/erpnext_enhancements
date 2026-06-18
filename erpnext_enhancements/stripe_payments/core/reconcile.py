@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 
 import frappe
-from frappe.utils import flt, today
+from frappe.utils import flt, now_datetime, today
 
 from erpnext_enhancements.stripe_payments.core.checkout import _stamp_invoice
 from erpnext_enhancements.stripe_payments.core.utils import (
@@ -417,6 +417,21 @@ def _handle_setup_completed(session):
 			"custom_stripe_autopay_enabled": 1,
 		},
 	)
+	# Activate the proof-of-authorization recorded at enrollment.
+	consent = frappe.db.get_value(
+		"Stripe Autopay Consent", {"setup_session": session.get("id"), "status": "Pending"}, "name"
+	) or frappe.db.get_value(
+		"Stripe Autopay Consent",
+		{"customer": customer, "status": "Pending"},
+		"name",
+		order_by="creation desc",
+	)
+	if consent:
+		frappe.db.set_value(
+			"Stripe Autopay Consent",
+			consent,
+			{"status": "Active", "payment_method": pm_id, "activated_on": now_datetime()},
+		)
 	frappe.db.commit()
 	return None
 
