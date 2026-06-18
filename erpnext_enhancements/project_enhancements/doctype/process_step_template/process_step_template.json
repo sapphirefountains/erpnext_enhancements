@@ -12,6 +12,7 @@
   "column_break_main",
   "auto_anchor",
   "sla_hours",
+  "sla_business_days",
   "enabled",
   "details_section",
   "description",
@@ -54,10 +55,17 @@
   },
   {
    "default": "24",
-   "description": "Hours after this step becomes the current step before daily escalation reminders fire. 0 disables escalation for this step.",
+   "description": "Legacy calendar-hours SLA, superseded by SLA (Business Days) which now drives the due date. Retained as the source for the one-time business-days backfill.",
    "fieldname": "sla_hours",
    "fieldtype": "Int",
-   "label": "SLA (Hours)"
+   "label": "SLA (Hours, legacy)"
+  },
+  {
+   "default": "1",
+   "description": "Business days (Mon-Fri, skipping the Hand-Off Holiday List) after this step becomes current before its due date and daily escalation fire. 0 disables escalation for this step.",
+   "fieldname": "sla_business_days",
+   "fieldtype": "Int",
+   "label": "SLA (Business Days)"
   },
   {
    "default": "1",

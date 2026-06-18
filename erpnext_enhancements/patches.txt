@@ -102,3 +102,7 @@ erpnext_enhancements.patches.create_device_manager_role
 # field "custom_master_project" + Project Dashboard logic). Those one-time patches
 # already ran on legacy sites; re-running them here under the new module path would
 # delete the active doctype/field and break new installs.
+# v1.66.0 hand-off SLAs move to business days: backfill sla_business_days from sla_hours
+erpnext_enhancements.patches.backfill_sla_business_days
+# v1.66.0 hand-off reorder: Hold Hand-Off Meeting moves ahead of Create Project (1,4,2,3,5,6,7)
+erpnext_enhancements.patches.renumber_handoff_steps

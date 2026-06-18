@@ -30,6 +30,7 @@
   "pipeline_stale_red_days",
   "handoff_section",
   "handoff_ar_rep",
+  "handoff_holiday_list",
   "briefing_section",
   "briefing_enabled",
   "briefing_use_gemini",
@@ -217,6 +218,13 @@
    "fieldtype": "Link",
    "label": "Accounts Receivable Rep",
    "options": "Employee"
+  },
+  {
+   "description": "Optional. Holiday List used to compute hand-off step due dates in business days; its holidays are skipped in addition to weekends. Leave blank to skip weekends only.",
+   "fieldname": "handoff_holiday_list",
+   "fieldtype": "Link",
+   "label": "Holiday List (Due Dates)",
+   "options": "Holiday List"
   },
   {
    "fieldname": "briefing_section",

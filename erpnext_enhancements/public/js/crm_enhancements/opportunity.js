@@ -9,11 +9,14 @@
  *    `_user_tags` so each value stream (Build/Design/Rent/Service) shows up as a
  *    tag; for already-saved docs missing those tags it persists them directly via
  *    the `sync_opportunity_tags_for_existing` API instead of waiting for a save.
- *  - Add a "Create Project" button (Closed Won opportunities only, for Employees /
- *    System Managers) that prompts for a Project Template + users to notify and
- *    enqueues background project creation, then listens on the
- *    `project_creation_status` realtime channel to report success/failure
- *    (including Google Drive folder provisioning results).
+ *  - Reopen-on-load: an Opportunity already "Closed Won" with no project yet gets
+ *    the "Create project now?" prompt once (here "No" just dismisses). Fresh
+ *    transitions into Closed Won are handled by the global realtime prompt in
+ *    create_project_prompt.js — there is no longer a manual "Create Project"
+ *    button (project creation is gated entirely behind that prompt).
+ *  - Listen on the `project_creation_status` realtime channel to report
+ *    background project-creation success/failure (incl. Google Drive folder
+ *    provisioning results).
  */
 function sync_tags_from_child_table(frm) {
 	let value_streams = (frm.doc.custom_value_stream || [])
@@ -77,6 +80,12 @@ frappe.ui.form.on("Opportunity", {
 			});
 		}
 	},
+	onload: function (frm) {
+		// Capture the status the form loaded with, so the reopen-on-load prompt
+		// only fires for opportunities that were ALREADY Closed Won when opened —
+		// a fresh transition (handled by the realtime prompt) loads as non-won.
+		frm._ee_loaded_status = frm.doc.status;
+	},
 	custom_value_stream_add: function (frm) {
 		sync_tags_from_child_table(frm);
 	},
@@ -87,101 +96,30 @@ frappe.ui.form.on("Opportunity", {
 		// Sync tags on load
 		sync_tags_from_child_table(frm);
 
-		function toggle_project_button() {
-			if (
-				frm.doc.status === "Closed Won" &&
-				!frm.doc.custom_created_project &&
-				(frappe.user.has_role("Employee") || frappe.user.has_role("System Manager"))
-			) {
-				frm.add_custom_button(__("Create Project"), function () {
-					// 1. Fetch the list of users first.
-					frappe.call({
-						method: "frappe.client.get_list",
-						args: {
-							doctype: "User",
-							filters: {
-								enabled: 1,
-								user_type: "System User",
-							},
-							fields: ["name"],
-							limit_page_length: 0,
-						},
-						callback: function (r) {
-							let users = r.message || [];
-							let user_options = users.map((u) => u.name);
+		// Project creation is triggered only by the "Create project now?" prompt
+		// (create_project_prompt.js), never a manual button. Defensively drop any
+		// standard "Create > Project" entry if a future ERPNext / site adds one.
+		frm.remove_custom_button("Project", "Create");
 
-							// 2. Create a dialog to ask for the Project Template.
-							let dialog = new frappe.ui.Dialog({
-								title: "Select Project Template",
-								fields: [
-									{
-										label: "Project Template",
-										fieldname: "project_template",
-										fieldtype: "Link",
-										options: "Project Template",
-										reqd: 1, // Make the selection mandatory
-									},
-									{
-										label: "Users to Notify",
-										fieldname: "users_to_notify",
-										fieldtype: "MultiSelect",
-										options: user_options,
-										default: [frappe.session.user],
-										reqd: 1, // Make the selection mandatory
-										description:
-											"Select users to be notified when the project is created.",
-									},
-								],
-								primary_action_label: "Create Project",
-								// 3. This code runs when the user clicks "Create Project".
-								primary_action: function (values) {
-									// Change the dialog to show a progress bar.
-									dialog
-										.get_primary_btn()
-										.prop("disabled", true)
-										.html("Queuing...");
-									dialog.body.innerHTML = `
-                                        <div class="progress">
-                                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
-                                        </div>
-                                        <div class="text-center" style="margin-top: 10px;">
-                                            Adding job to the queue...
-                                        </div>`;
-
-									// 4. Call the backend with the selected template.
-									frappe.call({
-										method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
-										args: {
-											opportunity_name: frm.doc.name,
-											users: values.users_to_notify, // Pass the selected users
-											project_template: values.project_template, // Pass the selected template
-										},
-										callback: function (r) {
-											dialog.hide(); // Close the dialog.
-											if (r.message && r.message.status === "queued") {
-												frappe.show_alert({
-													message: __(
-														"Project creation started in the background. Awaiting completion..."
-													),
-													indicator: "blue",
-												});
-												frm.remove_custom_button("Create Project");
-											}
-										},
-									});
-								},
-							});
-
-							dialog.show();
-						},
-					});
-				}).addClass("btn-primary");
-			} else {
-				frm.remove_custom_button("Create Project");
-			}
+		// Reopen-on-load: an opportunity already Closed Won with no project yet
+		// gets the same prompt once ("No" just dismisses — it was won intentionally
+		// earlier). Guarded to fire at most once per load and never for a status
+		// change made during this session (the realtime prompt covers transitions).
+		if (
+			!frm._ee_reopen_checked &&
+			!frm.is_new() &&
+			frm._ee_loaded_status === "Closed Won" &&
+			frm.doc.status === "Closed Won" &&
+			!frm.doc.custom_created_project &&
+			erpnext_enhancements.crm &&
+			erpnext_enhancements.crm.confirm_create_project
+		) {
+			frm._ee_reopen_checked = true;
+			erpnext_enhancements.crm.confirm_create_project(frm.doc.name, {
+				mode: "reopen",
+				frm: frm,
+			});
 		}
-		toggle_project_button();
-		frm.fields_dict["status"].$input.on("change", toggle_project_button);
 
 		// The real-time listener for completion remains exactly the same.
 		frappe.realtime.on("project_creation_status", function (data) {

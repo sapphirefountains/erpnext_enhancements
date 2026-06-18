@@ -14,6 +14,7 @@
   "due_by",
   "notes",
   "sla_hours",
+  "sla_business_days",
   "auto_anchor",
   "last_reminded_on"
  ],
@@ -83,7 +84,14 @@
    "fieldname": "sla_hours",
    "fieldtype": "Int",
    "hidden": 1,
-   "label": "SLA (Hours)",
+   "label": "SLA (Hours, legacy)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sla_business_days",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "SLA (Business Days)",
    "read_only": 1
   },
   {

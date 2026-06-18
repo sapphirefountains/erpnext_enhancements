@@ -12,9 +12,10 @@ Template** records):
   they opt in via the "Start Hand-Off Process" form button
   (:func:`start_process`).
 * :func:`announce_seeded_steps` (Project ``after_insert``) — tells the first
-  pending step's owner their step is up. For a fresh project that is the
-  Accounts Receivable rep (Step 3): "the project number exists, start the
-  accounting setup" — exactly the hand-off the meeting said kept dropping.
+  pending step's owner their step is up. As of the v1.66.0 reorder that is the
+  Account Executive holding the hand-off meeting (Step 2): the internal hand-off
+  now leads, before the downstream accounting setup the meeting said kept
+  dropping.
 * :func:`sync_process_steps` (Project ``before_save``, after the payment
   stamp from ``status_alerts``) — auto-completes *Payment Received*-anchored
   steps when the Payment Received box is ticked, stamps
@@ -38,13 +39,14 @@ reverse lookup as fallback); **Accounts Receivable** → the Employee named in
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, cint, get_datetime, get_url_to_form, now_datetime
+from frappe.utils import cint, get_datetime, get_url_to_form, now_datetime
 
 from erpnext_enhancements.feature_flags import (
 	process_automation_enabled,
 	throw_if_process_automation_disabled,
 )
 from erpnext_enhancements.status_alerts import _deliver
+from erpnext_enhancements.utils.working_days import add_working_days
 
 ROLE_AE = "Account Executive"
 ROLE_AR = "Accounts Receivable"
@@ -67,7 +69,7 @@ def _templates():
 	return frappe.get_all(
 		"Process Step Template",
 		filters={"enabled": 1},
-		fields=["step_number", "step_title", "responsible_role", "auto_anchor", "sla_hours", "description"],
+		fields=["step_number", "step_title", "responsible_role", "auto_anchor", "sla_hours", "sla_business_days", "description"],
 		order_by="step_number asc",
 	)
 
@@ -77,11 +79,30 @@ def _first_pending(steps):
 	return min(pending, key=lambda row: cint(row.step_number)) if pending else None
 
 
+def _handoff_holiday_list():
+	"""Holiday List used for business-day due dates (settings; None = weekends only)."""
+	return frappe.db.get_single_value("ERPNext Enhancements Settings", "handoff_holiday_list")
+
+
 def _refresh_due(doc):
-	"""Ensure the current (first pending) step has a due date: now + SLA."""
+	"""Ensure the current (first pending) step has a due date: now + SLA business days.
+
+	The SLA is counted in business days (Mon-Fri, skipping the configured Holiday
+	List) so a 2-day SLA set on a Friday lands the following Tuesday. ``0`` business
+	days means no due date / no escalation. Rows predating the ``sla_business_days``
+	field (pre-backfill) fall back to the legacy calendar ``sla_hours``, rounded up
+	to whole days.
+	"""
 	current = _first_pending(doc.get(STEPS_FIELD) or [])
-	if current and not current.due_by and cint(current.sla_hours) > 0:
-		current.due_by = add_to_date(now_datetime(), hours=cint(current.sla_hours))
+	if not current or current.due_by:
+		return
+	days = current.get("sla_business_days")
+	if days is None:
+		days = (cint(current.get("sla_hours")) + 23) // 24  # legacy fallback: ceil(hours/24)
+	days = cint(days)
+	if days <= 0:
+		return
+	current.due_by = add_working_days(now_datetime(), days, holiday_list=_handoff_holiday_list())
 
 
 def _append_steps(doc):
@@ -104,6 +125,7 @@ def _append_steps(doc):
 			"step_title": template.step_title,
 			"responsible_role": template.responsible_role,
 			"sla_hours": cint(template.sla_hours),
+			"sla_business_days": cint(template.get("sla_business_days")),
 			"auto_anchor": template.auto_anchor or "",
 			"status": "Pending",
 		}

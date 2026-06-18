@@ -3,58 +3,31 @@
 // Targets: the Opportunity DocType form.
 // Loaded via: hooks.py `doctype_js["Opportunity"]`.
 //
-// Bundles four behaviours that previously lived as database Client Scripts:
+// Bundles the behaviours that previously lived as database Client Scripts:
 //   1. Make the Scope/Schedule/Budget rank fields mandatory once status is
 //      "Closed Won".
 //   2. Enforce that those three ranks are unique among the ones that are filled.
 //   3. Show/hide the per-value-stream scope fields based on the selected streams.
-//   4. A simpler "Create Project" button variant (see opportunity.js for the
-//      richer dialog; both enqueue the same background project-creation API).
+//
+// Note: a "Create Project" button variant used to live here too. Project
+// creation is now gated entirely behind the "Create project now?" prompt
+// (create_project_prompt.js + crm_enhancements/project_prompt.py), so the button
+// — and this file's duplicate `project_creation_status` listener (the form's
+// canonical one lives in crm_enhancements/opportunity.js) — were removed.
 //
 // Sources:
 //   - "Opportunity Status for Rankings Mandatory" (Opportunity, Form)
 //   - "Opportunity Scope Schedule Budget Ranking" (Opportunity, Form)
 //   - "Opportunities Show/Hide Custom Fields Value Stream" (Opportunity, Form)
-//   - "Opportunity - Create Project Button" (Opportunity, Form)
 
 frappe.ui.form.on("Opportunity", {
     refresh: function (frm) {
         set_rank_fields_mandatory(frm);
         toggle_value_stream_fields(frm);
-        toggle_create_project_button(frm);
-
-        // Real-time listener for background project creation completion.
-        frappe.realtime.on("project_creation_status", function (data) {
-            if (data.opportunity_name === frm.doc.name) {
-                if (data.status === "success") {
-                    frappe.show_alert(
-                        {
-                            message: __(
-                                `Project <a href="/app/project/${data.project_doc.name}">${data.project_doc.name}</a> created successfully.`
-                            ),
-                            indicator: "green",
-                        },
-                        10
-                    );
-                    frm.reload_doc();
-                } else {
-                    frappe.show_alert(
-                        {
-                            message: __(
-                                "Project creation failed. Please check the Error Log for details."
-                            ),
-                            indicator: "red",
-                        },
-                        10
-                    );
-                }
-            }
-        });
     },
 
     status: function (frm) {
         set_rank_fields_mandatory(frm);
-        toggle_create_project_button(frm);
     },
 
     // Source: "Opportunity Scope Schedule Budget Ranking"
@@ -140,76 +113,4 @@ function toggle_value_stream_fields(frm) {
     });
 
     frm.refresh_fields();
-}
-
-// Source: "Opportunity - Create Project Button"
-// NOTE: the original Client Script called `crm_enhancements.crm_enhancements.api.enqueue_project_creation`
-// with an `user` arg; corrected here to the app's actual method/signature
-// (erpnext_enhancements.crm_enhancements.api.enqueue_project_creation(opportunity_name, users, project_template)).
-function toggle_create_project_button(frm) {
-    const can_create =
-        frm.doc.status === "Closed Won" &&
-        !frm.doc.custom_created_project &&
-        (frappe.user.has_role("Employee") || frappe.user.has_role("System Manager"));
-
-    if (!can_create) {
-        frm.remove_custom_button("Create Project");
-        return;
-    }
-
-    frm.add_custom_button(__("Create Project"), function () {
-        let dialog = new frappe.ui.Dialog({
-            title: "Select Project Template",
-            fields: [
-                {
-                    label: "Project Template",
-                    fieldname: "project_template",
-                    fieldtype: "Link",
-                    options: "Project Template",
-                    reqd: 1,
-                },
-                {
-                    label: "Project Status",
-                    fieldname: "project_status",
-                    fieldtype: "Select",
-                    options: "Active\nCompleted",
-                    default: "Active",
-                },
-            ],
-            primary_action_label: "Create Project",
-            primary_action: function (values) {
-                dialog.get_primary_btn().prop("disabled", true).html("Queuing...");
-                dialog.body.innerHTML = `
-                    <div class="progress">
-                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
-                    </div>
-                    <div class="text-center" style="margin-top: 10px;">
-                        Adding job to the queue...
-                    </div>`;
-
-                frappe.call({
-                    method: "erpnext_enhancements.crm_enhancements.api.enqueue_project_creation",
-                    args: {
-                        opportunity_name: frm.doc.name,
-                        users: frappe.session.user,
-                        project_template: values.project_template,
-                    },
-                    callback: function (r) {
-                        dialog.hide();
-                        if (r.message && r.message.status === "queued") {
-                            frappe.show_alert({
-                                message: __(
-                                    "Project creation started in the background. Awaiting completion..."
-                                ),
-                                indicator: "blue",
-                            });
-                            frm.remove_custom_button("Create Project");
-                        }
-                    },
-                });
-            },
-        });
-
-        dialog.show();
-    }).addClass("btn-primary");
 }
