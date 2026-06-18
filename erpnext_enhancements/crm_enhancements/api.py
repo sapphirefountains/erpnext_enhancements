@@ -332,6 +332,18 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			opp.save(ignore_permissions=True)
 			frappe.db.commit()
 
+			# Deferred Closed-Won team SMS (PRO-0204 Step 1): the alert is coupled to
+			# the Project actually existing, so it fires here rather than on the
+			# won-save. enqueue_after_commit=False — the Opportunity is already
+			# committed above, so the job reads a consistent row even if the Drive
+			# step below fails.
+			frappe.enqueue(
+				"erpnext_enhancements.status_alerts.deliver_closed_won_alerts",
+				opportunity=opportunity_name,
+				queue="short",
+				enqueue_after_commit=False,
+			)
+
 			drive_success = False
 			drive_error_details = None
 

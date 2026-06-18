@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.67.0] - 2026-06-18
+
+### Added
+- **Closed Won now prompts "Create project now?" (form + Kanban).** Marking an Opportunity **Closed Won** asks whether to create the Project right away — coupling the win to the hand-off so a deal can't sit "won but unconverted" by accident (PRO-0204 Step 1 → Step 2). The transition is detected server-side on the Opportunity `on_update` hook (so it fires from the form, a **Kanban** drag, a list edit, or the API) and the popup is shown via a global realtime listener.
+  - **Yes** opens the existing create-project dialog (Project Template + Users to Notify), with **Users to Notify defaulting to the Account Executive + Project Manager role holders** (still editable), then runs the same background project creation as before.
+  - **No** rolls the status back to its previous value and clears the `custom_date_closed_won` stamp.
+  - Opening an Opportunity that is **already** Closed Won with no Project yet re-shows the prompt once (there, **No** simply dismisses — it was won intentionally earlier).
+- **Hand-off step due dates are now counted in business days (Mon–Fri, skipping holidays).** A 2-day SLA set on a Friday now lands the following **Tuesday**, not Sunday. A new `sla_business_days` field on **Process Step Template** / **Project Process Step** drives `due_by` (the daily overdue escalation follows automatically); an optional **Hand-Off → Holiday List** setting (`handoff_holiday_list`) skips holidays in addition to weekends (blank = weekends only). Legacy `sla_hours` is retained and back-filled (`ceil(hours/24)`: 0→0, 24→1, 48→2).
+- **Hand-off sequence reordered so the internal hand-off leads.** Steps are now **1** Mark Won → **2** Hold Hand-Off Meeting → **3** Create Project → **4** Create Accounting Project → **5** Receive Payment → **6** Outline Tasks → **7** Launch Meeting (the hand-off meeting now precedes project creation). The Project's Hand-Off Process tab follows the new order; existing projects/templates are renumbered by a patch.
+- **Opportunity gets a read-only "Hand-Off Process" tab** showing the first three steps (Mark Won · Hold Hand-Off Meeting · Create Project) — the opportunity→project handover. Once a project exists the rows mirror that Project's live step statuses; the full 7-step tracker continues on the Project.
+
+### Changed
+- **The manual "Create Project" button on Opportunity was removed** (both the rich variant and its shadowed duplicate). Project creation is now reachable only through the Closed-Won prompt; any standard "Create → Project" entry is defensively hidden.
+- **The Closed-Won team SMS is deferred until the Project is actually created** (enqueued from the project-creation background job) instead of firing on the won-save — so answering "No" to the prompt sends nothing. The alert now links to the created Project.
+
+### Notes
+- Requires **`bench migrate`** (new `handoff_holiday_list` setting; `sla_business_days` field + backfill; Opportunity Hand-Off Process tab fields; step-reorder patch) and **`bench build`** (bundled global desk JS). No new Python dependency.
+- Optionally set **ERPNext Enhancements Settings → Hand-Off Process → Holiday List**; confirm the relevant users hold the **Account Executive** / **Project Manager** roles so the notify default resolves.
+
 ## [1.66.0] - 2026-06-18
 
 ### Added

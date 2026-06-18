@@ -1,16 +1,26 @@
 """Seed the PRO-0204 "Won Opportunity Hand-Off" Process Step Templates.
 
 Creates the seven steps from PRO-0204 v1.0 (04/28/2026) — with the Jun 9
-meeting's amendments baked into the descriptions (Step 3 customer-data
-verification, Step 4 attendee list incl. the tech lead, Step 5 auto-completing
-from the Payment Received checkbox). **Insert-only**: a template whose
-``step_number`` already exists is left untouched, so site-side edits
-(rewording, SLA tuning, disabling a step) survive re-migrations and this
-patch re-running on fresh installs.
+meeting's amendments baked into the descriptions (customer-data verification on
+the accounting step, the attendee list incl. the tech lead on the hand-off
+meeting, payment auto-completing from the Payment Received checkbox).
 
-SLA semantics: hours after the step becomes *current* before the daily
-escalation starts nagging; 0 disables escalation (used for the auto-anchored
-steps and for payment, whose timing belongs to the customer, not the rep).
+As of v1.66.0 the sequence is **Mark Won (1) -> Hold Hand-Off Meeting (2) ->
+Create Project (3) -> Create Accounting Project (4) -> Receive Payment (5) ->
+Outline Tasks (6) -> Launch Meeting (7)** — the internal hand-off now leads,
+before the project is stood up. Existing sites are renumbered by
+``patches.renumber_handoff_steps``.
+
+**Insert-only**: a template whose ``step_number`` already exists is left
+untouched, so site-side edits (rewording, SLA tuning, disabling a step) survive
+re-migrations and this patch re-running on fresh installs.
+
+SLA semantics: business days (Mon-Fri, skipping the configured Holiday List)
+after the step becomes *current* before the daily escalation starts nagging; 0
+disables escalation (used for the auto-anchored steps and for payment, whose
+timing belongs to the customer, not the rep). ``sla_business_days`` drives the
+due date as of v1.66.0; the legacy calendar ``sla_hours`` is kept as the source
+for the one-time backfill (``patches.backfill_sla_business_days``).
 """
 
 import frappe
@@ -22,6 +32,7 @@ STEPS = [
 		"responsible_role": "Account Executive",
 		"auto_anchor": "Opportunity Won",
 		"sla_hours": 0,
+		"sla_business_days": 0,
 		"description": (
 			"Mark the opportunity Closed Won in the CRM. The system texts the team "
 			"automatically (Sales, Production, Finance) — Finance can start QuickBooks "
@@ -29,22 +40,24 @@ STEPS = [
 		),
 	},
 	{
-		"step_number": 2,
+		"step_number": 3,
 		"step_title": "Create Project in PM System",
 		"responsible_role": "Project Manager",
 		"auto_anchor": "Project Created",
 		"sla_hours": 0,
+		"sla_business_days": 0,
 		"description": (
 			"Create the project from the won opportunity (this step completes itself "
 			"when the project exists). Assign the tech lead while you're here."
 		),
 	},
 	{
-		"step_number": 3,
+		"step_number": 4,
 		"step_title": "Create Accounting Project & Send Invoice",
 		"responsible_role": "Accounts Receivable",
 		"auto_anchor": "",
 		"sla_hours": 24,
+		"sla_business_days": 1,
 		"description": (
 			"Verify the customer's address and contact details are current FIRST "
 			"(per the Jun 9 meeting — this is the data-accuracy checkpoint). Then "
@@ -53,11 +66,12 @@ STEPS = [
 		),
 	},
 	{
-		"step_number": 4,
+		"step_number": 2,
 		"step_title": "Hold Hand-Off Meeting",
 		"responsible_role": "Account Executive",
 		"auto_anchor": "",
 		"sla_hours": 48,
+		"sla_business_days": 2,
 		"description": (
 			"Sales schedules and leads the internal hand-off with the PM and tech "
 			"lead (Lisa joins for build projects with a schedule of values). Right "
@@ -72,6 +86,7 @@ STEPS = [
 		"responsible_role": "Accounts Receivable",
 		"auto_anchor": "Payment Received",
 		"sla_hours": 0,
+		"sla_business_days": 0,
 		"description": (
 			"Completes itself when the Payment Received box on the Budget tab is "
 			"ticked — that also notifies the PM and AE that the project is "
@@ -85,6 +100,7 @@ STEPS = [
 		"responsible_role": "Project Manager",
 		"auto_anchor": "",
 		"sla_hours": 48,
+		"sla_business_days": 2,
 		"description": (
 			"Build out the schedule: tasks, milestones, deadlines, assignments. New "
 			"projects get the full structure; the open-task count next to this step "
@@ -97,6 +113,7 @@ STEPS = [
 		"responsible_role": "Project Manager",
 		"auto_anchor": "",
 		"sla_hours": 48,
+		"sla_business_days": 2,
 		"description": (
 			"The formal kickoff with the production team: scope, deliverables, "
 			"timeline, individual assignments. Steps 1-6 all feed this — it only "

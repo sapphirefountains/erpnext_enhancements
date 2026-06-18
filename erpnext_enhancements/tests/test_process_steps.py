@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils import get_datetime, getdate
 
 from erpnext_enhancements.process_steps import (
 	_first_pending,
@@ -18,12 +19,13 @@ from erpnext_enhancements.process_steps import (
 	seed_process_steps,
 	sync_process_steps,
 )
+from erpnext_enhancements.utils.working_days import add_working_days
 
 TEMPLATES = [
-	frappe._dict(step_number=1, step_title="Mark Opportunity as Won", responsible_role="Account Executive", auto_anchor="Opportunity Won", sla_hours=0, description=""),
-	frappe._dict(step_number=2, step_title="Create Project in PM System", responsible_role="Project Manager", auto_anchor="Project Created", sla_hours=0, description=""),
-	frappe._dict(step_number=3, step_title="Create Accounting Project & Send Invoice", responsible_role="Accounts Receivable", auto_anchor="", sla_hours=24, description=""),
-	frappe._dict(step_number=5, step_title="Receive Customer Payment", responsible_role="Accounts Receivable", auto_anchor="Payment Received", sla_hours=0, description=""),
+	frappe._dict(step_number=1, step_title="Mark Opportunity as Won", responsible_role="Account Executive", auto_anchor="Opportunity Won", sla_hours=0, sla_business_days=0, description=""),
+	frappe._dict(step_number=2, step_title="Create Project in PM System", responsible_role="Project Manager", auto_anchor="Project Created", sla_hours=0, sla_business_days=0, description=""),
+	frappe._dict(step_number=3, step_title="Create Accounting Project & Send Invoice", responsible_role="Accounts Receivable", auto_anchor="", sla_hours=24, sla_business_days=1, description=""),
+	frappe._dict(step_number=5, step_title="Receive Customer Payment", responsible_role="Accounts Receivable", auto_anchor="Payment Received", sla_hours=0, sla_business_days=0, description=""),
 ]
 
 
@@ -80,6 +82,7 @@ def _seeded_project(**overrides):
 	with (
 		patch("erpnext_enhancements.process_steps._templates", return_value=TEMPLATES),
 		patch.object(frappe.db, "get_value", return_value="2026-06-01"),
+		patch.object(frappe.db, "get_single_value", return_value=None),
 	):
 		seed_process_steps(project)
 	return project
@@ -234,3 +237,35 @@ class TestTransitions(FrappeTestCase):
 		with patch.object(frappe, "enqueue") as enqueue:
 			notify_step_transitions(project)
 		enqueue.assert_not_called()
+
+
+class TestWorkingDays(FrappeTestCase):
+	"""Business-day arithmetic for hand-off due dates (2026-06-19 is a Friday)."""
+
+	def test_friday_plus_two_lands_tuesday(self):
+		self.assertEqual(getdate(add_working_days("2026-06-19 09:00:00", 2)), getdate("2026-06-23"))
+
+	def test_friday_plus_one_lands_monday(self):
+		self.assertEqual(getdate(add_working_days("2026-06-19 09:00:00", 1)), getdate("2026-06-22"))
+
+	def test_monday_plus_one_lands_tuesday(self):
+		self.assertEqual(getdate(add_working_days("2026-06-22 09:00:00", 1)), getdate("2026-06-23"))
+
+	def test_zero_or_negative_returns_unchanged(self):
+		self.assertEqual(
+			get_datetime(add_working_days("2026-06-19 09:00:00", 0)), get_datetime("2026-06-19 09:00:00")
+		)
+		self.assertEqual(
+			get_datetime(add_working_days("2026-06-19 09:00:00", -2)), get_datetime("2026-06-19 09:00:00")
+		)
+
+	def test_preserves_time_of_day(self):
+		self.assertEqual(
+			get_datetime(add_working_days("2026-06-19 14:30:00", 1)), get_datetime("2026-06-22 14:30:00")
+		)
+
+	def test_skips_configured_holiday(self):
+		# Holiday on Monday 2026-06-22 -> Friday + 1 business day skips to Tuesday.
+		with patch.object(frappe, "get_all", return_value=[frappe._dict(holiday_date="2026-06-22")]):
+			result = add_working_days("2026-06-19 09:00:00", 1, holiday_list="Test Holidays")
+		self.assertEqual(getdate(result), getdate("2026-06-23"))

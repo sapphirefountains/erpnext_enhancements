@@ -6,10 +6,11 @@ numbers resolve from ``Employee.cell_number`` at send time; texts go out
 through the Triton gateway via
 :func:`erpnext_enhancements.api.telephony.send_system_sms`):
 
-* :func:`notify_closed_won` — Opportunity ``on_update``. Fires once, on the
-  *transition* into status "Closed Won" (PRO-0204 Step 1: "system sends
-  auto-alerts"); texts each opted-in recipient a deep link so the Project can
-  be created and QuickBooks set up without waiting on email.
+* :func:`deliver_closed_won_alerts` — texts each opted-in recipient that a deal
+  is won (PRO-0204 Step 1: "system sends auto-alerts"). Enqueued from project
+  creation rather than the won-save: Phase 1 couples "won" to creating the
+  Project (see :mod:`erpnext_enhancements.crm_enhancements.project_prompt`), so
+  the alert only fires once the Project exists.
 * :func:`nag_unconverted_opportunities` — daily scheduler. Re-nags while a won
   opportunity still has no Project (``custom_created_project`` empty) after
   the configured number of hours — the Step 1 → Step 2 gap where leads have
@@ -108,37 +109,25 @@ def _deliver(recipients, message, subject, reference_doctype, reference_docname)
 # ---------------------------------------------------------------------------
 
 
-def notify_closed_won(doc, method=None):
-	"""Opportunity ``on_update`` — queue team SMS on the transition into Closed Won.
-
-	Transition-guarded via ``get_doc_before_save()``: re-saving an already-won
-	opportunity never re-sends. A document *created* directly in Closed Won
-	(no before-doc) does alert.
-	"""
-	if doc.status != "Closed Won" or _in_maintenance_context():
-		return
-	if not process_automation_enabled():
-		return
-	before = doc.get_doc_before_save()
-	if before and before.status == "Closed Won":
-		return
-	frappe.enqueue(
-		"erpnext_enhancements.status_alerts.deliver_closed_won_alerts",
-		opportunity=doc.name,
-		queue="short",
-		enqueue_after_commit=True,
-	)
-
-
 def deliver_closed_won_alerts(opportunity):
-	"""Background job: text the opted-in recipients about a won opportunity."""
+	"""Background job: text the opted-in recipients about a won opportunity.
+
+	Enqueued from project creation
+	(:func:`erpnext_enhancements.crm_enhancements.api.create_project_from_opportunity_background`),
+	not the won-save: Phase 1 couples "won" to creating the Project (see
+	:mod:`erpnext_enhancements.crm_enhancements.project_prompt`), so the alert only
+	goes out once the Project exists — answering "No" to the create prompt sends
+	nothing.
+	"""
+	if _in_maintenance_context() or not process_automation_enabled():
+		return
 	recipients = _alert_recipients("closed_won")
 	if not recipients:
 		return
 	opp = frappe.db.get_value(
 		"Opportunity",
 		opportunity,
-		["name", "customer_name", "party_name", "custom_opportunity_summary"],
+		["name", "customer_name", "party_name", "custom_opportunity_summary", "custom_created_project"],
 		as_dict=True,
 	)
 	if not opp:
@@ -148,7 +137,11 @@ def deliver_closed_won_alerts(opportunity):
 	parts = [f"WON: {customer}"]
 	if opp.custom_opportunity_summary:
 		parts.append(opp.custom_opportunity_summary)
-	message = " - ".join(parts) + f"\nReview & convert: {get_url_to_form('Opportunity', opp.name)}"
+	if opp.custom_created_project:
+		tail = f"\nProject: {get_url_to_form('Project', opp.custom_created_project)}"
+	else:
+		tail = f"\nReview & convert: {get_url_to_form('Opportunity', opp.name)}"
+	message = " - ".join(parts) + tail
 
 	_deliver(
 		recipients,
@@ -226,9 +219,9 @@ def stamp_payment_received_date(doc, method=None):
 def notify_payment_received(doc, method=None):
 	"""Project ``on_update`` — comment + alert PM and AE when Payment Received is ticked.
 
-	Transition-guarded like :func:`notify_closed_won`; unticking and re-ticking
-	deliberately re-alerts (it means a recorded payment was corrected and then
-	confirmed again).
+	Transition-guarded via ``get_doc_before_save()`` (a save that didn't just
+	tick the box is a no-op); unticking and re-ticking deliberately re-alerts
+	(it means a recorded payment was corrected and then confirmed again).
 	"""
 	if not cint(doc.custom_payment_received) or _in_maintenance_context():
 		return

@@ -34,6 +34,9 @@ import "./global_comments.js";
 import "./comments.js";
 import "./comments_auto.js";
 import "./crm_note_enhancements.js";
+// Closed Won -> "Create project now?" prompt (global listener; works on the
+// Opportunity form and the Kanban board). Server half: crm_enhancements/project_prompt.py.
+import "./crm_enhancements/create_project_prompt.js";
 import "./performance_fixes.js";
 import "./activity_log_numbering.js";
 import "./filter_help.js";

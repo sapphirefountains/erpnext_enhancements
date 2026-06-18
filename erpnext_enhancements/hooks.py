@@ -53,6 +53,7 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
+		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 	],
@@ -254,7 +255,7 @@ doc_events = {
 		],
 		"on_update": [
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
-			"erpnext_enhancements.status_alerts.notify_closed_won",
+			"erpnext_enhancements.crm_enhancements.project_prompt.prompt_create_project_on_won",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
 		],
 		# Drive folder per Customer-party opportunity (settings opt-in)
