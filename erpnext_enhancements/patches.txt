@@ -106,3 +106,5 @@ erpnext_enhancements.patches.create_device_manager_role
 erpnext_enhancements.patches.backfill_sla_business_days
 # v1.66.0 hand-off reorder: Hold Hand-Off Meeting moves ahead of Create Project (1,4,2,3,5,6,7)
 erpnext_enhancements.patches.renumber_handoff_steps
+# v1.68.0 backstop: ensure the Opportunity Hand-Off Process tab custom fields exist (fixture sync missed them on some deploys)
+erpnext_enhancements.patches.ensure_opportunity_handoff_fields
