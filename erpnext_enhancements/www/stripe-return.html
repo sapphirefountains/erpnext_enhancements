@@ -1,0 +1,20 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("Payment") }}{% endblock %}
+
+{% block page_content %}
+<div class="stripe-return" style="max-width:560px;margin:40px auto;text-align:center;">
+	{% if outcome == "cancel" %}
+		<h1>{{ _("Payment cancelled") }}</h1>
+		<p class="text-muted">{{ _("No charge was made. You can return and try again whenever you're ready.") }}</p>
+	{% else %}
+		<h1>{{ _("Thank you!") }}</h1>
+		{% if payment_status == "Paid" %}
+			<p class="text-muted">{{ _("Your payment was received. A receipt will follow by email.") }}</p>
+		{% else %}
+			<p class="text-muted">{{ _("Your payment is being processed. Bank (ACH) payments can take a few business days to clear; you'll be notified once it settles.") }}</p>
+		{% endif %}
+	{% endif %}
+	<p style="margin-top:24px;"><a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a></p>
+</div>
+{% endblock %}

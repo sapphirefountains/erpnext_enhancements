@@ -18,6 +18,10 @@ dependencies = [
     # validation + Voice access-token JWTs). The used APIs are stable across
     # 8.x-9.x; the bound guards against a breaking 10.x.
     "twilio>=8,<10",
+    # NOTE: stripe_payments deliberately adds NO Stripe SDK dependency — the host
+    # is a managed server where packages can't be pip-installed. It talks to the
+    # Stripe REST API with `requests` (a Frappe dependency) and hand-rolls webhook
+    # signature verification, mirroring the QuickBooks Online client.
     # "frappe~=16.0.0" # Installed and managed by bench.
 ]
 

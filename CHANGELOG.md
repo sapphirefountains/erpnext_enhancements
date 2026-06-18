@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.65.0] - 2026-06-18
+
+### Added
+- **Stripe surcharging / fee pass-through (configurable, default OFF).** Pass card/ACH processing fees to customers, the compliant way. Because hosted Checkout can't detect debit vs credit, the flow is **method-first**: the payer (desk dialog or portal buttons) picks **Card** or **Bank (ACH)** and sees the fee before paying; the session is locked to that method and the fee is added as a **separate, labelled line item** with a **pre-payment disclosure** (Checkout `custom_text`). Settings: `surcharge_enabled`, `card_surcharge_percent` (validation caps it at the US 3% network max), `card_surcharge_flat`, `ach_fee_percent`, `ach_fee_flat`, `surcharge_income_account`, `surcharge_label`, `surcharge_disclosure`. Accounting: the invoice amount is allocated to the invoice and the surcharge is booked to the income account via a Payment Entry deduction (the bank/clearing account receives invoice + fee). A full compliance reference — US 3% cap, debit/prepaid prohibition, state bans (CT/MA/ME/PR) + California, Visa/Mastercard/Amex/Discover registration + disclosure, and the rule that refunds must return the surcharge — is documented in **`docs/stripe_surcharging_compliance.md`** with a go-live checklist. **Ships OFF**; complete the checklist (including 30-day advance notice to the networks/Stripe) before enabling.
+- **Stripe Payments Phase 2 — saved payment methods + recurring / off-session charging.**
+  - **Save a method:** a **"Set up Autopay"** action (Customer form + the customer portal `/pay`) starts a Checkout Session in **setup mode** with consent text; the webhook stores the payment method + a display label on the Customer (`custom_stripe_default_payment_method`, `custom_stripe_payment_method_label`, `custom_stripe_autopay_enabled`).
+  - **Charge off-session:** a manual **"Charge Saved Method"** button (Customer form) and an **automatic charge when a Sales Invoice is submitted** for an autopay-enrolled customer — which also covers **scheduled / maintenance-contract billing**, since maintenance generates Sales Invoices. Off-session PaymentIntents post a Payment Entry on success (ACH `processing` handled), deduped by PaymentIntent. New `Stripe Payment` channel "Auto".
+  - **Refunds:** a **"Refund"** button on Stripe Payment (operator-only) issues a full or partial Stripe refund; the `charge.refunded` webhook records the refunded amount + status. (Booking the GL reversal is a manual step for now.)
+
+### Notes
+- No new Python dependency (uses `requests`). Requires `bench migrate` (new Customer/Settings fields + `Stripe Payment` channel option) and `bench build` (form/portal JS). Verify on the Stripe **sandbox** before enabling surcharge or autopay.
+
+## [1.64.0] - 2026-06-18
+
+### Added
+- **Stripe Payments integration — Phase 1 (sandbox-only).** A new `stripe_payments` module (Frappe module **"Stripe Payments"**) for taking customer payments via **Stripe-hosted Checkout** and recording them back into ERPNext as **Payment Entries**. Realizes the long-planned "text-to-pay via Stripe" (June 9 invoice-processing Phase 5). Mirrors the QuickBooks Online module's conventions (encrypted secrets, role-gated whitelisted RPCs, signature-verified webhook, audit/idempotency ledger). **Test mode only** for now — the Stripe account isn't live yet.
+  - **Stripe Payments Settings** (Single): `environment` (Test/Live, default **Test**), `enabled`, `company`, publishable/secret keys + webhook signing secret (encrypted **Password** fields), deposit/clearing account, card & ACH Modes of Payment, `enable_card`/`enable_ach`, redirect routes. A **sandbox guard** (`get_api_key()`) refuses an `sk_live_` key while Environment is Test (and vice-versa), so the build cannot accidentally transact live. **No third-party SDK** — the integration talks to the Stripe REST API with `requests` (a Frappe dependency) and hand-rolls webhook signature verification, mirroring the QuickBooks client, so nothing needs to be `pip install`ed on the managed host.
+  - **Payments against Sales Invoices and ad-hoc amounts**, with **cards + ACH** (`us_bank_account`). Initiation from **both** a **"Pay with Stripe"** button on submitted/outstanding Sales Invoices (open / copy / **email** / **text** the link — SMS reuses the existing Triton `send_system_sms`) and a **customer self-service portal** at **`/pay`** (Customer-role users pay their own invoices; added to the portal menu). Stripe redirects to a public **`/stripe-return`** landing page.
+  - **Signature-verified webhook** (`…stripe_payments.api.stripe_webhook`, the only guest endpoint) with hand-rolled verification of Stripe's `t=`/`v1=` HMAC-SHA256 signature (constant-time, with replay-window tolerance); events are recorded as **Stripe Event** rows whose name *is* the Stripe event id, so a redelivery can't be ingested twice. Background reconciler posts a **Payment Entry** on success and handles **ACH's delayed settlement** (`checkout.session.completed` → Processing, then `checkout.session.async_payment_succeeded` → Paid), plus failed/expired/refunded transitions. Posting is deduped against existing Payment Entries by PaymentIntent id — **no double charges, no double posting**.
+  - **Stripe Payment** ledger doctype (one row per checkout) + **desk dashboard** ("Stripe Payments") showing connection/config readiness, status counts and recent payments. Hourly scheduler tasks back-stop missed webhooks (`poll_pending`) and retry errored events (`retry_failed`).
+  - `after_migrate` adds Stripe id back-reference custom fields (Customer / Sales Invoice / Payment Entry) and creates **"Stripe"** + **"ACH"** Modes of Payment, defaulting the Settings to them.
+
+### Notes
+- **Deploy:** `bench migrate` (new doctypes + custom fields + Modes of Payment) and `bench build` (form/portal/dashboard JS). **No new Python dependency** — uses `requests` (already a Frappe dependency), so no `pip install` is required (the host is a managed server).
+- **Config before use:** enter test keys (`sk_test_`/`pk_test_`), set a **Deposit / Clearing Account**, and register the webhook endpoint (shown read-only on Settings; locally use `stripe listen --forward-to …/api/method/erpnext_enhancements.stripe_payments.api.stripe_webhook`) and paste its `whsec_…` signing secret. Verify on the Stripe **sandbox** before the account goes live.
+- **Phase 2 (next):** saved payment methods + off-session/recurring charging for maintenance contracts (Stripe SetupIntents, ACH mandates, consent) and refund-initiation UI. This phase records refunds but does not yet reverse the Payment Entry.
+
 ## [1.63.0] - 2026-06-17
 
 ### Security

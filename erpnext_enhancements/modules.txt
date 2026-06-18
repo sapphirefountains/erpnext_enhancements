@@ -17,3 +17,4 @@ Morning Briefing
 Asset Management
 Process Documentation
 Accounting Intake
+Stripe Payments

@@ -92,6 +92,7 @@ doctype_js = {
 		"public/js/customer.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/drive_folder_button.js",
+		"public/js/stripe_payments/customer_autopay.js",
 	],
 	"Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
 	"Sales Order": [
@@ -145,6 +146,10 @@ doctype_js = {
 	# quickbooks_online write-back button (intake-created PI / Payment Entry)
 	"Purchase Invoice": "public/js/quickbooks_online/qbo_writeback_button.js",
 	"Payment Entry": "public/js/quickbooks_online/qbo_writeback_button.js",
+	# stripe_payments
+	"Stripe Payments Settings": "public/js/stripe_payments/stripe_payments_settings.js",
+	"Sales Invoice": "public/js/stripe_payments/sales_invoice_pay_button.js",
+	"Stripe Payment": "public/js/stripe_payments/stripe_payment.js",
 }
 
 doctype_list_js = {
@@ -289,6 +294,11 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_customer_folder",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
+	# stripe_payments: auto-charge a saved method when an invoice for an
+	# autopay-enrolled customer is submitted (covers maintenance-generated invoices).
+	"Sales Invoice": {
+		"on_submit": "erpnext_enhancements.stripe_payments.core.saved_methods.auto_charge_on_invoice_submit",
+	},
 	"*": {
 		"after_save": "erpnext_enhancements.utils.triton_sync.global_triton_sync",
 	},
@@ -341,6 +351,9 @@ scheduler_events = {
 		"erpnext_enhancements.mdm_integration.tasks.retry_failed_syncs",
 		# accounting_intake: ingest new files dropped into the Drive watched folder
 		"erpnext_enhancements.accounting_intake.channels.poll_watched_folder",
+		# stripe_payments: backstop for missed webhooks + retry of errored events
+		"erpnext_enhancements.stripe_payments.core.tasks.poll_pending",
+		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
@@ -364,6 +377,9 @@ after_migrate = [
 	"erpnext_enhancements.accounting_intake.setup.create_supplier_drive_field",
 	# accounting_intake: QBO write-back fields on Purchase Invoice / Payment Entry
 	"erpnext_enhancements.accounting_intake.setup.create_qbo_writeback_fields",
+	# stripe_payments: Stripe id back-reference fields + Stripe/ACH Modes of Payment
+	"erpnext_enhancements.stripe_payments.setup.create_stripe_custom_fields",
+	"erpnext_enhancements.stripe_payments.setup.create_stripe_modes_of_payment",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -512,7 +528,10 @@ has_permission = {
 
 ignore_links_on_delete = ["User Form Draft"]
 
-portal_menu_items = [{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"}]
+portal_menu_items = [
+	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
+	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
+]
 
 # ---------------------------------------------------------------------------
 # Frappe Assistant Core (FAC) integration — read-only MCP tools + skills
