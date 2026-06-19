@@ -83,6 +83,17 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `log_time`, dashboard `update_*`, …) until a follow-on batch. The write
   *gate* itself (`_gate.py`/`gating_api.py`) writes AI Pending Action / AI
   Action Log rows but never business documents.
+- **Mutation/risk annotations (v1.71.0).** Each *mutating* tool sets
+  `self.annotations = annotations_for(self.name)` (from `_gate.py`) in its
+  `__init__`. `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
+  / `destructiveHint`, plus an `x-ee-mutation` / `x-ee-risk` band) from the
+  gate's classification sets, and FAC forwards a tool's `annotations` verbatim
+  in `tools/list`. This lets an MCP **client** (e.g. Triton) read a tool's
+  mutation/risk from the catalog instead of guessing from its verb — closing a
+  safety gap where the oddly-named device tools (`remote_wipe_device`,
+  `run_device_script`, …) were guessed read-only and skipped the client's
+  confirmation step. `_gate.py` stays the single source of truth; a contract
+  test enforces that every `APP_MUTATING` tool advertises the metadata.
 - Permission model: list queries go through `frappe.get_list` (role + user
   permissions enforced); anything that reaches raw SQL or `frappe.get_all`
   inside a reused function is gated first with an explicit
@@ -106,6 +117,11 @@ For the same reason, do **not** add `frappe_assistant_core` to
 | `workforce_time_status` | Time Kiosk | fresh perm-enforced Job Interval queries + `time_kiosk.get_current_status` |
 | `check_ai_pending_action` | AI Governance | read-only status/result lookup of gated AI Pending Actions |
 | `create_followup_task` | Productivity | **write (gated)** — creates a ToDo follow-up, optionally linked + assigned |
+| `remote_lock_device` / `remote_wipe_device` / `locate_device` / `reboot_device` / `run_device_script` / `deploy_device_patch` | Device Management | **write (gated)** — remote MDM actions via `mdm_integration.actions` (Miradore mobile / Action1 computers); wipe/lock/run-script are HIGH risk |
+| `stripe_payment_status` | Accounting | counts by status + unreconciled-paid + failed-webhook signals + recent Stripe Payments (perm-aware `frappe.get_list`) |
+| `quickbooks_sync_status` | Accounting | QBO connection state + failed-run count + recent QuickBooks Sync Log rows; pass `sync_log` for one run's summary |
+| `document_intake_queue` | Accounting | Accounting Document Intake review queue — counts by status, needs-attention backlog, one doc's lines + matches (companion to Triton's `sfo_extract_document`) |
+| `closed_won_handoff_status` | Sales | Closed-Won Opportunities with no project yet (hand-off backlog, oldest first); pass `opportunity` for its hand-off step state |
 
 ## Deployment notes
 

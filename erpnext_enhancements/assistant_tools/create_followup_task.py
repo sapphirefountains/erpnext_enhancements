@@ -26,6 +26,7 @@ from frappe.utils import nowdate
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _PRIORITIES = ("Low", "Medium", "High")
 
@@ -52,6 +53,7 @@ class CreateFollowupTask(BaseTool):
         self.category = "Productivity"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "ToDo"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

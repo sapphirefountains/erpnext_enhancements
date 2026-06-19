@@ -188,6 +188,39 @@ class TestAssistantToolsContract(unittest.TestCase):
                     f"{path}: required field {required!r} missing from properties",
                 )
 
+    def test_mutating_tools_advertise_mutation_annotations(self):
+        # Device-safety fix (v1.71.0): every mutating app tool advertises MCP
+        # ToolAnnotations derived from _gate, so an MCP client (Triton) reads its
+        # mutation/risk from tools/list instead of guessing from the verb (which
+        # mis-classified the oddly-named device tools as read-only). Enforce it so
+        # a future write tool can't silently ship without the metadata.
+        from erpnext_enhancements.assistant_tools._gate import APP_MUTATING
+
+        for path, _module_name, _cls, tool in self.tools:
+            if tool.name not in APP_MUTATING:
+                continue
+            ann = getattr(tool, "annotations", None)
+            self.assertIsInstance(ann, dict, f"{path}: mutating tool must set .annotations")
+            self.assertIs(ann.get("readOnlyHint"), False, f"{path}: annotations.readOnlyHint must be False")
+            self.assertIs(ann.get("x-ee-mutation"), True, f"{path}: annotations must mark x-ee-mutation True")
+            self.assertIn(
+                ann.get("x-ee-risk"), {"low", "medium", "high"},
+                f"{path}: annotations.x-ee-risk must be low/medium/high",
+            )
+
+    def test_annotations_well_formed(self):
+        # Any tool that sets annotations must use a JSON-serialisable dict with a
+        # boolean readOnlyHint and a valid risk band (FAC forwards it verbatim).
+        for path, _module_name, _cls, tool in self.tools:
+            ann = getattr(tool, "annotations", None)
+            if ann is None:
+                continue
+            self.assertIsInstance(ann, dict, path)
+            if "readOnlyHint" in ann:
+                self.assertIsInstance(ann["readOnlyHint"], bool, path)
+            if "x-ee-risk" in ann:
+                self.assertIn(ann["x-ee-risk"], {"low", "medium", "high"}, path)
+
 
 class TestAssistantSkillsManifest(unittest.TestCase):
     @classmethod
