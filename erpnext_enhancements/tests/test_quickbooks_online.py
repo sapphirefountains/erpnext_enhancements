@@ -423,6 +423,43 @@ def test_account_based_bill_maps_to_journal_entry(monkeypatch):
 	assert debits == {"Build Materials - SF": 100.0, "Shop Supplies - SF": 50.0}
 
 
+def test_bill_payment_sets_supplier_party_on_ap_line(monkeypatch):
+	"""A BillPayment's A/P debit carries the vendor as Party and uses the default payable."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor":
+				return "Plastic Works"
+			if f.get("qbo_entity_type") == "Account":
+				return "US Bank Checking - SF" if f.get("qbo_id") == "130" else None
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "2955",
+		"TxnDate": "2009-08-21",
+		"TotalAmt": 87.5,
+		"VendorRef": {"value": "1045"},
+		"CheckPayment": {"BankAccountRef": {"value": "130"}},
+		"Line": [{"Amount": 87.5}],
+	}
+	doctype, values = map_qbo_to_erpnext("BillPayment", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	ap = values["accounts"][0]
+	assert ap["account"] == "2110 - Creditors - SF"
+	assert ap["debit_in_account_currency"] == 87.5
+	assert ap["party_type"] == "Supplier" and ap["party"] == "Plastic Works"
+	funding = values["accounts"][1]
+	assert funding["account"] == "US Bank Checking - SF" and funding["credit_in_account_currency"] == 87.5
+
+
 def test_heal_invalid_owned_selects_repairs_stale_value():
 	"""A pre-existing invalid Select value is replaced with the valid mapped value."""
 	frappe = install_frappe_stub()
