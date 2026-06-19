@@ -83,6 +83,17 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `log_time`, dashboard `update_*`, …) until a follow-on batch. The write
   *gate* itself (`_gate.py`/`gating_api.py`) writes AI Pending Action / AI
   Action Log rows but never business documents.
+- **Mutation/risk annotations (v1.71.0).** Each *mutating* tool sets
+  `self.annotations = annotations_for(self.name)` (from `_gate.py`) in its
+  `__init__`. `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
+  / `destructiveHint`, plus an `x-ee-mutation` / `x-ee-risk` band) from the
+  gate's classification sets, and FAC forwards a tool's `annotations` verbatim
+  in `tools/list`. This lets an MCP **client** (e.g. Triton) read a tool's
+  mutation/risk from the catalog instead of guessing from its verb — closing a
+  safety gap where the oddly-named device tools (`remote_wipe_device`,
+  `run_device_script`, …) were guessed read-only and skipped the client's
+  confirmation step. `_gate.py` stays the single source of truth; a contract
+  test enforces that every `APP_MUTATING` tool advertises the metadata.
 - Permission model: list queries go through `frappe.get_list` (role + user
   permissions enforced); anything that reaches raw SQL or `frappe.get_all`
   inside a reused function is gated first with an explicit

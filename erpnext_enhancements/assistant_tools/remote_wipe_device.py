@@ -13,6 +13,8 @@ import frappe
 from frappe import _
 from frappe_assistant_core.core.base_tool import BaseTool
 
+from erpnext_enhancements.assistant_tools._gate import annotations_for
+
 _MODES = ("selective", "full")
 
 
@@ -31,6 +33,7 @@ class RemoteWipeDevice(BaseTool):
 		self.category = "Device Management"
 		self.source_app = "erpnext_enhancements"
 		self.requires_permission = "Managed Device"
+		self.annotations = annotations_for(self.name)
 		self.inputSchema = {
 			"type": "object",
 			"properties": {
@@ -57,7 +60,9 @@ class RemoteWipeDevice(BaseTool):
 			frappe.throw(_("'mode' must be 'selective' or 'full'."), frappe.ValidationError)
 		if not frappe.has_permission("Managed Device", "write"):
 			frappe.throw(_("You do not have permission to act on devices."), frappe.PermissionError)
-		return execute_device_action(device, "wipe", mode=mode, source="Assistant", requested_by=frappe.session.user)
+		return execute_device_action(
+			device, "wipe", mode=mode, source="Assistant", requested_by=frappe.session.user
+		)
 
 
 __all__ = ["RemoteWipeDevice"]

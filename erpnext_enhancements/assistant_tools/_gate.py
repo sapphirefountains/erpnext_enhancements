@@ -116,6 +116,34 @@ def classify_risk(tool_name, category=None):
     return "Medium"
 
 
+def annotations_for(tool_name):
+    """MCP ToolAnnotations (+ ``x-ee-*`` risk band) for a tool, derived from the
+    classification sets above so this gate stays the single source of truth.
+
+    FAC forwards a tool's ``annotations`` verbatim in its ``tools/list`` response
+    (it reads ``getattr(tool, "annotations", None)``), so an MCP client such as
+    Triton can read a tool's mutation/risk from here instead of guessing from the
+    verb — which is how Triton was mis-classifying the oddly-named device tools
+    (``remote_wipe_device`` / ``run_device_script`` / …) as read-only and skipping
+    its confirmation step. Mutating tools advertise ``readOnlyHint: False`` +
+    ``destructiveHint`` + an ``x-ee-risk`` band; explicit read tools advertise
+    ``readOnlyHint: True``; unknown tools get ``{}`` (the client decides).
+
+    Pure / bench-free (no frappe calls), so it is safe to call from a tool's
+    ``__init__`` and from the schema tests' stub environment."""
+    if tool_name in EXPLICIT_MUTATING or tool_name in APP_MUTATING:
+        return {
+            "readOnlyHint": False,
+            "destructiveHint": tool_name in HIGH_RISK,
+            "idempotentHint": False,
+            "x-ee-mutation": True,
+            "x-ee-risk": classify_risk(tool_name).lower(),
+        }
+    if tool_name in EXPLICIT_READONLY:
+        return {"readOnlyHint": True, "x-ee-mutation": False}
+    return {}
+
+
 def summarize_tool_call(tool_name, arguments):
     """One human line for the desk card (ported from Triton's templates)."""
     args = arguments or {}
