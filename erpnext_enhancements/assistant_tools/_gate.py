@@ -62,6 +62,10 @@ EXPLICIT_READONLY = {
     "project_procurement_status",
     "workforce_time_status",
     "check_ai_pending_action",
+    "stripe_payment_status",
+    "quickbooks_sync_status",
+    "document_intake_queue",
+    "closed_won_handoff_status",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

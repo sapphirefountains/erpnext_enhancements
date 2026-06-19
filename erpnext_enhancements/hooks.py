@@ -576,6 +576,14 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.reboot_device.RebootDevice",
 	"erpnext_enhancements.assistant_tools.run_device_script.RunDeviceScript",
 	"erpnext_enhancements.assistant_tools.deploy_device_patch.DeployDevicePatch",
+	# v1.70.0 — read-only status tools for subsystems that previously had no AI
+	# surface (Stripe Payments, QuickBooks Online sync, Accounting Document Intake
+	# review queue, Closed-Won -> Project hand-off backlog). All read-only (listed
+	# in _gate.py EXPLICIT_READONLY); each gates on its subsystem's DocType.
+	"erpnext_enhancements.assistant_tools.stripe_payment_status.StripePaymentStatus",
+	"erpnext_enhancements.assistant_tools.quickbooks_sync_status.QuickbooksSyncStatus",
+	"erpnext_enhancements.assistant_tools.document_intake_queue.DocumentIntakeQueue",
+	"erpnext_enhancements.assistant_tools.closed_won_handoff_status.ClosedWonHandoffStatus",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).
