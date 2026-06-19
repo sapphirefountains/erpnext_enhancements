@@ -423,6 +423,90 @@ def test_account_based_bill_maps_to_journal_entry(monkeypatch):
 	assert debits == {"Build Materials - SF": 100.0, "Shop Supplies - SF": 50.0}
 
 
+def test_ledger_line_drops_zero_value_rows():
+	"""_ledger_line skips rows with no posting so ERPNext won't reject a 0/0 line."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _ledger_line
+
+	assert _ledger_line("Bank - SF", debit=100) == {
+		"account": "Bank - SF",
+		"debit_in_account_currency": 100.0,
+		"credit_in_account_currency": 0.0,
+	}
+	assert _ledger_line("Bank - SF", debit=0, credit=0) is None
+	assert _ledger_line(None, debit=5) is None
+
+
+def test_account_based_bill_skips_zero_amount_lines(monkeypatch):
+	"""A QBO Bill's $0 expense line is dropped so the Journal Entry stays insertable."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor":
+				return "C.A.R Automotive Repair"
+			if f.get("qbo_entity_type") == "Account":
+				return "Auto and Trailer Expense - SF"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "20892",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 64.35,
+		"VendorRef": {"value": "2651"},
+		"Line": [
+			{"Amount": 60.0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "159"}}},
+			{"Amount": 0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "159"}}},
+			{"Amount": 4.35, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "159"}}},
+		],
+	}
+	_, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	# No row may have both sides zero, and the two non-zero expense lines remain.
+	assert all(
+		a["debit_in_account_currency"] or a["credit_in_account_currency"] for a in values["accounts"]
+	)
+	debits = [a for a in values["accounts"] if a["debit_in_account_currency"]]
+	assert len(debits) == 2
+	debit_total = sum(a["debit_in_account_currency"] for a in values["accounts"])
+	credit_total = sum(a["credit_in_account_currency"] for a in values["accounts"])
+	assert round(debit_total - credit_total, 2) == 0  # 60 + 4.35 == 64.35 A/P
+
+
+def test_sales_items_set_cost_center_from_class(monkeypatch):
+	"""Sales line cost_center comes from the line's mapped QBO Class; blank otherwise."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Item":
+				return "SERVICE - MAINTENANCE CONTRACT"
+			if f.get("qbo_entity_type") == "Class":
+				return "CL150 Service & Repair - SF"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_items
+
+	payload = {
+		"Line": [
+			{"Amount": 555.0, "Description": "labor", "SalesItemLineDetail": {"ItemRef": {"value": "279"}, "ClassRef": {"value": "100"}, "Qty": 3, "UnitPrice": 185}},
+			{"Amount": 6.82, "Description": "chemicals", "SalesItemLineDetail": {"ItemRef": {"value": "279"}}},
+		]
+	}
+	items = _sales_items(payload)
+
+	assert items[0]["cost_center"] == "CL150 Service & Repair - SF"
+	assert "cost_center" not in items[1]  # no ClassRef -> falls back to company default
+
+
 def test_bill_payment_sets_supplier_party_on_ap_line(monkeypatch):
 	"""A BillPayment's A/P debit carries the vendor as Party and uses the default payable."""
 	frappe = install_frappe_stub()
