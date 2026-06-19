@@ -79,7 +79,7 @@ def sync_opportunity_tags(doc, method=None):
 		``None`` when empty).
 	"""
 	# 1. Define the possible value stream options
-	value_stream_options = {"Build", "Design", "Rent", "Service"}
+	value_stream_options = {"Build", "Design", "Rent", "Service", "Delivery", "Products"}
 
 	# 2. Get the current selected value streams from the child table
 	selected_value_streams = set()

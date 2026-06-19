@@ -28,7 +28,7 @@ function sync_tags_from_child_table(frm) {
 		.map((t) => t.trim())
 		.filter(Boolean);
 
-	let core_tags = ["Build", "Design", "Rent", "Service"];
+	let core_tags = ["Build", "Design", "Rent", "Service", "Delivery", "Products"];
 	let other_tags = current_tags.filter((t) => !core_tags.includes(t));
 
 	let desired_tags = [...new Set([...other_tags, ...value_streams])];

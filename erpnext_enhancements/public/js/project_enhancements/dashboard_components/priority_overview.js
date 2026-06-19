@@ -273,9 +273,10 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 
 			if (projectsRes.message && !projectsRes.message.error) {
 				// Priority Overview covers client-facing work: only the Build,
-				// Design, Rent and Service value streams, and only projects that
-				// are still in progress (is_active = "Yes" and a live status).
-				const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service"];
+				// Design, Rent, Service and Delivery value streams, and only
+				// projects that are still in progress (is_active = "Yes" and a
+				// live status).
+				const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service", "Delivery"];
 				this.projects = projectsRes.message.filter(
 					(p) =>
 						PRIORITY_PROJECT_TYPES.includes(p.project_type) &&

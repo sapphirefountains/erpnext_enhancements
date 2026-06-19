@@ -40,7 +40,7 @@
     // Portfolio Gantt fallback. Kept in one place so this Custom HTML Block stays
     // in sync with the page dashboard (priority_overview.js / the backend's
     // get_all_projects_for_gantt), which filter to exactly these project types.
-    const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service"];
+    const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service", "Delivery"];
 
     // Gantt State tracking
     let gantt_detailed_view = false;
