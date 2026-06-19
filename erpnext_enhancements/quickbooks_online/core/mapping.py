@@ -1602,12 +1602,18 @@ def _account_root_type(qbo_account_type):
 
 
 def _account_type(qbo_account_type):
-	"""Translate a QBO AccountType to an ERPNext account_type (Bank/Receivable/...)."""
+	"""Translate a QBO AccountType to an ERPNext account_type (Bank/Receivable/...).
+
+	QBO "Credit Card" accounts are deliberately left untyped (a plain Liability
+	ledger). ERPNext has no Credit Card account type, and typing them "Payable"
+	makes ERPNext demand a Party on every journal line that funds a purchase or
+	bill payment from the card -- which a credit-card liability has none -- so the
+	transaction can't post. An untyped liability ledger books freely.
+	"""
 	account_type_map = {
 		"Bank": "Bank",
 		"Accounts Receivable": "Receivable",
 		"Accounts Payable": "Payable",
-		"Credit Card": "Payable",
 		"Fixed Asset": "Fixed Asset",
 		"Expense": "Expense Account",
 		"Other Expense": "Expense Account",

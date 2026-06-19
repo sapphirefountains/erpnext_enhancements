@@ -343,7 +343,7 @@ def test_preflight_blocks_journal_lines_posting_to_party_accounts(monkeypatch):
 	)
 	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
 
-	# A Deposit maps onto a Journal Entry; a credit-card account is typed Payable.
+	# A Deposit maps onto a Journal Entry; a party-less line posts to a Payable account.
 	values = {
 		"company": "Demo",
 		"accounts": [
@@ -553,6 +553,21 @@ def test_detect_conflicts_ignores_child_tables_and_flags_scalars():
 	# A genuine scalar edit (user changed the remark) is still detected.
 	doc.remark = "Edited by a user"
 	assert detect_conflicts(doc, incoming, mapping) == ["remark"]
+
+
+def test_credit_card_account_is_untyped_liability():
+	"""QBO Credit Card accounts map to an untyped Liability ledger, not a Payable.
+
+	Typing them Payable made ERPNext demand a Party on every journal line funding a
+	purchase or bill payment from the card, blocking those postings.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _account_root_type, _account_type
+
+	assert _account_type("Credit Card") is None
+	assert _account_root_type("Credit Card") == "Liability"
+	# Genuine A/P is still typed Payable (it legitimately needs a party).
+	assert _account_type("Accounts Payable") == "Payable"
 
 
 def test_account_mapping_uses_existing_root_as_parent():
