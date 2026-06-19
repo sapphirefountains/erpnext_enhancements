@@ -372,6 +372,9 @@ after_migrate = [
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
+	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source
+	# of truth; upserts the blocks from "Custom HTML Block/" and places them on Home
+	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)

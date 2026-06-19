@@ -1,8 +1,8 @@
-# Custom HTML Block — exported block sources
+# Custom HTML Block — block sources (source of truth)
 
-This folder is the **exported source** of the Frappe **Custom HTML Blocks** — dashboard widgets that are authored and stored **in the Frappe UI** (Custom HTML Block doctype) and embedded on workspaces. The blocks here are *Projects Dashboard*, *Task Dashboard*, *Morning Briefing*, and *Desk Shortcuts*.
+This folder is the **source of truth** for the Frappe **Custom HTML Blocks** — dashboard widgets embedded on workspaces. The blocks here are *Projects Dashboard*, *Task Dashboard*, *Morning Briefing*, and *Desk Shortcuts*.
 
-> ⚠️ **Source-of-truth caveat.** The live widgets live in the database, edited through the Frappe UI. These files are the version-controlled **backup / source copy**. The two can drift: edit here and paste back into the UI to deploy, or export from the UI after editing there. Keep them in sync manually. (Exception: *Task Dashboard* is **created** from these files by the `seed_task_dashboard_block` patch if the block doesn't exist yet — insert-only, so UI edits after creation still win until you paste.)
+> ✅ **Repo is the source of truth (v1.69.0).** On every `bench migrate`, `erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks` (an `after_migrate` hook) **upserts** all four blocks from these files: missing blocks are created and any block whose `html`/`script`/`style` has drifted from the source is **overwritten**, then the blocks are placed on the **Home** workspace (idempotent append). So edit the files here and `bench migrate` to deploy — **UI-side edits to these blocks do not survive a migrate.** (The older insert-only seed patches — `seed_task_dashboard_block`, `seed_morning_briefing_block`, `seed_desk_shortcuts_block` — are now superseded by this seeder and left only for history; they no-op once a block exists.)
 
 ## Files — Projects Dashboard
 
@@ -30,8 +30,9 @@ event (debounced) plus a 5-minute kiosk fallback; timers/subscriptions are store
 | `task_dashboard.js` | Block-sandbox script: fetch + render, clock, guarded realtime/interval refresh. |
 | `task_dashboard.css` | Shadow-root styles. Structural colors from Frappe CSS variables (they pierce the shadow boundary, so both themes work); literal accents only for priority/overdue semantics. |
 
-**Install:** `bench migrate` creates the block (patch above); then edit the target
-Workspace once and add the "Task Dashboard" Custom HTML Block.
+**Install:** `bench migrate` creates the block and auto-places it on **Home**
+(via `sync_custom_html_blocks`). To show it on another workspace too, edit that
+Workspace and add the "Task Dashboard" Custom HTML Block.
 
 ## Files — Desk Shortcuts (configurable Home icons, v1.30.0)
 

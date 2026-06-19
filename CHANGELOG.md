@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.69.0] - 2026-06-19
+
+### Added
+- **"Delivery" project category + "Products" value stream.** Added **Delivery** as a selectable option across the Projects-Dashboard category fields on **Project** (and the shared value stream on **Opportunity** / **Customer**): the `project_type` ("Project Stage") Link gains a **Delivery** Project Type, `custom_value_stream` gains a **Delivery** Value Stream, and the `custom_project_priority` / `custom_company_priority` Selects gain a **Delivery** option. Also added **Products** as a new **Value Stream** option. The Priority Overview and Portfolio Gantt now treat Delivery as client-facing alongside Build/Design/Rent/Service, and the Opportunity value-stream tag sync manages the new Delivery/Products tags. Masters are seeded idempotently by `seed_delivery_and_products_categories`; the Select options ship in the custom-field fixtures.
+- **Custom HTML Blocks auto-import from source.** The four dashboard widgets (Projects Dashboard, Task Dashboard, Morning Briefing, Desk Shortcuts) are now upserted from their repo-root `Custom HTML Block/` sources on every `bench migrate` and placed on the **Home** workspace (`setup/custom_html_blocks.sync_custom_html_blocks`, an `after_migrate` hook). The repo is now the source of truth — editing the source files and migrating redeploys the block — superseding the older insert-only seed patches and the manual copy-paste-into-the-UI workflow.
+
 ## [1.68.0] - 2026-06-18
 
 ### Fixed
