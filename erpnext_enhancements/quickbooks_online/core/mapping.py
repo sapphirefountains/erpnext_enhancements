@@ -457,11 +457,11 @@ def validate_mapped_values(
 	for fieldname in sorted(_required_mapped_fields(entity_type, erpnext_doctype, values, include_doc_required)):
 		if _is_empty_required_value(values.get(fieldname)):
 			issues.append(f"Missing required field: {fieldname}")
-	for account in _blocked_stock_accounts(entity_type, values):
+	for account in _blocked_stock_accounts(erpnext_doctype, values):
 		issues.append(f"Stock account requires a stock transaction: {account}")
-	for account in _blocked_party_accounts(entity_type, values):
+	for account in _blocked_party_accounts(erpnext_doctype, values):
 		issues.append(f"Journal Entry line requires a Party for Receivable/Payable account: {account}")
-	imbalance = _journal_imbalance(entity_type, values)
+	imbalance = _journal_imbalance(erpnext_doctype, values)
 	if imbalance:
 		issues.append(imbalance)
 	return issues
@@ -476,23 +476,20 @@ def _required_mapped_fields(
 	fields (when ``include_doc_required``), but only those we can meaningfully
 	check pre-insert (see ``_can_validate_required_field``).
 	"""
-	fields = {
-		"Invoice": {"company", "customer", "items"},
-		"SalesReceipt": {"company", "customer", "items"},
-		"Bill": {"company", "supplier", "items"},
-		"Estimate": {"company", "party_name", "items"},
-		"PurchaseOrder": {"company", "supplier", "items"},
-		"JournalEntry": {"company", "accounts"},
-		# Cash-movement types mapped to Journal Entries: an empty accounts table
-		# means none of their account references resolved -> manual review rather
-		# than an opaque insert failure.
-		"Purchase": {"company", "accounts"},
-		"Transfer": {"company", "accounts"},
-		"BillPayment": {"company", "accounts"},
-		"CreditCardPayment": {"company", "accounts"},
-		"VendorCredit": {"company", "accounts"},
-		"Deposit": {"company", "accounts"},
-	}.get(entity_type, set())
+	# Key the baseline on the actual target DocType so an entity that can map to
+	# more than one (a Bill becomes a Purchase Invoice when it has item lines, or a
+	# Journal Entry when it has only expense-account lines) is checked against the
+	# fields its chosen DocType actually needs.
+	if erpnext_doctype == "Journal Entry":
+		fields = {"company", "accounts"}
+	else:
+		fields = {
+			"Invoice": {"company", "customer", "items"},
+			"SalesReceipt": {"company", "customer", "items"},
+			"Bill": {"company", "supplier", "items"},
+			"Estimate": {"company", "party_name", "items"},
+			"PurchaseOrder": {"company", "supplier", "items"},
+		}.get(entity_type, set())
 	if not include_doc_required:
 		return fields
 	try:
@@ -558,59 +555,58 @@ def _is_empty_required_value(value):
 	return value in (None, "") or (isinstance(value, list) and not value)
 
 
-def _journal_line_accounts_by_type(entity_type: str, values: dict, account_types: tuple[str, ...]) -> list[str]:
-	"""List a Journal Entry's line accounts whose ``account_type`` is in the set.
-
-	Applies to every entity mapped onto a Journal Entry -- the native JournalEntry
-	plus the cash-movement types (Purchase/Transfer/BillPayment/Deposit/...), which
-	all build plain debit/credit ``accounts`` rows -- so account-type restrictions
-	are enforced uniformly rather than only for native journal entries.
-	"""
-	if get_erpnext_doctype(entity_type) != "Journal Entry":
-		return []
-	accounts = []
-	for row in values.get("accounts") or []:
-		account = row.get("account")
-		if account and frappe.db.get_value("Account", account, "account_type") in account_types:
-			accounts.append(account)
-	return accounts
-
-
-def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
+def _blocked_stock_accounts(erpnext_doctype: str, values: dict) -> list[str]:
 	"""List Stock accounts referenced by a Journal Entry's lines.
 
 	ERPNext forbids posting to a Stock-type account through a Journal Entry
 	(stock value must come from a stock transaction), so any such account is a
-	validation blocker.
+	validation blocker. Keyed on the resolved target DocType so it covers every
+	entity that maps onto a Journal Entry (native JournalEntry, the cash-movement
+	types, and expense-only Bills).
 	"""
-	return _journal_line_accounts_by_type(entity_type, values, ("Stock",))
+	if erpnext_doctype != "Journal Entry":
+		return []
+	accounts = []
+	for row in values.get("accounts") or []:
+		account = row.get("account")
+		if account and frappe.db.get_value("Account", account, "account_type") == "Stock":
+			accounts.append(account)
+	return accounts
 
 
-def _blocked_party_accounts(entity_type: str, values: dict) -> list[str]:
-	"""List Receivable/Payable accounts referenced by a Journal Entry's lines.
+def _blocked_party_accounts(erpnext_doctype: str, values: dict) -> list[str]:
+	"""List party-less Receivable/Payable lines on a Journal Entry.
 
 	ERPNext requires a Party (Customer/Supplier) on any Journal Entry line posting
 	to a Receivable or Payable account ("Party Type and Party is required for
-	Receivable / Payable account ..."). The QBO->Journal Entry mappers build plain
-	debit/credit lines with no party, so a line hitting a control account -- a true
-	A/R or A/P account, or a QBO credit-card account, which maps to account_type
-	Payable -- can't be booked. Route it to manual review instead of failing on
-	insert and re-failing on every retry.
+	Receivable / Payable account ..."). A line that already carries a party_type and
+	party (e.g. the A/P leg of an expense-only Bill) is fine; one without -- a QBO
+	credit-card account (account_type Payable) credited by a Purchase, or an A/R/A/P
+	control account with no party -- can't be booked, so route it to manual review.
 	"""
-	return _journal_line_accounts_by_type(entity_type, values, ("Receivable", "Payable"))
+	if erpnext_doctype != "Journal Entry":
+		return []
+	accounts = []
+	for row in values.get("accounts") or []:
+		account = row.get("account")
+		if not account or (row.get("party_type") and row.get("party")):
+			continue
+		if frappe.db.get_value("Account", account, "account_type") in ("Receivable", "Payable"):
+			accounts.append(account)
+	return accounts
 
 
-def _journal_imbalance(entity_type: str, values: dict) -> str | None:
+def _journal_imbalance(erpnext_doctype: str, values: dict) -> str | None:
 	"""Return an issue string if a Journal Entry's debits and credits don't match.
 
-	Applies to every entity mapped onto a Journal Entry (native JournalEntry plus
-	the cash-movement types: Purchase/Transfer/BillPayment/Deposit/...). A lopsided
-	total almost always means a line referenced a QBO account that isn't mapped
-	into ERPNext yet (e.g. an inactive account that wasn't imported), so it is
-	routed to manual review with a clear reason instead of failing on insert with
-	ERPNext's opaque "Total Debit must equal Total Credit" error.
+	Applies to every entity mapped onto a Journal Entry (native JournalEntry, the
+	cash-movement types Purchase/Transfer/BillPayment/Deposit/..., and expense-only
+	Bills). A lopsided total almost always means a line referenced a QBO account
+	that isn't mapped into ERPNext yet (e.g. an inactive account that wasn't
+	imported), so it is routed to manual review with a clear reason instead of
+	failing on insert with ERPNext's opaque "Total Debit must equal Total Credit".
 	"""
-	if get_erpnext_doctype(entity_type) != "Journal Entry":
+	if erpnext_doctype != "Journal Entry":
 		return None
 	rows = values.get("accounts") or []
 	if not rows:
@@ -876,11 +872,18 @@ def _map_sales_receipt(payload, settings):
 
 
 def _map_purchase_invoice(payload, settings):
-	"""Map a QBO Bill to an ERPNext Purchase Invoice (supplier + line items).
+	"""Map a QBO Bill to an ERPNext Purchase Invoice or Journal Entry.
 
-	Sets the payable account (``credit_to``) and currency/exchange ERPNext can't
-	infer from the payload so the bill is insertable.
+	QBO Bills come in two shapes. Item-based bills (``ItemBasedExpenseLineDetail``)
+	map to a Purchase Invoice with line items. Expense-account bills
+	(``AccountBasedExpenseLineDetail`` -- the common case: a vendor charge booked
+	straight to an expense account, with no inventory item) have no ERPNext items,
+	so they map to a Journal Entry that debits each expense account and credits A/P
+	with the supplier as party -- the same payable a Purchase Invoice would create.
 	"""
+	items = _purchase_items(payload)
+	if not items and _has_account_expense_lines(payload):
+		return _map_bill_as_journal_entry(payload, settings)
 	currency, rate = _txn_currency(payload, settings)
 	return "Purchase Invoice", {
 		"company": settings.company,
@@ -890,9 +893,48 @@ def _map_purchase_invoice(payload, settings):
 		"currency": currency,
 		"conversion_rate": rate,
 		"credit_to": _company_value(settings, "default_payable_account"),
-		"items": _purchase_items(payload),
+		"items": items,
 		"remarks": f"Imported from QuickBooks Online Bill {payload.get('DocNumber') or payload.get('Id')}",
 	}
+
+
+def _has_account_expense_lines(payload) -> bool:
+	"""True if a Bill has any ``AccountBasedExpenseLineDetail`` (expense-account) line."""
+	return any(line.get("AccountBasedExpenseLineDetail") for line in payload.get("Line") or [])
+
+
+def _map_bill_as_journal_entry(payload, settings):
+	"""Map an expense-account QBO Bill to a Journal Entry (debit expenses, credit A/P).
+
+	The A/P leg uses the company's default payable (a ledger) and carries the
+	supplier as Party, so the bill posts the same outstanding payable a Purchase
+	Invoice would and stays matchable against its later Bill Payment. The A/P credit
+	is the bill ``TotalAmt``; if the expense lines don't sum to it (e.g. the bill
+	carries tax not modeled here) the balance guard routes it to manual review.
+	"""
+	supplier = _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value"))
+	total = _to_amount(payload.get("TotalAmt"))
+	accounts = []
+	payable = _company_value(settings, "default_payable_account")
+	ap_line = _ledger_line(payable, credit=total)
+	if ap_line:
+		ap_line["party_type"] = "Supplier"
+		ap_line["party"] = supplier
+		accounts.append(ap_line)
+	for line in payload.get("Line") or []:
+		detail = line.get("AccountBasedExpenseLineDetail") or {}
+		row = _ledger_line(
+			_resolve_account(settings, (detail.get("AccountRef") or {}).get("value")),
+			debit=_to_amount(line.get("Amount")),
+		)
+		if row:
+			accounts.append(row)
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online Bill {payload.get('DocNumber') or payload.get('Id')}",
+	)
 
 
 def _map_payment_entry(payload, settings):

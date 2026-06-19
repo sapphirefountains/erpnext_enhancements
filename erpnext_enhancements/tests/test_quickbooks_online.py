@@ -358,6 +358,71 @@ def test_preflight_blocks_journal_lines_posting_to_party_accounts(monkeypatch):
 	)
 
 
+def test_party_guard_skips_journal_lines_that_already_have_a_party(monkeypatch):
+	"""An A/P line carrying a party (e.g. an expense-only Bill) is not blocked."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: (
+			"Payable" if doctype == "Account" and name == "2110 - Creditors - SF" else ("Expense Account" if doctype == "Account" else None)
+		),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
+
+	values = {
+		"company": "Demo",
+		"accounts": [
+			{"account": "2110 - Creditors - SF", "credit_in_account_currency": 150.0, "party_type": "Supplier", "party": "Acme"},
+			{"account": "Build Materials - SF", "debit_in_account_currency": 150.0},
+		],
+	}
+	issues = validate_mapped_values("Bill", "Journal Entry", values, include_doc_required=False)
+	assert not any("requires a Party" in i for i in issues)
+	assert issues == []  # balanced, party present -> insertable
+
+
+def test_account_based_bill_maps_to_journal_entry(monkeypatch):
+	"""An expense-account QBO Bill maps to a JE debiting expenses, crediting A/P."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor":
+				return "Clegg Mabey Reimbursement"
+			if f.get("qbo_entity_type") == "Account":
+				return {"800": "Build Materials - SF", "801": "Shop Supplies - SF"}.get(f.get("qbo_id"))
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "21135",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 150.0,
+		"VendorRef": {"value": "2614"},
+		"Line": [
+			{"Amount": 100.0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "800"}}},
+			{"Amount": 50.0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "801"}}},
+		],
+	}
+
+	doctype, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	accounts = values["accounts"]
+	ap = accounts[0]
+	assert ap["account"] == "2110 - Creditors - SF"
+	assert ap["credit_in_account_currency"] == 150.0
+	assert ap["party_type"] == "Supplier" and ap["party"] == "Clegg Mabey Reimbursement"
+	debits = {a["account"]: a["debit_in_account_currency"] for a in accounts[1:]}
+	assert debits == {"Build Materials - SF": 100.0, "Shop Supplies - SF": 50.0}
+
+
 def test_heal_invalid_owned_selects_repairs_stale_value():
 	"""A pre-existing invalid Select value is replaced with the valid mapped value."""
 	frappe = install_frappe_stub()
