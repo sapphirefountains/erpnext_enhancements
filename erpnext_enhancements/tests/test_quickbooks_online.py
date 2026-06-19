@@ -11,6 +11,7 @@ stub a module-level function (e.g. ``sync.query_all``).
 import base64
 import hashlib
 import hmac
+import json
 import sys
 import types
 from datetime import datetime
@@ -342,7 +343,7 @@ def test_preflight_blocks_journal_lines_posting_to_party_accounts(monkeypatch):
 	)
 	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
 
-	# A Deposit maps onto a Journal Entry; a credit-card account is typed Payable.
+	# A Deposit maps onto a Journal Entry; a party-less line posts to a Payable account.
 	values = {
 		"company": "Demo",
 		"accounts": [
@@ -355,6 +356,108 @@ def test_preflight_blocks_journal_lines_posting_to_party_accounts(monkeypatch):
 		"Journal Entry line requires a Party for Receivable/Payable account: Capital One Spark Card - SF"
 		in issues
 	)
+
+
+def test_party_guard_skips_journal_lines_that_already_have_a_party(monkeypatch):
+	"""An A/P line carrying a party (e.g. an expense-only Bill) is not blocked."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: (
+			"Payable" if doctype == "Account" and name == "2110 - Creditors - SF" else ("Expense Account" if doctype == "Account" else None)
+		),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
+
+	values = {
+		"company": "Demo",
+		"accounts": [
+			{"account": "2110 - Creditors - SF", "credit_in_account_currency": 150.0, "party_type": "Supplier", "party": "Acme"},
+			{"account": "Build Materials - SF", "debit_in_account_currency": 150.0},
+		],
+	}
+	issues = validate_mapped_values("Bill", "Journal Entry", values, include_doc_required=False)
+	assert not any("requires a Party" in i for i in issues)
+	assert issues == []  # balanced, party present -> insertable
+
+
+def test_account_based_bill_maps_to_journal_entry(monkeypatch):
+	"""An expense-account QBO Bill maps to a JE debiting expenses, crediting A/P."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor":
+				return "Clegg Mabey Reimbursement"
+			if f.get("qbo_entity_type") == "Account":
+				return {"800": "Build Materials - SF", "801": "Shop Supplies - SF"}.get(f.get("qbo_id"))
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "21135",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 150.0,
+		"VendorRef": {"value": "2614"},
+		"Line": [
+			{"Amount": 100.0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "800"}}},
+			{"Amount": 50.0, "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "801"}}},
+		],
+	}
+
+	doctype, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	accounts = values["accounts"]
+	ap = accounts[0]
+	assert ap["account"] == "2110 - Creditors - SF"
+	assert ap["credit_in_account_currency"] == 150.0
+	assert ap["party_type"] == "Supplier" and ap["party"] == "Clegg Mabey Reimbursement"
+	debits = {a["account"]: a["debit_in_account_currency"] for a in accounts[1:]}
+	assert debits == {"Build Materials - SF": 100.0, "Shop Supplies - SF": 50.0}
+
+
+def test_bill_payment_sets_supplier_party_on_ap_line(monkeypatch):
+	"""A BillPayment's A/P debit carries the vendor as Party and uses the default payable."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor":
+				return "Plastic Works"
+			if f.get("qbo_entity_type") == "Account":
+				return "US Bank Checking - SF" if f.get("qbo_id") == "130" else None
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "2955",
+		"TxnDate": "2009-08-21",
+		"TotalAmt": 87.5,
+		"VendorRef": {"value": "1045"},
+		"CheckPayment": {"BankAccountRef": {"value": "130"}},
+		"Line": [{"Amount": 87.5}],
+	}
+	doctype, values = map_qbo_to_erpnext("BillPayment", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	ap = values["accounts"][0]
+	assert ap["account"] == "2110 - Creditors - SF"
+	assert ap["debit_in_account_currency"] == 87.5
+	assert ap["party_type"] == "Supplier" and ap["party"] == "Plastic Works"
+	funding = values["accounts"][1]
+	assert funding["account"] == "US Bank Checking - SF" and funding["credit_in_account_currency"] == 87.5
 
 
 def test_heal_invalid_owned_selects_repairs_stale_value():
@@ -417,6 +520,54 @@ def test_save_or_manual_review_parks_validation_errors(monkeypatch):
 		mapping._save_or_manual_review(
 			"Customer", "1", {}, "Customer", make_doc(exc=frappe.exceptions.TimestampMismatchError("locked"))
 		)
+
+
+def test_detect_conflicts_ignores_child_tables_and_flags_scalars():
+	"""Conflict detection skips child tables but still catches scalar field edits."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import detect_conflicts
+
+	owned = {
+		# Stored snapshot of a Journal Entry: plain-dict child rows + scalars.
+		"accounts": [{"account": "Bank - SF", "debit_in_account_currency": 0.0}],
+		"posting_date": "2026-06-02",
+		"remark": "Imported from QuickBooks Online Cash 21147",
+	}
+	mapping = types.SimpleNamespace(owned_fields=json.dumps(owned))
+	incoming = {
+		"accounts": [{"account": "Bank - SF", "debit_in_account_currency": 0.0}],
+		"posting_date": "2026-06-02",
+		"remark": "Imported from QuickBooks Online Cash 21147",
+	}
+
+	# The live doc returns child rows as objects (str() differs from the snapshot)
+	# and an unchanged posting_date -- neither should be reported as a conflict.
+	doc = types.SimpleNamespace(
+		accounts=[types.SimpleNamespace(account="Bank - SF")],
+		posting_date="2026-06-02",
+		remark="Imported from QuickBooks Online Cash 21147",
+	)
+	doc.get = lambda fieldname: getattr(doc, fieldname, None)
+	assert detect_conflicts(doc, incoming, mapping) == []
+
+	# A genuine scalar edit (user changed the remark) is still detected.
+	doc.remark = "Edited by a user"
+	assert detect_conflicts(doc, incoming, mapping) == ["remark"]
+
+
+def test_credit_card_account_is_untyped_liability():
+	"""QBO Credit Card accounts map to an untyped Liability ledger, not a Payable.
+
+	Typing them Payable made ERPNext demand a Party on every journal line funding a
+	purchase or bill payment from the card, blocking those postings.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _account_root_type, _account_type
+
+	assert _account_type("Credit Card") is None
+	assert _account_root_type("Credit Card") == "Liability"
+	# Genuine A/P is still typed Payable (it legitimately needs a party).
+	assert _account_type("Accounts Payable") == "Payable"
 
 
 def test_account_mapping_uses_existing_root_as_parent():
