@@ -1041,23 +1041,37 @@ def _map_transfer(payload, settings):
 	)
 
 
+def _supplier_payable_line(settings, ap_ref, total, supplier):
+	"""Build a vendor JE's A/P debit line, tagged with the supplier as Party.
+
+	ERPNext requires a Party on any Payable-account line; the QBO vendor is that
+	party, so the journal posts and stays matchable against the bill it settles.
+	The A/P account falls back to the company default payable (a ledger) when the
+	payload omits an explicit reference.
+	"""
+	line = _ledger_line(_resolve_account(settings, ap_ref, "default_payable_account"), debit=total)
+	if line:
+		line["party_type"] = "Supplier"
+		line["party"] = supplier
+	return line
+
+
 def _map_bill_payment(payload, settings):
 	"""Map a QBO BillPayment to a Journal Entry (debit A/P, credit the funding account).
 
 	The funds come from a bank account (Check) or a credit card (CreditCard); the
-	A/P account falls back to the company default when the payload omits it.
+	A/P account falls back to the company default when the payload omits it and
+	carries the vendor as Party so the Payable line is accepted.
 	"""
 	total = _to_amount(payload.get("TotalAmt"))
+	supplier = _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value"))
 	funding_ref = (
 		(payload.get("CheckPayment") or {}).get("BankAccountRef")
 		or (payload.get("CreditCardPayment") or {}).get("CCAccountRef")
 		or {}
 	).get("value")
 	accounts = [
-		_ledger_line(
-			_resolve_account(settings, (payload.get("APAccountRef") or {}).get("value"), "default_payable_account"),
-			debit=total,
-		),
+		_supplier_payable_line(settings, (payload.get("APAccountRef") or {}).get("value"), total, supplier),
 		_ledger_line(_resolve_account(settings, funding_ref), credit=total),
 	]
 	return _journal_entry_doc(
@@ -1088,11 +1102,9 @@ def _map_credit_card_payment(payload, settings):
 def _map_vendor_credit(payload, settings):
 	"""Map a QBO VendorCredit to a Journal Entry (debit A/P, credit each expense line)."""
 	total = _to_amount(payload.get("TotalAmt"))
+	supplier = _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value"))
 	accounts = []
-	ap = _ledger_line(
-		_resolve_account(settings, (payload.get("APAccountRef") or {}).get("value"), "default_payable_account"),
-		debit=total,
-	)
+	ap = _supplier_payable_line(settings, (payload.get("APAccountRef") or {}).get("value"), total, supplier)
 	if ap:
 		accounts.append(ap)
 	for line in payload.get("Line") or []:
