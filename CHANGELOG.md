@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.70.0] - 2026-06-19
+
+### Added
+- **AI assistant status tools for four subsystems that had no AI surface.** The Frappe Assistant Core (FAC) tool catalog had been frozen since the Maintenance/Project/Workforce/Device batches, so every subsystem shipped since (Stripe, QuickBooks Online, Accounting Intake, the Closed-Won hand-off) was invisible to the assistant — and, because Triton discovers ERPNext's tools through FAC at runtime, invisible to Triton too. Four new **read-only** tools close that gap (in `assistant_tools/`, registered in `hooks.py`, classified read-only in `_gate.py` `EXPLICIT_READONLY`):
+  - **`stripe_payment_status`** — connection/config state, a count of Stripe Payments by status, and the two trouble signals (`unreconciled_paid` = Paid but not yet reconciled to a Payment Entry; `failed_webhooks` = errored Stripe Events), plus recent payments. Gates on **Stripe Payment**.
+  - **`quickbooks_sync_status`** — QBO connection state (connected, realm bound, token expiry, last full-import/CDC/webhook), the count of Failed sync runs, and recent **QuickBooks Sync Log** rows; pass `sync_log` for one run's summary + error. Gates on **QuickBooks Sync Log**.
+  - **`document_intake_queue`** — the Accounting Document Intake review queue: counts by workflow status, the needs-attention backlog (Needs Review + Needs Item Review + Failed), and one intake's extracted header/lines/proposed-matches. The read companion to Triton's `sfo_extract_document` filing tool. Gates on **Document Intake**.
+  - **`closed_won_handoff_status`** — Opportunities marked **Closed Won** with no project created yet (the hand-off backlog), oldest first with days-waiting and total count; pass `opportunity` for its first-three hand-off step state. Gates on **Opportunity**.
+- All four are read-only and **permission-aware**: counts and lists go through `frappe.get_list` (so a user only sees rows they may read), auxiliary settings/event reads are guarded with `frappe.has_permission`, and single-document detail paths call `_common.require_doc_read` first. No new Python dependency; FAC-optional invariant preserved (nothing in the app imports `assistant_tools`).
+
+### Notes
+- Tools are discovered by FAC on **`bench restart`** (and by Triton within its 10-minute MCP discovery cache thereafter). FAC's **custom_tools plugin must be enabled** on the site. No `bench migrate` required.
+- This is PR 1 of a cross-repo feature-sync; a follow-up advertises each tool's mutation/risk class to Triton so its client-side confirmation gate stops mis-classifying the gated device tools as read-only.
+
 ## [1.69.0] - 2026-06-19
 
 ### Added
