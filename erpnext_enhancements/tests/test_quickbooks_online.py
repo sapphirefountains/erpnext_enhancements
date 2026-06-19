@@ -85,6 +85,22 @@ def install_frappe_stub():
 	frappe.get_traceback = lambda: "Traceback\nValidationError: Missing required field"
 	frappe._ = lambda message=None, *args, **kwargs: message
 	frappe.throw = _stub_throw
+
+	# Minimal exception hierarchy mirroring frappe.exceptions: TimestampMismatchError
+	# is a ValidationError subclass (transient/concurrency) the sync re-raises.
+	frappe_exceptions = sys.modules.get("frappe.exceptions") or types.ModuleType("frappe.exceptions")
+	if not hasattr(frappe_exceptions, "ValidationError"):
+
+		class ValidationError(Exception):
+			pass
+
+		class TimestampMismatchError(ValidationError):
+			pass
+
+		frappe_exceptions.ValidationError = ValidationError
+		frappe_exceptions.TimestampMismatchError = TimestampMismatchError
+	frappe.exceptions = frappe_exceptions
+	sys.modules.setdefault("frappe.exceptions", frappe_exceptions)
 	# Passthrough decorator so the @frappe.whitelist() RPC layer is importable.
 	frappe.whitelist = lambda *args, **kwargs: (lambda fn: fn)
 	sys.modules.setdefault("frappe", frappe)
@@ -263,6 +279,144 @@ def test_clear_account_type_for_group_conversion(monkeypatch):
 	already_group = make_doc(is_group=1, account_type="Expense Account")
 	assert _clear_account_type_for_group_conversion("Account", already_group) is False
 	assert already_group.account_type == "Expense Account"
+
+
+def test_keep_account_as_group_when_erpnext_children_exist(monkeypatch):
+	"""An Account QBO reports as a leaf stays a group when ERPNext has children.
+
+	Demoting it would trip "Account with child nodes cannot be set as ledger".
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "exists", lambda doctype, filters=None: doctype == "Account" and bool(filters)
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _keep_account_as_group
+
+	def make_doc(**attrs):
+		doc = types.SimpleNamespace(name="2100 - Accounts Payable - SF", **attrs)
+		doc.get = lambda fieldname: getattr(doc, fieldname, None)
+		return doc
+
+	leaf_with_children = make_doc(is_group=0)
+	assert _keep_account_as_group("Account", leaf_with_children) is True
+	assert leaf_with_children.is_group == 1
+
+	# Already a group, or a non-Account doctype: no change, no DB lookup needed.
+	assert _keep_account_as_group("Account", make_doc(is_group=1)) is False
+	assert _keep_account_as_group("Customer", make_doc(is_group=0)) is False
+
+	# A genuine leaf without children is left as a ledger.
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, filters=None: False)
+	childless = make_doc(is_group=0)
+	assert _keep_account_as_group("Account", childless) is False
+	assert childless.is_group == 0
+
+
+def test_drop_self_parent_account_clears_self_reference():
+	"""A root Account whose parent resolves to itself has parent_account dropped."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _drop_self_parent_account
+
+	values = {"parent_account": "Build Income - SF", "is_group": 1}
+	_drop_self_parent_account("Account", values, "Build Income - SF")
+	assert "parent_account" not in values
+
+	# A parent that is a different account is left in place.
+	other = {"parent_account": "Income - SF"}
+	_drop_self_parent_account("Account", other, "Build Income - SF")
+	assert other["parent_account"] == "Income - SF"
+
+	# Non-Account doctypes are untouched even on a self reference.
+	non_account = {"parent_account": "X"}
+	_drop_self_parent_account("Customer", non_account, "X")
+	assert non_account["parent_account"] == "X"
+
+
+def test_preflight_blocks_journal_lines_posting_to_party_accounts(monkeypatch):
+	"""A Journal-Entry-mapped entity with an A/R or A/P line routes to manual review."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		lambda doctype, name=None, fieldname=None, **kwargs: "Payable" if doctype == "Account" else None,
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import validate_mapped_values
+
+	# A Deposit maps onto a Journal Entry; a credit-card account is typed Payable.
+	values = {
+		"company": "Demo",
+		"accounts": [
+			{"account": "Capital One Spark Card - SF", "debit_in_account_currency": 100, "credit_in_account_currency": 0},
+			{"account": "Undeposited Funds - SF", "debit_in_account_currency": 0, "credit_in_account_currency": 100},
+		],
+	}
+	issues = validate_mapped_values("Deposit", "Journal Entry", values, include_doc_required=False)
+	assert (
+		"Journal Entry line requires a Party for Receivable/Payable account: Capital One Spark Card - SF"
+		in issues
+	)
+
+
+def test_heal_invalid_owned_selects_repairs_stale_value():
+	"""A pre-existing invalid Select value is replaced with the valid mapped value."""
+	frappe = install_frappe_stub()
+	field = types.SimpleNamespace(fieldtype="Select", options="Commercial\nResidential\nPartnership")
+	frappe.get_meta = lambda doctype: types.SimpleNamespace(
+		get_field=lambda fieldname: field if fieldname == "customer_type" else None
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _heal_invalid_owned_selects
+
+	doc = types.SimpleNamespace(doctype="Customer", customer_type="Company", customer_name="Acme")
+	doc.get = lambda fieldname: getattr(doc, fieldname, None)
+	doc.set = lambda fieldname, value: setattr(doc, fieldname, value)
+
+	healed = _heal_invalid_owned_selects(doc, {"customer_type": "Commercial", "customer_name": "Acme"})
+
+	assert healed == ["customer_type"]
+	assert doc.customer_type == "Commercial"
+
+	# A value that is already valid (and non-Select fields) are left untouched.
+	assert _heal_invalid_owned_selects(doc, {"customer_type": "Commercial"}) == []
+
+
+def test_save_or_manual_review_parks_validation_errors(monkeypatch):
+	"""A linked record's own validation failure becomes a manual_review action."""
+	import pytest
+
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	recorded = {}
+	monkeypatch.setattr(
+		mapping, "save_manual_review_mapping", lambda *args, **kwargs: recorded.update(issues=args[-1])
+	)
+
+	def make_doc(exc=None):
+		doc = types.SimpleNamespace(name="CUST-1", doctype="Customer")
+
+		def save(**kwargs):
+			if exc:
+				raise exc
+
+		doc.save = save
+		return doc
+
+	# A clean save returns None and records no review.
+	assert mapping._save_or_manual_review("Customer", "1", {}, "Customer", make_doc()) is None
+	assert recorded == {}
+
+	# A ValidationError (e.g. a scheme-less website) is parked for manual review.
+	err = frappe.exceptions.ValidationError("'www.x.com' is not a valid URL")
+	result = mapping._save_or_manual_review("Customer", "1", {}, "Customer", make_doc(exc=err))
+	assert result["action"] == "manual_review"
+	assert "not a valid URL" in result["reason"]
+	assert recorded["issues"] == ["'www.x.com' is not a valid URL"]
+
+	# A concurrency conflict is re-raised so the normal retry path handles it.
+	with pytest.raises(frappe.exceptions.TimestampMismatchError):
+		mapping._save_or_manual_review(
+			"Customer", "1", {}, "Customer", make_doc(exc=frappe.exceptions.TimestampMismatchError("locked"))
+		)
 
 
 def test_account_mapping_uses_existing_root_as_parent():

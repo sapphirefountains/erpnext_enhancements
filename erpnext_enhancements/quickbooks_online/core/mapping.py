@@ -131,10 +131,15 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			return {"action": "conflict", "doctype": erpnext_doctype, "name": doc.name, "fields": conflicts}
 		if preview:
 			return {"action": "update", "doctype": erpnext_doctype, "name": doc.name, "fields": list(values)}
+		_drop_self_parent_account(erpnext_doctype, values, doc.name)
 		apply_values(doc, values)
+		if _keep_account_as_group(erpnext_doctype, doc):
+			values["is_group"] = 1
 		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
 			values.pop("account_type", None)
-		doc.save(ignore_permissions=True)
+		review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
+		if review:
+			return review
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
 
@@ -158,16 +163,29 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 				"match_rule": existing_match["rule"],
 			}
 		doc = frappe.get_doc(erpnext_doctype, existing_match["name"])
+		_drop_self_parent_account(erpnext_doctype, values, doc.name)
 		applied_values = apply_blank_values(doc, values)
+		# Repair a pre-existing invalid Select value (e.g. a customer_type left as
+		# "Company" after the site re-customized the field's options) with the valid
+		# value we mapped: apply_blank_values keeps the stale value and the
+		# whole-document re-validation on save would otherwise reject it.
+		for fieldname in _heal_invalid_owned_selects(doc, values):
+			applied_values[fieldname] = values[fieldname]
 		# A QBO group account auto-linked to a pre-existing ledger must become a
 		# group or its children can never nest under it (apply_blank_values
 		# treats the existing 0 as a value and leaves it).
 		if erpnext_doctype == "Account" and values.get("is_group") and not doc.get("is_group"):
 			doc.is_group = 1
 			applied_values["is_group"] = 1
+		# Conversely, never demote an account that already has ERPNext children to a
+		# ledger just because QBO reports it as a leaf.
+		if _keep_account_as_group(erpnext_doctype, doc):
+			applied_values["is_group"] = 1
 		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
 			applied_values.pop("account_type", None)
-		doc.save(ignore_permissions=True)
+		review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
+		if review:
+			return review
 		save_mapping(
 			entity_type,
 			qbo_id,
@@ -441,6 +459,8 @@ def validate_mapped_values(
 			issues.append(f"Missing required field: {fieldname}")
 	for account in _blocked_stock_accounts(entity_type, values):
 		issues.append(f"Stock account requires a stock transaction: {account}")
+	for account in _blocked_party_accounts(entity_type, values):
+		issues.append(f"Journal Entry line requires a Party for Receivable/Payable account: {account}")
 	imbalance = _journal_imbalance(entity_type, values)
 	if imbalance:
 		issues.append(imbalance)
@@ -538,6 +558,24 @@ def _is_empty_required_value(value):
 	return value in (None, "") or (isinstance(value, list) and not value)
 
 
+def _journal_line_accounts_by_type(entity_type: str, values: dict, account_types: tuple[str, ...]) -> list[str]:
+	"""List a Journal Entry's line accounts whose ``account_type`` is in the set.
+
+	Applies to every entity mapped onto a Journal Entry -- the native JournalEntry
+	plus the cash-movement types (Purchase/Transfer/BillPayment/Deposit/...), which
+	all build plain debit/credit ``accounts`` rows -- so account-type restrictions
+	are enforced uniformly rather than only for native journal entries.
+	"""
+	if get_erpnext_doctype(entity_type) != "Journal Entry":
+		return []
+	accounts = []
+	for row in values.get("accounts") or []:
+		account = row.get("account")
+		if account and frappe.db.get_value("Account", account, "account_type") in account_types:
+			accounts.append(account)
+	return accounts
+
+
 def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
 	"""List Stock accounts referenced by a Journal Entry's lines.
 
@@ -545,14 +583,21 @@ def _blocked_stock_accounts(entity_type: str, values: dict) -> list[str]:
 	(stock value must come from a stock transaction), so any such account is a
 	validation blocker.
 	"""
-	if entity_type != "JournalEntry":
-		return []
-	stock_accounts = []
-	for row in values.get("accounts") or []:
-		account = row.get("account")
-		if account and frappe.db.get_value("Account", account, "account_type") == "Stock":
-			stock_accounts.append(account)
-	return stock_accounts
+	return _journal_line_accounts_by_type(entity_type, values, ("Stock",))
+
+
+def _blocked_party_accounts(entity_type: str, values: dict) -> list[str]:
+	"""List Receivable/Payable accounts referenced by a Journal Entry's lines.
+
+	ERPNext requires a Party (Customer/Supplier) on any Journal Entry line posting
+	to a Receivable or Payable account ("Party Type and Party is required for
+	Receivable / Payable account ..."). The QBO->Journal Entry mappers build plain
+	debit/credit lines with no party, so a line hitting a control account -- a true
+	A/R or A/P account, or a QBO credit-card account, which maps to account_type
+	Payable -- can't be booked. Route it to manual review instead of failing on
+	insert and re-failing on every retry.
+	"""
+	return _journal_line_accounts_by_type(entity_type, values, ("Receivable", "Payable"))
 
 
 def _journal_imbalance(entity_type: str, values: dict) -> str | None:
@@ -1316,6 +1361,103 @@ def _clear_account_type_for_group_conversion(erpnext_doctype: str, doc) -> bool:
 		return False
 	doc.account_type = None
 	return True
+
+
+def _keep_account_as_group(erpnext_doctype: str, doc) -> bool:
+	"""Force an Account to stay a group when ERPNext already has children under it.
+
+	QBO can report an account as a leaf (``is_group`` 0) while the linked ERPNext
+	account is the parent of other accounts -- common for the A/R and A/P control
+	accounts, which carry Debtors/Creditors sub-ledgers that don't exist in QBO.
+	Writing it as a ledger trips account.py's "Account with child nodes cannot be
+	set as ledger" and fails the sync on every run. Force ``is_group`` back on (a
+	no-op conversion, since the record is already a group) and report it so the
+	caller records the corrected value. Returns True when it kept it a group.
+	"""
+	if erpnext_doctype != "Account" or doc.get("is_group"):
+		return False
+	if not frappe.db.exists("Account", {"parent_account": doc.name}):
+		return False
+	doc.is_group = 1
+	return True
+
+
+def _drop_self_parent_account(erpnext_doctype: str, values: dict, name: str):
+	"""Clear a ``parent_account`` that points at the account itself (root accounts).
+
+	A QBO top-level account has no ParentRef, so the mapper falls back to the root
+	group for its type -- which, when the account *is* that root (e.g. an Income
+	root linked to the QBO income parent), resolves to itself. ERPNext rejects an
+	account that is its own parent, so drop it and let the account stay a root.
+	"""
+	if erpnext_doctype == "Account" and name and values.get("parent_account") == name:
+		values.pop("parent_account", None)
+
+
+def _heal_invalid_owned_selects(doc, values: dict) -> list[str]:
+	"""Replace a record's invalid Select values with the (valid) value we mapped.
+
+	When auto-linking to a pre-existing record, a Select field can hold a value
+	that is no longer valid -- e.g. a site re-customized Customer's "Account Type"
+	options from Company/Individual to Commercial/Residential/Partnership, leaving
+	old records storing "Company". ``apply_blank_values`` leaves the (non-blank)
+	stale value in place, and the whole-document re-validation on save then rejects
+	it. For each field we map that is a Select whose current value is non-empty and
+	no longer a valid option, overwrite it with our mapped value when that value is
+	itself valid. Returns the healed fieldnames so the caller records ownership.
+	"""
+	try:
+		meta = frappe.get_meta(doc.doctype)
+	except Exception:
+		return []
+	get_field = getattr(meta, "get_field", None)
+	if not callable(get_field):
+		return []
+	healed = []
+	for fieldname, value in values.items():
+		if value is None or isinstance(value, list):
+			continue
+		field = get_field(fieldname)
+		if not field or getattr(field, "fieldtype", None) != "Select":
+			continue
+		options = [option.strip() for option in (field.options or "").split("\n") if option.strip()]
+		current = doc.get(fieldname)
+		if current in (None, "") or current in options:
+			continue
+		if value in options:
+			doc.set(fieldname, value)
+			healed.append(fieldname)
+	return healed
+
+
+def _save_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, doc):
+	"""Save a linked/updated ERPNext doc, routing its own validation failure to review.
+
+	An auto-linked or previously synced ERPNext record can carry pre-existing data
+	the QBO sync never set -- a website saved without a scheme, a Select value left
+	invalid by a later field re-customization, a posting date outside any fiscal
+	year. ERPNext re-validates the whole document on save, so such latent data fails
+	the save and (via the failed-sync retry loop) re-errors on every run. Park the
+	record for manual review with the validation message instead of aborting and
+	endlessly re-logging. Concurrency errors (``TimestampMismatchError``) are
+	re-raised so the normal retry path can handle them. Returns a manual_review
+	action dict on a handled ValidationError, or None when the save succeeds.
+	"""
+	try:
+		doc.save(ignore_permissions=True)
+		return None
+	except frappe.exceptions.TimestampMismatchError:
+		raise
+	except frappe.exceptions.ValidationError as exc:
+		message = str(exc) or "Validation failed on save"
+		save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [message])
+		return {
+			"action": "manual_review",
+			"doctype": erpnext_doctype,
+			"name": doc.name,
+			"qbo_id": qbo_id,
+			"reason": message,
+		}
 
 
 def _root_account_for_type(root_type, settings):
