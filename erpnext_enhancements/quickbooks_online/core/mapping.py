@@ -632,11 +632,19 @@ def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
 	(``mapping.owned_fields``). A field conflicts only if it differs from BOTH
 	the previously-synced value (proving a local edit) AND the incoming QBO value
 	(proving the edit isn't just QBO catching up) -- so a true three-way divergence.
+
+	Child-table fields (lists -- e.g. a Journal Entry's ``accounts`` or an invoice's
+	``items``) are skipped: the sync rewrites them wholesale on every update rather
+	than owning them row by row, and the live value comes back as child DocType
+	objects whose ``str()`` never equals the plain-dict snapshot, so comparing them
+	would flag a conflict on every re-sync and freeze the record's updates.
 	"""
 	owned = json_loads(mapping.owned_fields, default={}) or {}
 	conflicts = []
 	for fieldname, previous_value in owned.items():
 		if fieldname not in incoming_values:
+			continue
+		if isinstance(previous_value, list) or isinstance(incoming_values[fieldname], list):
 			continue
 		current_value = doc.get(fieldname)
 		if _normalize(current_value) != _normalize(previous_value) and _normalize(

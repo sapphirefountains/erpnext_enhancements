@@ -11,6 +11,7 @@ stub a module-level function (e.g. ``sync.query_all``).
 import base64
 import hashlib
 import hmac
+import json
 import sys
 import types
 from datetime import datetime
@@ -417,6 +418,39 @@ def test_save_or_manual_review_parks_validation_errors(monkeypatch):
 		mapping._save_or_manual_review(
 			"Customer", "1", {}, "Customer", make_doc(exc=frappe.exceptions.TimestampMismatchError("locked"))
 		)
+
+
+def test_detect_conflicts_ignores_child_tables_and_flags_scalars():
+	"""Conflict detection skips child tables but still catches scalar field edits."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import detect_conflicts
+
+	owned = {
+		# Stored snapshot of a Journal Entry: plain-dict child rows + scalars.
+		"accounts": [{"account": "Bank - SF", "debit_in_account_currency": 0.0}],
+		"posting_date": "2026-06-02",
+		"remark": "Imported from QuickBooks Online Cash 21147",
+	}
+	mapping = types.SimpleNamespace(owned_fields=json.dumps(owned))
+	incoming = {
+		"accounts": [{"account": "Bank - SF", "debit_in_account_currency": 0.0}],
+		"posting_date": "2026-06-02",
+		"remark": "Imported from QuickBooks Online Cash 21147",
+	}
+
+	# The live doc returns child rows as objects (str() differs from the snapshot)
+	# and an unchanged posting_date -- neither should be reported as a conflict.
+	doc = types.SimpleNamespace(
+		accounts=[types.SimpleNamespace(account="Bank - SF")],
+		posting_date="2026-06-02",
+		remark="Imported from QuickBooks Online Cash 21147",
+	)
+	doc.get = lambda fieldname: getattr(doc, fieldname, None)
+	assert detect_conflicts(doc, incoming, mapping) == []
+
+	# A genuine scalar edit (user changed the remark) is still detected.
+	doc.remark = "Edited by a user"
+	assert detect_conflicts(doc, incoming, mapping) == ["remark"]
 
 
 def test_account_mapping_uses_existing_root_as_parent():
