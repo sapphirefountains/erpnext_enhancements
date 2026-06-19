@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.68.0] - 2026-06-18
+
+### Fixed
+- **Opportunity "Hand-Off Process" tab now reliably appears.** The v1.67.0 fixtures that add the tab's custom fields (`custom_process_tab` / `custom_process_progress`) weren't applied on some deploys (model-sync + patches ran, but fixture sync didn't create them), so the tab was missing from the Opportunity form. Added an idempotent backstop patch (`ensure_opportunity_handoff_fields`) that creates the fields via `create_custom_fields` on migrate — patches always run, so it's deploy-agnostic. The fixtures remain the source of truth.
+
 ## [1.67.0] - 2026-06-18
 
 ### Added
