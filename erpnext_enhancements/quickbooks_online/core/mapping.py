@@ -1352,13 +1352,23 @@ def _resolve_account(settings, qbo_id, company_default_field: str | None = None)
 
 
 def _ledger_line(account, debit=0, credit=0):
-	"""Build one Journal Entry account row, or None if the account didn't resolve."""
+	"""Build one Journal Entry account row, or None if it carries no posting.
+
+	Returns None when the account didn't resolve, or when both debit and credit are
+	zero -- QBO emits $0 placeholder lines (e.g. an "Amount Paid" row) that ERPNext
+	rejects with "Both Debit and Credit values cannot be zero". A zero line adds
+	nothing to the entry, so dropping it is safe and keeps it balanced.
+	"""
 	if not account:
+		return None
+	debit_amount = _to_amount(debit)
+	credit_amount = _to_amount(credit)
+	if debit_amount == 0 and credit_amount == 0:
 		return None
 	return {
 		"account": account,
-		"debit_in_account_currency": _to_amount(debit),
-		"credit_in_account_currency": _to_amount(credit),
+		"debit_in_account_currency": debit_amount,
+		"credit_in_account_currency": credit_amount,
 	}
 
 
@@ -1772,6 +1782,17 @@ def _has_field(doctype, fieldname):
 		return False
 
 
+def _line_cost_center(detail):
+	"""Resolve a QBO line's ClassRef to its mapped ERPNext Cost Center, or None.
+
+	QBO tracking classes import as Cost Centers, so a line's ClassRef gives the row
+	its cost center. Returning None lets ERPNext fall back to the company default
+	cost center, which avoids the "Cost Center '' does not belong to company" error
+	on lines (or sites) that carry no class.
+	"""
+	return _linked_name("Class", "Cost Center", (detail.get("ClassRef") or {}).get("value"))
+
+
 def _sales_items(payload):
 	"""Build ERPNext sales line items from a QBO transaction's SalesItemLineDetail lines.
 
@@ -1784,15 +1805,17 @@ def _sales_items(payload):
 		item_code = _linked_name("Item", "Item", item_ref.get("value"))
 		if not item_code:
 			continue
-		items.append(
-			{
-				"item_code": item_code,
-				"description": line.get("Description") or item_ref.get("name"),
-				"qty": detail.get("Qty") or 1,
-				"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
-				"amount": line.get("Amount") or 0,
-			}
-		)
+		row = {
+			"item_code": item_code,
+			"description": line.get("Description") or item_ref.get("name"),
+			"qty": detail.get("Qty") or 1,
+			"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
+			"amount": line.get("Amount") or 0,
+		}
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		items.append(row)
 	return items
 
 
@@ -1808,15 +1831,17 @@ def _purchase_items(payload):
 		item_code = _linked_name("Item", "Item", item_ref.get("value"))
 		if not item_code:
 			continue
-		items.append(
-			{
-				"item_code": item_code,
-				"description": line.get("Description") or item_ref.get("name"),
-				"qty": detail.get("Qty") or 1,
-				"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
-				"amount": line.get("Amount") or 0,
-			}
-		)
+		row = {
+			"item_code": item_code,
+			"description": line.get("Description") or item_ref.get("name"),
+			"qty": detail.get("Qty") or 1,
+			"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
+			"amount": line.get("Amount") or 0,
+		}
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		items.append(row)
 	return items
 
 
@@ -1833,13 +1858,18 @@ def _journal_accounts(payload):
 		account = _linked_name("Account", "Account", account_ref.get("value"))
 		if not account:
 			continue
-		amount = line.get("Amount") or 0
+		amount = _to_amount(line.get("Amount"))
+		# Skip $0 lines: ERPNext rejects a journal row with zero debit and credit.
+		if amount == 0:
+			continue
 		posting_type = detail.get("PostingType")
-		accounts.append(
-			{
-				"account": account,
-				"debit_in_account_currency": amount if posting_type == "Debit" else 0,
-				"credit_in_account_currency": amount if posting_type == "Credit" else 0,
-			}
-		)
+		row = {
+			"account": account,
+			"debit_in_account_currency": amount if posting_type == "Debit" else 0,
+			"credit_in_account_currency": amount if posting_type == "Credit" else 0,
+		}
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		accounts.append(row)
 	return accounts
