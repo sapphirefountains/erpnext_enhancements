@@ -19,6 +19,7 @@ from urllib.parse import urlencode
 import frappe
 import requests
 from frappe.utils import add_to_date, now_datetime
+from frappe.utils.synchronization import filelock
 
 from erpnext_enhancements.quickbooks_online.core.constants import (
 	AUTHORIZATION_URL,
@@ -29,6 +30,7 @@ from erpnext_enhancements.quickbooks_online.core.constants import (
 	TOKEN_URL,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import (
+	clear_oauth_tokens,
 	format_qbo_datetime,
 	get_secret,
 	get_settings,
@@ -36,8 +38,24 @@ from erpnext_enhancements.quickbooks_online.core.utils import (
 )
 
 
+# Lock name serializing token refreshes across workers (see refresh_access_token).
+TOKEN_REFRESH_LOCK = "quickbooks_online_token_refresh"
+
+
 class QuickBooksAPIError(Exception):
 	"""Raised when a QBO token or data request returns an HTTP error (>=400)."""
+
+	pass
+
+
+class QuickBooksDisconnectedError(QuickBooksAPIError):
+	"""Raised when the OAuth grant is dead (``invalid_grant``).
+
+	Signals that the refresh token is invalid or expired and the stored tokens
+	have already been cleared (status set to Not Connected). Callers should prompt
+	the operator to reconnect rather than retry. Subclasses ``QuickBooksAPIError``
+	so existing ``except QuickBooksAPIError`` handlers still catch it.
+	"""
 
 	pass
 
@@ -112,7 +130,7 @@ class QuickBooksClient:
 		self._store_tokens(data, realm_id=realm_id)
 		return data
 
-	def refresh_access_token(self):
+	def refresh_access_token(self, *, previous_access_token=None):
 		"""Use the stored refresh token to obtain a new access token.
 
 		Invoked proactively by ``tasks.refresh_token_if_needed`` (hourly
@@ -120,14 +138,44 @@ class QuickBooksClient:
 		to the token endpoint and persistence via ``_store_tokens`` (QBO may also
 		rotate the refresh token, which is then saved). Raises if no refresh token
 		is stored -- the integration must be reconnected.
-		"""
-		refresh_token = get_secret(self.settings, "refresh_token")
-		if not refresh_token:
-			frappe.throw("QuickBooks Online refresh token is missing. Reconnect the integration.")
 
-		data = self._token_request({"grant_type": "refresh_token", "refresh_token": refresh_token})
-		self._store_tokens(data)
-		return data
+		Refreshes are serialized with a cross-worker lock because QBO rotates the
+		refresh token on every call and only honors the latest one: two workers
+		refreshing at once (the hourly job plus an interactive sync, or many
+		requests hitting a 401 together during an import) would each rotate it and
+		invalidate the grant. After taking the lock we re-read Settings, and if
+		another worker already minted a new access token (the stored value differs
+		from the one our caller's request used) we reuse it instead of rotating
+		again. A dead grant (``invalid_grant``) clears the stored tokens and marks
+		the connection Not Connected so callers get a clear reconnect prompt rather
+		than a raw 400 on every request.
+		"""
+		with filelock(TOKEN_REFRESH_LOCK, timeout=60):
+			self.settings = get_settings()
+			current_access_token = get_secret(self.settings, "access_token")
+			if previous_access_token and current_access_token and current_access_token != previous_access_token:
+				# Another worker refreshed while we waited for the lock; reuse it.
+				return {"access_token": current_access_token}
+
+			refresh_token = get_secret(self.settings, "refresh_token")
+			if not refresh_token:
+				frappe.throw("QuickBooks Online refresh token is missing. Reconnect the integration.")
+
+			try:
+				data = self._token_request({"grant_type": "refresh_token", "refresh_token": refresh_token})
+			except QuickBooksAPIError as exc:
+				if "invalid_grant" in str(exc):
+					clear_oauth_tokens(
+						self.settings,
+						message="QuickBooks disconnected: the refresh token is invalid or expired. Reconnect to resume sync.",
+					)
+					raise QuickBooksDisconnectedError(
+						"QuickBooks Online is disconnected (refresh token invalid or expired). "
+						"Reconnect the integration in QuickBooks Online Settings."
+					) from exc
+				raise
+			self._store_tokens(data)
+			return data
 
 	def revoke_tokens(self):
 		"""Revoke the OAuth2 grant at Intuit (best-effort). Return True on success.
@@ -241,7 +289,7 @@ class QuickBooksClient:
 		)
 		# 401 => access token expired/revoked: refresh once and retry the same call.
 		if response.status_code == 401:
-			self.refresh_access_token()
+			self.refresh_access_token(previous_access_token=access_token)
 			return self.request(method, path, **kwargs, params=params)
 		if response.status_code >= 400:
 			raise QuickBooksAPIError(f"QuickBooks API request failed: {response.status_code} {_error_snippet(response.text)}")
@@ -274,7 +322,7 @@ class QuickBooksClient:
 			timeout=120,
 		)
 		if response.status_code == 401:
-			self.refresh_access_token()
+			self.refresh_access_token(previous_access_token=access_token)
 			return self.upload_attachable(
 				file_bytes=file_bytes, file_name=file_name, mime_type=mime_type, entity_type=entity_type, qbo_id=qbo_id
 			)

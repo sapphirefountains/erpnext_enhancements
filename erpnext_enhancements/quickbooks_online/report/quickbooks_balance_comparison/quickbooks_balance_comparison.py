@@ -13,14 +13,20 @@ into one tabular view, mismatches first.
 import frappe
 from frappe import _
 
+from erpnext_enhancements.quickbooks_online.core.client import QuickBooksAPIError
 from erpnext_enhancements.quickbooks_online.core.reconcile import compare_account_balances
 
 
 def execute(filters=None):
 	filters = frappe._dict(filters or {})
-	result = compare_account_balances(
-		as_of_date=filters.get("as_of_date"), tolerance=filters.get("tolerance") or 0.01
-	)
+	try:
+		result = compare_account_balances(
+			as_of_date=filters.get("as_of_date"), tolerance=filters.get("tolerance") or 0.01
+		)
+	except QuickBooksAPIError as exc:
+		# Surface a connection problem (e.g. a disconnected grant) as a clean message
+		# in the report UI rather than a raw 500 traceback.
+		frappe.throw(str(exc), title=_("QuickBooks Online"))
 	return get_columns(), get_data(result, filters)
 
 
