@@ -9,6 +9,7 @@ logic to run deterministically. ``monkeypatch`` is used where a test needs to
 stub a module-level function (e.g. ``sync.query_all``).
 """
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -104,10 +105,70 @@ def install_frappe_stub():
 	sys.modules.setdefault("frappe.exceptions", frappe_exceptions)
 	# Passthrough decorator so the @frappe.whitelist() RPC layer is importable.
 	frappe.whitelist = lambda *args, **kwargs: (lambda fn: fn)
+
+	# frappe.utils.synchronization.filelock -- a no-op context manager so the QBO
+	# client (which locks around token refresh) is importable without a real bench.
+	frappe_sync = sys.modules.get("frappe.utils.synchronization") or types.ModuleType(
+		"frappe.utils.synchronization"
+	)
+	if not hasattr(frappe_sync, "filelock"):
+
+		@contextlib.contextmanager
+		def _noop_filelock(*args, **kwargs):
+			yield
+
+		frappe_sync.filelock = _noop_filelock
+	frappe_utils.synchronization = frappe_sync
+
 	sys.modules.setdefault("frappe", frappe)
 	sys.modules.setdefault("frappe.utils", frappe_utils)
+	sys.modules.setdefault("frappe.utils.synchronization", frappe_sync)
 	sys.modules.setdefault("requests", types.ModuleType("requests"))
 	return frappe
+
+
+def test_refresh_access_token_reuses_token_from_concurrent_worker(monkeypatch):
+	"""When another worker already refreshed, reuse its token instead of rotating again."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_mod
+
+	monkeypatch.setattr(client_mod, "get_settings", lambda: types.SimpleNamespace())
+	# Stored access token ("NEW") differs from the one our request used ("OLD"),
+	# i.e. a concurrent worker refreshed while we waited for the lock.
+	monkeypatch.setattr(client_mod, "get_secret", lambda settings, key: "NEW" if key == "access_token" else "rt")
+	client = client_mod.QuickBooksClient(types.SimpleNamespace())
+	calls = {"token_request": 0}
+	monkeypatch.setattr(client, "_token_request", lambda payload: calls.__setitem__("token_request", calls["token_request"] + 1))
+
+	result = client.refresh_access_token(previous_access_token="OLD")
+
+	assert result == {"access_token": "NEW"}
+	assert calls["token_request"] == 0  # no second rotation of the refresh token
+
+
+def test_refresh_access_token_disconnects_on_invalid_grant(monkeypatch):
+	"""A dead grant clears the stored tokens and raises QuickBooksDisconnectedError."""
+	import pytest
+
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_mod
+
+	monkeypatch.setattr(client_mod, "get_settings", lambda: types.SimpleNamespace())
+	monkeypatch.setattr(client_mod, "get_secret", lambda settings, key: "tok")
+	cleared = {}
+	monkeypatch.setattr(
+		client_mod, "clear_oauth_tokens", lambda settings, message=None: cleared.update(message=message)
+	)
+	client = client_mod.QuickBooksClient(types.SimpleNamespace())
+
+	def invalid_grant(payload):
+		raise client_mod.QuickBooksAPIError('QuickBooks token request failed: 400 {"error":"invalid_grant"}')
+
+	monkeypatch.setattr(client, "_token_request", invalid_grant)
+
+	with pytest.raises(client_mod.QuickBooksDisconnectedError):
+		client.refresh_access_token(previous_access_token="tok")
+	assert "disconnect" in (cleared.get("message") or "").lower()
 
 
 def test_ordered_entities_imports_masters_before_transactions():

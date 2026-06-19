@@ -12,9 +12,9 @@ from __future__ import annotations
 import frappe
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
-from erpnext_enhancements.quickbooks_online.core.client import QuickBooksAPIError, QuickBooksClient
+from erpnext_enhancements.quickbooks_online.core.client import QuickBooksClient, QuickBooksDisconnectedError
 from erpnext_enhancements.quickbooks_online.core.sync import retry_failed, run_cdc
-from erpnext_enhancements.quickbooks_online.core.utils import clear_oauth_tokens, get_settings
+from erpnext_enhancements.quickbooks_online.core.utils import get_settings
 
 
 def refresh_token_if_needed():
@@ -39,16 +39,13 @@ def refresh_token_if_needed():
 		now_datetime(), minutes=10, as_datetime=True
 	):
 		return
+	# A dead grant is self-healed inside refresh_access_token (tokens cleared, status
+	# set to Not Connected), so swallow it here -- nothing to do until the operator
+	# reconnects. Other token errors (e.g. a transient 5xx) still propagate.
 	try:
 		QuickBooksClient(settings).refresh_access_token()
-	except QuickBooksAPIError as exc:
-		if "invalid_grant" in str(exc):
-			clear_oauth_tokens(
-				get_settings(),
-				message="QuickBooks disconnected: the refresh token was revoked or expired. Reconnect to resume sync.",
-			)
-		else:
-			raise
+	except QuickBooksDisconnectedError:
+		return
 
 
 def cdc_poll():
