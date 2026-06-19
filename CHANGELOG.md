@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.71.0] - 2026-06-19
+
+### Added
+- **AI tools now advertise their mutation/risk to MCP clients (device-safety hardening).** Every *mutating* assistant tool — the six MDM device actions (`remote_lock_device` / `remote_wipe_device` / `locate_device` / `reboot_device` / `run_device_script` / `deploy_device_patch`) plus `create_followup_task` — now sets an `annotations` attribute derived from `_gate.py`'s single-source classification via a new pure `annotations_for()` helper. FAC forwards a tool's `annotations` verbatim in its MCP `tools/list` response, so a connected MCP client (notably **Triton**) can read each tool's mutation flag (`readOnlyHint` / `x-ee-mutation`) and risk band (`destructiveHint` / `x-ee-risk` = low/medium/high) from the catalog instead of *guessing from the verb*. That guess was the bug: Triton's verb-based classifier treated the oddly-named device tools as read-only and ran them **without its confirmation step**, so a model hallucination or prompt injection could lock/wipe a device or run a remote script with no human in the loop. (ERPNext's own server-side AI write-gate still applies — but it ships dormant by default, so the client gate mattered.) A contract test now enforces that every `APP_MUTATING` tool advertises the metadata, so a future write tool can't ship without it.
+
+### Notes
+- ERPNext-side change is purely **additive** — older MCP clients simply ignore the new `annotations` field. The companion change that *consumes* these annotations (and adds a hardened device fallback) lands in the `triton` repo. Discovered by FAC on `bench restart`; no `bench migrate` required.
+
 ## [1.70.0] - 2026-06-19
 
 ### Added
