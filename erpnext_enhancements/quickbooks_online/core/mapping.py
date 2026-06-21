@@ -231,7 +231,9 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 
 	doc = frappe.new_doc(erpnext_doctype)
 	apply_values(doc, values)
-	doc.insert(ignore_permissions=True)
+	review = _insert_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
+	if review:
+		return review
 	save_mapping(
 		entity_type,
 		qbo_id,
@@ -1515,18 +1517,47 @@ def _save_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext
 	re-raised so the normal retry path can handle them. Returns a manual_review
 	action dict on a handled ValidationError, or None when the save succeeds.
 	"""
+	return _persist_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc, insert=False)
+
+
+def _insert_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, doc):
+	"""Insert a brand-new ERPNext doc, routing its validation failure to manual review.
+
+	The create-path twin of ``_save_or_manual_review``. A freshly mapped record can
+	still fail ERPNext's own validation on insert -- most commonly a transaction
+	(Quotation/Invoice/Journal Entry/...) whose QBO ``TxnDate`` falls outside every
+	configured ERPNext Fiscal Year (``FiscalYearError``, a ValidationError subclass:
+	e.g. a 2022 estimate on a company whose earliest Fiscal Year is 2025). Without
+	this the insert raises, the record is logged as a hard failure, and -- because
+	the failed run is retried -- it re-fails on every pass, which is exactly the
+	cascade that buried CDC. Parking it for manual review keeps one bad record from
+	failing the whole batch.
+	"""
+	return _persist_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc, insert=True)
+
+
+def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, doc, *, insert: bool):
+	"""Insert/save ``doc``; on a ValidationError park it for manual review, else None.
+
+	Shared body of ``_save_or_manual_review`` (save) and ``_insert_or_manual_review``
+	(insert). ``TimestampMismatchError`` (a transient concurrency error) is re-raised
+	so the caller's retry path handles it rather than mis-parking a good record.
+	"""
 	try:
-		doc.save(ignore_permissions=True)
+		if insert:
+			doc.insert(ignore_permissions=True)
+		else:
+			doc.save(ignore_permissions=True)
 		return None
 	except frappe.exceptions.TimestampMismatchError:
 		raise
 	except frappe.exceptions.ValidationError as exc:
-		message = str(exc) or "Validation failed on save"
+		message = str(exc) or ("Validation failed on insert" if insert else "Validation failed on save")
 		save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [message])
 		return {
 			"action": "manual_review",
 			"doctype": erpnext_doctype,
-			"name": doc.name,
+			"name": getattr(doc, "name", None),
 			"qbo_id": qbo_id,
 			"reason": message,
 		}
@@ -1863,10 +1894,16 @@ def _journal_accounts(payload):
 		if amount == 0:
 			continue
 		posting_type = detail.get("PostingType")
+		debit = amount if posting_type == "Debit" else 0
+		credit = amount if posting_type == "Credit" else 0
+		# A missing/unexpected PostingType would leave both columns zero, which
+		# ERPNext rejects ("Both Debit and Credit values cannot be zero"); skip it.
+		if debit == 0 and credit == 0:
+			continue
 		row = {
 			"account": account,
-			"debit_in_account_currency": amount if posting_type == "Debit" else 0,
-			"credit_in_account_currency": amount if posting_type == "Credit" else 0,
+			"debit_in_account_currency": debit,
+			"credit_in_account_currency": credit,
 		}
 		cost_center = _line_cost_center(detail)
 		if cost_center:

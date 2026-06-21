@@ -112,22 +112,20 @@ class StripePaymentStatus(BaseTool):
 		limit = clamp_limit(args.get("limit"), 15, 100)
 
 		# Status breakdown — permission-aware aggregate over the user's visible rows.
-		counts = {
-			row["status"]: row["count"]
-			for row in frappe.get_list(
-				"Stripe Payment",
-				fields=["status", "count(name) as count"],
-				group_by="status",
-			)
-		}
+		# Tally in Python: this Frappe rejects SQL function strings ("count(name)") in fields.
+		counts: dict[str, int] = {}
+		for row in frappe.get_list("Stripe Payment", fields=["status"], limit_page_length=0):
+			counts[row["status"]] = counts.get(row["status"], 0) + 1
 
 		# Trouble signal 1: paid but not yet reconciled to a Payment Entry.
-		unreconciled = frappe.get_list(
-			"Stripe Payment",
-			filters={"status": "Paid", "payment_entry": ["is", "not set"]},
-			fields=["count(name) as count"],
+		unreconciled_paid = len(
+			frappe.get_list(
+				"Stripe Payment",
+				filters={"status": "Paid", "payment_entry": ["is", "not set"]},
+				fields=["name"],
+				limit_page_length=0,
+			)
 		)
-		unreconciled_paid = unreconciled[0]["count"] if unreconciled else 0
 
 		result: dict[str, Any] = {
 			"success": True,

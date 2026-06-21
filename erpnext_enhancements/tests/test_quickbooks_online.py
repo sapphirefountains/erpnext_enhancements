@@ -1844,3 +1844,284 @@ def test_error_snippet_bounds_response_bodies():
 	snippet = _error_snippet(long_body)
 	assert snippet.endswith("(truncated)")
 	assert len(snippet) < len(long_body)
+
+
+# ---------------------------------------------------------------------------
+# Sync resilience: retry de-amplification, the CDC/import concurrency guard,
+# stale-run reaping, create-path manual review and the bounded 401 refresh.
+# These cover the runaway-CDC failure cluster (hundreds of failed runs that
+# re-spawned each other and raced on the same mapping rows).
+# ---------------------------------------------------------------------------
+
+
+def test_retry_failed_reruns_each_operation_once(monkeypatch):
+	"""retry_failed re-runs the global CDC/import once per call, not once per failed log.
+
+	The old behaviour re-ran the global operation once per failed log; since every
+	failed run creates another failed log, N failures spawned N re-runs that spawned
+	more -- the observed storm of hundreds of failed CDC runs.
+	"""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	failed = [types.SimpleNamespace(name=f"CDC-{i}", sync_type="CDC", retry_count=0) for i in range(5)]
+	failed.append(types.SimpleNamespace(name="IMP-1", sync_type="Import All", retry_count=0))
+
+	def get_all(doctype, filters=None, fields=None, **kwargs):
+		# The failed-log query returns the batch; the reaper's Running/Queued query is empty.
+		if filters and filters.get("status") == "Failed":
+			return failed
+		return []
+
+	saved = []
+
+	def get_doc(doctype, name):
+		doc = types.SimpleNamespace(
+			name=name, retry_count=0, sync_type="Import All" if name.startswith("IMP") else "CDC"
+		)
+		doc.save = lambda **kwargs: saved.append(name)
+		return doc
+
+	monkeypatch.setattr(frappe, "get_all", get_all)
+	monkeypatch.setattr(frappe, "get_doc", get_doc, raising=False)
+	monkeypatch.setattr(sync, "get_settings", lambda: types.SimpleNamespace(retry_limit=3))
+	calls = {"cdc": 0, "import": 0}
+	monkeypatch.setattr(sync, "run_cdc", lambda: calls.__setitem__("cdc", calls["cdc"] + 1))
+	monkeypatch.setattr(sync, "import_all", lambda: calls.__setitem__("import", calls["import"] + 1))
+
+	sync.retry_failed()
+
+	# One CDC + one import, regardless of the five failed CDC logs (no amplification)...
+	assert calls == {"cdc": 1, "import": 1}
+	# ...while every eligible log still records its retry attempt.
+	assert len(saved) == 6
+
+
+def test_retry_failed_skips_logs_past_retry_limit(monkeypatch):
+	"""A failed log already at retry_limit is skipped, triggering no re-run."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	failed = [types.SimpleNamespace(name="CDC-1", sync_type="CDC", retry_count=3)]
+	monkeypatch.setattr(
+		frappe,
+		"get_all",
+		lambda doctype, filters=None, **kwargs: failed if (filters or {}).get("status") == "Failed" else [],
+	)
+	monkeypatch.setattr(sync, "get_settings", lambda: types.SimpleNamespace(retry_limit=3))
+	calls = {"cdc": 0}
+	monkeypatch.setattr(sync, "run_cdc", lambda: calls.__setitem__("cdc", calls["cdc"] + 1))
+	monkeypatch.setattr(sync, "import_all", lambda: None)
+
+	sync.retry_failed()
+
+	assert calls["cdc"] == 0
+
+
+def test_run_in_progress_ignores_stale_runs(monkeypatch):
+	"""run_in_progress sees a fresh run but treats an orphaned (stale) one as not running."""
+	from datetime import datetime, timedelta
+
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	now = datetime(2026, 6, 21, 12, 0, 0)
+	monkeypatch.setattr(sync, "now_datetime", lambda: now)
+	monkeypatch.setattr(sync, "get_datetime", lambda value: value)
+
+	stale = now - timedelta(hours=3)  # past the 1h CDC staleness window
+	monkeypatch.setattr(frappe, "get_all", lambda *a, **k: [types.SimpleNamespace(started_at=stale, modified=stale)])
+	assert sync.run_in_progress("CDC") is False
+
+	fresh = now - timedelta(minutes=5)
+	monkeypatch.setattr(frappe, "get_all", lambda *a, **k: [types.SimpleNamespace(started_at=fresh, modified=fresh)])
+	assert sync.run_in_progress("CDC") is True
+
+
+def test_reap_stale_runs_fails_only_orphaned_logs(monkeypatch):
+	"""reap_stale_runs marks a long-orphaned Running log Failed but leaves a live one."""
+	from datetime import datetime, timedelta
+
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	now = datetime(2026, 6, 21, 12, 0, 0)
+	monkeypatch.setattr(sync, "now_datetime", lambda: now)
+	monkeypatch.setattr(sync, "get_datetime", lambda value: value)
+
+	rows = [
+		types.SimpleNamespace(
+			name="IMP-stuck",
+			sync_type="Import All",
+			started_at=now - timedelta(hours=12),  # past the 11h import window
+			modified=now - timedelta(hours=12),
+		),
+		types.SimpleNamespace(
+			name="CDC-live",
+			sync_type="CDC",
+			started_at=now - timedelta(minutes=10),  # inside the 1h CDC window
+			modified=now - timedelta(minutes=10),
+		),
+	]
+	monkeypatch.setattr(frappe, "get_all", lambda *a, **k: rows)
+	saved = {}
+
+	def get_doc(doctype, name):
+		doc = types.SimpleNamespace(name=name, status="Running", error_message=None, finished_at=None)
+		doc.save = lambda **kwargs: saved.__setitem__(doc.name, doc.status)
+		return doc
+
+	monkeypatch.setattr(frappe, "get_doc", get_doc, raising=False)
+
+	reaped = sync.reap_stale_runs()
+
+	assert reaped == 1
+	assert saved == {"IMP-stuck": "Failed"}
+
+
+def test_safe_upsert_retries_once_on_timestamp_mismatch(monkeypatch):
+	"""A transient TimestampMismatchError is retried once, then succeeds (not parked Failed)."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	calls = {"n": 0}
+
+	def flaky(entity_type, payload, settings, **kwargs):
+		calls["n"] += 1
+		if calls["n"] == 1:
+			raise frappe.exceptions.TimestampMismatchError("modified after open")
+		return {"action": "created"}
+
+	monkeypatch.setattr(sync, "upsert_entity", flaky)
+
+	result = sync.safe_upsert("Customer", {"Id": "1"}, types.SimpleNamespace())
+
+	assert result == {"action": "created"}
+	assert calls["n"] == 2
+
+
+def test_safe_upsert_marks_failed_after_persistent_mismatch(monkeypatch):
+	"""A persistent concurrency error falls through to a logged failed result."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	monkeypatch.setattr(frappe, "log_error", lambda *a, **k: None, raising=False)
+	monkeypatch.setattr(
+		sync,
+		"upsert_entity",
+		lambda *a, **k: (_ for _ in ()).throw(frappe.exceptions.TimestampMismatchError("still modified")),
+	)
+
+	result = sync.safe_upsert("Customer", {"Id": "7"}, types.SimpleNamespace())
+
+	assert result["action"] == "failed"
+	assert result["qbo_id"] == "7"
+
+
+def test_insert_or_manual_review_parks_validation_error(monkeypatch):
+	"""A create-time ValidationError (e.g. date outside any Fiscal Year) -> manual review."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	parked = {}
+	monkeypatch.setattr(
+		mapping,
+		"save_manual_review_mapping",
+		lambda et, qid, payload, dt, issues: parked.update(entity=et, qbo_id=qid, issues=issues),
+	)
+
+	class Doc:
+		name = "QTN-0001"
+
+		def insert(self, **kwargs):
+			raise frappe.exceptions.ValidationError(
+				"Date 01-28-2022 is not in any active Fiscal Year for Sapphire Fountains"
+			)
+
+	result = mapping._insert_or_manual_review("Estimate", "8932", {"Id": "8932"}, "Quotation", Doc())
+
+	assert result["action"] == "manual_review"
+	assert "Fiscal Year" in result["reason"]
+	assert parked["qbo_id"] == "8932"
+
+
+def test_insert_or_manual_review_reraises_timestamp_mismatch():
+	"""TimestampMismatchError on insert is re-raised (left for the retry path, not parked)."""
+	import pytest
+
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	class Doc:
+		name = "QTN-1"
+
+		def insert(self, **kwargs):
+			raise frappe.exceptions.TimestampMismatchError("modified after open")
+
+	with pytest.raises(frappe.exceptions.TimestampMismatchError):
+		mapping._insert_or_manual_review("Estimate", "1", {"Id": "1"}, "Quotation", Doc())
+
+
+def test_insert_or_manual_review_returns_none_on_success():
+	"""A clean insert returns None so the caller proceeds to record the mapping."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	class Doc:
+		name = "QTN-2"
+
+		def insert(self, **kwargs):
+			return None
+
+	assert mapping._insert_or_manual_review("Estimate", "2", {"Id": "2"}, "Quotation", Doc()) is None
+
+
+def test_journal_accounts_skips_line_with_unknown_posting_type(monkeypatch):
+	"""A JE line with an amount but no PostingType is dropped (it would be a 0/0 row)."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", lambda *a, **k: "Some Account - SF")
+	from erpnext_enhancements.quickbooks_online.core.mapping import _journal_accounts
+
+	rows = _journal_accounts(
+		{
+			"Line": [
+				{"Amount": 100, "JournalEntryLineDetail": {"PostingType": "Debit", "AccountRef": {"value": "1"}}},
+				{"Amount": 50, "JournalEntryLineDetail": {"AccountRef": {"value": "2"}}},  # no PostingType
+			]
+		}
+	)
+
+	assert len(rows) == 1
+	assert rows[0]["debit_in_account_currency"] == 100
+	assert rows[0]["credit_in_account_currency"] == 0
+
+
+def test_request_refreshes_and_retries_at_most_once(monkeypatch):
+	"""A 401 triggers exactly one refresh+retry; a still-401 response raises, not loops.
+
+	An unbounded refresh/retry loop would re-rotate (and thus invalidate) the refresh
+	token on every pass -- the very failure the serialized refresh exists to prevent.
+	"""
+	import pytest
+
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_mod
+
+	monkeypatch.setattr(client_mod, "get_secret", lambda settings, key: "tok")
+	client = client_mod.QuickBooksClient(types.SimpleNamespace(realm_id="42", environment="Production"))
+	refreshes = {"n": 0}
+	monkeypatch.setattr(client, "refresh_access_token", lambda **kwargs: refreshes.__setitem__("n", refreshes["n"] + 1))
+
+	class Resp:
+		status_code = 401
+		text = '{"fault":{"error":[{"message":"unauthorized"}]}}'
+
+		def json(self):
+			return {}
+
+	monkeypatch.setattr(client_mod.requests, "request", lambda *a, **k: Resp(), raising=False)
+
+	with pytest.raises(client_mod.QuickBooksAPIError):
+		client.request("GET", "/v3/company/42/query", params={"query": "select * from Account"})
+
+	assert refreshes["n"] == 1

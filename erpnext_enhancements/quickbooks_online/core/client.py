@@ -259,7 +259,7 @@ class QuickBooksClient:
 		self.settings.save(ignore_permissions=True)
 		frappe.db.commit()
 
-	def request(self, method: str, path: str, **kwargs):
+	def request(self, method: str, path: str, *, _refreshed: bool = False, **kwargs):
 		"""Make an authenticated QBO API call, refreshing the token on 401.
 
 		Prepends the environment base URL to ``path`` and injects the bearer
@@ -267,6 +267,12 @@ class QuickBooksClient:
 		the access token once and retries the same request; any other >=400
 		response raises ``QuickBooksAPIError``. Returns the parsed JSON body (or
 		``{}`` for an empty body). Raises if no access token is stored.
+
+		``_refreshed`` is internal: it caps the refresh/retry at one attempt so a
+		token that is *still* rejected after a fresh refresh raises instead of
+		recursing forever -- an unbounded loop would re-rotate (and thus invalidate)
+		the refresh token on every pass, the very failure the serialized refresh
+		exists to prevent.
 		"""
 		access_token = get_secret(self.settings, "access_token")
 		if not access_token:
@@ -288,14 +294,14 @@ class QuickBooksClient:
 			**kwargs,
 		)
 		# 401 => access token expired/revoked: refresh once and retry the same call.
-		if response.status_code == 401:
+		if response.status_code == 401 and not _refreshed:
 			self.refresh_access_token(previous_access_token=access_token)
-			return self.request(method, path, **kwargs, params=params)
+			return self.request(method, path, _refreshed=True, **kwargs, params=params)
 		if response.status_code >= 400:
 			raise QuickBooksAPIError(f"QuickBooks API request failed: {response.status_code} {_error_snippet(response.text)}")
 		return response.json() if response.text else {}
 
-	def upload_attachable(self, *, file_bytes, file_name, mime_type, entity_type, qbo_id):
+	def upload_attachable(self, *, file_bytes, file_name, mime_type, entity_type, qbo_id, _refreshed=False):
 		"""Upload a file to QBO and attach it to ``entity_type``/``qbo_id`` (a Bill
 		or Payment) via the Attachable batch-upload endpoint. Sent as
 		multipart/form-data (a JSON metadata part + the binary), so — unlike
@@ -321,10 +327,10 @@ class QuickBooksClient:
 			params={"minorversion": MINOR_VERSION},
 			timeout=120,
 		)
-		if response.status_code == 401:
+		if response.status_code == 401 and not _refreshed:
 			self.refresh_access_token(previous_access_token=access_token)
 			return self.upload_attachable(
-				file_bytes=file_bytes, file_name=file_name, mime_type=mime_type, entity_type=entity_type, qbo_id=qbo_id
+				file_bytes=file_bytes, file_name=file_name, mime_type=mime_type, entity_type=entity_type, qbo_id=qbo_id, _refreshed=True
 			)
 		if response.status_code >= 400:
 			raise QuickBooksAPIError(f"QuickBooks upload failed: {response.status_code} {response.text}")

@@ -41,6 +41,21 @@ from erpnext_enhancements.quickbooks_online.core.mapping import (
 from erpnext_enhancements.quickbooks_online.core.utils import get_settings, json_dumps
 
 
+# A QuickBooks Sync Log left Running/Queued longer than this is treated as orphaned
+# (its worker stopped, restarted or OOM'd) so it neither blocks a new run forever nor
+# lingers as a phantom "Running". Keyed per sync type because a full import legitimately
+# runs for hours while a CDC poll is a matter of seconds/minutes.
+STALE_RUN_SECONDS = {
+	"CDC": 60 * 60,  # 1h -- a CDC poll never legitimately runs this long
+	"Import All": 11 * 60 * 60,  # > the 10h background-job timeout (api.QBO_JOB_TIMEOUT)
+	"Run Resync": 11 * 60 * 60,
+	"Preview Resync": 11 * 60 * 60,
+	"Opening Balances": 60 * 60,
+	"Entity Sync": 30 * 60,
+}
+DEFAULT_STALE_RUN_SECONDS = 2 * 60 * 60
+
+
 def import_all(entity_types=None):
 	"""Full one-way import of all (or selected) QBO entities into ERPNext.
 
@@ -55,6 +70,10 @@ def import_all(entity_types=None):
 	"""
 	settings = get_settings()
 	ensure_connected(settings)
+	# Never run two full imports at once: they page the same entities and would race
+	# on the same mapping rows. Skip if one is already (genuinely) in progress.
+	if run_in_progress("Import All"):
+		return None
 	log = start_log("Import All")
 	try:
 		settings.status = "Syncing"
@@ -196,6 +215,10 @@ def run_cdc():
 	if not settings.sync_enabled or not settings.realm_id:
 		return None
 	ensure_connected(settings)
+	# Serialize CDC: overlapping polls reprocess the same change window and race on
+	# the same mapping rows (TimestampMismatchError). Skip if one is already running.
+	if run_in_progress("CDC"):
+		return None
 	log = start_log("CDC")
 	# Cursor: changes since the last successful CDC; first run looks back 24h.
 	# Clamp it into QBO's 30-day CDC window so a stale cursor (paused integration)
@@ -238,28 +261,97 @@ def retry_failed(log_name=None):
 
 	Called by the ``tasks.retry_failed_syncs`` scheduler hook (all failed logs)
 	or with a specific ``log_name`` from the dashboard "Retry Failed" action.
-	Each eligible log has its ``retry_count`` incremented (skipped once it hits
-	Settings.retry_limit, default 3), then the originating operation is re-run:
-	CDC logs re-run ``run_cdc``; Import All / Run Resync logs re-run ``import_all``.
-	Always returns True.
+	Each eligible failed log has its ``retry_count`` incremented (skipped once it
+	hits Settings.retry_limit, default 3) to record the attempt, but the originating
+	operation is then re-run **at most once per call**: CDC re-runs ``run_cdc`` once
+	and Import All / Run Resync re-run ``import_all`` once, no matter how many logs
+	of that type are failed.
+
+	Running the global operation once per *log* (the previous behaviour) amplified
+	catastrophically: every failed run creates another failed log, so N failed logs
+	spawned N re-runs that each spawned more, all racing on the same mapping rows
+	(``TimestampMismatchError``) and never converging -- the observed runaway of
+	hundreds of failed CDC runs. Orphaned Running/Queued logs are reaped first so a
+	crashed run can't keep the failed list (and the storm) alive. Always returns True.
 	"""
+	reap_stale_runs()
+	limit = get_settings().retry_limit or 3
 	filters = {"status": "Failed"}
 	if log_name:
 		filters["name"] = log_name
+	pending = set()
 	for log in frappe.get_all(
 		"QuickBooks Sync Log", filters=filters, fields=["name", "sync_type", "retry_count"]
 	):
 		# Stop retrying a log once it has hit the configured attempt ceiling.
-		if (log.retry_count or 0) >= (get_settings().retry_limit or 3):
+		if (log.retry_count or 0) >= limit:
 			continue
 		doc = frappe.get_doc("QuickBooks Sync Log", log.name)
 		doc.retry_count = (doc.retry_count or 0) + 1
 		doc.save(ignore_permissions=True)
 		if doc.sync_type == "CDC":
-			run_cdc()
+			pending.add("cdc")
 		elif doc.sync_type in {"Import All", "Run Resync"}:
-			import_all()
+			pending.add("import")
+	# Re-run each global operation a single time for the whole batch of failed logs.
+	if "cdc" in pending:
+		run_cdc()
+	if "import" in pending:
+		import_all()
 	return True
+
+
+def run_in_progress(sync_type):
+	"""True if a non-stale Running/Queued sync log of ``sync_type`` exists.
+
+	The concurrency guard for ``run_cdc``/``import_all``. Logs older than the
+	per-type staleness window (``STALE_RUN_SECONDS``) are an orphaned run whose
+	worker died and are ignored, so a crashed run can never permanently block new
+	ones.
+	"""
+	now = get_datetime(now_datetime())
+	threshold = STALE_RUN_SECONDS.get(sync_type, DEFAULT_STALE_RUN_SECONDS)
+	for log in frappe.get_all(
+		"QuickBooks Sync Log",
+		filters={"sync_type": sync_type, "status": ["in", ["Running", "Queued"]]},
+		fields=["started_at", "modified"],
+	):
+		started = get_datetime(log.started_at or log.modified)
+		if started and (now - started).total_seconds() <= threshold:
+			return True
+	return False
+
+
+def reap_stale_runs():
+	"""Fail orphaned Running/Queued sync logs and return how many were reaped.
+
+	A run whose worker died (deploy, restart, OOM) leaves its log stuck Running
+	forever -- inflating the failed/running counts and, for an Import All, blocking
+	every future import via the ``run_in_progress`` guard. This marks any Running or
+	Queued log past its per-type staleness window as Failed so it stops blocking and
+	the normal retry path can pick it up.
+	"""
+	now = get_datetime(now_datetime())
+	reaped = 0
+	for log in frappe.get_all(
+		"QuickBooks Sync Log",
+		filters={"status": ["in", ["Running", "Queued"]]},
+		fields=["name", "sync_type", "started_at", "modified"],
+	):
+		started = get_datetime(log.started_at or log.modified)
+		threshold = STALE_RUN_SECONDS.get(log.sync_type, DEFAULT_STALE_RUN_SECONDS)
+		if not started or (now - started).total_seconds() <= threshold:
+			continue
+		doc = frappe.get_doc("QuickBooks Sync Log", log.name)
+		doc.status = "Failed"
+		doc.finished_at = now_datetime()
+		if not (doc.error_message or "").strip():
+			doc.error_message = (
+				"Run did not finish (worker stopped or restarted); marked Failed by stale-run cleanup."
+			)
+		doc.save(ignore_permissions=True)
+		reaped += 1
+	return reaped
 
 
 def _clamp_cdc_cursor(changed_since, now):
@@ -347,20 +439,35 @@ def safe_upsert(entity_type, payload, settings, **kwargs):
 	Used by batch operations (import/resync/CDC) so one malformed record logs an
 	Error and returns ``{"action": "failed", ...}`` instead of aborting the whole
 	run. ``kwargs`` forward flags like ``preview`` / ``overwrite``.
+
+	A ``TimestampMismatchError`` (another worker touched the same mapping/record
+	between our read and write) is retried once: ``upsert_entity`` re-reads both the
+	mapping and the target doc on entry, so a single retry clears the transient race
+	rather than parking a perfectly good record as Failed.
 	"""
 	try:
 		return upsert_entity(entity_type, payload, settings, **kwargs)
+	except frappe.exceptions.TimestampMismatchError:
+		try:
+			return upsert_entity(entity_type, payload, settings, **kwargs)
+		except Exception:
+			return _failed_result(entity_type, payload)
 	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"QuickBooks Online {entity_type} import failed for {payload.get('Id') if isinstance(payload, dict) else ''}",
-		)
-		return {
-			"action": "failed",
-			"entity_type": entity_type,
-			"reason": frappe.get_traceback(),
-			"qbo_id": payload.get("Id") if isinstance(payload, dict) else None,
-		}
+		return _failed_result(entity_type, payload)
+
+
+def _failed_result(entity_type, payload):
+	"""Log the traceback and build the ``{"action": "failed", ...}`` result dict."""
+	frappe.log_error(
+		frappe.get_traceback(),
+		f"QuickBooks Online {entity_type} import failed for {payload.get('Id') if isinstance(payload, dict) else ''}",
+	)
+	return {
+		"action": "failed",
+		"entity_type": entity_type,
+		"reason": frappe.get_traceback(),
+		"qbo_id": payload.get("Id") if isinstance(payload, dict) else None,
+	}
 
 
 def ordered_entities(entity_types=None):

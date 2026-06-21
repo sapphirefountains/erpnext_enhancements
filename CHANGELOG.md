@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.72.0] - 2026-06-21
+
+### Fixed
+- **QuickBooks Online sync: stopped the runaway retry storm and the concurrency races it caused.** The integration had accumulated **hundreds of Failed CDC runs** (and would have detonated on the next reconnect). Root cause: `sync.retry_failed` re-ran the **global** `run_cdc()` / `import_all()` **once per failed log** — and since every failed run creates another failed log, N failures spawned N re-runs that spawned more, never converging. Those re-runs also overlapped and raced on the same `QuickBooks Sync Mapping` rows, throwing `TimestampMismatchError` (which then failed otherwise-fine records like vendor `Purchase` entries). Fixes:
+  - `retry_failed` now re-runs each global operation **at most once per pass** (it still bumps each eligible log's `retry_count` to record the attempt), so the failed list drains instead of amplifying.
+  - `run_cdc` and `import_all` gained a **concurrency guard** (`run_in_progress`) so two polls/imports can't execute at once. The guard is **stale-aware**: a Running/Queued log past a per-type window (1h for CDC, >10h for an import) is treated as orphaned so a crashed run can't block new ones forever.
+  - New `reap_stale_runs` (run at the top of `retry_failed`) marks orphaned Running/Queued logs Failed — clearing, among others, a stuck "Running" Import All that was silently blocking **every** future import via the dashboard guard.
+  - `safe_upsert` now **retries a record once** on `TimestampMismatchError` (the upsert re-reads the mapping and target doc on entry) instead of parking a good record as Failed.
+- **Old-dated transactions no longer hard-fail the whole import.** A QBO transaction whose date falls outside every configured ERPNext Fiscal Year (e.g. a 2022 `Estimate` on a company whose earliest Fiscal Year was 2025) threw `FiscalYearError` on insert and failed the entire run — which the retry storm then re-failed forever. The create path now mirrors the existing update/link path: an insert-time `ValidationError` routes that one record to **manual review** with the validation message instead of aborting the batch (`mapping._insert_or_manual_review`). (Operationally, Fiscal Years 2020–2024 were also added on the instance so the historical estimates import rather than parking.)
+- **Journal-line mapping hardened against a zero/zero row.** `mapping._journal_accounts` now drops a `JournalEntry` line whose `Amount` is non-zero but whose `PostingType` is missing/unexpected — previously it produced a row with both Debit and Credit zero, which ERPNext rejects ("Both Debit and Credit values cannot be zero"). (The `_ledger_line`-based mappers were already safe; this closes the same gap on the native `JournalEntry` path.)
+- **Bounded the 401 token refresh/retry.** `client.request` / `upload_attachable` refreshed the access token and retried on a 401 with **no cap**: a persistently-401 response recursed forever, re-rotating (and thus invalidating) the refresh token on every pass — a self-inflicted way to kill the grant. They now refresh-and-retry **at most once**, then surface the error.
+- **Four AI status tools were returning a 500 instead of a status.** `quickbooks_sync_status`, `stripe_payment_status`, `document_intake_queue` and `closed_won_handoff_status` built their counts with `frappe.get_list(fields=["count(name) as count"])`, which this Frappe version rejects ("SQL functions are not allowed as strings in SELECT") — so each tool failed outright. Replaced with permission-aware tallies over the user's visible rows (preserving the tools' documented permission-awareness).
+
 ## [1.71.0] - 2026-06-19
 
 ### Added
