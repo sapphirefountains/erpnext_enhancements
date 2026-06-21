@@ -104,12 +104,13 @@ class QuickbooksSyncStatus(BaseTool):
 	def _summary(self, args: dict[str, Any]) -> dict[str, Any]:
 		limit = clamp_limit(args.get("limit"), 10, 50)
 
-		failed = frappe.get_list(
-			"QuickBooks Sync Log",
-			filters={"status": "Failed"},
-			fields=["count(name) as count"],
+		# Permission-aware count: tally the user's visible rows. (This Frappe rejects
+		# SQL function strings like "count(name)" in get_list fields.)
+		failed_records = len(
+			frappe.get_list(
+				"QuickBooks Sync Log", filters={"status": "Failed"}, fields=["name"], limit_page_length=0
+			)
 		)
-		failed_records = failed[0]["count"] if failed else 0
 
 		filters = {"status": args["status"]} if args.get("status") else {}
 		latest = frappe.get_list(

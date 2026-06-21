@@ -70,8 +70,9 @@ class ClosedWonHandoffStatus(BaseTool):
 		limit = clamp_limit(args.get("limit"), 20, 100)
 		filters = {"status": _WON_STATUS, "custom_created_project": ["is", "not set"]}
 
-		total = frappe.get_list("Opportunity", filters=filters, fields=["count(name) as count"])
-		total_waiting = total[0]["count"] if total else 0
+		# Permission-aware count: tally the user's visible rows (a Sales user may have
+		# territory-scoped Opportunity access). This Frappe rejects "count(name)" fields.
+		total_waiting = len(frappe.get_list("Opportunity", filters=filters, fields=["name"], limit_page_length=0))
 
 		rows = frappe.get_list(
 			"Opportunity",

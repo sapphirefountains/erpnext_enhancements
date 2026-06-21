@@ -139,14 +139,11 @@ class DocumentIntakeQueue(BaseTool):
 	def _summary(self, args: dict[str, Any]) -> dict[str, Any]:
 		limit = clamp_limit(args.get("limit"), 20, 100)
 
-		counts = {
-			row["status"]: row["count"]
-			for row in frappe.get_list(
-				"Document Intake",
-				fields=["status", "count(name) as count"],
-				group_by="status",
-			)
-		}
+		# Permission-aware status breakdown: tally the user's visible rows in Python.
+		# (This Frappe rejects SQL function strings like "count(name)" in get_list fields.)
+		counts: dict[str, int] = {}
+		for row in frappe.get_list("Document Intake", fields=["status"], limit_page_length=0):
+			counts[row["status"]] = counts.get(row["status"], 0) + 1
 		needs_attention = sum(counts.get(s, 0) for s in _ATTENTION)
 
 		filters: dict[str, Any] = {}
