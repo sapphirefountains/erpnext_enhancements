@@ -20,6 +20,8 @@ imports/webhooks/CDC safe to re-run.
 
 from __future__ import annotations
 
+import re
+
 import frappe
 from frappe.utils import now_datetime
 
@@ -697,6 +699,10 @@ def find_existing_match(entity_type: str, payload: dict, settings):
 		"Class": _match_class,
 	}
 	matcher = matchers.get(entity_type)
+	# A QBO job is entity_type "Customer" but maps to a Project, so it matches against
+	# existing ERPNext Projects (by PRJ number), not Customers.
+	if entity_type == "Customer" and _is_qbo_customer_job(payload):
+		matcher = _match_project
 	return matcher(payload, settings) if matcher else None
 
 
@@ -720,6 +726,49 @@ def _display_name(payload):
 		or payload.get("Name")
 		or payload.get("Id")
 	)
+
+
+def _is_qbo_customer_job(payload) -> bool:
+	"""True if a QBO Customer payload is a sub-customer / job (a "Project" in QBO),
+	not a top-level customer.
+
+	QBO marks these with ``Job``/``IsProject`` true, a ``ParentRef``, or ``Level`` > 0,
+	and their ``FullyQualifiedName`` is the colon path ``Parent:Job``. Sapphire's jobs
+	are per-project (named ``PRJ-### ...``) and ``BillWithParent``; they belong in
+	ERPNext as **Projects** under the parent Customer, not as flat colon-named
+	Customers. Importing them as Customers produced thousands of ``Parent:Job``
+	records and, via the Customer ``after_insert`` Drive hook, orphan top-level Drive
+	folders -- which is the bug this routing fixes (see ``_map_qbo_job_to_project``).
+	"""
+	return bool(
+		payload.get("Job")
+		or payload.get("IsProject")
+		or payload.get("ParentRef")
+		or (payload.get("Level") or 0) > 0
+	)
+
+
+# Numeric token of a "PRJ-###" label, with any leading zeros dropped, so a QBO job
+# leaf ("PRJ-401 ...") matches an ERPNext project id ("PRJ-00401") -- both reduce to
+# "401". Case-insensitive; tolerates the optional hyphen ("PRJ419").
+_PRJ_NUMBER_RE = re.compile(r"PRJ-?0*(\d+)", re.IGNORECASE)
+
+
+def _prj_number(text) -> str | None:
+	"""Return the digits of a 'PRJ-###' token in ``text`` (zero-padding stripped), or None."""
+	match = _PRJ_NUMBER_RE.search(text or "")
+	return match.group(1) if match else None
+
+
+def _raw_payload_dict(entity_type, qbo_id):
+	"""Most-recent stored raw QBO payload for an entity as a dict, or None."""
+	doc = _latest_raw_payload(entity_type, qbo_id)
+	if not doc or not doc.payload:
+		return None
+	try:
+		return json_loads(doc.payload)
+	except (TypeError, ValueError):
+		return None
 
 
 def _latest_raw_payload(entity_type, qbo_id):
@@ -782,10 +831,15 @@ def _map_account(payload, settings):
 def _map_customer(payload, settings):
 	"""Map a QBO Customer to an ERPNext Customer (company vs individual by CompanyName).
 
-	``customer_type`` is resolved against the field's actual Select options --
-	sites customize them via Property Setter (e.g. Commercial/Residential/
-	Partnership), and an option not in the list fails validation on insert.
+	QBO sub-customers / jobs are not customers -- they are per-project records that
+	``BillWithParent``. They route to an ERPNext **Project** under the top-level
+	Customer (``_map_qbo_job_to_project``) rather than a flat ``Parent:Job``
+	colon-named Customer. ``customer_type`` is resolved against the field's actual
+	Select options -- sites customize them via Property Setter (e.g. Commercial/
+	Residential/Partnership), and an option not in the list fails validation on insert.
 	"""
+	if _is_qbo_customer_job(payload):
+		return _map_qbo_job_to_project(payload, settings)
 	return "Customer", {
 		"customer_name": _display_name(payload),
 		"customer_type": _select_option(
@@ -801,6 +855,57 @@ def _map_customer(payload, settings):
 			"Term", "Payment Terms Template", (payload.get("SalesTermRef") or {}).get("value")
 		),
 	}
+
+
+def _map_qbo_job_to_project(payload, settings):
+	"""Map a QBO job / sub-customer to an ERPNext Project under its top-level Customer.
+
+	The job's leaf ``DisplayName`` (e.g. ``PRJ-401 4th West Fountain ...``) becomes the
+	project title; ``customer`` is the top-level ancestor Customer (``_top_level_customer``).
+	The matcher (``_match_project``) links to an already-existing ERPNext project by its
+	``PRJ-###`` number first, so this create path is only hit for jobs with no project
+	yet. ``project_name`` is left to fill only when blank on an auto-linked project, so
+	an existing project title is never overwritten.
+	"""
+	values = {
+		"project_name": payload.get("DisplayName") or _display_name(payload),
+		"status": "Open",
+	}
+	customer = _top_level_customer(payload, settings)
+	if customer:
+		values["customer"] = customer
+	if _has_field("Project", "company"):
+		values["company"] = settings.company
+	return "Project", values
+
+
+def _top_level_customer(payload, settings):
+	"""ERPNext Customer for the top-level ancestor of a QBO job, or None.
+
+	Walks ``ParentRef`` up the QBO customer tree (a job's parent may itself be a job)
+	until it reaches a QBO customer imported as an ERPNext Customer. A parent that
+	imported as a Project (i.e. is also a job) contributes its own ``customer``.
+	Returns None if no ancestor is mapped yet -- the Project is still created, and a
+	later sync fills the link. Customer import is ordered top-level-first
+	(``sync.query_entity_payloads``), so the immediate parent is normally resolvable.
+	"""
+	seen: set[str] = set()
+	parent_id = (payload.get("ParentRef") or {}).get("value")
+	while parent_id and str(parent_id) not in seen:
+		seen.add(str(parent_id))
+		customer = _linked_name("Customer", "Customer", parent_id)
+		if customer:
+			return customer
+		project = _linked_name("Customer", "Project", parent_id)
+		if project:
+			customer = frappe.db.get_value("Project", project, "customer")
+			if customer:
+				return customer
+		parent_payload = _raw_payload_dict("Customer", parent_id)
+		if not parent_payload:
+			break
+		parent_id = (parent_payload.get("ParentRef") or {}).get("value")
+	return None
 
 
 def _map_supplier(payload, settings):
@@ -842,9 +947,13 @@ def _map_sales_invoice(payload, settings):
 	ERPNext to compute.
 	"""
 	currency, rate = _txn_currency(payload, settings)
+	# A job's invoice resolves to the parent Customer + the job's Project (job costing);
+	# a top-level customer's invoice resolves to that Customer with project None.
+	customer, project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
 	return "Sales Invoice", {
 		"company": settings.company,
-		"customer": _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value")),
+		"customer": customer,
+		"project": project,
 		"posting_date": payload.get("TxnDate"),
 		"set_posting_time": 1,
 		"currency": currency,
@@ -1172,12 +1281,17 @@ def _map_deposit(payload, settings):
 
 
 def _map_quotation(payload, settings):
-	"""Map a QBO Estimate to an ERPNext Quotation (to a Customer)."""
+	"""Map a QBO Estimate to an ERPNext Quotation (to a Customer).
+
+	A job's estimate resolves to the parent Customer (and its Project, when Quotation
+	carries a ``project`` field) -- see ``_resolve_customer_ref``.
+	"""
 	currency, rate = _txn_currency(payload, settings)
-	return "Quotation", {
+	customer, project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
+	values = {
 		"company": settings.company,
 		"quotation_to": "Customer",
-		"party_name": _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value")),
+		"party_name": customer,
 		"transaction_date": payload.get("TxnDate"),
 		"currency": currency,
 		"conversion_rate": rate,
@@ -1186,6 +1300,9 @@ def _map_quotation(payload, settings):
 		"plc_conversion_rate": 1,
 		"items": _sales_items(payload),
 	}
+	if project and _has_field("Quotation", "project"):
+		values["project"] = project
+	return "Quotation", values
 
 
 def _map_purchase_order(payload, settings):
@@ -1284,6 +1401,29 @@ def _linked_name(qbo_entity_type: str, erpnext_doctype: str, qbo_id: str | None)
 		{"qbo_entity_type": qbo_entity_type, "qbo_id": str(qbo_id), "erpnext_doctype": erpnext_doctype},
 		"erpnext_name",
 	)
+
+
+def _resolve_customer_ref(qbo_customer_id):
+	"""Resolve a QBO ``CustomerRef`` to ``(erpnext_customer, project)``.
+
+	A top-level QBO customer maps to an ERPNext Customer (``project`` None). A QBO job
+	maps to an ERPNext Project (see ``_map_qbo_job_to_project``); its transactions bill
+	to the project's parent Customer, tagged with the Project for job costing. Returns
+	``(None, None)`` when the reference is unmapped. This is the customer-side
+	counterpart to ``_linked_name`` and the bridge that keeps a job's invoices/payments
+	attached to the real customer after jobs stopped being flat Customers.
+	"""
+	if not qbo_customer_id:
+		return None, None
+	# Top-level customers map straight to an ERPNext Customer (the common case).
+	customer = _linked_name("Customer", "Customer", qbo_customer_id)
+	if customer:
+		return customer, None
+	# A job maps to an ERPNext Project; bill its parent Customer + tag the Project.
+	project = _linked_name("Customer", "Project", qbo_customer_id)
+	if project:
+		return frappe.db.get_value("Project", project, "customer"), project
+	return None, None
 
 
 def _default_or_none(doctype: str, name: str):
@@ -1644,8 +1784,9 @@ def _root_cost_center(settings):
 
 
 def _payment_party(payload):
-	"""Resolve a payment's party: a mapped Customer, else a mapped Vendor, else (None, None)."""
-	customer = _linked_name("Customer", "Customer", (payload.get("CustomerRef") or {}).get("value"))
+	"""Resolve a payment's party: a mapped Customer (a job resolves to its parent
+	Customer), else a mapped Vendor, else (None, None)."""
+	customer, _project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
 	if customer:
 		return "Customer", customer
 	vendor = _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value"))
@@ -1746,6 +1887,50 @@ def _match_customer(payload, settings):
 	if email and _has_field("Customer", "email_id"):
 		return _single_or_ambiguous("Customer", {"email_id": email}, "email_id", payload, confidence=85)
 	return None
+
+
+def _match_project(payload, settings):
+	"""Match a QBO job to an existing ERPNext Project, by its ``PRJ-###`` number first.
+
+	Sapphire's QBO jobs are named after ERPNext projects (e.g. ``PRJ-401 ...``), so the
+	number links the bulk of them to the existing project. ERPNext ids are zero-padded
+	(``PRJ-00401``), which ``_prj_number`` normalises, so the regexp matches both
+	``name`` and ``project_name``. A unique hit is a high-confidence match; multiple
+	hits are ambiguous (manual review). With no number it falls back to an exact
+	``project_name`` under the resolved parent customer.
+	"""
+	leaf = payload.get("DisplayName") or _display_name(payload)
+	number = _prj_number(leaf)
+	if number:
+		# ``number`` is digits-only (from _prj_number); the pattern is bound as a
+		# parameter, never string-built into the SQL. The boundary keeps "401" from
+		# matching "4010".
+		names = [
+			row.name
+			for row in frappe.db.sql(
+				"""select name from `tabProject`
+				   where name regexp %(pat)s or project_name regexp %(pat)s""",
+				{"pat": f"PRJ-?0*{number}([^0-9]|$)"},
+				as_dict=True,
+			)
+		]
+		names = list(dict.fromkeys(names))
+		if len(names) == 1:
+			return {"status": "matched", "name": names[0], "rule": "prj_number", "confidence": 95}
+		if len(names) > 1:
+			return {
+				"status": "ambiguous",
+				"reason": "prj_number",
+				"candidates": [{"doctype": "Project", "name": name} for name in names],
+				"qbo_name": leaf,
+			}
+	return _single_or_ambiguous(
+		"Project",
+		{"project_name": leaf, "customer": _top_level_customer(payload, settings)},
+		"project_name + customer",
+		payload,
+		confidence=90,
+	)
 
 
 def _match_supplier(payload, settings):
