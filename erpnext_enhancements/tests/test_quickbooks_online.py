@@ -2301,3 +2301,71 @@ def test_customers_imported_top_level_first(monkeypatch):
 	levels = [payload.get("Level") or 0 for payload in payloads]
 	assert levels == sorted(levels)
 	assert payloads[-1]["Id"] == "2054"  # the only job sorts last
+
+
+# ---------------------------------------------------------------------------
+# Remediation of the legacy Parent:Job Customers (job_remediation.py).
+# ---------------------------------------------------------------------------
+
+
+def test_remediation_enumerates_only_jobs_top_level_first(monkeypatch):
+	"""_enumerate_jobs returns only QBO-job mappings, sorted by Level ascending."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import job_remediation
+
+	rows = [
+		types.SimpleNamespace(name="QBO-MAP-Customer-2054", qbo_id="2054", erpnext_doctype="Customer", erpnext_name="4th West Apartments:PRJ-401 job"),
+		types.SimpleNamespace(name="QBO-MAP-Customer-1225", qbo_id="1225", erpnext_doctype="Customer", erpnext_name="4th West Apartments"),
+		types.SimpleNamespace(name="QBO-MAP-Customer-2099", qbo_id="2099", erpnext_doctype="Project", erpnext_name="PRJ-00099"),
+	]
+	monkeypatch.setattr(frappe, "get_all", lambda *a, **k: rows)
+	payloads = {
+		"2054": {"Job": True, "Level": 1, "ParentRef": {"value": "1225"}, "DisplayName": "PRJ-401 job"},
+		"1225": {"DisplayName": "4th West Apartments"},  # top-level customer, NOT a job
+		"2099": {"Job": True, "Level": 2, "ParentRef": {"value": "2054"}, "DisplayName": "deep job"},
+	}
+	monkeypatch.setattr(job_remediation, "_raw_payload_dict", lambda entity, qbo_id: payloads.get(str(qbo_id)))
+
+	jobs = job_remediation._enumerate_jobs()
+	ids = [mapping_row.qbo_id for mapping_row, _payload in jobs]
+
+	assert "1225" not in ids  # the top-level parent is excluded
+	assert ids == ["2054", "2099"]  # only jobs, Level 1 before Level 2
+
+
+def test_remediation_tally_reports_would_actions_in_dry_run():
+	"""_tally counts would_merge/invoice-count in dry-run and actuals in apply mode."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.job_remediation import _new_report, _tally
+
+	dry = _new_report("dry-run", 1)
+	_tally(dry, {
+		"outcome": "dry-run", "project": "PRJ-00401", "project_created": False,
+		"would_merge": True, "invoices": 3, "folder_plan": "empty",
+	})
+	assert dry["project_linked"] == 1 and dry["merged"] == 1
+	assert dry["invoices_tagged"] == 3 and dry["folders_trashed"] == 1
+
+	live = _new_report("apply", 1)
+	_tally(live, {
+		"outcome": "consolidated", "project": "PRJ-9", "project_created": True,
+		"merged": True, "invoices": 5, "invoices_tagged": 2, "folder_action": "moved",
+	})
+	assert live["project_created"] == 1 and live["merged"] == 1
+	assert live["invoices_tagged"] == 2 and live["folders_moved"] == 1  # actual tagged, not the count of 5
+
+	skip = _new_report("apply", 1)
+	_tally(skip, {"outcome": "skip-no-parent"})
+	assert skip["no_parent"] == 1 and skip["merged"] == 0
+
+
+def test_remediation_project_folder_name_for_relocated_folder():
+	"""_project_folder_name prefixes the leaf with the project id, avoiding duplication."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.job_remediation import _project_folder_name
+
+	assert _project_folder_name("PRJ-00401", {"DisplayName": "4th West Fountain"}) == "PRJ-00401 - 4th West Fountain"
+	# leaf already carries the id -> no double prefix
+	assert _project_folder_name("PRJ-00401", {"DisplayName": "PRJ-00401 4th West"}) == "PRJ-00401 4th West"
+	# a not-yet-created project ("(new) ...") -> just the leaf
+	assert _project_folder_name("(new) Foo", {"DisplayName": "Foo"}) == "Foo"

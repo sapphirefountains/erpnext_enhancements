@@ -161,3 +161,39 @@ interruptions rather than restarting from scratch.
 Balance (`Trial_balance.xlsx`) — or simply run the **QuickBooks Balance Comparison**
 report, which does this per account automatically. Investigate any manual-review/failed
 rows in the sync log first.
+
+---
+
+## 6. Remediation: legacy job-customers (one-off)
+
+An **earlier** version of the importer mapped QBO sub-customers / jobs to flat
+`Parent:Job` colon-named **Customers** (and the Customer Drive hook then made an orphan
+top-level folder for each). The current importer maps jobs to **Projects** (§1), but
+records created before that fix need a one-off cleanup, in
+`quickbooks_online/core/job_remediation.py`.
+
+`consolidate_qbo_jobs` walks the QBO job-customers (identified via QBO Sync Mapping +
+the raw payload's `Job`/`ParentRef`, **not** a blind name `LIKE '%:%'`), top-level-first,
+and for each: links it to the existing ERPNext Project by `PRJ-###` (else creates one
+under the parent), tags the job's Sales Invoices with that Project, **merges** the
+job-Customer into its top-level parent (`frappe.rename_doc(merge=True)` — moves
+invoices/payments/quotations/addresses), repoints the QBO Sync Mapping to the Project,
+and cleans the orphan Drive folder (trashes it if empty, else relocates it under the
+parent customer folder). It is **dry-run by default**, idempotent, batched/committed,
+per-record guarded, and Drive folders are **trashed (recoverable), never hard-deleted**.
+
+Runbook (do this in order, **on a sandbox/test site first**):
+
+1. Deploy the job→Project importer fix together with this module.
+2. Preview (writes nothing):
+   `bench --site <site> execute erpnext_enhancements.quickbooks_online.core.job_remediation.consolidate_qbo_jobs`
+   Review the printed summary (jobs, would-merge, would-tag invoices, folder plan,
+   `no_parent`/`ambiguous_project` skips). Optionally `--kwargs "{'limit': 5}"` to scope.
+3. Apply: re-run with `--kwargs "{'apply': True}"` (requires System Manager). Re-runnable —
+   already-consolidated jobs are skipped.
+4. Confirm: 0 Customers with a colon in `customer_name` remain that are QBO jobs; spot-check
+   a parent (e.g. *4th West Apartments*) now owns the projects/invoices and the orphan Drive
+   folders are gone.
+5. **Only then** re-enable the QBO sync (`QuickBooks Online Settings.sync_enabled`). Running
+   the remediation first repoints every job's mapping to its Project, so the resumed sync
+   updates the Project instead of recreating the flat Customer.
