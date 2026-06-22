@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.86.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks sync no longer re-parks a record over a pre-existing invalid Link it doesn't manage.** When the sync **re-saves an existing record** (an update, or an auto-link), ERPNext re-validates *every* field on the document — including ones the sync never set. A live example: a `Project` (linked to a QBO job) whose `custom_project_owner` field (label **"Project Manager"**, a Link to **Employee**) was left holding an **email** (`james.harris@…`) by an earlier data load. ERPNext rejected the save with *"Could not find Project Manager: …@…"*, so the job was routed to manual review — and re-parked on **every** subsequent import, undoing the job→Project mapping each run (the Projects themselves were never harmed). `_persist_or_manual_review` now sets `doc.flags.ignore_links` on the **save** path so the sync doesn't fail on (and doesn't alter) such latent invalid links — the sync's own links are already resolved to real records via `_linked_name`, so nothing unvalidated is introduced. **Inserts (brand-new records) still validate links normally.** (Operationally, the ~351 Project Manager values that mapped to a real Employee were also corrected; ~64 with no Employee record were left for manual review — this fix is what stops them re-parking jobs in the meantime.)
+
 ## [1.85.0] - 2026-06-22
 
 ### Fixed
