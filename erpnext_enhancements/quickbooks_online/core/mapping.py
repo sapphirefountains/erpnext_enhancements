@@ -145,6 +145,37 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
 
+	# Doctype-flip guard. This QBO id is already linked to a DIFFERENT ERPNext DocType
+	# (the classic case: a QBO Customer imported as a Customer that a later payload
+	# reclassifies as a job -> Project). The in-place-update branch above keys on THIS
+	# run's resolved DocType, so it was skipped; left alone the flow below would create
+	# a brand-new record of the new DocType and orphan the original -- a Customer+Project
+	# duplicate for one qbo_id. Flag the existing mapping for review (the job_remediation
+	# tool merges/relinks these) instead of silently creating a duplicate.
+	if (
+		mapping
+		and mapping.erpnext_name
+		and mapping.erpnext_doctype
+		and mapping.erpnext_doctype != erpnext_doctype
+		and frappe.db.exists(mapping.erpnext_doctype, mapping.erpnext_name)
+	):
+		reason = (
+			f"QBO {entity_type} {qbo_id} is already linked to {mapping.erpnext_doctype} "
+			f"'{mapping.erpnext_name}' but now resolves to {erpnext_doctype}; deferred to "
+			f"manual review (run job remediation to relink) to avoid creating a duplicate."
+		)
+		if not preview:
+			mapping.conflict_status = "Pending Review"
+			mapping.match_status = "Pending Review"
+			mapping.save(ignore_permissions=True)
+		return {
+			"action": "manual_review",
+			"doctype": mapping.erpnext_doctype,
+			"name": mapping.erpnext_name,
+			"qbo_id": qbo_id,
+			"reason": reason,
+		}
+
 	# Not yet linked: try to attach to a pre-existing ERPNext record by fuzzy match.
 	existing_match = find_existing_match(entity_type, payload, settings)
 	if existing_match:
@@ -495,7 +526,28 @@ def validate_mapped_values(
 	imbalance = _journal_imbalance(erpnext_doctype, values)
 	if imbalance:
 		issues.append(imbalance)
+	unlinked_project = _blocked_unlinked_project(erpnext_doctype, values, include_doc_required)
+	if unlinked_project:
+		issues.append(unlinked_project)
 	return issues
+
+
+def _blocked_unlinked_project(erpnext_doctype: str, values: dict, include_doc_required: bool) -> str | None:
+	"""Issue when a QBO job would create a Project with no parent Customer resolved.
+
+	Only blocks at create time (``include_doc_required`` True), never at preflight, so a
+	job with a ``PRJ-###`` number still links to its existing Project via ``_match_project``
+	first -- this is reached only when no match was found. A job's top-level Customer may
+	not be imported yet (QBO Customer order isn't guaranteed parent-first), and creating
+	the Project unlinked would orphan it and let two customers' same-titled jobs collide.
+	Defer to manual review; a later sync, once the parent Customer exists, creates it
+	linked. (Net-new jobs WITH a resolved customer still create normally.)
+	"""
+	if not include_doc_required or erpnext_doctype != "Project":
+		return None
+	if values.get("customer"):
+		return None
+	return "QBO job has no resolved parent Customer yet; deferring Project creation to manual review."
 
 
 def _required_mapped_fields(
@@ -1955,9 +2007,18 @@ def _match_project(payload, settings):
 				"candidates": [{"doctype": "Project", "name": name} for name in names],
 				"qbo_name": leaf,
 			}
+	# No PRJ number: only match on the exact title scoped to the resolved parent
+	# Customer. If that parent isn't mapped yet, do NOT fall back to a title-only lookup
+	# -- _single_or_ambiguous would drop the empty customer filter and could mislink to a
+	# same-named project under a different customer. Return None so the job defers to
+	# manual review (validate_mapped_values' unlinked-Project guard) instead of
+	# mislinking or creating an orphan.
+	customer = _top_level_customer(payload, settings)
+	if not customer:
+		return None
 	return _single_or_ambiguous(
 		"Project",
-		{"project_name": leaf, "customer": _top_level_customer(payload, settings)},
+		{"project_name": leaf, "customer": customer},
 		"project_name + customer",
 		payload,
 		confidence=90,

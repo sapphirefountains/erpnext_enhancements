@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.83.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks sync can no longer auto-create a duplicate/orphan Project from a QBO job.** The live sync routes a QBO sub-customer/job to an ERPNext **Project**, linking to an existing one via its `PRJ-###` number (else `project_name + customer`). An adversarial audit found two paths where it instead *created* a new Project unsafely — automatic via the hourly `cdc_poll`/`retry_failed_syncs` whenever `sync_enabled` is on:
+  - **Doctype flip:** a QBO Customer id first imported as an ERPNext **Customer**, then reclassified as a job, now resolves to **Project**. The in-place-update guard keys on the freshly-resolved DocType, so `frappe.db.exists("Project", <customer-name>)` is False and the update is skipped; `_match_project` scans only `tabProject` and can't relink the Customer, so a **new Project is created and the Customer is orphaned** — a Customer+Project pair for one qbo_id.
+  - **Unlinked Project:** a net-new job with no `PRJ-###` number whose parent Customer isn't mapped yet — `_match_project`'s `project_name + customer` fallback drops the empty customer filter and (on no title match) the create path makes a **Project with no customer**, which can also collide with another customer's same-titled job.
+
+  Three guards, all biased to **manual review** (never a silent create):
+  - `upsert_entity` now detects a **doctype flip** (the qbo_id is already linked to a *different*, still-existing DocType) and defers to manual review instead of creating — the `job_remediation` tool relinks/merges these.
+  - `validate_mapped_values` blocks creating a **Project with no resolved parent Customer** (create-time only — a `PRJ-###` job still links first); a later sync creates it linked once the parent imports.
+  - `_match_project` no longer falls back to a **title-only** lookup when the parent Customer is unresolved (which could mislink to a same-named project under a different customer).
+
+  Validated against live data: all 15 already-created Projects and 60/60 sampled jobs have a PRJ# and a resolvable customer, so legitimate jobs still link/create unchanged — only the junk/flip cases (which were the ones producing duplicates) now park for review.
+
 ## [1.82.0] - 2026-06-22
 
 ### Fixed
