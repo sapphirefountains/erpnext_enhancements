@@ -1391,13 +1391,21 @@ def _map_quotation(payload, settings):
 def _map_purchase_order(payload, settings):
 	"""Map a QBO PurchaseOrder to an ERPNext Purchase Order (supplier + items)."""
 	currency, rate = _txn_currency(payload, settings)
+	txn_date = payload.get("TxnDate")
+	# ERPNext requires a "Required By" (schedule_date) on the PO header and each line.
+	# QBO POs carry no delivery date, so default it to the PO's DueDate, else its date.
+	required_by = payload.get("DueDate") or txn_date
+	items = _purchase_items(payload)
+	for item in items:
+		item.setdefault("schedule_date", required_by)
 	return "Purchase Order", {
 		"company": settings.company,
 		"supplier": _linked_name("Vendor", "Supplier", (payload.get("VendorRef") or {}).get("value")),
-		"transaction_date": payload.get("TxnDate"),
+		"transaction_date": txn_date,
+		"schedule_date": required_by,
 		"currency": currency,
 		"conversion_rate": rate,
-		"items": _purchase_items(payload),
+		"items": items,
 	}
 
 
@@ -1761,6 +1769,34 @@ def _heal_invalid_owned_selects(doc, values: dict) -> list[str]:
 	return healed
 
 
+def _heal_invalid_urls(doc) -> list[str]:
+	"""Prepend a scheme to scheme-less URL fields so ERPNext's URL validation passes.
+
+	A pre-existing Customer/Supplier (or one whose QBO ``WebAddr`` was a bare domain)
+	can carry a ``website`` like ``www.fountainpeople.com`` with no ``http(s)://``.
+	ERPNext re-validates every URL-type field on save and rejects the scheme-less value
+	("'...' is not a valid URL"), parking the record -- which then cascades (that
+	vendor's bill payments can no longer resolve a supplier party). Normalise such
+	values in place by prefixing ``https://``. Returns the healed fieldnames.
+	"""
+	try:
+		fields = frappe.get_meta(doc.doctype).fields or []
+	except Exception:
+		return []
+	healed = []
+	for df in fields:
+		if getattr(df, "fieldtype", None) != "Data" or (getattr(df, "options", "") or "") != "URL":
+			continue
+		value = doc.get(df.fieldname)
+		if not isinstance(value, str):
+			continue
+		stripped = value.strip()
+		if stripped and "://" not in stripped and not stripped.startswith(("/", "#", "mailto:", "tel:")):
+			doc.set(df.fieldname, "https://" + stripped)
+			healed.append(df.fieldname)
+	return healed
+
+
 def _save_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpnext_doctype: str, doc):
 	"""Save a linked/updated ERPNext doc, routing its own validation failure to review.
 
@@ -1800,6 +1836,9 @@ def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpn
 	(insert). ``TimestampMismatchError`` (a transient concurrency error) is re-raised
 	so the caller's retry path handles it rather than mis-parking a good record.
 	"""
+	# Normalise any scheme-less URL the record carries (typically a pre-existing
+	# Customer/Supplier website) so the whole-doc re-validation doesn't reject it.
+	_heal_invalid_urls(doc)
 	try:
 		if insert:
 			doc.insert(ignore_permissions=True)
@@ -2187,11 +2226,40 @@ def _purchase_items(payload):
 	return items
 
 
+def _journal_line_party(detail):
+	"""Resolve a QBO ``JournalEntryLineDetail.Entity`` to an ERPNext (party_type, party).
+
+	A QBO JE line posting to A/R or A/P carries an ``Entity`` naming the Customer or
+	Vendor; ERPNext requires a Party on Receivable/Payable journal lines, so it has to
+	be mapped through. A Customer ``Entity`` that is a job (imported as a Project)
+	contributes its top-level Customer. Returns ``(None, None)`` when there's no entity
+	or it isn't mapped yet (the line then parks for review via the party guard).
+	"""
+	entity = detail.get("Entity") or {}
+	qbo_id = (entity.get("EntityRef") or {}).get("value")
+	if not qbo_id:
+		return None, None
+	if entity.get("Type") == "Vendor":
+		supplier = _linked_name("Vendor", "Supplier", qbo_id)
+		return ("Supplier", supplier) if supplier else (None, None)
+	customer = _linked_name("Customer", "Customer", qbo_id)
+	if customer:
+		return "Customer", customer
+	project = _linked_name("Customer", "Project", qbo_id)
+	if project:
+		top = frappe.db.get_value("Project", project, "customer")
+		if top:
+			return "Customer", top
+	return None, None
+
+
 def _journal_accounts(payload):
 	"""Build ERPNext journal lines from QBO JournalEntryLineDetail lines.
 
 	Maps each line's AccountRef to an ERPNext Account (skipping unmapped ones) and
-	splits the amount into debit/credit columns based on QBO's PostingType.
+	splits the amount into debit/credit columns based on QBO's PostingType. A line
+	posting to a Receivable/Payable control account also carries its QBO ``Entity``
+	through as the required Party.
 	"""
 	accounts = []
 	for line in payload.get("Line", []) or []:
@@ -2216,6 +2284,12 @@ def _journal_accounts(payload):
 			"debit_in_account_currency": debit,
 			"credit_in_account_currency": credit,
 		}
+		# ERPNext mandates a Party on any line posting to a Receivable/Payable account;
+		# carry the QBO line Entity through so the entry isn't parked for a missing party.
+		party_type, party = _journal_line_party(detail)
+		if party_type and party and frappe.db.get_value("Account", account, "account_type") in ("Receivable", "Payable"):
+			row["party_type"] = party_type
+			row["party"] = party
 		cost_center = _line_cost_center(detail)
 		if cost_center:
 			row["cost_center"] = cost_center
