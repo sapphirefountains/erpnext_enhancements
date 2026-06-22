@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.74.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks Online: grouped bank deposits now import, by modeling Undeposited Funds correctly** (follow-up to the v1.73.0 *Import All* fix). In QBO, a customer payment with no `DepositToAccountRef` lands in **Undeposited Funds**, and a later **Deposit** sweeps it to the bank via `Line` entries that carry a `LinkedTxn` (to the Payment) and **no `AccountRef`**. The importer mishandled both legs:
+  - `_map_payment_entry` posted *every* customer receipt straight to the default **bank**.
+  - `_map_deposit` couldn't resolve the AccountRef-less sweep lines, so it dropped the credit leg — leaving the deposit with only a bank debit and parking it as *"Journal Entry is unbalanced (debit … vs credit 0.00)"*. This was the bulk of the parked `Deposit` backlog.
+
+  Had we only credited the bank's counter-account on deposits, the bank would have been **double-counted** (once by the payment, once by the deposit). The coupled fix:
+  - Customer **Payment Entries** now set `paid_to` = the payment's `DepositToAccountRef` when present, else **Undeposited Funds** (falling back to the bank only when no UF account is imported, preserving prior behavior).
+  - **Deposit** sweep lines (a `LinkedTxn`/`PaymentMethodRef` line with no `AccountRef`) now **credit Undeposited Funds**.
+
+  The two legs net Undeposited Funds to zero and the bank is counted once — correct double-entry, and the deposits import instead of parking. New helper `_undeposited_funds_account(settings)` resolves the account by QBO's standard name, scoped to the company. Vendor payments and account-referenced deposit lines are unchanged.
+  - *Verification note:* if a Payment Entry ever fails to validate with `paid_to = Undeposited Funds`, the create path's `_persist_or_manual_review` routes that record to **manual review** rather than failing the run — so the change can only ever match or improve on the current parking behavior, never regress to a hard failure. Worth confirming on the dev instance during the first import.
+- **Not addressed here (correctly parked, not mapper bugs):** account-based QBO `PurchaseOrder`s (ERPNext POs require item lines) and `Estimate`s whose `CustomerRef` isn't mapped yet (resolve once masters import) continue to route to manual review.
+
 ## [1.73.0] - 2026-06-22
 
 ### Fixed
