@@ -869,7 +869,11 @@ def _map_qbo_job_to_project(payload, settings):
 	"""
 	values = {
 		"project_name": payload.get("DisplayName") or _display_name(payload),
-		"status": "Open",
+		# Sites customize the Project status Select via Property Setter (e.g.
+		# Active/Client Hold/.../Canceled, with no "Open"). Resolve to a valid option
+		# (preferring an open-like status), falling back to the field's first option,
+		# so the insert never fails with "Status cannot be 'Open'".
+		"status": _select_option("Project", "status", ("Open", "Active")),
 	}
 	customer = _top_level_customer(payload, settings)
 	if customer:

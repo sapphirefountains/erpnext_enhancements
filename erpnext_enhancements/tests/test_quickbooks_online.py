@@ -2196,6 +2196,47 @@ def test_qbo_job_maps_to_project_under_parent_customer(monkeypatch):
 	assert values["status"] == "Open"
 
 
+def test_qbo_job_project_status_resolves_against_customized_options(monkeypatch):
+	"""A new Project's status is resolved to a valid option of the site's customized
+	Project status Select (no hard-coded 'Open' that would fail validation)."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe,
+		"get_meta",
+		lambda doctype: types.SimpleNamespace(
+			has_field=lambda fieldname: False,
+			get_field=lambda fieldname: types.SimpleNamespace(
+				options="Active\nClient Hold\nParked\nCompleted\nInvoiced\nPaid\nCanceled"
+			)
+			if fieldname == "status"
+			else None,
+		),
+	)
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if (
+			doctype == "QuickBooks Sync Mapping"
+			and isinstance(filters, dict)
+			and filters.get("qbo_id") == "1225"
+			and filters.get("erpnext_doctype") == "Customer"
+		):
+			return "4th West Apartments"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Customer",
+		{"Id": "2054", "DisplayName": "PRJ-401 X", "Job": True, "Level": 1, "ParentRef": {"value": "1225"}},
+		types.SimpleNamespace(company="SF"),
+	)
+	assert doctype == "Project"
+	# "Open" is not a valid option here, so it falls to the next preference, "Active".
+	assert values["status"] == "Active"
+	assert values["status"] in ("Active", "Client Hold", "Parked", "Completed", "Invoiced", "Paid", "Canceled")
+
+
 def test_resolve_customer_ref_redirects_job_to_parent_and_tags_project(monkeypatch):
 	"""_resolve_customer_ref: a Customer ref stays a customer; a job ref -> (parent, project)."""
 	frappe = install_frappe_stub()

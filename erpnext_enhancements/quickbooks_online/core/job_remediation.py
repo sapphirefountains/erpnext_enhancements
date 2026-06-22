@@ -53,6 +53,7 @@ from erpnext_enhancements.quickbooks_online.core.mapping import (
 	_map_qbo_job_to_project,
 	_match_project,
 	_raw_payload_dict,
+	_select_option,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import get_settings
 
@@ -223,7 +224,13 @@ def _process_job(mapping_row, payload, settings, apply, clean_drive, service, sh
 
 	# 2) Merge the job-Customer into the parent (moves all references, deletes the job).
 	if old_customer and not self_merge:
-		frappe.rename_doc("Customer", old_customer, parent, merge=True, ignore_permissions=True)
+		# Frappe's rename_doc(merge=True) runs orjson.loads on each party's _assign /
+		# _liked_by; an empty-string value (left by some imports) raises JSONDecodeError
+		# mid-merge. Normalise "" -> NULL on both ends first. (rename_doc on this Frappe
+		# version takes no ignore_permissions kwarg.)
+		_normalize_meta_json(old_customer)
+		_normalize_meta_json(parent)
+		frappe.rename_doc("Customer", old_customer, parent, merge=True)
 		result["merged"] = True
 
 	# 3) Repoint the QBO Sync Mapping to the Project (the "done" marker; last DB step).
@@ -247,6 +254,17 @@ def _process_job(mapping_row, payload, settings, apply, clean_drive, service, sh
 
 	result["outcome"] = "consolidated"
 	return result
+
+
+def _normalize_meta_json(customer):
+	"""Set a Customer's framework meta-JSON fields to NULL when stored as an empty
+	string. ``frappe.rename_doc(merge=True)`` runs ``orjson.loads`` on ``_assign`` /
+	``_liked_by`` (e.g. in ``update_assignments``); an empty string raises
+	``JSONDecodeError`` and aborts the merge. Some imported customers carry ``""``
+	there, so normalise both the job and its parent before merging."""
+	for field in ("_assign", "_liked_by"):
+		if frappe.db.get_value("Customer", customer, field) == "":
+			frappe.db.set_value("Customer", customer, field, None, update_modified=False)
 
 
 def _resolve_parent_customer(payload):
@@ -304,7 +322,9 @@ def _resolve_project(mapping_row, payload, parent, apply, settings):
 	_doctype, values = _map_qbo_job_to_project(payload, settings)
 	values["customer"] = parent  # authoritative parent for the remediation
 	if "(deleted)" in (values.get("project_name") or "").lower():
-		values["status"] = "Cancelled"
+		# Mark QBO-deleted jobs cancelled, using whichever spelling the site's Project
+		# status Select actually has ("Canceled"/"Cancelled"), else Completed.
+		values["status"] = _select_option("Project", "status", ("Cancelled", "Canceled", "Completed"))
 	if not apply:
 		return f"(new) {values.get('project_name')}", True
 	project_doc = frappe.get_doc({"doctype": "Project", **values})
