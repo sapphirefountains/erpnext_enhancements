@@ -359,6 +359,32 @@ def get_mapping(entity_type: str, qbo_id: str):
 	return frappe.get_doc("QuickBooks Sync Mapping", name) if name else None
 
 
+def _owned_snapshot(erpnext_doctype: str, erpnext_name: str, values: dict) -> dict:
+	"""Snapshot what ERPNext actually STORED for each mapped scalar field.
+
+	``owned_fields`` is the baseline ``detect_conflicts`` compares against to spot a
+	*user's* later edit. Storing the mapper's INPUT values flags a false conflict on
+	every field ERPNext normalises or rewrites on save -- ``conversion_rate`` 1 -> 1.0,
+	a Payment Entry's auto-generated ``remarks``, an Item ``description`` stripped of
+	HTML -- because the stored value never equals the input, so detect_conflicts trips
+	on it on every subsequent sync (and then *blocks* that record from receiving QBO
+	updates). Reading the value back off the saved record makes the baseline reflect
+	what ERPNext kept, so a record only conflicts when the ERPNext value actually moves
+	away from it. Child-table (list) values are kept as mapped -- detect_conflicts skips
+	them anyway -- and the input values are used unchanged if the record can't be read.
+	"""
+	if not erpnext_name or not frappe.db.exists(erpnext_doctype, erpnext_name):
+		return values
+	try:
+		doc = frappe.get_doc(erpnext_doctype, erpnext_name)
+	except Exception:
+		return values
+	return {
+		fieldname: (value if isinstance(value, list) else doc.get(fieldname))
+		for fieldname, value in values.items()
+	}
+
+
 def save_mapping(
 	entity_type: str,
 	qbo_id: str,
@@ -371,9 +397,10 @@ def save_mapping(
 	"""Create or update the ledger row linking a QBO entity to an ERPNext record.
 
 	Records the QBO ``SyncToken`` and ``LastUpdatedTime`` (concurrency/cursor
-	metadata), the sync timestamp, and ``owned_fields`` -- the JSON snapshot of
-	QBO-sourced values used later by ``detect_conflicts``. ``**extra`` sets
-	match_status/match_rule/conflict_status etc. Upserts by (entity_type, qbo_id).
+	metadata), the sync timestamp, and ``owned_fields`` -- the snapshot of the
+	QBO-sourced values *as ERPNext stored them* (see ``_owned_snapshot``) used later
+	by ``detect_conflicts``. ``**extra`` sets match_status/match_rule/conflict_status
+	etc. Upserts by (entity_type, qbo_id).
 	"""
 	mapping = get_mapping(entity_type, qbo_id) or frappe.new_doc("QuickBooks Sync Mapping")
 	mapping.qbo_entity_type = entity_type
@@ -384,7 +411,7 @@ def save_mapping(
 	mapping.last_qbo_updated_at = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
 	mapping.last_synced_at = now_datetime()
 	mapping.deleted = 0
-	mapping.owned_fields = json_dumps(values)
+	mapping.owned_fields = json_dumps(_owned_snapshot(erpnext_doctype, erpnext_name, values))
 	for fieldname, value in extra.items():
 		setattr(mapping, fieldname, value)
 	if mapping.is_new():
