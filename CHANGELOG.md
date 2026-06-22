@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.82.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks "Conflict" status no longer fires on fields ERPNext normalises (≈3,600 false positives).** `detect_conflicts` flags a record as conflicted when its ERPNext value differs from the last QBO-synced value in `owned_fields`. But `save_mapping` snapshotted `owned_fields` from the mapper's **input** values, while ERPNext **rewrites** several on save — `conversion_rate` / `plc_conversion_rate` / `source`/`target_exchange_rate` `1 → 1.0`, a Payment Entry's auto-generated `remarks`, an Item `description` stripped of HTML. The stored value never matched the snapshot, so every Invoice / Payment / Estimate / SalesReceipt / Item was flagged `Conflict` on the next sync — which *also blocks* those records from receiving further QBO updates (a non-overwrite resync skips conflicted rows). `owned_fields` is now snapshotted via `_owned_snapshot`, which reads each mapped scalar field back **off the saved record**, so the baseline reflects what ERPNext actually kept and a record only conflicts when its value genuinely moves. Validated on live data: every sampled false conflict (`conversion_rate`/`remarks`/`description`/exchange rates) drops to none. Child-table fields are unaffected (detect_conflicts already skips them). *Existing* `Conflict` rows clear when each record is next synced (or via a one-off re-snapshot); this stops new ones from forming.
+
 ## [1.81.0] - 2026-06-22
 
 ### Changed
