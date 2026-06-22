@@ -201,11 +201,26 @@ def upload_attachment_to_drive(file_docname, attempts=1):
 
 
 def sync_shadow_attachments():
-	"""Hourly scheduler job: for every linked document, walk its Drive folder
+	"""Hourly scheduler entry: hand the Drive→ERPNext shadow walk to a long
+	worker. Walking every linked document's whole Drive tree (a network round-trip
+	per folder) and inserting shadows must not run on a short 300s worker — a
+	large first-time sync blew that budget mid-insert (PRJ-00275)."""
+	if not _sync_enabled():
+		return
+	frappe.enqueue(
+		"erpnext_enhancements.google_drive.drive_sync.run_shadow_sync",
+		queue="long",
+		timeout=3600,
+	)
+
+
+def run_shadow_sync():
+	"""Background worker: for every linked document, walk its Drive folder
 	tree and create link-only shadow attachments for the files *and subfolders*
 	ERPNext doesn't have yet, and flag shadows whose Drive item vanished as Stale
 	(never deleting anything). One document's failure (e.g. its linked folder was
-	deleted) is logged and skipped — it never aborts the whole run."""
+	deleted) is logged and skipped — it never aborts the whole run, and a
+	commit-per-document keeps finished work durable if a later one fails."""
 	settings = _settings()
 	if not _sync_enabled(settings):
 		return
@@ -226,12 +241,13 @@ def sync_shadow_attachments():
 				_sync_folder_shadows(
 					service, doctype, row.name, row.get(folder_field), drive_id_cache
 				)
+				frappe.db.commit()
 			except Exception:
+				frappe.db.rollback()
 				frappe.log_error(
 					f"Shadow sync failed for {doctype} {row.name}\n{frappe.get_traceback()}",
 					"Drive Shadow Sync",
 				)
-	frappe.db.commit()
 
 
 # Google Drive's folder mime type, and a hard cap on how deep the shadow walk
@@ -358,17 +374,23 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 		# Path-prefixed so the flat attachment list stays legible; a trailing
 		# slash marks folders. Link-only either way — no bytes are copied.
 		display_name = f"{rel_path}{drive_file.get('name')}" + ("/" if is_folder else "")
+		# Insert unattached, then link via db_set. Inserting with attached_to_*
+		# set fires File.after_insert -> create_attachment_record, which adds an
+		# "Attachment" comment to the reference doc and publishes realtime per
+		# file — that per-shadow overhead is what timed the job out mid-insert
+		# (PRJ-00275), and on a first-time sync it spams the document timeline
+		# with one "Added <file>" comment per shadow. db_set runs no hooks.
 		shadow = frappe.get_doc({
 			"doctype": "File",
 			"file_name": display_name,
 			"file_url": drive_file.get("webViewLink"),
-			"attached_to_doctype": doctype,
-			"attached_to_name": docname,
 			"is_private": 1,
 			"custom_drive_file_id": drive_file["id"],
 		})
 		shadow.flags.ignore_permissions = True
 		shadow.insert(ignore_permissions=True)
+		shadow.db_set("attached_to_doctype", doctype, update_modified=False)
+		shadow.db_set("attached_to_name", docname, update_modified=False)
 		log_sync(
 			"Shadow Attachment", "Success",
 			reference_doctype=doctype, reference_name=docname,

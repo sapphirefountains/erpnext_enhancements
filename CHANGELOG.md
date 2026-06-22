@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.74.1] - 2026-06-22
+
+### Fixed
+- **Google Drive shadow sync no longer times out (and stops spamming the document timeline).** The hourly `Drive → ERPNext` shadow walk ran on a short 300s worker, and a large first-time sync of a project's Drive tree blew that budget mid-insert (`JobTimeoutException` on PRJ-00275). Two compounding causes, both fixed:
+  - The hourly entry now just **hands the walk to the `long` queue** (`timeout=3600`) instead of doing all the work inline on the 300s `default` worker, and it **commits per document** so a later failure or kill no longer discards every finished document's shadows.
+  - Each shadow `File` was inserted with `attached_to_*` set, firing Frappe's `after_insert → create_attachment_record`, which adds an "Attachment" comment to the reference doc **and publishes realtime per file** — the exact slow path the timeout fired in, and on a first-time sync it buried the Project/Customer/Opportunity timeline under one *"Added &lt;file&gt;"* comment per shadow. Shadows are now inserted unattached and linked via `db_set` (which runs no hooks), so they still appear in the attachment sidebar without the comment, realtime, or per-file cost.
+
 ## [1.74.0] - 2026-06-22
 
 ### Fixed
