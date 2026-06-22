@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.75.0] - 2026-06-22
+
+### Changed
+- **QuickBooks Online sync now commits every 100 records, not just per entity (bounds the shared naming-series lock).** Follow-up hardening to v1.73.0. Every document insert takes a `FOR UPDATE` lock on the `{#####}` naming-series counter — a `tabSeries` row keyed by the empty string and **shared by every `format:…{#####}` doctype on the site** — held until the transaction commits. v1.73.0 committed per *entity*, so a large entity (e.g. ~2,000 `Purchase`s) still held that global counter for the minutes it took to fetch + upsert, briefly blocking unrelated record creation across the whole site during a full import. `import_all`, `preview_resync`, `run_cdc` and `run_resync` now commit every `QBO_COMMIT_EVERY` (100) records, bounding the lock hold to a few seconds while keeping commit overhead negligible; each entity's tail is still flushed at its boundary, and progress remains durable/idempotent on a late failure. (`run_resync`'s prior fixed 200-record batch now uses the same constant.) No behavior change to what gets imported — only commit cadence.
+
 ## [1.74.1] - 2026-06-22
 
 ### Fixed
