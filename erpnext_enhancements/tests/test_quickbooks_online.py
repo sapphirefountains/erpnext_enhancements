@@ -2125,3 +2125,179 @@ def test_request_refreshes_and_retries_at_most_once(monkeypatch):
 		client.request("GET", "/v3/company/42/query", params={"query": "select * from Account"})
 
 	assert refreshes["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# QBO sub-customers / "jobs" -> ERPNext Projects (not flat colon-named Customers).
+# A job (Job/IsProject/ParentRef/Level>0) imported as a Customer produced names
+# like "4th West Apartments:PRJ-401 ..." and, via the Customer after_insert Drive
+# hook, orphan top-level Drive folders. Jobs now route to a Project under the
+# parent Customer; their transactions bill the parent, tagged with the Project.
+# ---------------------------------------------------------------------------
+
+
+def test_is_qbo_customer_job_detects_subcustomers():
+	"""_is_qbo_customer_job flags QBO sub-customers/jobs but not top-level customers."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _is_qbo_customer_job
+
+	assert _is_qbo_customer_job({"Job": True})
+	assert _is_qbo_customer_job({"IsProject": True})
+	assert _is_qbo_customer_job({"ParentRef": {"value": "1225"}})
+	assert _is_qbo_customer_job({"Level": 1})
+	assert not _is_qbo_customer_job({"DisplayName": "Acme Supply", "Level": 0})
+	assert not _is_qbo_customer_job({"DisplayName": "Acme Supply"})
+
+
+def test_prj_number_normalizes_padding():
+	"""_prj_number reduces a 'PRJ-###' label to its digits, stripping zero-padding."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _prj_number
+
+	assert _prj_number("PRJ-401 4th West Fountain Control & Pump Repair") == "401"
+	assert _prj_number("PRJ-00401") == "401"  # QBO leaf "401" matches ERPNext id "PRJ-00401"
+	assert _prj_number("PRJ419 Jan Trost - Fountain repair") == "419"
+	assert _prj_number("4th West Apartments") is None
+
+
+def test_qbo_job_maps_to_project_under_parent_customer(monkeypatch):
+	"""A QBO job routes to a Project (title = leaf DisplayName) under the parent Customer."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if (
+			doctype == "QuickBooks Sync Mapping"
+			and isinstance(filters, dict)
+			and filters.get("qbo_entity_type") == "Customer"
+			and filters.get("qbo_id") == "1225"
+			and filters.get("erpnext_doctype") == "Customer"
+		):
+			return "4th West Apartments"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = {
+		"Id": "2054",
+		"DisplayName": "PRJ-401 4th West Fountain Control & Pump Repair",
+		"FullyQualifiedName": "4th West Apartments:PRJ-401 4th West Fountain Control & Pump Repair",
+		"Job": True,
+		"IsProject": True,
+		"Level": 1,
+		"ParentRef": {"value": "1225"},
+	}
+	doctype, values = map_qbo_to_erpnext("Customer", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Project"
+	# The colon path is gone -- the title is the bare leaf, the parent is the Customer.
+	assert values["project_name"] == "PRJ-401 4th West Fountain Control & Pump Repair"
+	assert values["customer"] == "4th West Apartments"
+	assert values["status"] == "Open"
+
+
+def test_resolve_customer_ref_redirects_job_to_parent_and_tags_project(monkeypatch):
+	"""_resolve_customer_ref: a Customer ref stays a customer; a job ref -> (parent, project)."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and isinstance(filters, dict):
+			# A top-level customer ("1") maps to a Customer; a job ("2054") to a Project.
+			if filters.get("qbo_id") == "1" and filters.get("erpnext_doctype") == "Customer":
+				return "Acme Supply"
+			if filters.get("qbo_id") == "2054" and filters.get("erpnext_doctype") == "Project":
+				return "PRJ-00401"
+			return None
+		if doctype == "Project" and filters == "PRJ-00401" and fieldname == "customer":
+			return "4th West Apartments"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _resolve_customer_ref
+
+	assert _resolve_customer_ref("1") == ("Acme Supply", None)
+	assert _resolve_customer_ref("2054") == ("4th West Apartments", "PRJ-00401")
+	assert _resolve_customer_ref(None) == (None, None)
+
+
+def test_sales_invoice_for_job_bills_parent_and_tags_project(monkeypatch):
+	"""A QBO Invoice billed to a job posts to the parent Customer, tagged with the Project."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {"default_receivable_account": "Debtors - SF", "default_currency": "USD"}.get(fieldname)
+		if doctype == "Price List":
+			return "Standard Selling"
+		if doctype == "QuickBooks Sync Mapping" and isinstance(filters, dict):
+			if filters.get("qbo_id") == "2054" and filters.get("erpnext_doctype") == "Project":
+				return "PRJ-00401"
+			return None  # the job has no Customer mapping anymore
+		if doctype == "Project" and filters == "PRJ-00401" and fieldname == "customer":
+			return "4th West Apartments"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Invoice",
+		{"Id": "5", "TxnDate": "2026-06-06", "CustomerRef": {"value": "2054"}},
+		types.SimpleNamespace(company="Sapphire Fountains"),
+	)
+
+	assert doctype == "Sales Invoice"
+	assert values["customer"] == "4th West Apartments"
+	assert values["project"] == "PRJ-00401"
+
+
+def test_match_project_links_existing_job_by_prj_number(monkeypatch):
+	"""find_existing_match routes a job to _match_project, linking the ERPNext project by number."""
+	frappe = install_frappe_stub()
+
+	def fake_sql(query, params=None, as_dict=False, **kwargs):
+		assert "regexp" in query.lower()
+		assert params["pat"].startswith("PRJ-?0*401")  # zero-pad-agnostic, number bound as a param
+		return [types.SimpleNamespace(name="PRJ-00401")]
+
+	monkeypatch.setattr(frappe.db, "sql", fake_sql, raising=False)
+	from erpnext_enhancements.quickbooks_online.core.mapping import find_existing_match
+
+	match = find_existing_match(
+		"Customer",
+		{
+			"Id": "2054",
+			"DisplayName": "PRJ-401 4th West Fountain Control & Pump Repair",
+			"Job": True,
+			"ParentRef": {"value": "1225"},
+		},
+		types.SimpleNamespace(company="Sapphire Fountains"),
+	)
+
+	assert match["status"] == "matched"
+	assert match["name"] == "PRJ-00401"
+	assert match["rule"] == "prj_number"
+
+
+def test_customers_imported_top_level_first(monkeypatch):
+	"""query_entity_payloads yields customers sorted by QBO Level so parents precede jobs."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import sync
+
+	monkeypatch.setattr(
+		sync,
+		"query_all",
+		lambda entity_type, settings=None: iter(
+			[
+				{"Id": "2054", "DisplayName": "PRJ-401 job", "Level": 1, "ParentRef": {"value": "1225"}},
+				{"Id": "1225", "DisplayName": "4th West Apartments", "Level": 0},
+				{"Id": "9", "DisplayName": "Customer without a Level"},  # missing Level -> treated as 0
+			]
+		),
+	)
+
+	payloads = list(sync.query_entity_payloads("Customer"))
+
+	levels = [payload.get("Level") or 0 for payload in payloads]
+	assert levels == sorted(levels)
+	assert payloads[-1]["Id"] == "2054"  # the only job sorts last

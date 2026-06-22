@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.76.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks sub-customers / "jobs" now import as ERPNext Projects under the parent Customer — not as flat colon-named Customers (which also spawned orphan Drive folders).** A QBO job (a sub-customer flagged `Job`/`IsProject`, carrying a `ParentRef`, or at `Level` > 0) was mapped to a flat ERPNext Customer named with QBO's `FullyQualifiedName` — the colon path `Parent:Job` (e.g. `4th West Apartments:PRJ-401 4th West Fountain Control & Pump Repair`). Each such Customer then tripped the `Customer` `after_insert` Google Drive hook, creating a malformed **top-level** Drive folder that never nested under the real customer folder — hundreds of orphans, one per job. The customer mapper now detects a job and routes it to a **Project** under the top-level parent Customer: it links to the existing ERPNext project by its `PRJ-###` number (zero-padding ignored, so QBO `PRJ-401` matches `PRJ-00401`), else creates one. A job's invoices, sales receipts, payments and estimates resolve to the **parent** Customer and tag the Sales Invoice with the Project for job costing (`_resolve_customer_ref`). Customers are imported top-level-first (`sync.query_entity_payloads`) so a job's parent is mapped before the job resolves. *(Forward fix only — existing flat `Parent:Job` Customers and their orphan Drive folders are cleaned up by a separate remediation; production QBO sync was paused pending deploy.)*
+
 ## [1.75.0] - 2026-06-22
 
 ### Changed

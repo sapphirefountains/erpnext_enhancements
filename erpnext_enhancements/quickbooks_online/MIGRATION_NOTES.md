@@ -14,7 +14,7 @@ should verify after import.
 | QBO entity | ERPNext target | Notes |
 |---|---|---|
 | Account | Account | Hierarchy preserved via `ParentRef`; group vs ledger inferred. **Inactive accounts are now imported** so historical postings resolve. |
-| Customer / Vendor / Item / TaxCode | Customer / Supplier / Item / Account | Sub-customers ("jobs") import as flat records using their **fully-qualified name** to stay unique. |
+| Customer / Vendor / Item / TaxCode | Customer / Supplier / Item / Account | Top-level records only. **QBO sub-customers / jobs** (`Job`/`IsProject`/`ParentRef`) map to an ERPNext **Project** under the parent Customer (see below), not a flat `Parent:Job` Customer. |
 | **Term** | Payment Terms Template | Single 100%-portion term (`DueDays` → credit days); linked onto Customer/Supplier `payment_terms`. |
 | **Payment Method** | Mode of Payment | Credit-card → Bank type, otherwise Cash. |
 | **Class** | Cost Center | Hierarchy preserved via `ParentRef`; parents become group cost centers. |
@@ -122,9 +122,16 @@ interruptions rather than restarting from scratch.
   **manual review** (by design — the balance guard refuses to post a lopsided entry).
 - **Item-based expense lines** on a Purchase are skipped (their GL account lives on the
   Item, not the line); such a purchase will be flagged unbalanced for review.
-- **Sub-customers (jobs)** are flattened to ERPNext Customers (no native customer
-  hierarchy). Names use the fully-qualified path (`Parent:Job`) to stay unique;
-  consider mapping jobs to **Projects** post-import if you want job costing.
+- **Sub-customers (jobs)** map to ERPNext **Projects under the parent Customer**, not to
+  flat Customers. A job is any QBO Customer flagged `Job`/`IsProject`, carrying a
+  `ParentRef`, or at `Level` > 0 (its `FullyQualifiedName` is the colon path
+  `Parent:Job`). The job links to an existing ERPNext project by its `PRJ-###` number
+  (zero-padding ignored, so QBO `PRJ-401` matches `PRJ-00401`) when one exists, else a
+  Project is created under the parent. The job's invoices / sales receipts / payments /
+  estimates bill the **parent** Customer and are tagged with the Project for job costing.
+  Customers import top-level-first so a job's parent is resolvable when the job is mapped.
+  *(Earlier imports created flat `Parent:Job` Customers — and, via the Customer Drive
+  hook, orphan top-level Drive folders; a separate remediation consolidates those.)*
 - **Inactive entities** import as **enabled** so historical transactions can post.
   Disable them in ERPNext after import if you don't want them selectable.
 

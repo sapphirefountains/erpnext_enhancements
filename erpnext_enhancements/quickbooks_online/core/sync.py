@@ -463,7 +463,21 @@ def query_entity_payloads(entity_type, settings=None):
 	tagging each with a transient ``_qbo_has_children`` flag so the mapper can
 	correctly mark parents as a group (``is_group``) Account / Cost Center. The
 	flag is stripped before persistence by ``_clean_payload``.
+
+	Customers are yielded top-level-first (sorted by QBO ``Level``) so that a
+	sub-customer / job -- which the mapper turns into a Project under its parent
+	Customer (see ``mapping._map_qbo_job_to_project`` / ``_top_level_customer``) --
+	finds its parent already imported and mapped when it resolves.
 	"""
+	if entity_type == "Customer":
+		# QBO ``Level`` is the nesting depth (0 = top-level customer, >0 = job under a
+		# parent). Stable-sort by level so parents precede their children; QBO's own
+		# order is preserved within a level.
+		payloads = list(query_all(entity_type, settings=settings))
+		payloads.sort(key=lambda payload: payload.get("Level") or 0)
+		yield from payloads
+		return
+
 	if entity_type not in ("Account", "Class"):
 		yield from query_all(entity_type, settings=settings)
 		return
