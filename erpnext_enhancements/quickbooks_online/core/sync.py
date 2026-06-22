@@ -78,6 +78,7 @@ def import_all(entity_types=None):
 	try:
 		settings.status = "Syncing"
 		settings.save(ignore_permissions=True)
+		frappe.db.commit()
 		for entity_type in ordered_entities(entity_types):
 			for payload in query_entity_payloads(entity_type, settings=settings):
 				store_raw_payload(
@@ -88,6 +89,14 @@ def import_all(entity_types=None):
 					realm_id=settings.realm_id,
 				)
 				_track_result(log, safe_upsert(entity_type, payload, settings))
+			# Persist progress after each entity: a full import runs for many minutes,
+			# and committing per entity keeps its locks (per-record naming series, the
+			# created docs) from accumulating across the whole run, surfaces live
+			# counters to the dashboard, and means a late failure keeps the entities
+			# already imported (the upsert is idempotent, so a retry resumes cleanly)
+			# instead of rolling the entire run back.
+			log.save(ignore_permissions=True)
+			frappe.db.commit()
 		finish_log(log)
 		if log.status == "Completed":
 			settings.last_full_import = now_datetime()
@@ -132,6 +141,11 @@ def preview_resync(entity_types=None, log_name=None):
 				result = safe_upsert(entity_type, payload, settings, preview=True)
 				_track_result(log, result)
 				preview.append({"entity_type": entity_type, "qbo_id": payload.get("Id"), **result})
+			# Commit the stored raw payloads + running counters after each entity so
+			# this long dry run doesn't hold its locks (notably the raw-payload naming
+			# series, which run_resync later reads back) for the entire pass.
+			log.save(ignore_permissions=True)
+			frappe.db.commit()
 		log.preview_payload = json_dumps(preview)
 		finish_log(log)
 		frappe.db.commit()
@@ -156,6 +170,7 @@ def run_resync(preview_id):
 	ensure_connected(settings)
 	log = start_log("Run Resync")
 	try:
+		processed = 0
 		for raw in frappe.get_all(
 			"QuickBooks Raw Payload",
 			filters={"sync_log": preview_id},
@@ -165,6 +180,12 @@ def run_resync(preview_id):
 			payload = json.loads(raw.payload)
 			result = safe_upsert(raw.qbo_entity_type, payload, settings, overwrite=True)
 			_track_result(log, result)
+			processed += 1
+			# Commit in batches so a large replay holds locks for a window at a time,
+			# keeps counters current, and survives a late failure with progress intact.
+			if processed % 200 == 0:
+				log.save(ignore_permissions=True)
+				frappe.db.commit()
 		finish_log(log)
 		frappe.db.commit()
 		return {"sync_log": log.name, "summary": summarize_log(log)}
@@ -242,6 +263,10 @@ def run_cdc():
 						else:
 							result = safe_upsert(entity_type, payload, settings)
 						_track_result(log, result)
+					# Commit each entity batch so a poll never holds its locks across
+					# the whole CDC window and progress is durable mid-run.
+					log.save(ignore_permissions=True)
+					frappe.db.commit()
 		finish_log(log)
 		# Only advance the cursor on a clean run so failures get reprocessed.
 		if log.status == "Completed":
@@ -504,13 +529,27 @@ def store_raw_payload(source, entity_type, payload, *, sync_log=None, realm_id=N
 
 
 def start_log(sync_type, entity_type=None):
-	"""Open and insert a new ``QuickBooks Sync Log`` in the Running state."""
+	"""Open, insert and commit a new ``QuickBooks Sync Log`` in the Running state.
+
+	The commit is load-bearing, not cosmetic. Inserting the log advances the
+	``QBO-SYNC-{YYYY}-`` naming series, which takes a row lock on its ``tabSeries``
+	entry. A batch op (import/resync/CDC) otherwise holds that lock for its ENTIRE
+	single-transaction run -- minutes to hours -- so every other run's
+	``start_log`` blocks on the series and dies with "Lock wait timeout exceeded;
+	try restarting transaction" before it can create a log, which surfaces as
+	"Import All does nothing" (the job fails at start_log, never logging). Committing
+	here releases the series lock immediately and makes the Running log visible at
+	once -- to the dashboard for progress, and to ``run_in_progress`` /
+	api.import_all's "already_running" guard so duplicate runs are refused instead
+	of piling up.
+	"""
 	log = frappe.new_doc("QuickBooks Sync Log")
 	log.sync_type = sync_type
 	log.entity_type = entity_type
 	log.status = "Running"
 	log.started_at = now_datetime()
 	log.insert(ignore_permissions=True)
+	frappe.db.commit()
 	return log
 
 
@@ -539,6 +578,9 @@ def _resume_or_start_log(log_name, sync_type):
 		if not log.started_at:
 			log.started_at = now_datetime()
 		log.save(ignore_permissions=True)
+		# Commit the Running transition at once: the row was pre-created Queued, so
+		# this both frees its lock and lets the dashboard see the run start.
+		frappe.db.commit()
 	return log
 
 

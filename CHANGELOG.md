@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.73.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks Online "Import All" (and CDC / Resync) silently did nothing — fixed the single-transaction naming-series lock.** Clicking *Import All* enqueued the job, a worker ran it, but it died immediately with `(1205, 'Lock wait timeout exceeded; try restarting transaction')` at `sync.start_log` → `log.insert` → the `format:QBO-SYNC-{YYYY}-{#####}` naming-series increment — **before any Sync Log row was created**, so nothing appeared in the dashboard and the click looked like a no-op. Root cause: every batch operation (`import_all`, `preview_resync`, `run_cdc`, `run_resync`) opened its `QuickBooks Sync Log` and then did the **entire run inside one uncommitted transaction**, committing only at the very end. That single transaction held the row lock on the `QBO-SYNC-{YYYY}-` `tabSeries` counter for its full duration (minutes to hours, or forever if the worker hung), so **every other run's `start_log` blocked on the series and timed out** — one stuck/long import wedged all subsequent imports, CDC polls and resyncs. The held log row was also uncommitted, hence invisible to the dashboard *and* to the `run_in_progress` / `api.import_all` "already_running" guards, so duplicate runs piled up instead of being refused. Fixes:
+  - `start_log` (and `_resume_or_start_log`) now **commit immediately** after creating/transitioning the log — releasing the naming-series lock at once and making the Running run visible to the dashboard and the concurrency guards.
+  - `import_all` and `preview_resync` now **commit after each entity**, `run_cdc` **after each entity batch**, and `run_resync` **every 200 records** — so a long run no longer holds locks across its whole duration, live counters surface as it works, and a late failure keeps the progress already made (the upserts are idempotent, so a retry resumes cleanly) instead of rolling the entire run back.
+  - Operational note: an in-flight run started under the old code holds the lock until its worker is recycled; a `bench restart` (which a deploy performs) clears it. After deploying this, *Import All* creates a visible Running log and proceeds.
+
 ## [1.72.0] - 2026-06-21
 
 ### Fixed
