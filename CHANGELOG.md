@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.80.0] - 2026-06-22
+
+### Fixed
+- **A long QuickBooks import/CDC no longer fails at the finish line with `TimestampMismatchError`.** `import_all` (and `run_cdc`) load the `QuickBooks Online Settings` Single once at the start and saved it at the very end to stamp `status` / `last_full_import` / `last_cdc_sync`. But a full import runs for ~80 minutes, which spans the **hourly token refresh** — and that scheduled task modifies the same Settings doc. So the end-of-run `settings.save()` on the now-stale doc raised `TimestampMismatchError: ... has been modified after you have opened it` and **failed an otherwise-successful run** (observed on a live import: all data committed fine via the per-batch commits, but the run was marked Failed and `last_full_import` never stamped — which also makes the scheduler retry it). The end-of-run status fields are now written with `frappe.db.set_value` (a new `_record_settings_status` helper) — an atomic per-field write with no whole-doc optimistic-lock check and no race, leaving the token fields the refresh wrote untouched. `fail_log` uses the same helper so the error path can't raise a *second* `TimestampMismatchError` that masks the original failure.
+
 ## [1.79.0] - 2026-06-22
 
 ### Fixed

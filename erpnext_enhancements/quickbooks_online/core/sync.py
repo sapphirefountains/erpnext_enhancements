@@ -114,12 +114,14 @@ def import_all(entity_types=None):
 			log.save(ignore_permissions=True)
 			frappe.db.commit()
 		finish_log(log)
-		if log.status == "Completed":
-			settings.last_full_import = now_datetime()
-		settings.status = "Failed" if log.status == "Failed" else "Connected"
-		settings.status_message = _status_message(log, "Full import completed.")
-		settings.save(ignore_permissions=True)
-		frappe.db.commit()
+		# Write the end-of-run status with set_value, not a save of the Settings doc we
+		# loaded at the start: a long import spans the hourly token refresh, which modifies
+		# Settings, so a stale-doc save would TimestampMismatch and fail the whole run here.
+		_record_settings_status(
+			"Failed" if log.status == "Failed" else "Connected",
+			_status_message(log, "Full import completed."),
+			{"last_full_import": now_datetime()} if log.status == "Completed" else None,
+		)
 		return log.name
 	except Exception as exc:
 		fail_log(log, exc)
@@ -298,13 +300,13 @@ def run_cdc():
 					log.save(ignore_permissions=True)
 					frappe.db.commit()
 		finish_log(log)
-		# Only advance the cursor on a clean run so failures get reprocessed.
-		if log.status == "Completed":
-			settings.last_cdc_sync = now_datetime()
-		settings.status = "Failed" if log.status == "Failed" else "Connected"
-		settings.status_message = _status_message(log, "CDC sync completed.")
-		settings.save(ignore_permissions=True)
-		frappe.db.commit()
+		# Only advance the cursor on a clean run so failures get reprocessed. Written via
+		# set_value (not a stale-doc save) for the same reason as import_all's finish.
+		_record_settings_status(
+			"Failed" if log.status == "Failed" else "Connected",
+			_status_message(log, "CDC sync completed."),
+			{"last_cdc_sync": now_datetime()} if log.status == "Completed" else None,
+		)
 		return log.name
 	except Exception as exc:
 		fail_log(log, exc)
@@ -628,6 +630,25 @@ def _resume_or_start_log(log_name, sync_type):
 	return log
 
 
+def _record_settings_status(status, message, extra=None):
+	"""Write QBO Settings status fields directly, bypassing the optimistic-lock check.
+
+	A long import/CDC run loads the Settings Single once at the start and would save it
+	at the end -- but the hourly token refresh modifies that doc mid-run, so saving the
+	now-stale doc raises ``TimestampMismatchError`` and fails an otherwise-successful run
+	at the finish line (the imported data, committed per batch, survives; only the run is
+	wrongly marked Failed and the cursor / last-import stamp is lost). ``db.set_value`` is
+	an atomic per-field write -- no whole-doc timestamp check and no race -- and it leaves
+	the token fields the refresh just wrote untouched. Commits so the status survives the
+	caller's re-raise.
+	"""
+	updates = {"status": status, "status_message": (message or "")[:1000]}
+	if extra:
+		updates.update(extra)
+	frappe.db.set_value("QuickBooks Online Settings", "QuickBooks Online Settings", updates)
+	frappe.db.commit()
+
+
 def fail_log(log, exc):
 	"""Mark a run as hard-failed: record the traceback on the log and Settings.
 
@@ -641,11 +662,9 @@ def fail_log(log, exc):
 	log.finished_at = now_datetime()
 	log.failed_count = (log.failed_count or 0) + 1
 	log.save(ignore_permissions=True)
-	settings = get_settings()
-	settings.status = "Failed"
-	settings.status_message = str(exc)[:1000]
-	settings.save(ignore_permissions=True)
-	frappe.db.commit()
+	# set_value, not a doc save: the error handler must not itself raise a second
+	# TimestampMismatchError (masking the original) when Settings changed mid-run.
+	_record_settings_status("Failed", str(exc))
 
 
 def finish_log(log):
