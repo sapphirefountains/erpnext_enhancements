@@ -55,6 +55,16 @@ STALE_RUN_SECONDS = {
 }
 DEFAULT_STALE_RUN_SECONDS = 2 * 60 * 60
 
+# How many records a batch op (import / preview / CDC / resync) processes between
+# commits. Each document insert takes a FOR UPDATE lock on the `{#####}` naming-series
+# row -- a tabSeries entry keyed by the empty string and shared by EVERY
+# `format:...{#####}` doctype site-wide -- and holds it until the transaction commits.
+# Committing only per entity would hold that global lock for the minutes a large entity
+# (e.g. ~2,000 Purchases) takes to fetch + upsert, briefly blocking unrelated record
+# creation across the whole site. Committing every N records bounds the hold to a few
+# seconds while keeping commit overhead negligible.
+QBO_COMMIT_EVERY = 100
+
 
 def import_all(entity_types=None):
 	"""Full one-way import of all (or selected) QBO entities into ERPNext.
@@ -79,6 +89,7 @@ def import_all(entity_types=None):
 		settings.status = "Syncing"
 		settings.save(ignore_permissions=True)
 		frappe.db.commit()
+		processed = 0
 		for entity_type in ordered_entities(entity_types):
 			for payload in query_entity_payloads(entity_type, settings=settings):
 				store_raw_payload(
@@ -89,12 +100,17 @@ def import_all(entity_types=None):
 					realm_id=settings.realm_id,
 				)
 				_track_result(log, safe_upsert(entity_type, payload, settings))
-			# Persist progress after each entity: a full import runs for many minutes,
-			# and committing per entity keeps its locks (per-record naming series, the
-			# created docs) from accumulating across the whole run, surfaces live
-			# counters to the dashboard, and means a late failure keeps the entities
-			# already imported (the upsert is idempotent, so a retry resumes cleanly)
-			# instead of rolling the entire run back.
+				processed += 1
+				# Commit every QBO_COMMIT_EVERY records so the shared naming-series lock
+				# (and the rows written so far) is released in seconds rather than held
+				# for the minutes a large entity takes -- otherwise one big batch briefly
+				# blocks record creation elsewhere on the site. Counters stay live and a
+				# late failure keeps committed progress (the upsert is idempotent).
+				if processed % QBO_COMMIT_EVERY == 0:
+					log.save(ignore_permissions=True)
+					frappe.db.commit()
+			# Flush this entity's tail (the < QBO_COMMIT_EVERY records since the last
+			# commit) before moving on, so progress is durable at every entity boundary.
 			log.save(ignore_permissions=True)
 			frappe.db.commit()
 		finish_log(log)
@@ -129,6 +145,7 @@ def preview_resync(entity_types=None, log_name=None):
 	log = _resume_or_start_log(log_name, "Preview Resync")
 	preview = []
 	try:
+		processed = 0
 		for entity_type in ordered_entities(entity_types):
 			for payload in query_entity_payloads(entity_type, settings=settings):
 				store_raw_payload(
@@ -141,9 +158,14 @@ def preview_resync(entity_types=None, log_name=None):
 				result = safe_upsert(entity_type, payload, settings, preview=True)
 				_track_result(log, result)
 				preview.append({"entity_type": entity_type, "qbo_id": payload.get("Id"), **result})
-			# Commit the stored raw payloads + running counters after each entity so
-			# this long dry run doesn't hold its locks (notably the raw-payload naming
-			# series, which run_resync later reads back) for the entire pass.
+				processed += 1
+				# Commit every QBO_COMMIT_EVERY records so this long dry run releases the
+				# shared naming-series lock (it still writes raw payloads, which run_resync
+				# later reads back) in seconds rather than holding it for the whole pass.
+				if processed % QBO_COMMIT_EVERY == 0:
+					log.save(ignore_permissions=True)
+					frappe.db.commit()
+			# Flush this entity's tail before moving on.
 			log.save(ignore_permissions=True)
 			frappe.db.commit()
 		log.preview_payload = json_dumps(preview)
@@ -181,9 +203,10 @@ def run_resync(preview_id):
 			result = safe_upsert(raw.qbo_entity_type, payload, settings, overwrite=True)
 			_track_result(log, result)
 			processed += 1
-			# Commit in batches so a large replay holds locks for a window at a time,
-			# keeps counters current, and survives a late failure with progress intact.
-			if processed % 200 == 0:
+			# Commit in batches so a large replay holds the shared naming-series lock for
+			# a bounded window at a time, keeps counters current, and survives a late
+			# failure with progress intact.
+			if processed % QBO_COMMIT_EVERY == 0:
 				log.save(ignore_permissions=True)
 				frappe.db.commit()
 		finish_log(log)
@@ -248,6 +271,7 @@ def run_cdc():
 	changed_since = _clamp_cdc_cursor(get_datetime(changed_since), get_datetime(now_datetime()))
 	try:
 		response = QuickBooksClient(settings).cdc(CDC_ENTITIES, changed_since)
+		processed = 0
 		for cdc_response in response.get("CDCResponse", []):
 			for query_response in cdc_response.get("QueryResponse", []):
 				for entity_type, payloads in query_response.items():
@@ -263,6 +287,12 @@ def run_cdc():
 						else:
 							result = safe_upsert(entity_type, payload, settings)
 						_track_result(log, result)
+						processed += 1
+						# Bound the shared naming-series lock hold on a wide catch-up
+						# window (a first poll after a long pause can be large).
+						if processed % QBO_COMMIT_EVERY == 0:
+							log.save(ignore_permissions=True)
+							frappe.db.commit()
 					# Commit each entity batch so a poll never holds its locks across
 					# the whole CDC window and progress is durable mid-run.
 					log.save(ignore_permissions=True)
