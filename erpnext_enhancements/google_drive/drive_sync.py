@@ -254,6 +254,10 @@ def run_shadow_sync():
 # recurses — a guard against Drive-shortcut cycles and pathological nesting.
 FOLDER_MIME = "application/vnd.google-apps.folder"
 MAX_SHADOW_DEPTH = 10
+# File.file_name is Data(140). A deep tree's path-prefixed shadow name can exceed that;
+# inserting it raises CharacterLengthExceededError and fails the whole sync, so the
+# shadow name is capped to this length (keeping the meaningful tail).
+MAX_FILE_NAME_LENGTH = 140
 
 
 def _list_folder_children(service, folder_id, drive_id):
@@ -374,6 +378,10 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 		# Path-prefixed so the flat attachment list stays legible; a trailing
 		# slash marks folders. Link-only either way — no bytes are copied.
 		display_name = f"{rel_path}{drive_file.get('name')}" + ("/" if is_folder else "")
+		# Cap to the File.file_name limit, keeping the tail (the real file/folder name is
+		# more useful than the leading path) so a deeply-nested item can't crash the sync.
+		if len(display_name) > MAX_FILE_NAME_LENGTH:
+			display_name = "..." + display_name[-(MAX_FILE_NAME_LENGTH - 3):]
 		# Insert unattached, then link via db_set. Inserting with attached_to_*
 		# set fires File.after_insert -> create_attachment_record, which adds an
 		# "Attachment" comment to the reference doc and publishes realtime per

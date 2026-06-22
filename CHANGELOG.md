@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.85.0] - 2026-06-22
+
+### Fixed
+- **Drive shadow sync no longer crashes on a deeply-nested folder whose path-prefixed name exceeds 140 chars.** `run_shadow_sync` builds each shadow `File.file_name` as the `/`-joined folder path plus the item name; for a deep tree this can exceed the `File.file_name` `Data(140)` limit, raising `CharacterLengthExceededError` on insert and failing the *entire* sync for that Customer/Project (seen on **CEM Aquatics** after orphan-job folders were relocated under their parent during the QBO job remediation, deepening a few trees). The shadow name is now capped to 140 characters, keeping the meaningful tail (the actual file/folder name) so the link stays useful.
+
 ## [1.84.0] - 2026-06-22
 
 ### Fixed
