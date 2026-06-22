@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.79.0] - 2026-06-22
+
+### Fixed
+- **QBO job→Project mapping: resolve Project `status` against the site's options instead of hard-coding `"Open"`.** Sites customize the Project `status` Select via Property Setter (Sapphire uses `Active / Client Hold / Parked / Completed / Invoiced / Paid / Canceled` — no `Open`). `_map_qbo_job_to_project` hard-coded `status="Open"`, so creating a Project for a QBO job (the live sync's path for any new job, and the v1.78.0 remediation's path for jobs with no existing project) failed validation with *"Status cannot be 'Open'"*. It now uses `_select_option("Project", "status", ("Open", "Active"))` (and the remediation marks `(deleted)` jobs `Canceled`/`Cancelled` via the same resolver), falling back to the field's first option — valid on both stock and customized sites. **This unblocks the live sync's project creation, not just the remediation.**
+- **Job remediation: fix the customer merge call + an empty `_assign` crash.** (1) `frappe.rename_doc()` on this Frappe version takes no `ignore_permissions` keyword — the v1.78.0 call raised `TypeError` on every merge; removed it. (2) `rename_doc(merge=True)` runs `orjson.loads` on each party's `_assign`/`_liked_by`, and customers carrying an empty string there (left by an earlier import) crashed the merge with `JSONDecodeError: zero-length document`; the remediation now normalizes those `""`→`NULL` on both the job and its parent before merging.
+
 ## [1.78.0] - 2026-06-22
 
 ### Fixed
