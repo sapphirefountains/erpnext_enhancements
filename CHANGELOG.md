@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.84.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks import: recover three classes of records that were parking for manual review.** A triage of the ~323 still-parked QBO records found three fixable mapper gaps (≈70 records, plus cascades):
+  - **Scheme-less website → URL validation failure (22 masters, + cascades).** A pre-existing ERPNext Customer/Supplier with a bare-domain `website` (e.g. `www.fountainpeople.com`, `teamcomma.com`) fails ERPNext's whole-doc URL re-validation when the sync auto-links and saves it, parking the master — which then **cascades** (that vendor never maps, so its Bills/Bill Payments can't resolve a supplier party and park too). `_persist_or_manual_review` now heals scheme-less URL-type fields (prefix `https://`) before saving, via `_heal_invalid_urls`. Recovers the masters and, on the next sync, their downstream transactions.
+  - **Purchase Order missing "Required By" (20).** QBO POs carry no delivery date, so `_map_purchase_order` left `schedule_date` empty and ERPNext rejected the PO ("Please enter the Required By."). It now defaults the header and each line's `schedule_date` to the PO's `DueDate` (else its `TxnDate`).
+  - **Journal Entry line to A/R / A/P with no party (10).** A QBO `JournalEntry` line posting to a Receivable/Payable control account carries an `Entity` (the Customer/Vendor), which `_journal_accounts` ignored — so the line failed "...requires a Party for Receivable/Payable account" and the whole entry parked. It now carries the QBO line `Entity` through as the line's `party_type`/`party` (a Customer `Entity` that is a job resolves to its top-level Customer), via `_journal_line_party`. Validated: all 10 parked JEs resolve a party.
+
+  Validated against live data; no change to what's imported beyond these previously-parked records. (The companion operational step — setting the Company's **Stock Received But Not Billed** default account, which recovers ~8 stock-item Bills — is a config change, not code.)
+
 ## [1.83.0] - 2026-06-22
 
 ### Fixed
