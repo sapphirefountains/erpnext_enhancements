@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.81.0] - 2026-06-22
+
+### Changed
+- **QBO job remediation now LINKS existing Projects only — it never creates one.** Sapphire already holds every QBO project in ERPNext (often named differently than the QBO job), so `consolidate_qbo_jobs` matches a job to an existing Project by its `PRJ-###` number (or an exact `project_name`+customer) and links it; a job with **no** match (the internal / `(deleted)` / differently-named ones) is consolidated into its parent Customer with **no project** — its invoices roll up to the parent untagged. The QBO Sync Mapping is repointed to the matched Project, or to the parent Customer when there is none, so the paused sync resumes against a real record rather than recreating the `Parent:Job` colon customer. Supersedes v1.79.0's create-if-missing behaviour, which produced duplicate projects. Drive-folder cleanup is also guarded to genuine colon-job merges so a re-run can never trash a parent customer's real folder. *(Forward-fix create path in `mapping.py` for the live sync is unchanged here and still needs the same no-create treatment before the sync is re-enabled.)*
+
 ## [1.80.0] - 2026-06-22
 
 ### Fixed
