@@ -243,6 +243,80 @@ def rename_folder(service, file_id, new_name, shared_drive_id=None):
 			raise error
 
 
+def get_folder_meta(service, file_id, shared_drive_id=None):
+	"""Return ``{id, name, trashed, parents}`` for a Drive folder, or ``None`` if it no
+	longer exists (404).
+
+	A read-only probe used before acting on a folder so cleanup stays idempotent: a
+	folder that was already deleted/trashed/moved is a no-op rather than an error.
+	"""
+	kwargs = {"fileId": file_id, "fields": "id, name, trashed, parents"}
+	if shared_drive_id:
+		kwargs["supportsAllDrives"] = True
+	try:
+		return service.files().get(**kwargs).execute()
+	except HttpError as error:
+		if error.resp.status == 404:
+			return None
+		raise
+
+
+def move_folder(service, file_id, new_parent_id, shared_drive_id=None):
+	"""Reparent a Drive folder under ``new_parent_id``, preserving its contents, and
+	return ``(file_id, web_view_link)``.
+
+	Reads the folder's current parents first, then swaps them in one ``files().update``
+	(``addParents``/``removeParents``). Within a single Shared Drive this is an
+	intra-drive move (allowed). Retries up to 5 times with exponential backoff on
+	403/429.
+	"""
+	meta = get_folder_meta(service, file_id, shared_drive_id)
+	previous_parents = ",".join((meta or {}).get("parents", []) or [])
+
+	kwargs = {"fileId": file_id, "addParents": new_parent_id, "fields": "id, webViewLink, parents"}
+	if previous_parents:
+		kwargs["removeParents"] = previous_parents
+	if shared_drive_id:
+		kwargs["supportsAllDrives"] = True
+
+	max_retries = 5
+	for attempt in range(max_retries):
+		try:
+			folder = service.files().update(**kwargs).execute()
+			return folder.get("id"), folder.get("webViewLink")
+		except HttpError as error:
+			if error.resp.status in [403, 429] and attempt < max_retries - 1:
+				time.sleep((2**attempt) + 1)
+				continue
+			raise error
+
+
+def trash_folder(service, file_id, shared_drive_id=None):
+	"""Move a Drive folder to the (recoverable) trash and return ``True``, or ``False``
+	if it no longer exists (404).
+
+	Uses ``files().update`` with ``trashed=True`` — never a hard ``files().delete`` — so
+	an accidental cleanup can be restored from the Shared Drive trash. Retries up to 5
+	times with exponential backoff on 403/429.
+	"""
+	kwargs = {"fileId": file_id, "body": {"trashed": True}, "fields": "id"}
+	if shared_drive_id:
+		kwargs["supportsAllDrives"] = True
+
+	max_retries = 5
+	for attempt in range(max_retries):
+		try:
+			service.files().update(**kwargs).execute()
+			return True
+		except HttpError as error:
+			if error.resp.status == 404:
+				return False
+			if error.resp.status in [403, 429] and attempt < max_retries - 1:
+				time.sleep((2**attempt) + 1)
+				continue
+			raise error
+
+
 def create_project_subfolders(service, project_folder_id, shared_drive_id, project_type=None):
 	"""Find-or-create the standard project subfolder tree inside a project folder.
 

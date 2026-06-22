@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.78.0] - 2026-06-22
+
+### Fixed
+- **One-off remediation to consolidate the legacy `Parent:Job` Customers + orphan Drive folders left behind by the pre-1.76.0 importer** (`quickbooks_online/core/job_remediation.py`, run manually via `bench execute` — *not* on migrate). v1.76.0 fixed the importer going forward; this cleans up the records the old behaviour already created. `consolidate_qbo_jobs` walks the QBO job-customers (identified via QBO Sync Mapping + the raw payload's `Job`/`ParentRef`, never a blind name `LIKE '%:%'`, so it skips a legitimately colon-named non-job customer and still catches jobs that auto-linked to a non-colon-named customer), top-level-first, and for each: links/creates the Project, tags the job's Sales Invoices, **merges** the job-Customer into its top-level parent (`frappe.rename_doc(merge=True)`, moving invoices/payments/quotations/addresses), repoints the QBO Sync Mapping to the Project, and cleans the orphan Drive folder (trashes if empty, else relocates under the parent customer folder via new `drive_utils.move_folder`/`trash_folder`/`get_folder_meta` helpers). **Dry-run by default**, idempotent, batched/committed, per-record guarded; Drive folders are trashed (recoverable), never hard-deleted. See `MIGRATION_NOTES.md` §6 for the runbook. *(Production QBO sync was paused pending deploy; run the remediation before re-enabling it so the resumed sync updates Projects instead of recreating the flat Customers.)*
+
 ## [1.77.0] - 2026-06-22
 
 ### Fixed
