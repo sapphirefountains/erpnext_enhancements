@@ -110,3 +110,6 @@ erpnext_enhancements.patches.renumber_handoff_steps
 erpnext_enhancements.patches.ensure_opportunity_handoff_fields
 # v1.69.0 Projects Dashboard: seed the "Delivery" Project Type + "Delivery"/"Products" Value Streams masters
 erpnext_enhancements.patches.seed_delivery_and_products_categories
+# v1.77.0 HRMS optional: clear orphaned Expense Claim Type values on Travel Settings
+# when HRMS isn't installed (a stored value 404s the form via link-title resolution)
+erpnext_enhancements.patches.clear_orphan_travel_expense_types

@@ -38,6 +38,7 @@ from erpnext_enhancements.travel_management import (
 	RELATED_PARTY_DOCTYPES,
 	TRAVEL_COORDINATOR_ROLES,
 	TRAVEL_FOR_DOCTYPES,
+	expense_claims_available,
 )
 
 # Status transitions a plain Employee may perform manually. Coordinators are
@@ -62,6 +63,12 @@ def user_is_travel_coordinator(user=None):
 
 class TravelTrip(Document):
 	"""Validation pipeline + financial rollups; document creation lives in api.py."""
+
+	def onload(self):
+		# Tell the form whether HRMS is around so it can hide the Expense
+		# Claim / Employee Advance / Vehicle Log create buttons (api.py also
+		# refuses those endpoints with a clear message). HRMS is optional.
+		self.set_onload("expense_claims_available", expense_claims_available())
 
 	def validate(self):
 		self._before = self.get_doc_before_save()

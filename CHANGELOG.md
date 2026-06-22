@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.77.0] - 2026-06-22
+
+### Fixed
+- **Travel Settings (and the rest of the Travel module) no longer 404 / crash on a site without the HR module — HRMS is now treated as the optional dependency it always was.** Opening **Travel Settings** returned a hard `404` (`frappe.desk.form.load.getdoc` → `DoesNotExistError: DocType Expense Claim Type not found`). The Single doc itself was fine; the failure was in Frappe core's link-*title* resolution: Travel Settings has six `Link → Expense Claim Type` fields (`flight/hotel/ground/misc/per_diem/mileage_expense_type`), the stored singles row had them populated (`Travel`/`Others`), and `Expense Claim Type` is an **HRMS** doctype — which is **not installed** on this site. `getdoc` tried to fetch the link titles, `frappe.get_meta("Expense Claim Type")` threw, and the HTTP layer turned that into a 404, leaving the form impossible to even open and clear. (The doctype only ever came from `hrms`; the app ships an `enhancements_core` controller *stub* with no JSON, so `bench migrate` never creates it.)
+
+  HRMS was always meant to be optional — the travel *finance* surfaces (Expense Claim / Employee Advance / Vehicle Log generation, Expense Claim Type mapping) ride on it, while itinerary, logistics, per-diem and mileage do not. They now degrade gracefully instead of hard-failing:
+  - New `travel_management.expense_claims_available()` probes for the `Expense Claim Type` doctype (the exact thing the links resolve against).
+  - **Travel Settings** clears the six Expense Claim Type fields on save when the doctype is absent (so a stored value can never re-404 the form) and flags availability to the client; the new `travel_settings.js` hides the *Expense Claim Types* section and explains why, keeping the per-diem/mileage/automation settings usable.
+  - **Travel Trip**: the *Create → Expense Claims / Employee Advance / Vehicle Log* buttons are hidden when HRMS is absent (the Lead/Opportunity/Itinerary actions stay), and the `api.py` create endpoints (`create_expense_claim(s)`, `create_employee_advance`, `create_vehicle_log`) now throw a clear "HR module not installed" error instead of a raw `DoesNotExistError`.
+  - *Production data fix:* the six orphaned `*_expense_type` values already stored on the live Travel Settings singles row were cleared (they referenced the missing doctype), which immediately restored the page. Re-pick them under Travel Settings → Expense Claim Types if HRMS is later installed.
+
 ## [1.76.0] - 2026-06-22
 
 ### Fixed
