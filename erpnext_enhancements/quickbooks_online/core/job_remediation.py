@@ -50,10 +50,8 @@ import frappe
 
 from erpnext_enhancements.quickbooks_online.core.mapping import (
 	_is_qbo_customer_job,
-	_map_qbo_job_to_project,
 	_match_project,
 	_raw_payload_dict,
-	_select_option,
 )
 from erpnext_enhancements.quickbooks_online.core.utils import get_settings
 
@@ -184,16 +182,17 @@ def _process_job(mapping_row, payload, settings, apply, clean_drive, service, sh
 	)
 	self_merge = old_customer is not None and old_customer == parent
 
-	# Resolve (or, on apply, create) the Project this job becomes.
-	project, created = _resolve_project(mapping_row, payload, parent, apply, settings)
-	if project is None and created == "ambiguous":
-		result["outcome"] = "skip-ambiguous-project"
-		return result
+	# Link an EXISTING Project for this job, or None (never create one).
+	project = _resolve_project(mapping_row, payload, settings)
 	result["project"] = project
-	result["project_created"] = bool(created)
 
-	# Capture the orphan folder id BEFORE the merge deletes the job-Customer.
-	folder_id = _orphan_folder_id(old_customer) if (clean_drive and old_customer) else None
+	# Capture the orphan folder id BEFORE the merge deletes the job-Customer. ONLY for a
+	# genuine colon job being merged away -- never for the parent itself (a self-merge,
+	# or an already-consolidated job re-processed on a later run, where the mapping now
+	# points at the parent). The parent's folder is real and must not be touched.
+	folder_id = (
+		_orphan_folder_id(old_customer) if (clean_drive and old_customer and not self_merge) else None
+	)
 
 	# Invoices to tag with the Project (still on the job-Customer pre-merge).
 	invoice_names = (
@@ -233,17 +232,20 @@ def _process_job(mapping_row, payload, settings, apply, clean_drive, service, sh
 		frappe.rename_doc("Customer", old_customer, parent, merge=True)
 		result["merged"] = True
 
-	# 3) Repoint the QBO Sync Mapping to the Project (the "done" marker; last DB step).
+	# 3) Repoint the QBO Sync Mapping (the "done" marker; last DB step): to the matched
+	#    Project, or -- when the job has no project -- to the parent Customer, so the
+	#    paused sync resumes against a real record instead of recreating the colon name.
 	if project:
 		frappe.db.set_value(
-			"QuickBooks Sync Mapping",
-			mapping_row.name,
-			{
-				"erpnext_doctype": "Project",
-				"erpnext_name": project,
-				"match_status": "Manual Matched",
-				"match_rule": "job_remediation",
-			},
+			"QuickBooks Sync Mapping", mapping_row.name,
+			{"erpnext_doctype": "Project", "erpnext_name": project,
+			 "match_status": "Manual Matched", "match_rule": "job_remediation"},
+		)
+	else:
+		frappe.db.set_value(
+			"QuickBooks Sync Mapping", mapping_row.name,
+			{"erpnext_doctype": "Customer", "erpnext_name": parent,
+			 "match_status": "Manual Matched", "match_rule": "job_merge_no_project"},
 		)
 
 	# 4) Clean the orphan Drive folder (reversible; never aborts the DB work).
@@ -301,35 +303,20 @@ def _customer_name_for_qbo(qbo_id):
 	return name if name and frappe.db.exists("Customer", name) else None
 
 
-def _resolve_project(mapping_row, payload, parent, apply, settings):
-	"""Return ``(project_name, created)`` for the job.
+def _resolve_project(mapping_row, payload, settings):
+	"""The EXISTING ERPNext Project this job maps to, or ``None`` -- NEVER creates one.
 
-	``created`` is True if a new Project was (or would be) created, False if linked to
-	an existing one, or the string ``"ambiguous"`` when the PRJ number matches more
-	than one Project (skip + manual review). Reuses the forward fix's matcher so a
-	re-run links the same Project the live sync would.
+	The site already holds every QBO project, so a job is only ever *linked* to an
+	existing Project (matched by its ``PRJ-###`` number, else an exact ``project_name``
+	+ customer -- see ``_match_project``). A job with no match (the internal / deleted /
+	differently-named ones) is consolidated into its parent Customer with **no project**;
+	its transactions roll up to the parent untagged. We never invent a Project, and an
+	ambiguous match is treated as no-match (left untagged) rather than a guess.
 	"""
 	if mapping_row.erpnext_doctype == "Project" and frappe.db.exists("Project", mapping_row.erpnext_name):
-		return mapping_row.erpnext_name, False
-
+		return mapping_row.erpnext_name
 	match = _match_project(payload, settings)
-	if match and match.get("status") == "matched":
-		return match["name"], False
-	if match and match.get("status") == "ambiguous":
-		return None, "ambiguous"
-
-	# No existing Project -> create one under the parent (mirrors the forward fix).
-	_doctype, values = _map_qbo_job_to_project(payload, settings)
-	values["customer"] = parent  # authoritative parent for the remediation
-	if "(deleted)" in (values.get("project_name") or "").lower():
-		# Mark QBO-deleted jobs cancelled, using whichever spelling the site's Project
-		# status Select actually has ("Canceled"/"Cancelled"), else Completed.
-		values["status"] = _select_option("Project", "status", ("Cancelled", "Canceled", "Completed"))
-	if not apply:
-		return f"(new) {values.get('project_name')}", True
-	project_doc = frappe.get_doc({"doctype": "Project", **values})
-	project_doc.insert(ignore_permissions=True)
-	return project_doc.name, True
+	return match["name"] if (match and match.get("status") == "matched") else None
 
 
 def _tag_invoice_project(si_name, project):
