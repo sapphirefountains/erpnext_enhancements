@@ -960,7 +960,19 @@ def _map_payment_entry(payload, settings):
 	amount = _to_amount(payload.get("TotalAmt"))
 	bank = _company_value(settings, "default_bank_account") or _company_value(settings, "default_cash_account")
 	if party_type == "Customer":
-		payment_type, paid_from, paid_to = "Receive", _company_value(settings, "default_receivable_account"), bank
+		# Where the receipt lands. QBO names it in DepositToAccountRef when the payment
+		# is deposited straight to a bank; when that's absent the receipt sits in
+		# Undeposited Funds until a Deposit sweeps it to the bank (see _map_deposit).
+		# Routing it to UF (not straight to the bank) is what lets that later Deposit's
+		# UF->bank move avoid double-counting the bank and lets UF reconcile to zero.
+		# Falls back to the bank only when no UF account is imported, preserving the
+		# previous behaviour rather than failing to map.
+		paid_to = (
+			_resolve_account(settings, (payload.get("DepositToAccountRef") or {}).get("value"))
+			or _undeposited_funds_account(settings)
+			or bank
+		)
+		payment_type, paid_from = "Receive", _company_value(settings, "default_receivable_account")
 	else:
 		payment_type, paid_from, paid_to = "Pay", bank, _company_value(settings, "default_payable_account")
 	return "Payment Entry", {
@@ -1140,10 +1152,15 @@ def _map_deposit(payload, settings):
 		accounts.append(deposit_to)
 	for line in payload.get("Line") or []:
 		detail = line.get("DepositLineDetail") or {}
-		row = _ledger_line(
-			_resolve_account(settings, (detail.get("AccountRef") or {}).get("value")),
-			credit=_to_amount(line.get("Amount")),
-		)
+		account = _resolve_account(settings, (detail.get("AccountRef") or {}).get("value"))
+		# A deposit line that merely sweeps a customer payment into the bank carries a
+		# LinkedTxn (to the Payment) and no AccountRef -- the money is moving out of
+		# Undeposited Funds, where _map_payment_entry parked that receipt. Credit UF so
+		# the entry balances and imports, instead of dropping the credit leg and parking
+		# the deposit as unbalanced (the common case for QBO's grouped bank deposits).
+		if not account and (line.get("LinkedTxn") or detail.get("PaymentMethodRef")):
+			account = _undeposited_funds_account(settings)
+		row = _ledger_line(account, credit=_to_amount(line.get("Amount")))
 		if row:
 			accounts.append(row)
 	return _journal_entry_doc(
@@ -1351,6 +1368,23 @@ def _resolve_account(settings, qbo_id, company_default_field: str | None = None)
 	if company_default_field:
 		return _company_value(settings, company_default_field)
 	return None
+
+
+def _undeposited_funds_account(settings):
+	"""Resolve the company's Undeposited Funds clearing account, or None.
+
+	QBO routes a customer payment with no explicit ``DepositToAccountRef`` into
+	Undeposited Funds, and a later Deposit sweeps it to a bank. Both legs --
+	``_map_payment_entry`` (the receipt) and ``_map_deposit`` (the sweep) -- post to
+	this account so it nets to zero. Matched by QBO's standard account name (the
+	importer preserves QBO names), scoped to the configured company. Returns None
+	when it isn't imported, leaving the caller to fall back or drop the line.
+	"""
+	return frappe.db.get_value(
+		"Account",
+		{"company": settings.company, "account_name": "Undeposited Funds", "is_group": 0},
+		"name",
+	)
 
 
 def _ledger_line(account, debit=0, credit=0):
