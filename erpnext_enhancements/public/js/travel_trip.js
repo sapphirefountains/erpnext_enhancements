@@ -249,11 +249,18 @@ frappe.ui.form.on('Travel Trip', {
 	refresh(frm) {
 		if (frm.is_new()) return;
 
+		// HRMS is optional: the Expense Claim / Employee Advance / Vehicle Log
+		// actions need its doctypes (api.py also guards them). Hide the buttons
+		// when HRMS isn't installed rather than offer a dead end.
+		const hrms = !!(frm.doc.__onload && frm.doc.__onload.expense_claims_available);
+
 		if (frm.doc.status !== 'Closed') {
-			frm.add_custom_button(__('Expense Claims (All Travelers)'), () => create_expense_claims(frm), __('Create'));
-			frm.add_custom_button(__('Expense Claim (One Traveler)'), () => create_expense_claim_for_one(frm), __('Create'));
-			frm.add_custom_button(__('Employee Advance'), () => create_employee_advance(frm), __('Create'));
-			frm.add_custom_button(__('Vehicle Log'), () => create_vehicle_log(frm), __('Create'));
+			if (hrms) {
+				frm.add_custom_button(__('Expense Claims (All Travelers)'), () => create_expense_claims(frm), __('Create'));
+				frm.add_custom_button(__('Expense Claim (One Traveler)'), () => create_expense_claim_for_one(frm), __('Create'));
+				frm.add_custom_button(__('Employee Advance'), () => create_employee_advance(frm), __('Create'));
+				frm.add_custom_button(__('Vehicle Log'), () => create_vehicle_log(frm), __('Create'));
+			}
 			frm.add_custom_button(__('Lead from Stop'), () => create_outcome(frm, 'Lead'), __('Create'));
 			frm.add_custom_button(__('Opportunity from Stop'), () => create_outcome(frm, 'Opportunity'), __('Create'));
 		}

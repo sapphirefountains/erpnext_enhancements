@@ -50,6 +50,21 @@ def _refuse_closed(doc):
 		)
 
 
+def _require_hrms(doctype, feature):
+	"""Refuse a finance action with a clear message when its HRMS doctype is
+	missing. HRMS is optional (see ``travel_management.expense_claims_available``);
+	without it ``frappe.new_doc("Expense Claim")`` etc. would raise a raw
+	``DoesNotExistError``, so we surface the real cause instead."""
+	if not frappe.db.exists("DocType", doctype):
+		frappe.throw(
+			_(
+				"Travel {0} need the HR module (Frappe HR / “hrms”), which is not installed "
+				"on this site. Install hrms to use this."
+			).format(feature),
+			title=_("HR module not installed"),
+		)
+
+
 def _get_traveler_row(doc, traveler):
 	row = next((t for t in doc.travelers if t.name == traveler), None)
 	if not row:
@@ -76,6 +91,7 @@ def create_expense_claim(trip: str, traveler: str):
 	"""Create (or extend) the draft Expense Claim for one traveler row,
 	pulling in every unclaimed employee-paid cost, mileage row and the per
 	diem. Returns the claim name, or None when nothing is claimable."""
+	_require_hrms("Expense Claim", _("expense claims"))
 	doc = _get_trip(trip)
 	_refuse_closed(doc)
 	row = _get_traveler_row(doc, traveler)
@@ -90,6 +106,7 @@ def create_expense_claim(trip: str, traveler: str):
 def create_expense_claims(trip: str):
 	"""Create/extend draft Expense Claims for every traveler with claimable
 	material. Returns ``{employee: claim_name}``."""
+	_require_hrms("Expense Claim", _("expense claims"))
 	doc = _get_trip(trip)
 	_refuse_closed(doc)
 
@@ -275,6 +292,7 @@ def _create_claim_for_traveler(doc, row):
 def create_employee_advance(trip: str, traveler: str, amount, mode_of_payment: str | None = None):
 	"""Create a draft Employee Advance for one traveler and link it to the
 	trip. HR submits and pays it natively; status flows back via doc_events."""
+	_require_hrms("Employee Advance", _("advances"))
 	doc = _get_trip(trip)
 	_refuse_closed(doc)
 	row = _get_traveler_row(doc, traveler)
@@ -370,6 +388,7 @@ def create_outcome_from_stop(trip: str, agenda_row: str, target_doctype: str, va
 def create_vehicle_log(trip: str, ground_row: str, odometer, date: str | None = None, employee: str | None = None):
 	"""Create a draft Vehicle Log for a Company Fleet ground-transport row.
 	Left as draft on purpose — HRMS validates odometer continuity on submit."""
+	_require_hrms("Vehicle Log", _("vehicle logs"))
 	doc = _get_trip(trip)
 	_refuse_closed(doc)
 
