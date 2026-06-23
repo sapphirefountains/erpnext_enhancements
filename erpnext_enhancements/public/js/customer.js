@@ -12,8 +12,9 @@
  * Second form.on block (migrated from the "Create Contact from Accounts",
  * "Auto Reminder for Accounts" and "Accounts (Customer) Tables" Client Scripts):
  * adds a "Create" dropdown for related docs (Contact/Address/Lead/Prospect/
- * Opportunity/Project), defaults `custom_reminder_days` from the account status,
- * and populates the related Projects/Opportunities/Leads child tables on load.
+ * Opportunity/Project), defaults `custom_reminder_days` and the `custom_prospect`
+ * reminder gate from the account status, and populates the related Projects/
+ * Opportunities/Leads child tables on load.
  */
 frappe.ui.form.on("Customer", {
 	refresh: function (frm) {
@@ -167,7 +168,7 @@ frappe.ui.form.on("Customer", {
     },
 
     // Source: "Auto Reminder for Accounts"
-    // Default the reminder cadence from the account status.
+    // Default the reminder cadence and the Prospect gate from the account status.
     custom_account_status: function (frm) {
         let days = 0;
         switch (frm.doc.custom_account_status) {
@@ -184,6 +185,16 @@ frappe.ui.form.on("Customer", {
                 days = 0;
         }
         frm.set_value("custom_reminder_days", days);
+
+        // Prospect and Champion are the statuses we actively follow up with, so
+        // keep the Prospect gate (custom_prospect) in sync with the status: it
+        // drives the daily inactivity reminder and reveals the Activity Reminder
+        // section. The checkbox stays manually toggleable for other statuses.
+        const prospect_statuses = ["Prospect", "Champion"];
+        frm.set_value(
+            "custom_prospect",
+            prospect_statuses.includes(frm.doc.custom_account_status) ? 1 : 0
+        );
     },
 
     // Source: "Accounts (Customer) Tables"
