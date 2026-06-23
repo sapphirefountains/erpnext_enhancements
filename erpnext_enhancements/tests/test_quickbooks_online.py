@@ -2160,6 +2160,60 @@ def test_prj_number_normalizes_padding():
 	assert _prj_number("4th West Apartments") is None
 
 
+def test_strip_prj_prefix_handles_every_format():
+	"""strip_prj_prefix removes a single leading PRJ-### token across the formats the
+	QBO data carries, leaves clean titles alone, and never blanks a number-only title."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import strip_prj_prefix
+
+	# Leading prefix in its various real-world spellings -> bare human title.
+	assert strip_prj_prefix("PRJ-401 - 4th West Fountain Control & Pump Repair") == "4th West Fountain Control & Pump Repair"
+	assert strip_prj_prefix("PRJ000062 - Terror Ride Fountain") == "Terror Ride Fountain"
+	assert strip_prj_prefix("PRJ-96 - Hardware West Courtyard Fountains") == "Hardware West Courtyard Fountains"
+	assert strip_prj_prefix("PRJ-111 District Heightsr (deleted)") == "District Heightsr (deleted)"  # space-only separator
+	assert strip_prj_prefix("PRJ-00581 Myers Mortuary") == "Myers Mortuary"
+	# An embedded " - " in the real title survives (only the leading token is stripped).
+	assert strip_prj_prefix("PRJ-112 - Salt Hardware East Lobby - CO Manifold Replacement") == "Salt Hardware East Lobby - CO Manifold Replacement"
+	# Already clean, no PRJ-number prefix, or a name that merely starts with "PRJ" letters.
+	assert strip_prj_prefix("Myers Mortuary") == "Myers Mortuary"
+	assert strip_prj_prefix("Pristine Fountains") == "Pristine Fountains"
+	# Degenerate: a title that is only the number -> never blanked (returned unchanged).
+	assert strip_prj_prefix("PRJ-00614") == "PRJ-00614"
+	assert strip_prj_prefix("") == ""
+	assert strip_prj_prefix(None) is None
+
+
+def test_protect_existing_project_title_drops_only_when_title_set():
+	"""_protect_existing_project_title removes project_name from the update values only
+	when the Project already has a non-blank title (so the QBO job DisplayName never
+	clobbers a curated title), and leaves it to fill an empty one."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _protect_existing_project_title
+
+	class _Doc:
+		def __init__(self, title):
+			self._title = title
+
+		def get(self, fieldname):
+			return self._title if fieldname == "project_name" else None
+
+	# Existing title -> project_name is dropped (not overwritten); other fields untouched.
+	values = {"project_name": "PRJ-00581 Myers Mortuary", "customer": "Acme"}
+	_protect_existing_project_title("Project", values, _Doc("Myers Mortuary"))
+	assert "project_name" not in values
+	assert values["customer"] == "Acme"
+
+	# Blank existing title -> project_name is kept (the create/link path fills it).
+	values = {"project_name": "Myers Mortuary"}
+	_protect_existing_project_title("Project", values, _Doc(""))
+	assert values["project_name"] == "Myers Mortuary"
+
+	# Non-Project doctype -> never touched.
+	values = {"project_name": "x"}
+	_protect_existing_project_title("Customer", values, _Doc("anything"))
+	assert values["project_name"] == "x"
+
+
 def test_qbo_job_maps_to_project_under_parent_customer(monkeypatch):
 	"""A QBO job routes to a Project (title = leaf DisplayName) under the parent Customer."""
 	frappe = install_frappe_stub()
@@ -2190,8 +2244,9 @@ def test_qbo_job_maps_to_project_under_parent_customer(monkeypatch):
 	doctype, values = map_qbo_to_erpnext("Customer", payload, types.SimpleNamespace(company="Sapphire Fountains"))
 
 	assert doctype == "Project"
-	# The colon path is gone -- the title is the bare leaf, the parent is the Customer.
-	assert values["project_name"] == "PRJ-401 4th West Fountain Control & Pump Repair"
+	# The colon path is gone and the redundant leading PRJ-### is stripped -- the title
+	# is the bare human name (the number is already the Project's `name`).
+	assert values["project_name"] == "4th West Fountain Control & Pump Repair"
 	assert values["customer"] == "4th West Apartments"
 	assert values["status"] == "Open"
 

@@ -124,6 +124,9 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	mapping = get_mapping(entity_type, qbo_id)
 	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
 		doc = frappe.get_doc(erpnext_doctype, mapping.erpnext_name)
+		# A QBO job must never re-clobber an existing Project's title with its prefixed
+		# DisplayName; drop it here so it's excluded from conflicts, the write and the snapshot.
+		_protect_existing_project_title(erpnext_doctype, values, doc)
 		conflicts = detect_conflicts(doc, values, mapping)
 		# A conflict = a user changed a QBO-owned field; respect it unless overwriting.
 		if conflicts and not overwrite:
@@ -877,6 +880,36 @@ def _prj_number(text) -> str | None:
 	return match.group(1) if match else None
 
 
+# A QBO job's DisplayName mirrors the ERPNext project it belongs to and is prefixed
+# with that project's number ("PRJ-401 - 4th West Fountain", "PRJ000062 - Terror
+# Ride Fountain"). That number is already the Project's ``name``, so carrying it into
+# ``project_name`` duplicates it ("PRJ-00581 Myers Mortuary" instead of "Myers
+# Mortuary"). This matches a single leading PRJ-### token plus its separator/space so
+# the title can be stripped clean. Anchored to the start; the optional separator and
+# zero-padding tolerate every format the data carries ("PRJ-96", "PRJ00097",
+# "PRJ-111 District ...").
+_PRJ_PREFIX_RE = re.compile(r"^\s*PRJ-?0*\d+\s*[-–—:]?\s*", re.IGNORECASE)
+
+
+def strip_prj_prefix(text):
+	"""Drop a single redundant leading ``PRJ-###`` token (and its separator) from a
+	title, returning just the human name. Returns the input unchanged when there is no
+	prefix, or when stripping would leave nothing (a title that is only a number) so a
+	title is never blanked. Shared by the job mapper and the project-title remediation."""
+	if not text:
+		return text
+	stripped = _PRJ_PREFIX_RE.sub("", text, count=1).strip()
+	return stripped or text
+
+
+def _job_project_title(payload) -> str | None:
+	"""Project title for a QBO job: its leaf DisplayName with the redundant leading
+	PRJ-### number stripped (that number is the Project's ``name``, not part of the
+	title). Falls back to the raw leaf when stripping would empty it (a job named by
+	number only) so a Project is never left titleless."""
+	return strip_prj_prefix(payload.get("DisplayName") or _display_name(payload))
+
+
 def _raw_payload_dict(entity_type, qbo_id):
 	"""Most-recent stored raw QBO payload for an entity as a dict, or None."""
 	doc = _latest_raw_payload(entity_type, qbo_id)
@@ -978,14 +1011,18 @@ def _map_qbo_job_to_project(payload, settings):
 	"""Map a QBO job / sub-customer to an ERPNext Project under its top-level Customer.
 
 	The job's leaf ``DisplayName`` (e.g. ``PRJ-401 4th West Fountain ...``) becomes the
-	project title; ``customer`` is the top-level ancestor Customer (``_top_level_customer``).
+	project title, with the redundant leading ``PRJ-###`` number stripped
+	(``_job_project_title``) -- that number is already the Project's ``name``, so keeping
+	it in ``project_name`` duplicates it ("PRJ-00581 Myers Mortuary" vs "Myers Mortuary").
+	``customer`` is the top-level ancestor Customer (``_top_level_customer``).
 	The matcher (``_match_project``) links to an already-existing ERPNext project by its
 	``PRJ-###`` number first, so this create path is only hit for jobs with no project
-	yet. ``project_name`` is left to fill only when blank on an auto-linked project, so
-	an existing project title is never overwritten.
+	yet. ``project_name`` is filled only when blank on an auto-linked project, and the
+	in-place update path (``_protect_existing_project_title``) never overwrites a set
+	title, so an existing project title is never clobbered by the job's DisplayName.
 	"""
 	values = {
-		"project_name": payload.get("DisplayName") or _display_name(payload),
+		"project_name": _job_project_title(payload),
 		# Sites customize the Project status Select via Property Setter (e.g.
 		# Active/Client Hold/.../Canceled, with no "Open"). Resolve to a valid option
 		# (preferring an open-like status), falling back to the field's first option,
@@ -1769,6 +1806,23 @@ def _drop_self_parent_account(erpnext_doctype: str, values: dict, name: str):
 	"""
 	if erpnext_doctype == "Account" and name and values.get("parent_account") == name:
 		values.pop("parent_account", None)
+
+
+def _protect_existing_project_title(erpnext_doctype: str, values: dict, doc):
+	"""Never let a QBO job's DisplayName overwrite an existing Project's title.
+
+	A QBO job links to its ERPNext Project by ``PRJ-###`` number; the Project's
+	``project_name`` is the human-curated title and QBO is only secondary to it. The
+	create / auto-link paths already fill it only when blank, but the in-place *update*
+	path applies every mapped value -- which re-clobbered the title with the job's
+	prefixed DisplayName ("PRJ-00581 Myers Mortuary") on every re-sync (this is the bug
+	that prefixed ~377 project titles). Drop ``project_name`` from the values when the
+	Project already has one, so the title is set once (on create) and then owned by
+	ERPNext: it is excluded from conflict detection, the field write and the owned-field
+	snapshot alike.
+	"""
+	if erpnext_doctype == "Project" and "project_name" in values and (doc.get("project_name") or "").strip():
+		values.pop("project_name", None)
 
 
 def _heal_invalid_owned_selects(doc, values: dict) -> list[str]:
