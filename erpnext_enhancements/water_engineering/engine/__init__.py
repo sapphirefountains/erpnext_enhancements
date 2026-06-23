@@ -18,6 +18,7 @@ from .feature import nozzle_array_flow, nozzle_flow, weir_flow
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
 from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
+from .safety import npsh_available, suction_outlet_vgb, water_hammer
 from .tdh import component_loss, fitting_minor_loss, total_dynamic_head
 
 __all__ = [
@@ -38,15 +39,18 @@ __all__ = [
     "manning_drain_flow",
     "nozzle_array_flow",
     "nozzle_flow",
+    "npsh_available",
     "ozone_sidestream",
     "pipe_velocity",
     "run_spine",
     "select_pump",
     "size_drain",
     "size_pipe",
+    "suction_outlet_vgb",
     "surge_basin_volume",
     "total_dynamic_head",
     "turnover_gpm",
     "velocity_status",
+    "water_hammer",
     "weir_flow",
 ]

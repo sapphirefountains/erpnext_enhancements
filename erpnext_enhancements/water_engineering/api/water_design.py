@@ -26,14 +26,17 @@ from erpnext_enhancements.water_engineering.engine import (
     manning_drain_flow,
     nozzle_array_flow,
     nozzle_flow,
+    npsh_available,
     ozone_sidestream,
     run_spine,
     select_pump,
     size_drain,
     size_pipe,
+    suction_outlet_vgb,
     surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
+    water_hammer,
     weir_flow,
 )
 
@@ -204,6 +207,34 @@ def _run_calc(calc, inputs):
         r = calc_lighting(i.get("lights", []), i.get("lighting_voltage", 12), i.get("per_relay_watts", 60))
     elif calc == "calc_solenoid_relays":
         r = calc_solenoid_relays(i.get("valve_qty", 0))
+    elif calc == "suction_outlet_vgb":
+        r = suction_outlet_vgb(
+            i.get("system_gpm", 0),
+            i.get("cover_length_in", 0),
+            i.get("cover_width_in", 0),
+            i.get("open_area_fraction", 0),
+            outlets=i.get("outlets", 1),
+            vmax_fps=i.get("vmax_fps", 1.5),
+        )
+    elif calc == "npsh_available":
+        r = npsh_available(
+            i.get("suction_static_ft", 0),
+            i.get("suction_friction_ft", 0),
+            elevation_ft=i.get("elevation_ft", 0),
+            water_temp_f=i.get("water_temp_f", 70),
+            npshr_ft=i.get("npshr_ft", 0),
+            margin_ft=i.get("margin_ft", 3.0),
+        )
+    elif calc == "water_hammer":
+        r = water_hammer(
+            i.get("velocity_fps", 0),
+            i.get("length_ft", 0),
+            closure_time_s=i.get("closure_time_s", 0),
+            material=i.get("material", "SCH40 PVC"),
+            wave_speed_fps=i.get("wave_speed_fps", 0),
+            static_psi=i.get("static_psi", 0),
+            pipe_rating_psi=i.get("pipe_rating_psi", 0),
+        )
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()
