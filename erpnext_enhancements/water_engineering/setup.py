@@ -8,13 +8,16 @@ reads (rated flow/head + nameplate) to Item, gated to the "Pumps" item group.
 Idempotent, like the other ``setup`` field creators wired in hooks.py
 ``after_migrate``.
 
-``seed_pump_catalog`` creates the "Pumps" Item Group and a starter pump catalog
-from DOC-0028 (Design Part Numbers). It is NOT auto-run — an operator runs it
-once after deploy (``bench --site SITE execute
-erpnext_enhancements.water_engineering.setup.seed_pump_catalog``) so the design
-spine can resolve a pump. Each pump's rated flow is derived from the GPH in its
-DOC-0028 description (GPH / 60); the head ("max lift") is not in the source data,
-so it is left blank and the selector matches on flow + flags a pump-curve check.
+``ensure_pump_catalog`` is the ``after_migrate`` entry: it creates those fields
+and seeds the "Pumps" Item Group + a starter catalog from DOC-0028 (Design Part
+Numbers). It runs on every migrate — so Frappe Cloud (where ``bench execute``
+isn't available) gets the catalog automatically on deploy — and is idempotent
+(skips existing item codes, never overwrites) and guarded (a seed error only
+logs, never breaks the deploy). ``seed_pump_catalog`` is the same thing callable
+directly (bench console / FAC ``run_python_code``) if a manual run is ever
+wanted. Each pump's rated flow is derived from the GPH in its DOC-0028
+description (GPH / 60); the head ("max lift") is not in the source data, so it is
+left blank and the selector matches on flow + flags a pump-curve check.
 """
 
 import frappe
@@ -89,11 +92,9 @@ def create_pump_item_fields():
 	frappe.db.commit()
 
 
-def seed_pump_catalog():
-	"""Create the Pumps item group + the DOC-0028 starter pump items. Idempotent;
-	run once per site after deploy. Returns a summary dict."""
-	create_pump_item_fields()
-
+def _seed_pump_items():
+	"""Create the Pumps item group + the DOC-0028 starter pump items. Idempotent
+	(skips existing item codes; never overwrites). Returns a summary dict."""
 	if not frappe.db.exists("Item Group", "Pumps"):
 		frappe.get_doc(
 			{
@@ -127,3 +128,24 @@ def seed_pump_catalog():
 
 	frappe.db.commit()
 	return {"created": created, "skipped": skipped}
+
+
+def seed_pump_catalog():
+	"""Create the pump-spec fields + the DOC-0028 starter catalog. Idempotent.
+	Auto-run on migrate via ``ensure_pump_catalog`` (so Frappe Cloud gets it on
+	deploy, no shell needed); also callable directly. Returns a summary dict."""
+	create_pump_item_fields()
+	return _seed_pump_items()
+
+
+def ensure_pump_catalog():
+	"""after_migrate entry: ensure the pump-spec Item fields and seed the starter
+	catalog. The seed is guarded so a data hiccup can never break a deploy/migrate
+	(it only logs) — the fields, which are schema, are created unguarded."""
+	create_pump_item_fields()
+	try:
+		result = _seed_pump_items()
+		if result.get("created"):
+			frappe.logger().info(f"[water_engineering] seeded pumps: {result['created']}")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering pump catalog seed")
