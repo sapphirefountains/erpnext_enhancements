@@ -1839,6 +1839,17 @@ def _persist_or_manual_review(entity_type: str, qbo_id: str, payload: dict, erpn
 	# Normalise any scheme-less URL the record carries (typically a pre-existing
 	# Customer/Supplier website) so the whole-doc re-validation doesn't reject it.
 	_heal_invalid_urls(doc)
+	# When re-saving an EXISTING record (update / auto-link), don't fail on a
+	# pre-existing invalid Link the sync doesn't manage -- e.g. a Project's
+	# ``custom_project_owner`` ("Project Manager", a Link to Employee) left holding a
+	# stale email by an earlier import. ERPNext re-validates every link on save, so
+	# that latent data raises "Could not find Project Manager: <email>" and re-parks
+	# the record on every run. ``ignore_links`` leaves the bad value untouched (for
+	# separate cleanup) rather than blocking the sync; the sync's own links are already
+	# resolved to real records via ``_linked_name``, so nothing unvalidated slips in.
+	# Inserts (brand-new records) still validate links normally.
+	if not insert:
+		doc.flags.ignore_links = True
 	try:
 		if insert:
 			doc.insert(ignore_permissions=True)
