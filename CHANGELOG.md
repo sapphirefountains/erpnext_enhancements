@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.88.0] - 2026-06-23
+
+### Added
+- **"Prospect" checkbox on Customer gates the activity-reminder follow-ups.** A new `custom_prospect` Check field sits at the top of the second column of the Customer **Details** top section (`insert_after: column_break0`). It is the master switch for the inactivity reminder:
+  - The **Activity Reminder** section (`custom_activity_reminder` — Reminder Days / Last Activity / Reminder Assignee) is now hidden unless Prospect is checked (`depends_on: eval:doc.custom_prospect`), so the reminder controls only surface for accounts that should send follow-ups.
+  - The daily scheduler [`customer.customer_inactivity_reminder`](erpnext_enhancements/script_migrations/customer.py) now filters on `custom_prospect = 1`, so only flagged Prospect accounts generate the inactivity follow-up ToDo. The reminder window itself is unchanged — per-customer `custom_reminder_days`, falling back to the global `inactivity_threshold` (**Sales Activity Settings**).
+  - The follow-up ToDo is now allocated to the account's **Reminder Assignee** (`custom_reminder_assignee`, the field surfaced in the Activity Reminder section) — so the assignment email reaches the chosen account executive — and only falls back to the document owner when that field is blank. Previously the field was a no-op and reminders always went to the owner (often the data-importer/admin).
+  - **Account Status sync:** the Customer form ([customer.js](erpnext_enhancements/public/js/customer.js)) now auto-ticks `custom_prospect` when **Account Status** is set to `Prospect` or `Champion` (the statuses we actively follow up with; `Champion` already carries the 90-day cadence), and clears it otherwise — alongside the existing `custom_reminder_days` defaulting. The checkbox remains manually toggleable for other statuses.
+  - **Behaviour change:** because the field defaults to unchecked, existing customers stop generating reminders until they are explicitly flagged as Prospects (or have their Account Status set/re-saved to Prospect/Champion) — this is the intended "prospects only" scoping. Flag the accounts that should receive follow-ups after deploy.
+
 ## [1.87.0] - 2026-06-22
 
 ### Fixed
