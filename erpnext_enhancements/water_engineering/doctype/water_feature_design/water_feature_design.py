@@ -28,10 +28,12 @@ from erpnext_enhancements.water_engineering.engine import (
 	component_loss,
 	fitting_minor_loss,
 	hazen_williams_loss,
+	manning_drain_flow,
 	nozzle_array_flow,
 	nozzle_flow,
 	pipe_velocity,
 	run_spine,
+	surge_basin_volume,
 	velocity_status,
 	weir_flow,
 )
@@ -78,6 +80,7 @@ class WaterFeatureDesign(Document):
 
 		self._write_audit_trail(out.get("results") or [])
 		self._compute_chemistry()
+		self._compute_drainage()
 		self._fill_basin_rows()
 		self._fill_feature_rows()
 		self._fill_segment_rows()
@@ -118,6 +121,35 @@ class WaterFeatureDesign(Document):
 					"steps": "\n".join(r.get("steps") or []),
 					"citations": ", ".join(r.get("citations") or []),
 					"warnings": "\n".join(r.get("warnings") or []),
+				},
+			)
+
+	def _compute_drainage(self):
+		"""Phase-3 gravity drain capacity + surge-basin volume (both optional)."""
+		envelopes = []
+		if self.drain_nominal_size:
+			r = manning_drain_flow(self.drain_nominal_size, flt(self.drain_slope_in_per_ft) or 0.25)
+			self.drain_capacity_gpm = r.value or 0
+			envelopes.append(r)
+		else:
+			self.drain_capacity_gpm = 0
+		if flt(self.surge_basin_area_sf) > 0:
+			r = surge_basin_volume(flt(self.surge_pool_area_sf), flt(self.surge_basin_area_sf))
+			self.surge_basin_gallons = r.value or 0
+			envelopes.append(r)
+		else:
+			self.surge_basin_gallons = 0
+		for r in envelopes:
+			self.append(
+				"calc_results",
+				{
+					"calc": r.calc,
+					"value": _fmt(r.value),
+					"unit": r.unit,
+					"formula": r.formula,
+					"steps": "\n".join(r.steps),
+					"citations": ", ".join(r.citations),
+					"warnings": "\n".join(r.warnings),
 				},
 			)
 

@@ -1,0 +1,365 @@
+{
+ "actions": [],
+ "autoname": "format:CPD-{YYYY}-{#####}",
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "project",
+  "water_feature_design",
+  "product_family",
+  "nema_rating",
+  "controller_hardware",
+  "enclosure_part_no",
+  "cb_head",
+  "panel_includes_contactors_overload",
+  "safe_state_on_power_up",
+  "sb_power",
+  "main_line_voltage",
+  "frequency_hz",
+  "phase",
+  "amperage_to_panel",
+  "main_breaker_size_a",
+  "cb_power",
+  "control_voltage_1",
+  "control_voltage_1_type",
+  "input_voltage_default",
+  "solenoid_voltage_default",
+  "sb_ui",
+  "screen_main",
+  "screen_run",
+  "screen_maintenance",
+  "screen_status",
+  "additional_screens",
+  "sb_pumps",
+  "pumps",
+  "sb_io",
+  "io_points",
+  "sb_interlocks",
+  "interlocks",
+  "sb_lights",
+  "lights",
+  "sb_sizing",
+  "lighting_voltage",
+  "per_relay_watts",
+  "solenoid_valve_qty",
+  "control_transformer_va",
+  "cb_sizing",
+  "lighting_total_watts",
+  "lighting_current_a",
+  "lighting_relay_count",
+  "solenoid_relay_count",
+  "sb_image",
+  "representative_image"
+ ],
+ "fields": [
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "water_feature_design",
+   "fieldtype": "Link",
+   "label": "Water Feature Design",
+   "options": "Water Feature Design"
+  },
+  {
+   "fieldname": "product_family",
+   "fieldtype": "Data",
+   "label": "Product Family",
+   "in_list_view": 1,
+   "description": "e.g. Splash Wizard Basic / PLUS / MAX"
+  },
+  {
+   "fieldname": "nema_rating",
+   "fieldtype": "Select",
+   "label": "NEMA Rating",
+   "options": "\nNEMA 1\nNEMA 3R\nNEMA 4\nNEMA 4X\nNEMA 12"
+  },
+  {
+   "fieldname": "controller_hardware",
+   "fieldtype": "Select",
+   "label": "Controller Hardware",
+   "options": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR\nAllen-Bradley PLC",
+   "default": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR"
+  },
+  {
+   "fieldname": "enclosure_part_no",
+   "fieldtype": "Data",
+   "label": "Enclosure Part No",
+   "default": "WP-40"
+  },
+  {
+   "fieldname": "cb_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "panel_includes_contactors_overload",
+   "fieldtype": "Check",
+   "label": "Panel Includes Contactors + Overload",
+   "default": "1"
+  },
+  {
+   "fieldname": "safe_state_on_power_up",
+   "fieldtype": "Check",
+   "label": "Safe State on Power-up",
+   "default": "1"
+  },
+  {
+   "fieldname": "sb_power",
+   "fieldtype": "Section Break",
+   "label": "Power & Nameplate"
+  },
+  {
+   "fieldname": "main_line_voltage",
+   "fieldtype": "Select",
+   "label": "Main Line Voltage",
+   "options": "\n120\n208\n230\n240\n480"
+  },
+  {
+   "fieldname": "frequency_hz",
+   "fieldtype": "Select",
+   "label": "Frequency (Hz)",
+   "options": "60\n50",
+   "default": "60"
+  },
+  {
+   "fieldname": "phase",
+   "fieldtype": "Select",
+   "label": "Phase",
+   "options": "\n1\n2\n3"
+  },
+  {
+   "fieldname": "amperage_to_panel",
+   "fieldtype": "Float",
+   "label": "Operating Full Load Amps"
+  },
+  {
+   "fieldname": "main_breaker_size_a",
+   "fieldtype": "Float",
+   "label": "Main Breaker Size (A)"
+  },
+  {
+   "fieldname": "cb_power",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "control_voltage_1",
+   "fieldtype": "Select",
+   "label": "Control Voltage 1",
+   "options": "\n12\n24\n120"
+  },
+  {
+   "fieldname": "control_voltage_1_type",
+   "fieldtype": "Select",
+   "label": "Control Voltage 1 Type",
+   "options": "\nVDC\nVAC",
+   "default": "VDC"
+  },
+  {
+   "fieldname": "input_voltage_default",
+   "fieldtype": "Data",
+   "label": "Input Voltage Default",
+   "default": "24 VDC"
+  },
+  {
+   "fieldname": "solenoid_voltage_default",
+   "fieldtype": "Data",
+   "label": "Solenoid Voltage Default",
+   "default": "24 VAC"
+  },
+  {
+   "fieldname": "sb_ui",
+   "fieldtype": "Section Break",
+   "label": "User Interface"
+  },
+  {
+   "fieldname": "screen_main",
+   "fieldtype": "Check",
+   "label": "Main",
+   "default": "1"
+  },
+  {
+   "fieldname": "screen_run",
+   "fieldtype": "Check",
+   "label": "Run",
+   "default": "1"
+  },
+  {
+   "fieldname": "screen_maintenance",
+   "fieldtype": "Check",
+   "label": "Maintenance",
+   "default": "1"
+  },
+  {
+   "fieldname": "screen_status",
+   "fieldtype": "Check",
+   "label": "Status / Off",
+   "default": "1"
+  },
+  {
+   "fieldname": "additional_screens",
+   "fieldtype": "Small Text",
+   "label": "Additional Screens"
+  },
+  {
+   "fieldname": "sb_pumps",
+   "fieldtype": "Section Break",
+   "label": "Pumps"
+  },
+  {
+   "fieldname": "pumps",
+   "fieldtype": "Table",
+   "label": "Pumps",
+   "options": "Control Pump"
+  },
+  {
+   "fieldname": "sb_io",
+   "fieldtype": "Section Break",
+   "label": "I/O Points"
+  },
+  {
+   "fieldname": "io_points",
+   "fieldtype": "Table",
+   "label": "I/O Points",
+   "options": "Control IO Point"
+  },
+  {
+   "fieldname": "sb_interlocks",
+   "fieldtype": "Section Break",
+   "label": "Interlocks (seeded with the standard set)"
+  },
+  {
+   "fieldname": "interlocks",
+   "fieldtype": "Table",
+   "label": "Interlocks",
+   "options": "Control Interlock"
+  },
+  {
+   "fieldname": "sb_lights",
+   "fieldtype": "Section Break",
+   "label": "Lighting"
+  },
+  {
+   "fieldname": "lights",
+   "fieldtype": "Table",
+   "label": "Lights",
+   "options": "Control Light"
+  },
+  {
+   "fieldname": "sb_sizing",
+   "fieldtype": "Section Break",
+   "label": "Sizing Rollups"
+  },
+  {
+   "fieldname": "lighting_voltage",
+   "fieldtype": "Float",
+   "label": "Lighting Voltage",
+   "default": "12"
+  },
+  {
+   "fieldname": "per_relay_watts",
+   "fieldtype": "Float",
+   "label": "Watts per Relay",
+   "default": "60"
+  },
+  {
+   "fieldname": "solenoid_valve_qty",
+   "fieldtype": "Int",
+   "label": "Solenoid Valve Qty"
+  },
+  {
+   "fieldname": "control_transformer_va",
+   "fieldtype": "Float",
+   "label": "Control Transformer VA",
+   "description": "Business rule (not in source docs) \u2014 enter manually."
+  },
+  {
+   "fieldname": "cb_sizing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "lighting_total_watts",
+   "fieldtype": "Float",
+   "label": "Lighting Total (W)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lighting_current_a",
+   "fieldtype": "Float",
+   "label": "Lighting Current (A)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lighting_relay_count",
+   "fieldtype": "Int",
+   "label": "Lighting Relays",
+   "read_only": 1
+  },
+  {
+   "fieldname": "solenoid_relay_count",
+   "fieldtype": "Int",
+   "label": "Solenoid Relays",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_image",
+   "fieldtype": "Section Break",
+   "label": "Representative Image"
+  },
+  {
+   "fieldname": "representative_image",
+   "fieldtype": "Attach Image",
+   "label": "Panel Layout"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Control Panel Design",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "product_family",
+ "track_changes": 1
+}

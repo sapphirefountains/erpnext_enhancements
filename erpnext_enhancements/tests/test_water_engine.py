@@ -18,17 +18,23 @@ if str(REPO_ROOT) not in sys.path:
 
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    calc_lighting,
+    calc_solenoid_relays,
     chemistry_targets,
     chlorinator_feed,
     component_loss,
     fitting_minor_loss,
     hazen_williams_loss,
+    lighting_sizing,
+    manning_drain_flow,
     nozzle_flow,
     ozone_sidestream,
     pipe_velocity,
     run_spine,
     select_pump,
+    size_drain,
     size_pipe,
+    surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
     units,
@@ -224,6 +230,50 @@ class ChemistryTests(unittest.TestCase):
         r = ozone_sidestream(40000, 60, 0.25, "CNT30", 1, "2-log")  # 666 GPM full, 167 side vs 40 max
         self.assertNotEqual(r.status, "Okay")
         self.assertTrue(r.warnings)
+
+
+class DrainageTests(unittest.TestCase):
+    def test_manning_drain_flow_golden(self):
+        # DOC-0049 10-Gravity K-column, slope 1/4"/ft, table n (verified)
+        self.assertAlmostEqual(manning_drain_flow('3"', 0.25).value, 30.369546829898628, places=6)
+        self.assertAlmostEqual(manning_drain_flow('4"', 0.25).value, 58.20622076699431, places=6)
+        self.assertAlmostEqual(manning_drain_flow('6"', 0.25).value, 162.01613635126017, places=5)
+        # G-Gravity!E34 worked example: 4" @ 3/8"/ft
+        self.assertAlmostEqual(manning_drain_flow('4"', 0.375).value, 71.2877703674629, places=6)
+
+    def test_manning_unknown_size_warns(self):
+        self.assertTrue(manning_drain_flow('99"', 0.25).warnings)
+
+    def test_size_drain_picks_smallest_adequate(self):
+        # @ 1/4"/ft: 3"=30.4, 4"=58.2 GPM -> 50 GPM needs 4", 25 GPM needs 3"
+        self.assertEqual(size_drain(50, 0.25).value, '4"')
+        self.assertEqual(size_drain(25, 0.25).value, '3"')
+
+    def test_surge_basin_volume(self):
+        # pool 400 sf over basin 100 sf, defaults, no swimmers:
+        # depth = 3+3+0 + (400*1/100=4) + (400*0.25/100=1) + 12 = 23 in
+        # gal = (23/12)*100*7.48 = 1433.6667
+        r = surge_basin_volume(400, 100)
+        self.assertAlmostEqual(r.value, 1433.6667, places=3)
+        # swimmers add displacement -> larger basin
+        self.assertGreater(surge_basin_volume(400, 100, swimmers=20).value, r.value)
+
+
+class ControlsTests(unittest.TestCase):
+    def test_lighting_sizing(self):
+        # 4 x 50W @ 12VDC -> 200W, 16.67A, ceil(200/60)=4 relays
+        s = lighting_sizing([{"qty": 4, "watts_each": 50}])
+        self.assertEqual(s["total_watts"], 200)
+        self.assertAlmostEqual(s["current_a"], 16.6667, places=3)
+        self.assertEqual(s["relay_count"], 4)
+        self.assertEqual(calc_lighting([{"qty": 4, "watts_each": 50}]).value, 4)
+
+    def test_lighting_oversized_single_light_warns(self):
+        r = calc_lighting([{"qty": 1, "watts_each": 90}])
+        self.assertTrue(any("exceeds" in w for w in r.warnings))
+
+    def test_solenoid_relays(self):
+        self.assertEqual(calc_solenoid_relays(5).value, 5)
 
 
 class UnitsTests(unittest.TestCase):

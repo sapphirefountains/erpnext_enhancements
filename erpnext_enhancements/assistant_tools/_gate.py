@@ -66,9 +66,10 @@ EXPLICIT_READONLY = {
     "quickbooks_sync_status",
     "document_intake_queue",
     "closed_won_handoff_status",
-    # water_engineering: stateless calculator + design reader (no DB writes)
+    # water_engineering: stateless calculator + design/panel readers (no DB writes)
     "water_calc",
     "water_design_status",
+    "control_panel_status",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

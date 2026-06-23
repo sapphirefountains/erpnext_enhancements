@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "qty",
+  "part_no_description",
+  "watts_each",
+  "voltage"
+ ],
+ "fields": [
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "label": "Qty",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "part_no_description",
+   "fieldtype": "Data",
+   "label": "Part No / Description",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "watts_each",
+   "fieldtype": "Float",
+   "label": "Watts each",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "voltage",
+   "fieldtype": "Select",
+   "label": "Voltage",
+   "options": "\n12\n24\n120",
+   "default": "12"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Control Light",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -44,6 +44,14 @@
   "cb_chemistry",
   "chlorinator_feed_gph",
   "chemistry_targets_summary",
+  "sb_drainage",
+  "drain_nominal_size",
+  "drain_slope_in_per_ft",
+  "drain_capacity_gpm",
+  "cb_drainage",
+  "surge_pool_area_sf",
+  "surge_basin_area_sf",
+  "surge_basin_gallons",
   "amended_from"
  ],
  "fields": [
@@ -277,6 +285,49 @@
    "fieldname": "chemistry_targets_summary",
    "fieldtype": "Small Text",
    "label": "Target Ranges",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_drainage",
+   "fieldtype": "Section Break",
+   "label": "Drainage & Surge Basin"
+  },
+  {
+   "fieldname": "drain_nominal_size",
+   "fieldtype": "Select",
+   "label": "Drain Size",
+   "options": "\n1-1/2\"\n2\"\n2-1/2\"\n3\"\n4\"\n6\"\n8\"\n10\"\n12\""
+  },
+  {
+   "fieldname": "drain_slope_in_per_ft",
+   "fieldtype": "Float",
+   "label": "Drain Slope (in/ft)",
+   "default": "0.25"
+  },
+  {
+   "fieldname": "drain_capacity_gpm",
+   "fieldtype": "Float",
+   "label": "Drain Capacity (GPM)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_drainage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "surge_pool_area_sf",
+   "fieldtype": "Float",
+   "label": "Pool Surface Area (sq ft)"
+  },
+  {
+   "fieldname": "surge_basin_area_sf",
+   "fieldtype": "Float",
+   "label": "Surge Basin Area (sq ft)"
+  },
+  {
+   "fieldname": "surge_basin_gallons",
+   "fieldtype": "Float",
+   "label": "Surge Basin (gal)",
    "read_only": 1
   },
   {

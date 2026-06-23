@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.93.0] - 2026-06-23
+
+### Added
+- **Water Engineering — Phase 3 (drainage + surge basin) and Phase 4 (controls / control-panel submittal).** Two more calc areas for the design tooling, verified against DOC-0049 (`10 - Gravity` / `G - Gravity` / `B - Surge Basin`) and DOC-0126/0127/0025; both wired into the engine, the desk `run_calc` endpoint, and the `fac_water_calc` MCP tool.
+  - **Drainage (Manning's):** `manning_drain_flow` (gravity-drain capacity GPM = `A·(1.486/n)·R^(2/3)·S^(1/2)·7.48·60`, half-full area `3.14·D²/8/144`, `R=(D/4)/12`, slope = in/ft ÷ 12, n by size 0.012–0.016) and `size_drain` (smallest drain for a required GPM). Uses **DOC-0049 as the authority, not DOC-0119** — the latter's 1.49 / n=0.009 / full-pipe form over-predicts capacity ~3× and is internally inconsistent (its own worked example is off ~2.9×). Golden-tested to the workbook cells (3″@¼″/ft → 30.37 GPM, 4″ → 58.21, 6″ → 162.0).
+  - **Surge basin:** `surge_basin_volume` — basin depth (overflow + freeboard + swimmer-displacement + precipitation + evaporation + vortex) and normal-operating gallons, with the DOC-0049 green-cell defaults (evap 0.25 in/day, precip 1.0 in, vortex 12 in, freeboard/overflow 3 in).
+  - The **`Water Feature Design`** form gains a **Drainage & Surge Basin** section (drain size + slope → capacity; pool/basin areas → surge gallons), computed in `recompute()` and logged to the audit trail.
+  - **Controls:** a new **`Control Panel Design`** doctype (the "controller document" / DOC-0126 submittal) with child tables for **Control Pump**, **Control IO Point**, **Control Interlock**, and **Control Light**. Its controller seeds the standard interlock checklist (circ-pump / low-water / high-wind / E-stop / thermal / power-up safe-state — DOC-0126/0127) on a fresh panel and rolls up the lighting load + relay counts. Sizing calcs `calc_lighting` (total W, current, fused-SSR relay count at 60 W/12 VDC — DOC-0126) and `calc_solenoid_relays` (one SSR per valve) are exposed via `fac_water_calc`. New read-only **`control_panel_status`** MCP tool + a Control Panel Design workspace link. Control-transformer VA is a manual field (flagged business rule — not in the source docs).
+  - Golden-value tests for all of the above in `test_water_engine.py`.
+
 ## [1.92.0] - 2026-06-23
 
 ### Added

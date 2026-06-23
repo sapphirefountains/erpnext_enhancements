@@ -31,6 +31,11 @@ _CALCS = (
     "chlorinator_feed",
     "chemistry_targets",
     "ozone_sidestream",
+    "manning_drain_flow",
+    "size_drain",
+    "surge_basin_volume",
+    "calc_lighting",
+    "calc_solenoid_relays",
 )
 
 
@@ -56,7 +61,13 @@ class WaterCalc(BaseTool):
             "liquid-chlorine feed gal/hr); chemistry_targets {water_type: outdoor|"
             "indoor|saltwater} (free Cl / pH / CYA ranges); ozone_sidestream "
             "{volume_gal, turnover_min, sidestream_pct, contact_tank, tank_qty, "
-            "log_reduction:2-log|3-log} (ozone g/hr + contact-tank check)."
+            "log_reduction:2-log|3-log} (ozone g/hr + contact-tank check). "
+            "Drainage: manning_drain_flow {nominal_size, slope_in_per_ft} (gravity-"
+            "drain GPM); size_drain {required_gpm, slope_in_per_ft} (smallest drain); "
+            "surge_basin_volume {pool_area_sf, basin_area_sf, evap_in_day, precip_in, "
+            "vortex_in, freeboard_in, overflow_in, swimmers}. Controls: calc_lighting "
+            "{lights:[{qty,watts_each}], lighting_voltage, per_relay_watts} (watts/"
+            "amps/relays); calc_solenoid_relays {valve_qty}."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"
