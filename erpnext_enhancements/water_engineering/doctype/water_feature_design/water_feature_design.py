@@ -21,6 +21,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
+from erpnext_enhancements.water_engineering.api.water_design import nozzle_profile_params
 from erpnext_enhancements.water_engineering.engine import (
 	basin_volume,
 	chemistry_targets,
@@ -173,7 +174,16 @@ class WaterFeatureDesign(Document):
 			elif "array" in ftype:
 				r = nozzle_array_flow(cint(row.nozzle_count), flt(row.gpm_each))
 			else:
-				r = nozzle_flow(row.nozzle_profile or "", flt(row.head_in))
+				params = nozzle_profile_params(row.nozzle_profile) if row.nozzle_profile else {}
+				r = nozzle_flow(
+					flt(row.supply_head_ft),
+					cd=params.get("cd"),
+					orifice_area_in2=params.get("orifice_area_in2"),
+					orifice_diameter_in=params.get("orifice_diameter_in"),
+					rated_gpm=params.get("rated_gpm"),
+					rated_head_ft=params.get("rated_head_ft"),
+					nozzle_profile=row.nozzle_profile or "",
+				)
 			row.flow_gpm = r.value or 0
 
 	def _fill_segment_rows(self):
@@ -229,6 +239,24 @@ def _fmt(value):
 	return str(value)
 
 
+def _feature_dict(f):
+	"""One feature row -> engine input dict, resolving the Nozzle Profile (Cd /
+	orifice / rated GPM) for orifice features so the engine can compute flow."""
+	row = {
+		"feature_type": f.feature_type or "Weir",
+		"weir_length_ft": flt(f.weir_length_ft),
+		"head_in": flt(f.head_in),
+		"contractions": cint(f.end_contractions) or 2,
+		"nozzle_count": cint(f.nozzle_count),
+		"gpm_each": flt(f.gpm_each),
+		"nozzle_profile": f.nozzle_profile or "",
+		"supply_head_ft": flt(f.supply_head_ft),
+	}
+	if f.nozzle_profile:
+		row.update(nozzle_profile_params(f.nozzle_profile))
+	return row
+
+
 def _engine_inputs(doc):
 	"""Build the pure-engine input dict from the doc's child rows."""
 	default_material = doc.pipe_material or "SCH40 PVC"
@@ -242,18 +270,7 @@ def _engine_inputs(doc):
 		}
 		for b in doc.get("basins") or []
 	]
-	features = [
-		{
-			"feature_type": f.feature_type or "Weir",
-			"weir_length_ft": flt(f.weir_length_ft),
-			"head_in": flt(f.head_in),
-			"contractions": cint(f.end_contractions) or 2,
-			"nozzle_count": cint(f.nozzle_count),
-			"gpm_each": flt(f.gpm_each),
-			"nozzle_profile": f.nozzle_profile or "",
-		}
-		for f in doc.get("features") or []
-	]
+	features = [_feature_dict(f) for f in doc.get("features") or []]
 	segments = [
 		{
 			"label": s.segment_label,

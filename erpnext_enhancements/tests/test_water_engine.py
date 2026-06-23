@@ -87,10 +87,20 @@ class FeatureTests(unittest.TestCase):
     def test_weir_monotonic_in_head(self):
         self.assertLess(weir_flow(1, 0.5).value, weir_flow(1, 1.0).value)
 
-    def test_nozzle_flow_is_stubbed(self):
-        r = nozzle_flow("smooth_bore", 12)
+    def test_nozzle_flow_stub_without_profile(self):
+        r = nozzle_flow(10)
         self.assertIsNone(r.value)
-        self.assertTrue(any("not defined" in w for w in r.warnings))
+        self.assertTrue(any("Nozzle Profile" in w for w in r.warnings))
+
+    def test_nozzle_flow_orifice(self):
+        # Q = Cd*A*sqrt(2gh): Cd 0.97, area 0.20 in^2, head 10 ft -> ~15.34 GPM
+        self.assertAlmostEqual(nozzle_flow(10, cd=0.97, orifice_area_in2=0.20).value, 15.34, places=1)
+        # the diameter path (A = pi/4 * d^2) also computes a positive flow
+        self.assertGreater(nozzle_flow(10, cd=0.97, orifice_diameter_in=0.5).value, 0)
+
+    def test_nozzle_flow_rated_scaling(self):
+        # Q = rated_gpm * sqrt(head/rated_head): 10 GPM @ 10 ft -> 14.142 GPM @ 20 ft
+        self.assertAlmostEqual(nozzle_flow(20, rated_gpm=10, rated_head_ft=10).value, 14.1421, places=3)
 
 
 class PipeTests(unittest.TestCase):

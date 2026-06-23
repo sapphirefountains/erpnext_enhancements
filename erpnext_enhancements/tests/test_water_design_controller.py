@@ -32,6 +32,10 @@ def setUpModule():
     frappe.utils.flt = lambda v=0, precision=None: float(v or 0)
     frappe.log_error = lambda *a, **k: None
     frappe.get_traceback = lambda *a, **k: ""
+    # The controller imports api.water_design (for nozzle_profile_params), whose
+    # @frappe.whitelist() decorators run at import — stub the decorator.
+    if not hasattr(frappe, "whitelist"):
+        frappe.whitelist = lambda *a, **k: (lambda f: f)
 
     model = sys.modules.setdefault("frappe.model", types.ModuleType("frappe.model"))
     doc_mod = sys.modules.setdefault("frappe.model.document", types.ModuleType("frappe.model.document"))

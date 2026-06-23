@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.94.0] - 2026-06-23
+
+### Added
+- **Water Engineering — Nozzle Profile catalog (orifice nozzles now compute real flow).** Orifice nozzle flow was a deliberate stub because the discharge coefficient + orifice size aren't in the Sapphire source documents. This adds the missing catalog so it works:
+  - New **`Nozzle Profile`** DocType (reference master): per-nozzle discharge coefficient (Cd) + orifice diameter/area, **or** a rated GPM @ rated head, plus manufacturer/model/cut-sheet. Engineers populate it from manufacturer data.
+  - **`nozzle_flow`** now computes from a profile's sourced coefficients — `Q = Cd·A·√(2gh)` (textbook orifice physics; Cd/area from the catalog, not invented) or `Q = rated_gpm·√(head/rated_head)` — driven by a per-feature **supply head**. With no profile it still returns a clear "needs a Nozzle Profile" warning rather than a fabricated number.
+  - `Water Feature Nozzle` rows gain a **Nozzle Profile** link + **Supply Head (ft)**; the design controller resolves the profile and computes orifice-feature flow in `recompute()`. Exposed through the desk `run_calc` endpoint and the `fac_water_calc` tool (pass `nozzle_profile` + `supply_head_ft`).
+  - **Generic starter profiles auto-seed on migrate** (`ensure_nozzle_profiles`, idempotent + guarded — Frappe Cloud gets them on deploy) for smooth-bore / aerating / geyser / spray / cascade, **clearly flagged "generic estimate — replace with manufacturer cut-sheet data"** (the same coefficients the legacy assistant used). A Nozzle Profile workspace link is added. Golden-value tests in `test_water_engine.py`.
+
 ## [1.93.0] - 2026-06-23
 
 ### Added

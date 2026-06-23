@@ -149,3 +149,49 @@ def ensure_pump_catalog():
 			frappe.logger().info(f"[water_engineering] seeded pumps: {result['created']}")
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Water Engineering pump catalog seed")
+
+
+# Generic starter Nozzle Profiles (Cd + orifice area). These are the same generic
+# estimates the legacy assistant used — clearly flagged so engineers replace them
+# with manufacturer cut-sheet data. Orifice nozzle flow needs sourced Cd/orifice,
+# so a starter catalog lets orifice features compute immediately.
+NOZZLE_PROFILE_SEED = [
+	{"profile_name": "Generic Smooth Bore", "nozzle_type": "Smooth Bore", "cd": 0.97, "area": 0.20},
+	{"profile_name": "Generic Aerating", "nozzle_type": "Aerating", "cd": 0.70, "area": 0.55},
+	{"profile_name": "Generic Geyser", "nozzle_type": "Geyser", "cd": 0.62, "area": 0.90},
+	{"profile_name": "Generic Spray", "nozzle_type": "Spray", "cd": 0.85, "area": 0.30},
+	{"profile_name": "Generic Cascade", "nozzle_type": "Cascade", "cd": 0.80, "area": 0.40},
+]
+
+
+def seed_nozzle_profiles():
+	"""Create the generic starter Nozzle Profiles. Idempotent (skips existing)."""
+	created, skipped = [], []
+	for prof in NOZZLE_PROFILE_SEED:
+		if frappe.db.exists("Nozzle Profile", prof["profile_name"]):
+			skipped.append(prof["profile_name"])
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "Nozzle Profile",
+				"profile_name": prof["profile_name"],
+				"nozzle_type": prof["nozzle_type"],
+				"is_generic_estimate": 1,
+				"discharge_coefficient": prof["cd"],
+				"orifice_area_in2": prof["area"],
+				"notes": "Generic estimate — replace Cd/orifice with manufacturer cut-sheet data.",
+			}
+		).insert(ignore_permissions=True)
+		created.append(prof["profile_name"])
+	frappe.db.commit()
+	return {"created": created, "skipped": skipped}
+
+
+def ensure_nozzle_profiles():
+	"""after_migrate entry: seed the generic starter Nozzle Profiles (guarded)."""
+	try:
+		result = seed_nozzle_profiles()
+		if result.get("created"):
+			frappe.logger().info(f"[water_engineering] seeded nozzle profiles: {result['created']}")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering nozzle profile seed")

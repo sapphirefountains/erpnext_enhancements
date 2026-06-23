@@ -389,6 +389,9 @@ after_migrate = [
 	# on every migrate (idempotent + guarded) — Frappe Cloud gets it on deploy with
 	# no shell needed.
 	"erpnext_enhancements.water_engineering.setup.ensure_pump_catalog",
+	# water_engineering: generic starter Nozzle Profiles so orifice nozzles compute
+	# immediately (idempotent + guarded; flagged generic — replace with cut-sheet data).
+	"erpnext_enhancements.water_engineering.setup.ensure_nozzle_profiles",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
