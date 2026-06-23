@@ -81,6 +81,29 @@ def _require(ptype):
         )
 
 
+def nozzle_profile_params(profile_name):
+    """Resolve a Nozzle Profile docname to the orifice/rated params the pure
+    engine's nozzle_flow needs. Empty dict if the profile is missing."""
+    if not profile_name or not frappe.db.exists("Nozzle Profile", profile_name):
+        return {}
+    p = (
+        frappe.db.get_value(
+            "Nozzle Profile",
+            profile_name,
+            ["discharge_coefficient", "orifice_diameter_in", "orifice_area_in2", "rated_gpm", "rated_head_ft"],
+            as_dict=True,
+        )
+        or {}
+    )
+    return {
+        "cd": p.get("discharge_coefficient"),
+        "orifice_diameter_in": p.get("orifice_diameter_in"),
+        "orifice_area_in2": p.get("orifice_area_in2"),
+        "rated_gpm": p.get("rated_gpm"),
+        "rated_head_ft": p.get("rated_head_ft"),
+    }
+
+
 # ----------------------------------------------------------- stateless calc
 
 
@@ -102,7 +125,16 @@ def _run_calc(calc, inputs):
     elif calc == "nozzle_array_flow":
         r = nozzle_array_flow(i.get("nozzle_count", 0), i.get("gpm_each", 0))
     elif calc == "nozzle_flow":
-        r = nozzle_flow(i.get("nozzle_profile", ""), i.get("head_in", 0))
+        params = nozzle_profile_params(i.get("nozzle_profile"))
+        r = nozzle_flow(
+            i.get("supply_head_ft", i.get("head_ft", 0)),
+            cd=i.get("cd", params.get("cd")),
+            orifice_area_in2=i.get("orifice_area_in2", params.get("orifice_area_in2")),
+            orifice_diameter_in=i.get("orifice_diameter_in", params.get("orifice_diameter_in")),
+            rated_gpm=i.get("rated_gpm", params.get("rated_gpm")),
+            rated_head_ft=i.get("rated_head_ft", params.get("rated_head_ft")),
+            nozzle_profile=i.get("nozzle_profile", ""),
+        )
     elif calc == "size_pipe":
         r = size_pipe(
             i.get("flow_gpm", 0),

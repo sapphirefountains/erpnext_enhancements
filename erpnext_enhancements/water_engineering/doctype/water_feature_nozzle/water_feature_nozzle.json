@@ -12,6 +12,7 @@
   "head_in",
   "end_contractions",
   "nozzle_profile",
+  "supply_head_ft",
   "nozzle_count",
   "gpm_each",
   "flow_gpm",
@@ -59,9 +60,16 @@
   },
   {
    "fieldname": "nozzle_profile",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Nozzle Profile",
-   "depends_on": "eval:doc.feature_type!='Weir'"
+   "depends_on": "eval:doc.feature_type!='Weir'",
+   "options": "Nozzle Profile"
+  },
+  {
+   "fieldname": "supply_head_ft",
+   "fieldtype": "Float",
+   "label": "Supply Head (ft)",
+   "depends_on": "eval:doc.feature_type=='Orifice Nozzle'"
   },
   {
    "fieldname": "nozzle_count",

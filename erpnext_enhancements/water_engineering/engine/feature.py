@@ -1,5 +1,5 @@
-"""Water-feature flow requirements: weirs/slots (Francis), nozzle arrays, and a
-deliberately-stubbed orifice nozzle calc.
+"""Water-feature flow requirements: weirs/slots (Francis), nozzle arrays, and
+orifice nozzles driven by a Nozzle Profile catalog.
 
 Verified against DOC-0049 ``I - Weir``:
     Q_gpm = (36 * L_ft * h_in^1.5) - (0.3 * n * h_in^2.5)   (n = end contractions)
@@ -8,13 +8,17 @@ The SUPPORT ``WeirInfo`` "GPM per foot" table is this same formula evaluated at
 L=1, n=2 -- so we compute Francis directly rather than store a lookup that could
 drift.
 
-IMPORTANT: the orifice form Q = Cd*A*sqrt(2gh) is NOT in the Sapphire source
-documents. DOC-0048 enters feature flow rate manually and there is no Cd lookup.
-:func:`nozzle_flow` therefore returns no value and a clear warning until a Nozzle
-Profile catalog (Cd / GPM-vs-pressure from manufacturer cut sheets) exists.
+Orifice nozzles: the orifice equation Q = Cd*A*sqrt(2gh) is textbook physics, but
+the discharge coefficient and orifice size are NOT in the Sapphire source docs —
+they come from a ``Nozzle Profile`` (manufacturer cut sheet). :func:`nozzle_flow`
+computes from those sourced coefficients (Cd + orifice area/diameter), or scales a
+rated GPM by sqrt(head); with neither it returns a clear "needs a Nozzle Profile"
+warning rather than an invented number.
 """
 
 from __future__ import annotations
+
+import math
 
 from .constants import (
     CIT_WEIR,
@@ -23,6 +27,8 @@ from .constants import (
     WEIR_FRANCIS_CONTRACTION_COEFF,
 )
 from .envelope import CalcResult, make_input
+
+CIT_ORIFICE = "Orifice equation Q=Cd*A*sqrt(2gh) (textbook); coefficients from Nozzle Profile catalog"
 
 
 def weir_flow(
@@ -78,26 +84,83 @@ def nozzle_array_flow(nozzle_count: int, gpm_each: float) -> CalcResult:
     )
 
 
-def nozzle_flow(nozzle_profile: str = "", head_in: float = 0.0) -> CalcResult:
-    """Single-orifice nozzle flow — UNSOURCED in the Sapphire docs (stub).
+def nozzle_flow(
+    head_ft: float = 0.0,
+    *,
+    cd: float | None = None,
+    orifice_area_in2: float | None = None,
+    orifice_diameter_in: float | None = None,
+    rated_gpm: float | None = None,
+    rated_head_ft: float | None = None,
+    nozzle_profile: str = "",
+) -> CalcResult:
+    """Orifice nozzle flow (GPM) from a Nozzle Profile's sourced coefficients.
 
-    Returns no value and a warning. Use :func:`nozzle_array_flow` with a rated
-    GPM from the cut sheet, or supply a Nozzle Profile (Cd, area) once that
-    catalog DocType exists.
+    Method 1 (Cd + orifice): Q = Cd * A * sqrt(2 g h), A from orifice area or
+    diameter (A = pi/4 * d^2). Method 2 (rated): Q = rated_gpm * sqrt(h / h_rated)
+    — orifice flow scales with the square root of head. ``head_ft`` is the nozzle
+    supply head. With neither method's coefficients, returns a warning stub.
     """
+    head_ft = float(head_ft or 0)
+    area = None
+    if orifice_area_in2:
+        area = float(orifice_area_in2)
+    elif orifice_diameter_in:
+        area = math.pi / 4 * float(orifice_diameter_in) ** 2
+
+    if cd and area and head_ft > 0:
+        g = 9.80665  # m/s^2
+        h_m = head_ft * 0.3048
+        area_m2 = area * 0.00064516  # in^2 -> m^2
+        q = float(cd) * area_m2 * math.sqrt(2 * g * h_m) * 15850.32314  # m^3/s -> US GPM
+        return CalcResult(
+            calc="nozzle_flow",
+            value=q,
+            unit="GPM",
+            inputs={
+                "supply_head": make_input(head_ft, "ft", "user"),
+                "cd": make_input(cd, "", "lookup", "Nozzle Profile"),
+                "orifice_area": make_input(round(area, 4), "in^2", "lookup", "Nozzle Profile"),
+                "nozzle_profile": make_input(nozzle_profile, "", "user"),
+            },
+            formula="Q = Cd * A * sqrt(2 g h)",
+            steps=[
+                f"A = {area:.4f} in^2 ; h = {head_ft} ft",
+                f"Q = {cd} * A * sqrt(2*9.80665*{h_m:.4f}) = {q:.4f} GPM",
+            ],
+            citations=[CIT_ORIFICE],
+        )
+
+    if rated_gpm and rated_head_ft and head_ft > 0:
+        q = float(rated_gpm) * math.sqrt(head_ft / float(rated_head_ft))
+        return CalcResult(
+            calc="nozzle_flow",
+            value=q,
+            unit="GPM",
+            inputs={
+                "supply_head": make_input(head_ft, "ft", "user"),
+                "rated_gpm": make_input(rated_gpm, "GPM", "lookup", "Nozzle Profile"),
+                "rated_head": make_input(rated_head_ft, "ft", "lookup", "Nozzle Profile"),
+                "nozzle_profile": make_input(nozzle_profile, "", "user"),
+            },
+            formula="Q = rated_gpm * sqrt(head / rated_head)",
+            steps=[f"Q = {rated_gpm} * sqrt({head_ft}/{rated_head_ft}) = {q:.4f} GPM"],
+            citations=[CIT_ORIFICE],
+        )
+
     return CalcResult(
         calc="nozzle_flow",
         value=None,
         unit="GPM",
         inputs={
+            "supply_head": make_input(head_ft, "ft", "user"),
             "nozzle_profile": make_input(nozzle_profile, "", "user"),
-            "head": make_input(head_in, "in", "user"),
         },
-        formula="Q = Cd * A * sqrt(2 * g * h)  (Cd/A not defined in source docs)",
+        formula="Q = Cd * A * sqrt(2 g h)  (needs a Nozzle Profile + supply head)",
         warnings=[
-            "Orifice nozzle flow is not defined in the Sapphire source documents "
-            "(DOC-0048 enters feature flow manually; there is no Cd lookup). Enter "
-            "the rated GPM directly (nozzle_array_flow) or add a Nozzle Profile "
-            "(Cd, orifice area) from the manufacturer cut sheet.",
+            "Orifice nozzle flow needs a Nozzle Profile (discharge coefficient + "
+            "orifice size, or a rated GPM @ head) and a positive supply head. Pick a "
+            "Nozzle Profile, enter the supply head, or use a weir / nozzle_array_flow "
+            "with a rated GPM.",
         ],
     )

@@ -1,0 +1,161 @@
+{
+ "actions": [],
+ "autoname": "field:profile_name",
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "profile_name",
+  "nozzle_type",
+  "is_generic_estimate",
+  "cb_head",
+  "manufacturer",
+  "model_no",
+  "sb_orifice",
+  "discharge_coefficient",
+  "orifice_diameter_in",
+  "orifice_area_in2",
+  "sb_rated",
+  "rated_gpm",
+  "rated_head_ft",
+  "sb_ref",
+  "cut_sheet",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "profile_name",
+   "fieldtype": "Data",
+   "label": "Profile Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "nozzle_type",
+   "fieldtype": "Select",
+   "label": "Nozzle Type",
+   "options": "Smooth Bore\nAerating\nGeyser\nSpray\nCascade\nFoam\nJet\nOther",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "is_generic_estimate",
+   "fieldtype": "Check",
+   "label": "Generic Estimate",
+   "in_list_view": 1,
+   "description": "Seeded placeholder \u2014 replace Cd/orifice with manufacturer cut-sheet data."
+  },
+  {
+   "fieldname": "cb_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "manufacturer",
+   "fieldtype": "Data",
+   "label": "Manufacturer"
+  },
+  {
+   "fieldname": "model_no",
+   "fieldtype": "Data",
+   "label": "Model No"
+  },
+  {
+   "fieldname": "sb_orifice",
+   "fieldtype": "Section Break",
+   "label": "Discharge-Coefficient Method (Q = Cd*A*sqrt(2gh))"
+  },
+  {
+   "fieldname": "discharge_coefficient",
+   "fieldtype": "Float",
+   "label": "Discharge Coefficient (Cd)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "orifice_diameter_in",
+   "fieldtype": "Float",
+   "label": "Orifice Diameter (in)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "orifice_area_in2",
+   "fieldtype": "Float",
+   "label": "Orifice Area (in^2)",
+   "precision": "4",
+   "description": "Optional \u2014 overrides diameter if set."
+  },
+  {
+   "fieldname": "sb_rated",
+   "fieldtype": "Section Break",
+   "label": "Rated-GPM Method (alternative: Q = rated_gpm * sqrt(head/rated_head))"
+  },
+  {
+   "fieldname": "rated_gpm",
+   "fieldtype": "Float",
+   "label": "Rated Flow (GPM)"
+  },
+  {
+   "fieldname": "rated_head_ft",
+   "fieldtype": "Float",
+   "label": "Rated Head (ft)"
+  },
+  {
+   "fieldname": "sb_ref",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "fieldname": "cut_sheet",
+   "fieldtype": "Attach",
+   "label": "Cut Sheet"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Nozzle Profile",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

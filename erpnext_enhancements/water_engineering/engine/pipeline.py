@@ -29,7 +29,15 @@ def _feature_flow(feature: dict):
         )
     if "array" in ftype:
         return nozzle_array_flow(feature.get("nozzle_count", 0), feature.get("gpm_each", 0))
-    return nozzle_flow(feature.get("nozzle_profile", ""), feature.get("head_in", 0))
+    return nozzle_flow(
+        feature.get("supply_head_ft", 0),
+        cd=feature.get("cd"),
+        orifice_area_in2=feature.get("orifice_area_in2"),
+        orifice_diameter_in=feature.get("orifice_diameter_in"),
+        rated_gpm=feature.get("rated_gpm"),
+        rated_head_ft=feature.get("rated_head_ft"),
+        nozzle_profile=feature.get("nozzle_profile", ""),
+    )
 
 
 def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
