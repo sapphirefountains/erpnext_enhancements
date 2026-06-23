@@ -10,6 +10,7 @@ unit-testable and lets both the MCP tools and the desk endpoints import it.
 """
 
 from .basin import basin_volume, turnover_gpm
+from .chemistry import chemistry_targets, chlorinator_feed, ozone_sidestream
 from .envelope import CalcOption, CalcResult, make_input
 from .feature import nozzle_array_flow, nozzle_flow, weir_flow
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
@@ -21,6 +22,8 @@ __all__ = [
     "CalcOption",
     "CalcResult",
     "basin_volume",
+    "chemistry_targets",
+    "chlorinator_feed",
     "component_loss",
     "electrical_load",
     "fitting_minor_loss",
@@ -28,6 +31,7 @@ __all__ = [
     "make_input",
     "nozzle_array_flow",
     "nozzle_flow",
+    "ozone_sidestream",
     "pipe_velocity",
     "run_spine",
     "select_pump",

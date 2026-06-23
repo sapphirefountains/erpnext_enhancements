@@ -28,6 +28,9 @@ _CALCS = (
     "hazen_williams_loss",
     "total_dynamic_head",
     "select_pump",
+    "chlorinator_feed",
+    "chemistry_targets",
+    "ozone_sidestream",
 )
 
 
@@ -48,7 +51,12 @@ class WaterCalc(BaseTool):
             "options); hazen_williams_loss {flow_gpm, length_ft, id_in}; "
             "total_dynamic_head {segments:[...], static_lift_ft}; select_pump "
             "{flow_gpm, tdh_ft, candidates:[...]}. Orifice nozzle_flow is a stub "
-            "(no Cd in the source data) — use nozzle_array_flow with a rated GPM."
+            "(no Cd in the source data) — use nozzle_array_flow with a rated GPM. "
+            "Water treatment: chlorinator_feed {volume_gal, chlorine_pct} (min "
+            "liquid-chlorine feed gal/hr); chemistry_targets {water_type: outdoor|"
+            "indoor|saltwater} (free Cl / pH / CYA ranges); ozone_sidestream "
+            "{volume_gal, turnover_min, sidestream_pct, contact_tank, tank_qty, "
+            "log_reduction:2-log|3-log} (ozone g/hr + contact-tank check)."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"

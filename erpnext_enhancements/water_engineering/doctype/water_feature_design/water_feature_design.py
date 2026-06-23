@@ -23,6 +23,8 @@ from frappe.utils import cint, flt
 
 from erpnext_enhancements.water_engineering.engine import (
 	basin_volume,
+	chemistry_targets,
+	chlorinator_feed,
 	component_loss,
 	fitting_minor_loss,
 	hazen_williams_loss,
@@ -75,10 +77,33 @@ class WaterFeatureDesign(Document):
 		self.selected_pump = selected if (selected and frappe.db.exists("Item", selected)) else None
 
 		self._write_audit_trail(out.get("results") or [])
+		self._compute_chemistry()
 		self._fill_basin_rows()
 		self._fill_feature_rows()
 		self._fill_segment_rows()
 		self._mark_selected_pump_row()
+
+	def _compute_chemistry(self):
+		"""Phase-2 water treatment sized off the system (basin) volume; appends
+		its envelopes to the audit trail written by _write_audit_trail."""
+		volume = flt(self.total_basin_gallons)
+		feed = chlorinator_feed(volume, flt(self.chem_chlorine_pct) or 10)
+		targets = chemistry_targets(self.chem_water_type or "Outdoor")
+		self.chlorinator_feed_gph = feed.value or 0
+		self.chemistry_targets_summary = "; ".join(targets.steps)
+		for r in (feed, targets):
+			self.append(
+				"calc_results",
+				{
+					"calc": r.calc,
+					"value": _fmt(r.value),
+					"unit": r.unit,
+					"formula": r.formula,
+					"steps": "\n".join(r.steps),
+					"citations": ", ".join(r.citations),
+					"warnings": "\n".join(r.warnings),
+				},
+			)
 
 	def _write_audit_trail(self, results):
 		self.set("calc_results", [])
