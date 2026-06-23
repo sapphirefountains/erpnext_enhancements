@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.89.0] - 2026-06-23
+
+### Fixed
+- **QuickBooks import no longer prefixes Project titles with their own number.** A QBO sub-customer / job carries a `DisplayName` that mirrors the ERPNext project it belongs to, prefixed with that project's number (`PRJ-401 - 4th West Fountain`, `PRJ000062 - Terror Ride Fountain`). The importer linked the job to its existing Project by `PRJ-###` number, but the **in-place update path** (`apply_values`) then re-applied every mapped value — including `project_name` — so the job's prefixed DisplayName overwrote the project's clean title on every re-sync. The result was ~377 projects reading `PRJ-00581 Myers Mortuary` instead of `Myers Mortuary` (the number is already the Project's `name`, so it was pure duplication). Two changes to [`core/mapping.py`](erpnext_enhancements/quickbooks_online/core/mapping.py):
+  - **Strip the prefix on create.** `_map_qbo_job_to_project` now derives the title via a shared `strip_prj_prefix` helper (`_job_project_title`), which drops a single leading `PRJ-###` token and its separator. It tolerates every spelling the data carries (`PRJ-96`, `PRJ00097`, `PRJ-111 District …` with a space-only separator) and never blanks a title that is only a number.
+  - **Stop the update path overwriting a set title.** A new `_protect_existing_project_title` guard drops `project_name` from the mapped values when the linked Project already has a non-blank title — *before* conflict detection, the field write, and the owned-field snapshot — so a job's DisplayName can never re-clobber a curated project title (and a manual rename no longer trips a false conflict). The title is set once on create and then owned by ERPNext.
+- **Data remediation for titles already prefixed.** New manual, dry-run-by-default tool [`core/project_name_remediation.py`](erpnext_enhancements/quickbooks_online/core/project_name_remediation.py) (`strip_project_name_prefixes`) strips the redundant leading `PRJ-###` from existing Project titles using the same `strip_prj_prefix` transform. It is idempotent, batched/committed, per-record guarded, and writes via `frappe.db.set_value` (no doc hooks — a pure display-field denormalisation). Number-only titles (`PRJ-00614`) and mid/trailing-`PRJ` titles (`Ogden Temple PRJ-00612`) are reported and left untouched for manual review.
+
 ## [1.88.0] - 2026-06-23
 
 ### Added
