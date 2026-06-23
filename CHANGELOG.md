@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.87.0] - 2026-06-22
+
+### Fixed
+- **QuickBooks sync stops churning QBO jobs into "Pending Review" on every Import All.** Two idempotency bugs in `upsert_entity` ([core/mapping.py](erpnext_enhancements/quickbooks_online/core/mapping.py)) meant a re-run re-flagged ~460 already-resolved jobs each time:
+  - **Stale review flag never cleared.** When the already-linked update path re-saved a record cleanly it only set `conflict_status="Clean"`, leaving a stale `match_status="Pending Review"` (stamped by an earlier transient failure, e.g. the Project-Manager save error) in place — so ~280 jobs correctly linked to their Projects stayed stuck in review forever. The update path now also restores `match_status` to `Auto Matched` when it was parked, so a clean re-sync releases it.
+  - **Consolidated no-Project jobs re-parked by the doctype-flip guard.** The remediation tool consolidates a QBO job with no matchable Project onto its parent **Customer**, but the live mapper always resolves a job to **Project**; the doctype-flip guard then saw "mapping=Customer vs run=Project" and re-parked the job (~180 of them, 90 "Sapphire Fountains Internal") on **every** run. A new *settled job-consolidation guard* runs before the flip guard: if the job is a QBO sub-customer already consolidated to a parent Customer and still has no matching Project, it's left consolidated (transactions roll up untagged) and its stale review flag cleared, instead of being re-parked. If a matching Project later appears, it falls through to the flip guard to be relinked by remediation.
+  - Net effect: once deployed, the first healthy Import All settles the previously re-parked jobs automatically (no separate data restore needed) instead of churning them.
+
 ## [1.86.0] - 2026-06-22
 
 ### Fixed

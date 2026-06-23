@@ -142,8 +142,46 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
 		if review:
 			return review
-		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, conflict_status="Clean")
+		# A clean in-place update means this record is synced. If it was previously parked
+		# ("Pending Review" -- e.g. a transient validation failure on an earlier run that
+		# has since been resolved), clear that now-stale flag so it doesn't sit in review
+		# forever; an already-synced match_status is left untouched.
+		mapping_extra = {"conflict_status": "Clean"}
+		if mapping.match_status == "Pending Review":
+			mapping_extra["match_status"] = "Auto Matched"
+		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, **mapping_extra)
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
+
+	# Settled job-consolidation guard. A QBO job the remediation tool consolidated onto
+	# its parent Customer (because it has no matchable Project) must stay consolidated.
+	# The live mapper always resolves a job to "Project", so without this the doctype-flip
+	# guard below sees "mapping=Customer vs run=Project" and re-parks the job to manual
+	# review on EVERY run even though nothing changed (this is what churns the internal /
+	# no-project jobs). Honour the consolidation: keep the job linked to its parent
+	# Customer (its transactions roll up untagged) and clear any stale review flag. If a
+	# matching Project now exists, fall through so the flip guard defers the relink to the
+	# job remediation tool rather than guessing here.
+	if (
+		mapping
+		and mapping.erpnext_name
+		and mapping.erpnext_doctype == "Customer"
+		and erpnext_doctype == "Project"
+		and _is_qbo_customer_job(payload)
+		and frappe.db.exists("Customer", mapping.erpnext_name)
+		and (_match_project(payload, settings) or {}).get("status") != "matched"
+	):
+		if not preview and (mapping.match_status != "Manual Matched" or mapping.conflict_status != "Clean"):
+			mapping.match_status = "Manual Matched"
+			mapping.conflict_status = "Clean"
+			mapping.match_rule = mapping.match_rule or "job_merge_no_project"
+			mapping.save(ignore_permissions=True)
+		return {
+			"action": "skipped",
+			"doctype": "Customer",
+			"name": mapping.erpnext_name,
+			"qbo_id": qbo_id,
+			"reason": "Job consolidated to parent customer (no matching project)",
+		}
 
 	# Doctype-flip guard. This QBO id is already linked to a DIFFERENT ERPNext DocType
 	# (the classic case: a QBO Customer imported as a Customer that a later payload
