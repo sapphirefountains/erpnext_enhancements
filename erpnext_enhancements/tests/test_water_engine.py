@@ -171,6 +171,27 @@ class PumpTests(unittest.TestCase):
         r = select_pump(50, 30, candidates)
         self.assertEqual(r.value, "PUMP-FIT")
 
+    def test_select_pump_flow_only_when_head_unknown(self):
+        # Catalog seeded from GPH (flow) with no head rating: match on flow,
+        # pick the smallest adequate, and warn to verify head against the curve.
+        candidates = [
+            {"item_code": "P-20", "rated_gpm": 20},  # too small for 27 GPM
+            {"item_code": "P-33", "rated_gpm": 33.3},  # smallest adequate
+            {"item_code": "P-97", "rated_gpm": 96.85},
+        ]
+        r = select_pump(27, 11, candidates)
+        self.assertEqual(r.value, "P-33")
+        self.assertTrue(any("head" in w.lower() for w in r.warnings))
+
+    def test_select_pump_excludes_insufficient_known_head(self):
+        # A pump WITH a head rating that can't meet the duty head is excluded.
+        candidates = [
+            {"item_code": "LOWHEAD", "rated_gpm": 100, "rated_tdh_ft": 5},
+            {"item_code": "OK", "rated_gpm": 100, "rated_tdh_ft": 50},
+        ]
+        r = select_pump(27, 30, candidates)
+        self.assertEqual(r.value, "OK")
+
 
 class UnitsTests(unittest.TestCase):
     def test_conversions(self):
