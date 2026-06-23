@@ -384,6 +384,9 @@ after_migrate = [
 	# stripe_payments: Stripe id back-reference fields + Stripe/ACH Modes of Payment
 	"erpnext_enhancements.stripe_payments.setup.create_stripe_custom_fields",
 	"erpnext_enhancements.stripe_payments.setup.create_stripe_modes_of_payment",
+	# water_engineering: pump-spec fields on Item (rated flow/head + nameplate) for
+	# the design pump selector. Catalog items are seeded manually (seed_pump_catalog).
+	"erpnext_enhancements.water_engineering.setup.create_pump_item_fields",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

@@ -47,11 +47,17 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
         )
 
     def adequate(c: dict) -> bool:
-        return (c.get("rated_gpm") or 0) >= flow_gpm and (c.get("rated_tdh_ft") or 0) >= tdh_ft
+        # Always require enough flow. Require head only when the catalog has a
+        # head rating — fountain submersibles are spec'd by GPH (flow); the head
+        # ("max lift") is often not on file. An unknown head doesn't exclude a
+        # pump; the chosen one is flagged for a pump-curve check instead.
+        head = c.get("rated_tdh_ft") or 0
+        return (c.get("rated_gpm") or 0) >= flow_gpm and (head >= tdh_ft if head else True)
 
     ranked = sorted(
         candidates,
-        key=lambda c: (not adequate(c), (c.get("rated_gpm") or 0), (c.get("rated_tdh_ft") or 0)),
+        # adequate first; then prefer a known head rating; then the smallest pump.
+        key=lambda c: (not adequate(c), not c.get("rated_tdh_ft"), (c.get("rated_gpm") or 0)),
     )
     options: list[CalcOption] = []
     recommended = None
@@ -69,6 +75,7 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
                     "rated_gpm": c.get("rated_gpm"),
                     "rated_tdh_ft": c.get("rated_tdh_ft"),
                     "meets_duty": ok,
+                    "head_known": bool(c.get("rated_tdh_ft")),
                     "hp": c.get("hp"),
                     "phase": c.get("phase"),
                     "voltage": c.get("voltage"),
@@ -82,6 +89,13 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
             f"No supplied pump covers {flow_gpm} GPM @ {tdh_ft:.1f} ft TDH; "
             "consider a larger pump or splitting the load."
         )
+    else:
+        rec_opt = next((o for o in options if o.recommended), None)
+        if rec_opt and not rec_opt.detail.get("rated_tdh_ft"):
+            warnings.append(
+                f"{recommended}: matched on flow only — no head rating on file. Confirm it "
+                f"delivers {tdh_ft:.1f} ft TDH against the manufacturer pump curve."
+            )
     return CalcResult(
         calc="select_pump",
         value=recommended,
