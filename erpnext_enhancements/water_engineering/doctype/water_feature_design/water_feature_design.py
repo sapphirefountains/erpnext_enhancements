@@ -210,6 +210,8 @@ def _engine_inputs(doc):
 		}
 		for s in doc.get("pipe_segments") or []
 	]
+	# Explicit pump rows win; otherwise auto-source from the ERPNext Items catalog
+	# (item_group "Pumps") so a seeded catalog resolves the pump automatically.
 	candidates = [
 		{
 			"item_code": p.pump_item,
@@ -219,7 +221,7 @@ def _engine_inputs(doc):
 			"rated_tdh_ft": flt(p.rated_tdh_ft),
 		}
 		for p in doc.get("pumps") or []
-	]
+	] or _catalog_pump_candidates()
 	return {
 		"basins": basins,
 		"features": features,
@@ -229,6 +231,35 @@ def _engine_inputs(doc):
 		"hazen_williams_c": cint(doc.hazen_williams_c) or 130,
 		"pump_candidates": candidates or None,
 	}
+
+
+def _catalog_pump_candidates():
+	"""Pump candidates from the Items catalog (item_group 'Pumps') with the
+	pump-spec custom fields. Empty if the fields/items aren't set up yet (the
+	get_all raises on an unknown column before migrate creates them)."""
+	try:
+		items = frappe.get_all(
+			"Item",
+			filters={"item_group": "Pumps", "disabled": 0},
+			fields=[
+				"item_code", "item_name", "custom_rated_gpm", "custom_rated_tdh_ft",
+				"custom_pump_hp", "custom_pump_phase", "custom_pump_voltage",
+			],
+		)
+	except Exception:
+		return []
+	return [
+		{
+			"item_code": it.get("item_code"),
+			"description": it.get("item_name"),
+			"rated_gpm": it.get("custom_rated_gpm"),
+			"rated_tdh_ft": it.get("custom_rated_tdh_ft"),
+			"hp": it.get("custom_pump_hp"),
+			"phase": it.get("custom_pump_phase"),
+			"voltage": it.get("custom_pump_voltage"),
+		}
+		for it in items
+	]
 
 
 def compute_completion_percent(doc):

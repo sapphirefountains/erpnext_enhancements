@@ -237,7 +237,13 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
     _require("read")
     fields = ["item_code", "item_name"]
     meta = frappe.get_meta("Item")
-    for cf in ("custom_rated_gpm", "custom_rated_tdh_ft"):
+    for cf in (
+        "custom_rated_gpm",
+        "custom_rated_tdh_ft",
+        "custom_pump_hp",
+        "custom_pump_phase",
+        "custom_pump_voltage",
+    ):
         if meta.has_field(cf):
             fields.append(cf)
     try:
@@ -250,6 +256,9 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
             "description": it.get("item_name"),
             "rated_gpm": it.get("custom_rated_gpm"),
             "rated_tdh_ft": it.get("custom_rated_tdh_ft"),
+            "hp": it.get("custom_pump_hp"),
+            "phase": it.get("custom_pump_phase"),
+            "voltage": it.get("custom_pump_voltage"),
         }
         for it in items
     ]

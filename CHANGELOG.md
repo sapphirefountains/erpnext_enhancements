@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.91.0] - 2026-06-23
+
+### Added
+- **Water Engineering — pump catalog, so the design spine resolves a pump end-to-end.** Phase 1 could size everything up to the duty point but couldn't pick a pump (Items carried no ratings, so designs capped at 75%). This adds the catalog:
+  - **Pump-spec custom fields on Item** (a "Pump Specifications" section shown only for the Pumps item group): `custom_rated_gpm`, `custom_rated_tdh_ft`, plus nameplate `custom_pump_hp` / `custom_pump_phase` / `custom_pump_voltage` / `custom_pump_fla_amps`. Created idempotently via `water_engineering/setup.py::create_pump_item_fields`, wired into `after_migrate`.
+  - **The starter catalog is seeded automatically on migrate** (`ensure_pump_catalog`, wired into `after_migrate`) — so **Frappe Cloud gets it on deploy with no shell/`bench execute` needed**. It creates the **Pumps** item group and the 5 DOC-0028 Pump-category part numbers; idempotent (skips existing item codes, never overwrites) and guarded (a seed error only logs, never breaks the deploy). Each pump's **rated flow is derived from the GPH in its DOC-0028 description** (GPH ÷ 60); the head ("max lift") isn't in the source data, so it's left blank. `seed_pump_catalog` remains callable directly (bench console / FAC `run_python_code`) if a manual run is ever wanted.
+  - **`Water Feature Design` auto-sources pump candidates from the catalog** (`item_group` "Pumps") when the design has no explicit pump rows, so `recompute()` resolves `selected_pump` and reaches 100% completion automatically.
+  - **`select_pump` matches on flow when a head rating is absent** (fountain submersibles are spec'd by GPH) and flags the chosen pump to verify its head against the manufacturer pump curve — rather than refusing to select. A pump that *has* a head rating below the duty head is still excluded.
+
 ## [1.90.0] - 2026-06-23
 
 ### Added
