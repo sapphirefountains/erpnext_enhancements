@@ -1,0 +1,12 @@
+{
+ "app_name": "erpnext_enhancements",
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "Module Def",
+ "module_name": "Water Engineering",
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Water Engineering",
+ "owner": "Administrator",
+ "package": "ERPNext Enhancements",
+ "restrict_to_domain": ""
+}

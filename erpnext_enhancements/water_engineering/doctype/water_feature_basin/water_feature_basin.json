@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "basin_label",
+  "shape",
+  "length_in",
+  "width_in",
+  "diameter_in",
+  "height_in",
+  "volume_gal",
+  "weight_lb"
+ ],
+ "fields": [
+  {
+   "fieldname": "basin_label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "shape",
+   "fieldtype": "Select",
+   "label": "Shape",
+   "options": "Rectangular\nCylindrical",
+   "default": "Rectangular",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "length_in",
+   "fieldtype": "Float",
+   "label": "Length (in)",
+   "depends_on": "eval:doc.shape=='Rectangular'"
+  },
+  {
+   "fieldname": "width_in",
+   "fieldtype": "Float",
+   "label": "Width (in)",
+   "depends_on": "eval:doc.shape=='Rectangular'"
+  },
+  {
+   "fieldname": "diameter_in",
+   "fieldtype": "Float",
+   "label": "Diameter (in)",
+   "depends_on": "eval:doc.shape=='Cylindrical'"
+  },
+  {
+   "fieldname": "height_in",
+   "fieldtype": "Float",
+   "label": "Height (in)"
+  },
+  {
+   "fieldname": "volume_gal",
+   "fieldtype": "Float",
+   "label": "Volume (gal)",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "weight_lb",
+   "fieldtype": "Float",
+   "label": "Weight (lb)",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Basin",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

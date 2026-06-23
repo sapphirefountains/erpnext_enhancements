@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "pump_item",
+  "hp",
+  "phase",
+  "voltage",
+  "fla_amps",
+  "breaker_amps",
+  "control_method"
+ ],
+ "fields": [
+  {
+   "fieldname": "pump_item",
+   "fieldtype": "Link",
+   "label": "Pump Item",
+   "options": "Item",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "hp",
+   "fieldtype": "Float",
+   "label": "HP",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "phase",
+   "fieldtype": "Select",
+   "label": "Phase",
+   "options": "1\n3",
+   "default": "1"
+  },
+  {
+   "fieldname": "voltage",
+   "fieldtype": "Select",
+   "label": "Voltage",
+   "options": "120\n208\n230\n460"
+  },
+  {
+   "fieldname": "fla_amps",
+   "fieldtype": "Float",
+   "label": "FLA (A)",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "breaker_amps",
+   "fieldtype": "Float",
+   "label": "Breaker (A)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "control_method",
+   "fieldtype": "Select",
+   "label": "Control Method",
+   "options": "VFD\nMotor Starter"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Electrical Load",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

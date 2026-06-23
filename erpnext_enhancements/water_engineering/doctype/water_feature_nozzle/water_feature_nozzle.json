@@ -1,0 +1,104 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "feature_label",
+  "feature_type",
+  "serial_no",
+  "weir_length_ft",
+  "head_in",
+  "end_contractions",
+  "nozzle_profile",
+  "nozzle_count",
+  "gpm_each",
+  "flow_gpm",
+  "is_mandatory"
+ ],
+ "fields": [
+  {
+   "fieldname": "feature_label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "feature_type",
+   "fieldtype": "Select",
+   "label": "Feature Type",
+   "options": "Weir\nNozzle Array\nOrifice Nozzle",
+   "default": "Weir",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Water Feature",
+   "options": "Serial No"
+  },
+  {
+   "fieldname": "weir_length_ft",
+   "fieldtype": "Float",
+   "label": "Weir Length (ft)",
+   "depends_on": "eval:doc.feature_type=='Weir'"
+  },
+  {
+   "fieldname": "head_in",
+   "fieldtype": "Float",
+   "label": "Head (in)",
+   "depends_on": "eval:doc.feature_type=='Weir'"
+  },
+  {
+   "fieldname": "end_contractions",
+   "fieldtype": "Int",
+   "label": "End Contractions",
+   "default": "2",
+   "depends_on": "eval:doc.feature_type=='Weir'"
+  },
+  {
+   "fieldname": "nozzle_profile",
+   "fieldtype": "Data",
+   "label": "Nozzle Profile",
+   "depends_on": "eval:doc.feature_type!='Weir'"
+  },
+  {
+   "fieldname": "nozzle_count",
+   "fieldtype": "Int",
+   "label": "Nozzle Count",
+   "depends_on": "eval:doc.feature_type=='Nozzle Array'"
+  },
+  {
+   "fieldname": "gpm_each",
+   "fieldtype": "Float",
+   "label": "GPM each",
+   "depends_on": "eval:doc.feature_type=='Nozzle Array'"
+  },
+  {
+   "fieldname": "flow_gpm",
+   "fieldtype": "Float",
+   "label": "Flow (GPM)",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "label": "Is Mandatory",
+   "hidden": 1,
+   "default": "0"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Nozzle",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
