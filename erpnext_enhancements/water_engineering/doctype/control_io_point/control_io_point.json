@@ -1,0 +1,79 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "point_name",
+  "io_type",
+  "signal",
+  "device",
+  "description",
+  "qty",
+  "control_mechanism",
+  "drawing_ref"
+ ],
+ "fields": [
+  {
+   "fieldname": "point_name",
+   "fieldtype": "Data",
+   "label": "Point",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "io_type",
+   "fieldtype": "Select",
+   "label": "I/O",
+   "options": "Input\nOutput",
+   "default": "Input",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "signal",
+   "fieldtype": "Select",
+   "label": "Signal",
+   "options": "Digital\nAnalog\nReed Switch Pulse\nDry Contact NO\nDry Contact NC\n24VAC\n24VDC\n4-20mA\n0-10V",
+   "default": "Digital",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "device",
+   "fieldtype": "Data",
+   "label": "Device"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "label": "Description"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "label": "Qty",
+   "default": "1"
+  },
+  {
+   "fieldname": "control_mechanism",
+   "fieldtype": "Select",
+   "label": "Control Mechanism",
+   "options": "\nSolid State Relay\nMechanical Relay\nPLC Direct\nVFD\nMotor Starter"
+  },
+  {
+   "fieldname": "drawing_ref",
+   "fieldtype": "Data",
+   "label": "Drawing Ref"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Control IO Point",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

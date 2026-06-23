@@ -64,6 +64,25 @@ OZONE_GHR_FACTOR = 3780 * 60 / 1_000_000
 CT_CRYPTO_2LOG = 4.9
 CT_CRYPTO_3LOG = 7.4
 
+# --- gravity drainage (DOC-0049 10 - Gravity / G - Gravity) -----------------
+# Manning's:  Q_gpm = A * (1.486/n) * R^(2/3) * S^(1/2) * 7.48 * 60
+# A = half-full area = 3.14 * D^2 / 8 / 144 (literal 3.14, D in inches); R = (D/4)/12 ft.
+# DOC-0049 is the conservative authority — NOT DOC-0119 (1.49 / n .009-.011 /
+# full-pipe area, which over-predicts capacity ~3x and is internally inconsistent).
+MANNING_CONSTANT = 1.486
+DRAIN_GAL_PER_CF = 7.48  # the drain sheet's gal/ft^3 (matches its golden cells)
+DRAIN_AREA_PI = 3.14  # literal 3.14 used in the half-full area cell
+
+# --- surge basin (DOC-0049 B - Surge Basin) green-cell defaults -------------
+SURGE_EVAP_IN_DAY = 0.25
+SURGE_PRECIP_IN = 1.0
+SURGE_VORTEX_IN = 12.0  # 6.0 if line velocity <= 1 FPS
+SURGE_FREEBOARD_IN = 3.0
+SURGE_OVERFLOW_IN = 3.0
+SWIMMER_WEIGHT_LB = 189.8  # avg adult male (NCHS)
+BODY_SPECIFIC_GRAVITY = 1.06
+WATER_LB_PER_CF = 62.4
+
 # --- source citations (doc / sheet) -----------------------------------------
 CIT_CHEM = "DOC-0049 / C - Chemicals"
 CIT_CHEM_TARGETS = "DOC-0119"

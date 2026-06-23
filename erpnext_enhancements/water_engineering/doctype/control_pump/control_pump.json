@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "function",
+  "qty",
+  "part_no",
+  "hp",
+  "control_method",
+  "voltage",
+  "voltage_type",
+  "phase",
+  "drawing_ref"
+ ],
+ "fields": [
+  {
+   "fieldname": "function",
+   "fieldtype": "Data",
+   "label": "Function",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "label": "Qty",
+   "default": "1"
+  },
+  {
+   "fieldname": "part_no",
+   "fieldtype": "Data",
+   "label": "Part No"
+  },
+  {
+   "fieldname": "hp",
+   "fieldtype": "Float",
+   "label": "HP",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "control_method",
+   "fieldtype": "Select",
+   "label": "Control Method",
+   "options": "Motor Starter\nVFD",
+   "default": "Motor Starter",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "voltage",
+   "fieldtype": "Select",
+   "label": "Voltage",
+   "options": "\n120\n208\n230\n240\n480\n24\n12"
+  },
+  {
+   "fieldname": "voltage_type",
+   "fieldtype": "Select",
+   "label": "Voltage Type",
+   "options": "\nVAC\nVDC"
+  },
+  {
+   "fieldname": "phase",
+   "fieldtype": "Select",
+   "label": "Phase",
+   "options": "\n1\n2\n3"
+  },
+  {
+   "fieldname": "drawing_ref",
+   "fieldtype": "Data",
+   "label": "Drawing Ref"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Control Pump",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

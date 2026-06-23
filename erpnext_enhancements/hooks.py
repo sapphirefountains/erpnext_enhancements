@@ -596,6 +596,8 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.water_calc.WaterCalc",
 	"erpnext_enhancements.assistant_tools.water_design_status.WaterDesignStatus",
 	"erpnext_enhancements.assistant_tools.save_water_design.SaveWaterDesign",
+	# v1.93.0 Water Engineering controls — read-only control-panel reader.
+	"erpnext_enhancements.assistant_tools.control_panel_status.ControlPanelStatus",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

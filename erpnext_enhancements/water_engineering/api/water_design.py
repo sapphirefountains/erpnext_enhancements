@@ -18,21 +18,27 @@ from frappe import _
 
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    calc_lighting,
+    calc_solenoid_relays,
     chemistry_targets,
     chlorinator_feed,
     hazen_williams_loss,
+    manning_drain_flow,
     nozzle_array_flow,
     nozzle_flow,
     ozone_sidestream,
     run_spine,
     select_pump,
+    size_drain,
     size_pipe,
+    surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
     weir_flow,
 )
 
 DESIGN_DOCTYPE = "Water Feature Design"
+CONTROL_DOCTYPE = "Control Panel Design"
 
 # Parent fields a desk/AI caller may set; the read-only rollups are never writable.
 EDITABLE_DESIGN_FIELDS = frozenset(
@@ -126,6 +132,25 @@ def _run_calc(calc, inputs):
             i.get("tank_qty", 1),
             i.get("log_reduction", "2-log"),
         )
+    elif calc == "manning_drain_flow":
+        r = manning_drain_flow(i.get("nominal_size", '3"'), i.get("slope_in_per_ft", 0.25))
+    elif calc == "size_drain":
+        r = size_drain(i.get("required_gpm", 0), i.get("slope_in_per_ft", 0.25))
+    elif calc == "surge_basin_volume":
+        r = surge_basin_volume(
+            i.get("pool_area_sf", 0),
+            i.get("basin_area_sf", 0),
+            evap_in_day=i.get("evap_in_day", 0.25),
+            precip_in=i.get("precip_in", 1.0),
+            vortex_in=i.get("vortex_in", 12),
+            freeboard_in=i.get("freeboard_in", 3),
+            overflow_in=i.get("overflow_in", 3),
+            swimmers=i.get("swimmers", 0),
+        )
+    elif calc == "calc_lighting":
+        r = calc_lighting(i.get("lights", []), i.get("lighting_voltage", 12), i.get("per_relay_watts", 60))
+    elif calc == "calc_solenoid_relays":
+        r = calc_solenoid_relays(i.get("valve_qty", 0))
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()
@@ -202,6 +227,78 @@ def design_state(design=None, project=None, include_results=True):
 def get_design_state(design=None, project=None, include_results=1):
     _require("read")
     return design_state(design, project, include_results=bool(int(include_results)))
+
+
+def control_panel_state(panel=None, project=None):
+    """Read a Control Panel Design's state, or list panels. Core helper (callers
+    must have gated read access)."""
+    if panel:
+        if not frappe.has_permission(CONTROL_DOCTYPE, "read", doc=panel):
+            frappe.throw(_("No read permission for {0}").format(panel), frappe.PermissionError)
+        doc = frappe.get_doc(CONTROL_DOCTYPE, panel)
+        screens = [
+            name
+            for name, on in (
+                ("Main", doc.screen_main),
+                ("Run", doc.screen_run),
+                ("Maintenance", doc.screen_maintenance),
+                ("Status/Off", doc.screen_status),
+            )
+            if on
+        ]
+        return {
+            "panel": doc.name,
+            "project": doc.project,
+            "product_family": doc.product_family,
+            "nema_rating": doc.nema_rating,
+            "controller_hardware": doc.controller_hardware,
+            "power": {
+                "main_line_voltage": doc.main_line_voltage,
+                "phase": doc.phase,
+                "amperage_to_panel": doc.amperage_to_panel,
+                "main_breaker_size_a": doc.main_breaker_size_a,
+            },
+            "screens": screens,
+            "sizing": {
+                "lighting_total_watts": doc.lighting_total_watts,
+                "lighting_current_a": doc.lighting_current_a,
+                "lighting_relay_count": doc.lighting_relay_count,
+                "solenoid_relay_count": doc.solenoid_relay_count,
+                "control_transformer_va": doc.control_transformer_va,
+            },
+            "counts": {
+                "pumps": len(doc.pumps or []),
+                "io_points": len(doc.io_points or []),
+                "interlocks": len(doc.interlocks or []),
+                "lights": len(doc.lights or []),
+            },
+            "interlocks": [
+                {"condition": il.condition, "action": il.action, "enabled": bool(il.enabled)}
+                for il in doc.interlocks or []
+            ],
+            "io_points": [
+                {"point_name": io.point_name, "io_type": io.io_type, "signal": io.signal, "device": io.device}
+                for io in doc.io_points or []
+            ],
+        }
+    filters = {"project": project} if project else {}
+    rows = frappe.get_list(
+        CONTROL_DOCTYPE,
+        filters=filters,
+        fields=["name", "product_family", "project"],
+        order_by="modified desc",
+        limit=20,
+    )
+    return {"panels": rows}
+
+
+@frappe.whitelist()
+def get_control_panel_state(panel=None, project=None):
+    if not frappe.has_permission(CONTROL_DOCTYPE, "read"):
+        frappe.throw(
+            _("You do not have access to {0}.").format(CONTROL_DOCTYPE), frappe.PermissionError
+        )
+    return control_panel_state(panel, project)
 
 
 # ----------------------------------------------------------------- save

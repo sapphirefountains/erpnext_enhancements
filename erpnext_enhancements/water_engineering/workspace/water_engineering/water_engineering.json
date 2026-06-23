@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Designs",
-   "link_count": 1,
+   "link_count": 2,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -29,6 +29,17 @@
    "onboard": 0,
    "type": "Link",
    "link_to": "Water Feature Design"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Control Panel Design",
+   "link_count": 0,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link",
+   "link_to": "Control Panel Design"
   },
   {
    "hidden": 0,
