@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.95.0] - 2026-06-23
+
+### Added
+- **Water Engineering — pump performance curves (true duty-point selection).** Pump selection previously matched on the max-flow / max-head *envelope*, which is optimistic (a pump can't deliver max flow and max head at once). This adds real curve-based sizing:
+  - New **`Pump Curve Point`** child table on Item (custom field `custom_pump_curve`): a handful of `(flow GPM, head ft)` points read off the manufacturer curve, plus a `custom_pump_cut_sheet` Attach field for the curve PDF (both created on migrate via `create_pump_item_fields`).
+  - **`head_at_flow(curve, flow)`** linearly interpolates a pump's head at a given flow; **`select_pump` now prefers the curve** — a pump is adequate only if its interpolated head at the design flow ≥ the required TDH (and the flow is within the curve's range). It falls back to the rated max-flow/max-head envelope when no curve is on file, and to flow-only matching (with the verify warning) when neither is. The chosen option reports `head_at_duty_ft` and `head_basis` (curve / rating / flow-only).
+  - The desk `get_pump_candidates` endpoint and the design controller's catalog resolver both attach each pump's curve points, so form, wizard, and the `fac_water_calc` selector all size against the real curve. Golden-value tests in `test_water_engine.py`.
+  - **Managing it:** enter 4–6 curve points per pump (or just the two endpoints — max flow at ~0 head, shutoff head at ~0 flow); the engine interpolates the rest.
+
 ## [1.94.0] - 2026-06-23
 
 ### Added
