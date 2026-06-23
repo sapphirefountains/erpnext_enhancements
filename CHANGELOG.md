@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.92.0] - 2026-06-23
+
+### Added
+- **Water Engineering — Phase 2: water chemistry / treatment.** Adds the chemical-treatment calculations to the design tooling (engine + desk API + `water_calc` MCP tool + a Water Chemistry section on the design), all verified against DOC-0049 `C - Chemicals` and DOC-0119:
+  - **`chlorinator_feed`** — minimum liquid-chlorinator feed rate (gal/hr) for a system volume: `vol × 3 / (24 × 10000)` at 10% chlorine (IBC 3133B.1), scaled by `10 / strength` for other concentrations. (50,000 gal → 0.625 gal/hr.)
+  - **`chemistry_targets`** — water-balance target ranges (free chlorine / pH / cyanuric acid) by water type (outdoor / indoor / saltwater), including the "free Cl ≥ 7.5% of CYA" rule (DOC-0119).
+  - **`ozone_sidestream`** — ozone side-stream sizing: full flow → side-stream flow → contact-tank adequacy check (from the verified `ContactTanks` catalog) → contact time → ozone required (g/hr) from the USEPA Cryptosporidium CT value (4.9 / 7.4 mg·L⁻¹·min for 2-log / 3-log). (40,000 gal example → 7.15 g/hr at 2-log.)
+  - The **`Water Feature Design`** form gains a **Water Chemistry** section (water type + chlorine %); `recompute()` sizes the chlorinator off the system volume and records the target ranges + the chemistry envelopes in the audit trail. The three calcs are also exposed through `fac_water_calc` and the desk `run_calc` endpoint. Golden-value tests added to `test_water_engine.py`.
+
 ## [1.91.0] - 2026-06-23
 
 ### Added

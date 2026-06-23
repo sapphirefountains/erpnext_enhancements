@@ -18,9 +18,12 @@ from frappe import _
 
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    chemistry_targets,
+    chlorinator_feed,
     hazen_williams_loss,
     nozzle_array_flow,
     nozzle_flow,
+    ozone_sidestream,
     run_spine,
     select_pump,
     size_pipe,
@@ -110,6 +113,19 @@ def _run_calc(calc, inputs):
         )
     elif calc == "select_pump":
         r = select_pump(i.get("flow_gpm", 0), i.get("tdh_ft", 0), i.get("candidates"))
+    elif calc == "chlorinator_feed":
+        r = chlorinator_feed(i.get("volume_gal", 0), i.get("chlorine_pct", 10))
+    elif calc == "chemistry_targets":
+        r = chemistry_targets(i.get("water_type", "outdoor"))
+    elif calc == "ozone_sidestream":
+        r = ozone_sidestream(
+            i.get("volume_gal", 0),
+            i.get("turnover_min", 0),
+            i.get("sidestream_pct", 0.25),
+            i.get("contact_tank", "CNT120"),
+            i.get("tank_qty", 1),
+            i.get("log_reduction", "2-log"),
+        )
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()

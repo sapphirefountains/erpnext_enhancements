@@ -53,7 +53,20 @@ FT_PER_PSI = 2.31  # engineering standard (1 / 0.4335) -- not in source docs
 # --- electrical (business rules; NOT formula-driven in the workbooks) -------
 BREAKER_CONTINUOUS_FACTOR = 1.25  # breaker >= 125% FLA (NEC 430.52) -- confirm w/ engineer
 
+# --- water chemistry (DOC-0049 C - Chemicals ; DOC-0119 targets) ------------
+# Liquid-chlorinator minimum capacity: 3 lb Cl2 / 24 hr / 10,000 gal (IBC 3133B.1),
+# basis "1 gal @ 10% = 1 lb Cl2".
+CHLORINE_MIN_LBS_PER_10KGAL_DAY = 3.0
+CHLORINE_REF_PCT = 10.0
+# Ozone g/hr conversion: GPM * mg/L * (3780 mL/gal * 60 min/hr / 1e6 mg/g).
+OZONE_GHR_FACTOR = 3780 * 60 / 1_000_000
+# USEPA CT values (mg/L * min) for Cryptosporidium inactivation by ozone.
+CT_CRYPTO_2LOG = 4.9
+CT_CRYPTO_3LOG = 7.4
+
 # --- source citations (doc / sheet) -----------------------------------------
+CIT_CHEM = "DOC-0049 / C - Chemicals"
+CIT_CHEM_TARGETS = "DOC-0119"
 CIT_BASIN = "DOC-0048 / Basin"
 CIT_PIPE = "DOC-0049 / A - Pipe Size"
 CIT_TDH = "DOC-0049 / H - TDH"

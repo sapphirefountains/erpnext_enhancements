@@ -18,10 +18,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
+    chemistry_targets,
+    chlorinator_feed,
     component_loss,
     fitting_minor_loss,
     hazen_williams_loss,
     nozzle_flow,
+    ozone_sidestream,
     pipe_velocity,
     run_spine,
     select_pump,
@@ -191,6 +194,36 @@ class PumpTests(unittest.TestCase):
         ]
         r = select_pump(27, 30, candidates)
         self.assertEqual(r.value, "OK")
+
+
+class ChemistryTests(unittest.TestCase):
+    def test_chlorinator_feed(self):
+        # DOC-0049 C36: 50000 gal -> 0.625 gal/hr of 10% chlorine
+        self.assertAlmostEqual(chlorinator_feed(50000).value, 0.625, places=6)
+        # stronger product needs proportionally less
+        self.assertAlmostEqual(chlorinator_feed(50000, 12.5).value, 0.5, places=6)
+
+    def test_chemistry_targets(self):
+        out = chemistry_targets("outdoor")
+        self.assertEqual(out.value, "outdoor")
+        self.assertTrue(any("1.0-3.0 ppm" in s for s in out.steps))
+        salt = chemistry_targets("saltwater")
+        self.assertTrue(any("60-80 ppm" in s for s in salt.steps))
+        self.assertTrue(chemistry_targets("lava").warnings)
+
+    def test_ozone_sidestream(self):
+        # DOC-0049 C - Chemicals worked example: 40000 gal, 360 min, 25%, CNT120
+        r = ozone_sidestream(40000, 360, 0.25, "CNT120", 1, "2-log")
+        self.assertEqual(r.status, "Okay")
+        self.assertAlmostEqual(r.value, 7.145833, places=4)  # g/hr, 2-log
+        r3 = ozone_sidestream(40000, 360, 0.25, "CNT120", 1, "3-log")
+        self.assertAlmostEqual(r3.value, 10.791667, places=4)  # g/hr, 3-log
+
+    def test_ozone_undersized_tank_warns(self):
+        # A tiny tank can't pass the side-stream flow -> status + warning
+        r = ozone_sidestream(40000, 60, 0.25, "CNT30", 1, "2-log")  # 666 GPM full, 167 side vs 40 max
+        self.assertNotEqual(r.status, "Okay")
+        self.assertTrue(r.warnings)
 
 
 class UnitsTests(unittest.TestCase):

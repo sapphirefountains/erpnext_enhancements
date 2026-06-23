@@ -38,6 +38,12 @@
   "has_warnings",
   "next_inputs_needed",
   "dashboard",
+  "sb_chemistry",
+  "chem_water_type",
+  "chem_chlorine_pct",
+  "cb_chemistry",
+  "chlorinator_feed_gph",
+  "chemistry_targets_summary",
   "amended_from"
  ],
  "fields": [
@@ -237,6 +243,41 @@
    "fieldname": "dashboard",
    "fieldtype": "HTML",
    "label": "Dashboard"
+  },
+  {
+   "fieldname": "sb_chemistry",
+   "fieldtype": "Section Break",
+   "label": "Water Chemistry"
+  },
+  {
+   "fieldname": "chem_water_type",
+   "fieldtype": "Select",
+   "label": "Water Type",
+   "options": "Outdoor\nIndoor\nSaltwater",
+   "default": "Outdoor"
+  },
+  {
+   "fieldname": "chem_chlorine_pct",
+   "fieldtype": "Float",
+   "label": "Chlorine %",
+   "default": "10",
+   "description": "Liquid chlorine concentration for the chlorinator feed calc."
+  },
+  {
+   "fieldname": "cb_chemistry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "chlorinator_feed_gph",
+   "fieldtype": "Float",
+   "label": "Chlorinator Feed (gal/hr)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "chemistry_targets_summary",
+   "fieldtype": "Small Text",
+   "label": "Target Ranges",
+   "read_only": 1
   },
   {
    "fieldname": "amended_from",
