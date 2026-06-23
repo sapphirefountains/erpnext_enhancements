@@ -584,6 +584,13 @@ assistant_tools = [
 	"erpnext_enhancements.assistant_tools.quickbooks_sync_status.QuickbooksSyncStatus",
 	"erpnext_enhancements.assistant_tools.document_intake_queue.DocumentIntakeQueue",
 	"erpnext_enhancements.assistant_tools.closed_won_handoff_status.ClosedWonHandoffStatus",
+	# v1.90.0 Water Engineering — fountain hydraulic calc tools. water_calc and
+	# water_design_status are read-only (EXPLICIT_READONLY); save_water_design
+	# writes a Water Feature Design and is gated (APP_MUTATING, Low risk). All
+	# three share the pure water_engineering.engine with the desk wizard.
+	"erpnext_enhancements.assistant_tools.water_calc.WaterCalc",
+	"erpnext_enhancements.assistant_tools.water_design_status.WaterDesignStatus",
+	"erpnext_enhancements.assistant_tools.save_water_design.SaveWaterDesign",
 ]
 
 # Paths are relative to the app package dir (frappe.get_app_path).

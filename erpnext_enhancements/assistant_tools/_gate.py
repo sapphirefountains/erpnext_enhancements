@@ -66,6 +66,9 @@ EXPLICIT_READONLY = {
     "quickbooks_sync_status",
     "document_intake_queue",
     "closed_won_handoff_status",
+    # water_engineering: stateless calculator + design reader (no DB writes)
+    "water_calc",
+    "water_design_status",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even
@@ -81,6 +84,8 @@ APP_MUTATING = {
     "reboot_device",
     "run_device_script",
     "deploy_device_patch",
+    # water_engineering: create/update a Water Feature Design (plain doc write)
+    "save_water_design",
 }
 
 HIGH_RISK = {
@@ -95,7 +100,13 @@ HIGH_RISK = {
     "remote_lock_device",
     "run_device_script",
 }
-LOW_RISK = {"create_document", "create_dashboard", "create_dashboard_chart", "create_followup_task"}
+LOW_RISK = {
+    "create_document",
+    "create_dashboard",
+    "create_dashboard_chart",
+    "create_followup_task",
+    "save_water_design",
+}
 
 # Only plain-document create/update may use the settings exempt-doctype
 # allowlist; privileged/irreversible tools never skip confirmation.
@@ -185,6 +196,8 @@ def summarize_tool_call(tool_name, arguments):
         return f"Run a script on device {args.get('device') or ''}".strip()
     if tool_name == "deploy_device_patch":
         return f"Deploy patch {args.get('patch') or ''} to device {args.get('device') or ''}".strip()
+    if tool_name == "save_water_design":
+        return f"Save Water Feature Design {args.get('design') or '(new)'}".strip()
     return tool_name.replace("_", " ").capitalize()
 
 

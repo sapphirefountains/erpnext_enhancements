@@ -1,0 +1,74 @@
+{
+ "actions": [],
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "calc",
+  "value",
+  "unit",
+  "formula",
+  "steps",
+  "citations",
+  "warnings"
+ ],
+ "fields": [
+  {
+   "fieldname": "calc",
+   "fieldtype": "Data",
+   "label": "Calculation",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Data",
+   "label": "Value",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "unit",
+   "fieldtype": "Data",
+   "label": "Unit",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "formula",
+   "fieldtype": "Small Text",
+   "label": "Formula",
+   "read_only": 1
+  },
+  {
+   "fieldname": "steps",
+   "fieldtype": "Small Text",
+   "label": "Steps",
+   "read_only": 1
+  },
+  {
+   "fieldname": "citations",
+   "fieldtype": "Data",
+   "label": "Citations",
+   "read_only": 1
+  },
+  {
+   "fieldname": "warnings",
+   "fieldtype": "Small Text",
+   "label": "Warnings",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Calc Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

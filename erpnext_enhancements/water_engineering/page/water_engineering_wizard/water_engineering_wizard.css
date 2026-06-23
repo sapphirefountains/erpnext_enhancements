@@ -1,0 +1,140 @@
+/* Water Engineering Wizard — themed with Frappe CSS variables (Light + Timeless Night). */
+
+.we-wrap {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	padding: 12px 0;
+}
+.we-col {
+	flex: 1 1 360px;
+	min-width: 320px;
+}
+.we-card {
+	background: var(--card-bg, var(--fg-color, #fff));
+	border: 1px solid var(--border-color, #d1d8dd);
+	border-radius: var(--border-radius-md, 8px);
+	padding: 14px 16px;
+}
+.we-card-head {
+	font-weight: 600;
+	font-size: var(--text-lg, 15px);
+	margin-bottom: 12px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.we-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+.we-row label {
+	flex: 0 0 130px;
+	margin: 0;
+	color: var(--text-muted, #6c7680);
+	font-size: var(--text-sm, 13px);
+}
+.we-input {
+	flex: 1 1 auto;
+	background: var(--control-bg, var(--bg-color, #fff));
+	color: var(--text-color, #1f272e);
+	border: 1px solid var(--border-color, #d1d8dd);
+	border-radius: var(--border-radius, 6px);
+	padding: 5px 8px;
+	font-size: var(--text-md, 14px);
+}
+#we-calc-run {
+	margin-top: 6px;
+}
+.we-result {
+	margin-top: 14px;
+	border-top: 1px solid var(--border-color, #d1d8dd);
+	padding-top: 12px;
+}
+.we-value {
+	font-size: var(--text-xl, 20px);
+	font-weight: 700;
+	color: var(--text-color, #1f272e);
+}
+.we-formula {
+	font-family: var(--font-stack-monospace, monospace);
+	color: var(--text-muted, #6c7680);
+	margin: 6px 0;
+	font-size: var(--text-sm, 13px);
+}
+.we-steps {
+	margin: 6px 0;
+	padding-left: 18px;
+	font-family: var(--font-stack-monospace, monospace);
+	font-size: var(--text-sm, 13px);
+	color: var(--text-color, #1f272e);
+}
+.we-cite {
+	color: var(--text-light, #8d99a6);
+	font-size: var(--text-xs, 11px);
+	margin-top: 6px;
+}
+.we-sub {
+	font-weight: 600;
+	margin: 8px 0 4px;
+}
+.we-opt {
+	font-size: var(--text-sm, 13px);
+	padding: 2px 0;
+}
+.we-muted,
+.we-opt .we-muted {
+	color: var(--text-muted, #6c7680);
+}
+.we-warn {
+	background: var(--bg-yellow, #fef3c7);
+	color: var(--text-on-yellow, #7a5b00);
+	border-radius: var(--border-radius, 6px);
+	padding: 6px 10px;
+	margin: 8px 0;
+	font-size: var(--text-sm, 13px);
+}
+.we-ok-note {
+	color: var(--text-muted, #6c7680);
+	font-size: var(--text-sm, 13px);
+	margin: 8px 0;
+}
+.we-badge {
+	display: inline-block;
+	border-radius: 10px;
+	padding: 1px 8px;
+	font-size: var(--text-xs, 11px);
+	font-weight: 600;
+	margin-left: 6px;
+}
+.we-ok {
+	background: var(--bg-green, #e6f4ea);
+	color: var(--text-on-green, #18794e);
+}
+.we-warn-badge,
+.we-badge.we-warn {
+	background: var(--bg-yellow, #fef3c7);
+	color: var(--text-on-yellow, #7a5b00);
+}
+.we-badge.we-bad {
+	background: var(--bg-red, #fce8e8);
+	color: var(--text-on-red, #b52a2a);
+}
+.we-rollups {
+	width: 100%;
+	margin: 8px 0;
+	font-size: var(--text-sm, 13px);
+}
+.we-rollups td {
+	padding: 3px 6px;
+	border-bottom: 1px solid var(--border-color, #eef0f2);
+}
+.we-rollups td:first-child {
+	color: var(--text-muted, #6c7680);
+}
+.we-denied {
+	padding: 24px;
+	color: var(--text-muted, #6c7680);
+}

@@ -1,0 +1,304 @@
+{
+ "actions": [],
+ "autoname": "format:WFD-{YYYY}-{#####}",
+ "creation": "2026-06-23 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "project",
+  "customer",
+  "serial_no",
+  "design_title",
+  "status",
+  "sb_inputs",
+  "turnover_per_hr",
+  "hazen_williams_c",
+  "pipe_material",
+  "cb_inputs",
+  "static_lift_ft",
+  "sb_basin",
+  "basins",
+  "sb_features",
+  "features",
+  "sb_piping",
+  "pipe_segments",
+  "sb_pumps",
+  "pumps",
+  "electrical_loads",
+  "sb_results",
+  "total_basin_gallons",
+  "required_circulation_gpm",
+  "design_flow_gpm",
+  "computed_tdh_ft",
+  "selected_pump",
+  "cb_results",
+  "calc_results",
+  "sb_state",
+  "completion_percent",
+  "has_warnings",
+  "next_inputs_needed",
+  "dashboard",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "fetch_from": "project.customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "serial_no",
+   "fieldtype": "Link",
+   "label": "Water Feature",
+   "options": "Serial No"
+  },
+  {
+   "fieldname": "design_title",
+   "fieldtype": "Data",
+   "label": "Design Title",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nInputs Gathered\nCalculated\nReviewed\nIssued",
+   "default": "Draft",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sb_inputs",
+   "fieldtype": "Section Break",
+   "label": "Global Inputs"
+  },
+  {
+   "fieldname": "turnover_per_hr",
+   "fieldtype": "Float",
+   "label": "Turnovers / hr",
+   "default": "2"
+  },
+  {
+   "fieldname": "hazen_williams_c",
+   "fieldtype": "Int",
+   "label": "Hazen-Williams C",
+   "default": "130",
+   "description": "PVC = 130"
+  },
+  {
+   "fieldname": "pipe_material",
+   "fieldtype": "Select",
+   "label": "Default Pipe Material",
+   "options": "SCH40 PVC\nSCH80 PVC\nType K Copper",
+   "default": "SCH40 PVC"
+  },
+  {
+   "fieldname": "cb_inputs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "static_lift_ft",
+   "fieldtype": "Float",
+   "label": "Static Lift (ft)",
+   "description": "Elevation gain from pump to highest discharge"
+  },
+  {
+   "fieldname": "sb_basin",
+   "fieldtype": "Section Break",
+   "label": "Basin"
+  },
+  {
+   "fieldname": "basins",
+   "fieldtype": "Table",
+   "label": "Basins",
+   "options": "Water Feature Basin"
+  },
+  {
+   "fieldname": "sb_features",
+   "fieldtype": "Section Break",
+   "label": "Features / Nozzles / Weirs"
+  },
+  {
+   "fieldname": "features",
+   "fieldtype": "Table",
+   "label": "Features",
+   "options": "Water Feature Nozzle"
+  },
+  {
+   "fieldname": "sb_piping",
+   "fieldtype": "Section Break",
+   "label": "Piping (TDH Segments)"
+  },
+  {
+   "fieldname": "pipe_segments",
+   "fieldtype": "Table",
+   "label": "Pipe Segments",
+   "options": "Water Feature Pipe Segment"
+  },
+  {
+   "fieldname": "sb_pumps",
+   "fieldtype": "Section Break",
+   "label": "Pumps & Electrical"
+  },
+  {
+   "fieldname": "pumps",
+   "fieldtype": "Table",
+   "label": "Pump Candidates",
+   "options": "Water Feature Pump"
+  },
+  {
+   "fieldname": "electrical_loads",
+   "fieldtype": "Table",
+   "label": "Electrical Loads",
+   "options": "Water Feature Electrical Load"
+  },
+  {
+   "fieldname": "sb_results",
+   "fieldtype": "Section Break",
+   "label": "Running Results"
+  },
+  {
+   "fieldname": "total_basin_gallons",
+   "fieldtype": "Float",
+   "label": "Total Basin (gal)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "required_circulation_gpm",
+   "fieldtype": "Float",
+   "label": "Circulation (GPM)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "design_flow_gpm",
+   "fieldtype": "Float",
+   "label": "Design Flow (GPM)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "computed_tdh_ft",
+   "fieldtype": "Float",
+   "label": "TDH (ft)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selected_pump",
+   "fieldtype": "Link",
+   "label": "Selected Pump",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_results",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "calc_results",
+   "fieldtype": "Table",
+   "label": "Calculation Audit Trail",
+   "options": "Water Feature Calc Result"
+  },
+  {
+   "fieldname": "sb_state",
+   "fieldtype": "Section Break",
+   "label": "Completion & Next Steps"
+  },
+  {
+   "fieldname": "completion_percent",
+   "fieldtype": "Percent",
+   "label": "Completed",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "has_warnings",
+   "fieldtype": "Check",
+   "label": "Has Warnings",
+   "read_only": 1,
+   "in_list_view": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "next_inputs_needed",
+   "fieldtype": "Small Text",
+   "label": "Next Inputs Needed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dashboard",
+   "fieldtype": "HTML",
+   "label": "Dashboard"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "options": "Water Feature Design",
+   "read_only": 1,
+   "no_copy": 1,
+   "print_hide": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-06-23 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Feature Design",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1
+  },
+  {
+   "role": "Water Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "submit": 1,
+   "cancel": 1,
+   "amend": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "design_title",
+ "track_changes": 1
+}

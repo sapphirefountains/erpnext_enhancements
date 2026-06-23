@@ -1,0 +1,19 @@
+{
+  "content": null,
+  "creation": "2026-06-23 12:00:00.000000",
+  "docstatus": 0,
+  "doctype": "Page",
+  "idx": 0,
+  "modified": "2026-06-23 12:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Water Engineering",
+  "name": "water-engineering-wizard",
+  "owner": "Administrator",
+  "page_name": "Water Engineering Wizard",
+  "roles": [],
+  "script": null,
+  "standard": "Yes",
+  "style": "water_engineering_wizard.css",
+  "system_page": 0,
+  "title": "Water Engineering Wizard"
+}
