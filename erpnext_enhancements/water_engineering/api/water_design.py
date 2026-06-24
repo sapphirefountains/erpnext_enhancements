@@ -560,6 +560,20 @@ def preview_design(payload):
     def _f(v):
         return float(v) if v not in (None, "") else 0.0
 
+    # Tallest jet across the features that carry a supply head (orifice nozzles),
+    # for the canvas — illustrative only. A free jet rises to ~0.9 * supply head
+    # (the jet_trajectory de-rating); kept inline so the canvas has no dependency
+    # on the optional jet calc.
+    jet_height = 0.0
+    for f in doc.get("features") or []:
+        head = _f(getattr(f, "supply_head_ft", 0))
+        if head > 0:
+            jet_height = max(jet_height, 0.9 * head)
+
+    # Selected pump's performance curve + this design's duty point, for the chart.
+    duty_flow = _f(doc.design_flow_gpm) or _f(doc.required_circulation_gpm)
+    curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.selected_pump else []
+
     return {
         "rollups": {
             "total_basin_gallons": doc.total_basin_gallons,
@@ -572,6 +586,11 @@ def preview_design(payload):
             "surge_basin_gallons": doc.surge_basin_gallons,
         },
         "static_lift_ft": _f(doc.static_lift_ft),
+        "jet_height_ft": jet_height or None,
+        "feature_count": len(doc.get("features") or []),
+        "pump_curve": curve or [],
+        "duty_flow": duty_flow,
+        "duty_head": _f(doc.computed_tdh_ft),
         "completion_percent": completion,
         "has_warnings": bool(doc.has_warnings),
         "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],

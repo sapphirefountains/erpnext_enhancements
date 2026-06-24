@@ -84,6 +84,9 @@ doctype_js = {
 		"public/js/item.js",
 		"public/js/water_engineering/pump_curve_chart.js",
 	],
+	# water_engineering: shared fountain "design canvas" renderer (window.WaterFountain),
+	# used by the design form's live dashboard; loaded before the auto-loaded form script.
+	"Water Feature Design": ["public/js/water_engineering/fountain_canvas.js"],
 	"Process Document": ["public/js/process_document.js"],
 	"Employee": [
 		"public/js/vue.global.js",

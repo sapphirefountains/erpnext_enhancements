@@ -169,12 +169,20 @@ function render_dashboard(frm, p) {
 	const pct = Math.round(d.completion_percent || 0);
 	const ru = p.rollups || {};
 
-	const box = (label, value, unit) => `
-		<div style="flex:1;min-width:96px;border:1px solid var(--border-color);border-radius:var(--border-radius-md,6px);padding:8px 10px;background:var(--fg-color,var(--card-bg))">
-			<div style="font-size:11px;color:var(--text-muted)">${esc(label)}</div>
-			<div style="font-weight:600;font-size:15px;line-height:1.3">${esc(String(value))}<span style="font-size:11px;color:var(--text-muted);font-weight:400"> ${esc(unit)}</span></div>
-		</div>`;
-	const arrow = `<div style="display:flex;align-items:center;color:var(--text-muted)">&rarr;</div>`;
+	const segList = p.pipe_segments || [];
+	const state = {
+		basin_gallons: ru.total_basin_gallons,
+		flow_gpm: ru.design_flow_gpm,
+		feature_count: p.feature_count || (d.features || []).length,
+		jet_height_ft: p.jet_height_ft,
+		pump: ru.selected_pump,
+		tdh_ft: ru.computed_tdh_ft,
+		basin_label: basin_label(d),
+		worst_status: worst_status(segList),
+	};
+	const WF = window.WaterFountain;
+	const canvas = WF ? WF.canvasSvg(state) : "";
+	const duty = WF && ru.selected_pump ? WF.dutySvg({ curve: p.pump_curve || [], duty_flow: p.duty_flow, duty_head: p.duty_head, pump: ru.selected_pump }) : "";
 
 	const tdh = ru.computed_tdh_ft || 0;
 	const stat = p.static_lift_ft || 0;
@@ -219,14 +227,12 @@ function render_dashboard(frm, p) {
 	const empty = !d.basins?.length && !d.features?.length;
 	const body = empty
 		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>`
-		: `
-			<div style="display:flex;gap:6px;flex-wrap:wrap">
-				${box(__("Basin"), num(ru.total_basin_gallons, 0), "gal")}${arrow}
-				${box(__("Features"), num(ru.design_flow_gpm), "GPM")}${arrow}
-				${box(__("Pump"), ru.selected_pump || "—", "")}${arrow}
-				${box(__("Piping (TDH)"), num(ru.computed_tdh_ft), "ft")}
+		: `<div style="overflow-x:auto">${canvas}</div>
+			<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+				${duty ? `<div style="flex:1;min-width:280px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pump duty point")}</div>${duty}</div>` : ""}
+				<div style="flex:1;min-width:280px">${tdhBar}${segs}</div>
 			</div>
-			${tdhBar}${segs}${warn}${needs}`;
+			${warn}${needs}`;
 
 	frm.get_field("dashboard").$wrapper.html(`
 		<div style="border:1px solid var(--border-color);border-radius:var(--border-radius-lg,8px);padding:14px 16px;background:var(--card-bg,var(--fg-color))">
@@ -261,4 +267,30 @@ function apply_template(frm, name) {
 	} else {
 		fill();
 	}
+}
+
+// First basin's dimensions as a compact "L × W × D ft" label for the canvas.
+function basin_label(d) {
+	const b = (d.basins || [])[0];
+	if (!b) return "";
+	const ft = (inch) => String(Math.round((Number(inch) / 12) * 10) / 10);
+	if ((b.shape || "").toLowerCase().indexOf("cyl") >= 0 && b.diameter_in) {
+		return `Ø ${ft(b.diameter_in)} ft × ${ft(b.height_in)} ft deep`;
+	}
+	if (b.length_in && b.width_in) {
+		return `${ft(b.length_in)} × ${ft(b.width_in)} ft × ${ft(b.height_in)} ft deep`;
+	}
+	return "";
+}
+
+// Most severe pipe-segment velocity status (drives the supply-pipe color).
+function worst_status(segs) {
+	let w = "";
+	(segs || []).forEach((s) => {
+		const v = (s.velocity_status || "").toLowerCase();
+		if (v.indexOf("exceed") >= 0) w = s.velocity_status;
+		else if (v.indexOf("increase") >= 0 && (w || "").toLowerCase().indexOf("exceed") < 0) w = s.velocity_status;
+		else if (!w) w = s.velocity_status;
+	});
+	return w;
 }
