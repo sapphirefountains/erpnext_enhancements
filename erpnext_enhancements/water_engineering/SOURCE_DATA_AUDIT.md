@@ -8,7 +8,7 @@ Status legend: ✅ done · ▶ recommended next · ◇ needs a product/engineeri
 
 ---
 
-## Done in this pass (v1.106–1.108)
+## Done in this pass (v1.106–1.113)
 - ✅ Pipe fittings/components picked from a catalog dropdown (no hand-typed JSON); catalog = engine's
   `FITTING_K` / `COMPONENT_COEFF`.
 - ✅ AI `save_water_design` is catalog-aware (valid `type` values embedded in the tool schema).
@@ -17,6 +17,29 @@ Status legend: ✅ done · ▶ recommended next · ◇ needs a product/engineeri
   engineer 4–6 GPM/ft* rule; under-sheeted edges warn. **Fixed mis-citation**: the 0.5 GPM/ft tier/edge
   rate is DOC-0049 B, not DOC-0119 (corrected in `feature.py` + the tier doctype).
 - ✅ `Control Panel Design.product_family` → Select (Splash Wizard Basic / PLUS / MAX, DOC-0062).
+- ✅ **Pipe pressure ratings** (DOC-0049 #1): full PSI/weight table + `pipe_pressure_rating` /
+  `pipe_pressure_check`; the spine flags under-rated discharge pipe.
+- ✅ **Nonlinear component-loss curves** (DOC-0049 #2): `component_loss` interpolates real curves +
+  warns past `max_gpm`.
+- ✅ **CYA chlorine floor** (DOC-0119 #1): `chemistry_targets(cya_ppm, free_cl_ppm)`.
+- ✅ **`lighting_design`** (watts/SF, DOC-0049 #5) + **`overflow_check`** (precip/overflow, DOC-0049 #6).
+- ✅ **Controls capture** (DOC-0025/0123/0127): Theory of Operation, parties, 2nd control voltage, power
+  source-of-confirmation, **Fuses** child table, seeded standard **I/O list**, two-stage **wind**
+  interlock, LCD controller_hardware option.
+- ✅ **Print formats**: Water Feature Design **Schedules** (Equipment + Piping, DOC-0121) and Control
+  Panel Design **Submittal** (DOC-0126 verbatim sections).
+
+## Still open (recommended next)
+- ◇ Pipe pressure surfaced as a per-segment doctype status field (currently a warning + audit card only).
+- ◇ Slot-channel circular-crest weir (DOC-0049 M, C=3.70) — needs exact-cell verification before coding.
+- ◇ Low-velocity (<0.5 FPS) settling band on `velocity_status`.
+- ◇ Aggregated **Fitting Schedule** (total qty per fitting type) — needs server-side aggregation (print
+  Jinja can't parse the per-segment JSON); Schedules currently lists fittings per run.
+- ◇ O&M manual print format (DOC-0123) — now unblocked (parties + fuses fields exist); needs the
+  Project address pulled through the `project` link.
+- ◇ Structural/concrete/rebar module (DOC-0119) — out of the Phase-1 hydraulic scope.
+- ◇ Catalog Item seeds (DOC-0028 part numbers: controllers, pumps, lights, enclosures).
+- ◇ `FT_PER_PSI` = 2.308966 (verified in DOC-0049 F-Formulas) — value upgrade + golden refresh.
 
 ---
 

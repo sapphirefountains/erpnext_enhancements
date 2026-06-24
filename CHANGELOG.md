@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.113.0] - 2026-06-24
+
+### Added
+- **Design-package print formats (DOC-0121 / DOC-0126).** Two new Jinja print formats, shipped on migrate alongside the existing Results / Calculation Audit:
+  - **Water Feature Design — Schedules:** an Equipment Schedule (selected pump, pump candidates, basins) and a Piping Schedule (every segment with material, size, length, velocity, head loss, and its fittings/equipment), per the DOC-0121 design-package requirement.
+  - **Control Panel Design — Submittal:** reproduces the DOC-0126 submittal verbatim — title line, User Interface (the enabled screens), Pump Control & Pumps (per-pump line), Inputs, Solenoid Valves, Lights, Interlocks, Theory of Operation, and the representative image — generated from the panel's fields.
+
 ## [1.112.0] - 2026-06-24
 
 ### Added
