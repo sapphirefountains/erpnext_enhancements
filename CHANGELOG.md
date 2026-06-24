@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`npsh_available`** — pump cavitation go/no-go. `NPSHa = Ha + Hz − Hf − Hvp` (atmospheric head de-rated for site altitude, signed static suction, suction friction, temperature-interpolated vapor pressure); compares to the pump's NPSHr + a 2–3 ft margin → Okay / Marginal / Cavitation Risk. Reuses the suction-side friction the TDH calc already produces.
   - **`water_hammer`** — Joukowsky surge. `ΔH = a·ΔV/g` with material-specific wave speed (PVC ≈1300 ft/s), scaled down for slow valve closure (when closure time exceeds the `2L/a` reflection period); peak (static + surge) vs. the pipe's pressure rating.
   - Golden-value tests in `test_water_engine.py` (VGB reproduces the P-sheet example; NPSH altitude/temperature/status bands; Joukowsky instantaneous + slow-closure + rating check). Bench-free suite green (76); ruff clean. NPSH and water-hammer constants are flagged as engineering standards (Hydraulic Institute / Joukowsky), not source-document formulas.
+## [1.99.0] - 2026-06-23
+
+### Added
+- **Water Feature Design — two Print Formats** (simple results + a robust formula audit) so a design's output can be reviewed and hand-checked against the source workbooks. Both render server-side (Jinja) from the persisted rollups + `calc_results` audit trail; created idempotently on `after_migrate` (Frappe-Cloud-safe, no shell needed).
+  - **`Water Feature Design - Results`** — the simple, final end-results: a Key Results table (basin gallons, required circulation, design flow, TDH, selected pump, chlorinator feed, drain capacity, surge basin — only the values that are set) plus a compact final value/unit/status table for every calculation.
+  - **`Water Feature Design - Calculation Audit`** — the robust view: for each calculation, the exact **formula**, the **inputs with provenance** (value, unit, and where each number came from — user / lookup / prior calc / default / standard, plus the source cell), the step-by-step **working**, the source **citation**, and any **warnings** — laid out to hand-compare against the spreadsheet.
+  - To feed the audit view, the `Water Feature Calc Result` child table now also persists `status`, `inputs_text` (tab-delimited, rendered as a table since the print Jinja sandbox can't parse JSON), and `inputs_json` (the exact structured input set with provenance); the three audit writers in the controller were refactored to one `_calc_row()` helper that captures the complete envelope. Open a design → **Print** → pick either format (or download PDF).
 
 ## [1.95.0] - 2026-06-23
 
