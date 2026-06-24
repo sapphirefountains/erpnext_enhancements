@@ -397,6 +397,9 @@ after_migrate = [
 	# water_engineering: generic starter Nozzle Profiles so orifice nozzles compute
 	# immediately (idempotent + guarded; flagged generic — replace with cut-sheet data).
 	"erpnext_enhancements.water_engineering.setup.ensure_nozzle_profiles",
+	# water_engineering: the Results + Calculation Audit Print Formats for a design
+	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
+	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

@@ -8,8 +8,11 @@
   "calc",
   "value",
   "unit",
+  "status",
   "formula",
   "steps",
+  "inputs_text",
+  "inputs_json",
   "citations",
   "warnings"
  ],
@@ -36,6 +39,13 @@
    "in_list_view": 1
   },
   {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
    "fieldname": "formula",
    "fieldtype": "Small Text",
    "label": "Formula",
@@ -45,6 +55,19 @@
    "fieldname": "steps",
    "fieldtype": "Small Text",
    "label": "Steps",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inputs_text",
+   "fieldtype": "Small Text",
+   "label": "Inputs",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inputs_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Inputs (JSON)",
    "read_only": 1
   },
   {
