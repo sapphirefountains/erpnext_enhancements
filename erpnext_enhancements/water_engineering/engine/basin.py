@@ -33,6 +33,16 @@ def basin_volume(
     """
     shape_key = (shape or "").strip().lower()
 
+    if any(float(v or 0) < 0 for v in (length_in, width_in, height_in, diameter_in)):
+        return CalcResult(
+            calc="basin_volume",
+            unit="gal",
+            inputs={"shape": make_input(shape, "", "user")},
+            formula="vol_gal = area * height * 0.004329",
+            citations=[CIT_BASIN],
+            warnings=["Basin dimensions must be >= 0."],
+        )
+
     if shape_key in ("rect", "rectangle", "rectangular"):
         area_in2 = float(length_in) * float(width_in)
         formula = "vol_gal = (L * W * H) * 0.004329 ; weight_lb = vol_gal * 8.34"
