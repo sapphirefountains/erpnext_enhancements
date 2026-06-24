@@ -37,6 +37,7 @@ from erpnext_enhancements.water_engineering.engine import (
     lsi_index,
     make_up_water,
     manning_drain_flow,
+    nozzle_array_flow,
     nozzle_flow,
     npsh_available,
     open_channel_flow,
@@ -547,6 +548,45 @@ class TreatmentTests(unittest.TestCase):
         self.assertAlmostEqual(filtration_area(120, "cartridge").value, 320.0, places=1)
         # sand capped at 3 GPM/SF: 90 GPM -> 30 SF
         self.assertAlmostEqual(filtration_area(90, "sand").value, 30.0, places=1)
+
+
+class CorrectnessGuardTests(unittest.TestCase):
+    def test_spine_defaults_blank_segment_flow_to_design(self):
+        # a segment with no flow should carry the design flow, so friction (and
+        # therefore TDH) is non-zero instead of silently static-only.
+        out = run_spine(
+            {
+                "basins": [{"shape": "rectangular", "length_in": 120, "width_in": 60, "height_in": 18}],
+                "turnovers_per_hr": 2,
+                "pipe_segments": [{"label": "d", "nominal_size": '3"', "material": "SCH40 PVC", "length_ft": 100, "flow_gpm": 0}],
+                "static_lift_ft": 0,
+            }
+        )
+        self.assertGreater(out["tdh_ft"], 0)
+
+    def test_spine_warns_zero_flow_segment_with_no_design_flow(self):
+        out = run_spine({"pipe_segments": [{"label": "x", "nominal_size": '3"', "material": "SCH40 PVC", "length_ft": 50, "flow_gpm": 0}]})
+        self.assertTrue(any("no flow" in w.lower() for w in out["warnings"]))
+
+    def test_basin_negative_dimension_warns(self):
+        r = basin_volume("rectangular", -120, 60, 18)
+        self.assertIsNone(r.value)
+        self.assertTrue(any("must be" in w.lower() for w in r.warnings))
+
+    def test_nozzle_array_negative_clamped_and_warned(self):
+        r = nozzle_array_flow(-5, 8)
+        self.assertEqual(r.value, 0)
+        self.assertTrue(r.warnings)
+
+    def test_pipe_velocity_zero_id_guarded(self):
+        r = pipe_velocity(50, 0)
+        self.assertIsNone(r.value)
+        self.assertTrue(r.warnings)
+
+    def test_hazen_williams_zero_id_guarded(self):
+        r = hazen_williams_loss(50, 100, 0)
+        self.assertIsNone(r.value)
+        self.assertTrue(r.warnings)
 
 
 if __name__ == "__main__":

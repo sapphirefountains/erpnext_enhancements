@@ -99,7 +99,7 @@ def tiered_fountain_flow(tiers, gpm_per_ft: float = 0.5) -> CalcResult:
     steps = []
     required = 0.0
     for i, t in enumerate(tiers, start=1):
-        d_in = float(t.get("diameter_in") or 0)
+        d_in = max(float(t.get("diameter_in") or 0), 0.0)
         circ_ft = math.pi * d_in / 12.0
         q = circ_ft * gpm_per_ft
         required = max(required, q)
@@ -161,6 +161,11 @@ def nozzle_array_flow(nozzle_count: int, gpm_each: float) -> CalcResult:
     """Total flow (GPM) for an array of identical nozzles at a known per-nozzle rate."""
     nozzle_count = int(nozzle_count or 0)
     gpm_each = float(gpm_each or 0.0)
+    warnings = []
+    if nozzle_count < 0 or gpm_each < 0:
+        warnings.append("Nozzle count and GPM-each must be >= 0.")
+        nozzle_count = max(nozzle_count, 0)
+        gpm_each = max(gpm_each, 0.0)
     q = nozzle_count * gpm_each
     return CalcResult(
         calc="nozzle_array_flow",
@@ -172,6 +177,7 @@ def nozzle_array_flow(nozzle_count: int, gpm_each: float) -> CalcResult:
         },
         formula="Q_gpm = nozzle_count * gpm_each",
         steps=[f"Q = {nozzle_count} * {gpm_each} = {q:.4f} GPM"],
+        warnings=warnings,
     )
 
 

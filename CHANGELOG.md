@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.104.0] - 2026-06-24
+
+### Fixed
+- **Water Feature Design — engine correctness hardening (from a system audit).**
+  - **Undersized-pump bug:** a pipe segment with a blank flow used to compute **zero friction loss**, silently yielding a TDH of just the static lift and a far-too-small pump — on a perfectly normal workflow. The spine now defaults a segment with no flow to the **design flow** (most segments carry the full system flow), the controller's per-row velocity/head-loss uses the same effective flow, and a length-bearing segment with no flow *and* no design flow to infer from now emits a warning instead of failing silently.
+  - **Garbage-in guards:** negative basin/feature dimensions (which produced negative gallons/weight/flow) are rejected with a warning; `pipe_velocity` / `hazen_williams_loss` now guard `inside diameter == 0` (was a 500 on the stateless calc / MCP path); negative nozzle counts and tier diameters are clamped with a warning.
+  - **No more silent drops:** when the recommended pump's item code isn't a real Item, the design now says so in *Next inputs needed* instead of just showing "no pump"; and submitting a design that still has warnings or unresolved inputs shows a non-blocking "not fully resolved" notice.
+  - Golden tests for each guard.
+
 ## [1.103.0] - 2026-06-24
 
 ### Added
