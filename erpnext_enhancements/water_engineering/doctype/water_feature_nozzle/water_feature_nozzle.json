@@ -29,7 +29,7 @@
    "fieldname": "feature_type",
    "fieldtype": "Select",
    "label": "Feature Type",
-   "options": "Weir\nNozzle Array\nOrifice Nozzle",
+   "options": "Weir\nSpilling Weir\nWaterwall\nNozzle Array\nOrifice Nozzle\nSplash Pad\nRain Curtain",
    "default": "Weir",
    "in_list_view": 1
   },

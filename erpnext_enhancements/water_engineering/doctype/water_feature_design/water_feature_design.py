@@ -27,6 +27,7 @@ from erpnext_enhancements.water_engineering.engine import (
 	chemistry_targets,
 	chlorinator_feed,
 	component_loss,
+	feature_flow_category,
 	fitting_minor_loss,
 	hazen_williams_loss,
 	manning_drain_flow,
@@ -135,10 +136,10 @@ class WaterFeatureDesign(Document):
 
 	def _fill_feature_rows(self):
 		for row in self.get("features") or []:
-			ftype = (row.feature_type or "Weir").lower()
-			if "weir" in ftype:
+			category = feature_flow_category(row.feature_type or "Weir")
+			if category == "weir":
 				r = weir_flow(flt(row.weir_length_ft), flt(row.head_in), cint(row.end_contractions) or 2)
-			elif "array" in ftype:
+			elif category == "array":
 				r = nozzle_array_flow(cint(row.nozzle_count), flt(row.gpm_each))
 			else:
 				params = nozzle_profile_params(row.nozzle_profile) if row.nozzle_profile else {}

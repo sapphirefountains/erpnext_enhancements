@@ -36,6 +36,42 @@ CIT_JET = "Bernoulli free-jet height (engineering standard; not in source docs)"
 CIT_ORIFICE = "Orifice equation Q=Cd*A*sqrt(2gh) (textbook); coefficients from Nozzle Profile catalog"
 
 
+def feature_flow_category(feature_type: str) -> str:
+    """Classify a feature type to the flow calc that sizes it:
+
+    * ``"weir"``    — water spilling over a crest as a sheet: weirs, spilling
+      weirs, vanishing/slot edges, and waterwalls (sized by the Francis weir
+      formula over the crest length).
+    * ``"array"``   — discrete jets/streams: nozzle arrays, splash pads, and rain
+      curtains (sized by count * GPM-each).
+    * ``"orifice"`` — a single orifice nozzle (Q = Cd*A*sqrt(2gh)).
+    """
+    t = (feature_type or "").lower()
+    if any(k in t for k in ("weir", "slot", "vanish", "wall", "spill")):
+        return "weir"
+    if any(k in t for k in ("array", "splash", "rain", "curtain")):
+        return "array"
+    return "orifice"
+
+
+def feature_visual_kind(feature_type: str) -> str:
+    """Classify a feature type to the schematic the canvas draws for it:
+    ``"waterwall" | "splash_pad" | "rain_curtain" | "spilling_weir" | "weir" |
+    "jet"``. Order matters (waterwall/spilling are checked before plain weir)."""
+    t = (feature_type or "").lower()
+    if "waterwall" in t or "water wall" in t or "wall" in t:
+        return "waterwall"
+    if "splash" in t:
+        return "splash_pad"
+    if "rain" in t or "curtain" in t:
+        return "rain_curtain"
+    if "spill" in t:
+        return "spilling_weir"
+    if "weir" in t or "slot" in t or "vanish" in t:
+        return "weir"
+    return "jet"
+
+
 def weir_flow(
     length_ft: float,
     head_in: float,

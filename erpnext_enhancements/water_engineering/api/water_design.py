@@ -25,6 +25,7 @@ from erpnext_enhancements.water_engineering.engine import (
     chlorinator_feed,
     electric_cost,
     evaporation_rate,
+    feature_visual_kind,
     filtration_area,
     hazen_williams_loss,
     heating_load,
@@ -192,10 +193,14 @@ def _canvas_state(doc):
             jet = max(jet, 0.9 * head)
 
     curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.selected_pump else []
+    features = doc.get("features") or []
+    # The schematic draws the primary (first) feature's kind.
+    kind = feature_visual_kind(features[0].feature_type) if features else None
     return {
         "basin_gallons": doc.total_basin_gallons,
         "flow_gpm": doc.design_flow_gpm,
-        "feature_count": len(doc.get("features") or []),
+        "feature_count": len(features),
+        "feature_kind": kind,
         "jet_height_ft": jet or None,
         "pump": doc.selected_pump,
         "tdh_ft": doc.computed_tdh_ft,
