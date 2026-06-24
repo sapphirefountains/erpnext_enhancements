@@ -1,10 +1,48 @@
 // Copyright (c) 2026, Sapphire Fountains and contributors
 // For license information, please see license.txt
 
-// Frappe auto-loads this form script for the Water Feature Design form. The
-// engine recompute() runs server-side on every save (validate), so the rollups
-// and audit trail refresh on save; this just adds quick actions and renders the
-// dashboard summary panel.
+// Modeling UX for the Water Feature Design form:
+//   - LIVE preview: as you edit basins / features / piping / inputs, the design
+//     is recomputed in memory server-side (no save) and the rollups, per-row
+//     velocity/flow/head-loss, completion, warnings, and a schematic dashboard
+//     all update — so modeling is responsive instead of save-and-wait.
+//   - Quick-start templates pre-fill a common fountain type.
+// The authoritative recompute still runs on save (validate); this preview calls
+// the SAME engine path, so what you see live equals what gets saved.
+
+const WFD_TEMPLATES = {
+	"Rectangular weir basin": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 4 },
+		basins: [{ shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
+		features: [{ feature_type: "Weir", weir_length_ft: 6, head_in: 0.25, end_contractions: 2 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
+		],
+	},
+	"Spray-jet pool": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
+		basins: [{ shape: "Cylindrical", diameter_in: 120, height_in: 24 }],
+		features: [{ feature_type: "Nozzle Array", nozzle_count: 6, gpm_each: 8 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", flow_gpm: 48, nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	"Vanishing edge (weir wall)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
+		basins: [{ shape: "Rectangular", length_in: 240, width_in: 18, height_in: 12 }],
+		features: [{ feature_type: "Weir", weir_length_ft: 20, head_in: 0.25, end_contractions: 0 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 60, line_type: "Discharge" },
+		],
+	},
+};
+
+const WFD_PREVIEW_FIELDS = [
+	"turnover_per_hr", "hazen_williams_c", "pipe_material", "static_lift_ft",
+	"chem_water_type", "chem_chlorine_pct", "drain_nominal_size", "drain_slope_in_per_ft",
+	"surge_pool_area_sf", "surge_basin_area_sf",
+];
+const WFD_TABLES = ["basins", "features", "pipe_segments", "pumps", "electrical_loads"];
 
 frappe.ui.form.on("Water Feature Design", {
 	refresh(frm) {
@@ -12,39 +50,215 @@ frappe.ui.form.on("Water Feature Design", {
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Recalculate"), () => frm.save());
 		}
-		render_dashboard(frm);
+		Object.keys(WFD_TEMPLATES).forEach((name) => {
+			frm.add_custom_button(__(name), () => apply_template(frm, name), __("New from Template"));
+		});
+
+		// Re-run the live preview whenever a grid changes (cell edit / add / remove).
+		WFD_TABLES.forEach((t) => {
+			const grid = frm.fields_dict[t] && frm.fields_dict[t].grid;
+			if (grid && grid.wrapper) {
+				grid.wrapper.off("change.wfdprev").on("change.wfdprev", () => schedule_preview(frm));
+			}
+		});
+		schedule_preview(frm);
 	},
 });
 
-function render_dashboard(frm) {
+// Re-preview when a global / treatment / drainage input changes.
+const _input_triggers = {};
+WFD_PREVIEW_FIELDS.forEach((f) => {
+	_input_triggers[f] = (frm) => schedule_preview(frm);
+});
+frappe.ui.form.on("Water Feature Design", _input_triggers);
+
+let _wfd_timer = null;
+function schedule_preview(frm) {
+	if (frm._wfd_applying) return;
+	clearTimeout(_wfd_timer);
+	_wfd_timer = setTimeout(() => run_preview(frm), 450);
+}
+
+function run_preview(frm) {
+	const payload = { fields: {} };
+	WFD_PREVIEW_FIELDS.forEach((f) => (payload.fields[f] = frm.doc[f]));
+	WFD_TABLES.forEach((t) => (payload[t] = frm.doc[t] || []));
+
+	frappe.call({
+		method: "erpnext_enhancements.water_engineering.api.water_design.preview_design",
+		args: { payload: payload },
+		callback: (r) => {
+			if (r && r.message && !r.message.error) apply_preview(frm, r.message);
+		},
+	});
+}
+
+function apply_preview(frm, p) {
+	frm._wfd_applying = true;
+	try {
+		const ru = p.rollups || {};
+		Object.keys(ru).forEach((k) => (frm.doc[k] = ru[k]));
+		frm.doc.completion_percent = p.completion_percent;
+		frm.doc.has_warnings = p.has_warnings ? 1 : 0;
+		frm.doc.next_inputs_needed = (p.next_inputs_needed || []).join("\n");
+
+		(p.basins || []).forEach((b, i) => {
+			if (frm.doc.basins && frm.doc.basins[i]) {
+				frm.doc.basins[i].volume_gal = b.volume_gal;
+				frm.doc.basins[i].weight_lb = b.weight_lb;
+			}
+		});
+		(p.features || []).forEach((f, i) => {
+			if (frm.doc.features && frm.doc.features[i]) frm.doc.features[i].flow_gpm = f.flow_gpm;
+		});
+		(p.pipe_segments || []).forEach((s, i) => {
+			const row = frm.doc.pipe_segments && frm.doc.pipe_segments[i];
+			if (row) {
+				row.velocity_fps = s.velocity_fps;
+				row.velocity_status = s.velocity_status;
+				row.head_loss_ft = s.head_loss_ft;
+			}
+		});
+
+		["total_basin_gallons", "required_circulation_gpm", "design_flow_gpm", "computed_tdh_ft",
+			"selected_pump", "chlorinator_feed_gph", "drain_capacity_gpm", "surge_basin_gallons",
+			"completion_percent", "next_inputs_needed", "basins", "features", "pipe_segments"].forEach((f) =>
+			frm.refresh_field(f)
+		);
+
+		render_dashboard(frm, p);
+		setTimeout(() => paint_segment_grid(frm, p), 60);
+	} finally {
+		frm._wfd_applying = false;
+	}
+}
+
+function pill_class(status) {
+	const s = (status || "").toLowerCase();
+	if (s.includes("exceed")) return "red";
+	if (s.includes("increase")) return "orange";
+	if (s.includes("okay")) return "green";
+	return "gray";
+}
+function pill_color(status) {
+	const s = (status || "").toLowerCase();
+	if (s.includes("exceed")) return "#c0392b";
+	if (s.includes("increase")) return "#c2700a";
+	if (s.includes("okay")) return "#1f9d55";
+	return "var(--text-muted)";
+}
+
+function paint_segment_grid(frm, p) {
+	const grid = frm.fields_dict.pipe_segments && frm.fields_dict.pipe_segments.grid;
+	if (!grid || !grid.grid_rows) return;
+	(p.pipe_segments || []).forEach((s, i) => {
+		try {
+			const gr = grid.grid_rows[i];
+			const col = gr && gr.columns && gr.columns.velocity_status;
+			if (col && col.$content) col.$content.css({ "font-weight": 500, color: pill_color(s.velocity_status) });
+		} catch (e) {
+			/* grid internals vary by version — coloring is a progressive enhancement */
+		}
+	});
+}
+
+function render_dashboard(frm, p) {
 	const d = frm.doc;
 	const esc = frappe.utils.escape_html;
-	const fmt = (v) => (v == null || v === 0 ? "—" : esc(String(v)));
-	const rows = [
-		[__("Total Basin (gal)"), d.total_basin_gallons],
-		[__("Circulation (GPM)"), d.required_circulation_gpm],
-		[__("Design Flow (GPM)"), d.design_flow_gpm],
-		[__("TDH (ft)"), d.computed_tdh_ft],
-		[__("Selected Pump"), d.selected_pump],
-	]
-		.map(([k, v]) => `<tr><td style="color:var(--text-muted)">${k}</td><td><b>${fmt(v)}</b></td></tr>`)
-		.join("");
+	const num = (v, dp) => (v == null || v === "" || v === 0 ? "—" : Number(v).toFixed(dp == null ? 2 : dp));
+	const pct = Math.round(d.completion_percent || 0);
+	const ru = p.rollups || {};
 
-	const needs = (d.next_inputs_needed || "")
-		.split("\n")
-		.filter((s) => s);
-	const needsHtml = needs.length
-		? `<div style="margin-top:8px;padding:6px 10px;border-radius:6px;background:var(--bg-yellow,#fef3c7);color:var(--text-on-yellow,#7a5b00)">
-			<b>${__("Still needed")}:</b> ${needs.map(esc).join(", ")}</div>`
-		: `<div style="margin-top:8px;color:var(--text-muted)">${__("All Phase-1 inputs provided.")}</div>`;
+	const box = (label, value, unit) => `
+		<div style="flex:1;min-width:96px;border:1px solid var(--border-color);border-radius:var(--border-radius-md,6px);padding:8px 10px;background:var(--fg-color,var(--card-bg))">
+			<div style="font-size:11px;color:var(--text-muted)">${esc(label)}</div>
+			<div style="font-weight:600;font-size:15px;line-height:1.3">${esc(String(value))}<span style="font-size:11px;color:var(--text-muted);font-weight:400"> ${esc(unit)}</span></div>
+		</div>`;
+	const arrow = `<div style="display:flex;align-items:center;color:var(--text-muted)">&rarr;</div>`;
+
+	const tdh = ru.computed_tdh_ft || 0;
+	const stat = p.static_lift_ft || 0;
+	const fric = Math.max(tdh - stat, 0);
+	let tdhBar = "";
+	if (tdh > 0) {
+		const sp = Math.round((stat / tdh) * 100);
+		tdhBar = `
+			<div style="margin-top:14px">
+				<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:3px"><span>${__("TDH breakdown")}</span><span>${num(tdh)} ft</span></div>
+				<div style="display:flex;height:14px;border-radius:4px;overflow:hidden;background:rgba(128,128,128,.15)">
+					<div style="width:${sp}%;background:#5e9bd6"></div><div style="width:${100 - sp}%;background:#e8a13a"></div>
+				</div>
+				<div style="font-size:11px;color:var(--text-muted);margin-top:3px"><span style="color:#5e9bd6">&#9632;</span> ${__("Static")} ${num(stat)} ft &nbsp; <span style="color:#e8a13a">&#9632;</span> ${__("Friction")} ${num(fric)} ft</div>
+			</div>`;
+	}
+
+	let segs = "";
+	if ((p.pipe_segments || []).length) {
+		const rows = p.pipe_segments
+			.map((s, i) => `
+				<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px solid var(--border-color)">
+					<span>${esc(s.segment_label || __("Segment") + " " + (i + 1))}</span>
+					<span><span style="color:var(--text-muted);font-size:12px">${num(s.velocity_fps)} ft/s</span> <span class="indicator-pill ${pill_class(s.velocity_status)}" style="margin-left:6px">${esc(s.velocity_status || "—")}</span></span>
+				</div>`)
+			.join("");
+		segs = `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pipe segments")}</div>${rows}</div>`;
+	}
+
+	let warn = `<div style="margin-top:12px;color:var(--text-muted);font-size:12px">${__("No warnings.")}</div>`;
+	if ((p.warnings || []).length) {
+		warn = `<div style="margin-top:14px;font-size:12px"><div style="color:var(--text-muted);margin-bottom:4px">${__("Warnings")} (${p.warnings.length})</div>${p.warnings
+			.map((w) => `<div style="display:flex;gap:6px;padding:2px 0"><span style="color:#c2700a">&#9888;</span><span>${esc(w)}</span></div>`)
+			.join("")}</div>`;
+	}
+
+	let needs = "";
+	if ((p.next_inputs_needed || []).length) {
+		needs = `<div style="margin-top:10px;padding:6px 10px;border-radius:6px;background:rgba(127,127,127,.12);font-size:12px"><b>${__("Still needed")}:</b> ${p.next_inputs_needed.map(esc).join(", ")}</div>`;
+	}
+
+	const empty = !d.basins?.length && !d.features?.length;
+	const body = empty
+		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>`
+		: `
+			<div style="display:flex;gap:6px;flex-wrap:wrap">
+				${box(__("Basin"), num(ru.total_basin_gallons, 0), "gal")}${arrow}
+				${box(__("Features"), num(ru.design_flow_gpm), "GPM")}${arrow}
+				${box(__("Pump"), ru.selected_pump || "—", "")}${arrow}
+				${box(__("Piping (TDH)"), num(ru.computed_tdh_ft), "ft")}
+			</div>
+			${tdhBar}${segs}${warn}${needs}`;
 
 	frm.get_field("dashboard").$wrapper.html(`
-		<div style="border:1px solid var(--border-color);border-radius:8px;padding:12px 14px">
-			<div style="font-weight:600;margin-bottom:6px">${__("Hydraulic Summary")}
-				<span style="float:right;color:var(--text-muted)">${d.completion_percent || 0}%</span>
+		<div style="border:1px solid var(--border-color);border-radius:var(--border-radius-lg,8px);padding:14px 16px;background:var(--card-bg,var(--fg-color))">
+			<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+				<div style="font-weight:600">${__("Hydraulic model")}</div>
+				<div style="display:flex;align-items:center;gap:8px;min-width:150px">
+					<div style="flex:1;height:8px;border-radius:4px;background:rgba(128,128,128,.2)"><div style="width:${pct}%;height:8px;border-radius:4px;background:var(--primary,#2490ef)"></div></div>
+					<span style="color:var(--text-muted);font-size:12px">${pct}%</span>
+				</div>
 			</div>
-			<table style="width:100%;font-size:13px">${rows}</table>
-			${needsHtml}
-		</div>
-	`);
+			${body}
+		</div>`);
+}
+
+function apply_template(frm, name) {
+	const tpl = WFD_TEMPLATES[name];
+	if (!tpl) return;
+	const has_rows = (frm.doc.basins || []).length || (frm.doc.features || []).length || (frm.doc.pipe_segments || []).length;
+	const fill = () => {
+		(tpl.fields ? Object.keys(tpl.fields) : []).forEach((k) => frm.set_value(k, tpl.fields[k]));
+		["basins", "features", "pipe_segments"].forEach((t) => {
+			frm.clear_table(t);
+			(tpl[t] || []).forEach((row) => frm.add_child(t, Object.assign({}, row)));
+			frm.refresh_field(t);
+		});
+		frm.dirty();
+		schedule_preview(frm);
+		frappe.show_alert({ message: __("Loaded template: {0}", [name]), indicator: "green" });
+	};
+	if (has_rows) {
+		frappe.confirm(__("Replace the current basin, feature, and piping rows with the {0} template?", [name]), fill);
+	} else {
+		fill();
+	}
 }

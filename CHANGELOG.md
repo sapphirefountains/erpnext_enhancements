@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.100.0] - 2026-06-23
+
+### Added / Changed
+- **Water Feature Design — modeling UX overhaul.** The desk form is now a responsive modeling surface instead of save-and-wait:
+  - **Live preview** — as you edit basins, features, piping, or any input, the design is recomputed in memory server-side (new `preview_design` endpoint, no save) and the rollups, per-row velocity/flow/head-loss, completion, and warnings update live. It calls the **same** controller `recompute()` as a save, so what you see equals what gets saved.
+  - **Schematic dashboard** — the summary panel is now a live hydraulic schematic (`Basin → Features → Pump → Piping`) with the key numbers, a static-vs-friction **TDH breakdown bar**, a per-segment list with color-coded velocity **status badges** (green Okay / amber Increase Size / red Exceeds Legal), a completion bar, and a warnings list. Pipe-segment grid rows also get their `velocity_status` cell color-coded live. Theme-aware (Frappe CSS vars + `indicator-pill` classes — works in Light and Timeless Night).
+  - **Tabbed layout** — the long single-column form is split into `Model` (live summary + inputs + basin/features/piping/pumps), `Treatment & Drainage`, and `Results & Audit` tabs to cut scrolling and group the modeling stages.
+  - **Quick-start templates** — a `New from Template` button pre-fills a common fountain type (Rectangular weir basin / Spray-jet pool / Vanishing edge) so a design starts in seconds; replacing existing rows asks for confirmation.
 ## [1.98.0] - 2026-06-23
 
 ### Added

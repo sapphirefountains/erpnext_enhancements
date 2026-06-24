@@ -5,11 +5,17 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "tab_model",
   "project",
   "customer",
   "serial_no",
   "design_title",
   "status",
+  "sb_state",
+  "dashboard",
+  "completion_percent",
+  "has_warnings",
+  "next_inputs_needed",
   "sb_inputs",
   "turnover_per_hr",
   "hazen_williams_c",
@@ -25,19 +31,7 @@
   "sb_pumps",
   "pumps",
   "electrical_loads",
-  "sb_results",
-  "total_basin_gallons",
-  "required_circulation_gpm",
-  "design_flow_gpm",
-  "computed_tdh_ft",
-  "selected_pump",
-  "cb_results",
-  "calc_results",
-  "sb_state",
-  "completion_percent",
-  "has_warnings",
-  "next_inputs_needed",
-  "dashboard",
+  "tab_treatment",
   "sb_chemistry",
   "chem_water_type",
   "chem_chlorine_pct",
@@ -52,6 +46,15 @@
   "surge_pool_area_sf",
   "surge_basin_area_sf",
   "surge_basin_gallons",
+  "tab_results",
+  "sb_results",
+  "total_basin_gallons",
+  "required_circulation_gpm",
+  "design_flow_gpm",
+  "computed_tdh_ft",
+  "selected_pump",
+  "cb_results",
+  "calc_results",
   "amended_from"
  ],
  "fields": [
@@ -178,7 +181,7 @@
   {
    "fieldname": "sb_results",
    "fieldtype": "Section Break",
-   "label": "Running Results"
+   "label": "Results"
   },
   {
    "fieldname": "total_basin_gallons",
@@ -224,7 +227,7 @@
   {
    "fieldname": "sb_state",
    "fieldtype": "Section Break",
-   "label": "Completion & Next Steps"
+   "label": "Live Summary"
   },
   {
    "fieldname": "completion_percent",
@@ -338,6 +341,21 @@
    "read_only": 1,
    "no_copy": 1,
    "print_hide": 1
+  },
+  {
+   "fieldname": "tab_model",
+   "fieldtype": "Tab Break",
+   "label": "Model"
+  },
+  {
+   "fieldname": "tab_treatment",
+   "fieldtype": "Tab Break",
+   "label": "Treatment & Drainage"
+  },
+  {
+   "fieldname": "tab_results",
+   "fieldtype": "Tab Break",
+   "label": "Results & Audit"
   }
  ],
  "is_submittable": 1,
