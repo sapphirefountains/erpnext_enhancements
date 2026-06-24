@@ -65,6 +65,17 @@ EDITABLE_DESIGN_FIELDS = frozenset(
 # Child tables a caller may replace wholesale.
 EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electrical_loads")
 
+# Parent input fields the live form preview may set (the editable design fields
+# plus the chemistry/drainage inputs) — read-only rollups are never accepted.
+PREVIEW_PARENT_FIELDS = EDITABLE_DESIGN_FIELDS | {
+    "chem_water_type",
+    "chem_chlorine_pct",
+    "drain_nominal_size",
+    "drain_slope_in_per_ft",
+    "surge_pool_area_sf",
+    "surge_basin_area_sf",
+}
+
 
 # ----------------------------------------------------------------- helpers
 
@@ -453,6 +464,76 @@ def save_inputs(payload):
     doc = _save_design(payload)
     frappe.db.commit()
     return design_state(doc.name)
+
+
+@frappe.whitelist()
+def preview_design(payload):
+    """Recompute a design IN MEMORY from the live form (no save), so the desk form
+    can show rollups, per-row velocity/flow/head-loss, warnings, and completion as
+    the user edits. Reuses the exact controller ``recompute()`` — the preview is
+    byte-identical to a save — so there is no second implementation to drift."""
+    _require("read")
+    # Lazy import avoids a circular import (the controller imports from this module).
+    from erpnext_enhancements.water_engineering.doctype.water_feature_design.water_feature_design import (
+        compute_completion_percent,
+    )
+
+    payload = _parse(payload)
+    doc = frappe.new_doc(DESIGN_DOCTYPE)
+    for key, value in (_parse(payload.get("fields")) or {}).items():
+        if key in PREVIEW_PARENT_FIELDS:
+            doc.set(key, value)
+    for table in EDITABLE_CHILD_TABLES:
+        if payload.get(table) is not None:
+            doc.set(table, [])
+            for row in payload[table] or []:
+                doc.append(table, row)
+
+    try:
+        doc.recompute()
+        completion = compute_completion_percent(doc)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Water Feature Design preview")
+        return {"error": True}
+
+    warnings, seen = [], set()
+    for r in doc.get("calc_results") or []:
+        for w in (r.warnings or "").split("\n"):
+            if w and w not in seen:
+                seen.add(w)
+                warnings.append(w)
+
+    def _f(v):
+        return float(v) if v not in (None, "") else 0.0
+
+    return {
+        "rollups": {
+            "total_basin_gallons": doc.total_basin_gallons,
+            "required_circulation_gpm": doc.required_circulation_gpm,
+            "design_flow_gpm": doc.design_flow_gpm,
+            "computed_tdh_ft": doc.computed_tdh_ft,
+            "selected_pump": doc.selected_pump,
+            "chlorinator_feed_gph": doc.chlorinator_feed_gph,
+            "drain_capacity_gpm": doc.drain_capacity_gpm,
+            "surge_basin_gallons": doc.surge_basin_gallons,
+        },
+        "static_lift_ft": _f(doc.static_lift_ft),
+        "completion_percent": completion,
+        "has_warnings": bool(doc.has_warnings),
+        "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
+        "warnings": warnings,
+        "basins": [{"volume_gal": b.volume_gal, "weight_lb": b.weight_lb} for b in doc.get("basins") or []],
+        "features": [{"flow_gpm": f.flow_gpm} for f in doc.get("features") or []],
+        "pipe_segments": [
+            {
+                "velocity_fps": s.velocity_fps,
+                "velocity_status": s.velocity_status,
+                "head_loss_ft": s.head_loss_ft,
+                "segment_label": s.segment_label,
+            }
+            for s in doc.get("pipe_segments") or []
+        ],
+    }
 
 
 # ----------------------------------------------------------- pump catalog
