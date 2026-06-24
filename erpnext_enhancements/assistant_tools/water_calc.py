@@ -45,6 +45,8 @@ _CALCS = (
     "vertical_pipe",
     "open_channel_flow",
     "lazy_river_hp",
+    "lighting_design",
+    "overflow_check",
     "program_rules",
     "jet_trajectory",
     "lsi_index",
@@ -107,7 +109,11 @@ class WaterCalc(BaseTool):
             "open_channel_flow {width_in, depth_in, slope, n} (runnel/rill GPM + "
             "Froude/Reynolds regime); lazy_river_hp {width_ft, depth_ft, length_ft, "
             "velocity_fps, n} (current-generation design HP); program_rules "
-            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar). "
+            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar); "
+            "lighting_design {surface_area_sf, pool_class:shallow_pond|residential|public|"
+            "diving_shallow|diving_deep|competition} (recommended underwater-light wattage from "
+            "watts/SF bands); overflow_check {surface_area_sf, pipe_size, rain_in_hr, "
+            "runoff_fraction} (peak rainfall overflow GPM + standpipe adequacy; 7.9 in/hr design). "
             "Aesthetics: jet_trajectory {supply_head_ft|supply_psi or target_height_ft, "
             "nozzle_type:smooth|aerated} (realistic spray height <-> required pressure + "
             "basin setback). Treatment/thermal: lsi_index {ph, temp_f, "

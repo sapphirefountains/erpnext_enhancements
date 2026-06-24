@@ -44,7 +44,15 @@ from .treatment import (
     make_up_water,
     uv_dose,
 )
-from .workbook import electric_cost, lazy_river_hp, open_channel_flow, program_rules, vertical_pipe
+from .workbook import (
+    electric_cost,
+    lazy_river_hp,
+    lighting_design,
+    open_channel_flow,
+    overflow_check,
+    program_rules,
+    vertical_pipe,
+)
 
 __all__ = [
     "CalcOption",
@@ -68,6 +76,7 @@ __all__ = [
     "heating_load",
     "jet_trajectory",
     "lazy_river_hp",
+    "lighting_design",
     "lighting_sizing",
     "lsi_index",
     "make_input",
@@ -77,6 +86,7 @@ __all__ = [
     "nozzle_flow",
     "npsh_available",
     "open_channel_flow",
+    "overflow_check",
     "ozone_sidestream",
     "pipe_pressure_check",
     "pipe_pressure_rating",

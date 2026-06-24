@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.111.0] - 2026-06-24
+
+### Added
+- **Two new design calcs from DOC-0049 D/G-Program.** `lighting_design` recommends total underwater-light wattage from the water-surface area and pool class, using the watts/SF design bands (shallow pond 0.25–0.75 → competition 2.0–3.0) — so the engine can *recommend* lighting load, not just roll up fixtures already chosen. `overflow_check` computes the peak rainfall overflow a basin must shed (`SA × in/hr/12 × 7.48 / 60`, 7.9 in/hr design) and checks an overflow standpipe (3"/4"/6") against it, recommending the smallest size that handles the peak. Both on the desk endpoint + AI `water_calc`.
+
 ## [1.110.0] - 2026-06-24
 
 ### Added

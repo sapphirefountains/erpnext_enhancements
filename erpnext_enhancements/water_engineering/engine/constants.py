@@ -156,6 +156,24 @@ SF_PER_SKIMMER = 400.0
 PERIMETER_OVERFLOW_SF_THRESHOLD = 5000.0
 SOLAR_PANEL_FRACTION = 0.8
 
+# Underwater-lighting design intensity (watts per SF of water surface) by pool
+# class -- (low, high) band (DOC-0049 D - Program B34:I39).
+LIGHTING_WATTS_PER_SF = {
+    "shallow_pond": (0.25, 0.75),
+    "residential": (0.5, 1.0),
+    "public": (1.0, 1.5),
+    "diving_shallow": (1.5, 2.0),  # diving < 12 ft
+    "diving_deep": (2.0, 3.0),  # diving > 12 ft
+    "competition": (2.0, 3.0),
+}
+
+# --- precipitation / overflow sizing (DOC-0049 D - Program / G - Gravity) ----
+# Design rainfall intensity; peak GPM = area_sf * (in/hr / 12) * 7.48 / 60.
+RAIN_DESIGN_IN_HR = 7.9
+GAL_PER_CUBIC_FOOT_DRAIN = 7.48
+# Overflow standpipe capacity (GPM) by nominal size (D - Program overflow table).
+OVERFLOW_PIPE_GPM = {'3"': 15.0, '4"': 29.0, '6"': 81.0}
+
 # --- jet trajectory / spray height (engineering standard; not in source docs) -
 # Realized jet height = k * supply head (k de-rates for drag + aeration).
 JET_EFFICIENCY = {"smooth": 0.90, "solid": 0.90, "spray": 0.75, "aerated": 0.60, "geyser": 0.60, "foam": 0.55}

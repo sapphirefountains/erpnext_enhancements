@@ -31,6 +31,7 @@ from erpnext_enhancements.water_engineering.engine import (
     heating_load,
     jet_trajectory,
     lazy_river_hp,
+    lighting_design,
     lsi_index,
     make_up_water,
     manning_drain_flow,
@@ -38,6 +39,7 @@ from erpnext_enhancements.water_engineering.engine import (
     nozzle_flow,
     npsh_available,
     open_channel_flow,
+    overflow_check,
     ozone_sidestream,
     pipe_pressure_check,
     pipe_pressure_rating,
@@ -364,6 +366,13 @@ def _run_calc(calc, inputs):
         )
     elif calc == "program_rules":
         r = program_rules(i.get("surface_area_sf", 0), i.get("pool_class", "pool"))
+    elif calc == "lighting_design":
+        r = lighting_design(i.get("surface_area_sf", 0), i.get("pool_class", "residential"))
+    elif calc == "overflow_check":
+        r = overflow_check(
+            i.get("surface_area_sf", 0), i.get("pipe_size"),
+            i.get("rain_in_hr", 7.9), i.get("runoff_fraction", 1.0),
+        )
     elif calc == "jet_trajectory":
         r = jet_trajectory(
             target_height_ft=i.get("target_height_ft", 0),

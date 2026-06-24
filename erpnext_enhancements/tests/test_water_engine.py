@@ -33,6 +33,7 @@ from erpnext_enhancements.water_engineering.engine import (
     heating_load,
     jet_trajectory,
     lazy_river_hp,
+    lighting_design,
     lighting_sizing,
     lsi_index,
     make_up_water,
@@ -41,6 +42,7 @@ from erpnext_enhancements.water_engineering.engine import (
     nozzle_flow,
     npsh_available,
     open_channel_flow,
+    overflow_check,
     ozone_sidestream,
     pipe_pressure_check,
     pipe_pressure_rating,
@@ -528,6 +530,23 @@ class WorkbookTests(unittest.TestCase):
         self.assertIn("1", r.steps[1])  # skimmers = 1
         # spa uses 9 SF/user -> more bathers than a pool of the same area
         self.assertGreater(program_rules(400, "spa").value, program_rules(400, "pool").value)
+
+    def test_lighting_design_bands(self):
+        # residential 0.5-1.0 W/SF over 400 SF -> 200-400 W, midpoint 300
+        self.assertAlmostEqual(lighting_design(400, "residential").value, 300, places=3)
+        # public band is denser than residential for the same area
+        self.assertGreater(lighting_design(400, "public").value, lighting_design(400, "residential").value)
+        self.assertTrue(lighting_design(0, "residential").warnings)
+
+    def test_overflow_check(self):
+        # 100 SF at 7.9 in/hr full: 100*(7.9/12)*7.48/60 = 8.21 GPM; a 3" overflow (15) handles it
+        r = overflow_check(100, '3"')
+        self.assertAlmostEqual(r.value, 8.21, delta=0.05)
+        self.assertEqual(r.status, "Okay")
+        # a large surface overruns a 3" overflow -> Undersized + warning
+        big = overflow_check(1000, '3"')
+        self.assertEqual(big.status, "Undersized")
+        self.assertTrue(big.warnings)
 
 
 class JetTests(unittest.TestCase):

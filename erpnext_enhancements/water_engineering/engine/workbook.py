@@ -29,12 +29,16 @@ from .constants import (
     DEFAULT_MOTOR_EFF,
     DEFAULT_PUMP_EFF,
     DEFAULT_PUMP_HOURS_DAY,
+    GAL_PER_CUBIC_FOOT_DRAIN,
     GRAVITY_FT_S2,
     HP_TO_KW,
     KINEMATIC_VISCOSITY_FT2_S,
     LAZY_RIVER_SAFETY_FACTOR,
+    LIGHTING_WATTS_PER_SF,
     MANNING_CONSTANT,
+    OVERFLOW_PIPE_GPM,
     PERIMETER_OVERFLOW_SF_THRESHOLD,
+    RAIN_DESIGN_IN_HR,
     SF_PER_POOL_USER,
     SF_PER_SKIMMER,
     SF_PER_SPA_USER,
@@ -44,6 +48,93 @@ from .constants import (
     WHP_DIVISOR,
 )
 from .envelope import CalcResult, make_input
+
+
+def lighting_design(surface_area_sf: float, pool_class: str = "residential") -> CalcResult:
+    """Recommend total underwater-lighting wattage from the water-surface area and
+    pool class, using the DOC-0049 D-Program watts/SF design bands. Returns the
+    band midpoint as the headline; the low/high ends bracket the design range."""
+    sa = float(surface_area_sf or 0)
+    cls = (pool_class or "residential").strip().lower().replace(" ", "_")
+    band = LIGHTING_WATTS_PER_SF.get(cls)
+    if sa <= 0 or not band:
+        return CalcResult(
+            calc="lighting_design", unit="W",
+            inputs={"pool_class": make_input(pool_class, "", "user")},
+            citations=[CIT_PROGRAM],
+            warnings=[
+                f"Give a surface area > 0 and a pool class in {list(LIGHTING_WATTS_PER_SF)}."
+            ],
+        )
+    lo, hi = band
+    w_lo, w_hi, w_mid = sa * lo, sa * hi, sa * (lo + hi) / 2
+    return CalcResult(
+        calc="lighting_design", value=round(w_mid, 0), unit="W",
+        inputs={
+            "surface_area_sf": make_input(sa, "SF", "user"),
+            "pool_class": make_input(cls, "", "user"),
+            "watts_per_sf": make_input(f"{lo}-{hi}", "W/SF", "lookup", "D - Program B34:I39"),
+        },
+        formula="watts = surface_area_sf * watts_per_sf (band by pool class)",
+        steps=[
+            f"{cls}: {lo}-{hi} W/SF",
+            f"range = {sa:g} * {lo}-{hi} = {w_lo:.0f}-{w_hi:.0f} W (midpoint {w_mid:.0f} W)",
+        ],
+        citations=[CIT_PROGRAM],
+    )
+
+
+def overflow_check(
+    surface_area_sf: float,
+    pipe_size: str | None = None,
+    rain_in_hr: float = RAIN_DESIGN_IN_HR,
+    runoff_fraction: float = 1.0,
+) -> CalcResult:
+    """Peak rainfall overflow (GPM) a basin must shed, and whether an overflow
+    standpipe handles it. ``runoff_fraction`` 1.0 = full design rainfall
+    (G - Gravity); 0.2 = the D - Program allowance. (DOC-0049 D/G.)"""
+    sa = float(surface_area_sf or 0)
+    rain = float(rain_in_hr or RAIN_DESIGN_IN_HR)
+    frac = float(runoff_fraction or 1.0)
+    if sa <= 0:
+        return CalcResult(
+            calc="overflow_check", unit="GPM", citations=[CIT_PROGRAM],
+            warnings=["Surface area must be > 0."],
+        )
+    peak_gpm = sa * (rain / 12.0) * GAL_PER_CUBIC_FOOT_DRAIN / 60.0 * frac
+    steps = [
+        f"peak = {sa:g} SF * ({rain:g}/12 ft/hr) * 7.48 gal/cf / 60"
+        + (f" * {frac:g}" if frac != 1.0 else "")
+        + f" = {peak_gpm:.2f} GPM",
+    ]
+    warnings: list[str] = []
+    status = None
+    if pipe_size:
+        cap = OVERFLOW_PIPE_GPM.get(pipe_size)
+        if cap is None:
+            warnings.append(f"No overflow capacity on file for {pipe_size}; known: {list(OVERFLOW_PIPE_GPM)}.")
+        else:
+            status = "Okay" if cap >= peak_gpm else "Undersized"
+            steps.append(f"{pipe_size} overflow capacity = {cap:g} GPM -> {status}")
+            if status != "Okay":
+                warnings.append(f"{pipe_size} overflow ({cap:g} GPM) < peak {peak_gpm:.1f} GPM — size up.")
+    rec = next((sz for sz, cap in OVERFLOW_PIPE_GPM.items() if cap >= peak_gpm), None)
+    if rec:
+        steps.append(f"smallest overflow that handles {peak_gpm:.1f} GPM = {rec}")
+    return CalcResult(
+        calc="overflow_check", value=round(peak_gpm, 2), unit="GPM",
+        inputs={
+            "surface_area_sf": make_input(sa, "SF", "user"),
+            "rain_in_hr": make_input(rain, "in/hr", "default", "DOC-0049 design 7.9"),
+            "runoff_fraction": make_input(frac, "", "user", "1.0 full / 0.2 D-Program"),
+            "pipe_size": make_input(pipe_size or "", "", "user"),
+        },
+        formula="peak_GPM = SA * (in_hr/12) * 7.48 / 60 * runoff_fraction",
+        steps=steps,
+        citations=[CIT_PROGRAM],
+        status=status,
+        warnings=warnings,
+    )
 
 
 def electric_cost(
