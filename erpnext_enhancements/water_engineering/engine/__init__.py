@@ -23,7 +23,14 @@ from .feature import (
     tiered_fountain_flow,
     weir_flow,
 )
-from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
+from .pipe import (
+    hazen_williams_loss,
+    pipe_pressure_check,
+    pipe_pressure_rating,
+    pipe_velocity,
+    size_pipe,
+    velocity_status,
+)
 from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
 from .safety import npsh_available, suction_outlet_vgb, water_hammer
@@ -71,6 +78,8 @@ __all__ = [
     "npsh_available",
     "open_channel_flow",
     "ozone_sidestream",
+    "pipe_pressure_check",
+    "pipe_pressure_rating",
     "pipe_velocity",
     "program_rules",
     "run_spine",

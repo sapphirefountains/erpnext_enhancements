@@ -26,6 +26,8 @@ _CALCS = (
     "nozzle_flow",
     "size_pipe",
     "hazen_williams_loss",
+    "pipe_pressure_rating",
+    "pipe_pressure_check",
     "total_dynamic_head",
     "select_pump",
     "chlorinator_feed",
@@ -70,6 +72,9 @@ class WaterCalc(BaseTool):
             "{nozzle_count, gpm_each}; size_pipe {flow_gpm, length_ft, material, "
             "line:discharge|suction} (returns every size with velocity/status in "
             "options); hazen_williams_loss {flow_gpm, length_ft, id_in}; "
+            "pipe_pressure_rating {material, nominal_size, temp_f} (max psi a pipe is rated "
+            "for; PVC derates 73->110F to half); pipe_pressure_check {material, nominal_size, "
+            "system_psi, temp_f} (is the pipe rated for the pressure? value = psi margin); "
             "total_dynamic_head {segments:[...], static_lift_ft}; select_pump "
             "{flow_gpm, tdh_ft, candidates:[...]}. Orifice nozzle_flow {nozzle_profile, "
             "supply_head_ft} computes Q=Cd*A*sqrt(2gh) from a Nozzle Profile's "
@@ -77,7 +82,9 @@ class WaterCalc(BaseTool):
             "with a rated GPM, or a weir. "
             "Water treatment: chlorinator_feed {volume_gal, chlorine_pct} (min "
             "liquid-chlorine feed gal/hr); chemistry_targets {water_type: outdoor|"
-            "indoor|saltwater} (free Cl / pH / CYA ranges); ozone_sidestream "
+            "indoor|saltwater, cya_ppm?, free_cl_ppm?} (free Cl / pH / CYA ranges; "
+            "pass cya_ppm/free_cl_ppm to check the DOC-0119 free-Cl floor = "
+            "max(2.0, 7.5% of CYA)); ozone_sidestream "
             "{volume_gal, turnover_min, sidestream_pct, contact_tank, tank_qty, "
             "log_reduction:2-log|3-log} (ozone g/hr + contact-tank check). "
             "Drainage: manning_drain_flow {nominal_size, slope_in_per_ft} (gravity-"

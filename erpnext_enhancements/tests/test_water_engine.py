@@ -42,6 +42,8 @@ from erpnext_enhancements.water_engineering.engine import (
     npsh_available,
     open_channel_flow,
     ozone_sidestream,
+    pipe_pressure_check,
+    pipe_pressure_rating,
     pipe_velocity,
     program_rules,
     run_spine,
@@ -157,6 +159,18 @@ class PipeTests(unittest.TestCase):
         self.assertEqual(velocity_status(5.79, "suction", 4.5, 6.5, 8.0), "Increase Size")
         self.assertEqual(velocity_status(8.5, "discharge", 4.5, 6.5, 8.0), "Exceeds Legal Limit")
 
+    def test_pipe_pressure_rating_and_check(self):
+        # 2" SCH40 PVC: 166 psi @73F, derates to 83 @110F (DOC-0049 1,2,3).
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"').value, 166, places=3)
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"', 110).value, 83, places=3)
+        # midpoint 91.5F -> halfway between 166 and 83 = 124.5
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"', 91.5).value, 124.5, places=1)
+        ok = pipe_pressure_check("SCH40 PVC", '2"', 100)
+        self.assertEqual(ok.status, "Okay")
+        bad = pipe_pressure_check("SCH40 PVC", '2"', 200)
+        self.assertEqual(bad.status, "Exceeds Pressure Rating")
+        self.assertTrue(bad.warnings)
+
     def test_hazen_williams_default_constant(self):
         # 10.44 * 150 * 120^1.85 / (130^1.85 * 3.068^4.8655) = 5.776797
         self.assertAlmostEqual(hazen_williams_loss(120, 150, 3.068).value, 5.776797, places=4)
@@ -196,12 +210,19 @@ class TdhTests(unittest.TestCase):
         self.assertTrue(r.warnings)
 
     def test_component_loss(self):
-        # (0.05 + 0.0766667) * 26.9812 = 3.4176
+        # Real DOC-0049 sheet-7 curves, interpolated at 26.9812 GPM:
+        #   grate  (10,0.5)->(50,2.5):  0.5 + (16.9812/40)*2.0 = 1.34906
+        #   CCP320 (20,0.5)->(30,0.8):  0.5 + (6.9812/10)*0.3  = 0.70944
         comps = [
             {"type": "SUCTION OUTLET COVER/GRATE", "qty": 1},
             {"type": "CARTRIDGE FILTER 320 SF CCP CLEAN", "qty": 1},
         ]
-        self.assertAlmostEqual(component_loss(26.9812, comps).value, 3.41763, places=3)
+        self.assertAlmostEqual(component_loss(26.9812, comps).value, 2.0585, places=3)
+
+    def test_component_loss_over_max_warns(self):
+        # A 320 SF cartridge is rated to 120 GPM; run it at 150 and it warns.
+        r = component_loss(150, [{"type": "CARTRIDGE FILTER 320 SF CCP CLEAN", "qty": 1}])
+        self.assertTrue(any("rated to 120" in w for w in r.warnings))
 
     def test_total_dynamic_head_single_segment(self):
         # static 10 + major(120,150,3.068)=5.7768, no minor/component -> 15.7768
@@ -292,6 +313,13 @@ class ChemistryTests(unittest.TestCase):
         salt = chemistry_targets("saltwater")
         self.assertTrue(any("60-80 ppm" in s for s in salt.steps))
         self.assertTrue(chemistry_targets("lava").warnings)
+
+    def test_chemistry_cya_chlorine_floor(self):
+        # DOC-0119: free Cl floor = max(2.0, 7.5% of CYA). At CYA 80 -> 6.0 ppm,
+        # above the outdoor target max (3.0) -> warn; and FC 2 ppm at CYA 80 warns.
+        r = chemistry_targets("outdoor", cya_ppm=80, free_cl_ppm=2.0)
+        self.assertTrue(any("floor" in s for s in r.steps))
+        self.assertTrue(any("6" in w and "floor" in w for w in r.warnings))
 
     def test_ozone_sidestream(self):
         # DOC-0049 C - Chemicals worked example: 40000 gal, 360 min, 25%, CNT120

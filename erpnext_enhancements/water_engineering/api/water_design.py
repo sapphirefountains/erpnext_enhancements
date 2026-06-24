@@ -39,6 +39,8 @@ from erpnext_enhancements.water_engineering.engine import (
     npsh_available,
     open_channel_flow,
     ozone_sidestream,
+    pipe_pressure_check,
+    pipe_pressure_rating,
     program_rules,
     run_spine,
     select_pump,
@@ -262,6 +264,13 @@ def _run_calc(calc, inputs):
         )
     elif calc == "hazen_williams_loss":
         r = hazen_williams_loss(i.get("flow_gpm", 0), i.get("length_ft", 0), i.get("id_in", 0), i.get("c") or 130)
+    elif calc == "pipe_pressure_rating":
+        r = pipe_pressure_rating(i.get("material", "SCH40 PVC"), i.get("nominal_size") or i.get("size"), i.get("temp_f", 73))
+    elif calc == "pipe_pressure_check":
+        r = pipe_pressure_check(
+            i.get("material", "SCH40 PVC"), i.get("nominal_size") or i.get("size"),
+            i.get("system_psi", 0), i.get("temp_f", 73),
+        )
     elif calc == "total_dynamic_head":
         r = total_dynamic_head(
             i.get("segments", []), static_lift_ft=i.get("static_lift_ft", 0), c=i.get("c") or 130
@@ -271,7 +280,7 @@ def _run_calc(calc, inputs):
     elif calc == "chlorinator_feed":
         r = chlorinator_feed(i.get("volume_gal", 0), i.get("chlorine_pct", 10))
     elif calc == "chemistry_targets":
-        r = chemistry_targets(i.get("water_type", "outdoor"))
+        r = chemistry_targets(i.get("water_type", "outdoor"), i.get("cya_ppm"), i.get("free_cl_ppm"))
     elif calc == "ozone_sidestream":
         r = ozone_sidestream(
             i.get("volume_gal", 0),

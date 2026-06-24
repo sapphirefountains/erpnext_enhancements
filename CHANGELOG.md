@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.110.0] - 2026-06-24
+
+### Added
+- **Pipe pressure ratings (DOC-0049 sheets 1–3).** Loaded the full per-size pressure/weight spec (OD, wall, dry/wet weight, max temp, PSI @73°F & @110°F) for SCH40/SCH80 PVC + Type K copper. Two new calcs — `pipe_pressure_rating` (max psi at a temperature; PVC derates linearly to half by 110°F) and `pipe_pressure_check` (psi margin vs the system pressure) — exposed on the desk endpoint and the AI `water_calc`. The spine sizes pipe by *velocity*; it now **also** checks pressure: once TDH is known it converts to psi (~TDH/2.31) and flags any discharge run whose pipe isn't rated for it (with a `pipe_pressure_check` audit card so it shows in "Show the math").
+- **DOC-0119 CYA-coupled chlorine floor.** `chemistry_targets` accepts optional `cya_ppm` / `free_cl_ppm` and computes the free-chlorine floor `max(2.0, 7.5% of CYA)`, warning when the standard target range or the planned level falls below it (under-sanitized water).
+
+### Changed
+- **Component head-loss now uses the real (nonlinear) manufacturer curves.** `component_loss` previously linearized each filter/skimmer/heater to a single ft/GPM coefficient; it now interpolates the actual DOC-0049 sheet-7 curves (`COMPONENT_CURVES`, 16 components) — a convex filter is no longer mis-stated across its range — and **warns when a component runs past its rated `max_gpm`**. The old coefficients remain as a fallback + the desk-picker hint. (This shifts computed TDH on designs with components — it's a correctness improvement.)
+
 ## [1.109.0] - 2026-06-24
 
 ### Added
