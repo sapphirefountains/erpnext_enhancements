@@ -96,34 +96,12 @@ class WaterFeatureDesign(Document):
 		self.chlorinator_feed_gph = feed.value or 0
 		self.chemistry_targets_summary = "; ".join(targets.steps)
 		for r in (feed, targets):
-			self.append(
-				"calc_results",
-				{
-					"calc": r.calc,
-					"value": _fmt(r.value),
-					"unit": r.unit,
-					"formula": r.formula,
-					"steps": "\n".join(r.steps),
-					"citations": ", ".join(r.citations),
-					"warnings": "\n".join(r.warnings),
-				},
-			)
+			self.append("calc_results", _calc_row(r))
 
 	def _write_audit_trail(self, results):
 		self.set("calc_results", [])
 		for r in results:
-			self.append(
-				"calc_results",
-				{
-					"calc": r.get("calc"),
-					"value": _fmt(r.get("value")),
-					"unit": r.get("unit"),
-					"formula": r.get("formula"),
-					"steps": "\n".join(r.get("steps") or []),
-					"citations": ", ".join(r.get("citations") or []),
-					"warnings": "\n".join(r.get("warnings") or []),
-				},
-			)
+			self.append("calc_results", _calc_row(r))
 
 	def _compute_drainage(self):
 		"""Phase-3 gravity drain capacity + surge-basin volume (both optional)."""
@@ -141,18 +119,7 @@ class WaterFeatureDesign(Document):
 		else:
 			self.surge_basin_gallons = 0
 		for r in envelopes:
-			self.append(
-				"calc_results",
-				{
-					"calc": r.calc,
-					"value": _fmt(r.value),
-					"unit": r.unit,
-					"formula": r.formula,
-					"steps": "\n".join(r.steps),
-					"citations": ", ".join(r.citations),
-					"warnings": "\n".join(r.warnings),
-				},
-			)
+			self.append("calc_results", _calc_row(r))
 
 	def _fill_basin_rows(self):
 		for row in self.get("basins") or []:
@@ -237,6 +204,42 @@ def _fmt(value):
 	if isinstance(value, float):
 		return f"{value:.4f}".rstrip("0").rstrip(".")
 	return str(value)
+
+
+def _calc_row(r):
+	"""One CalcResult (object or already-serialized dict) -> a Water Feature Calc
+	Result child row. Captures the headline value plus the FULL math — formula,
+	ordered steps, inputs with provenance, citations, warnings, and the status
+	band — so the two Print Formats (results summary + calculation audit) can
+	render the design's end values and the exact working behind them."""
+	d = r.to_dict() if hasattr(r, "to_dict") else r
+	inputs = d.get("inputs") or {}
+	# Tab-delimited "name\tvalue\tunit\tsource (ref)" per input — the Calculation
+	# Audit print format splits this to a table (the print Jinja sandbox can't
+	# parse the JSON), while inputs_json keeps the exact structured data.
+	inputs_text = "\n".join(
+		"\t".join(
+			[
+				str(name),
+				_fmt(meta.get("value")),
+				str(meta.get("unit") or ""),
+				str(meta.get("source") or "") + (f" — {meta.get('ref')}" if meta.get("ref") else ""),
+			]
+		)
+		for name, meta in inputs.items()
+	)
+	return {
+		"calc": d.get("calc"),
+		"value": _fmt(d.get("value")),
+		"unit": d.get("unit"),
+		"status": d.get("status") or "",
+		"formula": d.get("formula"),
+		"steps": "\n".join(d.get("steps") or []),
+		"inputs_text": inputs_text,
+		"inputs_json": json.dumps(inputs),
+		"citations": ", ".join(d.get("citations") or []),
+		"warnings": "\n".join(d.get("warnings") or []),
+	}
 
 
 def _feature_dict(f):

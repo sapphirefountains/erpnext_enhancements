@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.99.0] - 2026-06-23
+
+### Added
+- **Water Feature Design — two Print Formats** (simple results + a robust formula audit) so a design's output can be reviewed and hand-checked against the source workbooks. Both render server-side (Jinja) from the persisted rollups + `calc_results` audit trail; created idempotently on `after_migrate` (Frappe-Cloud-safe, no shell needed).
+  - **`Water Feature Design - Results`** — the simple, final end-results: a Key Results table (basin gallons, required circulation, design flow, TDH, selected pump, chlorinator feed, drain capacity, surge basin — only the values that are set) plus a compact final value/unit/status table for every calculation.
+  - **`Water Feature Design - Calculation Audit`** — the robust view: for each calculation, the exact **formula**, the **inputs with provenance** (value, unit, and where each number came from — user / lookup / prior calc / default / standard, plus the source cell), the step-by-step **working**, the source **citation**, and any **warnings** — laid out to hand-compare against the spreadsheet.
+  - To feed the audit view, the `Water Feature Calc Result` child table now also persists `status` and `inputs_json` (the full input set with provenance); the three audit writers in the controller were refactored to one `_calc_row()` helper that captures the complete envelope. Open a design → **Print** → pick either format (or download PDF).
+
 ## [1.94.0] - 2026-06-23
 
 ### Added
