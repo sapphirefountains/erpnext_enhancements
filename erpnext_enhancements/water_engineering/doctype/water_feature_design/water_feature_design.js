@@ -6,36 +6,105 @@
 //     is recomputed in memory server-side (no save) and the rollups, per-row
 //     velocity/flow/head-loss, completion, warnings, and a schematic dashboard
 //     all update — so modeling is responsive instead of save-and-wait.
-//   - Quick-start templates pre-fill a common fountain type.
+//   - Quick-start templates pre-fill a common fountain type — one per water
+//     feature type we build (weir family, jet/array family, and tiered cascade).
 // The authoritative recompute still runs on save (validate); this preview calls
 // the SAME engine path, so what you see live equals what gets saved.
+//
+// Each template's `feature_type` matches the Water Feature Nozzle select exactly,
+// so the engine routes it to the right flow calc (see feature_flow_category).
+// Segment `flow_gpm` is left blank on purpose: a blank segment carries the full
+// design flow (see the controller's _fill_segment_rows), so the piping sizes to
+// the computed circulation without hand-entering it.
 
 const WFD_TEMPLATES = {
-	"Rectangular weir basin": {
+	// --- Weir family (water spilling over a crest; Francis formula) -----------
+	"Weir basin": {
 		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 4 },
-		basins: [{ shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
-		features: [{ feature_type: "Weir", weir_length_ft: 6, head_in: 0.25, end_contractions: 2 }],
+		basins: [{ basin_label: "Catch basin", shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
+		features: [{ feature_label: "Weir", feature_type: "Weir", weir_length_ft: 6, head_in: 0.25, end_contractions: 2 }],
 		pipe_segments: [
 			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
 		],
 	},
-	"Spray-jet pool": {
-		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
-		basins: [{ shape: "Cylindrical", diameter_in: 120, height_in: 24 }],
-		features: [{ feature_type: "Nozzle Array", nozzle_count: 6, gpm_each: 8 }],
+	"Spilling weir (scupper)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 5 },
+		basins: [{ basin_label: "Catch basin", shape: "Rectangular", length_in: 144, width_in: 48, height_in: 18 }],
+		features: [{ feature_label: "Scupper", feature_type: "Spilling Weir", weir_length_ft: 8, head_in: 0.5, end_contractions: 0 }],
 		pipe_segments: [
-			{ segment_label: "Pump discharge", flow_gpm: 48, nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 45, line_type: "Discharge" },
 		],
 	},
 	"Vanishing edge (weir wall)": {
 		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
-		basins: [{ shape: "Rectangular", length_in: 240, width_in: 18, height_in: 12 }],
-		features: [{ feature_type: "Weir", weir_length_ft: 20, head_in: 0.25, end_contractions: 0 }],
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 240, width_in: 18, height_in: 12 }],
+		features: [{ feature_label: "Vanishing edge", feature_type: "Weir", weir_length_ft: 20, head_in: 0.25, end_contractions: 0 }],
 		pipe_segments: [
 			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 60, line_type: "Discharge" },
 		],
 	},
+	"Waterwall (sheet)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 12 },
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 120, width_in: 24, height_in: 14 }],
+		features: [{ feature_label: "Water wall", feature_type: "Waterwall", weir_length_ft: 8, head_in: 0.25, end_contractions: 0 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	// --- Jet / array family (discrete streams) -------------------------------
+	"Nozzle-array pool": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
+		basins: [{ basin_label: "Pool", shape: "Cylindrical", diameter_in: 120, height_in: 24 }],
+		features: [{ feature_label: "Jet ring", feature_type: "Nozzle Array", nozzle_count: 6, gpm_each: 8 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	"Orifice nozzle jet": {
+		// Orifice flow needs a Nozzle Profile (Cd / orifice size) from the catalog —
+		// pick one on the feature row; the supply head is pre-filled (~10 psi).
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 10 },
+		basins: [{ basin_label: "Pool", shape: "Cylindrical", diameter_in: 96, height_in: 24 }],
+		features: [{ feature_label: "Center jet — pick a Nozzle Profile", feature_type: "Orifice Nozzle", supply_head_ft: 23 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 35, line_type: "Discharge" },
+		],
+	},
+	"Splash pad": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
+		basins: [{ basin_label: "Collection tank", shape: "Rectangular", length_in: 120, width_in: 120, height_in: 12 }],
+		features: [{ feature_label: "Ground jets", feature_type: "Splash Pad", nozzle_count: 12, gpm_each: 5 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
+		],
+	},
+	"Rain curtain": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 11 },
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 144, width_in: 18, height_in: 14 }],
+		features: [{ feature_label: "Rain bar", feature_type: "Rain Curtain", nozzle_count: 48, gpm_each: 0.5 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 45, line_type: "Discharge" },
+		],
+	},
+	// --- Tiered cascade (sized from the Tiers table, not a feature row) -------
+	"Tiered fountain (cascade)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 7 },
+		basins: [{ basin_label: "Base pool", shape: "Cylindrical", diameter_in: 96, height_in: 18 }],
+		features: [{ feature_label: "Cascade", feature_type: "Tiered Fountain" }],
+		tiers: [
+			{ tier_label: "Top bowl", diameter_in: 24, rim_height_in: 48, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Middle bowl", diameter_in: 40, rim_height_in: 30, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Bottom bowl", diameter_in: 60, rim_height_in: 14, spill_gpm_per_ft: 0.5 },
+		],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 30, line_type: "Discharge" },
+		],
+	},
 };
+
+// Model tables a template may define / replace (tiers included so the Tiered
+// Fountain template lands its cascade rows).
+const WFD_TEMPLATE_TABLES = ["basins", "features", "pipe_segments", "tiers"];
 
 const WFD_PREVIEW_FIELDS = [
 	"turnover_per_hr", "hazen_williams_c", "pipe_material", "static_lift_ft",
@@ -297,10 +366,10 @@ function render_dashboard(frm, p) {
 function apply_template(frm, name) {
 	const tpl = WFD_TEMPLATES[name];
 	if (!tpl) return;
-	const has_rows = (frm.doc.basins || []).length || (frm.doc.features || []).length || (frm.doc.pipe_segments || []).length;
+	const has_rows = WFD_TEMPLATE_TABLES.some((t) => (frm.doc[t] || []).length);
 	const fill = () => {
 		(tpl.fields ? Object.keys(tpl.fields) : []).forEach((k) => frm.set_value(k, tpl.fields[k]));
-		["basins", "features", "pipe_segments"].forEach((t) => {
+		WFD_TEMPLATE_TABLES.forEach((t) => {
 			frm.clear_table(t);
 			(tpl[t] || []).forEach((row) => frm.add_child(t, Object.assign({}, row)));
 			frm.refresh_field(t);
@@ -310,7 +379,7 @@ function apply_template(frm, name) {
 		frappe.show_alert({ message: __("Loaded template: {0}", [name]), indicator: "green" });
 	};
 	if (has_rows) {
-		frappe.confirm(__("Replace the current basin, feature, and piping rows with the {0} template?", [name]), fill);
+		frappe.confirm(__("Replace the current basin, feature, piping, and tier rows with the {0} template?", [name]), fill);
 	} else {
 		fill();
 	}

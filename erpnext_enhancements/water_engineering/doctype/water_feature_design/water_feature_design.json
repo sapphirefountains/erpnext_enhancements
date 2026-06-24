@@ -65,7 +65,8 @@
    "fieldtype": "Link",
    "label": "Project",
    "options": "Project",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "description": "Optional — leave blank for a standalone design / quote."
   },
   {
    "fieldname": "customer",
@@ -73,7 +74,7 @@
    "label": "Customer",
    "options": "Customer",
    "fetch_from": "project.customer",
-   "read_only": 1
+   "fetch_if_empty": 1
   },
   {
    "fieldname": "serial_no",

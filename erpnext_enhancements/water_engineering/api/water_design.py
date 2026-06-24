@@ -61,6 +61,7 @@ CONTROL_DOCTYPE = "Control Panel Design"
 EDITABLE_DESIGN_FIELDS = frozenset(
     {
         "project",
+        "customer",
         "serial_no",
         "design_title",
         "status",

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.106.0] - 2026-06-24
+
+### Changed
+- **Water Feature Design — Project is optional; Customer can stand alone.** A design no longer needs a Project — the Project link is documented as optional (leave it blank for a standalone design or quote). The **Customer** field is now directly editable: it still auto-fills from the Project's customer when a Project is set (`fetch_if_empty`, so a hand-entered customer is never overwritten), but you can pick a customer on a project-less design. The wizard / FAC MCP save path accepts `customer` too. *(Project was never marked required in the doctype; if a form shows it as mandatory, that's a saved Customize Form override on the instance, not the app.)*
+
+### Added
+- **Water Feature Design — a quick-start template for every water feature type.** The **New from Template** menu now covers all the feature types we build, one per type, instead of three samples: **Weir basin**, **Spilling weir (scupper)**, **Vanishing edge (weir wall)**, **Waterwall (sheet)**, **Nozzle-array pool**, **Orifice nozzle jet**, **Splash pad**, **Rain curtain**, and **Tiered fountain (cascade)**. Each template's `feature_type` matches the engine's flow-calc routing, pre-fills a representative basin + feature + discharge run, and the **Tiered fountain** template lands a 3-tier cascade in the Tiers table. Applying a template now also clears/fills the **Tiers** table (previously it only touched basins, features, and piping, so a tiered template couldn't load its tiers). The Orifice nozzle template leaves the Nozzle Profile to pick (orifice flow is sourced from the manufacturer cut sheet) and pre-fills the supply head.
+
 ## [1.105.0] - 2026-06-24
 
 ### Added
