@@ -104,6 +104,27 @@ def nozzle_profile_params(profile_name):
     }
 
 
+def pump_curves(item_codes):
+    """{item_code: [{flow_gpm, head_ft}, ...]} performance-curve points for the
+    given pump Items. Empty if the Pump Curve Point table isn't migrated yet."""
+    codes = [c for c in (item_codes or []) if c]
+    if not codes:
+        return {}
+    try:
+        rows = frappe.get_all(
+            "Pump Curve Point",
+            filters={"parent": ["in", codes], "parenttype": "Item", "parentfield": "custom_pump_curve"},
+            fields=["parent", "flow_gpm", "head_ft"],
+            order_by="parent asc, idx asc",
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        out.setdefault(r["parent"], []).append({"flow_gpm": r["flow_gpm"], "head_ft": r["head_ft"]})
+    return out
+
+
 # ----------------------------------------------------------- stateless calc
 
 
@@ -407,6 +428,10 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
         }
         for it in items
     ]
+    curves = pump_curves([c["item_code"] for c in candidates])
+    for c in candidates:
+        if curves.get(c["item_code"]):
+            c["curve"] = curves[c["item_code"]]
     return select_pump(float(gpm or 0), float(tdh_ft or 0), candidates).to_dict()
 
 

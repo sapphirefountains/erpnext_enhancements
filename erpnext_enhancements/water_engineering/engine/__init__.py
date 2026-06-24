@@ -17,7 +17,7 @@ from .envelope import CalcOption, CalcResult, make_input
 from .feature import nozzle_array_flow, nozzle_flow, weir_flow
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
 from .pipeline import run_spine
-from .pump import electrical_load, select_pump
+from .pump import electrical_load, head_at_flow, select_pump
 from .tdh import component_loss, fitting_minor_loss, total_dynamic_head
 
 __all__ = [
@@ -32,6 +32,7 @@ __all__ = [
     "electrical_load",
     "fitting_minor_loss",
     "hazen_williams_loss",
+    "head_at_flow",
     "lighting_sizing",
     "make_input",
     "manning_drain_flow",

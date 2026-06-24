@@ -78,7 +78,12 @@ doctype_js = {
 	# (see app_include_js + COMMENT_APP_DOCTYPES). Doctypes that only needed the
 	# comments tab no longer require a doctype_js entry; the entries below keep
 	# only their non-comments form scripts.
-	"Item": ["public/js/vue.global.js", "public/js/comments.js", "public/js/item.js"],
+	"Item": [
+		"public/js/vue.global.js",
+		"public/js/comments.js",
+		"public/js/item.js",
+		"public/js/water_engineering/pump_curve_chart.js",
+	],
 	"Process Document": ["public/js/process_document.js"],
 	"Employee": [
 		"public/js/vue.global.js",
