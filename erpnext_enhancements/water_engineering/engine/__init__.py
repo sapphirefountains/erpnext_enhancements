@@ -14,12 +14,21 @@ from .chemistry import chemistry_targets, chlorinator_feed, ozone_sidestream
 from .controls import calc_lighting, calc_solenoid_relays, lighting_sizing
 from .drainage import manning_drain_flow, size_drain, surge_basin_volume
 from .envelope import CalcOption, CalcResult, make_input
-from .feature import nozzle_array_flow, nozzle_flow, weir_flow
+from .feature import jet_trajectory, nozzle_array_flow, nozzle_flow, weir_flow
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
 from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
 from .safety import npsh_available, suction_outlet_vgb, water_hammer
 from .tdh import component_loss, fitting_minor_loss, total_dynamic_head
+from .treatment import (
+    chemical_dose,
+    evaporation_rate,
+    filtration_area,
+    heating_load,
+    lsi_index,
+    make_up_water,
+    uv_dose,
+)
 from .workbook import electric_cost, lazy_river_hp, open_channel_flow, program_rules, vertical_pipe
 
 __all__ = [
@@ -28,17 +37,24 @@ __all__ = [
     "basin_volume",
     "calc_lighting",
     "calc_solenoid_relays",
+    "chemical_dose",
     "chemistry_targets",
     "chlorinator_feed",
     "component_loss",
     "electric_cost",
     "electrical_load",
+    "evaporation_rate",
+    "filtration_area",
     "fitting_minor_loss",
     "hazen_williams_loss",
     "head_at_flow",
+    "heating_load",
+    "jet_trajectory",
     "lazy_river_hp",
     "lighting_sizing",
+    "lsi_index",
     "make_input",
+    "make_up_water",
     "manning_drain_flow",
     "nozzle_array_flow",
     "nozzle_flow",
@@ -55,6 +71,7 @@ __all__ = [
     "surge_basin_volume",
     "total_dynamic_head",
     "turnover_gpm",
+    "uv_dose",
     "velocity_status",
     "vertical_pipe",
     "water_hammer",

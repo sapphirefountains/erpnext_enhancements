@@ -20,11 +20,18 @@ from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
     calc_lighting,
     calc_solenoid_relays,
+    chemical_dose,
     chemistry_targets,
     chlorinator_feed,
     electric_cost,
+    evaporation_rate,
+    filtration_area,
     hazen_williams_loss,
+    heating_load,
+    jet_trajectory,
     lazy_river_hp,
+    lsi_index,
+    make_up_water,
     manning_drain_flow,
     nozzle_array_flow,
     nozzle_flow,
@@ -40,6 +47,7 @@ from erpnext_enhancements.water_engineering.engine import (
     surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
+    uv_dose,
     vertical_pipe,
     water_hammer,
     weir_flow,
@@ -278,6 +286,52 @@ def _run_calc(calc, inputs):
         )
     elif calc == "program_rules":
         r = program_rules(i.get("surface_area_sf", 0), i.get("pool_class", "pool"))
+    elif calc == "jet_trajectory":
+        r = jet_trajectory(
+            target_height_ft=i.get("target_height_ft", 0),
+            supply_head_ft=i.get("supply_head_ft", 0),
+            supply_psi=i.get("supply_psi", 0),
+            nozzle_type=i.get("nozzle_type", "smooth"),
+        )
+    elif calc == "lsi_index":
+        r = lsi_index(
+            i.get("ph", 0),
+            i.get("temp_f", 0),
+            i.get("calcium_hardness_ppm", 0),
+            i.get("total_alkalinity_ppm", 0),
+            i.get("tds_ppm", 1000),
+        )
+    elif calc == "evaporation_rate":
+        r = evaporation_rate(
+            i.get("surface_area_sf", 0),
+            i.get("water_temp_f", 0),
+            i.get("air_temp_f", 0),
+            i.get("rh_pct", 0),
+            i.get("activity", "residential"),
+        )
+    elif calc == "make_up_water":
+        r = make_up_water(
+            i.get("evaporation_gpd", 0),
+            i.get("splash_gpd", 0),
+            i.get("backwash_gpd", 0),
+            i.get("fill_window_min", 20),
+        )
+    elif calc == "heating_load":
+        r = heating_load(
+            i.get("volume_gal", 0),
+            i.get("delta_f", 0),
+            cover=i.get("cover", "none"),
+            wind=i.get("wind", True),
+            gas_rate=i.get("gas_rate", 1.40),
+            heater_eff=i.get("heater_eff", 0.92),
+            warmup_hours=i.get("warmup_hours", 24),
+        )
+    elif calc == "chemical_dose":
+        r = chemical_dose(i.get("volume_gal", 0), i.get("chemical", ""), i.get("current", 0), i.get("target", 0))
+    elif calc == "uv_dose":
+        r = uv_dose(i.get("flow_gpm", 0), i.get("target_red_mj", 60))
+    elif calc == "filtration_area":
+        r = filtration_area(i.get("design_gpm", 0), i.get("media", "sand"), i.get("rate_gpm_sf", 0))
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()

@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Schematic dashboard** — the summary panel is now a live hydraulic schematic (`Basin → Features → Pump → Piping`) with the key numbers, a static-vs-friction **TDH breakdown bar**, a per-segment list with color-coded velocity **status badges** (green Okay / amber Increase Size / red Exceeds Legal), a completion bar, and a warnings list. Pipe-segment grid rows also get their `velocity_status` cell color-coded live. Theme-aware (Frappe CSS vars + `indicator-pill` classes — works in Light and Timeless Night).
   - **Tabbed layout** — the long single-column form is split into `Model` (live summary + inputs + basin/features/piping/pumps), `Treatment & Drainage`, and `Results & Audit` tabs to cut scrolling and group the modeling stages.
   - **Quick-start templates** — a `New from Template` button pre-fills a common fountain type (Rectangular weir basin / Spray-jet pool / Vanishing edge) so a design starts in seconds; replacing existing rows asks for confirmation.
+## [1.98.0] - 2026-06-23
+
+### Added
+- **Water Engineering — treatment, thermal & jet calc pack** (`engine/treatment.py` + `jet_trajectory` in `engine/feature.py`, exposed via `run_calc` + the `fac_water_calc` MCP tool). Eight more calculations that complete the calc-expansion roadmap:
+  - **`jet_trajectory`** — the most client-facing spec. A free jet rises to `k · supply_head` (k de-rates for drag/aeration: ~0.9 solid, ~0.6 aerated). Give a supply head/pressure to get the realistic plume height, or a target height to back-solve the required nozzle pressure (which then drives the existing TDH + pump chain) — with a basin-edge ≥ jet-height setback. *(30 ft head → 27 ft plume; 20 ft target → 9.62 psi.)*
+  - **`lsi_index`** — Langelier Saturation Index `LSI = pH + TF + CF + AF − TDS_const` (interpolated factor tables) → Balanced / Corrosive / Scaling; ties the existing chemistry ranges into one balance number. *(pH 7.5, 80 °F, CH 300, TA 100 → +0.15 Balanced.)*
+  - **`evaporation_rate`** — ASHRAE pool evaporation `ER = 0.1·A·AF·(Pw−Pa)` → daily make-up + latent heat, replacing the flat 0.25 in/day assumption.
+  - **`make_up_water`** — daily make-up demand (evaporation + splash + backwash) and the smallest D-sheet auto-fill valve that refills it in the fill window. *(124.7 gal/day → 3/4″ valve.)*
+  - **`heating_load`** — DOC-0049 O-sheet heat-loss model: `multiplier = water_wt · cover · depth · wind`, BTU/day, monthly gas cost, and a warm-up heater BTU/hr. *(5,984 gal, ΔT 11 °F, solid cover → $78.83/mo — matches the O-sheet.)*
+  - **`chemical_dose`** — acid / bicarbonate / CYA / salt dose to hit a target (scales with volume and the gap). Flagged as a buffering-dependent estimate — retest before re-dosing.
+  - **`uv_dose`** — UV design dose / RED at the recirculation flow (60 mJ/cm² dechloramine, 40 for 4-log), the modern complement to the existing ozone path.
+  - **`filtration_area`** — required filter media area = design GPM ÷ max rate (sand capped at 3 GPM/SF per Utah R392-302-1; cartridge/DE per NSF) + backwash flow.
+  - Golden-value tests in `test_water_engine.py` (heating reproduces the O-sheet; LSI/jet/make-up/dose/filtration to their references). Bench-free suite green (92); ruff clean. The treatment/thermal formulas not in the workbooks (LSI, ASHRAE evaporation, UV, dosing) are flagged as engineering-standard in their citations.
+- **Calc-expansion roadmap complete** — together with v1.96.0 (safety) and v1.97.0 (workbook sheets), the engine now covers all the additional calculations identified in the gap research (safety, energy/thermal, channels, treatment, aesthetics) on top of the original hydraulic spine.
 
 ## [1.97.0] - 2026-06-23
 

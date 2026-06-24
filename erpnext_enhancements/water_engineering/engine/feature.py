@@ -23,10 +23,15 @@ import math
 from .constants import (
     CIT_WEIR,
     DEFAULT_WEIR_CONTRACTIONS,
+    FT_PER_PSI,
+    JET_EFFICIENCY,
+    JET_EFFICIENCY_DEFAULT,
     WEIR_FRANCIS_COEFF,
     WEIR_FRANCIS_CONTRACTION_COEFF,
 )
 from .envelope import CalcResult, make_input
+
+CIT_JET = "Bernoulli free-jet height (engineering standard; not in source docs)"
 
 CIT_ORIFICE = "Orifice equation Q=Cd*A*sqrt(2gh) (textbook); coefficients from Nozzle Profile catalog"
 
@@ -163,4 +168,69 @@ def nozzle_flow(
             "Nozzle Profile, enter the supply head, or use a weir / nozzle_array_flow "
             "with a rated GPM.",
         ],
+    )
+
+
+def jet_trajectory(
+    target_height_ft: float = 0.0,
+    supply_head_ft: float = 0.0,
+    supply_psi: float = 0.0,
+    nozzle_type: str = "smooth",
+) -> CalcResult:
+    """Jet spray height <-> required pressure, with a basin-setback recommendation.
+
+    A free jet rises to ``k * supply_head`` (k de-rates for drag/aeration: ~0.9
+    solid, ~0.6 aerated). Give a supply head/pressure to get the realistic plume
+    height, or a ``target_height_ft`` to back-solve the supply pressure that
+    drives the existing TDH + pump chain. Basin edge should be >= the jet height."""
+    k = JET_EFFICIENCY.get((nozzle_type or "smooth").strip().lower(), JET_EFFICIENCY_DEFAULT)
+    head = float(supply_head_ft) or (float(supply_psi) * FT_PER_PSI if supply_psi else 0.0)
+
+    if head > 0:  # forward: achievable height from supply pressure
+        jet_h = k * head
+        return CalcResult(
+            calc="jet_trajectory",
+            value=round(jet_h, 2),
+            unit="ft (jet height)",
+            inputs={
+                "supply_head_ft": make_input(head, "ft", "user", "head at the nozzle"),
+                "nozzle_type": make_input(nozzle_type, "", "user"),
+                "k": make_input(k, "", "standard", "jet efficiency"),
+            },
+            formula="jet_height = k * supply_head  (V^2/2g = head)",
+            steps=[
+                f"k({nozzle_type}) = {k:g}",
+                f"jet height = {k:g} * {head:.2f} ft = {jet_h:.2f} ft",
+                f"basin edge should be >= {jet_h:.2f} ft from the jet (add splash margin for wind)",
+            ],
+            citations=[CIT_JET],
+            warnings=["Allow extra downwind basin margin (or anemometer trim) — wind blows spray well past the jet height."],
+        )
+    if target_height_ft and float(target_height_ft) > 0:  # inverse: pressure for a target plume
+        th = float(target_height_ft)
+        req_head = th / k
+        req_psi = req_head / FT_PER_PSI
+        return CalcResult(
+            calc="jet_trajectory",
+            value=round(req_psi, 2),
+            unit="psi (required at nozzle)",
+            inputs={
+                "target_height_ft": make_input(th, "ft", "user"),
+                "nozzle_type": make_input(nozzle_type, "", "user"),
+                "k": make_input(k, "", "standard", "jet efficiency"),
+            },
+            formula="required_head = target_height / k ; psi = head / 2.31",
+            steps=[
+                f"k({nozzle_type}) = {k:g}",
+                f"required head = {th:g} / {k:g} = {req_head:.2f} ft = {req_psi:.2f} psi at the nozzle",
+                f"basin edge should be >= {th:g} ft from the jet (add splash margin for wind)",
+            ],
+            citations=[CIT_JET],
+            warnings=["Feed this required head into the TDH + pump selection; allow downwind basin margin for wind."],
+        )
+    return CalcResult(
+        calc="jet_trajectory",
+        unit="ft",
+        citations=[CIT_JET],
+        warnings=["Give a supply head/pressure (for the achievable height) or a target_height_ft (for the required pressure)."],
     )
