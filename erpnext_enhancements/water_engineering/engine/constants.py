@@ -45,6 +45,24 @@ WEIR_FRANCIS_COEFF = 36.0
 WEIR_FRANCIS_CONTRACTION_COEFF = 0.3
 DEFAULT_WEIR_CONTRACTIONS = 2
 
+# --- weir edge-sheet operating guidance (DOC-0049 B - Surge Basin O29:P50) ---
+# Head over the crest -> flow per linear foot of edge, banded by the wind it
+# tolerates (this is the Francis formula at L=1 ft, n=2 -- the same math, with the
+# design-band labels the workbook attaches). DOC-0049 note O29: OPERATE edges near
+# 0.5 GPM/ft, but ENGINEER water-in-transit + plumbing for 4-6 GPM/ft. (0.5 GPM/ft
+# is also the tiered-fountain rim sheet rate -- previously mis-cited to DOC-0119.)
+WEIR_OPERATE_GPM_PER_FT = 0.5
+WEIR_ENGINEER_GPM_PER_FT = (4.0, 6.0)
+# (head_in_at_least, wind-condition label) -- highest band that the flow clears.
+WEIR_EDGE_BANDS = [
+    (0.0625, "minimum wet edge"),
+    (0.125, "light breeze"),
+    (0.1875, "medium breeze"),
+    (0.25, "strong breeze"),
+    (0.3125, "conservative (engineered) edge"),
+]
+CIT_WEIR_EDGE = "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
+
 # --- pressure <-> head ------------------------------------------------------
 # NOT present in either workbook. Pumps are specified in ft of TDH; psi is a
 # convenience output only. Standard fresh-water value flagged as such.

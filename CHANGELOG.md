@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.109.0] - 2026-06-24
+
+### Added
+- **Source-document data audit + roadmap.** Audited all 11 Sapphire design documents (DOC-0025/0028/0048/0049/0062/0092/0119/0121/0123/0126/0127) against what the engine actually uses; the prioritized gap analysis lives in `water_engineering/SOURCE_DATA_AUDIT.md`. First batch of findings implemented below.
+- **Weir / edge sheet-rate design guidance (DOC-0049 B — Surge Basin).** `weir_flow` and `tiered_fountain_flow` now report flow **per linear foot of edge**, classify it into the workbook's wind band (minimum wet edge → light/medium/strong breeze → conservative), and surface the design rule: *operate edges near 0.5 GPM/ft but engineer water-in-transit & plumbing for 4–6 GPM/ft*. An edge running below ~0.5 GPM/ft now warns that the sheet may break into rivulets. (`engine/feature.py:edge_sheet_guidance`.)
+
+### Fixed
+- **Corrected the 0.5 GPM/ft edge/tier sheet-rate citation.** It was attributed to DOC-0119, but the rate and its wind-tolerance bands actually come from **DOC-0049 sheet B (Surge Basin)** — fixed in `feature.py` and the Water Feature Tier field help.
+
+### Changed
+- **`Control Panel Design.product_family` is now a Select** (Splash Wizard Basic / PLUS / MAX) instead of free text, matching the DOC-0062 platform taxonomy.
+
 ## [1.108.0] - 2026-06-24
 
 ### Added

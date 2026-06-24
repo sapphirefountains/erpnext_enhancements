@@ -68,10 +68,11 @@
   },
   {
    "fieldname": "product_family",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "label": "Product Family",
+   "options": "\nSplash Wizard Basic\nSplash Wizard PLUS\nSplash Wizard MAX",
    "in_list_view": 1,
-   "description": "e.g. Splash Wizard Basic / PLUS / MAX"
+   "description": "Splash Wizard controls platform (DOC-0062 FCA001/002/003)."
   },
   {
    "fieldname": "nema_rating",

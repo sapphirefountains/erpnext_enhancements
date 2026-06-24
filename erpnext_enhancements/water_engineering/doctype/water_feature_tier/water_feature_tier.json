@@ -38,7 +38,7 @@
    "label": "Sheet Rate (GPM/ft)",
    "default": "0.5",
    "in_list_view": 1,
-   "description": "GPM per linear foot of rim to hold a continuous sheet (DOC-0119 ~0.5)."
+   "description": "GPM per linear foot of rim to hold a continuous sheet (DOC-0049 B ~0.5)."
   }
  ],
  "istable": 1,

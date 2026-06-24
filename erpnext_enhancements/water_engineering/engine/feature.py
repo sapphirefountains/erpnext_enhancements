@@ -22,14 +22,34 @@ import math
 
 from .constants import (
     CIT_WEIR,
+    CIT_WEIR_EDGE,
     DEFAULT_WEIR_CONTRACTIONS,
     FT_PER_PSI,
     JET_EFFICIENCY,
     JET_EFFICIENCY_DEFAULT,
+    WEIR_EDGE_BANDS,
+    WEIR_ENGINEER_GPM_PER_FT,
     WEIR_FRANCIS_COEFF,
     WEIR_FRANCIS_CONTRACTION_COEFF,
+    WEIR_OPERATE_GPM_PER_FT,
 )
 from .envelope import CalcResult, make_input
+
+
+def edge_sheet_guidance(gpm_per_ft: float, head_in: float = 0.0) -> str:
+    """One-line design advisory for a weir/edge running at ``gpm_per_ft`` per
+    linear foot: the wind band it tolerates plus the DOC-0049 B operate-vs-engineer
+    rule (operate ~0.5 GPM/ft; size plumbing & water-in-transit for 4-6 GPM/ft)."""
+    band = ""
+    for at_least, label in WEIR_EDGE_BANDS:
+        if head_in >= at_least:
+            band = label
+    lo, hi = WEIR_ENGINEER_GPM_PER_FT
+    band_txt = f"{band}; " if band else ""
+    return (
+        f"{gpm_per_ft:.2f} GPM/ft of edge ({band_txt}operate near "
+        f"{WEIR_OPERATE_GPM_PER_FT:g} GPM/ft, engineer plumbing for {lo:g}-{hi:g} GPM/ft)"
+    )
 
 CIT_JET = "Bernoulli free-jet height (engineering standard; not in source docs)"
 
@@ -108,17 +128,18 @@ def tiered_fountain_flow(tiers, gpm_per_ft: float = 0.5) -> CalcResult:
         f"cascade flow = largest tier = {required:.2f} GPM "
         "(the same water sheets every tier in series, so the biggest rim governs)"
     )
+    steps.append(edge_sheet_guidance(gpm_per_ft))
     return CalcResult(
         calc="tiered_fountain_flow",
         value=required,
         unit="GPM",
         inputs={
             "tier_count": make_input(len(tiers), "", "user"),
-            "gpm_per_ft": make_input(gpm_per_ft, "GPM/ft", "user", "edge sheet rate (DOC-0119 ~0.5)"),
+            "gpm_per_ft": make_input(gpm_per_ft, "GPM/ft", "user", "edge sheet rate (DOC-0049 B ~0.5)"),
         },
         formula="Q = max over tiers of (pi * D_in / 12) * gpm_per_ft  (circular weir, series cascade)",
         steps=steps,
-        citations=[CIT_WEIR],
+        citations=[CIT_WEIR, CIT_WEIR_EDGE],
     )
 
 
@@ -138,6 +159,21 @@ def weir_flow(
     if q < 0:
         q = 0.0
         warnings.append("Francis formula went negative (head too small for this length); clamped to 0.")
+    steps = [
+        f"Q = (36 * {length_ft} * {head_in}^1.5) - (0.3 * {contractions} * {head_in}^2.5)",
+        f"Q = {q:.4f} GPM",
+    ]
+    # Edge-sheet design advisory (DOC-0049 B): flow per linear foot + wind band +
+    # the operate-vs-engineer rule, so an under-sheeted or under-plumbed edge shows.
+    if length_ft > 0:
+        per_ft = q / length_ft
+        steps.append(edge_sheet_guidance(per_ft, head_in))
+        if 0 < per_ft < WEIR_OPERATE_GPM_PER_FT:
+            warnings.append(
+                f"Edge runs at {per_ft:.2f} GPM/ft, below the ~{WEIR_OPERATE_GPM_PER_FT:g} GPM/ft "
+                "minimum for a continuous sheet (DOC-0049 B) — it may break into rivulets; "
+                "increase head or shorten the crest."
+            )
     return CalcResult(
         calc="weir_flow",
         value=q,
@@ -148,11 +184,8 @@ def weir_flow(
             "contractions": make_input(contractions, "", "user", "I - Weir!C15 (default 2)"),
         },
         formula="Q_gpm = (36 * L_ft * h_in^1.5) - (0.3 * n * h_in^2.5)",
-        steps=[
-            f"Q = (36 * {length_ft} * {head_in}^1.5) - (0.3 * {contractions} * {head_in}^2.5)",
-            f"Q = {q:.4f} GPM",
-        ],
-        citations=[CIT_WEIR],
+        steps=steps,
+        citations=[CIT_WEIR, CIT_WEIR_EDGE],
         warnings=warnings,
     )
 

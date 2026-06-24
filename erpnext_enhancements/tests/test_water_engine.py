@@ -106,6 +106,17 @@ class FeatureTests(unittest.TestCase):
     def test_weir_monotonic_in_head(self):
         self.assertLess(weir_flow(1, 0.5).value, weir_flow(1, 1.0).value)
 
+    def test_weir_edge_sheet_guidance(self):
+        # DOC-0049 B: a 20 ft edge at 1/4" head runs 4.5 GPM/ft -> "strong breeze"
+        # band, with the operate/engineer advisory and the B - Surge Basin citation.
+        r = weir_flow(20, 0.25, 0)
+        guidance = next((s for s in r.steps if "GPM/ft of edge" in s), "")
+        self.assertIn("strong breeze", guidance)
+        self.assertIn("4-6 GPM/ft", guidance)
+        self.assertTrue(any("B - Surge Basin" in c for c in r.citations))
+        # Below ~0.5 GPM/ft the sheet breaks up -> a warning fires.
+        self.assertTrue(any("continuous sheet" in w for w in weir_flow(6, 0.03, 2).warnings))
+
     def test_tiered_fountain_flow(self):
         # largest tier governs: 36 in dia -> pi*36/12 = 9.4248 ft -> *0.5 = 4.712 GPM
         tiers = [{"diameter_in": 24}, {"diameter_in": 36}, {"diameter_in": 18}]
