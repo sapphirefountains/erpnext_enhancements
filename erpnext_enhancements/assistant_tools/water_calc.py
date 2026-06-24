@@ -36,6 +36,9 @@ _CALCS = (
     "surge_basin_volume",
     "calc_lighting",
     "calc_solenoid_relays",
+    "suction_outlet_vgb",
+    "npsh_available",
+    "water_hammer",
 )
 
 
@@ -69,7 +72,14 @@ class WaterCalc(BaseTool):
             "surge_basin_volume {pool_area_sf, basin_area_sf, evap_in_day, precip_in, "
             "vortex_in, freeboard_in, overflow_in, swimmers}. Controls: calc_lighting "
             "{lights:[{qty,watts_each}], lighting_voltage, per_relay_watts} (watts/"
-            "amps/relays); calc_solenoid_relays {valve_qty}."
+            "amps/relays); calc_solenoid_relays {valve_qty}. "
+            "Safety gates: suction_outlet_vgb {system_gpm, cover_length_in, "
+            "cover_width_in, open_area_fraction, outlets} (anti-entrapment drain-cover "
+            "max safe GPM + dual-drain flag, ANSI/APSP-16); npsh_available "
+            "{suction_static_ft (+flooded/-lift), suction_friction_ft, elevation_ft, "
+            "water_temp_f, npshr_ft} (pump cavitation go/no-go); water_hammer "
+            "{velocity_fps, length_ft, closure_time_s, material, static_psi, "
+            "pipe_rating_psi} (Joukowsky surge pressure vs pipe rating)."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"

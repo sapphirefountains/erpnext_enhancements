@@ -83,7 +83,37 @@ SWIMMER_WEIGHT_LB = 189.8  # avg adult male (NCHS)
 BODY_SPECIFIC_GRAVITY = 1.06
 WATER_LB_PER_CF = 62.4
 
+# --- suction-outlet anti-entrapment (DOC-0049 P - Suction Outlets) ----------
+# VGB / ANSI-APSP-16 cover sizing. Q = AR * (F / (C * rho/2 * AB))^0.5  (CFS),
+# verified verbatim against the P-sheet's worked example (D29).
+VGB_LIFT_LOAD_LBF = 120.0  # F, allowable body lifting load (per 2.3.1.2)
+VGB_FLOW_COEFF = 2.1  # C, flow coefficient (per 2.3.1.2)
+VGB_WATER_DENSITY_SLUG = 1.940  # rho, slug/ft^3 (per 2.3.1.2)
+VGB_BODY_BLOCK_LEN_IN = 23.0  # code body-footprint length (per 2.3.1.1)
+VGB_BODY_BLOCK_WID_IN = 18.0  # code body-footprint width (per 2.3.1.1)
+VGB_MAX_COVER_VELOCITY_FPS = 1.5  # max approach velocity through a cover
+CFS_TO_GPM = 7.48 * 60  # 448.8 — ft^3/s -> gal/min
+
+# --- NPSH available (Hydraulic Institute; NOT in the source docs) ------------
+# NPSHa = Ha (atm head) + Hz (static, +flooded/-lift) - Hf (suction loss) - Hvp.
+ATM_PRESSURE_PSIA_SEA = 14.696  # standard sea-level atmospheric pressure
+NPSH_DEFAULT_MARGIN_FT = 3.0  # require NPSHa >= NPSHr + margin (HI 2-3 ft)
+# Saturated water-vapor pressure (psia) by temperature (degF); interpolated.
+VAPOR_PRESSURE_PSIA = {
+    40: 0.122, 50: 0.178, 60: 0.256, 70: 0.363, 80: 0.507,
+    90: 0.698, 100: 0.949, 110: 1.275, 120: 1.692,
+}
+
+# --- water hammer / Joukowsky surge (NOT in the source docs) -----------------
+# dH = a * dV / g  (head);  dP_psi = dH / 2.31.  Pressure-wave speed `a` (ft/s)
+# is material/wall dependent; these are representative values, override-able.
+WAVE_SPEED_FPS = {"SCH40 PVC": 1300.0, "SCH80 PVC": 1400.0, "COPPER": 4270.0, "STEEL": 4500.0}
+WAVE_SPEED_DEFAULT_FPS = 1300.0  # PVC
+
 # --- source citations (doc / sheet) -----------------------------------------
+CIT_VGB = "DOC-0049 / P - Suction Outlets ; ANSI/APSP-16"
+CIT_NPSH = "Hydraulic Institute / NPSH (engineering standard, not in source docs)"
+CIT_WATER_HAMMER = "Joukowsky surge equation (engineering standard, not in source docs)"
 CIT_CHEM = "DOC-0049 / C - Chemicals"
 CIT_CHEM_TARGETS = "DOC-0119"
 CIT_BASIN = "DOC-0048 / Basin"

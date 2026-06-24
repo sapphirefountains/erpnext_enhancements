@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.96.0] - 2026-06-23
+
+### Added
+- **Water Engineering — safety-critical calc pack** (`engine/safety.py`, exposed via `run_calc` + the `fac_water_calc` MCP tool). Three gates that protect people and equipment, each returning the full math envelope + a pass/risk status:
+  - **`suction_outlet_vgb`** — VGB / ANSI-APSP-16 drain-cover anti-entrapment. `Q = AR·(F/(C·ρ/2·AB))^0.5` with F=120 lbf, C=2.1, ρ=1.940 — extracted and **verified verbatim against the DOC-0049 `P - Suction Outlets` worked example** (reproduces to the cell). Returns the cover's max safe GPM (entrapment- or approach-velocity-limited, whichever governs), the worst-case per-outlet flow with one outlet blocked, and a dual-drain requirement flag for single outlets. Always flags that it's an engineering aid, not a substitute for a listed cover's stamped rating.
+  - **`npsh_available`** — pump cavitation go/no-go. `NPSHa = Ha + Hz − Hf − Hvp` (atmospheric head de-rated for site altitude, signed static suction, suction friction, temperature-interpolated vapor pressure); compares to the pump's NPSHr + a 2–3 ft margin → Okay / Marginal / Cavitation Risk. Reuses the suction-side friction the TDH calc already produces.
+  - **`water_hammer`** — Joukowsky surge. `ΔH = a·ΔV/g` with material-specific wave speed (PVC ≈1300 ft/s), scaled down for slow valve closure (when closure time exceeds the `2L/a` reflection period); peak (static + surge) vs. the pipe's pressure rating.
+  - Golden-value tests in `test_water_engine.py` (VGB reproduces the P-sheet example; NPSH altitude/temperature/status bands; Joukowsky instantaneous + slow-closure + rating check). Bench-free suite green (76); ruff clean. NPSH and water-hammer constants are flagged as engineering standards (Hydraulic Institute / Joukowsky), not source-document formulas.
 ## [1.99.0] - 2026-06-23
 
 ### Added

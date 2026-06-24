@@ -29,17 +29,20 @@ from erpnext_enhancements.water_engineering.engine import (
     lighting_sizing,
     manning_drain_flow,
     nozzle_flow,
+    npsh_available,
     ozone_sidestream,
     pipe_velocity,
     run_spine,
     select_pump,
     size_drain,
     size_pipe,
+    suction_outlet_vgb,
     surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
     units,
     velocity_status,
+    water_hammer,
     weir_flow,
 )
 from erpnext_enhancements.water_engineering.engine.constants import (
@@ -373,6 +376,57 @@ class PipelineTests(unittest.TestCase):
         # No minor/component/static -> TDH == the Hazen-Williams major loss at that C.
         self.assertAlmostEqual(out150["tdh_ft"], hazen_williams_loss(100, 100, 2.067, 150).value, places=6)
         self.assertLess(out150["tdh_ft"], out130["tdh_ft"])  # smoother pipe (higher C) -> less loss
+
+
+class SafetyTests(unittest.TestCase):
+    # --- VGB suction-outlet anti-entrapment (DOC-0049 P-sheet worked example) ---
+    def test_vgb_psheet_golden(self):
+        # 362"x14" channel grate, 21.5% open: AR=7.086 SF, AB=0.4808 SF,
+        # entrapment Q=78.44 CFS=35,204 GPM, velocity-limit 4,770 GPM -> min governs.
+        r = suction_outlet_vgb(2000, 362, 14, 0.215, outlets=2)
+        self.assertAlmostEqual(r.value, 4770.3, delta=1.0)  # velocity-limited max safe
+        self.assertEqual(r.status, "Okay")  # 2 outlets, 2000 GPM each < 4770
+
+    def test_vgb_single_outlet_flags_dual_drain(self):
+        r = suction_outlet_vgb(2000, 362, 14, 0.215, outlets=1)
+        self.assertEqual(r.status, "Add Second Drain")
+        self.assertTrue(any("second anti-entrapment" in w.lower() for w in r.warnings))
+
+    def test_vgb_overflow_fails(self):
+        r = suction_outlet_vgb(10000, 362, 14, 0.215, outlets=2)
+        self.assertEqual(r.status, "Entrapment Risk — Resize")
+        self.assertTrue(any("exceeds" in w.lower() for w in r.warnings))
+
+    # --- NPSH available ---
+    def test_npsh_lift_golden(self):
+        # sea level Ha=33.948, Hvp@70F=0.839; lift 10 + friction 3 -> 20.11 ft
+        r = npsh_available(-10, 3, water_temp_f=70)
+        self.assertAlmostEqual(r.value, 20.11, places=1)
+
+    def test_npsh_status_bands(self):
+        self.assertEqual(npsh_available(-10, 3, water_temp_f=70, npshr_ft=15).status, "Okay")
+        self.assertEqual(npsh_available(-10, 3, water_temp_f=70, npshr_ft=19).status, "Marginal")
+        self.assertEqual(npsh_available(-10, 3, water_temp_f=70, npshr_ft=25).status, "Cavitation Risk")
+
+    def test_npsh_altitude_reduces_head(self):
+        self.assertLess(npsh_available(0, 0, elevation_ft=5000).value, npsh_available(0, 0, elevation_ft=0).value)
+
+    # --- water hammer (Joukowsky) ---
+    def test_water_hammer_instantaneous_golden(self):
+        # a=1300 ft/s, dV=6: surge = (1300*6/32.2)/2.31 = 104.86 psi
+        r = water_hammer(6, 200, closure_time_s=0, material="SCH40 PVC")
+        self.assertAlmostEqual(r.value, 104.9, delta=0.2)
+
+    def test_water_hammer_slow_closure_scales_down(self):
+        # 2L/a = 0.3077 s; a 3 s closure scales the surge by 0.3077/3
+        r = water_hammer(6, 200, closure_time_s=3, material="SCH40 PVC")
+        self.assertAlmostEqual(r.value, 10.75, delta=0.2)
+
+    def test_water_hammer_rating_check_and_material(self):
+        self.assertEqual(water_hammer(6, 200, static_psi=40, pipe_rating_psi=140).status, "Exceeds Pipe Rating")
+        self.assertEqual(water_hammer(6, 200, static_psi=40, pipe_rating_psi=200).status, "Okay")
+        # copper's stiffer wall -> much faster wave -> bigger surge than PVC
+        self.assertGreater(water_hammer(6, 200, material="COPPER").value, water_hammer(6, 200, material="SCH40 PVC").value)
 
 
 if __name__ == "__main__":
