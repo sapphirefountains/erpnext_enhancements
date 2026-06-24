@@ -42,7 +42,7 @@ const WFD_PREVIEW_FIELDS = [
 	"chem_water_type", "chem_chlorine_pct", "drain_nominal_size", "drain_slope_in_per_ft",
 	"surge_pool_area_sf", "surge_basin_area_sf",
 ];
-const WFD_TABLES = ["basins", "features", "pipe_segments", "pumps", "electrical_loads"];
+const WFD_TABLES = ["basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers"];
 
 frappe.ui.form.on("Water Feature Design", {
 	refresh(frm) {

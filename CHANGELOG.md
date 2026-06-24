@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.103.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — tiered (cascading) fountains, with a variable number of tiers.** A new `Tiered Fountain` feature type plus a **`Tiers` child table** on the design (one row per tier — diameter, rim height, and per-foot sheet rate). The tier count and dimensions are fully variable.
+  - **Cascade flow logic** (`tiered_fountain_flow`): each tier is a circular weir; the same recirculated water sheets every tier in series, so the required flow is the **largest tier's** rim demand — `Q = max over tiers of (π·D/12)·gpm_per_ft`. The controller pulls the tier rows into the spine for the tiered feature, so the design flow and pump size account for it.
+  - **Canvas schematic** — the fountain canvas draws the tiers as a stack of bowls (largest at the bottom) on a central column with water spilling tier-to-tier, sized from the actual tier diameters. Variable tier count in, matching stack out; mirrored in the Triton chat renderer.
+  - `feature_flow_category` / `feature_visual_kind` gain a `tiered` case; `_canvas_state` returns the tier list; `preview_design` accepts the `tiers` table so the live preview redraws as tiers are edited. Golden test for the cascade flow.
+
 ## [1.102.0] - 2026-06-24
 
 ### Added

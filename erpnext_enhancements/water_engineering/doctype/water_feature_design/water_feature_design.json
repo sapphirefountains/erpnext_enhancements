@@ -26,6 +26,8 @@
   "basins",
   "sb_features",
   "features",
+  "sb_tiers",
+  "tiers",
   "sb_piping",
   "pipe_segments",
   "sb_pumps",
@@ -356,6 +358,19 @@
    "fieldname": "tab_results",
    "fieldtype": "Tab Break",
    "label": "Results & Audit"
+  },
+  {
+   "fieldname": "sb_tiers",
+   "fieldtype": "Section Break",
+   "label": "Tiers (Cascading Fountain)",
+   "collapsible": 1,
+   "description": "For a Tiered Fountain feature: one row per tier, top of the table = top of the fountain."
+  },
+  {
+   "fieldname": "tiers",
+   "fieldtype": "Table",
+   "label": "Tiers",
+   "options": "Water Feature Tier"
   }
  ],
  "is_submittable": 1,
