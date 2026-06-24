@@ -138,6 +138,58 @@ SF_PER_SKIMMER = 400.0
 PERIMETER_OVERFLOW_SF_THRESHOLD = 5000.0
 SOLAR_PANEL_FRACTION = 0.8
 
+# --- jet trajectory / spray height (engineering standard; not in source docs) -
+# Realized jet height = k * supply head (k de-rates for drag + aeration).
+JET_EFFICIENCY = {"smooth": 0.90, "solid": 0.90, "spray": 0.75, "aerated": 0.60, "geyser": 0.60, "foam": 0.55}
+JET_EFFICIENCY_DEFAULT = 0.90
+
+# --- filtration sizing (DOC-0119 Utah R392-302-1 + NSF/ANSI 50) --------------
+# required filter area = design GPM / max filtration rate (GPM/SF), by media.
+FILTER_MAX_RATE = {"sand": 3.0, "high-rate sand": 15.0, "cartridge": 0.375, "de": 2.0}
+FILTER_BACKWASH_RATE = 15.0  # GPM/SF (sand/DE backwash)
+CIT_FILTER = "DOC-0119 / Utah R392-302-1 ; NSF/ANSI 50"
+
+# --- LSI water balance (PoolSpaNews / Langelier; not in source docs) ---------
+LSI_TDS_CONSTANT = {1000: 12.10, 2000: 12.29, 3000: 12.35, 4000: 12.41, 5000: 12.44}
+LSI_TF = {32: 0.0, 37: 0.1, 46: 0.2, 53: 0.3, 60: 0.4, 66: 0.5, 76: 0.6, 84: 0.7, 94: 0.8, 105: 0.9}
+LSI_CF = {5: 0.3, 25: 1.0, 50: 1.3, 75: 1.5, 100: 1.6, 150: 1.8, 200: 1.9, 300: 2.1, 400: 2.2, 800: 2.5}
+LSI_AF = {5: 0.7, 25: 1.4, 50: 1.7, 75: 1.9, 100: 2.0, 150: 2.2, 200: 2.3, 300: 2.5, 400: 2.6, 800: 2.9}
+CIT_LSI = "Langelier Saturation Index (PoolSpaNews; not in source docs)"
+
+# --- evaporation (ASHRAE Applications Ch.6; not in source docs) --------------
+EVAP_ASHRAE_COEFF = 0.1  # ER(lb/h) = 0.1 * A * AF * (Pw - Pa)  [vapor pressures in inHg]
+PSIA_TO_INHG = 2.036
+EVAP_ACTIVITY_FACTOR = {"residential": 0.5, "hotel": 0.8, "public": 1.0, "wavepool": 1.5}
+CIT_EVAP = "ASHRAE Applications Handbook Ch.6 (verify edition; not in source docs)"
+
+# --- make-up water / auto-fill (DOC-0049 D - Program valve table) ------------
+# Float-valve capacities (GPM) by line size.
+AUTOFILL_VALVE_GPM = {'3/4"': 11.0, '1"': 18.0, '1-1/4"': 30.0, '1-1/2"': 41.0, '2"': 68.0}
+CIT_MAKEUP = "DOC-0049 / D - Program (auto-fill valves)"
+
+# --- heating (DOC-0049 O - Heating) -----------------------------------------
+HEAT_COVER_FACTOR = {"none": 0.5, "solid": 0.2, "liquid": 0.3}
+HEAT_DEPTH_FACTOR = 1.15
+HEAT_WIND_FACTOR = {True: 1.35, False: 1.0}
+HEAT_BTU_PER_THERM = 100000.0  # 1 therm = 1e5 BTU
+HEAT_DAYS_PER_MONTH = 30.4
+HEAT_DEFAULT_GAS_RATE = 1.40  # $/therm
+HEAT_DEFAULT_EFF = 0.92
+BTU_PER_GAL_DEGF = 8.34  # 1 gal water raised 1 degF
+CIT_HEATING = "DOC-0049 / O - Heating"
+
+# --- chemical dose-to-target (manufacturer dosing tables; not source docs) ---
+ACID_OZ_PER_10K_PER_0_2_PH = 8.0  # 8 fl oz muriatic / 10k gal lowers pH ~0.2
+BICARB_LB_PER_10K_PER_10_TA = 1.5  # 1.5 lb / 10k gal raises TA ~10 ppm
+CYA_PPM_PER_LB_PER_10K = 12.0  # 1 lb / 10k gal raises CYA ~12 ppm
+SALT_LB_PER_10K_PER_100PPM = 8.375
+CIT_DOSE = "Manufacturer dosing tables (estimates; not source docs)"
+
+# --- UV disinfection (PWTAG / Wedeco; not in source docs) -------------------
+UV_DOSE_DECHLORAMINE_MJ = 60.0  # mJ/cm^2 at full recirculation flow
+UV_DOSE_4LOG_MJ = 40.0
+CIT_UV = "PWTAG TN31 / Wedeco UV dose (not in source docs)"
+
 # --- source citations (doc / sheet) -----------------------------------------
 CIT_ELEC = "DOC-0049 / E - Elec Costs"
 CIT_VERT_PIPE = "DOC-0049 / K - Vert Pipe"

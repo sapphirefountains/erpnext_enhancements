@@ -20,15 +20,22 @@ from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
     calc_lighting,
     calc_solenoid_relays,
+    chemical_dose,
     chemistry_targets,
     chlorinator_feed,
     component_loss,
     electric_cost,
+    evaporation_rate,
+    filtration_area,
     fitting_minor_loss,
     hazen_williams_loss,
     head_at_flow,
+    heating_load,
+    jet_trajectory,
     lazy_river_hp,
     lighting_sizing,
+    lsi_index,
+    make_up_water,
     manning_drain_flow,
     nozzle_flow,
     npsh_available,
@@ -45,6 +52,7 @@ from erpnext_enhancements.water_engineering.engine import (
     total_dynamic_head,
     turnover_gpm,
     units,
+    uv_dose,
     velocity_status,
     vertical_pipe,
     water_hammer,
@@ -471,6 +479,65 @@ class WorkbookTests(unittest.TestCase):
         self.assertIn("1", r.steps[1])  # skimmers = 1
         # spa uses 9 SF/user -> more bathers than a pool of the same area
         self.assertGreater(program_rules(400, "spa").value, program_rules(400, "pool").value)
+
+
+class JetTests(unittest.TestCase):
+    def test_jet_height_from_supply(self):
+        # smooth jet k=0.9: 30 ft supply head -> 27 ft plume
+        self.assertAlmostEqual(jet_trajectory(supply_head_ft=30, nozzle_type="smooth").value, 27.0, places=2)
+
+    def test_jet_required_pressure_inverse(self):
+        # target 20 ft, k=0.9 -> head 22.22 ft -> 9.62 psi
+        self.assertAlmostEqual(jet_trajectory(target_height_ft=20, nozzle_type="smooth").value, 9.62, delta=0.05)
+
+    def test_aerated_jet_shorter_than_solid(self):
+        self.assertLess(
+            jet_trajectory(supply_head_ft=30, nozzle_type="aerated").value,
+            jet_trajectory(supply_head_ft=30, nozzle_type="smooth").value,
+        )
+
+
+class TreatmentTests(unittest.TestCase):
+    def test_lsi_balanced(self):
+        # pH 7.5, 80F, CH 300, TA 100, TDS 1000: TF .65 + CF 2.1 + AF 2.0 - 12.10 -> +0.15
+        r = lsi_index(7.5, 80, 300, 100, 1000)
+        self.assertAlmostEqual(r.value, 0.15, places=2)
+        self.assertEqual(r.status, "Balanced")
+
+    def test_lsi_corrosive_and_scaling(self):
+        self.assertEqual(lsi_index(7.0, 50, 50, 50, 1000).status, "Corrosive")
+        self.assertEqual(lsi_index(8.2, 100, 800, 400, 1000).status, "Scaling")
+
+    def test_evaporation_positive_and_monotonic(self):
+        r = evaporation_rate(200, 80, 78, 50, "residential")
+        self.assertGreater(r.value, 0)
+        # warmer water evaporates faster
+        self.assertGreater(evaporation_rate(200, 90, 78, 50).value, evaporation_rate(200, 80, 78, 50).value)
+
+    def test_make_up_water_valve(self):
+        # D-sheet: 124.67 gal/day, 20-min fill -> 6.23 GPM -> 3/4" valve (11 GPM)
+        r = make_up_water(124.67, 0, 0, 20)
+        self.assertAlmostEqual(r.value, 124.7, places=1)
+        self.assertEqual(r.status, '3/4"')
+
+    def test_heating_load_golden(self):
+        # O-sheet: 5984 gal, dF 11, cover solid (0.2), wind -> ~$78.83/mo
+        self.assertAlmostEqual(heating_load(5984, 11, cover="solid", wind=True).value, 78.83, delta=0.3)
+
+    def test_chemical_dose(self):
+        # CYA: 1 lb / 10k gal raises CYA ~12 ppm
+        self.assertAlmostEqual(chemical_dose(10000, "cya_up", 0, 12).value, 1.0, places=2)
+        # muriatic acid: 8 fl oz / 10k gal drops pH 0.2; 20k gal, 0.2 drop -> 16 fl oz
+        self.assertAlmostEqual(chemical_dose(20000, "ph_down", 7.8, 7.6).value, 16.0, places=2)
+
+    def test_uv_dose(self):
+        self.assertEqual(uv_dose(300, 60).value, 60.0)
+
+    def test_filtration_area(self):
+        # cartridge at 0.375 GPM/SF: 120 GPM -> 320 SF
+        self.assertAlmostEqual(filtration_area(120, "cartridge").value, 320.0, places=1)
+        # sand capped at 3 GPM/SF: 90 GPM -> 30 SF
+        self.assertAlmostEqual(filtration_area(90, "sand").value, 30.0, places=1)
 
 
 if __name__ == "__main__":
