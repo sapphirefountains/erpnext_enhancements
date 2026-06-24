@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.102.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — more feature types, each with its own canvas schematic.** The `feature_type` options expand from Weir / Nozzle Array / Orifice Nozzle to also include **Spilling Weir, Waterwall, Splash Pad, and Rain Curtain**, and the fountain canvas now draws a distinct picture for each instead of a generic jet:
+  - **Waterwall** — a back wall with water sheeting down its face into the basin.
+  - **Spilling Weir / Weir** — water spilling over a raised crest into the basin.
+  - **Splash Pad** — a flat deck with ground jets and splash rings (no deep basin).
+  - **Rain Curtain** — an overhead manifold dropping a curtain of streams into the basin.
+  - **Nozzle Array / Orifice Nozzle** — the central jet plume (with the jet-height callout).
+  - Two shared engine classifiers (`feature_flow_category`, `feature_visual_kind`) drive both the flow calc and the drawing: sheet/crest features (weir, spilling weir, waterwall) size by the Francis weir formula; discrete-jet features (nozzle array, splash pad, rain curtain) size by count × GPM-each. The classifier replaces the ad-hoc substring checks in the engine spine and the controller, so flow and schematic always agree. `_canvas_state` now returns `feature_kind`, and the renderer (`fountain_canvas.js`, mirrored in the Triton chat) branches on it.
+
 ## [1.101.0] - 2026-06-24
 
 ### Added

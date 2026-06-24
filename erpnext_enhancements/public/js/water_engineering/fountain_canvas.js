@@ -57,6 +57,9 @@
 			depth = 56;
 		const botY = topY + depth;
 		const cx = bx + bw / 2;
+		const SPRAY = "#85B7EB";
+		const kind = st.feature_kind || (hasFeature ? "jet" : null);
+		const kindLabel = kind ? kind.replace(/_/g, " ") : "";
 
 		let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fountain design schematic">`;
 
@@ -65,32 +68,67 @@
 		s += `<tspan font-weight="600">${esc(num(st.basin_gallons, 0))}</tspan><tspan fill="${TM}"> gal basin</tspan>`;
 		s += `<tspan font-weight="600">   ·   ${esc(num(st.flow_gpm))}</tspan><tspan fill="${TM}"> GPM</tspan>`;
 		s += `<tspan font-weight="600">   ·   ${esc(st.pump || "—")}</tspan><tspan fill="${TM}"> pump</tspan>`;
-		s += `<tspan font-weight="600">   ·   ${esc(num(st.tdh_ft))}</tspan><tspan fill="${TM}"> ft TDH</tspan></text>`;
+		s += `<tspan font-weight="600">   ·   ${esc(num(st.tdh_ft))}</tspan><tspan fill="${TM}"> ft TDH</tspan>${kind ? `<tspan fill="${TM}">   ·   ${esc(kindLabel)}</tspan>` : ""}</text>`;
 
-		// jet
-		if (hasFeature) {
-			const jetTop = 56;
-			s += `<g stroke="${JET}" stroke-width="2.5" fill="none" stroke-linecap="round">`;
-			s += `<line x1="${cx}" y1="${topY}" x2="${cx}" y2="${jetTop}"/>`;
-			s += `<path d="M${cx} ${jetTop + 26} C ${cx - 20} ${jetTop} ${cx - 38} ${jetTop + 12} ${cx - 42} ${jetTop + 48}"/>`;
-			s += `<path d="M${cx} ${jetTop + 26} C ${cx + 20} ${jetTop} ${cx + 38} ${jetTop + 12} ${cx + 42} ${jetTop + 48}"/>`;
-			s += `</g>`;
-			s += `<g fill="#85B7EB"><circle cx="${cx - 42}" cy="${jetTop + 50}" r="3"/><circle cx="${cx + 42}" cy="${jetTop + 50}" r="3"/><circle cx="${cx}" cy="${jetTop - 4}" r="3"/></g>`;
-			if (st.jet_height_ft) {
-				s += `<line x1="${cx + 64}" y1="${jetTop}" x2="${cx + 64}" y2="${topY}" stroke="${STRUCT}" stroke-width="1" stroke-dasharray="4 4"/>`;
-				s += `<text x="${cx + 70}" y="${(jetTop + topY) / 2}" font-size="11" fill="${TM}">jet ≈ ${esc(num(st.jet_height_ft, 1))} ft</text>`;
+		// ---- feature schematic + basin (drawn per feature kind) ----
+		if (kind === "splash_pad") {
+			// flat deck with ground jets — no deep basin
+			s += `<rect x="${bx - 6}" y="${topY}" width="${bw + 12}" height="8" rx="2" fill="${STRUCT}"/>`;
+			const heights = [34, 50, 38, 54, 36, 46, 40];
+			for (let i = 0; i < heights.length; i++) {
+				const jx = bx + 44 + (i * (bw - 88)) / (heights.length - 1);
+				s += `<line x1="${jx}" y1="${topY}" x2="${jx}" y2="${topY - heights[i]}" stroke="${JET}" stroke-width="2.5" stroke-linecap="round"/>`;
+				s += `<circle cx="${jx}" cy="${topY - heights[i] - 3}" r="2.5" fill="${SPRAY}"/>`;
+				s += `<ellipse cx="${jx}" cy="${topY}" rx="7" ry="2.5" fill="${SPRAY}" opacity="0.5"/>`;
 			}
+			if (st.basin_label) s += `<text x="${cx}" y="${topY + 28}" font-size="11" fill="${TM}" text-anchor="middle">${esc(st.basin_label)}</text>`;
+		} else {
+			// feature above the basin
+			if (kind === "waterwall") {
+				const wy = 42;
+				s += `<rect x="${bx}" y="${wy}" width="${bw}" height="${topY - wy}" fill="${STRUCT}" opacity="0.4"/>`;
+				s += `<rect x="${bx}" y="${wy}" width="${bw}" height="4" fill="#185FA5"/>`;
+				for (let i = 0; i < 11; i++) {
+					const lx = bx + 16 + (i * (bw - 32)) / 10;
+					s += `<line x1="${lx}" y1="${wy + 4}" x2="${lx}" y2="${topY}" stroke="${WATER}" stroke-width="3" opacity="0.5"/>`;
+				}
+			} else if (kind === "rain_curtain") {
+				const ry = 50;
+				s += `<rect x="${bx}" y="${ry}" width="${bw}" height="8" rx="2" fill="${STRUCT}"/>`;
+				for (let i = 0; i < 20; i++) {
+					const lx = bx + 12 + (i * (bw - 24)) / 19;
+					s += `<line x1="${lx}" y1="${ry + 8}" x2="${lx}" y2="${topY}" stroke="${WATER}" stroke-width="1.5" opacity="0.7"/>`;
+				}
+			} else if (kind === "weir" || kind === "spilling_weir") {
+				const wallX = bx + bw - 10;
+				const crestY = topY - 42;
+				s += `<rect x="${wallX - 6}" y="${crestY}" width="12" height="${botY - crestY}" rx="1" fill="${STRUCT}"/>`;
+				s += `<path d="M${wallX - 6} ${crestY} C ${wallX - 28} ${crestY + 12} ${wallX - 40} ${topY - 20} ${wallX - 46} ${topY}" stroke="${WATER}" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.85"/>`;
+				s += `<path d="M${wallX - 6} ${crestY + 5} C ${wallX - 24} ${crestY + 14} ${wallX - 34} ${topY - 18} ${wallX - 40} ${topY}" stroke="${SPRAY}" stroke-width="2" fill="none"/>`;
+				s += `<g fill="${SPRAY}"><circle cx="${wallX - 46}" cy="${topY}" r="3"/><circle cx="${wallX - 52}" cy="${topY - 3}" r="2"/></g>`;
+			} else if (kind === "jet") {
+				const jetTop = 56;
+				s += `<g stroke="${JET}" stroke-width="2.5" fill="none" stroke-linecap="round">`;
+				s += `<line x1="${cx}" y1="${topY}" x2="${cx}" y2="${jetTop}"/>`;
+				s += `<path d="M${cx} ${jetTop + 26} C ${cx - 20} ${jetTop} ${cx - 38} ${jetTop + 12} ${cx - 42} ${jetTop + 48}"/>`;
+				s += `<path d="M${cx} ${jetTop + 26} C ${cx + 20} ${jetTop} ${cx + 38} ${jetTop + 12} ${cx + 42} ${jetTop + 48}"/>`;
+				s += `</g>`;
+				s += `<g fill="${SPRAY}"><circle cx="${cx - 42}" cy="${jetTop + 50}" r="3"/><circle cx="${cx + 42}" cy="${jetTop + 50}" r="3"/><circle cx="${cx}" cy="${jetTop - 4}" r="3"/></g>`;
+				if (st.jet_height_ft) {
+					s += `<line x1="${cx + 64}" y1="${jetTop}" x2="${cx + 64}" y2="${topY}" stroke="${STRUCT}" stroke-width="1" stroke-dasharray="4 4"/>`;
+					s += `<text x="${cx + 70}" y="${(jetTop + topY) / 2}" font-size="11" fill="${TM}">jet ≈ ${esc(num(st.jet_height_ft, 1))} ft</text>`;
+				}
+			}
+			// basin (coping, water, walls, floor)
+			s += `<rect x="${bx - 6}" y="${topY - 6}" width="${bw + 12}" height="6" rx="2" fill="${STRUCT}"/>`;
+			s += `<rect x="${bx}" y="${topY}" width="${bw}" height="${depth}" fill="${WATER}" opacity="0.85"/>`;
+			s += `<line x1="${bx}" y1="${topY}" x2="${bx + bw}" y2="${topY}" stroke="#185FA5" stroke-width="2"/>`;
+			s += `<rect x="${bx - 6}" y="${topY - 6}" width="6" height="${depth + 12}" rx="2" fill="${STRUCT}"/>`;
+			s += `<rect x="${bx + bw}" y="${topY - 6}" width="6" height="${depth + 12}" rx="2" fill="${STRUCT}"/>`;
+			s += `<rect x="${bx - 6}" y="${botY}" width="${bw + 12}" height="6" rx="2" fill="${STRUCT}"/>`;
+			if (kind === "jet") s += `<rect x="${cx - 7}" y="${topY - 4}" width="14" height="6" rx="2" fill="#5F5E5A"/>`;
+			if (st.basin_label) s += `<text x="${cx}" y="${botY + 22}" font-size="11" fill="${TM}" text-anchor="middle">${esc(st.basin_label)}</text>`;
 		}
-
-		// basin (coping, water, walls, floor)
-		s += `<rect x="${bx - 6}" y="${topY - 6}" width="${bw + 12}" height="6" rx="2" fill="${STRUCT}"/>`;
-		s += `<rect x="${bx}" y="${topY}" width="${bw}" height="${depth}" fill="${WATER}" opacity="0.85"/>`;
-		s += `<line x1="${bx}" y1="${topY}" x2="${bx + bw}" y2="${topY}" stroke="#185FA5" stroke-width="2"/>`;
-		s += `<rect x="${bx - 6}" y="${topY - 6}" width="6" height="${depth + 12}" rx="2" fill="${STRUCT}"/>`;
-		s += `<rect x="${bx + bw}" y="${topY - 6}" width="6" height="${depth + 12}" rx="2" fill="${STRUCT}"/>`;
-		s += `<rect x="${bx - 6}" y="${botY}" width="${bw + 12}" height="6" rx="2" fill="${STRUCT}"/>`;
-		s += `<rect x="${cx - 7}" y="${topY - 4}" width="14" height="6" rx="2" fill="#5F5E5A"/>`;
-		if (st.basin_label) s += `<text x="${cx}" y="${botY + 22}" font-size="11" fill="${TM}" text-anchor="middle">${esc(st.basin_label)}</text>`;
 
 		// pump + supply riser + suction
 		const px = 30,

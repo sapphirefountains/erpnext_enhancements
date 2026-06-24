@@ -14,7 +14,14 @@ from .chemistry import chemistry_targets, chlorinator_feed, ozone_sidestream
 from .controls import calc_lighting, calc_solenoid_relays, lighting_sizing
 from .drainage import manning_drain_flow, size_drain, surge_basin_volume
 from .envelope import CalcOption, CalcResult, make_input
-from .feature import jet_trajectory, nozzle_array_flow, nozzle_flow, weir_flow
+from .feature import (
+    feature_flow_category,
+    feature_visual_kind,
+    jet_trajectory,
+    nozzle_array_flow,
+    nozzle_flow,
+    weir_flow,
+)
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
 from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
@@ -44,6 +51,8 @@ __all__ = [
     "electric_cost",
     "electrical_load",
     "evaporation_rate",
+    "feature_flow_category",
+    "feature_visual_kind",
     "filtration_area",
     "fitting_minor_loss",
     "hazen_williams_loss",

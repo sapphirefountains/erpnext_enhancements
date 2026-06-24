@@ -14,20 +14,20 @@ from typing import Any
 
 from .basin import basin_volume, turnover_gpm
 from .constants import DEFAULT_TURNOVERS_PER_HR, HW_C_PVC
-from .feature import nozzle_array_flow, nozzle_flow, weir_flow
+from .feature import feature_flow_category, nozzle_array_flow, nozzle_flow, weir_flow
 from .pump import select_pump
 from .tdh import total_dynamic_head
 
 
 def _feature_flow(feature: dict):
-    ftype = (feature.get("feature_type") or "weir").lower()
-    if "weir" in ftype or "slot" in ftype or "vanish" in ftype:
+    category = feature_flow_category(feature.get("feature_type") or "weir")
+    if category == "weir":
         return weir_flow(
             feature.get("weir_length_ft", 0),
             feature.get("head_in", 0),
             feature.get("contractions", 2),
         )
-    if "array" in ftype:
+    if category == "array":
         return nozzle_array_flow(feature.get("nozzle_count", 0), feature.get("gpm_each", 0))
     return nozzle_flow(
         feature.get("supply_head_ft", 0),
