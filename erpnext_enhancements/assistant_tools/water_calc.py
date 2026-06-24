@@ -39,6 +39,11 @@ _CALCS = (
     "suction_outlet_vgb",
     "npsh_available",
     "water_hammer",
+    "electric_cost",
+    "vertical_pipe",
+    "open_channel_flow",
+    "lazy_river_hp",
+    "program_rules",
 )
 
 
@@ -79,7 +84,15 @@ class WaterCalc(BaseTool):
             "{suction_static_ft (+flooded/-lift), suction_friction_ft, elevation_ft, "
             "water_temp_f, npshr_ft} (pump cavitation go/no-go); water_hammer "
             "{velocity_fps, length_ft, closure_time_s, material, static_psi, "
-            "pipe_rating_psi} (Joukowsky surge pressure vs pipe rating)."
+            "pipe_rating_psi} (Joukowsky surge pressure vs pipe rating). "
+            "Workbook sheets: electric_cost {flow_gpm, tdh_ft, hours_per_day, "
+            "rate_per_kwh, pump_qty} (annual pump operating $); vertical_pipe "
+            "{head_in, id_in | flow_gpm} (standpipe discharge — give head+ID for "
+            "flow, flow+ID for head, or flow+head to size the pipe); "
+            "open_channel_flow {width_in, depth_in, slope, n} (runnel/rill GPM + "
+            "Froude/Reynolds regime); lazy_river_hp {width_ft, depth_ft, length_ft, "
+            "velocity_fps, n} (current-generation design HP); program_rules "
+            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar)."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"

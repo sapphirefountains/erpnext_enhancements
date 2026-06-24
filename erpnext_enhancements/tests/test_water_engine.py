@@ -23,15 +23,19 @@ from erpnext_enhancements.water_engineering.engine import (
     chemistry_targets,
     chlorinator_feed,
     component_loss,
+    electric_cost,
     fitting_minor_loss,
     hazen_williams_loss,
     head_at_flow,
+    lazy_river_hp,
     lighting_sizing,
     manning_drain_flow,
     nozzle_flow,
     npsh_available,
+    open_channel_flow,
     ozone_sidestream,
     pipe_velocity,
+    program_rules,
     run_spine,
     select_pump,
     size_drain,
@@ -42,6 +46,7 @@ from erpnext_enhancements.water_engineering.engine import (
     turnover_gpm,
     units,
     velocity_status,
+    vertical_pipe,
     water_hammer,
     weir_flow,
 )
@@ -427,6 +432,45 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(water_hammer(6, 200, static_psi=40, pipe_rating_psi=200).status, "Okay")
         # copper's stiffer wall -> much faster wave -> bigger surge than PVC
         self.assertGreater(water_hammer(6, 200, material="COPPER").value, water_hammer(6, 200, material="SCH40 PVC").value)
+
+
+class WorkbookTests(unittest.TestCase):
+    def test_electric_cost_golden(self):
+        # E-sheet: 50 GPM @ 35 ft, SG 1, eff 0.70/0.90, $0.17, 6 hr/day -> $194.74/yr
+        self.assertAlmostEqual(electric_cost(50, 35).value, 194.74, delta=0.1)
+
+    def test_electric_cost_scales_with_pumps(self):
+        self.assertAlmostEqual(electric_cost(50, 35, pump_qty=2).value, 2 * electric_cost(50, 35).value, places=2)
+
+    def test_vertical_pipe_flow_from_head(self):
+        # K-sheet: H=20", 3" Sch40 ID=3.068, K=0.8967 -> 214.4 GPM
+        self.assertAlmostEqual(vertical_pipe(head_in=20, id_in=3.068).value, 214.4, delta=0.5)
+
+    def test_vertical_pipe_head_from_flow(self):
+        # reverse: 50 GPM over 2" Sch40 (ID 2.067) -> 5.59 in head
+        self.assertAlmostEqual(vertical_pipe(flow_gpm=50, id_in=2.067).value, 5.59, delta=0.05)
+
+    def test_vertical_pipe_recommend_id(self):
+        # 215 GPM @ 20" head, fixed K=0.92 -> ID ~3.03 in
+        self.assertAlmostEqual(vertical_pipe(flow_gpm=215, head_in=20).value, 3.03, delta=0.02)
+
+    def test_open_channel_flow_golden(self):
+        # J-sheet: b=4", d=4", S=0.01, n=0.015 -> 114.18 GPM, subcritical
+        r = open_channel_flow(4, 4, 0.01, 0.015)
+        self.assertAlmostEqual(r.value, 114.18, delta=0.2)
+        self.assertEqual(r.status, "subcritical (tranquil)")
+
+    def test_lazy_river_hp_golden(self):
+        # L-sheet: W=7, D=3.75, L=175, V=5, n=0.0155 -> design WHP 6.418
+        self.assertAlmostEqual(lazy_river_hp(7, 3.75, 175, 5, 0.0155).value, 6.418, delta=0.01)
+
+    def test_program_rules(self):
+        # D-sheet: pool 400 SF -> 26 bathers (400/15), 1 skimmer (ceil 400/400), 320 SF solar
+        r = program_rules(400, "pool")
+        self.assertEqual(r.value, 26)
+        self.assertIn("1", r.steps[1])  # skimmers = 1
+        # spa uses 9 SF/user -> more bathers than a pool of the same area
+        self.assertGreater(program_rules(400, "spa").value, program_rules(400, "pool").value)
 
 
 if __name__ == "__main__":
