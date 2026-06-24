@@ -110,7 +110,40 @@ VAPOR_PRESSURE_PSIA = {
 WAVE_SPEED_FPS = {"SCH40 PVC": 1300.0, "SCH80 PVC": 1400.0, "COPPER": 4270.0, "STEEL": 4500.0}
 WAVE_SPEED_DEFAULT_FPS = 1300.0  # PVC
 
+# --- electric operating cost (DOC-0049 E - Elec Costs) ----------------------
+# WHP = SG*TDH*Q/3960 -> BHP /pump_eff -> HP /motor_eff -> KW *0.7457 -> $.
+WHP_DIVISOR = 3960.0
+HP_TO_KW = 0.7457
+DEFAULT_PUMP_EFF = 0.70  # hydraulic efficiency
+DEFAULT_MOTOR_EFF = 0.90
+DEFAULT_KWH_RATE = 0.17  # $/kWh
+DEFAULT_PUMP_HOURS_DAY = 6.0
+DAYS_PER_YEAR = 365.0
+
+# --- vertical-pipe discharge (DOC-0049 K - Vert Pipe) -----------------------
+# Q_gpm = 5.68 * H_in^0.5 * K * ID_in^2 ; K = 0.82 + 0.025*ID (0.92 in recommend mode).
+VERT_PIPE_COEFF = 5.68
+VERT_PIPE_K_FIXED = 0.92
+
+# --- open-channel & lazy-river Manning (DOC-0049 J - Channel / L - Lazy) -----
+KINEMATIC_VISCOSITY_FT2_S = 9.26e-6  # water @ 80F, for Reynolds
+DEFAULT_CHANNEL_N = 0.015
+DEFAULT_LAZY_RIVER_N = 0.0155
+LAZY_RIVER_SAFETY_FACTOR = 2.0
+
+# --- programmatic planning (DOC-0049 D - Program) ---------------------------
+SF_PER_POOL_USER = 15.0
+SF_PER_SPA_USER = 9.0
+SF_PER_SKIMMER = 400.0
+PERIMETER_OVERFLOW_SF_THRESHOLD = 5000.0
+SOLAR_PANEL_FRACTION = 0.8
+
 # --- source citations (doc / sheet) -----------------------------------------
+CIT_ELEC = "DOC-0049 / E - Elec Costs"
+CIT_VERT_PIPE = "DOC-0049 / K - Vert Pipe"
+CIT_CHANNEL = "DOC-0049 / J - Channel"
+CIT_LAZY = "DOC-0049 / L - Lazy"
+CIT_PROGRAM = "DOC-0049 / D - Program"
 CIT_VGB = "DOC-0049 / P - Suction Outlets ; ANSI/APSP-16"
 CIT_NPSH = "Hydraulic Institute / NPSH (engineering standard, not in source docs)"
 CIT_WATER_HAMMER = "Joukowsky surge equation (engineering standard, not in source docs)"

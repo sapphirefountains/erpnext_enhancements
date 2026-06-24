@@ -22,12 +22,16 @@ from erpnext_enhancements.water_engineering.engine import (
     calc_solenoid_relays,
     chemistry_targets,
     chlorinator_feed,
+    electric_cost,
     hazen_williams_loss,
+    lazy_river_hp,
     manning_drain_flow,
     nozzle_array_flow,
     nozzle_flow,
     npsh_available,
+    open_channel_flow,
     ozone_sidestream,
+    program_rules,
     run_spine,
     select_pump,
     size_drain,
@@ -36,6 +40,7 @@ from erpnext_enhancements.water_engineering.engine import (
     surge_basin_volume,
     total_dynamic_head,
     turnover_gpm,
+    vertical_pipe,
     water_hammer,
     weir_flow,
 )
@@ -235,6 +240,33 @@ def _run_calc(calc, inputs):
             static_psi=i.get("static_psi", 0),
             pipe_rating_psi=i.get("pipe_rating_psi", 0),
         )
+    elif calc == "electric_cost":
+        r = electric_cost(
+            i.get("flow_gpm", 0),
+            i.get("tdh_ft", 0),
+            hours_per_day=i.get("hours_per_day", 6),
+            rate_per_kwh=i.get("rate_per_kwh", 0.17),
+            sg=i.get("sg", 1.0),
+            pump_eff=i.get("pump_eff", 0.70),
+            motor_eff=i.get("motor_eff", 0.90),
+            pump_qty=i.get("pump_qty", 1),
+        )
+    elif calc == "vertical_pipe":
+        r = vertical_pipe(i.get("head_in", 0), i.get("id_in", 0), i.get("flow_gpm", 0))
+    elif calc == "open_channel_flow":
+        r = open_channel_flow(i.get("width_in", 0), i.get("depth_in", 0), i.get("slope", 0), i.get("n", 0.015))
+    elif calc == "lazy_river_hp":
+        r = lazy_river_hp(
+            i.get("width_ft", 0),
+            i.get("depth_ft", 0),
+            i.get("length_ft", 0),
+            i.get("velocity_fps", 5.0),
+            i.get("n", 0.0155),
+            i.get("sg", 1.0),
+            i.get("safety_factor", 2.0),
+        )
+    elif calc == "program_rules":
+        r = program_rules(i.get("surface_area_sf", 0), i.get("pool_class", "pool"))
     else:
         frappe.throw(_("Unknown calculation: {0}").format(calc), frappe.ValidationError)
     return r.to_dict()

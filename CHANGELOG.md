@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.97.0] - 2026-06-23
+
+### Added
+- **Water Engineering — workbook hydraulic & planning sheets** (`engine/workbook.py`, exposed via `run_calc` + the `fac_water_calc` MCP tool). Five more calculations extracted from the DOC-0049 workbook, each reproducing that sheet's own cached worked example (golden tests):
+  - **`electric_cost`** (E - Elec Costs) — annual pump operating cost: `WHP = SG·TDH·Q/3960` → BHP (÷pump eff) → HP (÷motor eff) → kW (×0.7457) → $/yr. Turns the engine from a sizing tool into a quoting tool. *(50 GPM @ 35 ft → $194.74/yr.)*
+  - **`vertical_pipe`** (K - Vert Pipe) — standpipe/vertical-pipe discharge `Q = 5.68·H^0.5·K·ID²`, K = 0.82 + 0.025·ID, in three solve modes (flow from head+ID, head from flow+ID, or recommend an ID from flow+head). *(20 in over a 3″ pipe → 214.4 GPM.)*
+  - **`open_channel_flow`** (J - Channel) — rectangular runnel/rill flow via Manning `Q = 1.486·A·R^(2/3)·S^0.5/n` with Froude (tranquil/critical/shooting) and Reynolds (laminar/turbulent) regime classification. *(4″×4″ @ 1% → 114.18 GPM, subcritical.)*
+  - **`lazy_river_hp`** (L - Lazy) — current-generation design horsepower: Manning slope to sustain a target current → friction head over the loop → water HP × safety factor. *(7×3.75 ft, 175 ft loop @ 5 ft/s → 6.418 HP.)*
+  - **`program_rules`** (D - Program) — programmatic sub-rules from the water surface area: bather load (15 SF/user pool, 9 SF spa), skimmer count (1 per 400 SF), minimum solar-panel area (0.8×SA), perimeter-overflow trigger (>5,000 SF).
+  - Golden-value tests in `test_water_engine.py`; bench-free suite green (81); ruff clean. Note: the open-channel/lazy-river Manning roughness defaults to the conservative workbook `n` (0.015 / 0.0155), not DOC-0119's lower 0.009–0.011.
+
 ## [1.96.0] - 2026-06-23
 
 ### Added

@@ -20,6 +20,7 @@ from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
 from .safety import npsh_available, suction_outlet_vgb, water_hammer
 from .tdh import component_loss, fitting_minor_loss, total_dynamic_head
+from .workbook import electric_cost, lazy_river_hp, open_channel_flow, program_rules, vertical_pipe
 
 __all__ = [
     "CalcOption",
@@ -30,18 +31,22 @@ __all__ = [
     "chemistry_targets",
     "chlorinator_feed",
     "component_loss",
+    "electric_cost",
     "electrical_load",
     "fitting_minor_loss",
     "hazen_williams_loss",
     "head_at_flow",
+    "lazy_river_hp",
     "lighting_sizing",
     "make_input",
     "manning_drain_flow",
     "nozzle_array_flow",
     "nozzle_flow",
     "npsh_available",
+    "open_channel_flow",
     "ozone_sidestream",
     "pipe_velocity",
+    "program_rules",
     "run_spine",
     "select_pump",
     "size_drain",
@@ -51,6 +56,7 @@ __all__ = [
     "total_dynamic_head",
     "turnover_gpm",
     "velocity_status",
+    "vertical_pipe",
     "water_hammer",
     "weir_flow",
 ]
