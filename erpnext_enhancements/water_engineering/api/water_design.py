@@ -152,6 +152,66 @@ def pump_curves(item_codes):
     return out
 
 
+def _canvas_state(doc):
+    """The fountain-design "canvas" state — everything the shared SVG renderer
+    (window.WaterFountain / the Triton chat) needs to draw the design. Built once
+    here so the desk live preview and the AI walkthrough show the SAME picture."""
+
+    def _f(v):
+        return float(v) if v not in (None, "") else 0.0
+
+    def _ft(inch):
+        return f"{round(_f(inch) / 12.0, 1):g}"
+
+    segs = doc.get("pipe_segments") or []
+    worst = ""
+    for s in segs:
+        v = (s.velocity_status or "").lower()
+        if "exceed" in v:
+            worst = s.velocity_status
+        elif "increase" in v and "exceed" not in (worst or "").lower():
+            worst = s.velocity_status
+        elif not worst:
+            worst = s.velocity_status
+
+    label = ""
+    basins = doc.get("basins") or []
+    if basins:
+        b = basins[0]
+        if "cyl" in (b.shape or "").lower() and _f(b.diameter_in):
+            label = f"{_ft(b.diameter_in)} ft dia x {_ft(b.height_in)} ft deep"
+        elif _f(b.length_in) and _f(b.width_in):
+            label = f"{_ft(b.length_in)} x {_ft(b.width_in)} ft x {_ft(b.height_in)} ft deep"
+
+    # Tallest jet across features that carry a supply head (~0.9 * head, the smooth
+    # jet de-rating) — illustrative; kept inline so the canvas has no calc dependency.
+    jet = 0.0
+    for f in doc.get("features") or []:
+        head = _f(getattr(f, "supply_head_ft", 0))
+        if head > 0:
+            jet = max(jet, 0.9 * head)
+
+    curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.selected_pump else []
+    return {
+        "basin_gallons": doc.total_basin_gallons,
+        "flow_gpm": doc.design_flow_gpm,
+        "feature_count": len(doc.get("features") or []),
+        "jet_height_ft": jet or None,
+        "pump": doc.selected_pump,
+        "tdh_ft": doc.computed_tdh_ft,
+        "static_lift_ft": _f(doc.static_lift_ft),
+        "basin_label": label,
+        "worst_status": worst,
+        "segments": [
+            {"label": s.segment_label, "velocity_fps": s.velocity_fps, "velocity_status": s.velocity_status}
+            for s in segs
+        ],
+        "curve": curve or [],
+        "duty_flow": _f(doc.design_flow_gpm) or _f(doc.required_circulation_gpm),
+        "duty_head": _f(doc.computed_tdh_ft),
+    }
+
+
 # ----------------------------------------------------------- stateless calc
 
 
@@ -377,6 +437,9 @@ def design_state(design=None, project=None, include_results=True):
             "has_warnings": bool(doc.has_warnings),
             "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
             "counts": {t: len(doc.get(t) or []) for t in EDITABLE_CHILD_TABLES},
+            # The fountain-canvas state so the AI walkthrough can draw the same
+            # picture the desk form shows (see api ``_canvas_state``).
+            "canvas": _canvas_state(doc),
         }
         if include_results:
             state["calc_results"] = [
@@ -560,20 +623,6 @@ def preview_design(payload):
     def _f(v):
         return float(v) if v not in (None, "") else 0.0
 
-    # Tallest jet across the features that carry a supply head (orifice nozzles),
-    # for the canvas — illustrative only. A free jet rises to ~0.9 * supply head
-    # (the jet_trajectory de-rating); kept inline so the canvas has no dependency
-    # on the optional jet calc.
-    jet_height = 0.0
-    for f in doc.get("features") or []:
-        head = _f(getattr(f, "supply_head_ft", 0))
-        if head > 0:
-            jet_height = max(jet_height, 0.9 * head)
-
-    # Selected pump's performance curve + this design's duty point, for the chart.
-    duty_flow = _f(doc.design_flow_gpm) or _f(doc.required_circulation_gpm)
-    curve = pump_curves([doc.selected_pump]).get(doc.selected_pump) if doc.selected_pump else []
-
     return {
         "rollups": {
             "total_basin_gallons": doc.total_basin_gallons,
@@ -586,11 +635,7 @@ def preview_design(payload):
             "surge_basin_gallons": doc.surge_basin_gallons,
         },
         "static_lift_ft": _f(doc.static_lift_ft),
-        "jet_height_ft": jet_height or None,
-        "feature_count": len(doc.get("features") or []),
-        "pump_curve": curve or [],
-        "duty_flow": duty_flow,
-        "duty_head": _f(doc.computed_tdh_ft),
+        "canvas": _canvas_state(doc),
         "completion_percent": completion,
         "has_warnings": bool(doc.has_warnings),
         "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
