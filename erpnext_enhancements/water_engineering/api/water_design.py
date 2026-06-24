@@ -729,3 +729,18 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
 def check_permission():
     """True if the user may use the wizard (read access to designs)."""
     return frappe.has_permission(DESIGN_DOCTYPE, "read")
+
+
+@frappe.whitelist()
+def get_loss_catalog():
+    """Fitting/valve K-factors and component head-loss coefficients (the engine's
+    own tables) for the pipe-segment loss pickers on the form. One source of truth
+    for the desk dropdowns and the engine math, so the two can't drift."""
+    _require("read")
+    # Lazy import keeps the engine-data module out of the API import graph until used.
+    from erpnext_enhancements.water_engineering.engine.data.fittings import COMPONENT_COEFF, FITTING_K
+
+    return {
+        "fittings": [{"type": name, "k": k} for name, k in FITTING_K.items()],
+        "components": [{"type": name, "coeff": coeff} for name, coeff in COMPONENT_COEFF.items()],
+    }

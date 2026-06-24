@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.107.0] - 2026-06-24
+
+### Changed
+- **Water Feature Design — pick pipe fittings & equipment instead of typing JSON.** Each pipe segment's fittings/valves and equipment/components used to require hand-typed JSON (`[{"type":"ELL 90","qty":2}]`), where the `type` had to exactly match an engine catalog key — far too fiddly for a designer. Now each segment row has **Edit Fittings & Valves** and **Edit Equipment & Components** buttons that open a picker: choose an item from a dropdown and set a quantity, add as many rows as needed. The row shows a plain-language summary (e.g. *"2× ELL 90, 1× EXIT"*), and the live head-loss / TDH updates on Apply.
+  - The dropdown options come straight from the engine's own K-factor and coefficient tables via a new `get_loss_catalog` endpoint, so the desk choices can never drift from the math (and an invalid hand-typed type is no longer possible). Each option shows its coefficient as a hint (`K 0.81`, `0.077 ft/GPM`).
+  - The raw JSON is still the stored value the engine reads — it's just hidden behind the picker now. Designs saved before this change get their summaries back-filled from the existing JSON on open.
+
 ## [1.106.0] - 2026-06-24
 
 ### Changed

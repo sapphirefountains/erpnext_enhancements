@@ -130,6 +130,7 @@ frappe.ui.form.on("Water Feature Design", {
 				grid.wrapper.off("change.wfdprev").on("change.wfdprev", () => schedule_preview(frm));
 			}
 		});
+		wfd_sync_loss_summaries(frm);
 		schedule_preview(frm);
 	},
 });
@@ -140,6 +141,19 @@ WFD_PREVIEW_FIELDS.forEach((f) => {
 	_input_triggers[f] = (frm) => schedule_preview(frm);
 });
 frappe.ui.form.on("Water Feature Design", _input_triggers);
+
+// Pipe-segment fittings/components are picked from a friendly dialog (dropdown +
+// quantity), not hand-typed JSON. The buttons live on each segment row; the
+// dropdown options come straight from the engine's K-factor / coefficient tables
+// (get_loss_catalog), so the desk choices can't drift from the math.
+frappe.ui.form.on("Water Feature Pipe Segment", {
+	edit_fittings(frm, cdt, cdn) {
+		wfd_edit_losses(frm, cdt, cdn, "fittings");
+	},
+	edit_components(frm, cdt, cdn) {
+		wfd_edit_losses(frm, cdt, cdn, "components");
+	},
+});
 
 let _wfd_timer = null;
 function schedule_preview(frm) {
@@ -383,4 +397,138 @@ function apply_template(frm, name) {
 	} else {
 		fill();
 	}
+}
+
+// ---------------------------------------------------------- loss pickers
+// Fittings/valves and equipment/components add minor + component head loss to a
+// pipe segment. The engine sizes them from K-factors / coefficients keyed by an
+// exact catalog name — so instead of hand-typing JSON, the designer picks from a
+// dropdown (the catalog) + a quantity, and we serialize that to the stored JSON.
+
+const WFD_LOSS_META = {
+	fittings: {
+		json: "fittings_json",
+		summary: "fittings_summary",
+		title: "Fittings & Valves",
+		add: "Add fitting / valve",
+		blurb: "Elbows, tees, valves, entrances/exits — head loss from each item's K-factor.",
+		hint: (o) => (o.k != null ? `K ${o.k}` : ""),
+	},
+	components: {
+		json: "components_json",
+		summary: "components_summary",
+		title: "Equipment & Components",
+		add: "Add equipment",
+		blurb: "Filters, skimmers, heaters, valves — head loss per GPM from each item's coefficient.",
+		hint: (o) => (o.coeff != null ? `${Number(o.coeff).toFixed(3)} ft/GPM` : ""),
+	},
+};
+
+let _wfd_loss_catalog = null;
+function wfd_loss_catalog() {
+	if (_wfd_loss_catalog) return Promise.resolve(_wfd_loss_catalog);
+	return frappe
+		.call("erpnext_enhancements.water_engineering.api.water_design.get_loss_catalog")
+		.then((r) => {
+			_wfd_loss_catalog = r.message || { fittings: [], components: [] };
+			return _wfd_loss_catalog;
+		});
+}
+
+function wfd_parse_loss(text) {
+	if (!text) return [];
+	try {
+		const data = JSON.parse(text);
+		return Array.isArray(data) ? data.filter((r) => r && r.type) : [];
+	} catch (e) {
+		return [];
+	}
+}
+
+function wfd_summarize_loss(list) {
+	return (list || [])
+		.filter((r) => r.type)
+		.map((r) => `${cint(r.qty) || 1}× ${r.type}`)
+		.join(", ");
+}
+
+// Populate the human-readable summaries from the stored JSON (e.g. for designs
+// saved before the picker existed). Direct row assignment — no dirty, no preview.
+function wfd_sync_loss_summaries(frm) {
+	let changed = false;
+	(frm.doc.pipe_segments || []).forEach((row) => {
+		["fittings", "components"].forEach((kind) => {
+			const m = WFD_LOSS_META[kind];
+			if (!row[m.summary] && row[m.json]) {
+				row[m.summary] = wfd_summarize_loss(wfd_parse_loss(row[m.json]));
+				changed = true;
+			}
+		});
+	});
+	if (changed) frm.refresh_field("pipe_segments");
+}
+
+function wfd_edit_losses(frm, cdt, cdn, kind) {
+	const row = locals[cdt][cdn];
+	const m = WFD_LOSS_META[kind];
+	wfd_loss_catalog().then((cat) => {
+		const options = (kind === "fittings" ? cat.fittings : cat.components) || [];
+		wfd_open_loss_dialog(m, options, wfd_parse_loss(row[m.json]), (list) => {
+			frappe.model.set_value(cdt, cdn, m.json, list.length ? JSON.stringify(list) : "");
+			frappe.model.set_value(cdt, cdn, m.summary, wfd_summarize_loss(list));
+			schedule_preview(frm);
+		});
+	});
+}
+
+function wfd_open_loss_dialog(m, options, existing, on_apply) {
+	const esc = frappe.utils.escape_html;
+	const option_tags = (selected) =>
+		[`<option value="">${__("— select —")}</option>`]
+			.concat(
+				options.map((o) => {
+					const hint = m.hint(o);
+					const text = o.type + (hint ? `  (${hint})` : "");
+					return `<option value="${esc(o.type)}"${o.type === selected ? " selected" : ""}>${esc(text)}</option>`;
+				})
+			)
+			.join("");
+
+	const row_html = (r) => `
+		<div class="wfd-loss-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+			<select class="wfd-loss-type form-control input-sm" style="flex:1">${option_tags(r ? r.type : "")}</select>
+			<input type="number" min="1" step="1" class="wfd-loss-qty form-control input-sm" style="width:84px"
+				value="${r ? cint(r.qty) || 1 : 1}" aria-label="${__("Quantity")}">
+			<button class="btn btn-default btn-xs wfd-loss-del" title="${__("Remove")}">&times;</button>
+		</div>`;
+
+	const dialog = new frappe.ui.Dialog({
+		title: __(m.title),
+		size: "large",
+		primary_action_label: __("Apply"),
+		primary_action: () => {
+			const list = [];
+			dialog.$body.find(".wfd-loss-row").each(function () {
+				const type = $(this).find(".wfd-loss-type").val();
+				const qty = cint($(this).find(".wfd-loss-qty").val());
+				if (type && qty > 0) list.push({ type: type, qty: qty });
+			});
+			on_apply(list);
+			dialog.hide();
+		},
+	});
+
+	dialog.$body.html(`
+		<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${__(m.blurb)}</div>
+		<div class="wfd-loss-list">${(existing.length ? existing : [null]).map(row_html).join("")}</div>
+		<button class="btn btn-default btn-sm wfd-loss-add" style="margin-top:6px">+ ${__(m.add)}</button>
+	`);
+
+	dialog.$body.find(".wfd-loss-add").on("click", () => {
+		$(row_html(null)).appendTo(dialog.$body.find(".wfd-loss-list"));
+	});
+	dialog.$body.on("click", ".wfd-loss-del", function () {
+		$(this).closest(".wfd-loss-row").remove();
+	});
+	dialog.show();
 }
