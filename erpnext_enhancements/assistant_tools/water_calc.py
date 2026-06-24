@@ -44,6 +44,14 @@ _CALCS = (
     "open_channel_flow",
     "lazy_river_hp",
     "program_rules",
+    "jet_trajectory",
+    "lsi_index",
+    "evaporation_rate",
+    "make_up_water",
+    "heating_load",
+    "chemical_dose",
+    "uv_dose",
+    "filtration_area",
 )
 
 
@@ -92,7 +100,19 @@ class WaterCalc(BaseTool):
             "open_channel_flow {width_in, depth_in, slope, n} (runnel/rill GPM + "
             "Froude/Reynolds regime); lazy_river_hp {width_ft, depth_ft, length_ft, "
             "velocity_fps, n} (current-generation design HP); program_rules "
-            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar)."
+            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar). "
+            "Aesthetics: jet_trajectory {supply_head_ft|supply_psi or target_height_ft, "
+            "nozzle_type:smooth|aerated} (realistic spray height <-> required pressure + "
+            "basin setback). Treatment/thermal: lsi_index {ph, temp_f, "
+            "calcium_hardness_ppm, total_alkalinity_ppm, tds_ppm} (water balance: "
+            "scale vs corrode); evaporation_rate {surface_area_sf, water_temp_f, "
+            "air_temp_f, rh_pct, activity} (ASHRAE gal/day); make_up_water "
+            "{evaporation_gpd, splash_gpd, backwash_gpd, fill_window_min} (daily make-up "
+            "+ auto-fill valve); heating_load {volume_gal, delta_f, cover:none|solid|"
+            "liquid, wind, gas_rate} (heat-loss $/mo + heater BTU/hr); chemical_dose "
+            "{volume_gal, chemical:ph_down|alkalinity_up|cya_up|salt_up, current, target} "
+            "(dose to target); uv_dose {flow_gpm, target_red_mj} (UV design dose); "
+            "filtration_area {design_gpm, media:sand|cartridge|de} (filter SF + backwash)."
         )
         self.category = "Water Engineering"
         self.source_app = "erpnext_enhancements"
