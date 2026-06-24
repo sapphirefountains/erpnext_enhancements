@@ -26,6 +26,8 @@ _CALCS = (
     "nozzle_flow",
     "size_pipe",
     "hazen_williams_loss",
+    "pipe_pressure_rating",
+    "pipe_pressure_check",
     "total_dynamic_head",
     "select_pump",
     "chlorinator_feed",
@@ -43,6 +45,8 @@ _CALCS = (
     "vertical_pipe",
     "open_channel_flow",
     "lazy_river_hp",
+    "lighting_design",
+    "overflow_check",
     "program_rules",
     "jet_trajectory",
     "lsi_index",
@@ -70,6 +74,9 @@ class WaterCalc(BaseTool):
             "{nozzle_count, gpm_each}; size_pipe {flow_gpm, length_ft, material, "
             "line:discharge|suction} (returns every size with velocity/status in "
             "options); hazen_williams_loss {flow_gpm, length_ft, id_in}; "
+            "pipe_pressure_rating {material, nominal_size, temp_f} (max psi a pipe is rated "
+            "for; PVC derates 73->110F to half); pipe_pressure_check {material, nominal_size, "
+            "system_psi, temp_f} (is the pipe rated for the pressure? value = psi margin); "
             "total_dynamic_head {segments:[...], static_lift_ft}; select_pump "
             "{flow_gpm, tdh_ft, candidates:[...]}. Orifice nozzle_flow {nozzle_profile, "
             "supply_head_ft} computes Q=Cd*A*sqrt(2gh) from a Nozzle Profile's "
@@ -77,7 +84,9 @@ class WaterCalc(BaseTool):
             "with a rated GPM, or a weir. "
             "Water treatment: chlorinator_feed {volume_gal, chlorine_pct} (min "
             "liquid-chlorine feed gal/hr); chemistry_targets {water_type: outdoor|"
-            "indoor|saltwater} (free Cl / pH / CYA ranges); ozone_sidestream "
+            "indoor|saltwater, cya_ppm?, free_cl_ppm?} (free Cl / pH / CYA ranges; "
+            "pass cya_ppm/free_cl_ppm to check the DOC-0119 free-Cl floor = "
+            "max(2.0, 7.5% of CYA)); ozone_sidestream "
             "{volume_gal, turnover_min, sidestream_pct, contact_tank, tank_qty, "
             "log_reduction:2-log|3-log} (ozone g/hr + contact-tank check). "
             "Drainage: manning_drain_flow {nominal_size, slope_in_per_ft} (gravity-"
@@ -100,7 +109,11 @@ class WaterCalc(BaseTool):
             "open_channel_flow {width_in, depth_in, slope, n} (runnel/rill GPM + "
             "Froude/Reynolds regime); lazy_river_hp {width_ft, depth_ft, length_ft, "
             "velocity_fps, n} (current-generation design HP); program_rules "
-            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar). "
+            "{surface_area_sf, pool_class:pool|spa} (bather load / skimmers / solar); "
+            "lighting_design {surface_area_sf, pool_class:shallow_pond|residential|public|"
+            "diving_shallow|diving_deep|competition} (recommended underwater-light wattage from "
+            "watts/SF bands); overflow_check {surface_area_sf, pipe_size, rain_in_hr, "
+            "runoff_fraction} (peak rainfall overflow GPM + standpipe adequacy; 7.9 in/hr design). "
             "Aesthetics: jet_trajectory {supply_head_ft|supply_psi or target_height_ft, "
             "nozzle_type:smooth|aerated} (realistic spray height <-> required pressure + "
             "basin setback). Treatment/thermal: lsi_index {ph, temp_f, "

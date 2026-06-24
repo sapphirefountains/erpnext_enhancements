@@ -31,6 +31,7 @@ from erpnext_enhancements.water_engineering.engine import (
     heating_load,
     jet_trajectory,
     lazy_river_hp,
+    lighting_design,
     lsi_index,
     make_up_water,
     manning_drain_flow,
@@ -38,7 +39,10 @@ from erpnext_enhancements.water_engineering.engine import (
     nozzle_flow,
     npsh_available,
     open_channel_flow,
+    overflow_check,
     ozone_sidestream,
+    pipe_pressure_check,
+    pipe_pressure_rating,
     program_rules,
     run_spine,
     select_pump,
@@ -61,6 +65,7 @@ CONTROL_DOCTYPE = "Control Panel Design"
 EDITABLE_DESIGN_FIELDS = frozenset(
     {
         "project",
+        "customer",
         "serial_no",
         "design_title",
         "status",
@@ -261,6 +266,13 @@ def _run_calc(calc, inputs):
         )
     elif calc == "hazen_williams_loss":
         r = hazen_williams_loss(i.get("flow_gpm", 0), i.get("length_ft", 0), i.get("id_in", 0), i.get("c") or 130)
+    elif calc == "pipe_pressure_rating":
+        r = pipe_pressure_rating(i.get("material", "SCH40 PVC"), i.get("nominal_size") or i.get("size"), i.get("temp_f", 73))
+    elif calc == "pipe_pressure_check":
+        r = pipe_pressure_check(
+            i.get("material", "SCH40 PVC"), i.get("nominal_size") or i.get("size"),
+            i.get("system_psi", 0), i.get("temp_f", 73),
+        )
     elif calc == "total_dynamic_head":
         r = total_dynamic_head(
             i.get("segments", []), static_lift_ft=i.get("static_lift_ft", 0), c=i.get("c") or 130
@@ -270,7 +282,7 @@ def _run_calc(calc, inputs):
     elif calc == "chlorinator_feed":
         r = chlorinator_feed(i.get("volume_gal", 0), i.get("chlorine_pct", 10))
     elif calc == "chemistry_targets":
-        r = chemistry_targets(i.get("water_type", "outdoor"))
+        r = chemistry_targets(i.get("water_type", "outdoor"), i.get("cya_ppm"), i.get("free_cl_ppm"))
     elif calc == "ozone_sidestream":
         r = ozone_sidestream(
             i.get("volume_gal", 0),
@@ -354,6 +366,13 @@ def _run_calc(calc, inputs):
         )
     elif calc == "program_rules":
         r = program_rules(i.get("surface_area_sf", 0), i.get("pool_class", "pool"))
+    elif calc == "lighting_design":
+        r = lighting_design(i.get("surface_area_sf", 0), i.get("pool_class", "residential"))
+    elif calc == "overflow_check":
+        r = overflow_check(
+            i.get("surface_area_sf", 0), i.get("pipe_size"),
+            i.get("rain_in_hr", 7.9), i.get("runoff_fraction", 1.0),
+        )
     elif calc == "jet_trajectory":
         r = jet_trajectory(
             target_height_ft=i.get("target_height_ft", 0),
@@ -728,3 +747,18 @@ def get_pump_candidates(gpm=0, tdh_ft=0):
 def check_permission():
     """True if the user may use the wizard (read access to designs)."""
     return frappe.has_permission(DESIGN_DOCTYPE, "read")
+
+
+@frappe.whitelist()
+def get_loss_catalog():
+    """Fitting/valve K-factors and component head-loss coefficients (the engine's
+    own tables) for the pipe-segment loss pickers on the form. One source of truth
+    for the desk dropdowns and the engine math, so the two can't drift."""
+    _require("read")
+    # Lazy import keeps the engine-data module out of the API import graph until used.
+    from erpnext_enhancements.water_engineering.engine.data.fittings import COMPONENT_COEFF, FITTING_K
+
+    return {
+        "fittings": [{"type": name, "k": k} for name, k in FITTING_K.items()],
+        "components": [{"type": name, "coeff": coeff} for name, coeff in COMPONENT_COEFF.items()],
+    }

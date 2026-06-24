@@ -45,6 +45,24 @@ WEIR_FRANCIS_COEFF = 36.0
 WEIR_FRANCIS_CONTRACTION_COEFF = 0.3
 DEFAULT_WEIR_CONTRACTIONS = 2
 
+# --- weir edge-sheet operating guidance (DOC-0049 B - Surge Basin O29:P50) ---
+# Head over the crest -> flow per linear foot of edge, banded by the wind it
+# tolerates (this is the Francis formula at L=1 ft, n=2 -- the same math, with the
+# design-band labels the workbook attaches). DOC-0049 note O29: OPERATE edges near
+# 0.5 GPM/ft, but ENGINEER water-in-transit + plumbing for 4-6 GPM/ft. (0.5 GPM/ft
+# is also the tiered-fountain rim sheet rate -- previously mis-cited to DOC-0119.)
+WEIR_OPERATE_GPM_PER_FT = 0.5
+WEIR_ENGINEER_GPM_PER_FT = (4.0, 6.0)
+# (head_in_at_least, wind-condition label) -- highest band that the flow clears.
+WEIR_EDGE_BANDS = [
+    (0.0625, "minimum wet edge"),
+    (0.125, "light breeze"),
+    (0.1875, "medium breeze"),
+    (0.25, "strong breeze"),
+    (0.3125, "conservative (engineered) edge"),
+]
+CIT_WEIR_EDGE = "DOC-0049 / B - Surge Basin (edge sheet rate / wind bands)"
+
 # --- pressure <-> head ------------------------------------------------------
 # NOT present in either workbook. Pumps are specified in ft of TDH; psi is a
 # convenience output only. Standard fresh-water value flagged as such.
@@ -138,6 +156,24 @@ SF_PER_SKIMMER = 400.0
 PERIMETER_OVERFLOW_SF_THRESHOLD = 5000.0
 SOLAR_PANEL_FRACTION = 0.8
 
+# Underwater-lighting design intensity (watts per SF of water surface) by pool
+# class -- (low, high) band (DOC-0049 D - Program B34:I39).
+LIGHTING_WATTS_PER_SF = {
+    "shallow_pond": (0.25, 0.75),
+    "residential": (0.5, 1.0),
+    "public": (1.0, 1.5),
+    "diving_shallow": (1.5, 2.0),  # diving < 12 ft
+    "diving_deep": (2.0, 3.0),  # diving > 12 ft
+    "competition": (2.0, 3.0),
+}
+
+# --- precipitation / overflow sizing (DOC-0049 D - Program / G - Gravity) ----
+# Design rainfall intensity; peak GPM = area_sf * (in/hr / 12) * 7.48 / 60.
+RAIN_DESIGN_IN_HR = 7.9
+GAL_PER_CUBIC_FOOT_DRAIN = 7.48
+# Overflow standpipe capacity (GPM) by nominal size (D - Program overflow table).
+OVERFLOW_PIPE_GPM = {'3"': 15.0, '4"': 29.0, '6"': 81.0}
+
 # --- jet trajectory / spray height (engineering standard; not in source docs) -
 # Realized jet height = k * supply head (k de-rates for drag + aeration).
 JET_EFFICIENCY = {"smooth": 0.90, "solid": 0.90, "spray": 0.75, "aerated": 0.60, "geyser": 0.60, "foam": 0.55}
@@ -203,6 +239,7 @@ CIT_CHEM = "DOC-0049 / C - Chemicals"
 CIT_CHEM_TARGETS = "DOC-0119"
 CIT_BASIN = "DOC-0048 / Basin"
 CIT_PIPE = "DOC-0049 / A - Pipe Size"
+CIT_PIPE_SPECS = "DOC-0049 / 1,2,3 - Pipe Specs"
 CIT_TDH = "DOC-0049 / H - TDH"
 CIT_WEIR = "DOC-0049 / I - Weir"
 CIT_SUPPORT = "DOC-0049 / SUPPORT"

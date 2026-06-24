@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.113.0] - 2026-06-24
+
+### Added
+- **Design-package print formats (DOC-0121 / DOC-0126).** Two new Jinja print formats, shipped on migrate alongside the existing Results / Calculation Audit:
+  - **Water Feature Design — Schedules:** an Equipment Schedule (selected pump, pump candidates, basins) and a Piping Schedule (every segment with material, size, length, velocity, head loss, and its fittings/equipment), per the DOC-0121 design-package requirement.
+  - **Control Panel Design — Submittal:** reproduces the DOC-0126 submittal verbatim — title line, User Interface (the enabled screens), Pump Control & Pumps (per-pump line), Inputs, Solenoid Valves, Lights, Interlocks, Theory of Operation, and the representative image — generated from the panel's fields.
+
+## [1.112.0] - 2026-06-24
+
+### Added
+- **Control Panel Design — captures the full controls intake (DOC-0025/0123/0127).** New fields: **Theory of Operation** (Long Text — DOC-0127 makes this mandatory), System & Control Panel descriptions, the three design/construction parties (Fountain Design / Construction / Controls company, defaulting to Sapphire Fountains — feeds the O&M manual), a second control voltage, a power **source-of-confirmation**, and a **Fuses** child table (new `Control Fuse` doctype: qty, rating, replacement part, protects — for the O&M fuse schedule).
+- **Standard input checklist is now seeded.** A fresh panel seeds the standard inputs (E-stop, water-level controller, wind sensor) the way it already seeds the standard interlocks, so the I/O list starts from the DOC-0126 baseline instead of empty.
+- **`controller_hardware`** now offers the LCD + 4-button platform (DOC-0062 EDP001/SDP001) alongside the Nextion HMI and Allen-Bradley PLC options.
+
+### Changed
+- **Wind interlock split into two thresholds** (DOC-0123 Wind Control): *above medium → VFDs ramp to windy speed* and *above high → feature pumps stop*, replacing the single "wind high → stop" row that under-modeled the real two-stage behavior.
+
+## [1.111.0] - 2026-06-24
+
+### Added
+- **Two new design calcs from DOC-0049 D/G-Program.** `lighting_design` recommends total underwater-light wattage from the water-surface area and pool class, using the watts/SF design bands (shallow pond 0.25–0.75 → competition 2.0–3.0) — so the engine can *recommend* lighting load, not just roll up fixtures already chosen. `overflow_check` computes the peak rainfall overflow a basin must shed (`SA × in/hr/12 × 7.48 / 60`, 7.9 in/hr design) and checks an overflow standpipe (3"/4"/6") against it, recommending the smallest size that handles the peak. Both on the desk endpoint + AI `water_calc`.
+
+## [1.110.0] - 2026-06-24
+
+### Added
+- **Pipe pressure ratings (DOC-0049 sheets 1–3).** Loaded the full per-size pressure/weight spec (OD, wall, dry/wet weight, max temp, PSI @73°F & @110°F) for SCH40/SCH80 PVC + Type K copper. Two new calcs — `pipe_pressure_rating` (max psi at a temperature; PVC derates linearly to half by 110°F) and `pipe_pressure_check` (psi margin vs the system pressure) — exposed on the desk endpoint and the AI `water_calc`. The spine sizes pipe by *velocity*; it now **also** checks pressure: once TDH is known it converts to psi (~TDH/2.31) and flags any discharge run whose pipe isn't rated for it (with a `pipe_pressure_check` audit card so it shows in "Show the math").
+- **DOC-0119 CYA-coupled chlorine floor.** `chemistry_targets` accepts optional `cya_ppm` / `free_cl_ppm` and computes the free-chlorine floor `max(2.0, 7.5% of CYA)`, warning when the standard target range or the planned level falls below it (under-sanitized water).
+
+### Changed
+- **Component head-loss now uses the real (nonlinear) manufacturer curves.** `component_loss` previously linearized each filter/skimmer/heater to a single ft/GPM coefficient; it now interpolates the actual DOC-0049 sheet-7 curves (`COMPONENT_CURVES`, 16 components) — a convex filter is no longer mis-stated across its range — and **warns when a component runs past its rated `max_gpm`**. The old coefficients remain as a fallback + the desk-picker hint. (This shifts computed TDH on designs with components — it's a correctness improvement.)
+
+## [1.109.0] - 2026-06-24
+
+### Added
+- **Source-document data audit + roadmap.** Audited all 11 Sapphire design documents (DOC-0025/0028/0048/0049/0062/0092/0119/0121/0123/0126/0127) against what the engine actually uses; the prioritized gap analysis lives in `water_engineering/SOURCE_DATA_AUDIT.md`. First batch of findings implemented below.
+- **Weir / edge sheet-rate design guidance (DOC-0049 B — Surge Basin).** `weir_flow` and `tiered_fountain_flow` now report flow **per linear foot of edge**, classify it into the workbook's wind band (minimum wet edge → light/medium/strong breeze → conservative), and surface the design rule: *operate edges near 0.5 GPM/ft but engineer water-in-transit & plumbing for 4–6 GPM/ft*. An edge running below ~0.5 GPM/ft now warns that the sheet may break into rivulets. (`engine/feature.py:edge_sheet_guidance`.)
+
+### Fixed
+- **Corrected the 0.5 GPM/ft edge/tier sheet-rate citation.** It was attributed to DOC-0119, but the rate and its wind-tolerance bands actually come from **DOC-0049 sheet B (Surge Basin)** — fixed in `feature.py` and the Water Feature Tier field help.
+
+### Changed
+- **`Control Panel Design.product_family` is now a Select** (Splash Wizard Basic / PLUS / MAX) instead of free text, matching the DOC-0062 platform taxonomy.
+
+## [1.108.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — per-segment pipe / fitting / component math in the audit trail.** "Show the math" already expanded basin, weir, and pump calcs, but a pipe run only showed the rolled-up Total Dynamic Head with one-line per-segment steps. The spine now emits a full `CalcResult` envelope for each segment's **friction** (Hazen-Williams major loss), **fitting** minor loss (the K-factor working), and **component** loss (equipment head), so every pipe run's and fitting's formula, inputs, step-by-step working, and citation render as their own cards when the toggle is on — the same transparency as the rest of the design. (`engine/tdh.py:segment_loss_results`, wired into `run_spine`.)
+
+### Changed
+- **AI `save_water_design` is now fitting/component catalog-aware.** The tool schema previously told the assistant `fittings_json` / `components_json` took JSON but not the valid `type` values, so the AI could emit a name the engine silently ignores. The `pipe_segments` schema now lists the exact catalog names (generated from the engine's `FITTING_K` / `COMPONENT_COEFF` tables, so it can't drift) plus the `{"type", "qty"}` shape and the Discharge/Suction & material enums — the same single-source-of-truth the desk picker uses.
+
+## [1.107.0] - 2026-06-24
+
+### Changed
+- **Water Feature Design — pick pipe fittings & equipment instead of typing JSON.** Each pipe segment's fittings/valves and equipment/components used to require hand-typed JSON (`[{"type":"ELL 90","qty":2}]`), where the `type` had to exactly match an engine catalog key — far too fiddly for a designer. Now each segment row has **Edit Fittings & Valves** and **Edit Equipment & Components** buttons that open a picker: choose an item from a dropdown and set a quantity, add as many rows as needed. The row shows a plain-language summary (e.g. *"2× ELL 90, 1× EXIT"*), and the live head-loss / TDH updates on Apply.
+  - The dropdown options come straight from the engine's own K-factor and coefficient tables via a new `get_loss_catalog` endpoint, so the desk choices can never drift from the math (and an invalid hand-typed type is no longer possible). Each option shows its coefficient as a hint (`K 0.81`, `0.077 ft/GPM`).
+  - The raw JSON is still the stored value the engine reads — it's just hidden behind the picker now. Designs saved before this change get their summaries back-filled from the existing JSON on open.
+
+## [1.106.0] - 2026-06-24
+
+### Changed
+- **Water Feature Design — Project is optional; Customer can stand alone.** A design no longer needs a Project — the Project link is documented as optional (leave it blank for a standalone design or quote). The **Customer** field is now directly editable: it still auto-fills from the Project's customer when a Project is set (`fetch_if_empty`, so a hand-entered customer is never overwritten), but you can pick a customer on a project-less design. The wizard / FAC MCP save path accepts `customer` too. *(Project was never marked required in the doctype; if a form shows it as mandatory, that's a saved Customize Form override on the instance, not the app.)*
+
+### Added
+- **Water Feature Design — a quick-start template for every water feature type.** The **New from Template** menu now covers all the feature types we build, one per type, instead of three samples: **Weir basin**, **Spilling weir (scupper)**, **Vanishing edge (weir wall)**, **Waterwall (sheet)**, **Nozzle-array pool**, **Orifice nozzle jet**, **Splash pad**, **Rain curtain**, and **Tiered fountain (cascade)**. Each template's `feature_type` matches the engine's flow-calc routing, pre-fills a representative basin + feature + discharge run, and the **Tiered fountain** template lands a 3-tier cascade in the Tiers table. Applying a template now also clears/fills the **Tiers** table (previously it only touched basins, features, and piping, so a tiered template couldn't load its tiers). The Orifice nozzle template leaves the Nozzle Profile to pick (orifice flow is sourced from the manufacturer cut sheet) and pre-fills the supply head.
+
 ## [1.105.0] - 2026-06-24
 
 ### Added

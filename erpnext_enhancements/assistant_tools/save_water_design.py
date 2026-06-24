@@ -26,6 +26,18 @@ from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._gate import annotations_for
 
+# The exact fitting/valve and equipment catalog the engine's TDH math keys on
+# (engine/data/fittings.py). Generated here so the AI is told the valid
+# `type` values for fittings_json / components_json — it can't hallucinate a name
+# the engine would silently ignore, and the list can never drift from the math.
+from erpnext_enhancements.water_engineering.engine.data.fittings import (
+    COMPONENT_COEFF,
+    FITTING_K,
+)
+
+_FITTING_TYPES = ", ".join(FITTING_K)
+_COMPONENT_TYPES = ", ".join(COMPONENT_COEFF)
+
 
 class SaveWaterDesign(BaseTool):
     def __init__(self):
@@ -76,7 +88,16 @@ class SaveWaterDesign(BaseTool):
                 "pipe_segments": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Segment rows {segment_label, line_type, flow_gpm, material, nominal_size, pipe_length_ft, fittings_json, components_json} (replaces the table).",
+                    "description": (
+                        "Segment rows {segment_label, line_type: Discharge|Suction, flow_gpm, "
+                        "material: SCH40 PVC|SCH80 PVC|Type K Copper, nominal_size, pipe_length_ft, "
+                        "fittings_json, components_json} (replaces the table). Leave flow_gpm blank/0 "
+                        "to carry the full design flow. fittings_json and components_json are "
+                        'JSON-encoded lists of {"type": <exact catalog name>, "qty": <int>} — a type '
+                        "not in the catalog is silently ignored, so use these names verbatim. "
+                        f"Valid fittings_json types: {_FITTING_TYPES}. "
+                        f"Valid components_json types: {_COMPONENT_TYPES}."
+                    ),
                 },
                 "pumps": {
                     "type": "array",

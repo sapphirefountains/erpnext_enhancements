@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from .basin import basin_volume, turnover_gpm
-from .constants import DEFAULT_TURNOVERS_PER_HR, HW_C_PVC
+from .constants import DEFAULT_TURNOVERS_PER_HR, FT_PER_PSI, HW_C_PVC
 from .feature import (
     feature_flow_category,
     nozzle_array_flow,
@@ -21,8 +21,9 @@ from .feature import (
     tiered_fountain_flow,
     weir_flow,
 )
+from .pipe import pipe_pressure_check
 from .pump import select_pump
-from .tdh import total_dynamic_head
+from .tdh import segment_loss_results, total_dynamic_head
 
 
 def _feature_flow(feature: dict):
@@ -113,10 +114,37 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     hw_c = inputs.get("hazen_williams_c") or HW_C_PVC
     tdh_ft = None
     if segments:
+        # Per-segment friction / fitting / component envelopes first (the full
+        # working behind each run), then the rolled-up TDH that sums them. The
+        # rollup already surfaces the minor/component warnings, so we don't also
+        # add the per-segment envelopes' warnings (the audit cards still show
+        # them; this just avoids double-counting in the warnings list).
+        for s in segments:
+            for env in segment_loss_results(s, c=hw_c):
+                results.append(env.to_dict())
         r = total_dynamic_head(segments, static_lift_ft=inputs.get("static_lift_ft", 0.0), c=hw_c)
         results.append(r.to_dict())
         warnings += r.warnings
         tdh_ft = r.value
+
+        # Pressure-rating check: the pump puts ~TDH ft of head (= TDH/2.31 psi) on
+        # the discharge side. The velocity check can't see this, so flag any
+        # discharge run whose pipe isn't rated for the system pressure.
+        if tdh_ft and tdh_ft > 0:
+            system_psi = tdh_ft / FT_PER_PSI
+            seen_under = set()
+            for s in segments:
+                if not (s.get("line_type") or "Discharge").lower().startswith("dis"):
+                    continue
+                size = s.get("nominal_size")
+                material = s.get("material", "SCH40 PVC")
+                if not size or (material, size) in seen_under:
+                    continue
+                chk = pipe_pressure_check(material, size, system_psi)
+                if chk.status and "Pressure" in chk.status:
+                    seen_under.add((material, size))
+                    results.append(chk.to_dict())
+                    warnings += chk.warnings
     else:
         needed.append("pipe_segments")
 

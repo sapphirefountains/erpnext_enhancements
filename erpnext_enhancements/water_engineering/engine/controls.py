@@ -21,14 +21,28 @@ from .envelope import CalcResult, make_input
 
 CIT_PANEL = "DOC-0126 / Control Panel Submittal"
 
-# Default standard interlock checklist (condition -> action), DOC-0126/0127.
+# Default standard interlock checklist (condition -> action), DOC-0126/0127/0123.
+# Wind has TWO thresholds (DOC-0123 Wind Control screen): at the medium setpoint
+# the VFDs ramp to the windy speed; at the high setpoint the feature pumps stop.
 DEFAULT_INTERLOCKS = [
     {"condition": "Circulation pump off", "action": "Inhibit feature pumps", "enabled": 1},
     {"condition": "Water level low", "action": "Stop / inhibit pumps", "enabled": 1},
-    {"condition": "Wind high", "action": "Stop feature pumps", "enabled": 1},
+    {"condition": "Wind above medium setpoint", "action": "VFDs ramp to windy speed", "enabled": 1},
+    {"condition": "Wind above high setpoint", "action": "Stop feature pumps", "enabled": 1},
     {"condition": "E-stop pressed", "action": "All stop", "enabled": 1},
     {"condition": "Thermal overload", "action": "Stop affected pump", "enabled": 1},
     {"condition": "Power-up", "action": "All components to safe state (off)", "enabled": 1},
+]
+
+# Standard panel inputs (DOC-0126 Inputs / DOC-0123). Seeded as a checklist when a
+# panel's I/O list is empty -- delete the ones a given job doesn't include.
+DEFAULT_IO_POINTS = [
+    {"point_name": "E-stop", "io_type": "Input", "signal": "Dry Contact NC",
+     "device": "E-stop button", "description": "Panel emergency stop", "qty": 1},
+    {"point_name": "Water level", "io_type": "Input", "signal": "Dry Contact NO",
+     "device": "Water level controller", "description": "Low-water cutoff / fill", "qty": 1},
+    {"point_name": "Wind sensor", "io_type": "Input", "signal": "Reed Switch Pulse",
+     "device": "Anemometer", "description": "Wind speed (medium/high setpoints)", "qty": 1},
 ]
 
 

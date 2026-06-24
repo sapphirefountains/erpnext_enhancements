@@ -33,6 +33,7 @@ from erpnext_enhancements.water_engineering.engine import (
     heating_load,
     jet_trajectory,
     lazy_river_hp,
+    lighting_design,
     lighting_sizing,
     lsi_index,
     make_up_water,
@@ -41,7 +42,10 @@ from erpnext_enhancements.water_engineering.engine import (
     nozzle_flow,
     npsh_available,
     open_channel_flow,
+    overflow_check,
     ozone_sidestream,
+    pipe_pressure_check,
+    pipe_pressure_rating,
     pipe_velocity,
     program_rules,
     run_spine,
@@ -106,6 +110,17 @@ class FeatureTests(unittest.TestCase):
     def test_weir_monotonic_in_head(self):
         self.assertLess(weir_flow(1, 0.5).value, weir_flow(1, 1.0).value)
 
+    def test_weir_edge_sheet_guidance(self):
+        # DOC-0049 B: a 20 ft edge at 1/4" head runs 4.5 GPM/ft -> "strong breeze"
+        # band, with the operate/engineer advisory and the B - Surge Basin citation.
+        r = weir_flow(20, 0.25, 0)
+        guidance = next((s for s in r.steps if "GPM/ft of edge" in s), "")
+        self.assertIn("strong breeze", guidance)
+        self.assertIn("4-6 GPM/ft", guidance)
+        self.assertTrue(any("B - Surge Basin" in c for c in r.citations))
+        # Below ~0.5 GPM/ft the sheet breaks up -> a warning fires.
+        self.assertTrue(any("continuous sheet" in w for w in weir_flow(6, 0.03, 2).warnings))
+
     def test_tiered_fountain_flow(self):
         # largest tier governs: 36 in dia -> pi*36/12 = 9.4248 ft -> *0.5 = 4.712 GPM
         tiers = [{"diameter_in": 24}, {"diameter_in": 36}, {"diameter_in": 18}]
@@ -146,6 +161,18 @@ class PipeTests(unittest.TestCase):
         self.assertEqual(velocity_status(5.79, "suction", 4.5, 6.5, 8.0), "Increase Size")
         self.assertEqual(velocity_status(8.5, "discharge", 4.5, 6.5, 8.0), "Exceeds Legal Limit")
 
+    def test_pipe_pressure_rating_and_check(self):
+        # 2" SCH40 PVC: 166 psi @73F, derates to 83 @110F (DOC-0049 1,2,3).
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"').value, 166, places=3)
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"', 110).value, 83, places=3)
+        # midpoint 91.5F -> halfway between 166 and 83 = 124.5
+        self.assertAlmostEqual(pipe_pressure_rating("SCH40 PVC", '2"', 91.5).value, 124.5, places=1)
+        ok = pipe_pressure_check("SCH40 PVC", '2"', 100)
+        self.assertEqual(ok.status, "Okay")
+        bad = pipe_pressure_check("SCH40 PVC", '2"', 200)
+        self.assertEqual(bad.status, "Exceeds Pressure Rating")
+        self.assertTrue(bad.warnings)
+
     def test_hazen_williams_default_constant(self):
         # 10.44 * 150 * 120^1.85 / (130^1.85 * 3.068^4.8655) = 5.776797
         self.assertAlmostEqual(hazen_williams_loss(120, 150, 3.068).value, 5.776797, places=4)
@@ -185,12 +212,19 @@ class TdhTests(unittest.TestCase):
         self.assertTrue(r.warnings)
 
     def test_component_loss(self):
-        # (0.05 + 0.0766667) * 26.9812 = 3.4176
+        # Real DOC-0049 sheet-7 curves, interpolated at 26.9812 GPM:
+        #   grate  (10,0.5)->(50,2.5):  0.5 + (16.9812/40)*2.0 = 1.34906
+        #   CCP320 (20,0.5)->(30,0.8):  0.5 + (6.9812/10)*0.3  = 0.70944
         comps = [
             {"type": "SUCTION OUTLET COVER/GRATE", "qty": 1},
             {"type": "CARTRIDGE FILTER 320 SF CCP CLEAN", "qty": 1},
         ]
-        self.assertAlmostEqual(component_loss(26.9812, comps).value, 3.41763, places=3)
+        self.assertAlmostEqual(component_loss(26.9812, comps).value, 2.0585, places=3)
+
+    def test_component_loss_over_max_warns(self):
+        # A 320 SF cartridge is rated to 120 GPM; run it at 150 and it warns.
+        r = component_loss(150, [{"type": "CARTRIDGE FILTER 320 SF CCP CLEAN", "qty": 1}])
+        self.assertTrue(any("rated to 120" in w for w in r.warnings))
 
     def test_total_dynamic_head_single_segment(self):
         # static 10 + major(120,150,3.068)=5.7768, no minor/component -> 15.7768
@@ -281,6 +315,13 @@ class ChemistryTests(unittest.TestCase):
         salt = chemistry_targets("saltwater")
         self.assertTrue(any("60-80 ppm" in s for s in salt.steps))
         self.assertTrue(chemistry_targets("lava").warnings)
+
+    def test_chemistry_cya_chlorine_floor(self):
+        # DOC-0119: free Cl floor = max(2.0, 7.5% of CYA). At CYA 80 -> 6.0 ppm,
+        # above the outdoor target max (3.0) -> warn; and FC 2 ppm at CYA 80 warns.
+        r = chemistry_targets("outdoor", cya_ppm=80, free_cl_ppm=2.0)
+        self.assertTrue(any("floor" in s for s in r.steps))
+        self.assertTrue(any("6" in w and "floor" in w for w in r.warnings))
 
     def test_ozone_sidestream(self):
         # DOC-0049 C - Chemicals worked example: 40000 gal, 360 min, 25%, CNT120
@@ -489,6 +530,23 @@ class WorkbookTests(unittest.TestCase):
         self.assertIn("1", r.steps[1])  # skimmers = 1
         # spa uses 9 SF/user -> more bathers than a pool of the same area
         self.assertGreater(program_rules(400, "spa").value, program_rules(400, "pool").value)
+
+    def test_lighting_design_bands(self):
+        # residential 0.5-1.0 W/SF over 400 SF -> 200-400 W, midpoint 300
+        self.assertAlmostEqual(lighting_design(400, "residential").value, 300, places=3)
+        # public band is denser than residential for the same area
+        self.assertGreater(lighting_design(400, "public").value, lighting_design(400, "residential").value)
+        self.assertTrue(lighting_design(0, "residential").warnings)
+
+    def test_overflow_check(self):
+        # 100 SF at 7.9 in/hr full: 100*(7.9/12)*7.48/60 = 8.21 GPM; a 3" overflow (15) handles it
+        r = overflow_check(100, '3"')
+        self.assertAlmostEqual(r.value, 8.21, delta=0.05)
+        self.assertEqual(r.status, "Okay")
+        # a large surface overruns a 3" overflow -> Undersized + warning
+        big = overflow_check(1000, '3"')
+        self.assertEqual(big.status, "Undersized")
+        self.assertTrue(big.warnings)
 
 
 class JetTests(unittest.TestCase):

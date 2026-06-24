@@ -23,7 +23,14 @@ from .feature import (
     tiered_fountain_flow,
     weir_flow,
 )
-from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
+from .pipe import (
+    hazen_williams_loss,
+    pipe_pressure_check,
+    pipe_pressure_rating,
+    pipe_velocity,
+    size_pipe,
+    velocity_status,
+)
 from .pipeline import run_spine
 from .pump import electrical_load, head_at_flow, select_pump
 from .safety import npsh_available, suction_outlet_vgb, water_hammer
@@ -37,7 +44,15 @@ from .treatment import (
     make_up_water,
     uv_dose,
 )
-from .workbook import electric_cost, lazy_river_hp, open_channel_flow, program_rules, vertical_pipe
+from .workbook import (
+    electric_cost,
+    lazy_river_hp,
+    lighting_design,
+    open_channel_flow,
+    overflow_check,
+    program_rules,
+    vertical_pipe,
+)
 
 __all__ = [
     "CalcOption",
@@ -61,6 +76,7 @@ __all__ = [
     "heating_load",
     "jet_trajectory",
     "lazy_river_hp",
+    "lighting_design",
     "lighting_sizing",
     "lsi_index",
     "make_input",
@@ -70,7 +86,10 @@ __all__ = [
     "nozzle_flow",
     "npsh_available",
     "open_channel_flow",
+    "overflow_check",
     "ozone_sidestream",
+    "pipe_pressure_check",
+    "pipe_pressure_rating",
     "pipe_velocity",
     "program_rules",
     "run_spine",

@@ -13,18 +13,85 @@ from __future__ import annotations
 
 from .constants import (
     CIT_PIPE,
+    CIT_PIPE_SPECS,
+    FT_PER_PSI,
     HW_C_PVC,
     HW_CONSTANT,
     HW_EXPONENT_D,
     HW_EXPONENT_Q,
     VELOCITY_COEFF,
 )
-from .data.pipe_specs import DEFAULT_PIPE_MATERIAL, PIPE_SPECS
+from .data.pipe_specs import DEFAULT_PIPE_MATERIAL, PIPE_SPECS, get_pipe_pressure
 from .envelope import CalcOption, CalcResult, make_input
 
 STATUS_OKAY = "Okay"
 STATUS_INCREASE = "Increase Size"
 STATUS_EXCEEDS = "Exceeds Legal Limit"
+STATUS_OVER_PRESSURE = "Exceeds Pressure Rating"
+
+
+def pipe_pressure_rating(material: str, size: str, temp_f: float = 73.0) -> CalcResult:
+    """Max operating pressure (psi) for a pipe at a temperature. PVC is rated at
+    73 deg F and derates linearly to half by 110 deg F; copper carries a single
+    rating. (DOC-0049 1,2,3 - Pipe Specs.)"""
+    spec = get_pipe_pressure(material, size)
+    base = {"material": make_input(material, "", "user"), "size": make_input(size, "", "user")}
+    if not spec or spec.get("psi_73f") is None:
+        return CalcResult(
+            calc="pipe_pressure_rating", unit="psi", inputs=base, citations=[CIT_PIPE_SPECS],
+            warnings=[f"No pressure rating on file for {material} {size}."],
+        )
+    temp_f = float(temp_f or 73.0)
+    psi73, psi110, max_temp = spec["psi_73f"], spec.get("psi_110f"), spec.get("max_temp_f")
+    if psi110 is None:
+        rated = float(psi73)
+        steps = [f"{material} {size}: {psi73} psi (single rating, max {max_temp} F)"]
+    elif temp_f <= 73:
+        rated, steps = float(psi73), [f"at {temp_f:g} F (<=73 F): {psi73} psi"]
+    elif temp_f >= 110:
+        rated, steps = float(psi110), [f"at {temp_f:g} F (>=110 F): {psi110} psi"]
+    else:
+        frac = (temp_f - 73) / (110 - 73)
+        rated = psi73 + (psi110 - psi73) * frac
+        steps = [f"derate 73->110 F: {psi73} + ({psi110}-{psi73})*{frac:.3f} = {rated:.1f} psi"]
+    warnings = []
+    if max_temp and temp_f > max_temp:
+        warnings.append(f"{temp_f:g} F exceeds the {max_temp} F max working temperature for {material} {size}.")
+    return CalcResult(
+        calc="pipe_pressure_rating", value=round(rated, 1), unit="psi",
+        inputs={**base, "temp": make_input(temp_f, "F", "user"),
+                "psi_73f": make_input(psi73, "psi", "lookup", "1,2,3 - Pipe Specs"),
+                "psi_110f": make_input(psi110, "psi", "lookup", "1,2,3 - Pipe Specs")},
+        formula="rated psi at temperature (PVC derates linearly 73->110 F to half)",
+        steps=steps, citations=[CIT_PIPE_SPECS], warnings=warnings,
+    )
+
+
+def pipe_pressure_check(material: str, size: str, system_psi: float, temp_f: float = 73.0) -> CalcResult:
+    """Pass/fail a pipe's pressure rating against the system pressure (psi). The
+    ``value`` is the margin (rated - system); negative means under-rated."""
+    rating = pipe_pressure_rating(material, size, temp_f)
+    if rating.value is None:
+        return rating
+    system_psi = float(system_psi or 0)
+    rated = rating.value
+    ok = system_psi <= rated
+    status = STATUS_OKAY if ok else STATUS_OVER_PRESSURE
+    warnings = list(rating.warnings)
+    if not ok:
+        warnings.append(
+            f"System {system_psi:.0f} psi exceeds the {rated:.0f} psi rating of {material} {size} "
+            f"at {float(temp_f or 73):g} F — use a heavier wall (e.g. SCH80) or larger pipe."
+        )
+    return CalcResult(
+        calc="pipe_pressure_check", value=round(rated - system_psi, 1), unit="psi margin",
+        inputs={"material": make_input(material, "", "user"), "size": make_input(size, "", "user"),
+                "system_psi": make_input(round(system_psi, 1), "psi", "prior_calc"),
+                "rated_psi": make_input(rated, "psi", "calc")},
+        formula="margin = rated_psi - system_psi  (>= 0 ok)",
+        steps=rating.steps + [f"margin = {rated:.0f} - {system_psi:.0f} = {rated - system_psi:.0f} psi -> {status}"],
+        citations=[CIT_PIPE_SPECS], status=status, warnings=warnings,
+    )
 
 
 def pipe_velocity(flow_gpm: float, id_in: float) -> CalcResult:

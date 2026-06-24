@@ -9,11 +9,28 @@ Verified against DOC-0049 ``H - TDH``:
 
 from __future__ import annotations
 
-from .constants import CIT_TDH, GRAVITY_FT_S2, HW_C_PVC, HW_CONSTANT
-from .data.fittings import COMPONENT_COEFF, FITTING_K
+from .constants import CIT_TDH, GRAVITY_FT_S2, HW_C_PVC, HW_CONSTANT, VELOCITY_COEFF
+from .data.fittings import COMPONENT_COEFF, COMPONENT_CURVES, FITTING_K
 from .data.pipe_specs import get_pipe_id
 from .envelope import CalcResult, make_input
 from .pipe import hazen_williams_loss
+
+
+def _interp_curve(points: list, gpm: float) -> float:
+    """Head loss (ft) at ``gpm`` on a ``[(gpm, ft), ...]`` curve (ascending).
+    Below the first point we scale linearly from the origin; above the last we
+    extrapolate on the final segment's slope (and the caller warns past max)."""
+    if not points:
+        return 0.0
+    if gpm <= points[0][0]:
+        g0, h0 = points[0]
+        return h0 * (gpm / g0) if g0 else 0.0
+    for (g0, h0), (g1, h1) in zip(points, points[1:]):
+        if gpm <= g1:
+            return h0 + (h1 - h0) * (gpm - g0) / (g1 - g0) if g1 != g0 else h1
+    (g0, h0), (g1, h1) = points[-2], points[-1]
+    slope = (h1 - h0) / (g1 - g0) if g1 != g0 else 0.0
+    return h1 + slope * (gpm - g1)
 
 
 def _qty(row: dict) -> float:
@@ -56,34 +73,52 @@ def fitting_minor_loss(velocity_fps: float, fittings: list[dict]) -> CalcResult:
 
 
 def component_loss(flow_gpm: float, components: list[dict]) -> CalcResult:
-    """Component loss (ft) from filters/skimmers/heaters (ft-of-head-per-GPM)."""
+    """Component loss (ft) from filters/skimmers/heaters at the system flow.
+
+    Uses the real (often nonlinear) manufacturer head-loss curves from DOC-0049
+    sheet 7 (``COMPONENT_CURVES``), interpolated at ``flow_gpm`` — a single
+    ft/GPM coefficient mis-states a convex filter across its range. Falls back to
+    the linear ``COMPONENT_COEFF`` for any component without a curve, and warns
+    when a component runs past its rated ``max_gpm``."""
     flow_gpm = float(flow_gpm)
-    sum_coeff = 0.0
+    loss = 0.0
     unknown: list[str] = []
+    over_max: list[str] = []
     parts: list[str] = []
     for row in components or []:
         name = row.get("type")
-        coeff = COMPONENT_COEFF.get(name)
-        if coeff is None:
-            unknown.append(str(name))
-            continue
         qty = _qty(row)
-        sum_coeff += coeff * qty
-        parts.append(f"{qty}x{name}(coeff={coeff:g})")
-    loss = sum_coeff * flow_gpm
-    warnings = [f"Unknown component type(s) ignored: {unknown}"] if unknown else []
+        curve = COMPONENT_CURVES.get(name)
+        if curve:
+            per = _interp_curve(curve["points"], flow_gpm)
+            loss += per * qty
+            parts.append(f"{qty}x{name}({per:.2f} ft @ {flow_gpm:g} GPM)")
+            max_gpm = curve.get("max_gpm")
+            if max_gpm and flow_gpm > max_gpm:
+                over_max.append(f"{name} is rated to {max_gpm:g} GPM but carries {flow_gpm:g} GPM")
+        elif name in COMPONENT_COEFF:
+            per = COMPONENT_COEFF[name] * flow_gpm
+            loss += per * qty
+            parts.append(f"{qty}x{name}({per:.2f} ft, linear)")
+        else:
+            unknown.append(str(name))
+    warnings = []
+    if unknown:
+        warnings.append(f"Unknown component type(s) ignored: {unknown}")
+    for o in over_max:
+        warnings.append(f"Over rated flow: {o} — split flow or size up.")
     return CalcResult(
         calc="component_loss",
         value=loss,
         unit="ft",
         inputs={
             "flow": make_input(flow_gpm, "GPM", "prior_calc"),
-            "sum_coeff": make_input(round(sum_coeff, 6), "ft/GPM", "lookup", "H - TDH component table"),
+            "components": make_input(len(components or []), "rows", "user"),
         },
-        formula="component_ft = SUMPRODUCT(coeff, count) * Q",
+        formula="component_ft = SUM over components of headloss_curve(type, Q) * count",
         steps=[
-            f"sum_coeff = {' + '.join(parts) if parts else '0'} = {sum_coeff:g} ft/GPM",
-            f"component = {sum_coeff:g} * {flow_gpm} = {loss:.4f} ft",
+            f"per component @ {flow_gpm:g} GPM: {' + '.join(parts) if parts else '0'}",
+            f"component total = {loss:.4f} ft",
         ],
         citations=[CIT_TDH],
         warnings=warnings,
@@ -99,6 +134,45 @@ def _segment_id(segment: dict) -> float | None:
     if size:
         return get_pipe_id(segment.get("material", "SCH40 PVC"), size)
     return None
+
+
+def segment_loss_results(
+    segment: dict,
+    c: float = HW_C_PVC,
+    constant: float = HW_CONSTANT,
+) -> list[CalcResult]:
+    """The full per-segment head-loss math as individual envelopes: friction
+    (Hazen-Williams major loss), fittings (K-factor minor loss), and components
+    (equipment loss). ``total_dynamic_head`` only emits a single rolled-up
+    envelope whose steps are one-liners — these break each segment out so the
+    audit trail and the form's "show the math" can render every segment's (and
+    fitting's) working, formula, inputs, and citation. ``[]`` if the segment has
+    no resolvable pipe diameter (nothing to compute)."""
+    id_in = _segment_id(segment)
+    if not id_in:
+        return []
+    label = segment.get("label") or segment.get("segment_label") or "segment"
+    flow = float(segment.get("flow_gpm", 0) or 0)
+    length_ft = float(segment.get("length_ft", 0) or 0)
+    velocity = flow * VELOCITY_COEFF / id_in**2
+
+    results: list[CalcResult] = []
+    major = hazen_williams_loss(flow, length_ft, id_in, c, constant)
+    major.calc = f"Pipe friction — {label}"
+    results.append(major)
+
+    fittings = segment.get("fittings") or []
+    if fittings:
+        minor = fitting_minor_loss(velocity, fittings)
+        minor.calc = f"Fitting loss — {label}"
+        results.append(minor)
+
+    components = segment.get("components") or []
+    if components:
+        comp = component_loss(flow, components)
+        comp.calc = f"Component loss — {label}"
+        results.append(comp)
+    return results
 
 
 def total_dynamic_head(

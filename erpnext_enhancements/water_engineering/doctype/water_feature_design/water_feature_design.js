@@ -6,36 +6,105 @@
 //     is recomputed in memory server-side (no save) and the rollups, per-row
 //     velocity/flow/head-loss, completion, warnings, and a schematic dashboard
 //     all update — so modeling is responsive instead of save-and-wait.
-//   - Quick-start templates pre-fill a common fountain type.
+//   - Quick-start templates pre-fill a common fountain type — one per water
+//     feature type we build (weir family, jet/array family, and tiered cascade).
 // The authoritative recompute still runs on save (validate); this preview calls
 // the SAME engine path, so what you see live equals what gets saved.
+//
+// Each template's `feature_type` matches the Water Feature Nozzle select exactly,
+// so the engine routes it to the right flow calc (see feature_flow_category).
+// Segment `flow_gpm` is left blank on purpose: a blank segment carries the full
+// design flow (see the controller's _fill_segment_rows), so the piping sizes to
+// the computed circulation without hand-entering it.
 
 const WFD_TEMPLATES = {
-	"Rectangular weir basin": {
+	// --- Weir family (water spilling over a crest; Francis formula) -----------
+	"Weir basin": {
 		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 4 },
-		basins: [{ shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
-		features: [{ feature_type: "Weir", weir_length_ft: 6, head_in: 0.25, end_contractions: 2 }],
+		basins: [{ basin_label: "Catch basin", shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
+		features: [{ feature_label: "Weir", feature_type: "Weir", weir_length_ft: 6, head_in: 0.25, end_contractions: 2 }],
 		pipe_segments: [
 			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
 		],
 	},
-	"Spray-jet pool": {
-		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
-		basins: [{ shape: "Cylindrical", diameter_in: 120, height_in: 24 }],
-		features: [{ feature_type: "Nozzle Array", nozzle_count: 6, gpm_each: 8 }],
+	"Spilling weir (scupper)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 5 },
+		basins: [{ basin_label: "Catch basin", shape: "Rectangular", length_in: 144, width_in: 48, height_in: 18 }],
+		features: [{ feature_label: "Scupper", feature_type: "Spilling Weir", weir_length_ft: 8, head_in: 0.5, end_contractions: 0 }],
 		pipe_segments: [
-			{ segment_label: "Pump discharge", flow_gpm: 48, nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 45, line_type: "Discharge" },
 		],
 	},
 	"Vanishing edge (weir wall)": {
 		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
-		basins: [{ shape: "Rectangular", length_in: 240, width_in: 18, height_in: 12 }],
-		features: [{ feature_type: "Weir", weir_length_ft: 20, head_in: 0.25, end_contractions: 0 }],
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 240, width_in: 18, height_in: 12 }],
+		features: [{ feature_label: "Vanishing edge", feature_type: "Weir", weir_length_ft: 20, head_in: 0.25, end_contractions: 0 }],
 		pipe_segments: [
 			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 60, line_type: "Discharge" },
 		],
 	},
+	"Waterwall (sheet)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 12 },
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 120, width_in: 24, height_in: 14 }],
+		features: [{ feature_label: "Water wall", feature_type: "Waterwall", weir_length_ft: 8, head_in: 0.25, end_contractions: 0 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	// --- Jet / array family (discrete streams) -------------------------------
+	"Nozzle-array pool": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
+		basins: [{ basin_label: "Pool", shape: "Cylindrical", diameter_in: 120, height_in: 24 }],
+		features: [{ feature_label: "Jet ring", feature_type: "Nozzle Array", nozzle_count: 6, gpm_each: 8 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	"Orifice nozzle jet": {
+		// Orifice flow needs a Nozzle Profile (Cd / orifice size) from the catalog —
+		// pick one on the feature row; the supply head is pre-filled (~10 psi).
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 10 },
+		basins: [{ basin_label: "Pool", shape: "Cylindrical", diameter_in: 96, height_in: 24 }],
+		features: [{ feature_label: "Center jet — pick a Nozzle Profile", feature_type: "Orifice Nozzle", supply_head_ft: 23 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 35, line_type: "Discharge" },
+		],
+	},
+	"Splash pad": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
+		basins: [{ basin_label: "Collection tank", shape: "Rectangular", length_in: 120, width_in: 120, height_in: 12 }],
+		features: [{ feature_label: "Ground jets", feature_type: "Splash Pad", nozzle_count: 12, gpm_each: 5 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
+		],
+	},
+	"Rain curtain": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 11 },
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 144, width_in: 18, height_in: 14 }],
+		features: [{ feature_label: "Rain bar", feature_type: "Rain Curtain", nozzle_count: 48, gpm_each: 0.5 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 45, line_type: "Discharge" },
+		],
+	},
+	// --- Tiered cascade (sized from the Tiers table, not a feature row) -------
+	"Tiered fountain (cascade)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 7 },
+		basins: [{ basin_label: "Base pool", shape: "Cylindrical", diameter_in: 96, height_in: 18 }],
+		features: [{ feature_label: "Cascade", feature_type: "Tiered Fountain" }],
+		tiers: [
+			{ tier_label: "Top bowl", diameter_in: 24, rim_height_in: 48, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Middle bowl", diameter_in: 40, rim_height_in: 30, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Bottom bowl", diameter_in: 60, rim_height_in: 14, spill_gpm_per_ft: 0.5 },
+		],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 30, line_type: "Discharge" },
+		],
+	},
 };
+
+// Model tables a template may define / replace (tiers included so the Tiered
+// Fountain template lands its cascade rows).
+const WFD_TEMPLATE_TABLES = ["basins", "features", "pipe_segments", "tiers"];
 
 const WFD_PREVIEW_FIELDS = [
 	"turnover_per_hr", "hazen_williams_c", "pipe_material", "static_lift_ft",
@@ -61,6 +130,7 @@ frappe.ui.form.on("Water Feature Design", {
 				grid.wrapper.off("change.wfdprev").on("change.wfdprev", () => schedule_preview(frm));
 			}
 		});
+		wfd_sync_loss_summaries(frm);
 		schedule_preview(frm);
 	},
 });
@@ -71,6 +141,19 @@ WFD_PREVIEW_FIELDS.forEach((f) => {
 	_input_triggers[f] = (frm) => schedule_preview(frm);
 });
 frappe.ui.form.on("Water Feature Design", _input_triggers);
+
+// Pipe-segment fittings/components are picked from a friendly dialog (dropdown +
+// quantity), not hand-typed JSON. The buttons live on each segment row; the
+// dropdown options come straight from the engine's K-factor / coefficient tables
+// (get_loss_catalog), so the desk choices can't drift from the math.
+frappe.ui.form.on("Water Feature Pipe Segment", {
+	edit_fittings(frm, cdt, cdn) {
+		wfd_edit_losses(frm, cdt, cdn, "fittings");
+	},
+	edit_components(frm, cdt, cdn) {
+		wfd_edit_losses(frm, cdt, cdn, "components");
+	},
+});
 
 let _wfd_timer = null;
 function schedule_preview(frm) {
@@ -297,10 +380,10 @@ function render_dashboard(frm, p) {
 function apply_template(frm, name) {
 	const tpl = WFD_TEMPLATES[name];
 	if (!tpl) return;
-	const has_rows = (frm.doc.basins || []).length || (frm.doc.features || []).length || (frm.doc.pipe_segments || []).length;
+	const has_rows = WFD_TEMPLATE_TABLES.some((t) => (frm.doc[t] || []).length);
 	const fill = () => {
 		(tpl.fields ? Object.keys(tpl.fields) : []).forEach((k) => frm.set_value(k, tpl.fields[k]));
-		["basins", "features", "pipe_segments"].forEach((t) => {
+		WFD_TEMPLATE_TABLES.forEach((t) => {
 			frm.clear_table(t);
 			(tpl[t] || []).forEach((row) => frm.add_child(t, Object.assign({}, row)));
 			frm.refresh_field(t);
@@ -310,8 +393,142 @@ function apply_template(frm, name) {
 		frappe.show_alert({ message: __("Loaded template: {0}", [name]), indicator: "green" });
 	};
 	if (has_rows) {
-		frappe.confirm(__("Replace the current basin, feature, and piping rows with the {0} template?", [name]), fill);
+		frappe.confirm(__("Replace the current basin, feature, piping, and tier rows with the {0} template?", [name]), fill);
 	} else {
 		fill();
 	}
+}
+
+// ---------------------------------------------------------- loss pickers
+// Fittings/valves and equipment/components add minor + component head loss to a
+// pipe segment. The engine sizes them from K-factors / coefficients keyed by an
+// exact catalog name — so instead of hand-typing JSON, the designer picks from a
+// dropdown (the catalog) + a quantity, and we serialize that to the stored JSON.
+
+const WFD_LOSS_META = {
+	fittings: {
+		json: "fittings_json",
+		summary: "fittings_summary",
+		title: "Fittings & Valves",
+		add: "Add fitting / valve",
+		blurb: "Elbows, tees, valves, entrances/exits — head loss from each item's K-factor.",
+		hint: (o) => (o.k != null ? `K ${o.k}` : ""),
+	},
+	components: {
+		json: "components_json",
+		summary: "components_summary",
+		title: "Equipment & Components",
+		add: "Add equipment",
+		blurb: "Filters, skimmers, heaters, valves — head loss per GPM from each item's coefficient.",
+		hint: (o) => (o.coeff != null ? `${Number(o.coeff).toFixed(3)} ft/GPM` : ""),
+	},
+};
+
+let _wfd_loss_catalog = null;
+function wfd_loss_catalog() {
+	if (_wfd_loss_catalog) return Promise.resolve(_wfd_loss_catalog);
+	return frappe
+		.call("erpnext_enhancements.water_engineering.api.water_design.get_loss_catalog")
+		.then((r) => {
+			_wfd_loss_catalog = r.message || { fittings: [], components: [] };
+			return _wfd_loss_catalog;
+		});
+}
+
+function wfd_parse_loss(text) {
+	if (!text) return [];
+	try {
+		const data = JSON.parse(text);
+		return Array.isArray(data) ? data.filter((r) => r && r.type) : [];
+	} catch (e) {
+		return [];
+	}
+}
+
+function wfd_summarize_loss(list) {
+	return (list || [])
+		.filter((r) => r.type)
+		.map((r) => `${cint(r.qty) || 1}× ${r.type}`)
+		.join(", ");
+}
+
+// Populate the human-readable summaries from the stored JSON (e.g. for designs
+// saved before the picker existed). Direct row assignment — no dirty, no preview.
+function wfd_sync_loss_summaries(frm) {
+	let changed = false;
+	(frm.doc.pipe_segments || []).forEach((row) => {
+		["fittings", "components"].forEach((kind) => {
+			const m = WFD_LOSS_META[kind];
+			if (!row[m.summary] && row[m.json]) {
+				row[m.summary] = wfd_summarize_loss(wfd_parse_loss(row[m.json]));
+				changed = true;
+			}
+		});
+	});
+	if (changed) frm.refresh_field("pipe_segments");
+}
+
+function wfd_edit_losses(frm, cdt, cdn, kind) {
+	const row = locals[cdt][cdn];
+	const m = WFD_LOSS_META[kind];
+	wfd_loss_catalog().then((cat) => {
+		const options = (kind === "fittings" ? cat.fittings : cat.components) || [];
+		wfd_open_loss_dialog(m, options, wfd_parse_loss(row[m.json]), (list) => {
+			frappe.model.set_value(cdt, cdn, m.json, list.length ? JSON.stringify(list) : "");
+			frappe.model.set_value(cdt, cdn, m.summary, wfd_summarize_loss(list));
+			schedule_preview(frm);
+		});
+	});
+}
+
+function wfd_open_loss_dialog(m, options, existing, on_apply) {
+	const esc = frappe.utils.escape_html;
+	const option_tags = (selected) =>
+		[`<option value="">${__("— select —")}</option>`]
+			.concat(
+				options.map((o) => {
+					const hint = m.hint(o);
+					const text = o.type + (hint ? `  (${hint})` : "");
+					return `<option value="${esc(o.type)}"${o.type === selected ? " selected" : ""}>${esc(text)}</option>`;
+				})
+			)
+			.join("");
+
+	const row_html = (r) => `
+		<div class="wfd-loss-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+			<select class="wfd-loss-type form-control input-sm" style="flex:1">${option_tags(r ? r.type : "")}</select>
+			<input type="number" min="1" step="1" class="wfd-loss-qty form-control input-sm" style="width:84px"
+				value="${r ? cint(r.qty) || 1 : 1}" aria-label="${__("Quantity")}">
+			<button class="btn btn-default btn-xs wfd-loss-del" title="${__("Remove")}">&times;</button>
+		</div>`;
+
+	const dialog = new frappe.ui.Dialog({
+		title: __(m.title),
+		size: "large",
+		primary_action_label: __("Apply"),
+		primary_action: () => {
+			const list = [];
+			dialog.$body.find(".wfd-loss-row").each(function () {
+				const type = $(this).find(".wfd-loss-type").val();
+				const qty = cint($(this).find(".wfd-loss-qty").val());
+				if (type && qty > 0) list.push({ type: type, qty: qty });
+			});
+			on_apply(list);
+			dialog.hide();
+		},
+	});
+
+	dialog.$body.html(`
+		<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">${__(m.blurb)}</div>
+		<div class="wfd-loss-list">${(existing.length ? existing : [null]).map(row_html).join("")}</div>
+		<button class="btn btn-default btn-sm wfd-loss-add" style="margin-top:6px">+ ${__(m.add)}</button>
+	`);
+
+	dialog.$body.find(".wfd-loss-add").on("click", () => {
+		$(row_html(null)).appendTo(dialog.$body.find(".wfd-loss-list"));
+	});
+	dialog.$body.on("click", ".wfd-loss-del", function () {
+		$(this).closest(".wfd-loss-row").remove();
+	});
+	dialog.show();
 }

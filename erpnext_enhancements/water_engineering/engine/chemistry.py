@@ -56,8 +56,19 @@ def chlorinator_feed(volume_gal: float, chlorine_pct: float = CHLORINE_REF_PCT) 
     )
 
 
-def chemistry_targets(water_type: str = "outdoor") -> CalcResult:
-    """Water-balance target ranges (free chlorine, pH, cyanuric acid)."""
+def chemistry_targets(
+    water_type: str = "outdoor",
+    cya_ppm: float | None = None,
+    free_cl_ppm: float | None = None,
+) -> CalcResult:
+    """Water-balance target ranges (free chlorine, pH, cyanuric acid).
+
+    DOC-0119: when cyanuric acid (CYA) is present, free chlorine must hold a
+    higher floor — ``>= 7.5% of the CYA level`` and ``>= 2 ppm``. Pass a
+    ``cya_ppm`` (planned/measured stabilizer) to compute that floor; pass a
+    ``free_cl_ppm`` (the level you intend to run) to be warned when it falls
+    below the floor (chlorine goes ineffective / the water is under-sanitized).
+    """
     key = (water_type or "outdoor").strip().lower()
     targets = CHEM_TARGETS.get(key)
     if not targets:
@@ -76,14 +87,41 @@ def chemistry_targets(water_type: str = "outdoor") -> CalcResult:
         steps.append(f"cyanuric acid (CYA): {cya[0]}-{cya[1]} ppm; keep free Cl >= 7.5% of CYA")
     else:
         steps.append("cyanuric acid (CYA): not used indoors")
+
+    warnings: list[str] = []
+    inputs = {"water_type": make_input(key, "", "user")}
+    # CYA-coupled free-chlorine floor (DOC-0119): >= 7.5% of CYA and >= 2 ppm.
+    effective_cya = float(cya_ppm) if cya_ppm is not None else (cya[1] or 0)
+    if effective_cya > 0:
+        fc_floor = max(2.0, round(0.075 * effective_cya, 2))
+        basis = "your CYA" if cya_ppm is not None else f"max target CYA {cya[1]}"
+        steps.append(
+            f"free Cl floor at {basis} {effective_cya:g} ppm = max(2.0, 7.5% x {effective_cya:g}) "
+            f"= {fc_floor:g} ppm"
+        )
+        inputs["cya"] = make_input(effective_cya, "ppm", "user" if cya_ppm is not None else "default")
+        inputs["free_cl_floor"] = make_input(fc_floor, "ppm", "calc", "DOC-0119 7.5% of CYA, >=2")
+        if fc[1] < fc_floor:
+            warnings.append(
+                f"At CYA {effective_cya:g} ppm the free-chlorine floor is {fc_floor:g} ppm, above the "
+                f"standard {key} target max of {fc[1]} ppm — raise free chlorine or lower CYA."
+            )
+        if free_cl_ppm is not None:
+            inputs["free_cl"] = make_input(float(free_cl_ppm), "ppm", "user")
+            if float(free_cl_ppm) < fc_floor:
+                warnings.append(
+                    f"Free chlorine {float(free_cl_ppm):g} ppm is below the {fc_floor:g} ppm floor for "
+                    f"CYA {effective_cya:g} ppm (DOC-0119) — chlorine is under-effective; raise it."
+                )
     return CalcResult(
         calc="chemistry_targets",
         value=key,
         unit="ranges",
-        inputs={"water_type": make_input(key, "", "user")},
-        formula="DOC-0119 water-balance target ranges",
+        inputs=inputs,
+        formula="DOC-0119 water-balance target ranges; free Cl floor = max(2.0, 0.075*CYA)",
         steps=steps,
         citations=[CIT_CHEM_TARGETS],
+        warnings=warnings,
     )
 
 

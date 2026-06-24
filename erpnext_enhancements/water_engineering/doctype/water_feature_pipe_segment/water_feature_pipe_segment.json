@@ -11,8 +11,15 @@
   "material",
   "nominal_size",
   "pipe_length_ft",
+  "sb_losses",
+  "edit_fittings",
+  "fittings_summary",
   "fittings_json",
+  "cb_losses",
+  "edit_components",
+  "components_summary",
   "components_json",
+  "sb_seg_results",
   "velocity_fps",
   "velocity_status",
   "head_loss_ft",
@@ -23,7 +30,8 @@
    "fieldname": "segment_label",
    "fieldtype": "Data",
    "label": "Label",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 2
   },
   {
    "fieldname": "line_type",
@@ -31,14 +39,16 @@
    "label": "Line",
    "options": "Discharge\nSuction",
    "default": "Discharge",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "flow_gpm",
    "fieldtype": "Float",
    "label": "Flow (GPM)",
    "reqd": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "material",
@@ -52,7 +62,8 @@
    "fieldtype": "Select",
    "label": "Nominal Size",
    "options": "1/2\"\n3/4\"\n1\"\n1-1/4\"\n1-1/2\"\n2\"\n2-1/2\"\n3\"\n4\"\n6\"\n8\"\n10\"\n12\"",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "pipe_length_ft",
@@ -60,16 +71,58 @@
    "label": "Length (ft)"
   },
   {
+   "fieldname": "sb_losses",
+   "fieldtype": "Section Break",
+   "label": "Fittings & Components"
+  },
+  {
+   "fieldname": "edit_fittings",
+   "fieldtype": "Button",
+   "label": "Edit Fittings & Valves"
+  },
+  {
+   "fieldname": "fittings_summary",
+   "fieldtype": "Small Text",
+   "label": "Fittings & Valves",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
    "fieldname": "fittings_json",
    "fieldtype": "Small Text",
    "label": "Fittings (JSON)",
-   "description": "JSON list, e.g. [{\"type\":\"ELL 90\",\"qty\":2},{\"type\":\"EXIT\",\"qty\":1}]"
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "cb_losses",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "edit_components",
+   "fieldtype": "Button",
+   "label": "Edit Equipment & Components"
+  },
+  {
+   "fieldname": "components_summary",
+   "fieldtype": "Small Text",
+   "label": "Equipment & Components",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
   },
   {
    "fieldname": "components_json",
    "fieldtype": "Small Text",
    "label": "Components (JSON)",
-   "description": "JSON list, e.g. [{\"type\":\"CARTRIDGE FILTER 320 SF CCP CLEAN\",\"qty\":1}]"
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "sb_seg_results",
+   "fieldtype": "Section Break",
+   "label": "Computed"
   },
   {
    "fieldname": "velocity_fps",
@@ -88,7 +141,8 @@
    "fieldtype": "Float",
    "label": "Head Loss (ft)",
    "read_only": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "is_mandatory",
@@ -100,7 +154,7 @@
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-06-23 12:00:00.000000",
+ "modified": "2026-06-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Feature Pipe Segment",

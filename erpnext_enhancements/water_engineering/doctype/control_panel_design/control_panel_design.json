@@ -14,15 +14,26 @@
   "cb_head",
   "panel_includes_contactors_overload",
   "safe_state_on_power_up",
+  "sb_intake",
+  "system_description",
+  "panel_description",
+  "theory_of_operation",
+  "cb_intake",
+  "fountain_design_company",
+  "fountain_construction_company",
+  "controls_company",
   "sb_power",
   "main_line_voltage",
   "frequency_hz",
   "phase",
   "amperage_to_panel",
   "main_breaker_size_a",
+  "power_source_confirmation",
   "cb_power",
   "control_voltage_1",
   "control_voltage_1_type",
+  "control_voltage_2",
+  "control_voltage_2_type",
   "input_voltage_default",
   "solenoid_voltage_default",
   "sb_ui",
@@ -37,6 +48,8 @@
   "io_points",
   "sb_interlocks",
   "interlocks",
+  "sb_fuses",
+  "fuses",
   "sb_lights",
   "lights",
   "sb_sizing",
@@ -68,10 +81,11 @@
   },
   {
    "fieldname": "product_family",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "label": "Product Family",
+   "options": "\nSplash Wizard Basic\nSplash Wizard PLUS\nSplash Wizard MAX",
    "in_list_view": 1,
-   "description": "e.g. Splash Wizard Basic / PLUS / MAX"
+   "description": "Splash Wizard controls platform (DOC-0062 FCA001/002/003)."
   },
   {
    "fieldname": "nema_rating",
@@ -83,7 +97,7 @@
    "fieldname": "controller_hardware",
    "fieldtype": "Select",
    "label": "Controller Hardware",
-   "options": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR\nAllen-Bradley PLC",
+   "options": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR\nArduino MEGA 2560 + LCD + 4-button + WP-40 + Power Relay\nAllen-Bradley PLC",
    "default": "Arduino MEGA 2560 + Nextion HMI + WP-40 + SSR"
   },
   {
@@ -107,6 +121,48 @@
    "fieldtype": "Check",
    "label": "Safe State on Power-up",
    "default": "1"
+  },
+  {
+   "fieldname": "sb_intake",
+   "fieldtype": "Section Break",
+   "label": "Project, Parties & Theory of Operation"
+  },
+  {
+   "fieldname": "system_description",
+   "fieldtype": "Small Text",
+   "label": "System Description",
+   "description": "What the fountain system does (DOC-0025 job info)."
+  },
+  {
+   "fieldname": "panel_description",
+   "fieldtype": "Small Text",
+   "label": "Control Panel Description"
+  },
+  {
+   "fieldname": "theory_of_operation",
+   "fieldtype": "Long Text",
+   "label": "Theory of Operation",
+   "description": "Required (DOC-0127): the features, safeties, and interlocks, and how the program implements them. Write this before coding."
+  },
+  {
+   "fieldname": "cb_intake",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fountain_design_company",
+   "fieldtype": "Data",
+   "label": "Fountain Design Company"
+  },
+  {
+   "fieldname": "fountain_construction_company",
+   "fieldtype": "Data",
+   "label": "Fountain Construction Company"
+  },
+  {
+   "fieldname": "controls_company",
+   "fieldtype": "Data",
+   "label": "Control Panel Design & Programming",
+   "default": "Sapphire Fountains"
   },
   {
    "fieldname": "sb_power",
@@ -143,6 +199,12 @@
    "label": "Main Breaker Size (A)"
   },
   {
+   "fieldname": "power_source_confirmation",
+   "fieldtype": "Data",
+   "label": "Source of Confirmation",
+   "description": "How the available power was confirmed (DOC-0025), e.g. meter reading / electrician / drawings."
+  },
+  {
    "fieldname": "cb_power",
    "fieldtype": "Column Break"
   },
@@ -158,6 +220,19 @@
    "label": "Control Voltage 1 Type",
    "options": "\nVDC\nVAC",
    "default": "VDC"
+  },
+  {
+   "fieldname": "control_voltage_2",
+   "fieldtype": "Select",
+   "label": "Control Voltage 2",
+   "options": "\n12\n24\n120"
+  },
+  {
+   "fieldname": "control_voltage_2_type",
+   "fieldtype": "Select",
+   "label": "Control Voltage 2 Type",
+   "options": "\nVDC\nVAC",
+   "default": "VAC"
   },
   {
    "fieldname": "input_voltage_default",
@@ -237,6 +312,19 @@
    "fieldtype": "Table",
    "label": "Interlocks",
    "options": "Control Interlock"
+  },
+  {
+   "fieldname": "sb_fuses",
+   "fieldtype": "Section Break",
+   "label": "Fuses",
+   "collapsible": 1,
+   "description": "Panel fuse schedule (DOC-0123 O&M): qty, rating, replacement part, and what each protects."
+  },
+  {
+   "fieldname": "fuses",
+   "fieldtype": "Table",
+   "label": "Fuses",
+   "options": "Control Fuse"
   },
   {
    "fieldname": "sb_lights",
