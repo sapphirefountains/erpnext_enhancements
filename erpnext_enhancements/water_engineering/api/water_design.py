@@ -72,7 +72,7 @@ EDITABLE_DESIGN_FIELDS = frozenset(
 )
 
 # Child tables a caller may replace wholesale.
-EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electrical_loads")
+EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers")
 
 # Parent input fields the live form preview may set (the editable design fields
 # plus the chemistry/drainage inputs) — read-only rollups are never accepted.
@@ -201,6 +201,9 @@ def _canvas_state(doc):
         "flow_gpm": doc.design_flow_gpm,
         "feature_count": len(features),
         "feature_kind": kind,
+        "tiers": [
+            {"diameter_in": _f(t.diameter_in), "rim_height_in": _f(t.rim_height_in)} for t in doc.get("tiers") or []
+        ],
         "jet_height_ft": jet or None,
         "pump": doc.selected_pump,
         "tdh_ft": doc.computed_tdh_ft,

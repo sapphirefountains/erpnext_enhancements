@@ -36,6 +36,7 @@ from erpnext_enhancements.water_engineering.engine import (
 	pipe_velocity,
 	run_spine,
 	surge_basin_volume,
+	tiered_fountain_flow,
 	velocity_status,
 	weir_flow,
 )
@@ -135,9 +136,13 @@ class WaterFeatureDesign(Document):
 			row.weight_lb = gallons_to_pounds(r.value) if r.value else 0
 
 	def _fill_feature_rows(self):
+		tier_rows = [{"diameter_in": flt(t.diameter_in)} for t in self.get("tiers") or []]
+		tier_gpm = (flt(self.tiers[0].spill_gpm_per_ft) or 0.5) if self.get("tiers") else 0.5
 		for row in self.get("features") or []:
 			category = feature_flow_category(row.feature_type or "Weir")
-			if category == "weir":
+			if category == "tiered":
+				r = tiered_fountain_flow(tier_rows, tier_gpm)
+			elif category == "weir":
 				r = weir_flow(flt(row.weir_length_ft), flt(row.head_in), cint(row.end_contractions) or 2)
 			elif category == "array":
 				r = nozzle_array_flow(cint(row.nozzle_count), flt(row.gpm_each))
@@ -274,7 +279,21 @@ def _engine_inputs(doc):
 		}
 		for b in doc.get("basins") or []
 	]
-	features = [_feature_dict(f) for f in doc.get("features") or []]
+	tiers = [
+		{
+			"diameter_in": flt(t.diameter_in),
+			"rim_height_in": flt(t.rim_height_in),
+			"spill_gpm_per_ft": flt(t.spill_gpm_per_ft) or 0.5,
+		}
+		for t in doc.get("tiers") or []
+	]
+	features = []
+	for f in doc.get("features") or []:
+		fd = _feature_dict(f)
+		if feature_flow_category(f.feature_type or "") == "tiered":
+			fd["tiers"] = tiers
+			fd["gpm_per_ft"] = tiers[0]["spill_gpm_per_ft"] if tiers else 0.5
+		features.append(fd)
 	segments = [
 		{
 			"label": s.segment_label,

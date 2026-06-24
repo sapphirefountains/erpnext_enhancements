@@ -20,6 +20,7 @@ from .feature import (
     jet_trajectory,
     nozzle_array_flow,
     nozzle_flow,
+    tiered_fountain_flow,
     weir_flow,
 )
 from .pipe import hazen_williams_loss, pipe_velocity, size_pipe, velocity_status
@@ -78,6 +79,7 @@ __all__ = [
     "size_pipe",
     "suction_outlet_vgb",
     "surge_basin_volume",
+    "tiered_fountain_flow",
     "total_dynamic_head",
     "turnover_gpm",
     "uv_dose",

@@ -14,13 +14,21 @@ from typing import Any
 
 from .basin import basin_volume, turnover_gpm
 from .constants import DEFAULT_TURNOVERS_PER_HR, HW_C_PVC
-from .feature import feature_flow_category, nozzle_array_flow, nozzle_flow, weir_flow
+from .feature import (
+    feature_flow_category,
+    nozzle_array_flow,
+    nozzle_flow,
+    tiered_fountain_flow,
+    weir_flow,
+)
 from .pump import select_pump
 from .tdh import total_dynamic_head
 
 
 def _feature_flow(feature: dict):
     category = feature_flow_category(feature.get("feature_type") or "weir")
+    if category == "tiered":
+        return tiered_fountain_flow(feature.get("tiers"), feature.get("gpm_per_ft", 0.5))
     if category == "weir":
         return weir_flow(
             feature.get("weir_length_ft", 0),

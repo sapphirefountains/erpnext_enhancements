@@ -39,6 +39,9 @@ CIT_ORIFICE = "Orifice equation Q=Cd*A*sqrt(2gh) (textbook); coefficients from N
 def feature_flow_category(feature_type: str) -> str:
     """Classify a feature type to the flow calc that sizes it:
 
+    * ``"tiered"``  — a tiered (cascading) fountain: a stack of tiers, each a
+      circular weir; the recirculated flow must sheet the largest tier (sized
+      from the design's tier rows, not a single feature row).
     * ``"weir"``    — water spilling over a crest as a sheet: weirs, spilling
       weirs, vanishing/slot edges, and waterwalls (sized by the Francis weir
       formula over the crest length).
@@ -47,6 +50,8 @@ def feature_flow_category(feature_type: str) -> str:
     * ``"orifice"`` — a single orifice nozzle (Q = Cd*A*sqrt(2gh)).
     """
     t = (feature_type or "").lower()
+    if "tier" in t:
+        return "tiered"
     if any(k in t for k in ("weir", "slot", "vanish", "wall", "spill")):
         return "weir"
     if any(k in t for k in ("array", "splash", "rain", "curtain")):
@@ -56,9 +61,11 @@ def feature_flow_category(feature_type: str) -> str:
 
 def feature_visual_kind(feature_type: str) -> str:
     """Classify a feature type to the schematic the canvas draws for it:
-    ``"waterwall" | "splash_pad" | "rain_curtain" | "spilling_weir" | "weir" |
-    "jet"``. Order matters (waterwall/spilling are checked before plain weir)."""
+    ``"tiered" | "waterwall" | "splash_pad" | "rain_curtain" | "spilling_weir" |
+    "weir" | "jet"``. Order matters (tier/waterwall/spilling before plain weir)."""
     t = (feature_type or "").lower()
+    if "tier" in t:
+        return "tiered"
     if "waterwall" in t or "water wall" in t or "wall" in t:
         return "waterwall"
     if "splash" in t:
@@ -70,6 +77,49 @@ def feature_visual_kind(feature_type: str) -> str:
     if "weir" in t or "slot" in t or "vanish" in t:
         return "weir"
     return "jet"
+
+
+def tiered_fountain_flow(tiers, gpm_per_ft: float = 0.5) -> CalcResult:
+    """Required circulation for a tiered (cascading) fountain.
+
+    ``tiers`` is a list of ``{diameter_in}`` rows. Each tier is a circular weir
+    whose rim needs ``gpm_per_ft`` per linear foot of circumference to hold a
+    continuous sheet. The same water cascades through every tier in series, so
+    the circulation must satisfy the most demanding (largest-circumference) tier
+    — that maximum is the required flow."""
+    tiers = tiers or []
+    gpm_per_ft = float(gpm_per_ft) or 0.5
+    if not tiers:
+        return CalcResult(
+            calc="tiered_fountain_flow",
+            unit="GPM",
+            citations=[CIT_WEIR],
+            warnings=["Add at least one tier (diameter) to size the cascade."],
+        )
+    steps = []
+    required = 0.0
+    for i, t in enumerate(tiers, start=1):
+        d_in = float(t.get("diameter_in") or 0)
+        circ_ft = math.pi * d_in / 12.0
+        q = circ_ft * gpm_per_ft
+        required = max(required, q)
+        steps.append(f"tier {i}: dia {d_in:g} in -> circumference {circ_ft:.2f} ft -> {q:.2f} GPM to sheet")
+    steps.append(
+        f"cascade flow = largest tier = {required:.2f} GPM "
+        "(the same water sheets every tier in series, so the biggest rim governs)"
+    )
+    return CalcResult(
+        calc="tiered_fountain_flow",
+        value=required,
+        unit="GPM",
+        inputs={
+            "tier_count": make_input(len(tiers), "", "user"),
+            "gpm_per_ft": make_input(gpm_per_ft, "GPM/ft", "user", "edge sheet rate (DOC-0119 ~0.5)"),
+        },
+        formula="Q = max over tiers of (pi * D_in / 12) * gpm_per_ft  (circular weir, series cascade)",
+        steps=steps,
+        citations=[CIT_WEIR],
+    )
 
 
 def weir_flow(

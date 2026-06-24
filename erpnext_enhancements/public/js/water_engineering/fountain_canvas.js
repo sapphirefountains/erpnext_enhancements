@@ -84,7 +84,30 @@
 			if (st.basin_label) s += `<text x="${cx}" y="${topY + 28}" font-size="11" fill="${TM}" text-anchor="middle">${esc(st.basin_label)}</text>`;
 		} else {
 			// feature above the basin
-			if (kind === "waterwall") {
+			if (kind === "tiered") {
+				// a tiered (cascading) fountain — a stack of bowls, largest at the
+				// bottom, water spilling tier to tier. Drawn from st.tiers (table top
+				// = fountain top), so tier count + diameters are fully variable.
+				const tiers = (st.tiers || []).filter((t) => (t.diameter_in || 0) > 0);
+				const n = tiers.length;
+				if (n) {
+					const maxD = Math.max(...tiers.map((t) => t.diameter_in || 0)) || 1;
+					const spacing = Math.min(26, (topY - 54) / n);
+					const colTop = topY - 10 - (n - 1) * spacing - 6;
+					s += `<rect x="${cx - 3}" y="${colTop}" width="6" height="${topY - colTop}" fill="${STRUCT}"/>`;
+					for (let j = 0; j < n; j++) {
+						const td = tiers[n - 1 - j];
+						const ty = topY - 10 - j * spacing;
+						const rx = Math.max(20, ((td.diameter_in || 0) / maxD) * 110);
+						const below = j === 0 ? topY + 4 : topY - 10 - (j - 1) * spacing;
+						s += `<path d="M${cx - rx} ${ty} Q ${cx} ${ty + 11} ${cx + rx} ${ty} Z" fill="${STRUCT}" opacity="0.45"/>`;
+						s += `<ellipse cx="${cx}" cy="${ty}" rx="${rx}" ry="5" fill="${WATER}" opacity="0.85" stroke="#185FA5" stroke-width="1.5"/>`;
+						s += `<path d="M${cx - rx} ${ty + 2} C ${cx - rx - 6} ${ty + 10} ${cx - rx + 2} ${below - 8} ${cx - rx + 8} ${below}" stroke="${WATER}" stroke-width="2.5" fill="none" opacity="0.7"/>`;
+						s += `<path d="M${cx + rx} ${ty + 2} C ${cx + rx + 6} ${ty + 10} ${cx + rx - 2} ${below - 8} ${cx + rx - 8} ${below}" stroke="${WATER}" stroke-width="2.5" fill="none" opacity="0.7"/>`;
+					}
+					s += `<circle cx="${cx}" cy="${colTop - 2}" r="2.5" fill="${SPRAY}"/>`;
+				}
+			} else if (kind === "waterwall") {
 				const wy = 42;
 				s += `<rect x="${bx}" y="${wy}" width="${bw}" height="${topY - wy}" fill="${STRUCT}" opacity="0.4"/>`;
 				s += `<rect x="${bx}" y="${wy}" width="${bw}" height="4" fill="#185FA5"/>`;

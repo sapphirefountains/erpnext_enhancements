@@ -49,6 +49,7 @@ from erpnext_enhancements.water_engineering.engine import (
     size_pipe,
     suction_outlet_vgb,
     surge_basin_volume,
+    tiered_fountain_flow,
     total_dynamic_head,
     turnover_gpm,
     units,
@@ -103,6 +104,14 @@ class FeatureTests(unittest.TestCase):
 
     def test_weir_monotonic_in_head(self):
         self.assertLess(weir_flow(1, 0.5).value, weir_flow(1, 1.0).value)
+
+    def test_tiered_fountain_flow(self):
+        # largest tier governs: 36 in dia -> pi*36/12 = 9.4248 ft -> *0.5 = 4.712 GPM
+        tiers = [{"diameter_in": 24}, {"diameter_in": 36}, {"diameter_in": 18}]
+        self.assertAlmostEqual(tiered_fountain_flow(tiers, 0.5).value, 4.71239, places=4)
+        # scales with the sheet rate; empty tiers -> warning, no value
+        self.assertAlmostEqual(tiered_fountain_flow(tiers, 1.0).value, 9.42478, places=4)
+        self.assertIsNone(tiered_fountain_flow([]).value)
 
     def test_nozzle_flow_stub_without_profile(self):
         r = nozzle_flow(10)
