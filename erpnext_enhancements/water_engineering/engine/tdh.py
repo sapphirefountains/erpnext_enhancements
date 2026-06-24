@@ -9,7 +9,7 @@ Verified against DOC-0049 ``H - TDH``:
 
 from __future__ import annotations
 
-from .constants import CIT_TDH, GRAVITY_FT_S2, HW_C_PVC, HW_CONSTANT
+from .constants import CIT_TDH, GRAVITY_FT_S2, HW_C_PVC, HW_CONSTANT, VELOCITY_COEFF
 from .data.fittings import COMPONENT_COEFF, FITTING_K
 from .data.pipe_specs import get_pipe_id
 from .envelope import CalcResult, make_input
@@ -99,6 +99,45 @@ def _segment_id(segment: dict) -> float | None:
     if size:
         return get_pipe_id(segment.get("material", "SCH40 PVC"), size)
     return None
+
+
+def segment_loss_results(
+    segment: dict,
+    c: float = HW_C_PVC,
+    constant: float = HW_CONSTANT,
+) -> list[CalcResult]:
+    """The full per-segment head-loss math as individual envelopes: friction
+    (Hazen-Williams major loss), fittings (K-factor minor loss), and components
+    (equipment loss). ``total_dynamic_head`` only emits a single rolled-up
+    envelope whose steps are one-liners — these break each segment out so the
+    audit trail and the form's "show the math" can render every segment's (and
+    fitting's) working, formula, inputs, and citation. ``[]`` if the segment has
+    no resolvable pipe diameter (nothing to compute)."""
+    id_in = _segment_id(segment)
+    if not id_in:
+        return []
+    label = segment.get("label") or segment.get("segment_label") or "segment"
+    flow = float(segment.get("flow_gpm", 0) or 0)
+    length_ft = float(segment.get("length_ft", 0) or 0)
+    velocity = flow * VELOCITY_COEFF / id_in**2
+
+    results: list[CalcResult] = []
+    major = hazen_williams_loss(flow, length_ft, id_in, c, constant)
+    major.calc = f"Pipe friction — {label}"
+    results.append(major)
+
+    fittings = segment.get("fittings") or []
+    if fittings:
+        minor = fitting_minor_loss(velocity, fittings)
+        minor.calc = f"Fitting loss — {label}"
+        results.append(minor)
+
+    components = segment.get("components") or []
+    if components:
+        comp = component_loss(flow, components)
+        comp.calc = f"Component loss — {label}"
+        results.append(comp)
+    return results
 
 
 def total_dynamic_head(

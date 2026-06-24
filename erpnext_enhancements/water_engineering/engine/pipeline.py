@@ -22,7 +22,7 @@ from .feature import (
     weir_flow,
 )
 from .pump import select_pump
-from .tdh import total_dynamic_head
+from .tdh import segment_loss_results, total_dynamic_head
 
 
 def _feature_flow(feature: dict):
@@ -113,6 +113,14 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     hw_c = inputs.get("hazen_williams_c") or HW_C_PVC
     tdh_ft = None
     if segments:
+        # Per-segment friction / fitting / component envelopes first (the full
+        # working behind each run), then the rolled-up TDH that sums them. The
+        # rollup already surfaces the minor/component warnings, so we don't also
+        # add the per-segment envelopes' warnings (the audit cards still show
+        # them; this just avoids double-counting in the warnings list).
+        for s in segments:
+            for env in segment_loss_results(s, c=hw_c):
+                results.append(env.to_dict())
         r = total_dynamic_head(segments, static_lift_ft=inputs.get("static_lift_ft", 0.0), c=hw_c)
         results.append(r.to_dict())
         warnings += r.warnings

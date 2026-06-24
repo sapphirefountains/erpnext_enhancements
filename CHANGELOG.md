@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.108.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — per-segment pipe / fitting / component math in the audit trail.** "Show the math" already expanded basin, weir, and pump calcs, but a pipe run only showed the rolled-up Total Dynamic Head with one-line per-segment steps. The spine now emits a full `CalcResult` envelope for each segment's **friction** (Hazen-Williams major loss), **fitting** minor loss (the K-factor working), and **component** loss (equipment head), so every pipe run's and fitting's formula, inputs, step-by-step working, and citation render as their own cards when the toggle is on — the same transparency as the rest of the design. (`engine/tdh.py:segment_loss_results`, wired into `run_spine`.)
+
+### Changed
+- **AI `save_water_design` is now fitting/component catalog-aware.** The tool schema previously told the assistant `fittings_json` / `components_json` took JSON but not the valid `type` values, so the AI could emit a name the engine silently ignores. The `pipe_segments` schema now lists the exact catalog names (generated from the engine's `FITTING_K` / `COMPONENT_COEFF` tables, so it can't drift) plus the `{"type", "qty"}` shape and the Discharge/Suction & material enums — the same single-source-of-truth the desk picker uses.
+
 ## [1.107.0] - 2026-06-24
 
 ### Changed
