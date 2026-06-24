@@ -85,6 +85,26 @@ def create_pump_item_fields():
 					"fieldtype": "Float",
 					"insert_after": "custom_pump_voltage",
 				},
+				{
+					"fieldname": "custom_pump_cut_sheet",
+					"label": "Cut Sheet",
+					"fieldtype": "Attach",
+					"insert_after": "custom_pump_fla_amps",
+				},
+				{
+					"fieldname": "custom_pump_curve",
+					"label": "Pump Curve",
+					"fieldtype": "Table",
+					"options": "Pump Curve Point",
+					"insert_after": "custom_pump_cut_sheet",
+					"description": "Flow/head points read off the manufacturer curve; the design selector interpolates the head at the design flow.",
+				},
+				{
+					"fieldname": "custom_pump_curve_chart",
+					"label": "Pump Curve Chart",
+					"fieldtype": "HTML",
+					"insert_after": "custom_pump_curve",
+				},
 			]
 		},
 		ignore_validate=True,

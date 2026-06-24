@@ -21,7 +21,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
-from erpnext_enhancements.water_engineering.api.water_design import nozzle_profile_params
+from erpnext_enhancements.water_engineering.api.water_design import nozzle_profile_params, pump_curves
 from erpnext_enhancements.water_engineering.engine import (
 	basin_volume,
 	chemistry_targets,
@@ -322,7 +322,7 @@ def _catalog_pump_candidates():
 		)
 	except Exception:
 		return []
-	return [
+	candidates = [
 		{
 			"item_code": it.get("item_code"),
 			"description": it.get("item_name"),
@@ -334,6 +334,11 @@ def _catalog_pump_candidates():
 		}
 		for it in items
 	]
+	curves = pump_curves([c["item_code"] for c in candidates])
+	for c in candidates:
+		if curves.get(c["item_code"]):
+			c["curve"] = curves[c["item_code"]]
+	return candidates
 
 
 def compute_completion_percent(doc):

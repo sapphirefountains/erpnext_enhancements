@@ -15,12 +15,37 @@ rule, or VFD-vs-starter logic in the sheets. So:
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
 from .constants import BREAKER_CONTINUOUS_FACTOR
 from .envelope import CalcOption, CalcResult, make_input
 
 # Standard inverse-time breaker ampere ratings (NEC 240.6) for rounding up.
 _STD_BREAKERS = [15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200]
+
+
+def head_at_flow(curve, flow_gpm):
+    """Linear-interpolate a pump performance curve's head (ft) at a flow (GPM).
+
+    ``curve`` is a list of {flow_gpm, head_ft} points. Returns None if the curve
+    is empty or the flow exceeds the curve's max flow (the pump physically can't
+    deliver that much water). Below the lowest point, the lowest point's head is
+    used (curves typically start at shutoff = max head, ~0 flow)."""
+    pts = sorted(
+        ((float(p.get("flow_gpm") or 0), float(p.get("head_ft") or 0)) for p in (curve or [])),
+        key=lambda x: x[0],
+    )
+    if not pts:
+        return None
+    f = float(flow_gpm)
+    if f > pts[-1][0]:
+        return None
+    if f <= pts[0][0]:
+        return pts[0][1]
+    for (f0, h0), (f1, h1) in pairwise(pts):
+        if f0 <= f <= f1:
+            return h0 + (h1 - h0) * ((f - f0) / (f1 - f0)) if f1 > f0 else h0
+    return pts[-1][1]
 
 
 def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = None) -> CalcResult:
@@ -47,17 +72,29 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
         )
 
     def adequate(c: dict) -> bool:
-        # Always require enough flow. Require head only when the catalog has a
-        # head rating — fountain submersibles are spec'd by GPH (flow); the head
-        # ("max lift") is often not on file. An unknown head doesn't exclude a
-        # pump; the chosen one is flagged for a pump-curve check instead.
+        # Best evidence wins: a performance CURVE gives the real duty-point check
+        # (interpolate head at the design flow). Otherwise fall back to the
+        # rated max-flow / max-head envelope; an unknown head doesn't exclude a
+        # pump (fountain submersibles are spec'd by GPH) — it's flagged instead.
+        if c.get("curve"):
+            h = head_at_flow(c["curve"], flow_gpm)
+            return h is not None and h >= tdh_ft
         head = c.get("rated_tdh_ft") or 0
         return (c.get("rated_gpm") or 0) >= flow_gpm and (head >= tdh_ft if head else True)
 
+    def head_basis(c):
+        if c.get("curve") and head_at_flow(c["curve"], flow_gpm) is not None:
+            return "curve"
+        return "rating" if c.get("rated_tdh_ft") else "flow-only"
+
     ranked = sorted(
         candidates,
-        # adequate first; then prefer a known head rating; then the smallest pump.
-        key=lambda c: (not adequate(c), not c.get("rated_tdh_ft"), (c.get("rated_gpm") or 0)),
+        # adequate first; then prefer curve > head-rating > flow-only; then smallest.
+        key=lambda c: (
+            not adequate(c),
+            {"curve": 0, "rating": 1, "flow-only": 2}[head_basis(c)],
+            (c.get("rated_gpm") or 0),
+        ),
     )
     options: list[CalcOption] = []
     recommended = None
@@ -65,6 +102,7 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
         ok = adequate(c)
         if recommended is None and ok:
             recommended = c.get("item_code") or c.get("part_number")
+        duty_head = head_at_flow(c["curve"], flow_gpm) if c.get("curve") else None
         options.append(
             CalcOption(
                 key=str(c.get("item_code") or c.get("part_number") or c.get("label") or "?"),
@@ -74,8 +112,9 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
                 detail={
                     "rated_gpm": c.get("rated_gpm"),
                     "rated_tdh_ft": c.get("rated_tdh_ft"),
+                    "head_at_duty_ft": round(duty_head, 2) if duty_head is not None else None,
+                    "head_basis": head_basis(c),
                     "meets_duty": ok,
-                    "head_known": bool(c.get("rated_tdh_ft")),
                     "hp": c.get("hp"),
                     "phase": c.get("phase"),
                     "voltage": c.get("voltage"),
@@ -91,10 +130,10 @@ def select_pump(flow_gpm: float, tdh_ft: float, candidates: list[dict] | None = 
         )
     else:
         rec_opt = next((o for o in options if o.recommended), None)
-        if rec_opt and not rec_opt.detail.get("rated_tdh_ft"):
+        if rec_opt and rec_opt.detail.get("head_basis") == "flow-only":
             warnings.append(
-                f"{recommended}: matched on flow only — no head rating on file. Confirm it "
-                f"delivers {tdh_ft:.1f} ft TDH against the manufacturer pump curve."
+                f"{recommended}: matched on flow only — no head rating or curve on file. "
+                f"Confirm it delivers {tdh_ft:.1f} ft TDH against the manufacturer pump curve."
             )
     return CalcResult(
         calc="select_pump",

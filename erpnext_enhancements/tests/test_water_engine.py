@@ -25,6 +25,7 @@ from erpnext_enhancements.water_engineering.engine import (
     component_loss,
     fitting_minor_loss,
     hazen_williams_loss,
+    head_at_flow,
     lighting_sizing,
     manning_drain_flow,
     nozzle_flow,
@@ -210,6 +211,34 @@ class PumpTests(unittest.TestCase):
         ]
         r = select_pump(27, 30, candidates)
         self.assertEqual(r.value, "OK")
+
+    def test_head_at_flow_interpolation(self):
+        curve = [{"flow_gpm": 0, "head_ft": 60}, {"flow_gpm": 50, "head_ft": 40}, {"flow_gpm": 100, "head_ft": 10}]
+        self.assertEqual(head_at_flow(curve, 0), 60)
+        self.assertEqual(head_at_flow(curve, 50), 40)
+        self.assertAlmostEqual(head_at_flow(curve, 25), 50, places=6)  # interpolated
+        self.assertAlmostEqual(head_at_flow(curve, 75), 25, places=6)
+        self.assertIsNone(head_at_flow(curve, 120))  # beyond the pump's max flow
+        self.assertIsNone(head_at_flow([], 10))
+
+    def test_select_pump_uses_curve(self):
+        # Envelope check (rated 80gpm/30ft) would pass the small pump at (40,25),
+        # but its curve (head=20 @ 40 gpm) correctly rejects it; the bigger pump wins.
+        small = {"item_code": "P-SMALL", "rated_gpm": 80, "rated_tdh_ft": 30,
+                 "curve": [{"flow_gpm": 0, "head_ft": 30}, {"flow_gpm": 40, "head_ft": 20}, {"flow_gpm": 80, "head_ft": 5}]}
+        big = {"item_code": "P-BIG", "rated_gpm": 150, "rated_tdh_ft": 60,
+               "curve": [{"flow_gpm": 0, "head_ft": 60}, {"flow_gpm": 40, "head_ft": 45}, {"flow_gpm": 120, "head_ft": 10}]}
+        r = select_pump(40, 25, [small, big])
+        self.assertEqual(r.value, "P-BIG")
+        rec = next(o for o in r.options if o.recommended)
+        self.assertEqual(rec.detail["head_basis"], "curve")
+        self.assertAlmostEqual(rec.detail["head_at_duty_ft"], 45.0, places=2)
+
+    def test_select_pump_curve_beyond_max_flow_excluded(self):
+        p = {"item_code": "P", "rated_gpm": 999,
+             "curve": [{"flow_gpm": 0, "head_ft": 50}, {"flow_gpm": 60, "head_ft": 10}]}
+        r = select_pump(100, 5, [p])  # 100 GPM is beyond the curve's 60 GPM max
+        self.assertIsNone(r.value)
 
 
 class ChemistryTests(unittest.TestCase):
