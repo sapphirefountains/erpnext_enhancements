@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.114.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — a Fountain Type field that switches the design.** A new **Fountain Type** Select on the design (next to the title) lists every starter we offer; picking one **loads that type's template**, replacing the basin / feature / piping / tier rows (with a confirmation prompt if the design already has rows — cancel reverts the field). Clicking a "New from Template" button now also sets the field, so the two stay in sync.
+- **Nine more templates / fountain types**, on top of the existing eight feature-type starters: **Reflecting pool, Bubbler / boil, Geyser / foam jet, Laminar clear-stream, Interactive plaza jets, Wall spout / mask, Pond / naturalistic, Pondless urn, Grand cascade (multi-tier)** — 18 in total, each mapped to one of the engine's feature flow calcs. The Fountain Type field options are kept exactly in sync with the template catalog. `fountain_type` is also accepted on the wizard / AI save path.
+
 ## [1.113.0] - 2026-06-24
 
 ### Added

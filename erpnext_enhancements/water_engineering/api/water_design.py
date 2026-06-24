@@ -68,6 +68,7 @@ EDITABLE_DESIGN_FIELDS = frozenset(
         "customer",
         "serial_no",
         "design_title",
+        "fountain_type",
         "status",
         "turnover_per_hr",
         "hazen_williams_c",

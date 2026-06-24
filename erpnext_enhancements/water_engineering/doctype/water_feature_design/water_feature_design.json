@@ -10,6 +10,7 @@
   "customer",
   "serial_no",
   "design_title",
+  "fountain_type",
   "status",
   "sb_state",
   "dashboard",
@@ -87,6 +88,14 @@
    "fieldtype": "Data",
    "label": "Design Title",
    "in_list_view": 1
+  },
+  {
+   "fieldname": "fountain_type",
+   "fieldtype": "Select",
+   "label": "Fountain Type",
+   "options": "\nWeir basin\nSpilling weir (scupper)\nVanishing edge (weir wall)\nWaterwall (sheet)\nNozzle-array pool\nOrifice nozzle jet\nSplash pad\nRain curtain\nTiered fountain (cascade)\nReflecting pool\nBubbler / boil\nGeyser / foam jet\nLaminar clear-stream\nInteractive plaza jets\nWall spout / mask\nPond / naturalistic\nPondless urn\nGrand cascade (multi-tier)",
+   "in_list_view": 1,
+   "description": "Pick a type to load its starter template (replaces the basin / feature / piping / tier rows)."
   },
   {
    "fieldname": "status",

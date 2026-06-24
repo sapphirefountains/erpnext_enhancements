@@ -100,7 +100,91 @@ const WFD_TEMPLATES = {
 			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 30, line_type: "Discharge" },
 		],
 	},
+	// --- Named composite types (each maps to one of the feature flow calcs) ---
+	"Reflecting pool": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 4 },
+		basins: [{ basin_label: "Reflecting basin", shape: "Rectangular", length_in: 240, width_in: 120, height_in: 12 }],
+		features: [{ feature_label: "Aerating bubblers", feature_type: "Nozzle Array", nozzle_count: 4, gpm_each: 3 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 50, line_type: "Discharge" },
+		],
+	},
+	"Bubbler / boil": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 5 },
+		basins: [{ basin_label: "Pool", shape: "Cylindrical", diameter_in: 96, height_in: 30 }],
+		features: [{ feature_label: "Boil jets", feature_type: "Nozzle Array", nozzle_count: 5, gpm_each: 18 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	"Geyser / foam jet": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 20 },
+		basins: [{ basin_label: "Catch pool", shape: "Cylindrical", diameter_in: 144, height_in: 36 }],
+		features: [{ feature_label: "Foam jet / geyser", feature_type: "Nozzle Array", nozzle_count: 1, gpm_each: 80 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 45, line_type: "Discharge" },
+		],
+	},
+	"Laminar clear-stream": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 8 },
+		basins: [{ basin_label: "Pool", shape: "Rectangular", length_in: 120, width_in: 60, height_in: 18 }],
+		features: [{ feature_label: "Laminar jets", feature_type: "Nozzle Array", nozzle_count: 4, gpm_each: 12 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 40, line_type: "Discharge" },
+		],
+	},
+	"Interactive plaza jets": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 9 },
+		basins: [{ basin_label: "Collection tank", shape: "Rectangular", length_in: 180, width_in: 180, height_in: 12 }],
+		features: [{ feature_label: "Deck jets", feature_type: "Splash Pad", nozzle_count: 20, gpm_each: 6 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 55, line_type: "Discharge" },
+		],
+	},
+	"Wall spout / mask": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 7 },
+		basins: [{ basin_label: "Catch trough", shape: "Rectangular", length_in: 96, width_in: 30, height_in: 16 }],
+		features: [{ feature_label: "Wall spout", feature_type: "Spilling Weir", weir_length_ft: 2, head_in: 0.75, end_contractions: 0 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 35, line_type: "Discharge" },
+		],
+	},
+	"Pond / naturalistic": {
+		fields: { turnover_per_hr: 1, pipe_material: "SCH40 PVC", static_lift_ft: 4 },
+		basins: [{ basin_label: "Pond", shape: "Rectangular", length_in: 360, width_in: 240, height_in: 36 }],
+		features: [{ feature_label: "Aerator", feature_type: "Nozzle Array", nozzle_count: 2, gpm_each: 10 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '4"', material: "SCH40 PVC", pipe_length_ft: 60, line_type: "Discharge" },
+		],
+	},
+	"Pondless urn": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 6 },
+		basins: [{ basin_label: "Hidden sump", shape: "Rectangular", length_in: 48, width_in: 48, height_in: 24 }],
+		features: [{ feature_label: "Urn bubbler", feature_type: "Nozzle Array", nozzle_count: 1, gpm_each: 12 }],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '2"', material: "SCH40 PVC", pipe_length_ft: 25, line_type: "Discharge" },
+		],
+	},
+	"Grand cascade (multi-tier)": {
+		fields: { turnover_per_hr: 2, pipe_material: "SCH40 PVC", static_lift_ft: 9 },
+		basins: [{ basin_label: "Base pool", shape: "Cylindrical", diameter_in: 144, height_in: 24 }],
+		features: [{ feature_label: "Grand cascade", feature_type: "Tiered Fountain" }],
+		tiers: [
+			{ tier_label: "Tier 1 (top)", diameter_in: 24, rim_height_in: 60, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Tier 2", diameter_in: 36, rim_height_in: 46, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Tier 3", diameter_in: 52, rim_height_in: 32, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Tier 4", diameter_in: 70, rim_height_in: 18, spill_gpm_per_ft: 0.5 },
+			{ tier_label: "Tier 5 (base)", diameter_in: 90, rim_height_in: 8, spill_gpm_per_ft: 0.5 },
+		],
+		pipe_segments: [
+			{ segment_label: "Pump discharge", nominal_size: '3"', material: "SCH40 PVC", pipe_length_ft: 35, line_type: "Discharge" },
+		],
+	},
 };
+
+// The fountain_type Select options on the doctype MUST stay in sync with these
+// keys (the field switches a design to the matching template).
+const WFD_TEMPLATE_NAMES = Object.keys(WFD_TEMPLATES);
 
 // Model tables a template may define / replace (tiers included so the Tiered
 // Fountain template lands its cascade rows).
@@ -119,9 +203,12 @@ frappe.ui.form.on("Water Feature Design", {
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Recalculate"), () => frm.save());
 		}
-		Object.keys(WFD_TEMPLATES).forEach((name) => {
+		WFD_TEMPLATE_NAMES.forEach((name) => {
 			frm.add_custom_button(__(name), () => apply_template(frm, name), __("New from Template"));
 		});
+
+		// Remember the current Fountain Type so a cancelled switch can revert it.
+		frm._wfd_ft = frm.doc.fountain_type;
 
 		// Re-run the live preview whenever a grid changes (cell edit / add / remove).
 		WFD_TABLES.forEach((t) => {
@@ -132,6 +219,18 @@ frappe.ui.form.on("Water Feature Design", {
 		});
 		wfd_sync_loss_summaries(frm);
 		schedule_preview(frm);
+	},
+
+	// Switching Fountain Type loads that type's starter template (replacing the
+	// model rows). Skip when WE set the field from inside apply_template.
+	fountain_type(frm) {
+		if (frm._wfd_template_applying) return;
+		const name = frm.doc.fountain_type;
+		if (name && WFD_TEMPLATES[name]) {
+			apply_template(frm, name, true);
+		} else {
+			frm._wfd_ft = name; // blank / unmapped: just remember it
+		}
 	},
 });
 
@@ -377,23 +476,43 @@ function render_dashboard(frm, p) {
 		});
 }
 
-function apply_template(frm, name) {
+// Load a template's rows + inputs into the form. `from_field` = the user picked
+// it via the Fountain Type field (vs the New from Template button), so a cancelled
+// confirm reverts the field instead of leaving a label that doesn't match the rows.
+function apply_template(frm, name, from_field) {
 	const tpl = WFD_TEMPLATES[name];
 	if (!tpl) return;
 	const has_rows = WFD_TEMPLATE_TABLES.some((t) => (frm.doc[t] || []).length);
+	// Set fountain_type without re-triggering its change handler.
+	const set_type = (val) => {
+		frm._wfd_template_applying = true;
+		try {
+			frm.set_value("fountain_type", val);
+		} finally {
+			frm._wfd_template_applying = false;
+		}
+	};
 	const fill = () => {
+		set_type(name);
 		(tpl.fields ? Object.keys(tpl.fields) : []).forEach((k) => frm.set_value(k, tpl.fields[k]));
 		WFD_TEMPLATE_TABLES.forEach((t) => {
 			frm.clear_table(t);
 			(tpl[t] || []).forEach((row) => frm.add_child(t, Object.assign({}, row)));
 			frm.refresh_field(t);
 		});
+		frm._wfd_ft = name;
 		frm.dirty();
 		schedule_preview(frm);
 		frappe.show_alert({ message: __("Loaded template: {0}", [name]), indicator: "green" });
 	};
 	if (has_rows) {
-		frappe.confirm(__("Replace the current basin, feature, piping, and tier rows with the {0} template?", [name]), fill);
+		frappe.confirm(
+			__("Replace the current basin, feature, piping, and tier rows with the {0} template?", [name]),
+			fill,
+			() => {
+				if (from_field) set_type(frm._wfd_ft || ""); // cancelled: revert the field
+			}
+		);
 	} else {
 		fill();
 	}
