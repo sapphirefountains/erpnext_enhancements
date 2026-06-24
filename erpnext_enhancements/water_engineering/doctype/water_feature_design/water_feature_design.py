@@ -55,6 +55,16 @@ class WaterFeatureDesign(Document):
 				_("Add at least one basin or feature before submitting the design."),
 				title=_("Nothing to Calculate"),
 			)
+		# Don't freeze an incomplete/garbage design silently — warn (non-blocking)
+		# if the recompute left warnings or still-needed inputs.
+		if self.has_warnings or (self.next_inputs_needed or "").strip():
+			frappe.msgprint(
+				_("Submitting with unresolved items: {0}").format(
+					(self.next_inputs_needed or _("see warnings")).replace("\n", "; ")
+				),
+				title=_("Design Not Fully Resolved"),
+				indicator="orange",
+			)
 
 	# ---------------------------------------------------------------- bridge
 	def recompute(self):
@@ -79,7 +89,15 @@ class WaterFeatureDesign(Document):
 		self.has_warnings = 1 if out.get("warnings") else 0
 
 		selected = out.get("selected_pump")
-		self.selected_pump = selected if (selected and frappe.db.exists("Item", selected)) else None
+		if selected and not frappe.db.exists("Item", selected):
+			# Don't drop a recommendation silently — say why it vanished.
+			self.next_inputs_needed = (
+				(self.next_inputs_needed + "\n") if self.next_inputs_needed else ""
+			) + _("Recommended pump {0} is not in the Item catalog.").format(selected)
+			self.has_warnings = 1
+			self.selected_pump = None
+		else:
+			self.selected_pump = selected or None
 
 		self._write_audit_trail(out.get("results") or [])
 		self._compute_chemistry()
@@ -171,7 +189,9 @@ class WaterFeatureDesign(Document):
 				row.head_loss_ft = 0
 				continue
 			id_in = spec["id_in"]
-			flow = flt(row.flow_gpm)
+			# A blank segment flow carries the full system (design) flow — keeps the
+			# per-row velocity/head-loss honest instead of showing 0.
+			flow = flt(row.flow_gpm) or flt(self.design_flow_gpm)
 			velocity = pipe_velocity(flow, id_in).value
 			row.velocity_fps = velocity
 			row.velocity_status = velocity_status(

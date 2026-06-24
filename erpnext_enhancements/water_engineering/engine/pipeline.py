@@ -93,8 +93,23 @@ def run_spine(inputs: dict[str, Any] | None = None) -> dict[str, Any]:
 
     design_flow = max(circ_gpm or 0.0, feature_flow)
 
-    # 4) Total Dynamic Head
-    segments = inputs.get("pipe_segments") or inputs.get("segments") or []
+    # 4) Total Dynamic Head. A pipe segment with no explicit flow carries the
+    #    full system (design) flow — most do. A length-bearing segment left at
+    #    zero would otherwise compute ZERO friction loss and silently undersize
+    #    the pump, so default it to design_flow (and warn if we can't).
+    raw_segments = inputs.get("pipe_segments") or inputs.get("segments") or []
+    segments = []
+    for s in raw_segments:
+        s = dict(s)
+        if not float(s.get("flow_gpm") or 0):
+            if design_flow:
+                s["flow_gpm"] = design_flow
+            elif float(s.get("length_ft") or 0) > 0:
+                warnings.append(
+                    f"Pipe segment {s.get('label') or '?'} has no flow and no design flow to "
+                    "infer it from — its friction loss is zero. Enter the GPM it carries."
+                )
+        segments.append(s)
     hw_c = inputs.get("hazen_williams_c") or HW_C_PVC
     tdh_ft = None
     if segments:

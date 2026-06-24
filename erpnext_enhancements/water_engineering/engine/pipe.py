@@ -31,6 +31,15 @@ def pipe_velocity(flow_gpm: float, id_in: float) -> CalcResult:
     """Flow velocity (ft/s) in a pipe of the given inside diameter."""
     flow_gpm = float(flow_gpm)
     id_in = float(id_in)
+    if id_in <= 0:
+        return CalcResult(
+            calc="pipe_velocity",
+            unit="FPS",
+            inputs={"flow": make_input(flow_gpm, "GPM", "prior_calc"), "id": make_input(id_in, "in", "user")},
+            formula="V = GPM * 0.4085 / ID^2",
+            citations=[CIT_PIPE],
+            warnings=["Inside diameter must be > 0 to compute velocity."],
+        )
     v = flow_gpm * VELOCITY_COEFF / id_in**2
     return CalcResult(
         calc="pipe_velocity",
@@ -74,6 +83,15 @@ def hazen_williams_loss(
     flow_gpm = float(flow_gpm)
     length_ft = float(length_ft)
     id_in = float(id_in)
+    if id_in <= 0 or float(c) <= 0:
+        return CalcResult(
+            calc="hazen_williams_loss",
+            unit="ft",
+            inputs={"flow": make_input(flow_gpm, "GPM", "prior_calc"), "id": make_input(id_in, "in", "user")},
+            formula="hf = K * L * Q^1.85 / (C^1.85 * D^4.8655)   [K=10.44]",
+            citations=[CIT_PIPE],
+            warnings=["Inside diameter and Hazen-Williams C must be > 0 to compute friction loss."],
+        )
     hf = constant * length_ft * flow_gpm**HW_EXPONENT_Q / (float(c) ** HW_EXPONENT_Q * id_in**HW_EXPONENT_D)
     return CalcResult(
         calc="hazen_williams_loss",
