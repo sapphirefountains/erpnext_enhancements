@@ -169,12 +169,10 @@ function render_dashboard(frm, p) {
 	const pct = Math.round(d.completion_percent || 0);
 	const ru = p.rollups || {};
 
-	const box = (label, value, unit) => `
-		<div style="flex:1;min-width:96px;border:1px solid var(--border-color);border-radius:var(--border-radius-md,6px);padding:8px 10px;background:var(--fg-color,var(--card-bg))">
-			<div style="font-size:11px;color:var(--text-muted)">${esc(label)}</div>
-			<div style="font-weight:600;font-size:15px;line-height:1.3">${esc(String(value))}<span style="font-size:11px;color:var(--text-muted);font-weight:400"> ${esc(unit)}</span></div>
-		</div>`;
-	const arrow = `<div style="display:flex;align-items:center;color:var(--text-muted)">&rarr;</div>`;
+	const cstate = p.canvas || {};
+	const WF = window.WaterFountain;
+	const canvas = WF ? WF.canvasSvg(cstate) : "";
+	const duty = WF && ru.selected_pump ? WF.dutySvg({ curve: cstate.curve || [], duty_flow: cstate.duty_flow, duty_head: cstate.duty_head, pump: ru.selected_pump }) : "";
 
 	const tdh = ru.computed_tdh_ft || 0;
 	const stat = p.static_lift_ft || 0;
@@ -219,14 +217,12 @@ function render_dashboard(frm, p) {
 	const empty = !d.basins?.length && !d.features?.length;
 	const body = empty
 		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>`
-		: `
-			<div style="display:flex;gap:6px;flex-wrap:wrap">
-				${box(__("Basin"), num(ru.total_basin_gallons, 0), "gal")}${arrow}
-				${box(__("Features"), num(ru.design_flow_gpm), "GPM")}${arrow}
-				${box(__("Pump"), ru.selected_pump || "—", "")}${arrow}
-				${box(__("Piping (TDH)"), num(ru.computed_tdh_ft), "ft")}
+		: `<div style="overflow-x:auto">${canvas}</div>
+			<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+				${duty ? `<div style="flex:1;min-width:280px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pump duty point")}</div>${duty}</div>` : ""}
+				<div style="flex:1;min-width:280px">${tdhBar}${segs}</div>
 			</div>
-			${tdhBar}${segs}${warn}${needs}`;
+			${warn}${needs}`;
 
 	frm.get_field("dashboard").$wrapper.html(`
 		<div style="border:1px solid var(--border-color);border-radius:var(--border-radius-lg,8px);padding:14px 16px;background:var(--card-bg,var(--fg-color))">
