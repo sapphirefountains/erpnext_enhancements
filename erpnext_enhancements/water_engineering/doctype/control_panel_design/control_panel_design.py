@@ -15,19 +15,23 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt
 
 from erpnext_enhancements.water_engineering.engine import lighting_sizing
-from erpnext_enhancements.water_engineering.engine.controls import DEFAULT_INTERLOCKS
+from erpnext_enhancements.water_engineering.engine.controls import DEFAULT_INTERLOCKS, DEFAULT_IO_POINTS
 
 
 class ControlPanelDesign(Document):
 	def validate(self):
-		self._seed_default_interlocks()
+		self._seed_defaults()
 		self._recompute_sizing()
 
-	def _seed_default_interlocks(self):
-		"""Seed the standard interlock checklist on a fresh panel (DOC-0126/0127)."""
+	def _seed_defaults(self):
+		"""Seed the standard interlock checklist + standard input list on a fresh
+		panel (DOC-0126/0127); delete the rows a given job doesn't include."""
 		if not self.get("interlocks"):
 			for row in DEFAULT_INTERLOCKS:
 				self.append("interlocks", dict(row))
+		if not self.get("io_points"):
+			for row in DEFAULT_IO_POINTS:
+				self.append("io_points", dict(row))
 
 	def _recompute_sizing(self):
 		lights = [

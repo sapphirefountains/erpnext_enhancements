@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.112.0] - 2026-06-24
+
+### Added
+- **Control Panel Design — captures the full controls intake (DOC-0025/0123/0127).** New fields: **Theory of Operation** (Long Text — DOC-0127 makes this mandatory), System & Control Panel descriptions, the three design/construction parties (Fountain Design / Construction / Controls company, defaulting to Sapphire Fountains — feeds the O&M manual), a second control voltage, a power **source-of-confirmation**, and a **Fuses** child table (new `Control Fuse` doctype: qty, rating, replacement part, protects — for the O&M fuse schedule).
+- **Standard input checklist is now seeded.** A fresh panel seeds the standard inputs (E-stop, water-level controller, wind sensor) the way it already seeds the standard interlocks, so the I/O list starts from the DOC-0126 baseline instead of empty.
+- **`controller_hardware`** now offers the LCD + 4-button platform (DOC-0062 EDP001/SDP001) alongside the Nextion HMI and Allen-Bradley PLC options.
+
+### Changed
+- **Wind interlock split into two thresholds** (DOC-0123 Wind Control): *above medium → VFDs ramp to windy speed* and *above high → feature pumps stop*, replacing the single "wind high → stop" row that under-modeled the real two-stage behavior.
+
 ## [1.111.0] - 2026-06-24
 
 ### Added
