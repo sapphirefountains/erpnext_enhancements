@@ -659,6 +659,25 @@ def preview_design(payload):
             }
             for s in doc.get("pipe_segments") or []
         ],
+        # The full math behind every calc (formula + working + inputs + citations),
+        # so the form's "Show the math" toggle can expand it live. recompute() has
+        # already populated calc_results in memory — zero extra compute.
+        "calc_results": [
+            {
+                "calc": r.calc,
+                "value": r.value,
+                "unit": r.unit,
+                "status": r.status,
+                "formula": r.formula,
+                # the child row stores these as joined strings — split back to the
+                # lists the form's math view expects.
+                "steps": [s for s in (r.steps or "").split("\n") if s],
+                "inputs_text": r.inputs_text,
+                "citations": [c for c in (r.citations or "").split(", ") if c],
+                "warnings": [w for w in (r.warnings or "").split("\n") if w],
+            }
+            for r in (doc.get("calc_results") or [])
+        ],
     }
 
 

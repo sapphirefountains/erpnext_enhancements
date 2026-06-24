@@ -162,7 +162,50 @@ function paint_segment_grid(frm, p) {
 	});
 }
 
+// "Show the math" toggle state (kept across re-renders so the last preview can
+// be redrawn without a server round-trip when the user flips it).
+const WFD_MATH = { show: false, p: null, frm: null };
+
+// Render the full math behind every calc — formula, inputs (with provenance),
+// step-by-step working, citations, warnings — from preview_design's calc_results
+// (the same envelope the Calculation Audit print format renders).
+function math_html(p) {
+	const esc = frappe.utils.escape_html;
+	const rows = p.calc_results || [];
+	if (!rows.length) return `<div style="color:var(--text-muted);font-size:12px;margin-top:8px">${__("No calculations yet.")}</div>`;
+	const fmt = (v) => (v == null || v === "" ? "—" : esc(String(v)));
+	const inputs_tbl = (txt) => {
+		const lines = (txt || "").split("\n").filter(Boolean);
+		if (!lines.length) return "";
+		return `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:3px">${lines
+			.map((ln) => {
+				const c = ln.split("\t");
+				return `<tr><td style="padding:1px 6px;color:var(--text-muted)">${esc(c[0] || "")}</td><td style="padding:1px 6px;text-align:right;font-weight:600">${esc(c[1] || "")}</td><td style="padding:1px 6px;color:var(--text-muted)">${esc(c[2] || "")}</td><td style="padding:1px 6px;color:var(--text-muted)">${esc(c[3] || "")}</td></tr>`;
+			})
+			.join("")}</table>`;
+	};
+	const cards = rows
+		.map(
+			(r) => `
+			<div style="border:1px solid var(--border-color);border-radius:6px;margin:8px 0;padding:8px 10px;background:var(--fg-color,var(--card-bg))">
+				<div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border-color);padding-bottom:3px">
+					<b style="font-size:12px">${esc(r.calc)}</b>
+					<span style="font-size:12px"><b>${fmt(r.value)}</b> <span style="color:var(--text-muted)">${esc(r.unit || "")}</span>${r.status ? ` · ${esc(r.status)}` : ""}</span>
+				</div>
+				${r.formula ? `<div style="margin-top:4px;font-size:11px"><span style="color:var(--text-muted)">${__("Formula")}:</span> <code>${esc(r.formula)}</code></div>` : ""}
+				${inputs_tbl(r.inputs_text)}
+				${(r.steps || []).length ? `<div style="margin-top:4px;font-size:11px"><span style="color:var(--text-muted)">${__("Working")}:</span><pre style="margin:2px 0;white-space:pre-wrap;font-size:11px">${esc((r.steps || []).join("\n"))}</pre></div>` : ""}
+				${(r.citations || []).length ? `<div style="font-size:11px;color:var(--text-muted)">${__("Source")}: ${esc((r.citations || []).join(", "))}</div>` : ""}
+				${(r.warnings || []).length ? `<div style="font-size:11px;color:#c2700a;margin-top:2px">&#9888; ${esc((r.warnings || []).join("; "))}</div>` : ""}
+			</div>`
+		)
+		.join("");
+	return `<div style="margin-top:12px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Calculations")} (${rows.length})</div>${cards}</div>`;
+}
+
 function render_dashboard(frm, p) {
+	WFD_MATH.p = p;
+	WFD_MATH.frm = frm;
 	const d = frm.doc;
 	const esc = frappe.utils.escape_html;
 	const num = (v, dp) => (v == null || v === "" || v === 0 ? "—" : Number(v).toFixed(dp == null ? 2 : dp));
@@ -214,6 +257,11 @@ function render_dashboard(frm, p) {
 		needs = `<div style="margin-top:10px;padding:6px 10px;border-radius:6px;background:rgba(127,127,127,.12);font-size:12px"><b>${__("Still needed")}:</b> ${p.next_inputs_needed.map(esc).join(", ")}</div>`;
 	}
 
+	const hasMath = (p.calc_results || []).length > 0;
+	const mathToggle = hasMath
+		? `<span class="wfd-math-toggle" style="cursor:pointer;font-size:12px;color:var(--primary,#2490ef);user-select:none;margin-right:12px">${WFD_MATH.show ? __("Hide the math") : __("Show the math")}</span>`
+		: "";
+
 	const empty = !d.basins?.length && !d.features?.length;
 	const body = empty
 		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>`
@@ -222,19 +270,28 @@ function render_dashboard(frm, p) {
 				${duty ? `<div style="flex:1;min-width:280px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pump duty point")}</div>${duty}</div>` : ""}
 				<div style="flex:1;min-width:280px">${tdhBar}${segs}</div>
 			</div>
-			${warn}${needs}`;
+			${warn}${needs}${WFD_MATH.show ? math_html(p) : ""}`;
 
 	frm.get_field("dashboard").$wrapper.html(`
 		<div style="border:1px solid var(--border-color);border-radius:var(--border-radius-lg,8px);padding:14px 16px;background:var(--card-bg,var(--fg-color))">
 			<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
 				<div style="font-weight:600">${__("Hydraulic model")}</div>
 				<div style="display:flex;align-items:center;gap:8px;min-width:150px">
+					${mathToggle}
 					<div style="flex:1;height:8px;border-radius:4px;background:rgba(128,128,128,.2)"><div style="width:${pct}%;height:8px;border-radius:4px;background:var(--primary,#2490ef)"></div></div>
 					<span style="color:var(--text-muted);font-size:12px">${pct}%</span>
 				</div>
 			</div>
 			${body}
 		</div>`);
+
+	frm.get_field("dashboard").$wrapper
+		.find(".wfd-math-toggle")
+		.off("click")
+		.on("click", () => {
+			WFD_MATH.show = !WFD_MATH.show;
+			render_dashboard(WFD_MATH.frm, WFD_MATH.p);
+		});
 }
 
 function apply_template(frm, name) {

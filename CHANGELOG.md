@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.105.0] - 2026-06-24
+
+### Added
+- **Water Feature Design — "Show the math" toggle on the live form.** Every engine calc already produces its formula, step-by-step working, inputs (each tagged with where it came from), and citations — and the Calculation Audit print format already renders them — but the *live* dashboard only showed the rollups + schematic. A **Show the math** toggle in the dashboard header now expands a card per calculation, inline, showing the formula, the inputs table (value / unit / source), the working, the source citation, and any warnings — the same transparency as the printed audit, live as you model. `preview_design` now returns the `calc_results` envelope (`recompute()` already populated it in memory — zero extra compute); the toggle re-renders client-side with no round-trip. Mirrors the Calculation Audit print format's markup.
+
 ## [1.104.0] - 2026-06-24
 
 ### Fixed
