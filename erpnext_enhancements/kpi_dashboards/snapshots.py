@@ -413,6 +413,235 @@ def _sales_metrics():
 	return {"values": values, "freshness": {}}
 
 
+def _design_metrics():
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	values, add = _collector()
+	wip = "status in ('Draft','Inputs Gathered','Calculated','Reviewed')"
+
+	add(
+		"designs_created_30",
+		"Designs Created (30d)",
+		_scalar("select count(*) from `tabWater Feature Design` where docstatus<2 and creation >= %(d)s", {"d": d30}),
+		"count",
+		"Water Feature Design",
+		metrics.HIGHER,
+	)
+	add(
+		"designs_issued_30",
+		"Designs Issued (30d)",
+		_scalar("select count(*) from `tabWater Feature Design` where status='Issued' and modified >= %(d)s", {"d": d30}),
+		"count",
+		"Water Feature Design",
+		metrics.HIGHER,
+	)
+	add(
+		"design_wip",
+		"Design WIP",
+		_scalar(f"select count(*) from `tabWater Feature Design` where docstatus<2 and {wip}"),
+		"count",
+		"Water Feature Design",
+		metrics.LOWER,
+	)
+	add(
+		"designs_with_warnings",
+		"Designs w/ Warnings",
+		_scalar("select count(*) from `tabWater Feature Design` where docstatus<2 and has_warnings=1"),
+		"count",
+		"Water Feature Design",
+		metrics.LOWER,
+	)
+	issued = flt(_scalar("select count(*) from `tabWater Feature Design` where status='Issued'"))
+	clean = flt(_scalar("select count(*) from `tabWater Feature Design` where status='Issued' and coalesce(has_warnings,0)=0"))
+	add("clean_issue_rate", "Clean-Issue Rate", (clean / issued * 100.0) if issued else None, "%", "Water Feature Design", metrics.HIGHER)
+	add(
+		"design_revisions",
+		"Open Design Revisions",
+		_scalar("select count(*) from `tabWater Feature Design` where docstatus<2 and coalesce(amended_from,'')<>''"),
+		"count",
+		"Water Feature Design",
+		metrics.LOWER,
+	)
+	add(
+		"avg_wip_completion",
+		"Avg WIP Completion",
+		_scalar(f"select avg(completion_percent) from `tabWater Feature Design` where docstatus<2 and {wip}"),
+		"%",
+		"Water Feature Design",
+		metrics.HIGHER,
+	)
+	return {"values": values, "freshness": {}}
+
+
+def _production_metrics():
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	d90 = add_days(today, -90)
+	values, add = _collector()
+	has = frappe.db.has_column
+
+	add(
+		"projects_completed_30",
+		"Projects Completed (30d)",
+		_scalar("select count(*) from `tabProject` where status='Completed' and modified >= %(d)s", {"d": d30}),
+		"count",
+		"Project",
+		metrics.HIGHER,
+	)
+	add(
+		"active_projects",
+		"Active Projects",
+		_scalar("select count(*) from `tabProject` where status='Open'"),
+		"count",
+		"Project",
+		metrics.HIGHER,
+	)
+	add(
+		"projects_overdue",
+		"Overdue Projects",
+		_scalar(
+			"select count(*) from `tabProject` where status='Open' and expected_end_date is not null and expected_end_date < %(t)s",
+			{"t": today},
+		),
+		"count",
+		"Project",
+		metrics.LOWER,
+	)
+	add(
+		"avg_project_completion",
+		"Avg Project Completion",
+		_scalar("select avg(percent_complete) from `tabProject` where status='Open'"),
+		"%",
+		"Project",
+		metrics.HIGHER,
+	)
+	if has("Project", "custom_time_budget_in_hours") and has("Project", "custom_total_time_elapsed"):
+		row = frappe.db.sql(
+			"select sum(custom_total_time_elapsed), sum(custom_time_budget_in_hours) from `tabProject` "
+			"where status='Open' and coalesce(custom_time_budget_in_hours,0)>0"
+		)
+		used, budget = (row[0][0], row[0][1]) if row and row[0] else (None, None)
+		if budget:
+			add("labor_budget_utilization", "Labor Budget Utilization", flt(used) / flt(budget) * 100.0, "%", "Project", metrics.LOWER)
+	if has("Project", "custom_project_dollar_amount"):
+		add(
+			"backlog_value",
+			"Backlog (Open Project Value)",
+			_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status='Open'"),
+			"USD",
+			"Project",
+			metrics.HIGHER,
+		)
+	if _exists("Project Process Step"):
+		add(
+			"milestones_overdue",
+			"Overdue Milestones",
+			_scalar(
+				"select count(*) from `tabProject Process Step` where status='Pending' and due_by is not null and due_by < %(t)s",
+				{"t": today},
+			),
+			"count",
+			"Project Process Step",
+			metrics.LOWER,
+		)
+		done = flt(
+			_scalar(
+				"select count(*) from `tabProject Process Step` where status='Completed' and completed_on is not null and modified >= %(d)s",
+				{"d": d90},
+			)
+		)
+		ontime = flt(
+			_scalar(
+				"select count(*) from `tabProject Process Step` where status='Completed' and completed_on is not null "
+				"and due_by is not null and completed_on <= due_by and modified >= %(d)s",
+				{"d": d90},
+			)
+		)
+		add("on_time_milestone_rate", "On-Time Milestone Rate (90d)", (ontime / done * 100.0) if done else None, "%", "Project Process Step", metrics.HIGHER)
+	if _exists("Project Contract") and frappe.db.has_column("Project Contract", "revision"):
+		add(
+			"change_orders",
+			"Contract Change Orders",
+			_scalar("select count(*) from `tabProject Contract` where coalesce(revision,0)>0"),
+			"count",
+			"Project Contract",
+			metrics.LOWER,
+		)
+	return {"values": values, "freshness": {}}
+
+
+def _marketing_metrics():
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	d90 = add_days(today, -90)
+	month_start = today.replace(day=1)
+	values, add = _collector()
+	open_filter = "status not in ('Closed Won','Lost','Closed','Converted')"
+
+	add(
+		"new_leads_30",
+		"New Leads (30d)",
+		_scalar("select count(*) from `tabLead` where creation >= %(d)s", {"d": d30}),
+		"count",
+		"Lead",
+		metrics.HIGHER,
+	)
+	add(
+		"new_leads_mtd",
+		"New Leads (MTD)",
+		_scalar("select count(*) from `tabLead` where creation >= %(d)s", {"d": month_start}),
+		"count",
+		"Lead",
+		metrics.HIGHER,
+	)
+	total = flt(_scalar("select count(*) from `tabLead` where creation >= %(d)s", {"d": d90}))
+	converted = flt(_scalar("select count(*) from `tabLead` where status='Converted' and creation >= %(d)s", {"d": d90}))
+	add("lead_conversion_90", "Lead Conversion (90d)", (converted / total * 100.0) if total else None, "%", "Lead", metrics.HIGHER)
+	add(
+		"leads_unsourced",
+		"Unsourced Leads (30d)",
+		_scalar("select count(*) from `tabLead` where creation >= %(d)s and coalesce(source,'')=''", {"d": d30}),
+		"count",
+		"Lead",
+		metrics.LOWER,
+	)
+	# Source attribution lives on Opportunity.source (stock Lead Source link).
+	if frappe.db.has_column("Opportunity", "source"):
+		add(
+			"marketing_pipeline",
+			"Sourced Pipeline Value",
+			_scalar(f"select sum(opportunity_amount) from `tabOpportunity` where {open_filter} and coalesce(source,'')<>''"),
+			"USD",
+			"Opportunity",
+			metrics.HIGHER,
+		)
+		closed_col = "custom_date_closed_won" if frappe.db.has_column("Opportunity", "custom_date_closed_won") else "modified"
+		add(
+			"marketing_won_30",
+			"Sourced Wins (30d)",
+			_scalar(
+				f"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(source,'')<>'' and {closed_col} >= %(d)s",
+				{"d": d30},
+			),
+			"count",
+			"Opportunity",
+			metrics.HIGHER,
+		)
+		add(
+			"opportunities_unsourced",
+			"Unsourced Opportunities",
+			_scalar(f"select count(*) from `tabOpportunity` where {open_filter} and coalesce(source,'')=''"),
+			"count",
+			"Opportunity",
+			metrics.LOWER,
+		)
+	# NOTE: GA4/Search Console web metrics (sessions, organic clicks) are intentionally
+	# NOT pulled here — api.analytics.get_ga4_data makes live external calls and imports
+	# google libs at module top. They belong in a follow-up that snapshots the daily GA4
+	# pull and reads its cached output, per the "no live external calls in the batch" rule.
+	return {"values": values, "freshness": {}}
+
+
 def _qbo_freshness():
 	"""Last QBO CDC sync time + staleness, for the Watch badge on QBO-sourced KPIs."""
 	out = {}
@@ -432,6 +661,9 @@ AGGREGATORS = {
 	"Finance": _finance_metrics,
 	"Sales": _sales_metrics,
 	"Operations": _operations_metrics,
+	"Design": _design_metrics,
+	"Production": _production_metrics,
+	"Marketing": _marketing_metrics,
 }
 
 

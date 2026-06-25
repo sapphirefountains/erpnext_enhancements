@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.116.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 2: Design, Production & Marketing aggregators.** Three more department snapshots on the Phase 1 spine, so the KPI Cockpit now covers **six** departments (Finance, Sales, Operations, Design, Production, Marketing). No new doctypes — each is a defensive read over existing data, picked up automatically by the nightly batch, the cockpit selector, and the role-gated endpoints (`AVAILABLE_DEPARTMENTS` now derives from the engine's aggregator registry so the two can't drift).
+  - **Design (Water Engineering):** designs created/issued (30d), Design WIP, designs-with-warnings, **Clean-Issue Rate**, open revisions, and average WIP completion — from Water Feature Design status/`has_warnings`/`completion_percent`/`amended_from`.
+  - **Production (Build):** projects completed (30d), active/overdue projects, average completion, **labor budget utilisation** (elapsed vs budgeted hours), backlog value, overdue milestones, **on-time milestone rate** (90d), and contract change-orders — from Project + Project Process Step + Project Contract (custom budget/hours fields guarded with `has_column`).
+  - **Marketing:** new leads (30d/MTD), **lead-conversion rate** (90d), unsourced-lead count, and source-attributed pipeline / wins / unsourced-opportunity count — from Lead + Opportunity `source`. GA4 / Search Console web metrics are intentionally deferred to a follow-up that snapshots the daily GA4 pull (no live external calls in the nightly batch).
+
 ## [1.115.0] - 2026-06-25
 
 ### Added

@@ -10,8 +10,9 @@ import frappe
 
 from erpnext_enhancements.kpi_dashboards import snapshots
 
-# Departments that have a snapshot aggregator today (Phase 1).
-AVAILABLE_DEPARTMENTS = ("Finance", "Sales", "Operations")
+# Departments that have a snapshot aggregator — single source of truth is the
+# engine's registry, so this can never drift from what actually produces data.
+AVAILABLE_DEPARTMENTS = tuple(snapshots.AGGREGATORS)
 
 # department -> roles allowed to view it (System Manager always allowed).
 DEPARTMENT_ROLES = {
