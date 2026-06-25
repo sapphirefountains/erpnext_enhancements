@@ -227,5 +227,39 @@
         "card": "QuickBooks Pending Review"
       }
     ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Finance Health",
+    "dashboard_name": "Finance Health",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Monthly Revenue",
+        "width": "Full"
+      },
+      {
+        "chart": "Sales Invoices by Status",
+        "width": "Half"
+      },
+      {
+        "chart": "QuickBooks Syncs by Status",
+        "width": "Half"
+      }
+    ],
+    "cards": [
+      {
+        "card": "AR Outstanding"
+      },
+      {
+        "card": "Overdue Sales Invoices"
+      },
+      {
+        "card": "AP Outstanding"
+      },
+      {
+        "card": "Draft Sales Invoices"
+      }
+    ]
   }
 ]

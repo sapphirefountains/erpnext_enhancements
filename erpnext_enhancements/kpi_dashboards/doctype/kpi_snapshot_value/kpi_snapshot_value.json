@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "creation": "2026-06-25 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "kpi_key",
+  "label",
+  "value",
+  "value_text",
+  "unit",
+  "column_break_val",
+  "target_value",
+  "status",
+  "direction",
+  "trend_pct",
+  "source",
+  "is_stale"
+ ],
+ "fields": [
+  {
+   "fieldname": "kpi_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "KPI Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fieldname": "value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Value",
+   "precision": "4"
+  },
+  {
+   "fieldname": "value_text",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Display"
+  },
+  {
+   "fieldname": "unit",
+   "fieldtype": "Data",
+   "label": "Unit"
+  },
+  {
+   "fieldname": "column_break_val",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "target_value",
+   "fieldtype": "Float",
+   "label": "Target",
+   "precision": "4"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "\nGood\nWatch\nBad"
+  },
+  {
+   "default": "Higher is better",
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "label": "Direction",
+   "options": "Higher is better\nLower is better"
+  },
+  {
+   "fieldname": "trend_pct",
+   "fieldtype": "Float",
+   "label": "Trend % (vs prior)",
+   "precision": "2"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Data",
+   "label": "Source"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_stale",
+   "fieldtype": "Check",
+   "label": "Source Stale"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-25 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "KPI Snapshot Value",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -37,7 +37,14 @@ BLOCKS = [
 	("Projects Dashboard", "projects_dashboard"),
 	("Task Dashboard", "task_dashboard"),
 	("Morning Briefing", "morning_briefing"),
+	# KPI Cockpit lives on the "KPI Dashboards" workspace (placed by its own
+	# workspace fixture), NOT on Home — it is role-gated per department.
+	("KPI Cockpit", "kpi_cockpit"),
 ]
+
+# Subset of BLOCKS appended to the Home workspace. Blocks created/refreshed but
+# absent here are placed by their own workspace fixtures instead.
+HOME_BLOCKS = {"Desk Shortcuts", "Projects Dashboard", "Task Dashboard", "Morning Briefing"}
 
 HOME_WORKSPACE = "Home"
 
@@ -96,8 +103,9 @@ def sync_custom_html_blocks():
 
 		synced.append(name)
 
-	if synced:
-		_place_blocks_on_home(synced)
+	home_blocks = [name for name in synced if name in HOME_BLOCKS]
+	if home_blocks:
+		_place_blocks_on_home(home_blocks)
 
 
 def _place_blocks_on_home(block_names):

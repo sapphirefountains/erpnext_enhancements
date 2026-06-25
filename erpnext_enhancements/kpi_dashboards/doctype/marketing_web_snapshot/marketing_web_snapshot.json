@@ -1,0 +1,116 @@
+{
+ "actions": [],
+ "autoname": "format:MWS-{snapshot_date}",
+ "creation": "2026-06-25 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "snapshot_date",
+  "generated_at",
+  "source_status",
+  "ga4_ok",
+  "gsc_ok",
+  "column_break_web",
+  "sessions_30",
+  "active_users_30",
+  "organic_clicks_30",
+  "organic_impressions_30",
+  "pull_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "snapshot_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Snapshot Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "generated_at",
+   "fieldtype": "Datetime",
+   "label": "Generated At",
+   "read_only": 1
+  },
+  {
+   "description": "Human-readable summary of the last pull (e.g. 'GA4 ✓ GSC ✗'). The aggregator gates each source on ga4_ok / gsc_ok below.",
+   "fieldname": "source_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Source Status",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "ga4_ok",
+   "fieldtype": "Check",
+   "label": "GA4 OK",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "gsc_ok",
+   "fieldtype": "Check",
+   "label": "GSC OK",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_web",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sessions_30",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sessions (30d)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "active_users_30",
+   "fieldtype": "Int",
+   "label": "Active Users (30d)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "organic_clicks_30",
+   "fieldtype": "Int",
+   "label": "Organic Clicks (30d)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "organic_impressions_30",
+   "fieldtype": "Int",
+   "label": "Organic Impressions (30d)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pull_error",
+   "fieldtype": "Small Text",
+   "label": "Pull Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-25 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "Marketing Web Snapshot",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

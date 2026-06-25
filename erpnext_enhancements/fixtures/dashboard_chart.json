@@ -320,5 +320,33 @@
     "type": "Donut",
     "filters_json": "[]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Monthly Revenue",
+    "chart_name": "Monthly Revenue",
+    "chart_type": "Sum",
+    "document_type": "Sales Invoice",
+    "based_on": "posting_date",
+    "value_based_on": "base_grand_total",
+    "timeseries": 1,
+    "timespan": "Last Year",
+    "time_interval": "Monthly",
+    "type": "Bar",
+    "filters_json": "[[\"Sales Invoice\",\"docstatus\",\"=\",1,false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Sales Invoices by Status",
+    "chart_name": "Sales Invoices by Status",
+    "chart_type": "Group By",
+    "document_type": "Sales Invoice",
+    "group_by_type": "Count",
+    "group_by_based_on": "status",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Sales Invoice\",\"docstatus\",\"=\",1,false]]",
+    "is_public": 1
   }
 ]

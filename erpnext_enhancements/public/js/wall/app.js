@@ -32,6 +32,7 @@
   var state = {
     data: window.WALL_BOOT || null,
     idx: 0,
+    kpiIdx: 0,
     paused: false,
     secondsOnSlide: 0,
   };
@@ -65,6 +66,7 @@
       "  </div>" +
       "</header>" +
       '<section class="wall-band" id="wall-band"></section>' +
+      '<section class="wall-kpi" id="wall-kpi"></section>' +
       '<section class="wall-carousel" id="wall-carousel"></section>' +
       '<footer class="wall-footer">' +
       '  <div class="wall-pips" id="wall-pips"></div>' +
@@ -153,6 +155,53 @@
       "</div>";
   }
 
+  // ------------------------------------------------------------------- kpi
+
+  function kpiStatusClass(status) {
+    var s = String(status || "").toLowerCase();
+    return s ? "kpi-" + s : "";
+  }
+
+  function kpiTrend(pct) {
+    if (pct == null) return "";
+    var r = Math.round(pct * 10) / 10;
+    if (r > 0) return "▲ " + r + "%";
+    if (r < 0) return "▼ " + Math.abs(r) + "%";
+    // 0 == flat OR no prior snapshot (Float can't be null) — show nothing.
+    return "";
+  }
+
+  // Latest KPI snapshot per department, rotated one department at a time in
+  // lock-step with the carousel. Empty/absent payload renders nothing (the
+  // section collapses), so a disabled or hiccuping KPI feed never disturbs
+  // the rest of the wall.
+  function renderKpi() {
+    var el = document.getElementById("wall-kpi");
+    if (!el) return;
+    var blocks = (state.data && state.data.kpi) || [];
+    if (!blocks.length) {
+      el.innerHTML = "";
+      return;
+    }
+    var block = blocks[state.kpiIdx % blocks.length];
+    var cards = (block.values || [])
+      .slice(0, 8)
+      .map(function (v) {
+        return (
+          '<div class="wall-kpi-card ' + kpiStatusClass(v.status) + '">' +
+          '<div class="wall-kpi-val">' + esc(v.value_text) + "</div>" +
+          '<div class="wall-kpi-label">' + esc(v.label) + "</div>" +
+          '<div class="wall-kpi-trend">' + esc(kpiTrend(v.trend_pct)) + "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+    el.innerHTML =
+      '<div class="wall-kpi-head">' + esc(block.department) + " KPIs" +
+      '<span class="wall-kpi-date">' + esc(block.snapshot_date) + "</span></div>" +
+      '<div class="wall-kpi-grid">' + cards + "</div>";
+  }
+
   // --------------------------------------------------------------- carousel
 
   function donut(stats) {
@@ -230,6 +279,11 @@
         state.secondsOnSlide = 0;
         state.idx += 1;
         renderSlide();
+        var kpiBlocks = (state.data && state.data.kpi) || [];
+        if (kpiBlocks.length) {
+          state.kpiIdx += 1;
+          renderKpi();
+        }
       }
     }
     var bar = document.getElementById("wall-progress");
@@ -326,6 +380,7 @@
         }
         state.data = data;
         renderBand();
+        renderKpi();
         renderSlide();
       })
       .catch(function (err) {
@@ -367,6 +422,7 @@
     tickClock();
     if (state.data) {
       renderBand();
+      renderKpi();
       renderSlide();
     }
     refreshWeather();

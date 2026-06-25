@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.121.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Marketing web metrics (GA4 / Search Console), snapshotted.** A new **Marketing Web Snapshot** doctype caches the daily 30-day web totals; ``snapshot_marketing_web`` pulls GA4 + Search Console **once at the head of the nightly batch** and stores them, so the Marketing aggregator surfaces **Web Sessions, Active Users, Organic Clicks, and Organic Impressions** by reading the cache — never calling Google in the snapshot path (honouring the "no live external calls in aggregation" rule). Fully guarded: an unconfigured or failing pull stores a status and the Marketing snapshot simply omits the web KPIs (no misleading zeros), and a slow pull can never block the batch.
+
+### Notes
+- The web-metric **plumbing** (the cache doctype, the batch hook, the aggregator read, and the unconfigured/failure paths) is live-verified on the dev bench; the **live GA4/GSC parse** itself can only be exercised on a GA4-configured site, so it should be sanity-checked once after the first real pull on production.
+
+## [1.120.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 4 (start): Marketing Spend → Cost Per Lead.** A new **Marketing Spend** doctype (one row per channel per month: month, channel, amount) — the single piece of genuine manual entry for Marketing, a monthly paste until ad-platform connectors exist. The Marketing snapshot now computes **Marketing Spend (MTD)** and **Cost Per Lead (MTD)** (spend ÷ new leads) from it, both guarded so they only appear once spend is entered. Linked from the KPI Dashboards workspace; editable by System Manager / Sales Manager. This begins to close Marketing — the weakest-data department — with the lightest possible capture.
+
+## [1.119.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — segment-aware build throughput (Production).** Four new build-specific KPIs using the existing `project_type` field: **Builds Completed (30d)**, **Active Builds**, **Overdue Builds**, and **Build Backlog Value** (open Build projects' contract value). Surfaces the Build segment specifically rather than lumping it with Service/Rent/Design work.
+
+### Notes
+- Inspection of real data (361 completed projects) found that the "enabler fields" anticipated in the Phase 3 plan are unnecessary or unusable: **`project_type` already encodes the revenue/cost segment** (Build / Service / Rent / Design), so no separate segment field is added; and **`Project.actual_end_date` is populated on 0 projects**, so a true on-time-delivery KPI is deferred until that field is captured (the snapshot uses overdue-vs-`expected_end_date` as the available signal in the meantime).
+
+## [1.118.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 3: KPIs on the `/wall` TV display.** The wall now rotates a **KPI band** between the briefing band and the project carousel, cycling one department's latest snapshot at a time (Executive rollup + Operations board — the natural TV content) in lock-step with the carousel rotation. Cards show value, Good/Watch/Bad colour, and trend. Gated by a new **Show KPI Band on Wall** toggle in ERPNext Enhancements Settings (default off; only available once KPI Dashboards is enabled). The payload reads the latest snapshots (no recompute) and is fully defensive — a disabled or hiccuping KPI feed renders nothing and never disturbs the 24/7 wall.
+  - _Remaining in Phase 3:_ a dedicated Executive desk page, the light enabler custom fields, and the deferred GA4 web-metrics snapshot.
+
+## [1.117.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 3 (start): Executive rollup.** A seventh aggregator that rolls the company up to one view. It re-surfaces a curated C-suite set from the freshest department snapshots — Revenue & Cash Collected (30d), AR & DSO, Open Pipeline & Win Rate, Backlog & On-Time Milestone Rate, Active Maintenance Contracts & Out-of-Range Rate — plus two direct computes (Active Headcount, Revenue per Employee). Executive is built **last** in the nightly batch so its rollup reads the same night's Finance/Sales/Production/Operations snapshots. It appears automatically in the KPI Cockpit (the selector and endpoints derive from the aggregator registry), gated to the Executive viewer roles. No new doctypes.
+  - _Still to come in Phase 3:_ a dedicated one-screen Executive desk page, the `/wall` TV rotation, the light enabler fields (revenue/cost segment on Project, scheduled/actual dates), and the deferred GA4 web-metrics snapshot.
+
+## [1.116.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 2: Design, Production & Marketing aggregators.** Three more department snapshots on the Phase 1 spine, so the KPI Cockpit now covers **six** departments (Finance, Sales, Operations, Design, Production, Marketing). No new doctypes — each is a defensive read over existing data, picked up automatically by the nightly batch, the cockpit selector, and the role-gated endpoints (`AVAILABLE_DEPARTMENTS` now derives from the engine's aggregator registry so the two can't drift).
+  - **Design (Water Engineering):** designs created/issued (30d), Design WIP, designs-with-warnings, **Clean-Issue Rate**, open revisions, and average WIP completion — from Water Feature Design status/`has_warnings`/`completion_percent`/`amended_from`.
+  - **Production (Build):** projects completed (30d), active/overdue projects, average completion, **labor budget utilisation** (elapsed vs budgeted hours), backlog value, overdue milestones, **on-time milestone rate** (90d), and contract change-orders — from Project + Project Process Step + Project Contract (custom budget/hours fields guarded with `has_column`).
+  - **Marketing:** new leads (30d/MTD), **lead-conversion rate** (90d), unsourced-lead count, and source-attributed pipeline / wins / unsourced-opportunity count — from Lead + Opportunity `source`. GA4 / Search Console web metrics are intentionally deferred to a follow-up that snapshots the daily GA4 pull (no live external calls in the nightly batch).
+
+## [1.115.0] - 2026-06-25
+
+### Added
+- **Department KPI Dashboards — Phase 1 (the snapshot spine).** A new **KPI Dashboards** module that precomputes per-department KPIs nightly and surfaces them on the desk, designed to cover each department's whole job scope (not just ERPNext data) with automation prioritised over manual entry. See `docs/KPI_DASHBOARD_DESIGN.md` for the full 114-KPI catalog and roadmap.
+  - **Three new doctypes:** **KPI Snapshot** (one durable row per department/period/day, idempotent `KPI-{department}-{period}-{date}` autoname, modelled on Daily Briefing so a `bench migrate` can't vaporise it), its **KPI Snapshot Value** child (value, target, Good/Watch/Bad status, period-over-period trend, source-freshness flag), and **KPI Target** — the tiny, high-leverage table managers edit to light up every "vs target" badge without a budgeting module.
+  - **Nightly snapshot engine** (`kpi_dashboards/snapshots.py`): a `0 5 * * *` cron enqueues a per-department batch onto the `long` queue (commits per department so one slow aggregator can't sink the rest). Phase 1 ships **Finance, Sales, and Operations** aggregators — ~12 KPIs each — read from the post-QBO-sync system-of-record doctypes (Sales/Purchase Invoice, Payment Entry, Opportunity, Lead, Sapphire Maintenance Record/Contract, etc.); QBO/Stripe are never called live in the render path, and their sync freshness is recorded so stale upstreams show a Watch badge. A daily purge trims snapshots past the retention window.
+  - **KPI Cockpit** Custom HTML Block on a new **KPI Dashboards** workspace: a role-gated department selector + Refresh, rendering each KPI's value, target, trend, and status. Endpoints `erpnext_enhancements.api.kpi.*` are role-gated per department (System Manager sees all).
+  - **Finance Health** native ERPNext dashboard (AR/AP outstanding, overdue + draft invoices, monthly revenue, invoice-status mix) — stock-field cards/charts that render immediately, independent of the snapshot engine.
+  - **Master switch** in ERPNext Enhancements Settings → *KPI Dashboards* (`kpi_dashboards_enabled`, default off per the staged-rollout convention) + snapshot retention days.
+
 ## [1.114.0] - 2026-06-24
 
 ### Added

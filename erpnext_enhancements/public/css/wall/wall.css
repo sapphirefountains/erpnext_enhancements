@@ -376,3 +376,73 @@ body {
 .wall-pause.is-paused {
   color: var(--wall-warn);
 }
+
+/* KPI band — rotates one department's latest snapshot at a time. Sits between
+ * the briefing band and the project carousel; collapses to nothing when the
+ * KPI feed is empty/disabled (no padding on an empty section). */
+.wall-kpi:empty {
+  display: none;
+}
+
+.wall-kpi-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8vw;
+  color: var(--wall-muted);
+  font-size: 1.1vw;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5vw;
+}
+
+.wall-kpi-date {
+  font-size: 0.9vw;
+  font-weight: 400;
+  color: var(--wall-muted);
+}
+
+.wall-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9vw, 1fr));
+  gap: 0.6vw;
+}
+
+.wall-kpi-card {
+  background: var(--wall-panel);
+  border: 1px solid var(--wall-panel-border);
+  border-left: 0.25vw solid var(--wall-panel-border);
+  border-radius: 0.4vw;
+  padding: 0.6vw 0.8vw;
+}
+
+.wall-kpi-card.kpi-good {
+  border-left-color: var(--wall-good);
+}
+
+.wall-kpi-card.kpi-watch {
+  border-left-color: var(--wall-warn);
+}
+
+.wall-kpi-card.kpi-bad {
+  border-left-color: var(--wall-bad);
+}
+
+.wall-kpi-val {
+  font-size: 1.9vw;
+  font-weight: 700;
+  color: var(--wall-text);
+  line-height: 1.1;
+}
+
+.wall-kpi-label {
+  font-size: 0.95vw;
+  color: var(--wall-muted);
+  margin-top: 0.2vw;
+}
+
+.wall-kpi-trend {
+  font-size: 0.85vw;
+  color: var(--wall-muted);
+  margin-top: 0.1vw;
+}

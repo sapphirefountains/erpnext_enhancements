@@ -1,0 +1,134 @@
+{
+ "actions": [],
+ "autoname": "format:TGT-{department}-{kpi_key}-{period}",
+ "creation": "2026-06-25 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "department",
+  "kpi_key",
+  "label",
+  "period",
+  "column_break_tgt",
+  "target_value",
+  "unit",
+  "direction",
+  "effective_from",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "department",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "Finance\nSales\nMarketing\nDesign\nProduction\nOperations\nExecutive",
+   "reqd": 1
+  },
+  {
+   "description": "Must match the kpi_key the snapshot engine emits (e.g. dso, win_rate_90, visits_completed_30).",
+   "fieldname": "kpi_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "KPI Key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "default": "Daily",
+   "fieldname": "period",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Period",
+   "options": "Daily\nWeekly\nMonthly"
+  },
+  {
+   "fieldname": "column_break_tgt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "target_value",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Target Value",
+   "precision": "4",
+   "reqd": 1
+  },
+  {
+   "fieldname": "unit",
+   "fieldtype": "Data",
+   "label": "Unit"
+  },
+  {
+   "default": "Higher is better",
+   "description": "Whether a value above or below the target is good — drives the Good/Watch/Bad badge.",
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "label": "Direction",
+   "options": "Higher is better\nLower is better"
+  },
+  {
+   "fieldname": "effective_from",
+   "fieldtype": "Date",
+   "label": "Effective From"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-25 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "KPI Target",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

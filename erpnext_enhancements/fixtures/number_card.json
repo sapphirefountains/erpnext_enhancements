@@ -230,5 +230,55 @@
     "is_public": 1,
     "show_percentage_stats": 0,
     "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "AR Outstanding",
+    "label": "AR Outstanding",
+    "type": "Document Type",
+    "document_type": "Sales Invoice",
+    "function": "Sum",
+    "aggregate_function_based_on": "outstanding_amount",
+    "filters_json": "[[\"Sales Invoice\",\"docstatus\",\"=\",1,false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Monthly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "Overdue Sales Invoices",
+    "label": "Overdue Sales Invoices",
+    "type": "Document Type",
+    "document_type": "Sales Invoice",
+    "function": "Count",
+    "filters_json": "[[\"Sales Invoice\",\"status\",\"=\",\"Overdue\",false]]",
+    "is_public": 1,
+    "show_percentage_stats": 1,
+    "stats_time_interval": "Weekly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "AP Outstanding",
+    "label": "AP Outstanding",
+    "type": "Document Type",
+    "document_type": "Purchase Invoice",
+    "function": "Sum",
+    "aggregate_function_based_on": "outstanding_amount",
+    "filters_json": "[[\"Purchase Invoice\",\"docstatus\",\"=\",1,false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Monthly"
+  },
+  {
+    "doctype": "Number Card",
+    "name": "Draft Sales Invoices",
+    "label": "Draft Sales Invoices",
+    "type": "Document Type",
+    "document_type": "Sales Invoice",
+    "function": "Count",
+    "filters_json": "[[\"Sales Invoice\",\"docstatus\",\"=\",0,false]]",
+    "is_public": 1,
+    "show_percentage_stats": 0,
+    "stats_time_interval": "Weekly"
   }
 ]
