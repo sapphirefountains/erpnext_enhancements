@@ -515,6 +515,49 @@ def _production_metrics():
 		"Project",
 		metrics.HIGHER,
 	)
+	# Build-segment throughput. project_type already encodes the segment
+	# (Build / Service / Rent / Design) — no separate segment field needed.
+	if has("Project", "project_type"):
+		add(
+			"builds_completed_30",
+			"Builds Completed (30d)",
+			_scalar(
+				"select count(*) from `tabProject` where status='Completed' and project_type='Build' and modified >= %(d)s",
+				{"d": d30},
+			),
+			"count",
+			"Project",
+			metrics.HIGHER,
+		)
+		add(
+			"active_builds",
+			"Active Builds",
+			_scalar("select count(*) from `tabProject` where status='Open' and project_type='Build'"),
+			"count",
+			"Project",
+			metrics.HIGHER,
+		)
+		add(
+			"builds_overdue",
+			"Overdue Builds",
+			_scalar(
+				"select count(*) from `tabProject` where status='Open' and project_type='Build' "
+				"and expected_end_date is not null and expected_end_date < %(t)s",
+				{"t": today},
+			),
+			"count",
+			"Project",
+			metrics.LOWER,
+		)
+		if has("Project", "custom_project_dollar_amount"):
+			add(
+				"build_backlog_value",
+				"Build Backlog Value",
+				_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status='Open' and project_type='Build'"),
+				"USD",
+				"Project",
+				metrics.HIGHER,
+			)
 	if has("Project", "custom_time_budget_in_hours") and has("Project", "custom_total_time_elapsed"):
 		row = frappe.db.sql(
 			"select sum(custom_total_time_elapsed), sum(custom_time_budget_in_hours) from `tabProject` "

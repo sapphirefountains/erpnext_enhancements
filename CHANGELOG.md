@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.119.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — segment-aware build throughput (Production).** Four new build-specific KPIs using the existing `project_type` field: **Builds Completed (30d)**, **Active Builds**, **Overdue Builds**, and **Build Backlog Value** (open Build projects' contract value). Surfaces the Build segment specifically rather than lumping it with Service/Rent/Design work.
+
+### Notes
+- Inspection of real data (361 completed projects) found that the "enabler fields" anticipated in the Phase 3 plan are unnecessary or unusable: **`project_type` already encodes the revenue/cost segment** (Build / Service / Rent / Design), so no separate segment field is added; and **`Project.actual_end_date` is populated on 0 projects**, so a true on-time-delivery KPI is deferred until that field is captured (the snapshot uses overdue-vs-`expected_end_date` as the available signal in the meantime).
+
 ## [1.118.0] - 2026-06-25
 
 ### Added
