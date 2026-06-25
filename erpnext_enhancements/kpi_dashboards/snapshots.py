@@ -410,6 +410,41 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
+	# Win/loss reason capture (custom_won_reason / custom_lost_reason).
+	if frappe.db.has_column("Opportunity", "custom_lost_reason"):
+		add(
+			"lost_to_competitor_90",
+			"Lost to Competitor (90d)",
+			_scalar(
+				"select count(*) from `tabOpportunity` where status='Lost' and custom_lost_reason='Competitor' and modified >= %(d)s",
+				{"d": d90},
+			),
+			"count",
+			"Opportunity",
+			metrics.LOWER,
+		)
+		closed = flt(
+			_scalar(
+				"select count(*) from `tabOpportunity` where status in ('Closed Won','Lost') and modified >= %(d)s",
+				{"d": d90},
+			)
+		)
+		with_reason = flt(
+			_scalar(
+				"select count(*) from `tabOpportunity` where modified >= %(d)s and ("
+				"(status='Closed Won' and coalesce(custom_won_reason,'')<>'') or "
+				"(status='Lost' and coalesce(custom_lost_reason,'')<>''))",
+				{"d": d90},
+			)
+		)
+		add(
+			"close_reason_capture_90",
+			"Close-Reason Capture (90d)",
+			(with_reason / closed * 100.0) if closed else None,
+			"%",
+			"Opportunity",
+			metrics.HIGHER,
+		)
 	return {"values": values, "freshness": {}}
 
 

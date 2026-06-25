@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.122.0] - 2026-06-25
+
+### Added
+- **Opportunity win/loss reason capture + Sales KPIs.** Three custom fields on Opportunity, shown only at close (depends-on status): **Won Reason** (Price / Relationship / Product Fit / Timing / Other), **Lost Reason** (Price / Competitor / No Budget / Timing / No Decision / Other), and **Lost To (Competitor)** (shown when the reason is Competitor). A reason is **required when an Opportunity transitions to Closed Won or Lost** (enforced on the transition only — editing a historical closed Opportunity is not retroactively blocked), mirroring the existing required-ranks-on-won validation.
+  - Feeds two new Sales snapshot KPIs — **Lost to Competitor (90d)** and **Close-Reason Capture (90d)** (share of closed opps that recorded a reason) — and an **Opportunity Loss Reasons** donut on the Sales Pipeline dashboard.
+  - The reason option lists are plain Select options, safe to edit to match your taxonomy. Fields are provisioned idempotently on migrate (`setup.custom_fields.create_opportunity_winloss_fields`).
+
 ## [1.121.0] - 2026-06-25
 
 ### Added
