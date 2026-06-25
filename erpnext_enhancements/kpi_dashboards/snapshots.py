@@ -678,6 +678,14 @@ def _marketing_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
+	# Manual monthly spend paste (Marketing Spend doctype) -> Cost Per Lead.
+	if _exists("Marketing Spend"):
+		spend_mtd = _scalar("select sum(amount) from `tabMarketing Spend` where month >= %(d)s", {"d": month_start})
+		add("marketing_spend_mtd", "Marketing Spend (MTD)", spend_mtd, "USD", "Marketing Spend", metrics.LOWER)
+		leads_mtd = flt(_scalar("select count(*) from `tabLead` where creation >= %(d)s", {"d": month_start}))
+		if spend_mtd is not None and leads_mtd:
+			add("cpl_mtd", "Cost Per Lead (MTD)", flt(spend_mtd) / leads_mtd, "USD", "Marketing Spend", metrics.LOWER)
+
 	# NOTE: GA4/Search Console web metrics (sessions, organic clicks) are intentionally
 	# NOT pulled here — api.analytics.get_ga4_data makes live external calls and imports
 	# google libs at module top. They belong in a follow-up that snapshots the daily GA4

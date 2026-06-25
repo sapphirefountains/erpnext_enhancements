@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.120.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 4 (start): Marketing Spend → Cost Per Lead.** A new **Marketing Spend** doctype (one row per channel per month: month, channel, amount) — the single piece of genuine manual entry for Marketing, a monthly paste until ad-platform connectors exist. The Marketing snapshot now computes **Marketing Spend (MTD)** and **Cost Per Lead (MTD)** (spend ÷ new leads) from it, both guarded so they only appear once spend is entered. Linked from the KPI Dashboards workspace; editable by System Manager / Sales Manager. This begins to close Marketing — the weakest-data department — with the lightest possible capture.
+
 ## [1.119.0] - 2026-06-25
 
 ### Added
