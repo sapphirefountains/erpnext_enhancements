@@ -686,10 +686,25 @@ def _marketing_metrics():
 		if spend_mtd is not None and leads_mtd:
 			add("cpl_mtd", "Cost Per Lead (MTD)", flt(spend_mtd) / leads_mtd, "USD", "Marketing Spend", metrics.LOWER)
 
-	# NOTE: GA4/Search Console web metrics (sessions, organic clicks) are intentionally
-	# NOT pulled here — api.analytics.get_ga4_data makes live external calls and imports
-	# google libs at module top. They belong in a follow-up that snapshots the daily GA4
-	# pull and reads its cached output, per the "no live external calls in the batch" rule.
+	# Web traffic — read the cached daily GA4/GSC pull (snapshot_marketing_web),
+	# never a live call here. Each source is gated on its own ok-flag so a
+	# GA4-only site shows GA4 metrics without misleading 0s for Search Console.
+	if _exists("Marketing Web Snapshot"):
+		rows = frappe.get_all(
+			"Marketing Web Snapshot",
+			fields=["sessions_30", "active_users_30", "organic_clicks_30", "organic_impressions_30", "ga4_ok", "gsc_ok"],
+			order_by="snapshot_date desc",
+			limit=1,
+		)
+		if rows:
+			w = rows[0]
+			if w.ga4_ok:
+				add("web_sessions_30", "Web Sessions (30d)", w.sessions_30, "count", "GA4", metrics.HIGHER)
+				add("web_users_30", "Web Active Users (30d)", w.active_users_30, "count", "GA4", metrics.HIGHER)
+			if w.gsc_ok:
+				add("organic_clicks_30", "Organic Clicks (30d)", w.organic_clicks_30, "count", "Search Console", metrics.HIGHER)
+				add("organic_impressions_30", "Organic Impressions (30d)", w.organic_impressions_30, "count", "Search Console", metrics.HIGHER)
+
 	return {"values": values, "freshness": {}}
 
 
@@ -877,6 +892,86 @@ def build_department_snapshot(department, period="Daily", generated_by="Schedule
 # ------------------------------------------------------------------- scheduler
 
 
+def _sum_dataset(chart, name_contains):
+	"""Sum a Frappe-charts dataset (``{labels, datasets:[{name, values}]}``) whose
+	name contains ``name_contains`` (case-insensitive). None if absent/unparseable."""
+	if not isinstance(chart, dict):
+		return None
+	for ds in chart.get("datasets") or []:
+		if name_contains.lower() in str(ds.get("name", "")).lower():
+			try:
+				return sum(int(v or 0) for v in ds.get("values") or [])
+			except (TypeError, ValueError):
+				return None
+	return None
+
+
+def snapshot_marketing_web():
+	"""Pull GA4 + Search Console once and cache the 30-day totals in Marketing
+	Web Snapshot. Called at the head of the nightly batch so the Marketing
+	aggregator reads cached numbers instead of calling Google in the snapshot
+	path. Fully guarded: never raises into the batch; skips quietly when GA4 is
+	not configured (the common case on most sites)."""
+	if not _exists("Marketing Web Snapshot") or not _exists("GA4 Settings"):
+		return
+	try:
+		if not frappe.db.get_single_value("GA4 Settings", "ga4_property_id"):
+			return
+	except Exception:
+		return
+
+	sessions = users = clicks = impressions = None
+	ga4_ok = gsc_ok = False
+	errors = []
+	try:
+		from erpnext_enhancements.api.analytics import get_ga4_data
+
+		ga = get_ga4_data()
+		if isinstance(ga, dict) and ga.get("error"):
+			errors.append("GA4: " + str(ga.get("error")))
+		elif isinstance(ga, dict):
+			tl = ga.get("traffic_timeline") or {}
+			sessions = _sum_dataset(tl, "session")
+			users = _sum_dataset(tl, "active user")
+			ga4_ok = True
+	except Exception:
+		errors.append("GA4 exception")
+		frappe.log_error(frappe.get_traceback(), "KPI marketing web — GA4")
+
+	try:
+		from erpnext_enhancements.api.analytics import get_gsc_data
+
+		gsc = get_gsc_data()
+		if isinstance(gsc, dict) and gsc.get("error"):
+			errors.append("GSC: " + str(gsc.get("error")))
+		elif isinstance(gsc, dict):
+			st = gsc.get("search_timeline") or {}
+			clicks = _sum_dataset(st, "click")
+			impressions = _sum_dataset(st, "impression")
+			gsc_ok = True
+	except Exception:
+		errors.append("GSC exception")
+		frappe.log_error(frappe.get_traceback(), "KPI marketing web — GSC")
+
+	status = f"GA4 {'✓' if ga4_ok else '✗'} · GSC {'✓' if gsc_ok else '✗'}"
+	today = nowdate()
+	name = f"MWS-{today}"
+	if frappe.db.exists("Marketing Web Snapshot", name):
+		frappe.delete_doc("Marketing Web Snapshot", name, force=True, ignore_permissions=True)
+	doc = frappe.new_doc("Marketing Web Snapshot")
+	doc.snapshot_date = today
+	doc.generated_at = now_datetime()
+	doc.sessions_30 = sessions
+	doc.active_users_30 = users
+	doc.organic_clicks_30 = clicks
+	doc.organic_impressions_30 = impressions
+	doc.source_status = status
+	doc.ga4_ok = 1 if ga4_ok else 0
+	doc.gsc_ok = 1 if gsc_ok else 0
+	doc.pull_error = ("; ".join(errors))[:300] or None
+	doc.insert(ignore_permissions=True)
+
+
 def scheduled_kpi_run():
 	"""Cron entry (nightly): hand the batch to a long worker if enabled."""
 	if not kpi_enabled():
@@ -894,6 +989,14 @@ def generate_all_snapshots(period="Daily"):
 	settings = _settings()
 	if not kpi_enabled(settings):
 		return
+	# Refresh the cached GA4/GSC pull first so the Marketing aggregator reads
+	# today's web numbers. Guarded — a slow/failed pull never blocks the batch.
+	try:
+		snapshot_marketing_web()
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(frappe.get_traceback(), "KPI snapshot batch — marketing web")
 	for department in AGGREGATORS:
 		try:
 			build_department_snapshot(department, period=period, generated_by="Scheduler")

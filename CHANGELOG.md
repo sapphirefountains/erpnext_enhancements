@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.121.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Marketing web metrics (GA4 / Search Console), snapshotted.** A new **Marketing Web Snapshot** doctype caches the daily 30-day web totals; ``snapshot_marketing_web`` pulls GA4 + Search Console **once at the head of the nightly batch** and stores them, so the Marketing aggregator surfaces **Web Sessions, Active Users, Organic Clicks, and Organic Impressions** by reading the cache — never calling Google in the snapshot path (honouring the "no live external calls in aggregation" rule). Fully guarded: an unconfigured or failing pull stores a status and the Marketing snapshot simply omits the web KPIs (no misleading zeros), and a slow pull can never block the batch.
+
+### Notes
+- The web-metric **plumbing** (the cache doctype, the batch hook, the aggregator read, and the unconfigured/failure paths) is live-verified on the dev bench; the **live GA4/GSC parse** itself can only be exercised on a GA4-configured site, so it should be sanity-checked once after the first real pull on production.
+
 ## [1.120.0] - 2026-06-25
 
 ### Added
