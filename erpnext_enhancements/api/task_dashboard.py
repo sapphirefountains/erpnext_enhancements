@@ -304,10 +304,52 @@ def _wall_settings():
 		"rotation_seconds": cint(settings.get("wall_rotation_seconds")) or 60,
 		"refresh_seconds": cint(settings.get("wall_data_refresh_seconds")) or 300,
 		"show_weather": check_default_on("wall_show_weather"),
+		"show_kpis": cint(settings.get("wall_show_kpis")),
 		"weather_latitude": float(settings.get("weather_latitude") or 40.8894),
 		"weather_longitude": float(settings.get("weather_longitude") or -111.8808),
 		"weather_label": settings.get("weather_label") or "Bountiful, UT",
 	}
+
+
+# Departments whose latest KPI snapshot rotates on the wall (the natural TV
+# content per the dashboard design: an exec rollup + the operations board).
+WALL_KPI_DEPARTMENTS = ("Executive", "Operations")
+
+
+def _wall_kpi_block():
+	"""Compact KPI payload for the wall's rotating band — the latest snapshot per
+	WALL_KPI_DEPARTMENTS. Gated by both the KPI master switch and the wall toggle;
+	fully defensive so a KPI hiccup can never break the (24/7) wall render."""
+	try:
+		settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
+		if not cint(settings.get("kpi_dashboards_enabled")) or not cint(settings.get("wall_show_kpis")):
+			return []
+		blocks = []
+		for dept in WALL_KPI_DEPARTMENTS:
+			name = frappe.get_all(
+				"KPI Snapshot",
+				filters={"department": dept, "period": "Daily"},
+				order_by="snapshot_date desc",
+				limit=1,
+				pluck="name",
+			)
+			if not name:
+				continue
+			doc = frappe.get_doc("KPI Snapshot", name[0])
+			blocks.append(
+				{
+					"department": dept,
+					"snapshot_date": str(doc.snapshot_date),
+					"values": [
+						{"label": v.label, "value_text": v.value_text, "status": v.status, "trend_pct": v.trend_pct}
+						for v in doc.values
+					],
+				}
+			)
+		return blocks
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Wall KPI block")
+		return []
 
 
 @frappe.whitelist()
@@ -321,5 +363,6 @@ def get_wall_dashboard_data():
 	data = get_task_dashboard_data()  # role gate happens in there
 	data["task_stats"] = _project_task_stats([p["name"] for p in data["top_projects"]])
 	data["settings"] = _wall_settings()
+	data["kpi"] = _wall_kpi_block()
 	data["deploy_version"] = get_deploy_version()
 	return data

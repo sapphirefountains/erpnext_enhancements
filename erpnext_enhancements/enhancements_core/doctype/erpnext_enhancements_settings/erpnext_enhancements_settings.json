@@ -40,6 +40,7 @@
   "wall_data_refresh_seconds",
   "wall_column_break",
   "wall_show_weather",
+  "wall_show_kpis",
   "weather_latitude",
   "weather_longitude",
   "weather_label",
@@ -285,6 +286,14 @@
    "fieldname": "wall_show_weather",
    "fieldtype": "Check",
    "label": "Show Weather Widget"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.kpi_dashboards_enabled",
+   "description": "Rotate a KPI band (Executive + Operations snapshots) on the /wall TV display. Requires KPI Dashboards enabled above.",
+   "fieldname": "wall_show_kpis",
+   "fieldtype": "Check",
+   "label": "Show KPI Band on Wall"
   },
   {
    "default": "40.8894",

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.118.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 3: KPIs on the `/wall` TV display.** The wall now rotates a **KPI band** between the briefing band and the project carousel, cycling one department's latest snapshot at a time (Executive rollup + Operations board — the natural TV content) in lock-step with the carousel rotation. Cards show value, Good/Watch/Bad colour, and trend. Gated by a new **Show KPI Band on Wall** toggle in ERPNext Enhancements Settings (default off; only available once KPI Dashboards is enabled). The payload reads the latest snapshots (no recompute) and is fully defensive — a disabled or hiccuping KPI feed renders nothing and never disturbs the 24/7 wall.
+  - _Remaining in Phase 3:_ a dedicated Executive desk page, the light enabler custom fields, and the deferred GA4 web-metrics snapshot.
+
 ## [1.117.0] - 2026-06-25
 
 ### Added

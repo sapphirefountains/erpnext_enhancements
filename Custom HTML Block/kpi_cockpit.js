@@ -34,7 +34,8 @@
         const rounded = Math.round(pct * 10) / 10;
         if (rounded > 0) return { cls: "up", text: `▲ ${rounded}%` };
         if (rounded < 0) return { cls: "down", text: `▼ ${Math.abs(rounded)}%` };
-        return { cls: "flat", text: "0%" };
+        // 0 == flat OR no prior snapshot (Float can't be null) — show nothing.
+        return { cls: "flat", text: "" };
     }
 
     function renderCards(body, meta, snap) {
