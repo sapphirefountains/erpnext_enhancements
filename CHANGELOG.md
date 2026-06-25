@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.117.0] - 2026-06-25
+
+### Added
+- **KPI Dashboards — Phase 3 (start): Executive rollup.** A seventh aggregator that rolls the company up to one view. It re-surfaces a curated C-suite set from the freshest department snapshots — Revenue & Cash Collected (30d), AR & DSO, Open Pipeline & Win Rate, Backlog & On-Time Milestone Rate, Active Maintenance Contracts & Out-of-Range Rate — plus two direct computes (Active Headcount, Revenue per Employee). Executive is built **last** in the nightly batch so its rollup reads the same night's Finance/Sales/Production/Operations snapshots. It appears automatically in the KPI Cockpit (the selector and endpoints derive from the aggregator registry), gated to the Executive viewer roles. No new doctypes.
+  - _Still to come in Phase 3:_ a dedicated one-screen Executive desk page, the `/wall` TV rotation, the light enabler fields (revenue/cost segment on Project, scheduled/actual dates), and the deferred GA4 web-metrics snapshot.
+
 ## [1.116.0] - 2026-06-25
 
 ### Added

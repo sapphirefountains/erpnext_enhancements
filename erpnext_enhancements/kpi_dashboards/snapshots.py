@@ -657,6 +657,63 @@ def _qbo_freshness():
 	return out
 
 
+def _latest_snapshot_values(department, period="Daily"):
+	"""Map kpi_key -> value from a department's most recent snapshot (any date)."""
+	name = frappe.get_all(
+		"KPI Snapshot",
+		filters={"department": department, "period": period},
+		order_by="snapshot_date desc",
+		limit=1,
+		pluck="name",
+	)
+	if not name:
+		return {}
+	rows = frappe.get_all("KPI Snapshot Value", filters={"parent": name[0]}, fields=["kpi_key", "value"])
+	return {r.kpi_key: r.value for r in rows}
+
+
+# (exec_key, label, source_department, source_kpi_key, unit, direction)
+_EXEC_ROLLUP = (
+	("revenue_30", "Revenue (30d)", "Finance", "revenue_30", "USD", metrics.HIGHER),
+	("cash_collected_30", "Cash Collected (30d)", "Finance", "cash_collected_30", "USD", metrics.HIGHER),
+	("ar_outstanding", "Accounts Receivable", "Finance", "ar_outstanding", "USD", metrics.LOWER),
+	("dso", "Days Sales Outstanding", "Finance", "dso", "days", metrics.LOWER),
+	("open_pipeline_value", "Open Pipeline", "Sales", "open_pipeline_value", "USD", metrics.HIGHER),
+	("win_rate_90", "Win Rate (90d)", "Sales", "win_rate_90", "%", metrics.HIGHER),
+	("backlog_value", "Backlog (Open Project Value)", "Production", "backlog_value", "USD", metrics.HIGHER),
+	("on_time_milestone_rate", "On-Time Milestone Rate", "Production", "on_time_milestone_rate", "%", metrics.HIGHER),
+	("active_contracts", "Active Maintenance Contracts", "Operations", "active_contracts", "count", metrics.HIGHER),
+	("chem_oor_rate", "Maintenance Out-of-Range Rate", "Operations", "chem_oor_rate", "%", metrics.LOWER),
+)
+
+
+def _executive_metrics():
+	"""Company-wide rollup. Re-surfaces curated KPIs from the freshest department
+	snapshots (Executive is built last in the nightly batch, so it sees today's),
+	plus a couple of direct exec-only computes."""
+	values, add = _collector()
+	cache = {}
+
+	def latest(dept):
+		if dept not in cache:
+			cache[dept] = _latest_snapshot_values(dept, "Daily")
+		return cache[dept]
+
+	for exec_key, label, dept, src_key, unit, direction in _EXEC_ROLLUP:
+		v = latest(dept).get(src_key)
+		if v is not None:
+			add(exec_key, label, v, unit, f"{dept} snapshot", direction)
+
+	if _exists("Employee"):
+		headcount = _scalar("select count(*) from `tabEmployee` where status='Active'")
+		add("headcount", "Active Headcount", headcount, "count", "Employee", metrics.HIGHER)
+		rev = latest("Finance").get("revenue_30")
+		if rev is not None and headcount:
+			add("revenue_per_employee", "Revenue per Employee (30d)", flt(rev) / flt(headcount), "USD", "Employee", metrics.HIGHER)
+
+	return {"values": values, "freshness": {}}
+
+
 AGGREGATORS = {
 	"Finance": _finance_metrics,
 	"Sales": _sales_metrics,
@@ -664,6 +721,9 @@ AGGREGATORS = {
 	"Design": _design_metrics,
 	"Production": _production_metrics,
 	"Marketing": _marketing_metrics,
+	# Executive is intentionally last: the nightly batch builds it after the
+	# source departments, so its rollup reads today's fresh snapshots.
+	"Executive": _executive_metrics,
 }
 
 
