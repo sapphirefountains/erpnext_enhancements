@@ -58,10 +58,13 @@ def validate_close_reason(doc, method=None):
 	"""Require a win/loss reason when an Opportunity transitions to Closed Won or
 	Lost, so win/loss analysis has data (mirrors ``validate_ranks_on_won``).
 
+	* Lost uses ERPNext's **native** ``lost_reasons`` Table MultiSelect (options
+	  doctype "Opportunity Lost Reason") — at least one row is required.
+	* Won uses the custom ``custom_won_reason`` Select (no native equivalent).
+
 	Enforced on the *transition* only (previous status was not the same closed
-	value): editing a historical closed Opportunity that predates these fields is
-	not retroactively blocked. The reason fields are provisioned by
-	``setup.custom_fields.create_opportunity_winloss_fields``.
+	value): editing a historical closed Opportunity that predates this rule is not
+	retroactively blocked.
 	"""
 	if doc.status not in ("Closed Won", "Lost"):
 		return
@@ -75,9 +78,9 @@ def validate_close_reason(doc, method=None):
 			"Please set a <b>Won Reason</b> before marking this Opportunity <b>Closed Won</b>.",
 			title="Won Reason Required",
 		)
-	if doc.status == "Lost" and not doc.get("custom_lost_reason"):
+	if doc.status == "Lost" and not doc.get("lost_reasons"):
 		frappe.throw(
-			"Please set a <b>Lost Reason</b> before marking this Opportunity <b>Lost</b>.",
+			"Please select at least one <b>Lost Reason</b> before marking this Opportunity <b>Lost</b>.",
 			title="Lost Reason Required",
 		)
 

@@ -354,12 +354,13 @@
     "name": "Opportunity Loss Reasons",
     "chart_name": "Opportunity Loss Reasons",
     "chart_type": "Group By",
-    "document_type": "Opportunity",
+    "document_type": "Opportunity Lost Reason Detail",
+    "parent_document_type": "Opportunity",
     "group_by_type": "Count",
-    "group_by_based_on": "custom_lost_reason",
+    "group_by_based_on": "lost_reason",
     "number_of_groups": 0,
     "type": "Donut",
-    "filters_json": "[[\"Opportunity\",\"status\",\"=\",\"Lost\",false],[\"Opportunity\",\"custom_lost_reason\",\"is\",\"set\",false]]",
+    "filters_json": "[]",
     "is_public": 1
   }
 ]

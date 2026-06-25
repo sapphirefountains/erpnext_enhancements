@@ -410,13 +410,17 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-	# Win/loss reason capture (custom_won_reason / custom_lost_reason).
-	if frappe.db.has_column("Opportunity", "custom_lost_reason"):
+	# Win/loss reason capture — native lost_reasons (Opportunity Lost Reason
+	# Detail child) for Lost, custom_won_reason for Won.
+	if _exists("Opportunity Lost Reason Detail"):
 		add(
 			"lost_to_competitor_90",
 			"Lost to Competitor (90d)",
 			_scalar(
-				"select count(*) from `tabOpportunity` where status='Lost' and custom_lost_reason='Competitor' and modified >= %(d)s",
+				"select count(distinct d.parent) from `tabOpportunity Lost Reason Detail` d "
+				"join `tabOpportunity` o on o.name = d.parent "
+				"where d.parenttype='Opportunity' and d.lost_reason in ('Competitor Loss','Competition') "
+				"and o.status='Lost' and o.modified >= %(d)s",
 				{"d": d90},
 			),
 			"count",
@@ -429,18 +433,29 @@ def _sales_metrics():
 				{"d": d90},
 			)
 		)
-		with_reason = flt(
+		won_reason_clause = (
+			" and coalesce(custom_won_reason,'')<>''"
+			if frappe.db.has_column("Opportunity", "custom_won_reason")
+			else ""
+		)
+		won_with_reason = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where modified >= %(d)s and ("
-				"(status='Closed Won' and coalesce(custom_won_reason,'')<>'') or "
-				"(status='Lost' and coalesce(custom_lost_reason,'')<>''))",
+				"select count(*) from `tabOpportunity` where status='Closed Won' and modified >= %(d)s" + won_reason_clause,
+				{"d": d90},
+			)
+		)
+		lost_with_reason = flt(
+			_scalar(
+				"select count(*) from `tabOpportunity` o where o.status='Lost' and o.modified >= %(d)s "
+				"and exists (select 1 from `tabOpportunity Lost Reason Detail` d "
+				"where d.parent = o.name and d.parenttype='Opportunity')",
 				{"d": d90},
 			)
 		)
 		add(
 			"close_reason_capture_90",
 			"Close-Reason Capture (90d)",
-			(with_reason / closed * 100.0) if closed else None,
+			((won_with_reason + lost_with_reason) / closed * 100.0) if closed else None,
 			"%",
 			"Opportunity",
 			metrics.HIGHER,

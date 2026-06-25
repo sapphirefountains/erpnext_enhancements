@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.122.0] - 2026-06-25
 
 ### Added
-- **Opportunity win/loss reason capture + Sales KPIs.** Three custom fields on Opportunity, shown only at close (depends-on status): **Won Reason** (Price / Relationship / Product Fit / Timing / Other), **Lost Reason** (Price / Competitor / No Budget / Timing / No Decision / Other), and **Lost To (Competitor)** (shown when the reason is Competitor). A reason is **required when an Opportunity transitions to Closed Won or Lost** (enforced on the transition only — editing a historical closed Opportunity is not retroactively blocked), mirroring the existing required-ranks-on-won validation.
-  - Feeds two new Sales snapshot KPIs — **Lost to Competitor (90d)** and **Close-Reason Capture (90d)** (share of closed opps that recorded a reason) — and an **Opportunity Loss Reasons** donut on the Sales Pipeline dashboard.
-  - The reason option lists are plain Select options, safe to edit to match your taxonomy. Fields are provisioned idempotently on migrate (`setup.custom_fields.create_opportunity_winloss_fields`).
+- **Opportunity win/loss reason capture + Sales KPIs.** Uses ERPNext's **native** lost-reason mechanism rather than a new field: **Lost Reasons** is the stock `lost_reasons` Table MultiSelect (options doctype "Opportunity Lost Reason", already populated on this instance). A single custom **Won Reason** Select is added (Price / Relationship / Product Fit / Timing / Other) since ERPNext has no native won-reason equivalent. A reason is **required when an Opportunity transitions to Closed Won or Lost** — at least one native Lost Reason, or a Won Reason — enforced on the transition only (editing a historical closed Opportunity is not retroactively blocked), mirroring the existing required-ranks-on-won validation.
+  - Feeds two new Sales snapshot KPIs — **Lost to Competitor (90d)** (native reasons "Competitor Loss" / "Competition") and **Close-Reason Capture (90d)** (share of closed opps that recorded a reason) — and an **Opportunity Loss Reasons** donut (grouped on the native lost-reason child) on the Sales Pipeline dashboard.
+  - Won Reason options are a plain Select, safe to edit; Lost Reasons are managed in the standard **Opportunity Lost Reason** list. The Won Reason field is provisioned idempotently on migrate (`setup.custom_fields.create_opportunity_winloss_fields`).
 
 ## [1.121.0] - 2026-06-25
 

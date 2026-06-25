@@ -182,13 +182,15 @@ def create_primary_contact_fields():
 
 
 def create_opportunity_winloss_fields():
-	"""``after_migrate`` entry point: win/loss reason capture on Opportunity.
+	"""``after_migrate`` entry point: a **Won Reason** field on Opportunity.
 
-	Three custom fields shown only at close (depends_on status), feeding the
-	Sales win/loss KPIs + the Loss Reasons chart. Idempotent — existing fields
-	are skipped. The Select options are safe to edit later (they're just option
-	lists); validation that requires a reason on close lives in
-	``script_migrations.opportunity.validate_close_reason``.
+	Lost reasons are NOT a custom field — ERPNext already ships the native
+	``lost_reasons`` Table MultiSelect (options doctype "Opportunity Lost Reason"),
+	which this instance has populated; capturing them is handled by the native
+	control plus ``script_migrations.opportunity.validate_close_reason`` (which
+	requires at least one on close). Won reasons have no native equivalent, so we
+	add a single Select, shown only on Closed Won. Idempotent; the options are
+	safe to edit later.
 	"""
 	if not frappe.db.exists("DocType", "Opportunity"):
 		return
@@ -202,21 +204,6 @@ def create_opportunity_winloss_fields():
 			"options": "\nPrice\nRelationship\nProduct Fit\nTiming\nOther",
 			"insert_after": "status",
 			"depends_on": "eval:doc.status=='Closed Won'",
-		},
-		{
-			"fieldname": "custom_lost_reason",
-			"label": "Lost Reason",
-			"fieldtype": "Select",
-			"options": "\nPrice\nCompetitor\nNo Budget\nTiming\nNo Decision\nOther",
-			"insert_after": "custom_won_reason",
-			"depends_on": "eval:doc.status=='Lost'",
-		},
-		{
-			"fieldname": "custom_lost_competitor",
-			"label": "Lost To (Competitor)",
-			"fieldtype": "Data",
-			"insert_after": "custom_lost_reason",
-			"depends_on": "eval:doc.status=='Lost' && doc.custom_lost_reason=='Competitor'",
 		},
 	]
 	fields_to_create = [f for f in fields if not meta.has_field(f["fieldname"])]
