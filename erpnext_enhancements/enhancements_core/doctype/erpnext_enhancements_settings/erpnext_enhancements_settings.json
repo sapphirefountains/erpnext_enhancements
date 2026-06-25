@@ -49,7 +49,10 @@
   "ai_exempt_doctypes",
   "ai_governance_column_break",
   "ai_usage_tracking_enabled",
-  "ai_action_log_retention_days"
+  "ai_action_log_retention_days",
+  "kpi_section",
+  "kpi_dashboards_enabled",
+  "kpi_snapshot_retention_days"
  ],
  "fields": [
   {
@@ -349,6 +352,26 @@
    "fieldname": "ai_action_log_retention_days",
    "fieldtype": "Int",
    "label": "Action Log Retention (Days)"
+  },
+  {
+   "fieldname": "kpi_section",
+   "fieldtype": "Section Break",
+   "label": "KPI Dashboards"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. Nightly at 05:00 (site timezone) one KPI Snapshot is precomputed per department (Finance, Sales, Operations in this release) and surfaced in the \"KPI Dashboards\" workspace cockpit. Off = no snapshots run and the cockpit shows a disabled notice. Set per-department targets in the KPI Target list to light up Good/Watch/Bad badges.",
+   "fieldname": "kpi_dashboards_enabled",
+   "fieldtype": "Check",
+   "label": "Enable KPI Dashboards"
+  },
+  {
+   "default": "120",
+   "depends_on": "kpi_dashboards_enabled",
+   "description": "Delete KPI Snapshot rows older than this many days (trend history window). 0 = keep forever.",
+   "fieldname": "kpi_snapshot_retention_days",
+   "fieldtype": "Int",
+   "label": "Snapshot Retention (Days)"
   }
  ],
  "issingle": 1,

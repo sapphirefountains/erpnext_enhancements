@@ -319,6 +319,9 @@ scheduler_events = {
 		# in the site's System Settings timezone (must be America/Denver here).
 		# The handler immediately enqueues the batch onto the long queue.
 		"30 6 * * 1-5": ["erpnext_enhancements.api.briefing.scheduled_briefing_run"],
+		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
+		# KPI Snapshot per department. Handler enqueues the batch onto long.
+		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
 	},
 	"daily": [
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
@@ -335,6 +338,7 @@ scheduler_events = {
 		"erpnext_enhancements.travel_management.reminders.send_pre_travel_reminders",
 		"erpnext_enhancements.travel_management.reminders.send_post_trip_expense_nudges",
 		"erpnext_enhancements.api.briefing.purge_old_briefings",
+		"erpnext_enhancements.kpi_dashboards.snapshots.purge_old_snapshots",
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
@@ -510,15 +514,18 @@ fixtures = [
 					"QuickBooks Sync Runs (Daily)",
 					"QuickBooks Syncs by Type",
 					"QuickBooks Syncs by Status",
+					# Finance Health dashboard (KPI dashboards, v1.115.0)
+					"Monthly Revenue",
+					"Sales Invoices by Status",
 				],
 			]
 		],
 	},
 	{
 		"dt": "Number Card",
-		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review"]]],
+		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review", "AR Outstanding", "Overdue Sales Invoices", "AP Outstanding", "Draft Sales Invoices"]]],
 	},
-	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online"]]]},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health"]]]},
 	# Public legal pages (guest-accessible Web Pages). stripe_payments adds the
 	# payment/surcharge + refund policies (counsel-review-pending).
 	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy", "payment-terms", "refund-policy"]]]},

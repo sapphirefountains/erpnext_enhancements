@@ -1,0 +1,82 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"kpi_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Department KPIs</b></span>\",\"col\":12}},{\"id\":\"kpi_block\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"KPI Cockpit\",\"col\":12}},{\"id\":\"kpi_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"kpi_manage_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Setup</b></span>\",\"col\":12}},{\"id\":\"kpi_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"KPI Setup\",\"col\":4}}]",
+ "creation": "2026-06-25 12:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "dashboard",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "KPI Dashboards",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "KPI Setup",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "KPI Target",
+   "link_count": 0,
+   "link_to": "KPI Target",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "KPI Snapshot",
+   "link_count": 0,
+   "link_to": "KPI Snapshot",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Enhancements Settings",
+   "link_count": 0,
+   "link_to": "ERPNext Enhancements Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-06-25 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "KPI Dashboards",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 30,
+ "shortcuts": [
+  {
+   "doc_view": "List",
+   "label": "KPI Target",
+   "link_to": "KPI Target",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "KPI Snapshot",
+   "link_to": "KPI Snapshot",
+   "type": "DocType"
+  }
+ ],
+ "title": "KPI Dashboards",
+ "type": "Workspace"
+}

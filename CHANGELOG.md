@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.115.0] - 2026-06-25
+
+### Added
+- **Department KPI Dashboards — Phase 1 (the snapshot spine).** A new **KPI Dashboards** module that precomputes per-department KPIs nightly and surfaces them on the desk, designed to cover each department's whole job scope (not just ERPNext data) with automation prioritised over manual entry. See `docs/KPI_DASHBOARD_DESIGN.md` for the full 114-KPI catalog and roadmap.
+  - **Three new doctypes:** **KPI Snapshot** (one durable row per department/period/day, idempotent `KPI-{department}-{period}-{date}` autoname, modelled on Daily Briefing so a `bench migrate` can't vaporise it), its **KPI Snapshot Value** child (value, target, Good/Watch/Bad status, period-over-period trend, source-freshness flag), and **KPI Target** — the tiny, high-leverage table managers edit to light up every "vs target" badge without a budgeting module.
+  - **Nightly snapshot engine** (`kpi_dashboards/snapshots.py`): a `0 5 * * *` cron enqueues a per-department batch onto the `long` queue (commits per department so one slow aggregator can't sink the rest). Phase 1 ships **Finance, Sales, and Operations** aggregators — ~12 KPIs each — read from the post-QBO-sync system-of-record doctypes (Sales/Purchase Invoice, Payment Entry, Opportunity, Lead, Sapphire Maintenance Record/Contract, etc.); QBO/Stripe are never called live in the render path, and their sync freshness is recorded so stale upstreams show a Watch badge. A daily purge trims snapshots past the retention window.
+  - **KPI Cockpit** Custom HTML Block on a new **KPI Dashboards** workspace: a role-gated department selector + Refresh, rendering each KPI's value, target, trend, and status. Endpoints `erpnext_enhancements.api.kpi.*` are role-gated per department (System Manager sees all).
+  - **Finance Health** native ERPNext dashboard (AR/AP outstanding, overdue + draft invoices, monthly revenue, invoice-status mix) — stock-field cards/charts that render immediately, independent of the snapshot engine.
+  - **Master switch** in ERPNext Enhancements Settings → *KPI Dashboards* (`kpi_dashboards_enabled`, default off per the staged-rollout convention) + snapshot retention days.
+
 ## [1.114.0] - 2026-06-24
 
 ### Added

@@ -1,0 +1,140 @@
+/* KPI Cockpit — Custom HTML Block styles (shadow-DOM scoped).
+ *
+ * Uses Frappe CSS variables so the widget tracks Frappe Light + Timeless Night
+ * automatically; the Good/Watch/Bad status colours are semantic, so they are
+ * intentionally literal (per the app's dark-theme convention). */
+
+.kpi-root {
+    font-family: var(--font-stack, inherit);
+    color: var(--text-color);
+}
+
+.kpi-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.kpi-title {
+    margin: 0;
+    font-weight: 600;
+}
+
+.kpi-title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.kpi-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.kpi-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.kpi-dept {
+    background: var(--control-bg, var(--bg-color));
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 6px);
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.kpi-refresh {
+    background: var(--control-bg, var(--bg-color));
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 6px);
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.kpi-refresh:hover {
+    background: var(--bg-light-gray, var(--fg-hover-color));
+}
+
+.kpi-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.kpi-card {
+    background: var(--card-bg, var(--fg-color));
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--border-color);
+    border-radius: var(--border-radius, 8px);
+    padding: 10px 12px;
+    min-height: 84px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.kpi-card.status-good { border-left-color: #28a745; }
+.kpi-card.status-watch { border-left-color: #f0ad4e; }
+.kpi-card.status-bad { border-left-color: #e24c4c; }
+
+.kpi-card-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.3;
+    margin-bottom: 6px;
+}
+
+.kpi-card-value {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.kpi-card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.kpi-target { white-space: nowrap; }
+
+.kpi-trend.up { color: #28a745; }
+.kpi-trend.down { color: #e24c4c; }
+.kpi-trend.flat { color: var(--text-muted); }
+
+.kpi-stale {
+    display: inline-block;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #f0ad4e;
+    border: 1px solid #f0ad4e;
+    border-radius: 4px;
+    padding: 0 4px;
+    margin-top: 4px;
+    align-self: flex-start;
+}
+
+.kpi-loading,
+.kpi-disabled {
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 16px 0;
+}
