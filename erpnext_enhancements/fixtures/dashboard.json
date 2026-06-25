@@ -107,7 +107,11 @@
       },
       {
         "chart": "Weekly Opportunity Inflow",
-        "width": "Full"
+        "width": "Half"
+      },
+      {
+        "chart": "Opportunity Loss Reasons",
+        "width": "Half"
       }
     ],
     "cards": [

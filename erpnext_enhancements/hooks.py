@@ -258,6 +258,7 @@ doc_events = {
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
 			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
+			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.stamp_stage_change",
 		],
@@ -381,6 +382,7 @@ extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 # Run after each `bench migrate` (from global_enhancements)
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
+	"erpnext_enhancements.setup.custom_fields.create_opportunity_winloss_fields",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
@@ -517,6 +519,8 @@ fixtures = [
 					# Finance Health dashboard (KPI dashboards, v1.115.0)
 					"Monthly Revenue",
 					"Sales Invoices by Status",
+					# Win/loss reasons (Phase 4)
+					"Opportunity Loss Reasons",
 				],
 			]
 		],

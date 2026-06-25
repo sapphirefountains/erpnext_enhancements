@@ -181,6 +181,49 @@ def create_primary_contact_fields():
 	create_comments_tab("Master Project")
 
 
+def create_opportunity_winloss_fields():
+	"""``after_migrate`` entry point: win/loss reason capture on Opportunity.
+
+	Three custom fields shown only at close (depends_on status), feeding the
+	Sales win/loss KPIs + the Loss Reasons chart. Idempotent — existing fields
+	are skipped. The Select options are safe to edit later (they're just option
+	lists); validation that requires a reason on close lives in
+	``script_migrations.opportunity.validate_close_reason``.
+	"""
+	if not frappe.db.exists("DocType", "Opportunity"):
+		return
+
+	meta = frappe.get_meta("Opportunity")
+	fields = [
+		{
+			"fieldname": "custom_won_reason",
+			"label": "Won Reason",
+			"fieldtype": "Select",
+			"options": "\nPrice\nRelationship\nProduct Fit\nTiming\nOther",
+			"insert_after": "status",
+			"depends_on": "eval:doc.status=='Closed Won'",
+		},
+		{
+			"fieldname": "custom_lost_reason",
+			"label": "Lost Reason",
+			"fieldtype": "Select",
+			"options": "\nPrice\nCompetitor\nNo Budget\nTiming\nNo Decision\nOther",
+			"insert_after": "custom_won_reason",
+			"depends_on": "eval:doc.status=='Lost'",
+		},
+		{
+			"fieldname": "custom_lost_competitor",
+			"label": "Lost To (Competitor)",
+			"fieldtype": "Data",
+			"insert_after": "custom_lost_reason",
+			"depends_on": "eval:doc.status=='Lost' && doc.custom_lost_reason=='Competitor'",
+		},
+	]
+	fields_to_create = [f for f in fields if not meta.has_field(f["fieldname"])]
+	if fields_to_create:
+		create_custom_fields({"Opportunity": fields_to_create}, update=True)
+
+
 def create_comments_tab(doctype):
 	"""Add a "Comments" tab hosting the Comments-app HTML widget to a doctype.
 
