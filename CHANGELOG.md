@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.125.0] - 2026-06-26
+
+### Fixed
+- **KPI Dashboards — Production/Build (and the Executive backlog rollup) KPIs were silently zero on production.** The Production aggregator filtered Projects by the stock status `'Open'`, but this deployment books live projects as `status='Active'` — **no Project row is ever `'Open'`** (prod distribution: Active 438, Completed 183, Paid 1). So *Active Projects, Overdue Projects, Avg Project Completion, Active Builds, Overdue Builds, Build Backlog Value, Labor Budget Utilization,* and *Backlog (Open Project Value)* all returned 0 / None — and the Executive cockpit's **Backlog** rolled up empty as a result. All eight Project filters now accept `status in ('Open','Active')`, matching how the Product aggregator already handles rentals, so the KPIs populate regardless of which status convention a site uses. Terminal-ish states (`Completed`/`Cancelled`/`Paid`/`Invoiced`) remain excluded from "active". Pure read-path change — no schema, data, or endpoint changes.
+
 ## [1.123.0] - 2026-06-26
 
 ### Added
