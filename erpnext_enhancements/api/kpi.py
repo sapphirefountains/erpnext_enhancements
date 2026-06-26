@@ -22,6 +22,7 @@ DEPARTMENT_ROLES = {
 	"Marketing": {"Sales Manager", "Marketing Manager"},
 	"Design": {"Projects Manager"},
 	"Production": {"Projects Manager"},
+	"Product": {"Item Manager", "Stock Manager", "Sales Manager"},
 	"Executive": {"Accounts Manager", "Sales Manager"},
 }
 

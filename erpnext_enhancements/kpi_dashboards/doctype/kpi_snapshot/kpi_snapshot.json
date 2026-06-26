@@ -24,7 +24,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Department",
-   "options": "Finance\nSales\nMarketing\nDesign\nProduction\nOperations\nExecutive",
+   "options": "Finance\nSales\nMarketing\nDesign\nProduction\nOperations\nProduct\nExecutive",
    "reqd": 1,
    "search_index": 1
   },

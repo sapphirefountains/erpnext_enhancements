@@ -815,6 +815,185 @@ def _executive_metrics():
 	return {"values": values, "freshness": {}}
 
 
+def _product_metrics():
+	"""Product Management — the fountain product catalog: revenue mix, SKU health,
+	rentals, inventory, and catalog data-quality. Reads native ERPNext doctypes
+	(Item / Bin / Sales Invoice Item / Project) — no live external calls.
+
+	Grounded-data notes (probed 2026-06-26): the product taxonomy is ``item_group``
+	(not a custom segment field); rentals are ``Project`` rows with
+	``project_type='Rent'`` and this site books live projects as ``status='Active'``
+	(not 'Open'), so the rental KPIs accept both for portability; and QBO-synced
+	Sales Invoices are currently drafts, so the submitted-only (``docstatus=1``)
+	revenue KPIs populate once invoices are submitted — same convention as Finance.
+	"""
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	d90 = add_days(today, -90)
+	d365 = add_days(today, -365)
+	values, add = _collector()
+	has = frappe.db.has_column
+
+	# --- catalog revenue (submitted Sales Invoices). A per-item-group split is
+	#     intentionally NOT attempted: on this instance every Sales Invoice Item
+	#     line carries item_group='All Item Groups' (the root — the leaf taxonomy
+	#     is not copied onto QBO-synced invoice lines), so a "Products"-vs-total
+	#     split is degenerate and would emit a misleading 0% share. Total catalog
+	#     revenue is always correct; it populates once invoices are submitted
+	#     (today the QBO-synced invoices are all drafts). ---
+	if _exists("Sales Invoice Item") and has("Sales Invoice Item", "base_net_amount"):
+
+		def _catalog_revenue(since):
+			return _scalar(
+				"select sum(sii.base_net_amount) from `tabSales Invoice Item` sii "
+				"join `tabSales Invoice` si on si.name=sii.parent "
+				"where si.docstatus=1 and si.posting_date >= %(d)s",
+				{"d": since},
+			)
+
+		add("catalog_revenue_30", "Catalog Revenue (30d)", _catalog_revenue(d30), "USD", "Sales Invoice", metrics.HIGHER)
+		add("catalog_revenue_365", "Catalog Revenue (1y)", _catalog_revenue(d365), "USD", "Sales Invoice", metrics.HIGHER)
+
+	# --- catalog size & freshness ---
+	add(
+		"active_sku_count",
+		"Active SKUs",
+		_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0"),
+		"count",
+		"Item",
+		metrics.HIGHER,
+	)
+	add(
+		"new_items_90",
+		"New Items (90d)",
+		_scalar("select count(*) from `tabItem` where is_sales_item=1 and creation >= %(d)s", {"d": d90}),
+		"count",
+		"Item",
+		metrics.HIGHER,
+	)
+	add(
+		"new_items_365",
+		"New Items (1y)",
+		_scalar("select count(*) from `tabItem` where is_sales_item=1 and creation >= %(d)s", {"d": d365}),
+		"count",
+		"Item",
+		metrics.HIGHER,
+	)
+
+	# --- rentals (Project rows, project_type='Rent'; live status is 'Active' here) ---
+	if has("Project", "project_type"):
+		add(
+			"active_rentals",
+			"Active Rentals",
+			_scalar("select count(*) from `tabProject` where project_type='Rent' and status in ('Open','Active')"),
+			"count",
+			"Project",
+			metrics.HIGHER,
+		)
+		add(
+			"rentals_started_30",
+			"Rentals Started (30d)",
+			_scalar("select count(*) from `tabProject` where project_type='Rent' and creation >= %(d)s", {"d": d30}),
+			"count",
+			"Project",
+			metrics.HIGHER,
+		)
+		if has("Project", "custom_project_dollar_amount"):
+			add(
+				"rental_backlog_value",
+				"Rental Backlog Value",
+				_scalar(
+					"select sum(custom_project_dollar_amount) from `tabProject` "
+					"where project_type='Rent' and status in ('Open','Active')"
+				),
+				"USD",
+				"Project",
+				metrics.HIGHER,
+			)
+
+	# --- inventory. Bin.stock_value is the stock ledger's own valuation (per-
+	#     warehouse moving average) — the canonical on-hand value. The Item-master
+	#     valuation_rate is a single static rate that under-reports materially. ---
+	if _exists("Bin"):
+		add(
+			"inventory_stock_value",
+			"Inventory Stock Value",
+			_scalar("select sum(stock_value) from `tabBin`"),
+			"USD",
+			"Bin",
+			metrics.HIGHER,
+		)
+		add(
+			"out_of_stock_sellable",
+			"Out-of-Stock Sellable Items",
+			_scalar(
+				"select count(*) from `tabItem` i where i.is_sales_item=1 and i.is_stock_item=1 and i.disabled=0 "
+				"and coalesce((select sum(actual_qty) from `tabBin` b where b.item_code=i.name),0) <= 0"
+			),
+			"count",
+			"Item",
+			metrics.LOWER,
+		)
+
+	# --- catalog data-quality completeness % ---
+	total_sellable = flt(_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0"))
+	if total_sellable:
+		if has("Item", "custom_sku"):
+			with_sku = flt(_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0 and coalesce(custom_sku,'')<>''"))
+			add("sku_completeness_pct", "SKU Completeness", with_sku / total_sellable * 100.0, "%", "Item", metrics.HIGHER)
+		if has("Item", "custom_item_identifier"):
+			with_id = flt(
+				_scalar("select count(*) from `tabItem` where is_sales_item=1 and disabled=0 and coalesce(custom_item_identifier,'')<>''")
+			)
+			add("item_identifier_completeness_pct", "Item Identifier Completeness", with_id / total_sellable * 100.0, "%", "Item", metrics.HIGHER)
+	if has("Item", "custom_rated_gpm") and has("Item", "custom_pump_hp"):
+		pumps = flt(_scalar("select count(*) from `tabItem` where item_group='Pumps'"))
+		if pumps:
+			pumps_ok = flt(
+				_scalar("select count(*) from `tabItem` where item_group='Pumps' and coalesce(custom_rated_gpm,0)<>0 and coalesce(custom_pump_hp,0)<>0")
+			)
+			add("pump_spec_completeness_pct", "Pump Spec Completeness", pumps_ok / pumps * 100.0, "%", "Item", metrics.HIGHER)
+
+	# --- SEMI: gross margin needs COGS via perpetual-inventory incoming_rate on
+	#     submitted Sales Invoice lines. Skip unless it is actually populated. ---
+	if _exists("Sales Invoice Item") and has("Sales Invoice Item", "incoming_rate") and has("Sales Invoice Item", "stock_qty"):
+		rev_365 = _scalar(
+			"select sum(sii.base_net_amount) from `tabSales Invoice Item` sii join `tabSales Invoice` si on si.name=sii.parent "
+			"where si.docstatus=1 and si.posting_date >= %(d)s",
+			{"d": d365},
+		)
+		cogs_365 = _scalar(
+			"select sum(sii.incoming_rate*sii.stock_qty) from `tabSales Invoice Item` sii join `tabSales Invoice` si on si.name=sii.parent "
+			"where si.docstatus=1 and si.posting_date >= %(d)s",
+			{"d": d365},
+		)
+		if rev_365 and cogs_365:
+			add("gross_margin_pct", "Gross Margin (1y)", (flt(rev_365) - flt(cogs_365)) / flt(rev_365) * 100.0, "%", "Sales Invoice", metrics.HIGHER)
+
+	# --- SEMI: items whose on-hand qty is below a configured reorder level. ---
+	if _exists("Item Reorder") and _exists("Bin") and has("Item Reorder", "warehouse_reorder_level"):
+		add(
+			"items_below_reorder",
+			"Items Below Reorder",
+			_scalar(
+				"select count(distinct r.parent) from `tabItem Reorder` r "
+				"where coalesce(r.warehouse_reorder_level,0) > 0 and "
+				"coalesce((select sum(b.actual_qty) from `tabBin` b where b.item_code=r.parent),0) < r.warehouse_reorder_level"
+			),
+			"count",
+			"Item Reorder",
+			metrics.LOWER,
+		)
+
+	# --- SEMI: design fountain-type mix (only if Water Feature Design carries it). ---
+	if _exists("Water Feature Design") and has("Water Feature Design", "fountain_type"):
+		distinct_ft = _scalar("select count(distinct fountain_type) from `tabWater Feature Design` where coalesce(fountain_type,'')<>''")
+		if distinct_ft:
+			add("design_fountain_types", "Distinct Fountain Types Designed", distinct_ft, "count", "Water Feature Design", metrics.HIGHER)
+
+	return {"values": values, "freshness": {}}
+
+
 AGGREGATORS = {
 	"Finance": _finance_metrics,
 	"Sales": _sales_metrics,
@@ -822,6 +1001,8 @@ AGGREGATORS = {
 	"Design": _design_metrics,
 	"Production": _production_metrics,
 	"Marketing": _marketing_metrics,
+	# Product is built before Executive so a future exec rollup can read it.
+	"Product": _product_metrics,
 	# Executive is intentionally last: the nightly batch builds it after the
 	# source departments, so its rollup reads today's fresh snapshots.
 	"Executive": _executive_metrics,
