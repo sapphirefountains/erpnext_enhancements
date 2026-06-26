@@ -19,5 +19,23 @@
     "doctype": "Workflow State",
     "name": "Final/Submitted",
     "workflow_state_name": "Final/Submitted"
+  },
+  {
+    "doctype": "Workflow State",
+    "name": "Pending Approval",
+    "workflow_state_name": "Pending Approval",
+    "style": "Warning"
+  },
+  {
+    "doctype": "Workflow State",
+    "name": "Approved",
+    "workflow_state_name": "Approved",
+    "style": "Success"
+  },
+  {
+    "doctype": "Workflow State",
+    "name": "Rejected",
+    "workflow_state_name": "Rejected",
+    "style": "Danger"
   }
 ]
