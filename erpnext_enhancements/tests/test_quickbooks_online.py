@@ -1555,6 +1555,52 @@ def test_parse_trial_balance_reads_signed_balances_and_recurses():
 	assert len(balances) == 2
 
 
+def test_parse_trial_balance_resolves_amount_columns_from_header():
+	"""v2: Debit/Credit are keyed off the Columns header, not a fixed ColData index.
+
+	The modernized Reports service tells integrators "do not rely on index
+	positions". Here the header lists Credit *before* Debit; positional parsing
+	would invert every balance, header-driven parsing gets the sign right.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.reconcile import _parse_trial_balance
+
+	response = {
+		"Columns": {
+			"Column": [
+				{"ColTitle": "", "ColType": "Account"},
+				{"ColTitle": "Credit", "ColType": "Money"},
+				{"ColTitle": "Debit", "ColType": "Money"},
+			]
+		},
+		"Rows": {
+			"Row": [
+				# Debit lives in column 2 here; Checking holds 1000 there => +1000.
+				{"ColData": [{"value": "Checking", "id": "35"}, {"value": ""}, {"value": "1000.00"}]},
+				# Loan holds 500 in the Credit column (index 1) => -500.
+				{"ColData": [{"value": "Loan", "id": "40"}, {"value": "500.00"}, {"value": ""}]},
+			]
+		},
+	}
+
+	balances = _parse_trial_balance(response)
+	assert balances["35"]["qb_balance"] == 1000.0
+	assert balances["40"]["qb_balance"] == -500.0
+
+
+def test_parse_trial_balance_matches_allcaps_titles():
+	"""v1 sometimes returned ColTitle in ALL CAPS; column matching is case-insensitive."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.reconcile import _parse_trial_balance
+
+	response = {
+		"Columns": {"Column": [{"ColTitle": ""}, {"ColTitle": "DEBIT"}, {"ColTitle": "CREDIT"}]},
+		"Rows": {"Row": [{"ColData": [{"value": "Checking", "id": "35"}, {"value": "250.00"}, {"value": ""}]}]},
+	}
+
+	assert _parse_trial_balance(response)["35"]["qb_balance"] == 250.0
+
+
 def test_extract_total_prefers_header_amount_then_sums_journal_debits():
 	"""_extract_total reads TotalAmt/Amount, falling back to summed JE debit lines."""
 	install_frappe_stub()
@@ -1654,6 +1700,25 @@ def test_client_report_builds_reports_endpoint_path(monkeypatch):
 
 	assert captured["method"] == "GET"
 	assert captured["path"].endswith("/reports/TrialBalance")
+	assert captured["params"]["end_date"] == "2026-06-16"
+	# Off by default: the v2 preview flag is absent unless explicitly requested.
+	assert "testing_migration" not in captured["params"]
+
+
+def test_client_report_adds_testing_migration_flag_when_requested(monkeypatch):
+	"""client.report appends Intuit's testing_migration flag to preview the v2 service."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import client as client_module
+
+	client = client_module.QuickBooksClient(types.SimpleNamespace(realm_id="42", environment="Production"))
+	captured = {}
+	monkeypatch.setattr(
+		client, "request", lambda method, path, **kwargs: captured.update(method=method, path=path, **kwargs) or {}
+	)
+
+	client.report("TrialBalance", {"end_date": "2026-06-16"}, testing_migration=True)
+
+	assert captured["params"]["testing_migration"] == "true"
 	assert captured["params"]["end_date"] == "2026-06-16"
 
 

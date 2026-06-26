@@ -71,6 +71,23 @@ def compare_account_balances(as_of_date: str | None = None, tolerance: float = 0
 	return _compare(qb_balances, erp_balances, tolerance, as_of_date)
 
 
+def _reports_testing_migration() -> bool:
+	"""Whether to preview QBO's modernized ("v2") Reports service.
+
+	Off by default. Set ``quickbooks_reports_testing_migration`` to a truthy value
+	in the site config (``common_site_config.json`` / ``site_config.json``) to route
+	the Trial Balance request through Intuit's modernized Reports service via the
+	temporary ``testing_migration`` flag — letting an operator validate
+	reconciliation and opening balances against real data before Intuit retires the
+	v1 service in 2026 (MIGRATION_NOTES §5). ``_parse_trial_balance`` is v2-safe
+	either way; this only controls early opt-in.
+	"""
+	try:
+		return bool(frappe.conf.get("quickbooks_reports_testing_migration"))
+	except Exception:
+		return False
+
+
 def _fetch_trial_balance(settings, as_of_date) -> dict[str, dict]:
 	"""Pull and parse QBO's Trial Balance into ``{qbo_account_id: {...}}``.
 
@@ -79,20 +96,54 @@ def _fetch_trial_balance(settings, as_of_date) -> dict[str, dict]:
 	balance (a bare date_macro window would only net activity inside it).
 	"""
 	params = {"start_date": "1901-01-01", "end_date": str(as_of_date)}
-	response = QuickBooksClient(settings).report("TrialBalance", params)
+	response = QuickBooksClient(settings).report(
+		"TrialBalance", params, testing_migration=_reports_testing_migration()
+	)
 	return _parse_trial_balance(response)
+
+
+def _resolve_amount_columns(response: dict) -> tuple[int, int]:
+	"""Locate the Debit and Credit column indices from the report's ``Columns`` header.
+
+	QBO's modernized ("v2") Reports service warns "Do not rely on row index
+	positions" and standardizes ``ColTitle`` to Title Case (v1 sometimes returned
+	ALL CAPS). We therefore resolve the Debit/Credit columns from the header by
+	title (case-insensitive) instead of assuming fixed ``ColData`` offsets, so a
+	relabelled or reordered report still parses. Falls back to the historical
+	layout (account=0, debit=1, credit=2) when no usable header is present —
+	preserving v1 behaviour and header-less canned fixtures.
+	"""
+	columns = ((response or {}).get("Columns") or {}).get("Column") or []
+	debit_idx = credit_idx = None
+	for idx, col in enumerate(columns):
+		title = ((col or {}).get("ColTitle") or "").strip().lower()
+		if title == "debit" and debit_idx is None:
+			debit_idx = idx
+		elif title == "credit" and credit_idx is None:
+			credit_idx = idx
+	return (1 if debit_idx is None else debit_idx, 2 if credit_idx is None else credit_idx)
 
 
 def _parse_trial_balance(response: dict) -> dict[str, dict]:
 	"""Parse a QBO TrialBalance response into ``{qbo_id: {qb_name, qb_balance}}``.
 
 	Pure function (no I/O) so it is unit-testable against canned QBO JSON. Walks
-	the nested ``Rows -> Row`` tree (sections recurse) and reads each data row's
-	``ColData`` as [account (value+id), debit, credit]; the balance is stored
-	signed debit-positive (debit - credit) to match ERPNext's GL convention.
+	the nested ``Rows -> Row`` tree (sections recurse to any depth, which also
+	absorbs v2's "child accounts always nested under their parent" change) and reads
+	each data row's ``ColData``: the account is column 0 (value+id); the Debit and
+	Credit columns are resolved from the header (see ``_resolve_amount_columns``)
+	rather than hardcoded, per Intuit's v2 "do not rely on index positions". The
+	balance is stored signed debit-positive (debit - credit) to match ERPNext's GL
+	convention. v2 returns ``""`` (never 0/None) for an empty amount, which ``flt``
+	already coerces to 0.
 	"""
 	balances: dict[str, dict] = {}
+	debit_idx, credit_idx = _resolve_amount_columns(response)
+	max_idx = max(debit_idx, credit_idx)
 	rows = ((response or {}).get("Rows") or {}).get("Row") or []
+
+	def cell(col_data, idx):
+		return flt((col_data[idx] or {}).get("value") or 0) if idx < len(col_data) else 0.0
 
 	def walk(row_list):
 		for row in row_list:
@@ -100,18 +151,18 @@ def _parse_trial_balance(response: dict) -> dict[str, dict]:
 				walk((row.get("Rows") or {}).get("Row") or [])
 				continue
 			col_data = row.get("ColData")
-			if not col_data or len(col_data) < 3:
+			# Need at least the account column plus both amount columns present.
+			if not col_data or len(col_data) <= max_idx:
 				continue
 			account_col = col_data[0]
+			# Only true account rows carry an id; section headers / "Total" rows don't.
 			if not isinstance(account_col, dict) or not account_col.get("id"):
 				continue
 			qbo_id = str(account_col.get("id"))
-			debit = flt(col_data[1].get("value") or 0)
-			credit = flt(col_data[2].get("value") or 0)
 			balances[qbo_id] = {
 				"qb_id": qbo_id,
 				"qb_name": account_col.get("value"),
-				"qb_balance": debit - credit,
+				"qb_balance": cell(col_data, debit_idx) - cell(col_data, credit_idx),
 			}
 
 	walk(rows)

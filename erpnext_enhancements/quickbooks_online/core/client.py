@@ -353,7 +353,7 @@ class QuickBooksClient:
 		"""Fetch a single QBO entity by id (used for webhook/manual entity syncs)."""
 		return self.request("GET", f"/v3/company/{self.settings.realm_id}/{entity_type.lower()}/{qbo_id}")
 
-	def report(self, report_name: str, params: dict | None = None):
+	def report(self, report_name: str, params: dict | None = None, *, testing_migration: bool = False):
 		"""Fetch a QBO Reports-API report (TrialBalance, GeneralLedger, ...) by name.
 
 		Reports live under ``/v3/company/{realm}/reports/{ReportName}`` and return a
@@ -367,11 +367,20 @@ class QuickBooksClient:
 		The Reports API returns computed ledger balances even for companies whose
 		transaction/statement exports come back empty, which is why reconciliation
 		and opening balances source from here rather than from ``query``.
+
+		``testing_migration`` adds Intuit's temporary ``testing_migration`` query
+		flag, which routes the request through the modernized ("v2") Reports service
+		so the integration can be validated before Intuit retires the v1 service in
+		2026 (see ``core.reconcile._reports_testing_migration`` and MIGRATION_NOTES
+		§5). The flag is presence-based; we send ``testing_migration=true``.
 		"""
+		params = dict(params or {})
+		if testing_migration:
+			params["testing_migration"] = "true"
 		return self.request(
 			"GET",
 			f"/v3/company/{self.settings.realm_id}/reports/{report_name}",
-			params=dict(params or {}),
+			params=params,
 		)
 
 	def cdc(self, entities: list[str], changed_since):
