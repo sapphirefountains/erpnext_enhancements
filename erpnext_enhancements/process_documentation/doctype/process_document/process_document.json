@@ -9,7 +9,9 @@
  "field_order": [
   "title",
   "diagram",
-  "mermaid_code"
+  "mermaid_code",
+  "raci_section",
+  "steps"
  ],
  "fields": [
   {
@@ -31,6 +33,18 @@
    "fieldname": "mermaid_code",
    "fieldtype": "Markdown Editor",
    "label": "Mermaid Code"
+  },
+  {
+   "fieldname": "raci_section",
+   "fieldtype": "Section Break",
+   "label": "Process Steps & RACI"
+  },
+  {
+   "description": "One row per step: who does it (RACI) and how it is enforced in ERPNext. This is the machine-readable spec that drives access-control and workflow configuration.",
+   "fieldname": "steps",
+   "fieldtype": "Table",
+   "label": "Steps",
+   "options": "Process Document Step"
   }
  ],
  "grid_page_length": 50,

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.127.0] - 2026-06-26
+
+### Added
+- **Process mapping — structured RACI on Process Documents (capture layer for the QuickBooks→ERPNext process-mapping program).** The `Process Document` doctype (Mermaid flow diagrams) now carries a **Process Steps & RACI** grid backed by a new child doctype **`Process Document Step`**. Each row captures one process step: the action, the RACI (**R**esponsible / **A**ccountable / **C**onsulted / **I**nformed — free text so a small team can name roles and/or people), and *how the step is enforced in ERPNext* — `erpnext_doctype` + `erpnext_action`, an `enforcement` Select (Workflow Transition / DocPerm / User Permission / Row Filter / Notify / Manual), a `coverage` Select (Built / Existing · Config Needed · Gap — To Build · Manual / Process-Only), and a `target_artifact` pointer to the file the config lands in.
+  - A `post_model_sync` patch (`seed_process_maps_finance_production`) seeds five maps — **Finance: Bill Payment (AP), Customer Invoicing (AR), Month-End Close, Job Costing; Production: Job Production** — each with its Mermaid flow and a fully populated RACI grid (people from the Jun 2026 process interview). Insert-only, so site-side edits survive re-migration; `erpnext_doctype` links are guarded so the patch never fails on a not-yet-built doctype (e.g. the future Month-End Close).
+  - Both app-owned doctypes (module *Process Documentation*), created by `bench migrate` — no fixture entry needed for the schema. Additive only; the existing Mermaid fields and form script are untouched.
+
 ## [1.126.0] - 2026-06-26
 
 ### Changed

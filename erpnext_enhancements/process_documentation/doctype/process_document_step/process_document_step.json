@@ -1,0 +1,126 @@
+{
+ "actions": [],
+ "creation": "2026-06-26 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "step_no",
+  "step_title",
+  "responsible",
+  "accountable",
+  "consulted",
+  "informed",
+  "column_break_mapping",
+  "erpnext_doctype",
+  "erpnext_action",
+  "enforcement",
+  "coverage",
+  "target_artifact",
+  "notes"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "step_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Step"
+  },
+  {
+   "columns": 3,
+   "description": "The action, in plain language (e.g. \"Approve the bill\").",
+   "fieldname": "step_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step / Action",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Who performs the step — role and/or person (e.g. \"Accounts User (Jane)\").",
+   "fieldname": "responsible",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Responsible (R)"
+  },
+  {
+   "description": "Who owns the outcome / final sign-off — ideally one person.",
+   "fieldname": "accountable",
+   "fieldtype": "Data",
+   "label": "Accountable (A)"
+  },
+  {
+   "description": "Whose input is sought before the step (no edit authority).",
+   "fieldname": "consulted",
+   "fieldtype": "Small Text",
+   "label": "Consulted (C)"
+  },
+  {
+   "description": "Who is kept in the loop after the step (notify only).",
+   "fieldname": "informed",
+   "fieldtype": "Small Text",
+   "label": "Informed (I)"
+  },
+  {
+   "fieldname": "column_break_mapping",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "description": "Where the step happens. Blank for purely manual / process-only steps.",
+   "fieldname": "erpnext_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "ERPNext DocType",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "erpnext_action",
+   "fieldtype": "Select",
+   "label": "Action",
+   "options": "\nDraft / Create\nReview\nApprove\nSubmit\nPay / Receive\nReconcile\nReport\nNotify\nOther"
+  },
+  {
+   "description": "How \"who does it\" is enforced in ERPNext (see program plan §3).",
+   "fieldname": "enforcement",
+   "fieldtype": "Select",
+   "label": "Enforcement",
+   "options": "\nWorkflow Transition\nDocPerm\nUser Permission\nRow Filter\nNotify\nManual"
+  },
+  {
+   "columns": 2,
+   "default": "Config Needed",
+   "description": "Current state: already enforced, just needs config, a gap to build, or process-only.",
+   "fieldname": "coverage",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Coverage",
+   "options": "Built / Existing\nConfig Needed\nGap — To Build\nManual / Process-Only"
+  },
+  {
+   "description": "The file / record the enforcement lands in (e.g. fixtures/workflow.json, a role patch, hooks.py).",
+   "fieldname": "target_artifact",
+   "fieldtype": "Data",
+   "label": "Config Target"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-26 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Process Documentation",
+ "name": "Process Document Step",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
