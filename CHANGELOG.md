@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.130.0] - 2026-06-26
+
+### Added
+- **Production build-phase tracking (Phase 3 of the process-mapping program).** Closes the biggest operations gap from the process maps — after design, builds had no status tracking. New **Production Tracking** fields on `Project` (in `fixtures/custom_field.json`): `custom_build_status` (Select: Design Complete → Procurement → Assembly → QA → Ready for Install → Installed → Commissioned), `custom_bid_cost` (Currency — the baseline the existing gross-margin-vs-bid KPI needs), `custom_production_started` / `custom_production_completed` (Date), and `custom_quality_sign_off_by` (User) / `custom_quality_sign_off_date` (Date) for the QC gate.
+  - A native **"Production Builds" Kanban board** (seeded via patch) on `Project` keyed by `custom_build_status` — drag a build across phases; columns are colour-coded. Chosen over a bespoke page because build status is single-doctype, so the native Kanban gives a maintainable drag-and-drop board with no custom UI code. (The maintenance-style day board stays bespoke because it aggregates live cross-doctype data.)
+  - The Kanban patch carries a `create_custom_fields` **ordering backstop** for `custom_build_status` (fixtures sync after patches on migrate), so the board's field exists on the first migrate; the fixture remains the source of truth for the full field set.
+  - `custom_bid_cost` makes the Production aggregator's "Project Gross Margin vs Bid" KPI computable; `custom_build_status` is available for future build-throughput KPIs.
+
 ## [1.129.0] - 2026-06-26
 
 ### Added
