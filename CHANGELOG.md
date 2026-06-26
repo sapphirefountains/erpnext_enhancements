@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.122.1] - 2026-06-26
+
+### Changed
+- **Projects Dashboard — value-stream group order.** On the Priority Overview, when grouped by **Project Priority** (value stream), the stream groups now follow the business-preferred order **Design, Build, Service, Rent** instead of alphabetical. Any other stream (e.g. Delivery, Uncategorized) falls after these, alphabetically. Applies to both the Project Dashboard page (`priority_overview.js`) and the Projects Dashboard Custom HTML Block.
+
 ## [1.122.0] - 2026-06-25
 
 ### Added

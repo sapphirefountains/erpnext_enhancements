@@ -21,6 +21,24 @@ frappe.provide("erpnext_enhancements.dashboard_components");
  * and supports rollback — wiring itself to the dashboard's global
  * save/discard-changes buttons.
  */
+/**
+ * Business-preferred ordering for the client-facing value streams. When the
+ * Priority Overview is grouped by value stream (sorted by Project Priority),
+ * the stream groups follow this order rather than alphabetical. Any stream not
+ * listed (e.g. Delivery, Uncategorized) sorts after these, alphabetically.
+ */
+erpnext_enhancements.dashboard_components.VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Rent"];
+
+erpnext_enhancements.dashboard_components.compare_value_streams = function (a, b) {
+	const order = erpnext_enhancements.dashboard_components.VALUE_STREAM_ORDER;
+	let ia = order.indexOf(a);
+	let ib = order.indexOf(b);
+	if (ia === -1) ia = order.length;
+	if (ib === -1) ib = order.length;
+	if (ia !== ib) return ia - ib;
+	return String(a).localeCompare(String(b));
+};
+
 erpnext_enhancements.dashboard_components.BufferManager = class BufferManager {
 	constructor(parentComponent) {
 		this.parent = parentComponent;
@@ -362,8 +380,12 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 				groups[stream].push(p);
 			});
 
-			// Sort streams alphabetically
-			let sorted_streams = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+			// Sort streams by the business-preferred value-stream order
+			// (Design, Build, Service, Rent); any other stream (e.g. Delivery,
+			// Uncategorized) falls after these, alphabetically.
+			let sorted_streams = Object.keys(groups).sort((a, b) =>
+				erpnext_enhancements.dashboard_components.compare_value_streams(a, b)
+			);
 
 			sorted_streams.forEach((stream) => {
 				// Sort projects within stream by project priority

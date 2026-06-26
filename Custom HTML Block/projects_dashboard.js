@@ -42,6 +42,20 @@
     // get_all_projects_for_gantt), which filter to exactly these project types.
     const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service", "Delivery"];
 
+    // Business-preferred ordering for the value-stream groups on Priority
+    // Overview (when sorted by Project Priority). Streams not listed (e.g.
+    // Delivery, Uncategorized) fall after these, alphabetically. Kept in sync
+    // with priority_overview.js's VALUE_STREAM_ORDER.
+    const VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Rent"];
+    const compare_value_streams = (a, b) => {
+        let ia = VALUE_STREAM_ORDER.indexOf(a);
+        let ib = VALUE_STREAM_ORDER.indexOf(b);
+        if (ia === -1) ia = VALUE_STREAM_ORDER.length;
+        if (ib === -1) ib = VALUE_STREAM_ORDER.length;
+        if (ia !== ib) return ia - ib;
+        return String(a).localeCompare(String(b));
+    };
+
     // Gantt State tracking
     let gantt_detailed_view = false;
     let gantt_status_filters = ["Active", "Working", "Client Hold"]; 
@@ -871,7 +885,7 @@
                 groups[stream].push(p);
             });
 
-            let sorted_streams = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+            let sorted_streams = Object.keys(groups).sort(compare_value_streams);
             sorted_streams.forEach(stream => {
                 let stream_projects = groups[stream].sort((a, b) => {
                     let weightA = get_priority_weight(a.custom_project_priority);
