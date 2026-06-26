@@ -17,7 +17,9 @@ Those patches are harmless once a block exists; this seeder now keeps every
 block current.
 
 It also places the blocks on the **Home** workspace (idempotent append) so the
-landing page shows all of them. Blocks created on the site under names *not*
+landing page shows all of them, and surfaces the **KPI Cockpit** on Home and on
+each department dashboard (see ``KPI_DEPARTMENT_DASHBOARDS``) so the numbers show
+up where each team already works. Blocks created on the site under names *not*
 listed here are left alone, and nothing is ever deleted.
 
 Requires a git-cloned app (``bench get-app``) where the repo root ships next to
@@ -37,16 +39,34 @@ BLOCKS = [
 	("Projects Dashboard", "projects_dashboard"),
 	("Task Dashboard", "task_dashboard"),
 	("Morning Briefing", "morning_briefing"),
-	# KPI Cockpit lives on the "KPI Dashboards" workspace (placed by its own
-	# workspace fixture), NOT on Home — it is role-gated per department.
+	# KPI Cockpit has its own "KPI Dashboards" workspace (its fixture); it is
+	# additionally surfaced on Home and each department dashboard below, where the
+	# block auto-locks to a department by route (role-gated per department).
 	("KPI Cockpit", "kpi_cockpit"),
 ]
 
-# Subset of BLOCKS appended to the Home workspace. Blocks created/refreshed but
-# absent here are placed by their own workspace fixtures instead.
+# Subset of BLOCKS appended to the Home workspace. KPI Cockpit reaches Home via
+# the department-dashboard loop below (not here); any other block absent here is
+# placed by its own workspace fixture instead.
 HOME_BLOCKS = {"Desk Shortcuts", "Projects Dashboard", "Task Dashboard", "Morning Briefing"}
 
 HOME_WORKSPACE = "Home"
+
+# The KPI Cockpit (with its department picker) also lands on Home and on each
+# department dashboard, where it auto-locks to that department by route (see
+# "Custom HTML Block/kpi_cockpit.js"). These dashboards are site-created during
+# the module reorg and may be absent on a given site — placement skips them
+# silently rather than failing the migrate.
+KPI_COCKPIT = "KPI Cockpit"
+KPI_DEPARTMENT_DASHBOARDS = (
+	"Finance Dashboard",
+	"Sales Dashboard",
+	"Operations Dashboard",
+	"Design Dashboard",
+	"Production Dashboard",
+	"Marketing Dashboard",
+	"Executive Dashboard",
+)
 
 
 def _source_dir():
@@ -61,7 +81,8 @@ def _read(source_dir, prefix, ext):
 
 
 def sync_custom_html_blocks():
-	"""Create/refresh every repo-defined Custom HTML Block, then place on Home."""
+	"""Create/refresh every repo-defined Custom HTML Block, then place them on
+	Home and the KPI Cockpit on each department dashboard."""
 	source_dir = _source_dir()
 	synced = []
 
@@ -103,22 +124,29 @@ def sync_custom_html_blocks():
 
 		synced.append(name)
 
+	changed = False
+
 	home_blocks = [name for name in synced if name in HOME_BLOCKS]
-	if home_blocks:
-		_place_blocks_on_home(home_blocks)
+	if home_blocks and _append_custom_blocks(HOME_WORKSPACE, home_blocks):
+		changed = True
+
+	# Surface the KPI Cockpit where people already work: Home (keeps the
+	# department picker) and each department dashboard (the block auto-locks to
+	# its department by route). Only once the block itself synced OK.
+	if KPI_COCKPIT in synced:
+		for workspace in (HOME_WORKSPACE, *KPI_DEPARTMENT_DASHBOARDS):
+			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
+				changed = True
+
+	if changed:
+		frappe.clear_cache()
 
 
-def _place_blocks_on_home(block_names):
-	"""Append any missing block to the Home workspace content (idempotent)."""
-	if not frappe.db.exists("Workspace", HOME_WORKSPACE):
-		return
-
-	content = frappe.db.get_value("Workspace", HOME_WORKSPACE, "content")
-	try:
-		blocks = json.loads(content or "[]")
-		if not isinstance(blocks, list):
-			blocks = []
-	except (ValueError, TypeError):
+def _merge_blocks(blocks, block_names):
+	"""Idempotently append one ``custom_block`` widget per name. No DB IO:
+	returns ``(blocks, changed)``. A block already present (matched by
+	``custom_block_name``) is left untouched, so re-running never duplicates."""
+	if not isinstance(blocks, list):
 		blocks = []
 
 	present = {
@@ -141,8 +169,26 @@ def _place_blocks_on_home(block_names):
 		present.add(name)
 		changed = True
 
+	return blocks, changed
+
+
+def _append_custom_blocks(workspace_name, block_names):
+	"""Append any missing block to ``workspace_name``'s content (idempotent).
+
+	Returns True if the content changed. A missing workspace is skipped silently
+	(the department dashboards are site-created and need not exist on every site).
+	The column is written directly (not ``doc.save``) so saving a standard/public
+	workspace can't trigger a JSON file export in developer-mode benches."""
+	if not frappe.db.exists("Workspace", workspace_name):
+		return False
+
+	content = frappe.db.get_value("Workspace", workspace_name, "content")
+	try:
+		blocks = json.loads(content or "[]")
+	except (ValueError, TypeError):
+		blocks = []
+
+	blocks, changed = _merge_blocks(blocks, block_names)
 	if changed:
-		# Write the column directly (not doc.save) so saving a standard/public
-		# workspace can't trigger a JSON file export in developer-mode benches.
-		frappe.db.set_value("Workspace", HOME_WORKSPACE, "content", json.dumps(blocks))
-		frappe.clear_cache()
+		frappe.db.set_value("Workspace", workspace_name, "content", json.dumps(blocks))
+	return changed

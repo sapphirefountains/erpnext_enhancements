@@ -29,6 +29,57 @@
         }
     }
 
+    // Each department dashboard (where the seeder also places this block) maps
+    // 1:1 to a KPI department. When the cockpit sits on one, lock to that
+    // department instead of showing the picker. Detection is by route first
+    // (slug or title form), with a page-title fallback — so it degrades to the
+    // picker on Home, the "KPI Dashboards" workspace, or any unmatched route.
+    const DASHBOARD_DEPARTMENTS = {
+        "finance dashboard": "Finance",
+        "sales dashboard": "Sales",
+        "operations dashboard": "Operations",
+        "design dashboard": "Design",
+        "production dashboard": "Production",
+        "marketing dashboard": "Marketing",
+        "executive dashboard": "Executive",
+    };
+
+    function normName(s) {
+        return String(s || "")
+            .toLowerCase()
+            .replace(/[-_]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function detectLockedDepartment() {
+        // 1) Current route — e.g. ["finance-dashboard"] or ["Workspaces","Finance Dashboard"].
+        try {
+            const route = (frappe.get_route && frappe.get_route()) || [];
+            for (const seg of route) {
+                let decoded = seg;
+                try {
+                    decoded = decodeURIComponent(seg);
+                } catch (e) {
+                    /* malformed % escape — use the raw segment */
+                }
+                const dept = DASHBOARD_DEPARTMENTS[normName(decoded)];
+                if (dept) return dept;
+            }
+        } catch (e) {
+            /* fall through to the title check */
+        }
+        // 2) The workspace title shown in the page head.
+        try {
+            const el = document.querySelector(".workspace-title, .page-title .title-text, .title-text");
+            const dept = el && DASHBOARD_DEPARTMENTS[normName(el.textContent)];
+            if (dept) return dept;
+        } catch (e) {
+            /* fall through */
+        }
+        return null;
+    }
+
     function fmtTrend(pct) {
         if (pct === null || pct === undefined) return { cls: "flat", text: "" };
         const rounded = Math.round(pct * 10) / 10;
@@ -83,6 +134,11 @@
         const meta = container.querySelector("#kpi-meta");
         const select = container.querySelector("#kpi-dept");
         const refresh_btn = container.querySelector("#kpi-refresh");
+        const title = container.querySelector(".kpi-title");
+
+        // Recomputed each render: the script re-runs with a fresh route on every
+        // workspace navigation, so this tracks which dashboard we're on now.
+        const locked = detectLockedDepartment();
 
         function showMessage(message) {
             body.innerHTML = `<div class="kpi-disabled">${frappe.utils.escape_html(message)}</div>`;
@@ -136,6 +192,21 @@
                 select.innerHTML = depts
                     .map((d) => `<option value="${frappe.utils.escape_html(d)}">${frappe.utils.escape_html(d)}</option>`)
                     .join("");
+
+                // Lock to one department when this block sits on that
+                // department's dashboard (by route), or when the user can see
+                // exactly one. Otherwise keep the picker (Home / overview).
+                let forced = locked && depts.includes(locked) ? locked : null;
+                if (!forced && depts.length === 1) forced = depts[0];
+
+                if (forced) {
+                    select.value = forced;
+                    select.style.display = "none";
+                    if (title) title.textContent = __("{0} KPIs", [forced]);
+                } else {
+                    select.style.display = "";
+                    if (title) title.textContent = __("KPI Dashboard");
+                }
                 load(false);
             })
             .catch((err) => {

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.123.0] - 2026-06-26
+
+### Added
+- **KPI Dashboards — KPI Cockpit surfaced on Home and the department dashboards.** The KPI Cockpit (until now only on its own *KPI Dashboards* workspace) is additionally placed on **Home** and on each of the seven department dashboards — *Finance / Sales / Operations / Design / Production / Marketing / Executive Dashboard* (previously empty) — so the numbers show up where each team already works.
+  - On a **department dashboard** the cockpit **auto-locks to that department** (detected from the workspace route, with a page-title fallback) and hides the picker; a viewer who can see exactly one department gets it locked everywhere. On **Home** and the *KPI Dashboards* overview it keeps the full department selector. Role-gating is unchanged — the locked view still only renders departments the user may see.
+  - Placement is idempotent on `bench migrate` (`setup.custom_html_blocks`): the cockpit is appended only if absent, and any department dashboard that doesn't exist on the site is skipped silently. No data, schema, or endpoint changes — the snapshot engine is untouched.
+
 ## [1.122.1] - 2026-06-26
 
 ### Changed
