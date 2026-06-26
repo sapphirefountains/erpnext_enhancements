@@ -162,6 +162,32 @@ Balance (`Trial_balance.xlsx`) — or simply run the **QuickBooks Balance Compar
 report, which does this per account automatically. Investigate any manual-review/failed
 rows in the sync log first.
 
+### Reports API modernization (Intuit "v2", 2026 cutover)
+
+Intuit is retiring the legacy Reports service; after the cutover **all** `/reports/`
+responses are served by the modernized ("v2") service. ([Upcoming changes to Reports
+APIs](https://medium.com/intuitdev/upcoming-changes-to-reports-apis-5083ec9aadce) —
+the article states **August 31, 2026**; some third-party summaries cite **June 30,
+2026**, so confirm the live date.) This integration uses the Reports API in exactly
+one place — QBO's **TrialBalance** report, behind both *Compare Balances* and *Import
+Opening Balances*. The reader was made v2-safe: Debit/Credit columns are resolved from
+the response header by title rather than fixed index positions, empty amounts (`""`)
+coerce to 0, and nested/section rows recurse. The **sync itself is unaffected** — entity
+import (`/query`), CDC (`/cdc`) and writes don't use the Reports API.
+
+**Validate early (optional).** To preview the modernized service against real company
+data before the cutover, set `quickbooks_reports_testing_migration` truthy in the site
+config and re-run *Compare Balances*:
+
+```bash
+bench --site <site> set-config quickbooks_reports_testing_migration 1   # 0/unset to disable
+```
+
+This adds Intuit's temporary `testing_migration` flag to the TrialBalance request. Run
+the balance comparison with it on and off and confirm the per-account figures still
+match; then unset it (the flag is temporary and removed once v2 is the only service —
+the parser stays correct either way).
+
 ---
 
 ## 6. Remediation: legacy job-customers (one-off)

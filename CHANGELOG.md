@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.126.0] - 2026-06-26
+
+### Changed
+- **QuickBooks Reports API — made the Trial Balance reader compatible with Intuit's modernized ("v2") Reports service** ([Upcoming changes to Reports APIs](https://medium.com/intuitdev/upcoming-changes-to-reports-apis-5083ec9aadce)). Intuit is retiring the legacy Reports service in 2026 — after the cutover *all* `/reports/` responses are served by the modernized service. The integration touches the Reports API in exactly one place: QBO's **TrialBalance** report, consumed by both **Compare Balances** (reconciliation) and **Import Opening Balances**. Audit findings and the fix:
+  - **Only `/reports/` is affected — the sync is not.** Entity import (`/query`), Change Data Capture (`/cdc`), single-entity fetches and all writes go through different endpoints the article doesn't touch, so master/transaction sync, webhooks and write-back are unchanged.
+  - **No deprecated parameters in use.** We send none of `group_by`, `qzurl`, or `summarize_column_by`, so those v2 removals/changes don't affect us. The only params sent to TrialBalance are `start_date`/`end_date`.
+  - **Stopped relying on fixed column index positions** (Intuit: *"Do not rely on row index positions"*). `_parse_trial_balance` now resolves the **Debit** and **Credit** columns from the report's `Columns` header by title (case-insensitive — v1 sometimes returned `ColTitle` in ALL CAPS, v2 standardizes to Title Case) instead of assuming `ColData[1]`/`ColData[2]`, falling back to the historical positions when no header is present. A reordered or relabelled report now parses with the correct sign.
+  - **Empty amounts already handled.** v2 always returns `""` (never `0`/`null`) for an empty Debit/Credit; `flt("")` is `0`, and the cell reader is bounds-safe.
+  - **Deeper account nesting absorbed.** v2 *"child accounts are always nested under their parent"*; the parser already recurses sections to any depth and keys rows by account id, so the extra nesting (and v2's empty-`Section` rows) is handled without change.
+  - **Early-validation hook.** A new `report(..., testing_migration=True)` passthrough adds Intuit's temporary `testing_migration` flag to route a request through the modernized service. Off by default; an operator can opt in by setting `quickbooks_reports_testing_migration` truthy in the site config to validate reconciliation/opening balances against real data before the cutover (see MIGRATION_NOTES §5). Pure read-path change — no schema, data, or endpoint changes.
+
 ## [1.125.1] - 2026-06-26
 
 ### Fixed
