@@ -431,6 +431,8 @@ fixtures = [
 					"User-verify_terms",  # lms
 					"User-assistant_enabled",  # frappe_assistant_core
 					"Sapphire Maintenance Record-workflow_state",  # frappe workflow engine
+					"Purchase Invoice-workflow_state",  # frappe workflow engine (Purchase Invoice Approval)
+					"Payment Entry-workflow_state",  # frappe workflow engine (Payment Entry Approval)
 				],
 			],
 		],
@@ -448,7 +450,10 @@ fixtures = [
 			],
 		],
 	},
-	{"dt": "Workflow", "filters": [["document_type", "=", "Sapphire Maintenance Record"]]},
+	{
+		"dt": "Workflow",
+		"filters": [["document_type", "in", ["Sapphire Maintenance Record", "Purchase Invoice", "Payment Entry"]]],
+	},
 	{
 		"dt": "Workflow State",
 		"filters": [
@@ -459,11 +464,19 @@ fixtures = [
 					"Draft",
 					"Pending Review",
 					"Final/Submitted",
+					"Pending Approval",
+					"Approved",
+					"Rejected",
 				],
 			]
 		],
 	},
-	{"dt": "Workflow Action Master", "filters": [["name", "in", ["Request Review", "Approve & Submit"]]]},
+	{
+		"dt": "Workflow Action Master",
+		"filters": [
+			["name", "in", ["Request Review", "Approve & Submit", "Submit for Approval", "Approve", "Reject"]]
+		],
+	},
 	{
 		"dt": "Notification",
 		"filters": [
