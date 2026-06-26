@@ -515,6 +515,13 @@ def _production_metrics():
 	values, add = _collector()
 	has = frappe.db.has_column
 
+	# "Active"/in-progress Project filter. The stock Project status is 'Open',
+	# but this site (and prod) books live projects as status='Active' — zero rows
+	# are ever 'Open'. Accept both so the active/overdue/backlog KPIs populate
+	# regardless of a site's convention, mirroring how _product_metrics handles
+	# rentals. Terminal-ish states ('Completed','Cancelled','Paid','Invoiced')
+	# are intentionally excluded from "active".
+
 	add(
 		"projects_completed_30",
 		"Projects Completed (30d)",
@@ -526,7 +533,7 @@ def _production_metrics():
 	add(
 		"active_projects",
 		"Active Projects",
-		_scalar("select count(*) from `tabProject` where status='Open'"),
+		_scalar("select count(*) from `tabProject` where status in ('Open','Active')"),
 		"count",
 		"Project",
 		metrics.HIGHER,
@@ -535,7 +542,7 @@ def _production_metrics():
 		"projects_overdue",
 		"Overdue Projects",
 		_scalar(
-			"select count(*) from `tabProject` where status='Open' and expected_end_date is not null and expected_end_date < %(t)s",
+			"select count(*) from `tabProject` where status in ('Open','Active') and expected_end_date is not null and expected_end_date < %(t)s",
 			{"t": today},
 		),
 		"count",
@@ -545,7 +552,7 @@ def _production_metrics():
 	add(
 		"avg_project_completion",
 		"Avg Project Completion",
-		_scalar("select avg(percent_complete) from `tabProject` where status='Open'"),
+		_scalar("select avg(percent_complete) from `tabProject` where status in ('Open','Active')"),
 		"%",
 		"Project",
 		metrics.HIGHER,
@@ -567,7 +574,7 @@ def _production_metrics():
 		add(
 			"active_builds",
 			"Active Builds",
-			_scalar("select count(*) from `tabProject` where status='Open' and project_type='Build'"),
+			_scalar("select count(*) from `tabProject` where status in ('Open','Active') and project_type='Build'"),
 			"count",
 			"Project",
 			metrics.HIGHER,
@@ -576,7 +583,7 @@ def _production_metrics():
 			"builds_overdue",
 			"Overdue Builds",
 			_scalar(
-				"select count(*) from `tabProject` where status='Open' and project_type='Build' "
+				"select count(*) from `tabProject` where status in ('Open','Active') and project_type='Build' "
 				"and expected_end_date is not null and expected_end_date < %(t)s",
 				{"t": today},
 			),
@@ -588,7 +595,7 @@ def _production_metrics():
 			add(
 				"build_backlog_value",
 				"Build Backlog Value",
-				_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status='Open' and project_type='Build'"),
+				_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status in ('Open','Active') and project_type='Build'"),
 				"USD",
 				"Project",
 				metrics.HIGHER,
@@ -596,7 +603,7 @@ def _production_metrics():
 	if has("Project", "custom_time_budget_in_hours") and has("Project", "custom_total_time_elapsed"):
 		row = frappe.db.sql(
 			"select sum(custom_total_time_elapsed), sum(custom_time_budget_in_hours) from `tabProject` "
-			"where status='Open' and coalesce(custom_time_budget_in_hours,0)>0"
+			"where status in ('Open','Active') and coalesce(custom_time_budget_in_hours,0)>0"
 		)
 		used, budget = (row[0][0], row[0][1]) if row and row[0] else (None, None)
 		if budget:
@@ -605,7 +612,7 @@ def _production_metrics():
 		add(
 			"backlog_value",
 			"Backlog (Open Project Value)",
-			_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status='Open'"),
+			_scalar("select sum(custom_project_dollar_amount) from `tabProject` where status in ('Open','Active')"),
 			"USD",
 			"Project",
 			metrics.HIGHER,
