@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.128.0] - 2026-06-26
+
+### Added
+- **Finance approval workflows (Phase 2 of the process-mapping program) — Purchase Invoice + Payment Entry.** Two Frappe Workflows that route bills and payments **Draft → Pending Approval → Approved** (with a **Rejected** branch that loops back for resubmission), role-gated to match the small-team RACI from the Finance process maps: `Accounts User` submits for approval, `Accounts Manager` approves/rejects (the Approve transition submits the document). Models "Lisa drafts → James (or Lisa) approves", with the external accountant as the compensating reviewer.
+  - **Shipped dormant (`is_active: 0`).** The workflows exist after `bench migrate` but enforce nothing until switched on per-doctype in the Workflow list. This is deliberate: activating a workflow on Purchase Invoice / Payment Entry changes how every user submits those documents **and can interfere with the QuickBooks importer/sync**, which creates and submits these documents programmatically. Enable once roles are confirmed and (ideally) after the QBO cutover.
+  - **Enabler:** widened the `Workflow` / `Workflow State` / `Workflow Action Master` fixture filters in `hooks.py` (previously scoped to the Sapphire Maintenance Record workflow only) so these definitions are version-controlled; added the new states (Pending Approval / Approved / Rejected, styled) and actions (Submit for Approval / Approve / Reject) to the fixture files; excluded the engine-created `Purchase Invoice-workflow_state` / `Payment Entry-workflow_state` custom fields from export, matching the maintenance precedent.
+  - **Self-approval is allowed** (`allow_self_approval: 1`) so one person can both draft and approve when needed — the small team's reality (Lisa drafts and may approve), with the external accountant as the compensating reviewer. Set it to `0` on the Approve transition later for a hard two-person rule.
+  - **No payment threshold** (single approver per the process interview — James, no $ limit set yet); a per-amount second-approver tier can be added later via transition `condition` strings. **Expense Claim approval deferred** (HRMS-dependent; not guaranteed installed on production).
+
 ## [1.127.0] - 2026-06-26
 
 ### Added
