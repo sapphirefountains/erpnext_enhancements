@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.131.0] - 2026-06-26
+
+### Added
+- **Month-End Close checklist + period lock (Phase 4 of the process-mapping program).** New submittable **`Month-End Close`** doctype (one per period/company) with a **`Month-End Close Task`** child checklist auto-seeded from the Finance — Month-End Close process map (reconcile bank/CC, post accruals, review AR/AP aging, reconcile vs QuickBooks, review P&L/BS, external-accountant review, approve statements). Each task has a responsible person + status; completion is auto-stamped.
+  - **Gated close:** the record can only be **submitted** (= period Closed) once every task is Done or N/A, and submit/cancel is permitted only to **Accounts Manager** (Accounts User can build and work the checklist). Status rolls up Open → In Progress → Closed.
+  - **The teeth (period lock):** on submit, the controller sets the **Company's `accounts_frozen_till_date`** to the period end date — ERPNext's GL `check_freezing_date` then blocks any posting on or before that date for everyone except the `role_allowed_for_frozen_entries` role (defaulted to *Accounts Manager* so genuine corrections remain possible). Cancelling restores the previous frozen-till date (the prior value is stashed on the record), re-opening the period.
+  - Uses the v16 freezing fields (moved from Accounts Settings to **Company** in ERPNext v16). App-owned doctypes in *Enhancements Core* — no fixtures needed.
+
 ## [1.130.0] - 2026-06-26
 
 ### Added
