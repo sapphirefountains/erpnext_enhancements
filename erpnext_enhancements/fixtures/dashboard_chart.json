@@ -361,5 +361,32 @@
     "type": "Donut",
     "filters_json": "[[\"Opportunity\",\"status\",\"=\",\"Lost\",false],[\"Opportunity\",\"custom_lost_reason\",\"is\",\"set\",false]]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Catalog Additions (Monthly)",
+    "chart_name": "Catalog Additions (Monthly)",
+    "chart_type": "Count",
+    "document_type": "Item",
+    "based_on": "creation",
+    "timeseries": 1,
+    "timespan": "Last Year",
+    "time_interval": "Monthly",
+    "type": "Bar",
+    "filters_json": "[[\"Item\",\"is_sales_item\",\"=\",1,false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Catalog by Item Group",
+    "chart_name": "Catalog by Item Group",
+    "chart_type": "Group By",
+    "document_type": "Item",
+    "group_by_type": "Count",
+    "group_by_based_on": "item_group",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Item\",\"disabled\",\"=\",0,false]]",
+    "is_public": 1
   }
 ]
