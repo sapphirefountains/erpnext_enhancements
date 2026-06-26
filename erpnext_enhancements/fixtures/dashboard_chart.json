@@ -361,5 +361,33 @@
     "type": "Donut",
     "filters_json": "[[\"Opportunity\",\"status\",\"=\",\"Lost\",false],[\"Opportunity\",\"custom_lost_reason\",\"is\",\"set\",false]]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Revenue by Item Group",
+    "chart_name": "Revenue by Item Group",
+    "chart_type": "Group By",
+    "document_type": "Sales Invoice Item",
+    "parent_document_type": "Sales Invoice",
+    "group_by_type": "Sum",
+    "group_by_based_on": "item_group",
+    "aggregate_function_based_on": "base_net_amount",
+    "number_of_groups": 0,
+    "type": "Bar",
+    "filters_json": "[[\"Sales Invoice Item\",\"docstatus\",\"=\",1,false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Catalog by Item Group",
+    "chart_name": "Catalog by Item Group",
+    "chart_type": "Group By",
+    "document_type": "Item",
+    "group_by_type": "Count",
+    "group_by_based_on": "item_group",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Item\",\"disabled\",\"=\",0,false]]",
+    "is_public": 1
   }
 ]

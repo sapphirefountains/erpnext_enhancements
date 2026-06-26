@@ -265,5 +265,22 @@
         "card": "Draft Sales Invoices"
       }
     ]
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "Product Catalog",
+    "dashboard_name": "Product Catalog",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Revenue by Item Group",
+        "width": "Full"
+      },
+      {
+        "chart": "Catalog by Item Group",
+        "width": "Half"
+      }
+    ],
+    "cards": []
   }
 ]

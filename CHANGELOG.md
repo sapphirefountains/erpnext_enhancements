@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.124.0] - 2026-06-26
+
+### Added
+- **KPI Dashboards — Product Management department (fountain product catalog).** A new **Product** aggregator on the existing snapshot spine, picked up automatically by the nightly batch, the cockpit selector (`AVAILABLE_DEPARTMENTS` derives from the registry), and the role-gated endpoints (viewer roles: Item Manager / Stock Manager / Sales Manager). Registered **before** Executive so a future exec rollup can read it. No new doctypes — a defensive read over `Item` / `Bin` / `Sales Invoice Item` / `Project`, with `has_column` guards and skip-None throughout.
+  - **Auto KPIs:** Products revenue + revenue-share (30d / 1y, from Sales Invoice Item `item_group`, submitted invoices); Active SKUs; New Items (90d / 1y); Active Rentals, Rentals Started (30d) and Rental Backlog Value (`Project` `project_type='Rent'`); Inventory Stock Value (`Bin`); Out-of-Stock Sellable Items; and catalog data-quality completeness — SKU %, Item Identifier %, and Pump Spec % (`item_group='Pumps'` with rated GPM + HP).
+  - **Semi (guarded, emit only when computable):** Gross Margin % (needs perpetual-inventory COGS via Sales Invoice line `incoming_rate`); Items Below Reorder (`Item Reorder` vs on-hand `Bin` qty); Distinct Fountain Types Designed (`Water Feature Design.fountain_type`).
+  - **Reporting:** two Dashboard Charts — **Revenue by Item Group** (Group-By on the `Sales Invoice Item` child table, so it sets `parent_document_type` = `Sales Invoice`) and **Catalog by Item Group** (Group-By on `Item`) — on a new **Product Catalog** dashboard fixture; all registered in `hooks.py` fixtures. "Product" added to the `department` Select on both KPI Snapshot and KPI Target.
+  - **Grounded-data notes:** the product taxonomy is `item_group` (no custom segment field); this site books live projects as `status='Active'` (not 'Open'), so the rental KPIs accept both; and QBO-synced Sales Invoices are currently **drafts** (`docstatus=0`), so the submitted-only revenue/margin KPIs (and the revenue chart) populate once invoices are submitted — the same convention as the Finance aggregator.
+
 ## [1.123.0] - 2026-06-26
 
 ### Added
