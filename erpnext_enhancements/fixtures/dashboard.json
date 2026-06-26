@@ -273,12 +273,12 @@
     "is_default": 0,
     "charts": [
       {
-        "chart": "Revenue by Item Group",
-        "width": "Full"
-      },
-      {
         "chart": "Catalog by Item Group",
         "width": "Half"
+      },
+      {
+        "chart": "Catalog Additions (Monthly)",
+        "width": "Full"
       }
     ],
     "cards": []

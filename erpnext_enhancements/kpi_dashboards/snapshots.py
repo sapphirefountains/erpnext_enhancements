@@ -834,24 +834,25 @@ def _product_metrics():
 	values, add = _collector()
 	has = frappe.db.has_column
 
-	# --- revenue by product line (submitted Sales Invoices; taxonomy = item_group) ---
-	if _exists("Sales Invoice Item") and has("Sales Invoice Item", "item_group") and has("Sales Invoice Item", "base_net_amount"):
+	# --- catalog revenue (submitted Sales Invoices). A per-item-group split is
+	#     intentionally NOT attempted: on this instance every Sales Invoice Item
+	#     line carries item_group='All Item Groups' (the root — the leaf taxonomy
+	#     is not copied onto QBO-synced invoice lines), so a "Products"-vs-total
+	#     split is degenerate and would emit a misleading 0% share. Total catalog
+	#     revenue is always correct; it populates once invoices are submitted
+	#     (today the QBO-synced invoices are all drafts). ---
+	if _exists("Sales Invoice Item") and has("Sales Invoice Item", "base_net_amount"):
 
-		def _rev(item_group, since):
-			clause = "and sii.item_group=%(g)s" if item_group else ""
+		def _catalog_revenue(since):
 			return _scalar(
 				"select sum(sii.base_net_amount) from `tabSales Invoice Item` sii "
 				"join `tabSales Invoice` si on si.name=sii.parent "
-				f"where si.docstatus=1 and si.posting_date >= %(d)s {clause}",
-				{"d": since, "g": item_group},
+				"where si.docstatus=1 and si.posting_date >= %(d)s",
+				{"d": since},
 			)
 
-		for suffix, label, since in (("30", "(30d)", d30), ("365", "(1y)", d365)):
-			products = _rev("Products", since)
-			total = _rev(None, since)
-			add(f"products_revenue_{suffix}", f"Products Revenue {label}", products, "USD", "Sales Invoice", metrics.HIGHER)
-			share = (flt(products) / flt(total) * 100.0) if total else None
-			add(f"products_revenue_share_{suffix}", f"Products Revenue Share {label}", share, "%", "Sales Invoice", metrics.HIGHER)
+		add("catalog_revenue_30", "Catalog Revenue (30d)", _catalog_revenue(d30), "USD", "Sales Invoice", metrics.HIGHER)
+		add("catalog_revenue_365", "Catalog Revenue (1y)", _catalog_revenue(d365), "USD", "Sales Invoice", metrics.HIGHER)
 
 	# --- catalog size & freshness ---
 	add(
@@ -910,12 +911,14 @@ def _product_metrics():
 				metrics.HIGHER,
 			)
 
-	# --- inventory (Bin = stock-ledger rollup; valuation from Item master per spec) ---
+	# --- inventory. Bin.stock_value is the stock ledger's own valuation (per-
+	#     warehouse moving average) — the canonical on-hand value. The Item-master
+	#     valuation_rate is a single static rate that under-reports materially. ---
 	if _exists("Bin"):
 		add(
 			"inventory_stock_value",
 			"Inventory Stock Value",
-			_scalar("select sum(b.actual_qty * i.valuation_rate) from `tabBin` b join `tabItem` i on i.name=b.item_code"),
+			_scalar("select sum(stock_value) from `tabBin`"),
 			"USD",
 			"Bin",
 			metrics.HIGHER,

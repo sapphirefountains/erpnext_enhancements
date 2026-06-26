@@ -522,8 +522,8 @@ fixtures = [
 					# Win/loss reasons (Phase 4)
 					"Opportunity Loss Reasons",
 					# Product Management KPI dashboard (KPI dashboards, v1.124.0)
-					"Revenue by Item Group",
 					"Catalog by Item Group",
+					"Catalog Additions (Monthly)",
 				],
 			]
 		],
