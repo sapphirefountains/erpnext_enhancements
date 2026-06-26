@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.129.0] - 2026-06-26
+
+### Added
+- **Department Role Profiles + process-map visibility (Phase 1 of the process-mapping program).** Seeded four onboarding **Role Profiles** — *Finance*, *Sales & Marketing*, *Projects & Operations*, *Executive* — each bundling the standard ERPNext roles for that department, so a new hire gets the right access from a single profile. Role-existence-guarded and insert-only (optional roles like Marketing Manager / Maintenance Manager are skipped on sites where that module isn't installed; site-side edits survive). **No new roles created** — the small team reuses the standard Accounts / Sales / Projects / Maintenance roles.
+  - Opened **`Process Document` read access to `Employee`** (read / report / print / email / share) so the Phase 0 process maps + RACI are visible to the team; `System Manager` keeps full control.
+  - `DEPARTMENT_ROLES` (`api/kpi.py`) reviewed against the org RACI — already correct, left unchanged. Assigning the profiles/roles to the actual users (Lisa, James, Brian, Clegg) is an operator step (User form) — the people's accounts aren't created in code.
+
 ## [1.127.0] - 2026-06-26
 
 ### Added
