@@ -122,3 +122,6 @@ erpnext_enhancements.patches.seed_production_kanban_board
 # v1.129.0 Business Process Mapping (Phase 1): seed department Role Profiles
 # (onboarding bundles of standard roles) — insert-only, role-existence-guarded
 erpnext_enhancements.patches.seed_department_role_profiles
+# v1.132.0 Business Process Mapping (Phase 5): seed the remaining 6 department
+# process maps (Sales/Design/Operations/Marketing/Product/Executive) — insert-only
+erpnext_enhancements.patches.seed_process_maps_remaining_departments

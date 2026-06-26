@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.132.0] - 2026-06-26
+
+### Added
+- **Remaining-department process maps (Phase 5 — completes the process-mapping program).** Seeded a `Process Document` (Mermaid flow + `Process Document Step` RACI grid) for the six departments not covered in Phase 0: **Sales** (Lead → Closed-Won → hand-off), **Design** (Water Feature Design: create → calc → review → issue → control panel), **Operations** (maintenance visit lifecycle), **Marketing** (lead-source + spend → CPL/web KPIs), **Product Management** (catalog/SKUs, inventory/reorder, rentals), and **Executive** (nightly KPI rollup → review → approve). People are from the Jun 2026 process interview (e.g. Sales = Brian; Design = Daniel Blass / Nathan Cox with James Harris reviewing; Maintenance crew of 7 with Austin Healey / Clegg Mabey approving; Marketing = Richard Hansen; Product = Parker Bailey; Executive sign-off = James Harris).
+  - Most steps are already automated in the app, so the maps document **who owns each step and how it's enforced** (coverage is largely *Built / Existing*); design review and executive sign-off are flagged *Manual / Process-Only*. Insert-only patch (site edits survive); `erpnext_doctype` links guarded against missing doctypes. With Phase 0 this brings all **8 departments** under documented, RACI-backed process maps.
+
 ## [1.131.0] - 2026-06-26
 
 ### Added
