@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.125.1] - 2026-06-26
+
+### Fixed
+- **@-mentions in comments rendered as raw HTML (e.g. `@<a class="mention-link" href=...>Name`) instead of a styled mention.** Root cause is an upstream inconsistency in Frappe core ~v16.24.x: the mention module (`quill-mention/quill.mention.js` `getItemData()`) still hands the embed blot the display value as an HTML anchor string, but the blot (`quill-mention/blots/mention.js` `MentionBlot.create`) was hardened to insert it via `valueSpan.textContent` — which *escapes* the markup, so the anchor shows up as literal text. This affects every linked mention on the affected build (the custom Comments App "New Note"/"Reply" dialogs and Frappe's own timeline box); it can look fine on an older dev bench (v16.22 used `innerHTML +=`).
+  - `global_enhancements/quill_mentions.js` now overrides `MentionBlot.create` to render a proper, XSS-safe mention: a real `<a class="mention-link">` built from the trusted server `data.link`, with the visible name set via `textContent` (so HTML in a user's name stays inert). All `data-*` attributes are preserved byte-identical to core, so `extract_mentions` still notifies tagged users via `data-id` and saved content round-trips unchanged.
+  - The override is applied once, the first time a text editor mounts, by reaching the shared blot through that editor's own Quill instance (no second Quill bundled), and it only engages when the running blot actually escapes a linked value — so it is a no-op on Frappe builds that fix the upstream bug. (The previous contents of this file were dead code: `frappe.ui.form.on("ControlTextEditor", …)` is not a valid registration for a control and never executed.)
+  - Note: comments saved *while the bug was live* persisted the escaped markup in the DB and are not retroactively repaired by this client-side fix.
+
 ## [1.125.0] - 2026-06-26
 
 ### Fixed
