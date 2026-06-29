@@ -56,6 +56,23 @@ def ai_write_gating_enabled():
 	)
 
 
+def field_description_icons_enabled():
+	"""True when field descriptions render as hover ⓘ icons.
+
+	Drives the global desk script in
+	``public/js/global_enhancements/field_description_icons.js`` via
+	``frappe.boot.ee_field_description_icons`` (see boot.py). Default ON: the
+	Check field ships ``default "1"`` (applied when a new site first creates the
+	Settings Single) and the ``default_field_description_icons_on`` patch writes
+	1 on existing installs; a user who unchecks it is then respected.
+	"""
+	return bool(
+		cint(
+			frappe.db.get_single_value("ERPNext Enhancements Settings", "field_description_icons_enabled")
+		)
+	)
+
+
 def throw_if_process_automation_disabled():
 	"""Guard for whitelisted entry points — explains instead of misbehaving."""
 	if not process_automation_enabled():

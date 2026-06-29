@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.136.0] - 2026-06-29
+
+### Changed
+- **Field descriptions now render as a hover "ⓘ" info icon instead of inline help text.** Across all desk forms, any field that has a description gets a small ⓘ next to its label; hovering (or keyboard-focusing / tapping) it reveals the text in a floating tooltip, decluttering the form. The text comes from Frappe's own (already translated, HTML/link-formatted) help-box, which is hidden via CSS rather than removed, so it stays the live source. New global desk script `public/js/global_enhancements/field_description_icons.js` + styles in `desk_addons.bundle.scss` (theme-aware via Frappe CSS variables, so Timeless Night just works). Gated by a new **ERPNext Enhancements Settings → Desk Experience → Field Description Info Icons** switch (default ON), shipped to the client via `frappe.boot.ee_field_description_icons` — toggling needs no deploy; clients pick it up on their next page load. Child-table (grid) fields are untouched (Frappe already tooltips their column headers).
+
 ## [1.135.0] - 2026-06-29
 
 ### Added

@@ -40,6 +40,8 @@ import "./crm_enhancements/create_project_prompt.js";
 import "./performance_fixes.js";
 import "./activity_log_numbering.js";
 import "./filter_help.js";
+// Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
+import "./global_enhancements/field_description_icons.js";
 import "./telephony_client.js";
 // global_enhancements
 import "./global_enhancements/quill_mentions.js";

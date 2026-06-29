@@ -1,0 +1,74 @@
+/*
+ * field_description_icons.css — field help text as a hover "ⓘ" info icon.
+ *
+ * Behaviour lives in public/js/global_enhancements/field_description_icons.js.
+ * Theme-aware via Frappe CSS variables: Timeless Night (dark) flips the same
+ * vars, so no [data-theme="dark"] overrides are needed here.
+ */
+
+/* Replace the inline help text — the JS keeps the .help-box in the DOM (it is
+ * the live source of the tooltip), we only hide it. */
+.ee-field-desc .help-box {
+	display: none !important;
+}
+
+.ee-field-desc-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	vertical-align: middle;
+	margin-left: 4px;
+	color: var(--text-muted);
+	cursor: help;
+	line-height: 0;
+	border-radius: 50%;
+	transition: color 0.12s ease;
+}
+
+.ee-field-desc-icon:hover,
+.ee-field-desc-icon:focus {
+	color: var(--primary);
+	outline: none;
+}
+
+.ee-field-desc-icon:focus-visible {
+	box-shadow: 0 0 0 2px var(--primary);
+}
+
+.ee-field-desc-icon svg {
+	display: block;
+}
+
+.ee-field-desc-tooltip {
+	position: fixed;
+	z-index: 1100;
+	display: none;
+	max-width: 320px;
+	padding: 8px 12px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-color);
+	background: var(--popover-bg, var(--card-bg));
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	box-shadow: var(--shadow-md, 0 2px 10px rgba(0, 0, 0, 0.15));
+	pointer-events: auto;
+	word-wrap: break-word;
+	overflow-wrap: anywhere;
+}
+
+.ee-field-desc-tooltip.ee-visible {
+	display: block;
+}
+
+.ee-field-desc-tooltip p {
+	margin: 0 0 6px;
+}
+
+.ee-field-desc-tooltip p:last-child {
+	margin-bottom: 0;
+}
+
+.ee-field-desc-tooltip a {
+	color: var(--primary);
+}

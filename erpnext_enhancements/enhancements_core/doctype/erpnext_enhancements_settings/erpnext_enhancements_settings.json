@@ -53,7 +53,9 @@
   "ai_action_log_retention_days",
   "kpi_section",
   "kpi_dashboards_enabled",
-  "kpi_snapshot_retention_days"
+  "kpi_snapshot_retention_days",
+  "desk_ux_section",
+  "field_description_icons_enabled"
  ],
  "fields": [
   {
@@ -381,6 +383,18 @@
    "fieldname": "kpi_snapshot_retention_days",
    "fieldtype": "Int",
    "label": "Snapshot Retention (Days)"
+  },
+  {
+   "fieldname": "desk_ux_section",
+   "fieldtype": "Section Break",
+   "label": "Desk Experience"
+  },
+  {
+   "default": "1",
+   "description": "Show each field's description as a small ⓘ info icon next to its label (hover, focus, or tap to reveal) instead of as inline help text under the field, across all desk forms. Applies on each user's next page load. Turn off to restore the standard inline help text.",
+   "fieldname": "field_description_icons_enabled",
+   "fieldtype": "Check",
+   "label": "Field Description Info Icons"
   }
  ],
  "issingle": 1,
