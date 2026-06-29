@@ -47,6 +47,11 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 
 	// Place the icon at the end of the field's label. Returns false if there is
 	// no label to attach to (HTML / Section Break / Column Break, etc.).
+	//
+	// IMPORTANT: the icon is (re)inserted whenever it is missing, NOT once. Frappe's
+	// set_label() does `label_span.innerHTML = __(label)` on render, which wipes any
+	// icon placed inside the label — so we self-heal on icon presence rather than a
+	// sticky flag, and the set_label patch below re-adds it right after that wipe.
 	function add_icon(field) {
 		const $wrapper = field.$wrapper;
 		if (!$wrapper || !$wrapper.length) return false;
@@ -56,13 +61,16 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 			: $wrapper.find(".frappe-control").first();
 		const $ctrl = $control.length ? $control : $wrapper;
 
-		if ($ctrl.hasClass(PROCESSED_CLASS)) return true; // already done
-
 		// Check fields label their text in `.label-area`; everything else uses
 		// the standard `.control-label`.
 		let $label = $ctrl.find(".control-label").first();
 		if (!$label.length) $label = $ctrl.find(".checkbox .label-area").first();
 		if (!$label.length) return false;
+
+		// Marks the wrapper so CSS hides the inline help-box (persists harmlessly).
+		$ctrl.addClass(PROCESSED_CLASS);
+
+		// Icon already present in this label? nothing to do.
 		if ($label.find("." + ICON_CLASS).length) return true;
 
 		const $icon = $(
@@ -78,23 +86,30 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 		$icon.data("eeDescFallback", __(field.df.description));
 
 		$label.append(" ").append($icon);
-		$ctrl.addClass(PROCESSED_CLASS);
 		return true;
 	}
 
-	function enhance(frm) {
+	// Decorate a single control — called right after Frappe renders its help-box
+	// (see the set_description patch below). `control` has `.$wrapper` and `.df`,
+	// the same shape add_icon() expects from a fields_dict entry.
+	function decorate(control) {
+		if (!is_enabled()) return;
+		if (!control || !control.df || !control.df.description) return;
+		try {
+			add_icon(control);
+		} catch (e) {
+			// Never let one weird field break the form.
+			// eslint-disable-next-line no-console
+			console.warn("field_description_icons: skipped", control.df && control.df.fieldname, e);
+		}
+	}
+
+	// Decorate every described field on a form — used as a safety net and to
+	// catch a form already open when the patch first lands.
+	function rescan(frm) {
+		frm = frm || window.cur_frm;
 		if (!is_enabled() || !frm || !frm.fields_dict) return;
-		Object.keys(frm.fields_dict).forEach((fieldname) => {
-			const field = frm.fields_dict[fieldname];
-			if (!field || !field.df || !field.df.description) return;
-			try {
-				add_icon(field);
-			} catch (e) {
-				// Never let one weird field break the whole pass.
-				// eslint-disable-next-line no-console
-				console.warn("field_description_icons: skipped", fieldname, e);
-			}
-		});
+		Object.keys(frm.fields_dict).forEach((f) => decorate(frm.fields_dict[f]));
 	}
 
 	// --- Tooltip (single body-appended element; avoids section overflow clipping) ---
@@ -212,9 +227,39 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 	document.addEventListener("scroll", force_hide_tip, true);
 	$(window).on("resize.eeFieldDesc", force_hide_tip);
 
-	// Run on every form refresh (fires per doctype with frm — see
-	// activity_log_numbering.js for the same pattern).
-	$(document).on("form-refresh", (e, frm) => enhance(frm));
+	// Patch the control base so each field is decorated exactly when Frappe
+	// renders it. We wrap BOTH methods, called per field inside refresh_input
+	// (set_description first, then set_label):
+	//   - set_description: runs when the help-box is (re)rendered.
+	//   - set_label: rewrites the label's innerHTML (wiping our icon), so we
+	//     re-add the icon immediately after it — this is what makes the icon
+	//     stick across refreshes.
+	// (The `form-refresh` event fires BEFORE refresh_fields, when neither the
+	// label nor help-box exist yet — hooking it alone decorated nothing.)
+	function patch_controls() {
+		const ControlInput = frappe.ui && frappe.ui.form && frappe.ui.form.ControlInput;
+		if (!ControlInput || ControlInput.prototype.__ee_desc_patched) return;
+		["set_description", "set_label"].forEach((method) => {
+			const orig = ControlInput.prototype[method];
+			if (typeof orig !== "function") return;
+			ControlInput.prototype[method] = function () {
+				const ret = orig.apply(this, arguments);
+				decorate(this);
+				return ret;
+			};
+		});
+		ControlInput.prototype.__ee_desc_patched = true;
+	}
 
-	erpnext_enhancements.field_description_icons.enhance = enhance;
+	patch_controls();
+	$(document).on("app_ready", () => {
+		patch_controls();
+		rescan(window.cur_frm);
+	});
+	// Safety net: a deferred pass after the form's render chain settles
+	// (setTimeout runs after run_serially's microtask chain, i.e. after
+	// refresh_fields). Idempotent — add_icon no-ops on already-decorated fields.
+	$(document).on("form-refresh", (e, frm) => setTimeout(() => rescan(frm), 0));
+
+	erpnext_enhancements.field_description_icons.rescan = rescan;
 })();
