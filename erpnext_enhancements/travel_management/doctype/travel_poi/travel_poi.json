@@ -55,6 +55,8 @@
  "module": "Travel Management",
  "name": "Travel POI",
  "owner": "Administrator",
+ "show_title_field_in_link": 1,
+ "title_field": "poi_name",
  "permissions": [
   {
    "create": 1,

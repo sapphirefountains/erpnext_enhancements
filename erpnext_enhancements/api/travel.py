@@ -9,7 +9,7 @@ Security:
 	- ``get_my_trips`` / ``get_itinerary_bootstrap`` derive the employee from
 	  the SESSION user (same model as ``api.time_kiosk``) — never from a
 	  client-supplied parameter.
-	- ``get_trip_itinerary`` / ``get_trip_pois`` gate through
+	- ``get_trip_itinerary`` / ``get_trip_map_data`` gate through
 	  ``frappe.has_permission`` on the trip, which the Travel Trip permission
 	  hooks scope to owner/crew/coordinators
 	  (``travel_management.permissions``).
@@ -331,14 +331,11 @@ def shape_itinerary(doc, viewing_employee=None):
 # --------------------------------------------------------------------- maps
 
 
-@frappe.whitelist()
-def get_trip_pois(trip):
-	"""POIs referenced by a trip's agenda, with coordinates, for the form map
-	(public/js/travel/travel_trip_map.js). One entry per POI, carrying the
-	agenda dates that visit it."""
-	doc = frappe.get_doc("Travel Trip", trip)
-	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
-
+def _trip_pois(doc):
+	"""Mappable POIs referenced by a trip's agenda: one entry per POI with
+	coordinates and the agenda dates that visit it. Stops whose POI is missing
+	or has no Point geometry are skipped (no coordinates → nothing to plot).
+	Shared by the whitelisted ``get_trip_map_data`` endpoint."""
 	pois = {}
 	for row in doc.itinerary:
 		if not row.location:
@@ -368,6 +365,24 @@ def get_trip_pois(trip):
 			entry["agenda_dates"].append(str(row.date))
 
 	return list(pois.values())
+
+
+@frappe.whitelist()
+def get_trip_map_data(trip):
+	"""Agenda-map payload for the Travel Trip form
+	(public/js/travel/travel_trip_map.js): the Google Maps browser API key plus
+	the trip's mappable POIs, in one round-trip.
+
+	The key is the *browser* Maps JavaScript API key (referrer-restricted by
+	design — it is exposed to the client either way), so returning it to a
+	viewer already permitted to read the trip is expected."""
+	doc = frappe.get_doc("Travel Trip", trip)
+	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
+
+	return {
+		"api_key": frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or "",
+		"pois": _trip_pois(doc),
+	}
 
 
 # -------------------------------------------------------------------- email

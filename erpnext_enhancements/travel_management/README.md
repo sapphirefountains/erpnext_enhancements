@@ -62,7 +62,7 @@ Travel Settings   Single: per-diem rate rules (Travel Per Diem Rate child), mile
 | `report/…` | Script Reports | Travel Trip Cost Summary, Travel Spend by Category, Unclaimed Travel Expenses |
 | `workspace/travel_management/` | "Travel" workspace (links, calendar/new-trip/itinerary shortcuts) | — |
 
-Read-side endpoints (calendar events, `/itinerary` page data, form map POIs) live in [`api/travel.py`](../api/README.md); the form scripts are `public/js/travel_trip.js` + `public/js/travel/travel_trip_map.js`, the calendar config `public/js/travel_trip_calendar.js`, and the mobile page `www/itinerary.*` + `public/js|css/travel/itinerary.*`.
+Read-side endpoints (calendar events, `/itinerary` page data, the trip form's Google Maps agenda map) live in [`api/travel.py`](../api/README.md); the form scripts are `public/js/travel_trip.js` + `public/js/travel/travel_trip_map.js` (the latter needs the **Google Maps API Key** set in Travel Settings), the calendar config `public/js/travel_trip_calendar.js`, and the mobile page `www/itinerary.*` + `public/js|css/travel/itinerary.*`.
 
 The **company travel policy** ships as a login-gated page at `/travel_guidelines` (`www/travel_guidelines.py`/`.html`) — policy text plus "In the system" callouts tying each rule to these flows (Accommodation rows one-per-room, the nearest Home Depot as a *Hardware Store* Travel POI linked to itinerary stops, receipts on cost rows, claims within a week, Time Kiosk clock-in at scheduled departure). It is linked from the Travel workspace, the `/itinerary` footer, and the booked/traveler-added emails (`guidelines_url` in the notification context).
 
