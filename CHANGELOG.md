@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.133.0] - 2026-06-29
+
+### Added
+- **Google Maps on the Travel Trip agenda map.** The "Map" section on a Travel Trip's Itinerary tab now renders a real Google map of the agenda-stop POIs, each pin carrying an **always-visible name label** plus a click bubble (category, the dates that visit it, and Open POI / Directions links). Driven by a new **Google Maps API Key** field in **Travel Settings** (the browser Maps JavaScript API key — enable that API for the key and restrict it by HTTP referrer). With no key set, the section degrades to a list of Google Maps links so the stops stay usable. New whitelisted `api.travel.get_trip_map_data` returns the key + mappable POIs in one permission-gated call (replaces `get_trip_pois`).
+
+### Fixed
+- **Blank trip "Map" box.** The agenda map lives on a tab that is hidden at form load, so the map was being initialised inside a 0×0 container and never laid out (a classic map-in-hidden-tab bug). It is now built lazily, the moment its tab/container is actually on screen and sized (`IntersectionObserver`).
+- **Unfriendly POI location names.** The itinerary "Location" column showed each Travel POI's raw hash id (e.g. `dfhasj23p8`) instead of its name. `Travel POI` now declares its `poi_name` as the title field with `show_title_field_in_link`, so every link to a POI displays the friendly name.
+
 ## [1.132.0] - 2026-06-26
 
 ### Added

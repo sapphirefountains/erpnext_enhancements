@@ -14,8 +14,24 @@ frappe.ui.form.on('Travel Settings', {
 
 		frm.toggle_display('expense_types_section', available);
 
+		// Clear once up front so neither notice duplicates across refreshes.
+		frm.dashboard.clear_comment();
+
+		// The agenda map uses a Google Maps *browser* key — it is sent to every
+		// permitted Trip viewer by design, so its only real protection is an
+		// HTTP-referrer restriction in the Google Cloud console. Remind the
+		// operator the moment a key is present.
+		if (frm.doc.google_maps_api_key) {
+			frm.dashboard.add_comment(
+				__(
+					'Restrict the Google Maps API key by HTTP referrer (to your ERPNext domain) in the Google Cloud console — a browser key is exposed to anyone who can open a Travel Trip.'
+				),
+				'blue',
+				true
+			);
+		}
+
 		if (!available) {
-			frm.dashboard.clear_comment();
 			frm.dashboard.add_comment(
 				__(
 					'The HR module (Frappe HR) is not installed, so Expense Claim Type mapping and travel expense-claim generation are unavailable. The per-diem and mileage rates below still apply. Install <code>hrms</code> to enable travel finance.'

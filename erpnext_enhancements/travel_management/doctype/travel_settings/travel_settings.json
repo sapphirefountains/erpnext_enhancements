@@ -18,7 +18,9 @@
   "per_diem_section",
   "per_diem_rates",
   "mileage_rate_section",
-  "mileage_rate"
+  "mileage_rate",
+  "maps_section",
+  "google_maps_api_key"
  ],
  "fields": [
   {
@@ -106,6 +108,17 @@
    "fieldname": "mileage_rate",
    "fieldtype": "Currency",
    "label": "Mileage Rate (per mile)"
+  },
+  {
+   "fieldname": "maps_section",
+   "fieldtype": "Section Break",
+   "label": "Maps"
+  },
+  {
+   "description": "Browser key for the Google Maps JavaScript API, used by the agenda map on the Travel Trip form. In the Google Cloud console, enable \"Maps JavaScript API\" for this key and restrict it by HTTP referrer to your ERPNext domain(s). Leave blank to fall back to a list of Google Maps links.",
+   "fieldname": "google_maps_api_key",
+   "fieldtype": "Data",
+   "label": "Google Maps API Key"
   }
  ],
  "issingle": 1,

@@ -70,7 +70,7 @@ Every file has a top-of-file doc block. This README is the architecture map.
 - **`project_enhancements/`** — `project_form_script.js` (task tree + Gantt tabs), `project_brief.js`, `task_tree_manager.js` (the `TaskTreeManager` hierarchical grid), `gantt_zoom.js` (shared zoom ladder), `task_gantt.js`, plus `dashboard_components/` (below) and the vendored `lib/frappe-gantt.umd.js`.
 - **`task_enhancements/`** — `task_enhancements.js` (patches `TreeView.get_tree_nodes` for the Hierarchical Task View).
 - **`kiosk/`** — `app.js` + `geo.js` (the Time Kiosk PWA front-end, below).
-- **`travel/`** — `travel_trip_map.js` (Leaflet map of agenda-stop POIs in the trip form's `agenda_map_html` field; renders on refresh, frappe-bundled Leaflet via the `location_timeline.js` loader pattern) and `itinerary.js` (the vanilla-JS `/itinerary` page UI — loaded by `www/itinerary.html` with the `?v=` cache-bust token, NOT via hooks; styles in `css/travel/itinerary.css`, `--ti-*` palette + `prefers-color-scheme` dark).
+- **`travel/`** — `travel_trip_map.js` (Google Maps map of agenda-stop POIs in the trip form's `agenda_map_html` field; key + POIs from `api.travel.get_trip_map_data`, map built lazily once its tab is visible to avoid the 0×0-container blank-map bug, pins carry always-visible name labels) and `itinerary.js` (the vanilla-JS `/itinerary` page UI — loaded by `www/itinerary.html` with the `?v=` cache-bust token, NOT via hooks; styles in `css/travel/itinerary.css`, `--ti-*` palette + `prefers-color-scheme` dark).
 
 ## The Comments App
 
