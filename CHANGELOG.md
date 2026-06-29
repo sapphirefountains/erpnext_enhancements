@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.135.0] - 2026-06-29
+
+### Added
+- **Travel maps locate POIs by their linked Address (geocoding).** A Travel POI is often located by its **Address** field rather than a dropped pin, which left the trip agenda map blank (it only plotted POIs with coordinates). Now:
+  - The **trip agenda map** geocodes any stop that has an address but no point, plots it, and **caches** the result back onto the POI (new whitelisted `api.travel.cache_poi_geocode`, write-gated and non-clobbering) so it isn't re-geocoded next time. `get_trip_map_data` now returns a geocodable `address` string for coordless POIs.
+  - The **Travel POI map** centres on the linked Address (geocoded) when no point is set, so the POI shows on Google Maps from its address alone; a **"Locate from linked address"** button (and manual click/drag) set an exact point.
+  - Requires the **Geocoding API** enabled on the Maps key (in addition to the Maps JavaScript API). Without it, maps fall back to a list of Google Maps links by address.
+
 ## [1.134.0] - 2026-06-29
 
 ### Added
