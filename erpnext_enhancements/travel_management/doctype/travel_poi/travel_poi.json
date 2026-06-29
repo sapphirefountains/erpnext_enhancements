@@ -7,6 +7,7 @@
   "poi_name",
   "category",
   "geolocation",
+  "location_map",
   "column_break_1",
   "address",
   "notes"
@@ -29,9 +30,16 @@
    "options": "Hardware Store\nSupply Depot\nClient HQ\nHotel\nAirport\nRestaurant\nJob Site\nOther"
   },
   {
+   "description": "Stored as GeoJSON; set via the Google map below (the native OpenStreetMap picker is hidden).",
    "fieldname": "geolocation",
    "fieldtype": "Geolocation",
+   "hidden": 1,
    "label": "Geolocation"
+  },
+  {
+   "fieldname": "location_map",
+   "fieldtype": "HTML",
+   "label": "Map"
   },
   {
    "fieldname": "column_break_1",
