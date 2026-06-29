@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.133.2] - 2026-06-29
+
+### Fixed
+- **Travel Trip save crashed with `TableMissingError: ('DocType', 'Expense Claim')` on HRMS-less sites.** The trip controller's financial rollups and trash-cleanup guarded their HRMS links (`Expense Claim` / `Employee Advance` / `Vehicle Log`) with `frappe.db.has_column(doctype, "custom_travel_trip")`, assuming a missing back-link returns `False`. But `has_column` *raises* `TableMissingError` when the **table itself** is absent (it only returns `False` for a missing column on an existing table) — so on a site without HRMS installed, `validate` → `_compute_rollups` blew up on every save. Added a `_has_travel_backlink()` helper that gates on `frappe.db.table_exists()` first; all three call sites now skip absent HRMS doctypes cleanly. (HRMS is not installed on production — see the optional-HRMS work in v1.77.0.)
+
 ## [1.133.1] - 2026-06-29
 
 ### Fixed
