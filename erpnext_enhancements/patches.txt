@@ -125,3 +125,6 @@ erpnext_enhancements.patches.seed_department_role_profiles
 # v1.132.0 Business Process Mapping (Phase 5): seed the remaining 6 department
 # process maps (Sales/Design/Operations/Marketing/Product/Executive) — insert-only
 erpnext_enhancements.patches.seed_process_maps_remaining_departments
+# v1.136.0 default the new "Field Description Info Icons" toggle ON for existing
+# installs (new sites get it from the Check field default at doc creation)
+erpnext_enhancements.patches.default_field_description_icons_on

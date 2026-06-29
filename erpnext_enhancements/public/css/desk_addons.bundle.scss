@@ -21,6 +21,7 @@
  * hooks.py still references "desk_addons.bundle.css" via assets.json.
  */
 @import "./global_enhancements/triton_widget";
+@import "./global_enhancements/field_description_icons";
 @import "./project_enhancements/task_tree";
 @import "./project_enhancements/frappe-gantt";
 @import "./task_enhancements/task_enhancements";
