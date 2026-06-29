@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.133.1] - 2026-06-29
+
+### Fixed
+- **Travel Trip save crashed with `Unknown column 'company'`.** The Travel Trip `company` field carried `default: ":Company"`, which Frappe resolves as "fetch the `company` field *from* the Company doctype" — but Company has no such column, so `_set_defaults` (run by `frappe.new_doc` on every save) raised `OperationalError (1054, "Unknown column 'company' in 'SELECT'")`. Latent since the module was effectively unused; surfaced on the first real trip save. Removed the default — Frappe still auto-fills the company from the user's default Company, exactly as ERPNext's own company fields do (Sales Invoice/Order/Project carry no default). Verified against the production bench.
+
 ## [1.133.0] - 2026-06-29
 
 ### Added
