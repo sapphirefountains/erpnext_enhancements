@@ -345,11 +345,35 @@ def get_maps_api_key():
 	return _maps_api_key()
 
 
+def _poi_address_string(address_name):
+	"""A geocodable one-line string for a linked Address, or None."""
+	if not address_name:
+		return None
+	addr = frappe.db.get_value(
+		"Address",
+		address_name,
+		["address_line1", "address_line2", "city", "state", "pincode", "country"],
+		as_dict=True,
+	)
+	if not addr:
+		return None
+	parts = [p for p in (
+		addr.address_line1,
+		addr.address_line2,
+		addr.city,
+		addr.state,
+		addr.pincode,
+		addr.country,
+	) if p]
+	return ", ".join(parts) if parts else None
+
+
 def _trip_pois(doc):
-	"""Mappable POIs referenced by a trip's agenda: one entry per POI with
-	coordinates and the agenda dates that visit it. Stops whose POI is missing
-	or has no Point geometry are skipped (no coordinates → nothing to plot).
-	Shared by the whitelisted ``get_trip_map_data`` endpoint."""
+	"""POIs referenced by a trip's agenda, one entry per POI with the agenda
+	dates that visit it. Each entry carries *either* coordinates (from the POI's
+	Geolocation) *or* — when no point is set — a geocodable ``address`` string
+	(from the linked Address) so the client can place it from the address. POIs
+	with neither are skipped (nothing to plot). Shared by ``get_trip_map_data``."""
 	pois = {}
 	for row in doc.itinerary:
 		if not row.location:
@@ -359,20 +383,22 @@ def _trip_pois(doc):
 			poi = frappe.db.get_value(
 				"Travel POI",
 				row.location,
-				["poi_name", "category", "geolocation"],
+				["poi_name", "category", "geolocation", "address"],
 				as_dict=True,
 			)
 			if not poi:
 				continue
 			latlng = _poi_latlng(poi.geolocation)
-			if not latlng:
+			address = None if latlng else _poi_address_string(poi.address)
+			if not latlng and not address:
 				continue
 			entry = pois[row.location] = {
 				"poi": row.location,
 				"label": poi.poi_name,
 				"category": poi.category,
-				"lat": latlng[0],
-				"lng": latlng[1],
+				"lat": latlng[0] if latlng else None,
+				"lng": latlng[1] if latlng else None,
+				"address": address,
 				"agenda_dates": [],
 			}
 		if str(row.date) not in entry["agenda_dates"]:
@@ -397,6 +423,33 @@ def get_trip_map_data(trip):
 		"api_key": _maps_api_key(),
 		"pois": _trip_pois(doc),
 	}
+
+
+@frappe.whitelist()
+def cache_poi_geocode(poi, lat, lng):
+	"""Persist a client-geocoded point onto a Travel POI's ``geolocation`` so a
+	linked Address isn't re-geocoded on every map load.
+
+	Best-effort: needs write access to the POI and never clobbers a point that is
+	already set (a manually-placed pin wins)."""
+	if not frappe.has_permission("Travel POI", "write", doc=poi):
+		return
+	existing = frappe.db.get_value("Travel POI", poi, "geolocation")
+	if existing and existing.strip() not in ("", "{}"):
+		return
+	geojson = json.dumps(
+		{
+			"type": "FeatureCollection",
+			"features": [
+				{
+					"type": "Feature",
+					"properties": {},
+					"geometry": {"type": "Point", "coordinates": [flt(lng), flt(lat)]},
+				}
+			],
+		}
+	)
+	frappe.db.set_value("Travel POI", poi, "geolocation", geojson)
 
 
 # -------------------------------------------------------------------- email

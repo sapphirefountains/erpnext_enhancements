@@ -1,14 +1,22 @@
 /**
  * Travel POI form.
  *
- *  - Google Maps location picker in the `location_map` HTML field: click the
- *    map (or drag the pin) to set this POI's coordinates. The point is stored
- *    in the *hidden* native `geolocation` field as a GeoJSON FeatureCollection
- *    Point — the same shape api/travel.py `_poi_latlng` reads — so the trip
- *    agenda map and itinerary page keep working unchanged. The native
+ *  - Google Maps location picker in the `location_map` HTML field. The map is
+ *    centred on the POI's point if one is set, otherwise it geocodes the linked
+ *    **Address** and shows that — so a POI located purely by its address still
+ *    appears on Google Maps. Click the map or drag the pin to set an exact
+ *    point, or press "Locate from linked address" to (re)place it from the
+ *    address. The chosen point is stored in the *hidden* native `geolocation`
+ *    field as a GeoJSON Point — the shape api/travel.py `_poi_latlng` reads — so
+ *    the trip agenda map and /itinerary page consume it unchanged. The native
  *    Geolocation control (Leaflet/OpenStreetMap) is hidden in favour of this.
- *  - "Open in Google Maps" button (the POI's coordinates, else a text search on
- *    the linked Address).
+ *  - "Open in Google Maps" button (the POI's coordinates, else its Address).
+ *
+ * Auto-geocoding from the address is *display only* — it does not dirty the
+ * form. Persisting coordinates happens when the user sets a point explicitly,
+ * or automatically when the POI is rendered on the trip agenda map (which
+ * caches the geocode via api.travel.cache_poi_geocode). Geocoding needs the
+ * Geocoding API enabled on the Maps key.
  *
  * The key comes from Travel Settings via api.travel.get_maps_api_key. The Maps
  * loader here is self-contained (the trip agenda map carries its own) — the
@@ -77,6 +85,42 @@
 		});
 	}
 
+	// A geocodable one-line string for the POI's linked Address, or null.
+	function addressString(frm) {
+		if (!frm.doc.address) return Promise.resolve(null);
+		return frappe.db
+			.get_value('Address', frm.doc.address, [
+				'address_line1',
+				'address_line2',
+				'city',
+				'state',
+				'pincode',
+				'country',
+			])
+			.then((r) => {
+				const a = (r && r.message) || {};
+				const parts = [
+					a.address_line1,
+					a.address_line2,
+					a.city,
+					a.state,
+					a.pincode,
+					a.country,
+				].filter(Boolean);
+				return parts.length ? parts.join(', ') : null;
+			});
+	}
+
+	function ensureKey(frm) {
+		if (frm._mapsApiKey !== undefined) return Promise.resolve(frm._mapsApiKey);
+		return frappe
+			.call({ method: 'erpnext_enhancements.api.travel.get_maps_api_key' })
+			.then((r) => {
+				frm._mapsApiKey = (r && r.message) || '';
+				return frm._mapsApiKey;
+			});
+	}
+
 	function renderPicker(frm, apiKey) {
 		const field = frm.get_field('location_map');
 		if (!field || !field.$wrapper) return;
@@ -104,6 +148,15 @@
 		$hint.text(editable ? __('Click the map or drag the pin to set this location. ') : __('Location: '));
 		$hint.append($coords);
 		$wrapper.append($hint);
+
+		let $relocate = null;
+		if (editable) {
+			$relocate = $(
+				'<button class="btn btn-xs btn-default" style="margin-bottom:6px;">' +
+				__('Locate from linked address') +
+				'</button>'
+			).appendTo($wrapper);
+		}
 
 		const container = $(
 			'<div style="height:340px;border-radius:8px;border:1px solid var(--border-color);"></div>'
@@ -139,9 +192,7 @@
 						} else {
 							marker = new maps.Marker({ position: { lat, lng }, map, draggable: editable });
 							if (editable) {
-								marker.addListener('dragend', (e) =>
-									commit(e.latLng.lat(), e.latLng.lng())
-								);
+								marker.addListener('dragend', (e) => commit(e.latLng.lat(), e.latLng.lng()));
 							}
 						}
 						showCoords(lat, lng);
@@ -155,9 +206,40 @@
 						frm.doc.geolocation = geolocationFromPoint(lat, lng);
 						frm.dirty();
 					};
-					if (existing) place(existing.lat, existing.lng);
+					// Geocode the linked address. `persist` commits (explicit user
+					// action); otherwise it only displays, so opening a POI never
+					// dirties the form.
+					const locateFromAddress = (persist) => {
+						addressString(frm).then((addr) => {
+							if (!addr) {
+								if (persist) frappe.msgprint(__('The linked Address has no details to locate.'));
+								return;
+							}
+							new maps.Geocoder().geocode({ address: addr }, (results, status) => {
+								if (status === 'OK' && results && results[0]) {
+									const loc = results[0].geometry.location;
+									const lat = loc.lat();
+									const lng = loc.lng();
+									map.setCenter({ lat, lng });
+									map.setZoom(POINT_ZOOM);
+									persist ? commit(lat, lng) : place(lat, lng);
+								} else if (persist) {
+									frappe.msgprint(
+										__('Could not locate that address. Is the Geocoding API enabled on the Maps key?')
+									);
+								}
+							});
+						});
+					};
+
+					if (existing) {
+						place(existing.lat, existing.lng);
+					} else if (frm.doc.address) {
+						locateFromAddress(false); // show the address location (no dirty)
+					}
 					if (editable) {
 						map.addListener('click', (e) => commit(e.latLng.lat(), e.latLng.lng()));
+						if ($relocate) $relocate.on('click', () => locateFromAddress(true));
 					}
 				})
 				.catch(() => {
@@ -184,36 +266,25 @@
 			window.open('https://maps.google.com/?q=' + coords.lat + ',' + coords.lng, '_blank');
 			return;
 		}
-		if (frm.doc.address) {
-			frappe.db.get_doc('Address', frm.doc.address).then((addr) => {
-				const parts = [
-					addr.address_line1,
-					addr.address_line2,
-					addr.city,
-					addr.state,
-					addr.pincode,
-					addr.country,
-				].filter(Boolean);
-				if (!parts.length) {
-					frappe.msgprint(__('The linked Address has no location details to map.'));
-					return;
-				}
-				window.open(
-					'https://maps.google.com/?q=' + encodeURIComponent(parts.join(', ')),
-					'_blank'
-				);
-			});
-			return;
-		}
-		frappe.msgprint(__('Set the location on the map or link an Address first.'));
+		addressString(frm).then((addr) => {
+			if (!addr) {
+				frappe.msgprint(__('Set the location on the map or link an Address first.'));
+				return;
+			}
+			window.open('https://maps.google.com/?q=' + encodeURIComponent(addr), '_blank');
+		});
 	}
 
 	frappe.ui.form.on('Travel POI', {
 		refresh(frm) {
 			frm.add_custom_button(__('Open in Google Maps'), () => openInGoogleMaps(frm));
-			frappe
-				.call({ method: 'erpnext_enhancements.api.travel.get_maps_api_key' })
-				.then((r) => renderPicker(frm, (r && r.message) || ''));
+			ensureKey(frm).then((key) => renderPicker(frm, key));
+		},
+		address(frm) {
+			// Address changed: re-render so the map reflects the new address (it
+			// auto-shows the address location when no point is set; an existing
+			// point is kept — use "Locate from linked address" to override it).
+			ensureKey(frm).then((key) => renderPicker(frm, key));
 		},
 	});
 })();

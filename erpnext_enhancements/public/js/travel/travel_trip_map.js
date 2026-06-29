@@ -6,8 +6,12 @@
  * Loaded via: hooks.py `doctype_js["Travel Trip"]` (alongside travel_trip.js).
  *
  * Data + key come from erpnext_enhancements.api.travel.get_trip_map_data:
- *   { api_key, pois }. Each POI carries coordinates and the agenda dates that
- *   visit it; api_key is the Google Maps **browser** key from Travel Settings
+ *   { api_key, pois }. Each POI carries the agenda dates that visit it and
+ *   *either* coordinates (from its Geolocation) *or* a geocodable `address`
+ *   string (from the linked Address) when no point is set — address-only stops
+ *   are geocoded here client-side and the result is cached back via
+ *   api.travel.cache_poi_geocode (needs the Geocoding API enabled on the key).
+ *   api_key is the Google Maps **browser** key from Travel Settings
  *   (Maps JavaScript API, referrer-restricted) — client-side by design.
  *
  * Two things this file is careful about:
@@ -90,9 +94,9 @@
 		return PoiLabel;
 	}
 
-	function popupHtml(poi) {
+	function popupHtml(poi, lat, lng) {
 		const esc = frappe.utils.escape_html;
-		const gmaps = 'https://maps.google.com/?q=' + poi.lat + ',' + poi.lng;
+		const gmaps = 'https://maps.google.com/?q=' + lat + ',' + lng;
 		const dates = (poi.agenda_dates || []).map(esc).join(', ');
 		return (
 			'<div style="min-width:160px">' +
@@ -105,10 +109,13 @@
 		);
 	}
 
+	// Plots POIs that already have coordinates immediately and geocodes the rest
+	// from their linked address (caching the result). Resolves with the number
+	// actually plotted so the caller can fall back when nothing could be placed.
 	function drawMap(maps, container, pois) {
 		const map = new maps.Map(container, {
-			zoom: 12,
-			center: { lat: pois[0].lat, lng: pois[0].lng },
+			zoom: 4,
+			center: { lat: 39.5, lng: -98.35 }, // continental US; fitBounds adjusts
 			mapTypeControl: false,
 			streetViewControl: false,
 			fullscreenControl: true,
@@ -117,28 +124,69 @@
 		const PoiLabel = makeLabelOverlay(maps);
 		const info = new maps.InfoWindow();
 		const bounds = new maps.LatLngBounds();
+		const geocoder = new maps.Geocoder();
+		let plotted = 0;
 
-		pois.forEach((poi) => {
-			const position = { lat: poi.lat, lng: poi.lng };
+		const addMarker = (poi, lat, lng) => {
+			const position = { lat: lat, lng: lng };
 			const marker = new maps.Marker({ position, map, title: poi.label });
-			new PoiLabel(new maps.LatLng(poi.lat, poi.lng), poi.label).setMap(map);
+			new PoiLabel(new maps.LatLng(lat, lng), poi.label).setMap(map);
 			marker.addListener('click', () => {
-				info.setContent(popupHtml(poi));
+				info.setContent(popupHtml(poi, lat, lng));
 				info.open({ map, anchor: marker });
 			});
 			bounds.extend(position);
+			plotted++;
+		};
+
+		const tasks = pois.map((poi) => {
+			if (poi.lat != null && poi.lng != null) {
+				addMarker(poi, poi.lat, poi.lng);
+				return Promise.resolve();
+			}
+			if (!poi.address) return Promise.resolve();
+			return new Promise((resolve) => {
+				geocoder.geocode({ address: poi.address }, (results, status) => {
+					if (status === 'OK' && results && results[0]) {
+						const loc = results[0].geometry.location;
+						const lat = loc.lat();
+						const lng = loc.lng();
+						addMarker(poi, lat, lng);
+						// Cache so the address isn't re-geocoded next load (best-effort).
+						frappe
+							.call({
+								method: 'erpnext_enhancements.api.travel.cache_poi_geocode',
+								args: { poi: poi.poi, lat: lat, lng: lng },
+							})
+							.catch(() => {});
+					}
+					resolve();
+				});
+			});
 		});
 
-		if (pois.length > 1) map.fitBounds(bounds, 48);
+		return Promise.all(tasks).then(() => {
+			if (plotted > 1) map.fitBounds(bounds, 48);
+			else if (plotted === 1) {
+				map.setCenter(bounds.getCenter());
+				map.setZoom(13);
+			}
+			return plotted;
+		});
 	}
 
-	// No map (no key, or the API failed to load): keep the stops usable as a
-	// list of Google Maps deep links rather than an empty box.
+	// No map (no key, the API failed to load, or nothing could be geocoded):
+	// keep the stops usable as a list of Google Maps deep links — by coordinates
+	// when known, otherwise by the linked address.
 	function fallbackList($wrapper, pois, message) {
 		const esc = frappe.utils.escape_html;
 		const links = pois
 			.map((poi) => {
-				const gmaps = 'https://maps.google.com/?q=' + poi.lat + ',' + poi.lng;
+				const query =
+					poi.lat != null && poi.lng != null
+						? poi.lat + ',' + poi.lng
+						: poi.address || poi.label;
+				const gmaps = 'https://maps.google.com/?q=' + encodeURIComponent(query);
 				return (
 					'<li><a href="' + gmaps + '" target="_blank" rel="noopener">' +
 					esc(poi.label) + '</a></li>'
@@ -170,7 +218,7 @@
 		if (!pois.length) {
 			$wrapper.html(
 				'<div class="text-muted" style="padding:8px 0;">' +
-				__('Link itinerary stops to Travel POIs with coordinates to see them here.') +
+				__('Link itinerary stops to Travel POIs with a location (a map point or a linked Address) to see them here.') +
 				'</div>'
 			);
 			return;
@@ -200,6 +248,15 @@
 			}
 			ensureGoogleMaps(apiKey)
 				.then((maps) => drawMap(maps, container, pois))
+				.then((plotted) => {
+					if (!plotted) {
+						fallbackList(
+							$wrapper,
+							pois,
+							__('Could not place these stops on the map — enable the Geocoding API on the Maps key, or set a point on each POI.')
+						);
+					}
+				})
 				.catch(() =>
 					fallbackList(
 						$wrapper,
