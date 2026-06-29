@@ -61,6 +61,20 @@ def user_is_travel_coordinator(user=None):
 	return bool(TRAVEL_COORDINATOR_ROLES & set(frappe.get_roles(user)))
 
 
+def _has_travel_backlink(doctype):
+	"""True only when ``doctype``'s table exists *and* carries the fixture-managed
+	``custom_travel_trip`` back-link.
+
+	HRMS is optional, so Expense Claim / Employee Advance / Vehicle Log may be
+	absent entirely. ``has_column`` raises ``TableMissingError`` for a missing
+	table (it returns False only for a missing column on a table that exists), so
+	gate on ``table_exists`` first — otherwise rollups/cleanup crash on a
+	no-HRMS site."""
+	return frappe.db.table_exists(doctype) and frappe.db.has_column(
+		doctype, "custom_travel_trip"
+	)
+
+
 class TravelTrip(Document):
 	"""Validation pipeline + financial rollups; document creation lives in api.py."""
 
@@ -86,13 +100,14 @@ class TravelTrip(Document):
 		"""Block deletion while submitted financial documents point here;
 		unlink drafts (and Leads/Opportunities, which are provenance only).
 
-		Every query is guarded by ``has_column``: the ``custom_travel_trip``
-		back-link fields are fixture-managed Custom Fields and may not exist
-		yet mid-migrate or on a partially set-up site.
+		Every query is guarded by ``_has_travel_backlink``: the HRMS doctypes may
+		be absent entirely, and the ``custom_travel_trip`` back-link fields are
+		fixture-managed Custom Fields that may not exist yet mid-migrate or on a
+		partially set-up site.
 		"""
 		linked = []
 		for doctype in ("Expense Claim", "Employee Advance", "Vehicle Log"):
-			if not frappe.db.has_column(doctype, "custom_travel_trip"):
+			if not _has_travel_backlink(doctype):
 				continue
 			for row in frappe.get_all(
 				doctype,
@@ -110,7 +125,7 @@ class TravelTrip(Document):
 				)
 			)
 		for doctype in ("Lead", "Opportunity"):
-			if not frappe.db.has_column(doctype, "custom_travel_trip"):
+			if not _has_travel_backlink(doctype):
 				continue
 			frappe.db.set_value(
 				doctype, {"custom_travel_trip": self.name}, "custom_travel_trip", None
@@ -351,7 +366,7 @@ class TravelTrip(Document):
 			self.total_advance_amount = self._linked_total("Employee Advance", "advance_amount")
 
 	def _linked_total(self, doctype, amount_field):
-		if not frappe.db.has_column(doctype, "custom_travel_trip"):
+		if not _has_travel_backlink(doctype):
 			return 0  # fixture-managed back-link field not applied yet
 		# Query builder: frappe 16 rejects SQL functions as get_all field strings.
 		from frappe.query_builder.functions import Sum
