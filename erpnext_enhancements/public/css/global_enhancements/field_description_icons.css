@@ -6,9 +6,11 @@
  * vars, so no [data-theme="dark"] overrides are needed here.
  */
 
-/* Replace the inline help text — the JS keeps the .help-box in the DOM (it is
- * the live source of the tooltip), we only hide it. */
-.ee-field-desc .help-box {
+/* Replace the inline help text — the JS keeps these in the DOM (they are the
+ * live source of the tooltip), we only hide them. Standard controls render the
+ * description in .help-box; Table/grid controls use .grid-description instead. */
+.ee-field-desc .help-box,
+.ee-field-desc .grid-description {
 	display: none !important;
 }
 

@@ -130,10 +130,15 @@ frappe.provide("erpnext_enhancements.field_description_icons");
 	}
 
 	function tip_html_for($icon) {
-		// The live help-box (sibling within the same control) is the source of
+		// The live description element within the same control is the source of
 		// truth: Frappe already translated it and rendered any HTML/links.
-		const $help = $icon.closest(".frappe-control").find(".help-box").first();
-		const html = $help.length ? ($help.html() || "").trim() : "";
+		// Standard controls use .help-box; Table/grid controls use .grid-description.
+		const $ctrl = $icon.closest(".frappe-control");
+		let $src = $ctrl.find(".help-box").first();
+		if (!$src.length || !($src.html() || "").trim()) {
+			$src = $ctrl.find(".grid-description").first();
+		}
+		const html = $src.length ? ($src.html() || "").trim() : "";
 		if (html) return html;
 		const fallback = $icon.data("eeDescFallback") || "";
 		return frappe.utils.escape_html(fallback);
