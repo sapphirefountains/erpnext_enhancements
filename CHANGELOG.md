@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.134.0] - 2026-06-29
+
+### Added
+- **Google Maps location picker on the Travel POI form.** Replaces the native `Geolocation` field's OpenStreetMap/Leaflet map (now hidden) with a Google map in a new **Map** field: click the map or drag the pin to set the POI's coordinates. The point is written back into the hidden `geolocation` field as a GeoJSON `Point` — the exact shape `api/travel.py` `_poi_latlng` already reads — so the trip agenda map and `/itinerary` page consume it unchanged. Read-only viewers get a non-editable map; with no API key set, a prompt to configure one. New whitelisted `api.travel.get_maps_api_key` serves the (browser, referrer-restricted) key to the form. This also unblocks the trip agenda map: it only plots stops whose POI has coordinates, so POIs need a point set here first.
+
 ## [1.133.2] - 2026-06-29
 
 ### Fixed

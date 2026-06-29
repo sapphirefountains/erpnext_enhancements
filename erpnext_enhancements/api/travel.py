@@ -331,6 +331,20 @@ def shape_itinerary(doc, viewing_employee=None):
 # --------------------------------------------------------------------- maps
 
 
+def _maps_api_key():
+	return frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or ""
+
+
+@frappe.whitelist()
+def get_maps_api_key():
+	"""The Google Maps *browser* API key (Travel Settings), for the Travel POI
+	location picker (travel_poi.js) and other travel maps.
+
+	A referrer-restricted browser key — exposed to the client by design — so any
+	logged-in user may read it. Not gated to a specific record."""
+	return _maps_api_key()
+
+
 def _trip_pois(doc):
 	"""Mappable POIs referenced by a trip's agenda: one entry per POI with
 	coordinates and the agenda dates that visit it. Stops whose POI is missing
@@ -380,7 +394,7 @@ def get_trip_map_data(trip):
 	frappe.has_permission("Travel Trip", "read", doc=doc, throw=True)
 
 	return {
-		"api_key": frappe.db.get_single_value("Travel Settings", "google_maps_api_key") or "",
+		"api_key": _maps_api_key(),
 		"pois": _trip_pois(doc),
 	}
 
