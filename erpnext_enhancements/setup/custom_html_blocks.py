@@ -61,11 +61,11 @@ HOME_BLOCKS = {"Desk Shortcuts", "Projects Dashboard", "Task Dashboard", "Mornin
 
 HOME_WORKSPACE = "Home"
 
-# The KPI Cockpit (with its department picker) also lands on Home and on each
-# department dashboard, where it auto-locks to that department by route (see
-# "Custom HTML Block/kpi_cockpit.js"). These dashboards are site-created during
-# the module reorg and may be absent on a given site — placement skips them
-# silently rather than failing the migrate.
+# The KPI Cockpit lands on Home (its placement above). The seven site-created
+# department workspaces below USED to carry it too; per-department KPIs now live
+# on dedicated role-gated pages instead, so this tuple is the list the strip
+# patch (patches.remove_kpi_cockpit_from_dept_workspaces) cleans the cockpit out
+# of. Kept here as the single source of truth for those workspace names.
 KPI_COCKPIT = "KPI Cockpit"
 KPI_DEPARTMENT_DASHBOARDS = (
 	"Finance Dashboard",
@@ -162,13 +162,13 @@ def sync_custom_html_blocks():
 	if home_blocks and _append_custom_blocks(HOME_WORKSPACE, home_blocks):
 		changed = True
 
-	# Surface the KPI Cockpit where people already work: Home (keeps the
-	# department picker) and each department dashboard (the block auto-locks to
-	# its department by route). Only once the block itself synced OK.
-	if KPI_COCKPIT in synced:
-		for workspace in (HOME_WORKSPACE, *KPI_DEPARTMENT_DASHBOARDS):
-			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
-				changed = True
+	# Surface the KPI Cockpit (with its department picker) on Home as a personal
+	# overview. Per-department KPI views now live on dedicated, role-gated desk
+	# pages (kpi_dashboards/page/<dept>_kpi) that can be shared individually —
+	# they are NOT placed on the department workspaces any more (the existing
+	# placements are stripped by patches.remove_kpi_cockpit_from_dept_workspaces).
+	if KPI_COCKPIT in synced and _append_custom_blocks(HOME_WORKSPACE, [KPI_COCKPIT]):
+		changed = True
 
 	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
 	# workspace, in FINANCE_DASHBOARD_BLOCKS order (a missing workspace is skipped).

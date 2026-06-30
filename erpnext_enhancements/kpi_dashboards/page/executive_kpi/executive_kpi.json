@@ -1,0 +1,24 @@
+{
+ "content": "",
+ "creation": "2026-06-30 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "KPI Dashboards",
+ "name": "executive-kpi",
+ "owner": "Administrator",
+ "page_name": "executive-kpi",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Sales Manager"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Executive KPIs"
+}

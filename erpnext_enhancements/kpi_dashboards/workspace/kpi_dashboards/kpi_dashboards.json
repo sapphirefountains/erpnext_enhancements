@@ -76,6 +76,54 @@
  "sequence_id": 30,
  "shortcuts": [
   {
+   "color": "Blue",
+   "label": "Finance KPIs",
+   "link_to": "finance-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Sales KPIs",
+   "link_to": "sales-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Operations KPIs",
+   "link_to": "operations-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Marketing KPIs",
+   "link_to": "marketing-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Design KPIs",
+   "link_to": "design-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Production KPIs",
+   "link_to": "production-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Product KPIs",
+   "link_to": "product-kpi",
+   "type": "Page"
+  },
+  {
+   "color": "Blue",
+   "label": "Executive KPIs",
+   "link_to": "executive-kpi",
+   "type": "Page"
+  },
+  {
    "doc_view": "List",
    "label": "KPI Target",
    "link_to": "KPI Target",

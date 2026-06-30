@@ -1,0 +1,27 @@
+{
+ "content": "",
+ "creation": "2026-06-30 12:00:00.000000",
+ "doc_type": "Page",
+ "doctype": "Page",
+ "module": "KPI Dashboards",
+ "name": "operations-kpi",
+ "owner": "Administrator",
+ "page_name": "operations-kpi",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Projects Manager"
+  },
+  {
+   "role": "Maintenance Manager"
+  },
+  {
+   "role": "Projects User"
+  }
+ ],
+ "standard": "Yes",
+ "title": "Operations KPIs"
+}
