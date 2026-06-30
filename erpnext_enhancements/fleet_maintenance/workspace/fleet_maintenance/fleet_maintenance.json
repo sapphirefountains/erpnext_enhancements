@@ -1,0 +1,94 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"fm_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"fm_sc_vehicles\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Fleet Vehicles\",\"col\":4}},{\"id\":\"fm_sc_logs\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Vehicle Maintenance Logs\",\"col\":4}},{\"id\":\"fm_sc_schedule\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maintenance Schedule\",\"col\":4}},{\"id\":\"fm_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"fm_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Fleet Maintenance</b></span>\",\"col\":12}},{\"id\":\"fm_card_fleet\",\"type\":\"card\",\"data\":{\"card_name\":\"Fleet\",\"col\":4}},{\"id\":\"fm_card_ref\",\"type\":\"card\",\"data\":{\"card_name\":\"Reference\",\"col\":4}}]",
+ "creation": "2026-06-30 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "tool",
+ "is_hidden": 0,
+ "label": "Fleet Maintenance",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Fleet",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Fleet Vehicle",
+   "link_count": 0,
+   "link_to": "Fleet Vehicle",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Vehicle Maintenance Log",
+   "link_count": 0,
+   "link_to": "Vehicle Maintenance Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reference",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maintenance Schedule",
+   "link_count": 0,
+   "link_to": "fleet-maintenance-schedule",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-06-30 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Fleet Maintenance",
+ "name": "Fleet Maintenance",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 45,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Fleet Vehicles",
+   "link_to": "Fleet Vehicle",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Vehicle Maintenance Logs",
+   "link_to": "Vehicle Maintenance Log",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "label": "Maintenance Schedule",
+   "link_to": "fleet-maintenance-schedule",
+   "type": "Page"
+  }
+ ],
+ "title": "Fleet Maintenance"
+}
