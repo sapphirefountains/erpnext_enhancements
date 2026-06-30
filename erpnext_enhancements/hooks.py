@@ -159,6 +159,8 @@ doctype_js = {
 	"Stripe Payments Settings": "public/js/stripe_payments/stripe_payments_settings.js",
 	"Sales Invoice": "public/js/stripe_payments/sales_invoice_pay_button.js",
 	"Stripe Payment": "public/js/stripe_payments/stripe_payment.js",
+	# plaid_banking — Plaid Link connect flow on the Settings form
+	"Plaid Settings": "plaid_banking/doctype/plaid_settings/plaid_settings.js",
 }
 
 doctype_list_js = {
@@ -368,6 +370,9 @@ scheduler_events = {
 		# stripe_payments: backstop for missed webhooks + retry of errored events
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_pending",
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
+		# plaid_banking: refresh cached bank balances (self-throttled to
+		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
+		"erpnext_enhancements.plaid_banking.core.tasks.scheduled_balance_refresh",
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
