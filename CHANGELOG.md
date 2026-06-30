@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.141.0] - 2026-06-30
+
+### Added
+- **Document Merge tool — consolidate any two non-submitted documents of the same doctype.** A System Manager gets a **"Merge into…"** button on any non-submitted form (and a **"Merge Selected…"** bulk action in list views) that absorbs a duplicate ("loser") into the record you keep ("survivor"): every reference on the site is repointed at the survivor — standard **Link** fields, **Dynamic Links**, **child-table** references and **Single** docs (via the reference-discovery engine shared with "Unlink and Delete"), **plus** the framework's "soft" references that aren't declared link fields — **attachments/Files, Comments, ToDos/assignments, Communications/emails, Tags, Versions, Notification Logs**. The survivor keeps all its own values; only its **blank** fields are backfilled from the loser (a real `0` is never overwritten), and the loser's **child rows are appended** (exact duplicates skipped). The loser is then **deleted**. A mandatory **side-by-side preview** shows exactly what is kept, discarded and backfilled, the full count of references to be repointed, and any free-text mentions of the loser's name flagged for **manual review** (those are never auto-rewritten); a **typed confirmation** of the loser's name guards the irreversible delete, and a **Swap** control flips which document survives. Every merge is recorded in an append-only **Document Merge Log**. Large merges (> 2,000 references) run as a **background job** and notify you on completion. Gated behind the new **default-OFF** `document_merge_enabled` switch (ERPNext Enhancements Settings → Document Merge); the server endpoints refuse while it's off. (The pre-existing Project-only merge button is unchanged.)
+
 ## [1.140.0] - 2026-06-30
 
 ### Changed
