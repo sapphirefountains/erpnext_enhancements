@@ -42,24 +42,32 @@ def _resolve_doctype(doctype: str) -> str:
 	return doctype
 
 
-@frappe.whitelist()
-def get_blocking_links(doctype, name):
-	"""
-	Returns a detailed list of documents blocking the deletion of the target document.
-	"""
-	# The frontend extracts the doctype from a desk URL, so it arrives as the
-	# route slug (e.g. 'sapphire-maintenance-contract'). Resolve it to the real
-	# DocType name before loading anything (see _resolve_doctype).
-	doctype = _resolve_doctype(doctype)
+def discover_references(doctype, name, include_cancelled=True, respect_ignore_hook=False):
+	"""Enumerate every document/field that points at ``(doctype, name)``.
 
-	try:
-		doc = frappe.get_doc(doctype, name)
-	except frappe.DoesNotExistError:
-		return []
+	Walks standard Link fields, Dynamic Links, their child-table parents, and
+	Single docs — returning a flat, structured list the callers render or
+	repoint. Self-references (the target's own rows) are always skipped.
 
+	This is the shared discovery core behind two features:
+
+	* :func:`get_blocking_links` (the "Unlink and Delete" flow) calls it with
+	  ``include_cancelled=False, respect_ignore_hook=True`` — it must not offer to
+	  break a cancelled doc's link, and it honours ``ignore_links_on_delete``.
+	* ``document_merge`` calls it with the defaults (``include_cancelled=True,
+	  respect_ignore_hook=False``) — a merge repoints *every* reference, including
+	  those on cancelled docs and on doctypes flagged ignore-on-delete (a merge is
+	  not a delete; nothing should be silently left pointing at the absorbed doc).
+
+	Each returned dict has at least ``doctype``/``name``/``fieldname`` and the
+	flags ``is_child`` / ``is_single`` / ``is_dynamic``; child rows also carry
+	``child_doctype``/``child_name``/``idx`` and dynamic links ``doctype_field``
+	(the companion "doctype" column). Callers must pass the *real* DocType name
+	(resolve route slugs via :func:`_resolve_doctype` first).
+	"""
 	links = []
 	link_fields = get_link_fields(doctype)
-	ignored_doctypes = set(frappe.get_hooks("ignore_links_on_delete"))
+	ignored_doctypes = set(frappe.get_hooks("ignore_links_on_delete")) if respect_ignore_hook else set()
 
 	# Standard Links
 	for lf in link_fields:
@@ -90,9 +98,9 @@ def get_blocking_links(doctype, name):
 		records = frappe.db.get_values(link_dt, {link_field: name}, fields, as_dict=True)
 		for rec in records:
 			# Skip if it's just a self-reference or cancelled
-			if DocStatus(rec.docstatus).is_cancelled():
+			if not include_cancelled and DocStatus(rec.docstatus).is_cancelled():
 				continue
-				
+
 			if meta.istable:
 				if rec.parenttype == doctype and rec.parent == name:
 					continue
@@ -140,7 +148,7 @@ def get_blocking_links(doctype, name):
 			fields = [RefDoc.name, RefDoc.docstatus]
 			if meta.istable:
 				fields.extend([RefDoc.parent, RefDoc.parenttype, RefDoc.idx])
-			
+
 			query = (
 				frappe.qb.from_(RefDoc)
 				.select(*fields)
@@ -148,36 +156,57 @@ def get_blocking_links(doctype, name):
 				.where(RefDoc[df.fieldname] == name)
 			)
 			for refdoc in query.run(as_dict=True):
-				if not DocStatus(refdoc.docstatus).is_cancelled():
-					if meta.istable:
-						if refdoc.parenttype == doctype and refdoc.parent == name:
-							continue
-						links.append({
-							"doctype": refdoc.parenttype,
-							"name": refdoc.parent,
-							"child_doctype": df.parent,
-							"child_name": refdoc.name,
-							"fieldname": df.fieldname,
-							"doctype_field": df.options,
-							"is_child": True,
-							"is_dynamic": True,
-							"idx": refdoc.idx,
-							"docstatus": refdoc.docstatus
-						})
-					else:
-						if df.parent == doctype and refdoc.name == name:
-							continue
-						links.append({
-							"doctype": df.parent,
-							"name": refdoc.name,
-							"fieldname": df.fieldname,
-							"doctype_field": df.options,
-							"is_child": False,
-							"is_dynamic": True,
-							"docstatus": refdoc.docstatus
-						})
+				if not include_cancelled and DocStatus(refdoc.docstatus).is_cancelled():
+					continue
+				if meta.istable:
+					if refdoc.parenttype == doctype and refdoc.parent == name:
+						continue
+					links.append({
+						"doctype": refdoc.parenttype,
+						"name": refdoc.parent,
+						"child_doctype": df.parent,
+						"child_name": refdoc.name,
+						"fieldname": df.fieldname,
+						"doctype_field": df.options,
+						"is_child": True,
+						"is_dynamic": True,
+						"idx": refdoc.idx,
+						"docstatus": refdoc.docstatus
+					})
+				else:
+					if df.parent == doctype and refdoc.name == name:
+						continue
+					links.append({
+						"doctype": df.parent,
+						"name": refdoc.name,
+						"fieldname": df.fieldname,
+						"doctype_field": df.options,
+						"is_child": False,
+						"is_dynamic": True,
+						"docstatus": refdoc.docstatus
+					})
 
 	return links
+
+
+@frappe.whitelist()
+def get_blocking_links(doctype, name):
+	"""
+	Returns a detailed list of documents blocking the deletion of the target document.
+	"""
+	# The frontend extracts the doctype from a desk URL, so it arrives as the
+	# route slug (e.g. 'sapphire-maintenance-contract'). Resolve it to the real
+	# DocType name before loading anything (see _resolve_doctype).
+	doctype = _resolve_doctype(doctype)
+
+	try:
+		frappe.get_doc(doctype, name)
+	except frappe.DoesNotExistError:
+		return []
+
+	# The delete flow must not offer to unlink cancelled docs and must honour the
+	# ignore_links_on_delete hook — see discover_references for why merge differs.
+	return discover_references(doctype, name, include_cancelled=False, respect_ignore_hook=True)
 
 
 @frappe.whitelist()

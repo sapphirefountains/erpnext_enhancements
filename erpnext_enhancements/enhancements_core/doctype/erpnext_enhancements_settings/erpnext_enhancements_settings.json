@@ -56,6 +56,8 @@
   "kpi_snapshot_retention_days",
   "desk_ux_section",
   "field_description_icons_enabled",
+  "document_merge_section",
+  "document_merge_enabled",
   "fleet_section",
   "fleet_maintenance_enabled",
   "fleet_reminders_enabled",
@@ -414,6 +416,18 @@
    "fieldname": "field_description_icons_enabled",
    "fieldtype": "Check",
    "label": "Field Description Info Icons"
+  },
+  {
+   "fieldname": "document_merge_section",
+   "fieldtype": "Section Break",
+   "label": "Document Merge"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the Document Merge tool. ON: System Managers get a \"Merge into…\" button on any non-submitted document (and a \"Merge…\" bulk action in list views) that consolidates a duplicate into the record you keep — repointing every link, dynamic link, child-table reference and soft reference (attachments, comments, ToDos, emails, tags) at the survivor, backfilling the survivor's blank fields from the duplicate, then deleting the duplicate. Always shows a side-by-side preview and a typed confirmation first; every merge is recorded in a Document Merge Log. OFF (default): the button is hidden and the server endpoints refuse. Because a merge deletes the absorbed document and cannot be undone, keep this OFF until you intend to use it.",
+   "fieldname": "document_merge_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Document Merge Tool"
   },
   {
    "fieldname": "fleet_section",

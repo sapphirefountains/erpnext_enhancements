@@ -1,0 +1,153 @@
+{
+ "actions": [],
+ "autoname": "format:MERGE-{YYYY}-{######}",
+ "creation": "2026-06-30 12:00:00.000000",
+ "description": "Append-only record of every document merge performed by the Document Merge tool. Because a merge deletes the absorbed (loser) document, the operation is irreversible and this is its durable audit trail.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "merged_doctype",
+  "survivor",
+  "loser",
+  "column_break_meta",
+  "merged_by",
+  "merged_on",
+  "counts_section",
+  "fields_backfilled",
+  "child_rows_appended",
+  "hard_references_repointed",
+  "column_break_counts",
+  "soft_references_repointed",
+  "manual_review_count",
+  "review_section",
+  "manual_review"
+ ],
+ "fields": [
+  {
+   "fieldname": "merged_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "DocType",
+   "options": "DocType",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The document that was kept (references now point here).",
+   "fieldname": "survivor",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Survivor (Kept)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The duplicate that was absorbed and deleted.",
+   "fieldname": "loser",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Merged & Deleted",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "merged_by",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Merged By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "merged_on",
+   "fieldtype": "Datetime",
+   "label": "Merged On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "What Changed"
+  },
+  {
+   "default": "0",
+   "fieldname": "fields_backfilled",
+   "fieldtype": "Int",
+   "label": "Fields Backfilled",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "child_rows_appended",
+   "fieldtype": "Int",
+   "label": "Child Rows Appended",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "hard_references_repointed",
+   "fieldtype": "Int",
+   "label": "Link References Repointed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "soft_references_repointed",
+   "fieldtype": "Int",
+   "label": "Soft References Repointed",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Free-text mentions of the merged document's name that were flagged for manual review (never auto-rewritten).",
+   "fieldname": "manual_review_count",
+   "fieldtype": "Int",
+   "label": "Manual-Review Flags",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "review_section",
+   "fieldtype": "Section Break",
+   "label": "Manual Review"
+  },
+  {
+   "fieldname": "manual_review",
+   "fieldtype": "Code",
+   "label": "Manual-Review Flags (JSON)",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-06-30 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Enhancements Core",
+ "name": "Document Merge Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "loser"
+}

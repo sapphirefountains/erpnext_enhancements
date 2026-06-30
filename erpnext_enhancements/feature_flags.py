@@ -95,6 +95,21 @@ def fleet_reminders_enabled():
 	)
 
 
+def document_merge_enabled():
+	"""True when the generic Document Merge tool is switched on.
+
+	Default OFF: the engine and the desk "Merge into…" button ship dormant until
+	the checkbox in **ERPNext Enhancements Settings → Document Merge** is flipped
+	(no deploy needed — the server guard reads the live value and the desk button
+	picks the flag up from bootinfo on the next page load). Gating a destructive,
+	irreversible tool behind an explicit switch keeps it off until an admin
+	deliberately enables it.
+	"""
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "document_merge_enabled"))
+	)
+
+
 def throw_if_process_automation_disabled():
 	"""Guard for whitelisted entry points — explains instead of misbehaving."""
 	if not process_automation_enabled():
@@ -102,6 +117,18 @@ def throw_if_process_automation_disabled():
 			frappe._(
 				"The process-automation suite is currently switched off "
 				"(ERPNext Enhancements Settings → Process Automation)."
+			),
+			title=frappe._("Feature Disabled"),
+		)
+
+
+def throw_if_document_merge_disabled():
+	"""Guard for the Document Merge whitelisted endpoints."""
+	if not document_merge_enabled():
+		frappe.throw(
+			frappe._(
+				"The Document Merge tool is currently switched off "
+				"(ERPNext Enhancements Settings → Document Merge)."
 			),
 			title=frappe._("Feature Disabled"),
 		)

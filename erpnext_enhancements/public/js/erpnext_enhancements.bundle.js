@@ -48,6 +48,9 @@ import "./global_enhancements/quill_mentions.js";
 import "./global_enhancements/global_sidebar.js";
 import "./global_enhancements/auto_collapse_sidebar.js";
 import "./global_enhancements/unlink_and_delete.js";
+// Generic document merge — global "Merge into…" form button + list bulk merge
+// (gated by frappe.boot.ee_merge_tool). Server: document_merge.py.
+import "./merge_tool/merge_tool.js";
 // Sapphire Fountains Mermaid theme (window.sf_mermaid) — before its consumers
 // (triton_widget.js here; process_document.js via doctype_js loads later).
 import "./global_enhancements/mermaid_theme.js";

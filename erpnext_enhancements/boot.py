@@ -7,6 +7,7 @@ serialized into every desk page's boot payload.
 from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
 from erpnext_enhancements.feature_flags import (
+	document_merge_enabled,
 	field_description_icons_enabled,
 	process_automation_enabled,
 )
@@ -32,8 +33,13 @@ def boot_session(bootinfo):
 	``frappe.boot.ee_field_description_icons`` gates the global desk script that
 	renders field descriptions as hover ⓘ icons (see
 	``public/js/global_enhancements/field_description_icons.js``).
+
+	``frappe.boot.ee_merge_tool`` gates the global "Merge into…" form button and
+	list-view bulk action (see ``public/js/merge_tool/merge_tool.js``); the
+	server-side guards in ``document_merge`` remain the authority.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
 	bootinfo.ee_desk_shortcuts = get_visible_shortcuts_for_user()
 	bootinfo.ee_field_description_icons = 1 if field_description_icons_enabled() else 0
+	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
