@@ -61,11 +61,12 @@ HOME_BLOCKS = {"Desk Shortcuts", "Projects Dashboard", "Task Dashboard", "Mornin
 
 HOME_WORKSPACE = "Home"
 
-# The KPI Cockpit lands on Home (its placement above). The seven site-created
-# department workspaces below USED to carry it too; per-department KPIs now live
-# on dedicated role-gated pages instead, so this tuple is the list the strip
-# patch (patches.remove_kpi_cockpit_from_dept_workspaces) cleans the cockpit out
-# of. Kept here as the single source of truth for those workspace names.
+# The KPI Cockpit (with its department picker) lands on Home and on each
+# department workspace below, where it auto-locks to that department by route
+# (see custom_html_blocks/kpi_cockpit.js). These workspaces are role-gated and
+# created-if-missing by patches.setup_department_kpi_workspaces, so each
+# department gets its own private, editable KPI dashboard; this tuple is the
+# single source of truth for those workspace names.
 KPI_COCKPIT = "KPI Cockpit"
 KPI_DEPARTMENT_DASHBOARDS = (
 	"Finance Dashboard",
@@ -74,6 +75,7 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Design Dashboard",
 	"Production Dashboard",
 	"Marketing Dashboard",
+	"Product Dashboard",
 	"Executive Dashboard",
 )
 
@@ -162,13 +164,14 @@ def sync_custom_html_blocks():
 	if home_blocks and _append_custom_blocks(HOME_WORKSPACE, home_blocks):
 		changed = True
 
-	# Surface the KPI Cockpit (with its department picker) on Home as a personal
-	# overview. Per-department KPI views now live on dedicated, role-gated desk
-	# pages (kpi_dashboards/page/<dept>_kpi) that can be shared individually —
-	# they are NOT placed on the department workspaces any more (the existing
-	# placements are stripped by patches.remove_kpi_cockpit_from_dept_workspaces).
-	if KPI_COCKPIT in synced and _append_custom_blocks(HOME_WORKSPACE, [KPI_COCKPIT]):
-		changed = True
+	# Surface the KPI Cockpit on Home (keeps the department picker) and on each
+	# role-gated department workspace, where the block auto-locks to that
+	# department by route. Idempotent append — a department's own added blocks
+	# are preserved. Only once the block itself synced OK.
+	if KPI_COCKPIT in synced:
+		for workspace in (HOME_WORKSPACE, *KPI_DEPARTMENT_DASHBOARDS):
+			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
+				changed = True
 
 	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
 	# workspace, in FINANCE_DASHBOARD_BLOCKS order (a missing workspace is skipped).
