@@ -36,6 +36,10 @@ app_include_js = [
 	# Triton widget, telephony, task tree/gantt preloads, ...), in the old
 	# include order: see public/js/erpnext_enhancements.bundle.js.
 	"erpnext_enhancements.bundle.js",
+	# Shared renderer for the per-department KPI desk pages (kpi_dashboards/page/
+	# <dept>_kpi). Defines erpnext_enhancements.kpi_page.render; each page's JS
+	# calls it with its department.
+	"kpi_dashboard_page.bundle.js",
 ]
 
 # include js, css files in header of web template

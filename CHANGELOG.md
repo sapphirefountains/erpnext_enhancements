@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.138.0] - 2026-06-30
+
+### Changed
+- **Each department now has its own shareable KPI page.** Per-department KPIs moved off the department workspaces onto dedicated, role-gated desk pages — `/app/finance-kpi`, `/app/sales-kpi`, `/app/operations-kpi`, `/app/marketing-kpi`, `/app/design-kpi`, `/app/production-kpi`, `/app/product-kpi`, `/app/executive-kpi` — so a single department's metrics can be shared by URL with just the people who should see them (each page is restricted to that department's roles + System Manager, and the underlying KPI API is role-gated too). The pages render the same precomputed KPI Snapshot the cockpit shows, via a shared renderer (`public/js/kpi_dashboard_page.bundle.js`). The **KPI Cockpit** (with its department picker) stays on Home and the KPI Dashboards workspace as an overview, and is now linked from there to each department page; it is no longer placed on the seven department workspaces (a one-time patch strips the existing placement). The six Finance operational widgets remain on the Finance Dashboard workspace.
+
 ## [1.137.0] - 2026-06-30
 
 ### Fixed
