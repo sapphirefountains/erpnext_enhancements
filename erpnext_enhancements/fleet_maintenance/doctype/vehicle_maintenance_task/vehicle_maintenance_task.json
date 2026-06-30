@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "creation": "2026-06-30 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "task",
+  "status",
+  "notes",
+  "is_mandatory"
+ ],
+ "fields": [
+  {
+   "columns": 5,
+   "description": "The maintenance item to check or perform.",
+   "fieldname": "task",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Task",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "description": "Leave blank until done. \"OK\" = checked/performed and fine; \"Action Needed\" = found a problem (note it); \"N/A\" = not applicable this time.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "\nOK\nAction Needed\nN/A"
+  },
+  {
+   "columns": 4,
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Notes"
+  },
+  {
+   "default": "0",
+   "description": "Submit is blocked while a mandatory item has no status. Copied from the checklist template.",
+   "fieldname": "is_mandatory",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Is Mandatory",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Fleet Maintenance",
+ "name": "Vehicle Maintenance Task",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

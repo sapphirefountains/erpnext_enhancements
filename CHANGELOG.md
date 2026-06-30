@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.138.0] - 2026-06-30
+## [1.139.0] - 2026-06-30
 
 ### Changed
 - **Each department now has its own shareable KPI page.** Per-department KPIs moved off the department workspaces onto dedicated, role-gated desk pages — `/app/finance-kpi`, `/app/sales-kpi`, `/app/operations-kpi`, `/app/marketing-kpi`, `/app/design-kpi`, `/app/production-kpi`, `/app/product-kpi`, `/app/executive-kpi` — so a single department's metrics can be shared by URL with just the people who should see them (each page is restricted to that department's roles + System Manager, and the underlying KPI API is role-gated too). The pages render the same precomputed KPI Snapshot the cockpit shows, via a shared renderer (`public/js/kpi_dashboard_page.bundle.js`). The **KPI Cockpit** (with its department picker) stays on Home and the KPI Dashboards workspace as an overview, and is now linked from there to each department page; it is no longer placed on the seven department workspaces (a one-time patch strips the existing placement). The six Finance operational widgets remain on the Finance Dashboard workspace.
+
+## [1.138.0] - 2026-06-30
+
+### Added
+- **Fleet Maintenance module — track routine company-vehicle maintenance.** A new module for the weekly / 3-month / 6-month vehicle maintenance schedule:
+  - **`Fleet Vehicle`** master — one record per vehicle (make/model/year, plate, VIN, fuel type, assigned driver, odometer, photo) plus a "last done" date per cadence. Each save derives the matching "due" dates and a headline **Maintenance Status** (`No Data` / `OK` / `Due Soon` / `Overdue`) from those dates and the configured intervals.
+  - **`Vehicle Maintenance Log`** (submittable) — the form crew fill in. Picking a **Maintenance Type** (Weekly / Oil Change (3-Month) / Dealership Check-Up (6-Month) / Windshield Wipers (6-Month) / Other / Repair) auto-loads that type's standard checklist (`Vehicle Maintenance Task` child rows); required items block submit until they have a status. On submit it rolls the vehicle's matching last-done date forward, advances the odometer (forward only), and recomputes status; on cancel it re-derives from the remaining submitted logs.
+  - **Nightly status refresh + reminders** — ages every non-retired vehicle's status as dates pass and, when reminders are on, sends a desk notification to fleet managers (users with the *Fleet Manager* or *Maintenance Manager* role, else System Managers) the day a vehicle newly becomes Due Soon / Overdue.
+  - **In-desk `Fleet Maintenance Schedule` page** (the cadence reference, incl. the standing daily "check gas, refill if ≤ half" instruction), a **Fleet Maintenance** workspace, and a printable **Vehicle Maintenance Checklist** Print Format (print a draft for a blank sheet to keep in the vehicle).
+  - New **Fleet Manager** role (seeded, assign post-deploy) with full access to both doctypes alongside the stock Maintenance Manager / Maintenance User roles.
+  - Gated by a new **ERPNext Enhancements Settings → Fleet Maintenance** section: a default-OFF master switch (`Enable Fleet Maintenance`), a default-ON `Send Fleet Reminders` toggle, and the four cadence intervals + the Due Soon window. The forms work regardless; only the background job + reminders are gated. Design + SOP in `docs/FLEET_VEHICLE_MAINTENANCE.md`; module notes in `erpnext_enhancements/fleet_maintenance/README.md`.
 
 ## [1.137.0] - 2026-06-30
 

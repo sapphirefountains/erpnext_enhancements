@@ -56,6 +56,15 @@
   "kpi_snapshot_retention_days",
   "desk_ux_section",
   "field_description_icons_enabled",
+  "fleet_section",
+  "fleet_maintenance_enabled",
+  "fleet_reminders_enabled",
+  "fleet_column_break",
+  "fleet_weekly_interval_days",
+  "fleet_oil_change_interval_months",
+  "fleet_dealership_interval_months",
+  "fleet_wiper_interval_months",
+  "fleet_due_soon_window_days",
   "finance_dashboard_section",
   "finance_new_jobs_enabled",
   "finance_whos_working_enabled",
@@ -405,6 +414,70 @@
    "fieldname": "field_description_icons_enabled",
    "fieldtype": "Check",
    "label": "Field Description Info Icons"
+  },
+  {
+   "fieldname": "fleet_section",
+   "fieldtype": "Section Break",
+   "label": "Fleet Maintenance"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. ON: the nightly job refreshes each vehicle's maintenance status (OK / Due Soon / Overdue) as cadence dates pass, and (with reminders on) notifies fleet managers when a vehicle newly slips. OFF = no background job runs; the Fleet Vehicle / Vehicle Maintenance Log forms still work, and due dates still compute on save. Server behavior changes immediately.",
+   "fieldname": "fleet_maintenance_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Fleet Maintenance"
+  },
+  {
+   "default": "1",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "Notify fleet managers (users with the Fleet Manager or Maintenance Manager role, else System Managers) in the desk notification bell when a vehicle newly becomes Due Soon or Overdue. Turn off to keep the due dashboard without notifications.",
+   "fieldname": "fleet_reminders_enabled",
+   "fieldtype": "Check",
+   "label": "Send Fleet Reminders"
+  },
+  {
+   "fieldname": "fleet_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "7",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "Days between weekly services (the schedule's default is 7).",
+   "fieldname": "fleet_weekly_interval_days",
+   "fieldtype": "Int",
+   "label": "Weekly Interval (Days)"
+  },
+  {
+   "default": "3",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "Months between oil changes (the schedule's default is 3).",
+   "fieldname": "fleet_oil_change_interval_months",
+   "fieldtype": "Int",
+   "label": "Oil Change Interval (Months)"
+  },
+  {
+   "default": "6",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "Months between dealership check-ups (the schedule's default is 6).",
+   "fieldname": "fleet_dealership_interval_months",
+   "fieldtype": "Int",
+   "label": "Dealership Check-Up Interval (Months)"
+  },
+  {
+   "default": "6",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "Months between windshield wiper replacements (the schedule's default is 6).",
+   "fieldname": "fleet_wiper_interval_months",
+   "fieldtype": "Int",
+   "label": "Wiper Replacement Interval (Months)"
+  },
+  {
+   "default": "7",
+   "depends_on": "fleet_maintenance_enabled",
+   "description": "A vehicle shows \"Due Soon\" this many days before a service comes due.",
+   "fieldname": "fleet_due_soon_window_days",
+   "fieldtype": "Int",
+   "label": "Due Soon Window (Days)"
   },
   {
    "fieldname": "finance_dashboard_section",

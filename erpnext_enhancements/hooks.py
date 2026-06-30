@@ -355,6 +355,9 @@ scheduler_events = {
 		# accounting_intake: retry failed intake steps + purge old logs
 		"erpnext_enhancements.accounting_intake.channels.retry_failed_intakes",
 		"erpnext_enhancements.accounting_intake.channels.purge_old_intake_logs",
+		# fleet_maintenance: refresh vehicle maintenance status (Due Soon / Overdue
+		# as dates pass) + notify fleet managers on a new slip. Dormant unless enabled.
+		"erpnext_enhancements.fleet_maintenance.tasks.refresh_fleet_status",
 	],
 	"hourly": [
 		"erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed",
@@ -418,6 +421,9 @@ after_migrate = [
 	# water_engineering: the Results + Calculation Audit Print Formats for a design
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
+	# fleet_maintenance: the Vehicle Maintenance Checklist Print Format (idempotent
+	# + guarded; re-upserts the HTML so template edits deploy on migrate).
+	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

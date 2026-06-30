@@ -128,7 +128,12 @@ erpnext_enhancements.patches.seed_process_maps_remaining_departments
 # v1.136.0 default the new "Field Description Info Icons" toggle ON for existing
 # installs (new sites get it from the Check field default at doc creation)
 erpnext_enhancements.patches.default_field_description_icons_on
-# v1.138.0 per-department KPI pages replace the cockpit on the department
+# v1.138.0 Fleet Maintenance: seed the "Fleet Manager" role (insert-only)
+erpnext_enhancements.patches.seed_fleet_manager_role
+# v1.138.0 Fleet Maintenance: default the "Send Fleet Reminders" toggle ON for
+# existing installs (new sites get it from the Check field default at doc creation)
+erpnext_enhancements.patches.default_fleet_reminders_on
+# v1.139.0 per-department KPI pages replace the cockpit on the department
 # workspaces: strip the KPI Cockpit block from the seven dept workspaces (it
 # stays on Home + the KPI Dashboards workspace)
 erpnext_enhancements.patches.remove_kpi_cockpit_from_dept_workspaces

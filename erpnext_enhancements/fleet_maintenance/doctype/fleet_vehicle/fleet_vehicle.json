@@ -1,0 +1,273 @@
+{
+ "actions": [],
+ "autoname": "field:vehicle_name",
+ "creation": "2026-06-30 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "vehicle_name",
+  "status",
+  "column_break_head",
+  "make",
+  "model",
+  "year",
+  "details_section",
+  "license_plate",
+  "vin",
+  "color",
+  "column_break_details",
+  "fuel_type",
+  "assigned_driver",
+  "current_odometer",
+  "photo",
+  "maintenance_status_section",
+  "maintenance_status",
+  "last_weekly_service_date",
+  "weekly_service_due_date",
+  "column_break_ms",
+  "last_oil_change_date",
+  "oil_change_due_date",
+  "column_break_ms2",
+  "last_dealership_checkup_date",
+  "dealership_checkup_due_date",
+  "last_wiper_change_date",
+  "wiper_change_due_date",
+  "notes_section",
+  "notes"
+ ],
+ "fields": [
+  {
+   "description": "A short label for this vehicle, e.g. \"Truck 1\" or \"Ford F-250 (ABC-123)\". Used as the record name, so keep it unique and stable.",
+   "fieldname": "vehicle_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Vehicle Name / ID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "Active",
+   "description": "Retired vehicles are skipped by the nightly status refresh and reminders.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nIn Shop\nRetired"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "make",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Make"
+  },
+  {
+   "fieldname": "model",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Model"
+  },
+  {
+   "fieldname": "year",
+   "fieldtype": "Int",
+   "label": "Year"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Identification"
+  },
+  {
+   "fieldname": "license_plate",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "License Plate"
+  },
+  {
+   "fieldname": "vin",
+   "fieldtype": "Data",
+   "label": "VIN"
+  },
+  {
+   "fieldname": "color",
+   "fieldtype": "Data",
+   "label": "Color"
+  },
+  {
+   "fieldname": "column_break_details",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Gasoline",
+   "fieldname": "fuel_type",
+   "fieldtype": "Select",
+   "label": "Fuel Type",
+   "options": "Gasoline\nDiesel\nHybrid\nElectric\nOther"
+  },
+  {
+   "description": "Primary driver / who is responsible for this vehicle's upkeep.",
+   "fieldname": "assigned_driver",
+   "fieldtype": "Data",
+   "label": "Assigned Driver"
+  },
+  {
+   "description": "Last recorded odometer reading (miles). Updated automatically from submitted maintenance logs; you can also set a starting value here.",
+   "fieldname": "current_odometer",
+   "fieldtype": "Int",
+   "label": "Current Odometer (mi)"
+  },
+  {
+   "fieldname": "photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
+  },
+  {
+   "fieldname": "maintenance_status_section",
+   "fieldtype": "Section Break",
+   "label": "Maintenance Status"
+  },
+  {
+   "default": "No Data",
+   "description": "Computed from the cadence settings and the last logged services. Refreshed nightly and whenever a maintenance log is submitted. \"No Data\" = no baseline date recorded yet for any cadence.",
+   "fieldname": "maintenance_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Maintenance Status",
+   "options": "No Data\nOK\nDue Soon\nOverdue",
+   "read_only": 1
+  },
+  {
+   "description": "Date the last weekly service was performed. Set automatically from submitted Weekly logs; seed it manually for a vehicle serviced before go-live.",
+   "fieldname": "last_weekly_service_date",
+   "fieldtype": "Date",
+   "label": "Last Weekly Service"
+  },
+  {
+   "description": "Last weekly service + the weekly interval (Settings).",
+   "fieldname": "weekly_service_due_date",
+   "fieldtype": "Date",
+   "label": "Weekly Service Due",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ms",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Date of the last oil change. Set automatically from submitted Oil Change logs; seed it manually for a vehicle serviced before go-live.",
+   "fieldname": "last_oil_change_date",
+   "fieldtype": "Date",
+   "label": "Last Oil Change"
+  },
+  {
+   "description": "Last oil change + the oil-change interval (Settings, default 3 months).",
+   "fieldname": "oil_change_due_date",
+   "fieldtype": "Date",
+   "label": "Oil Change Due",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_ms2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Date of the last dealership check-up. Set automatically from submitted Dealership logs; seed it manually for a vehicle serviced before go-live.",
+   "fieldname": "last_dealership_checkup_date",
+   "fieldtype": "Date",
+   "label": "Last Dealership Check-Up"
+  },
+  {
+   "description": "Last dealership check-up + the interval (Settings, default 6 months).",
+   "fieldname": "dealership_checkup_due_date",
+   "fieldtype": "Date",
+   "label": "Dealership Check-Up Due",
+   "read_only": 1
+  },
+  {
+   "description": "Date the windshield wipers were last replaced. Set automatically from submitted Windshield Wipers logs; seed it manually for a vehicle serviced before go-live.",
+   "fieldname": "last_wiper_change_date",
+   "fieldtype": "Date",
+   "label": "Last Wiper Change"
+  },
+  {
+   "description": "Last wiper change + the interval (Settings, default 6 months).",
+   "fieldname": "wiper_change_due_date",
+   "fieldtype": "Date",
+   "label": "Wiper Change Due",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Fleet Maintenance",
+ "name": "Fleet Vehicle",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Fleet Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maintenance User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "vehicle_name",
+ "track_changes": 1
+}
