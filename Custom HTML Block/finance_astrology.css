@@ -1,0 +1,41 @@
+/* Astrology — Finance Dashboard block styles (shadow-DOM scoped). */
+
+.fas-root {
+    font-family: var(--font-stack, inherit);
+    color: var(--text-color);
+}
+
+.fas-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.fas-title {
+    margin: 0;
+    font-weight: 600;
+}
+
+.fas-sign {
+    background: var(--control-bg, var(--bg-color));
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius, 6px);
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.fas-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-color);
+}
+
+.fas-muted {
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 12px 0;
+}
