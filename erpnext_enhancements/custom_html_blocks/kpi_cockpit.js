@@ -41,6 +41,7 @@
         "design dashboard": "Design",
         "production dashboard": "Production",
         "marketing dashboard": "Marketing",
+        "product dashboard": "Product",
         "executive dashboard": "Executive",
     };
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.140.0] - 2026-06-30
+
+### Changed
+- **Department KPI dashboards are now role-gated, editable Workspaces (replacing the v1.139.0 desk pages).** The desk-page approach couldn't host Custom HTML Blocks (those only work on Workspaces), so each department's KPIs live on its own **Workspace** again — `Finance Dashboard`, `Sales Dashboard`, `Operations Dashboard`, `Design Dashboard`, `Production Dashboard`, `Marketing Dashboard`, `Product Dashboard`, `Executive Dashboard` — now **restricted to that department's roles + System Manager**, so a workspace can be shared with just that team. Because they're ordinary (non-standard) workspaces, an admin can **add more Custom HTML Blocks** to any of them, and those edits survive migrations (the block seeder only *appends* the KPI Cockpit, never overwriting added content). A one-time patch (`setup_department_kpi_workspaces`) role-gates each workspace and creates any that are missing (incl. the new Product Dashboard); the v1.139.0 desk pages + their renderer bundle are removed (the pages drop out as orphans on migrate). The six Finance operational widgets remain on the Finance Dashboard workspace.
+
 ## [1.139.0] - 2026-06-30
 
 ### Changed
