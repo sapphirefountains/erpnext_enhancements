@@ -1,9 +1,9 @@
 """Version-controlled Custom HTML Blocks (Projects-module dashboard widgets).
 
 Entry point :func:`sync_custom_html_blocks` is registered in ``after_migrate``
-(hooks.py). The four dashboard widgets — Projects Dashboard, Task Dashboard,
-Morning Briefing and Desk Shortcuts — author their HTML/JS/CSS in the repo-root
-``Custom HTML Block/`` folder, and this seeder **upserts** each one on every
+(hooks.py). The dashboard widgets author their HTML/JS/CSS in the in-package
+``erpnext_enhancements/custom_html_blocks/`` folder, and this seeder **upserts**
+each one on every
 migrate: missing blocks are created, and a block whose ``html``/``script``/
 ``style`` has drifted from the repo source is overwritten. The repo is the
 source of truth — same philosophy as fixtures/ and setup/process_documents.py —
@@ -22,9 +22,10 @@ each department dashboard (see ``KPI_DEPARTMENT_DASHBOARDS``) so the numbers sho
 up where each team already works. Blocks created on the site under names *not*
 listed here are left alone, and nothing is ever deleted.
 
-Requires a git-cloned app (``bench get-app``) where the repo root ships next to
-the package; if the source folder is missing the seeder logs and skips rather
-than failing the migrate.
+The source files live INSIDE the Python package, so they ship with it on every
+install and partial sync (the legacy repo-root ``Custom HTML Block/`` folder is
+still honoured as a fallback for older checkouts). If the source folder is
+missing entirely the seeder logs and skips rather than failing the migrate.
 """
 
 import json
@@ -32,7 +33,7 @@ import os
 
 import frappe
 
-# name -> source-file prefix under the repo-root "Custom HTML Block/" folder.
+# name -> source-file prefix under the in-package "custom_html_blocks/" folder.
 # Order is the order blocks are appended to Home.
 BLOCKS = [
 	("Desk Shortcuts", "desk_shortcuts"),
@@ -92,8 +93,17 @@ FINANCE_DASHBOARD_BLOCKS = (
 
 
 def _source_dir():
-	repo_root = os.path.dirname(frappe.get_app_path("erpnext_enhancements"))
-	return os.path.join(repo_root, "Custom HTML Block")
+	"""Directory holding the block source triplets.
+
+	Prefers the in-package ``custom_html_blocks/`` folder (ships with the package
+	on every install and partial sync); falls back to the legacy repo-root
+	``Custom HTML Block/`` folder for older checkouts that still keep it there.
+	"""
+	app_path = frappe.get_app_path("erpnext_enhancements")
+	in_package = os.path.join(app_path, "custom_html_blocks")
+	if os.path.isdir(in_package):
+		return in_package
+	return os.path.join(os.path.dirname(app_path), "Custom HTML Block")
 
 
 def _read(source_dir, prefix, ext):

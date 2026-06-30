@@ -23,8 +23,9 @@ def execute():
 	if frappe.db.exists("Custom HTML Block", BLOCK_NAME):
 		return
 
-	repo_root = os.path.dirname(frappe.get_app_path("erpnext_enhancements"))
-	source_dir = os.path.join(repo_root, "Custom HTML Block")
+	from erpnext_enhancements.setup.custom_html_blocks import _source_dir
+
+	source_dir = _source_dir()
 
 	def read(filename):
 		path = os.path.join(source_dir, filename)
