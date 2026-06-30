@@ -293,9 +293,11 @@
 		setTimeout(add_list_action, 300);
 		setTimeout(add_list_action, 1200);
 	};
+	// app_ready fires after the desk boots (covers the initial / deep-linked load);
+	// router 'change' covers later navigation. Both run AFTER frappe.router is
+	// routed, so we never touch a null current_route at bundle-eval time.
 	$(document).on("app_ready", schedule_list_action);
 	frappe.router.on("change", schedule_list_action);
-	if (frappe.router && frappe.get_route_str && frappe.get_route_str()) schedule_list_action();
 
 	function start_bulk_merge(lv) {
 		const checked = (lv.get_checked_items && lv.get_checked_items()) || [];

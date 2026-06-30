@@ -64,9 +64,8 @@ SOFT_REFERENCE_TABLES = [
 	("Comment", "reference_doctype", "reference_name"),
 	("ToDo", "reference_type", "reference_name"),
 	("Communication", "reference_doctype", "reference_name"),
-	# Communication also carries a separate timeline target (what shows on a
-	# record's Activity feed); it can differ from reference_name, so move it too.
-	("Communication", "timeline_doctype", "timeline_name"),
+	# A Communication's timeline target (what shows on a record's Activity feed)
+	# lives in the Communication Link child rows, repointed by the entry below.
 	("Communication Link", "link_doctype", "link_name"),
 	("Notification Log", "document_type", "document_name"),
 	# The document-reference columns live on the Email Queue parent, NOT on the
@@ -594,16 +593,17 @@ def _repoint_hard_references(doctype, survivor, loser, refs):
 			# Skip the loser's own rows (already filtered in discovery, belt-and-braces).
 			if parent_dt == doctype and parent_name == loser:
 				continue
-			_repoint_one(
+			# count only actual repoints; a dropped duplicate returns False.
+			if _repoint_one(
 				child_dt,
 				child_name,
 				ref["fieldname"],
 				survivor,
 				ref["doctype_field"] if ref.get("is_dynamic") else None,
 				doctype,
-			)
+			):
+				count += 1
 			touched.add(parent_dt)
-			count += 1
 
 		else:
 			ref_dt, ref_name = ref["doctype"], ref["name"]
@@ -612,17 +612,17 @@ def _repoint_hard_references(doctype, survivor, loser, refs):
 				frappe.db.set_value(ref_dt, ref_name, ref["fieldname"], None, update_modified=False)
 				if ref.get("is_dynamic") and ref.get("doctype_field"):
 					frappe.db.set_value(ref_dt, ref_name, ref["doctype_field"], None, update_modified=False)
-			else:
-				_repoint_one(
-					ref_dt,
-					ref_name,
-					ref["fieldname"],
-					survivor,
-					ref["doctype_field"] if ref.get("is_dynamic") else None,
-					doctype,
-				)
+				count += 1
+			elif _repoint_one(
+				ref_dt,
+				ref_name,
+				ref["fieldname"],
+				survivor,
+				ref["doctype_field"] if ref.get("is_dynamic") else None,
+				doctype,
+			):
+				count += 1
 			touched.add(ref_dt)
-			count += 1
 
 	return count, touched
 
@@ -634,8 +634,9 @@ def _repoint_soft_references(doctype, survivor, loser, soft_rows):
 	companion ``*_doctype`` column never changes (same-doctype merge)."""
 	count = 0
 	for ref in soft_rows:
-		_repoint_one(ref["table"], ref["row"], ref["name_col"], survivor)
-		count += 1
+		# count only actual repoints; a dropped duplicate returns False.
+		if _repoint_one(ref["table"], ref["row"], ref["name_col"], survivor):
+			count += 1
 	return count
 
 
