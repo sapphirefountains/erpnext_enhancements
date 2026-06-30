@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.137.0] - 2026-06-30
 
+### Fixed
+- **Custom HTML Block sources now ship inside the Python package** (`erpnext_enhancements/custom_html_blocks/`) instead of a repo-root `Custom HTML Block/` folder that lived *outside* the package. The seeder reads from the in-package location (with a repo-root fallback), so the blocks are created on every install and partial sync — previously a bench synced without the external folder would skip creating **all** blocks (KPI Cockpit included), leaving the dashboards blank. The old `seed_*_block` patches use the same resilient resolver.
+
 ### Added
 - **Six new operational widgets on the Finance Dashboard.** Each ships as a self-contained Custom HTML Block (shadow-DOM, role-gated, individually toggleable), placed on the **Finance Dashboard** workspace by the after-migrate block seeder alongside the existing KPI Cockpit:
   - **New Jobs Queue** — the most recently created Active Projects (customer, owner, age, source Opportunity link).
