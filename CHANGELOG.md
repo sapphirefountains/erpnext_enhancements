@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.137.0] - 2026-06-30
+
+### Added
+- **Six new operational widgets on the Finance Dashboard.** Each ships as a self-contained Custom HTML Block (shadow-DOM, role-gated, individually toggleable), placed on the **Finance Dashboard** workspace by the after-migrate block seeder alongside the existing KPI Cockpit:
+  - **New Jobs Queue** — the most recently created Active Projects (customer, owner, age, source Opportunity link).
+  - **Who's Working** — a time-clock admin view of who is currently clocked in (employee, project/task, elapsed time), read from open/paused `Job Interval`s.
+  - **Bank Balances** — a live snapshot of bank account balances (KeyBank checking + any linked accounts) via a new **Plaid** integration (hand-rolled `requests` REST client — no SDK; durable `Bank Balance Snapshot` cache refreshed on a throttled schedule; the read widget never calls Plaid directly).
+  - **Weather** — an HQ weather chip reusing the existing keyless Open-Meteo path.
+  - **Astrology** — a daily horoscope with a pick-a-sign selector (free public API, server-side cached per sign per day; chosen sign remembered in the browser).
+  - **Finance Calendar** — upcoming events from a Google Calendar named "Finance" (Google Calendar API via the existing Drive service account).
+- **`Plaid Settings`** single doctype (new **Plaid Banking** module) isolates the encrypted Plaid credentials + connection state (System Manager full; Accounts Manager read). Plaid Link runs on the Settings form (**Connect Bank / Reconnect / Disconnect / Test Connection / Refresh Balances Now**); a non-retryable Plaid error pauses the integration (`plaid_auth_blocked`) instead of retrying, mirroring the MDM auth-block pattern.
+- **Finance Dashboard Widgets** section on **ERPNext Enhancements Settings**: per-widget enable toggles (default OFF), the Finance Google Calendar id + event cap, and an optional horoscope API base.
+
 ## [1.136.0] - 2026-06-29
 
 ### Changed
