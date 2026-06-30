@@ -284,10 +284,18 @@
 		});
 	}
 
-	frappe.router.on("change", function () {
-		// cur_list is assigned as the list view builds; give it a beat.
-		setTimeout(add_list_action, 500);
-	});
+	// Run on initial readiness AND on every route change (frappe.router 'change'
+	// does NOT fire for the page the desk lands on directly — a hard refresh or
+	// deep link straight to a list view). add_list_action is idempotent per
+	// cur_list (the __ee_merge_added guard), so the extra retry is harmless and
+	// closes the race where cur_list isn't built yet on a slow first paint.
+	const schedule_list_action = () => {
+		setTimeout(add_list_action, 300);
+		setTimeout(add_list_action, 1200);
+	};
+	$(document).on("app_ready", schedule_list_action);
+	frappe.router.on("change", schedule_list_action);
+	if (frappe.router && frappe.get_route_str && frappe.get_route_str()) schedule_list_action();
 
 	function start_bulk_merge(lv) {
 		const checked = (lv.get_checked_items && lv.get_checked_items()) || [];
@@ -349,30 +357,33 @@
 
 	async function run_bulk(doctype, survivor, losers, lv) {
 		let ok = 0;
+		let queued = 0;
 		let failed = 0;
 		frappe.show_progress(__("Merging"), 0, losers.length);
 		for (let i = 0; i < losers.length; i++) {
 			try {
-				await frappe.xcall("erpnext_enhancements.document_merge.perform_merge", {
+				const res = await frappe.xcall("erpnext_enhancements.document_merge.perform_merge", {
 					doctype: doctype,
 					survivor: survivor,
 					loser: losers[i],
 				});
-				ok++;
+				// A large merge returns {queued:true} — it is NOT done yet (the loser
+				// is deleted asynchronously); don't count it as completed.
+				if (res && res.queued) queued++;
+				else ok++;
 			} catch (e) {
 				failed++;
 			}
 			frappe.show_progress(__("Merging"), i + 1, losers.length);
 		}
 		frappe.hide_progress();
+		const parts = [__("{0} merged into {1}", [ok, esc(survivor)])];
+		if (queued) parts.push(__("{0} running in background", [queued]));
+		if (failed) parts.push(__("{0} failed (see Error Log)", [failed]));
 		frappe.msgprint({
 			title: __("Bulk merge complete"),
-			message: __("{0} merged into {1}{2}.", [
-				ok,
-				esc(survivor),
-				failed ? __(", {0} failed (see Error Log)", [failed]) : "",
-			]),
-			indicator: failed ? "orange" : "green",
+			message: parts.join(", ") + ".",
+			indicator: failed ? "orange" : queued ? "blue" : "green",
 		});
 		if (lv && lv.refresh) lv.refresh();
 	}
@@ -386,8 +397,8 @@
 			frappe.show_alert(
 				{
 					message: data.success
-						? __("Merge of {0} into {1} finished.", [data.loser, data.survivor])
-						: __("Background merge of {0} failed (see Error Log).", [data.loser]),
+						? __("Merge of {0} into {1} finished.", [esc(data.loser), esc(data.survivor)])
+						: __("Background merge of {0} failed (see Error Log).", [esc(data.loser)]),
 					indicator: data.success ? "green" : "red",
 				},
 				10

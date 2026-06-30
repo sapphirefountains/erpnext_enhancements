@@ -52,10 +52,8 @@ from erpnext_enhancements.feature_flags import throw_if_document_merge_disabled
 
 # Over this many discovered references, run the merge on the background queue
 # instead of inline (keeps the request from timing out on big master-data merges).
+# The merge is still a single atomic transaction either way (see _execute_merge).
 BACKGROUND_REF_THRESHOLD = 2000
-
-# Commit every N reference repoints so a mid-run failure keeps completed work.
-COMMIT_EVERY = 200
 
 # Framework "soft" reference tables — keyed by a (doctype, name) column pair that
 # is NOT a declared Link/Dynamic Link field, so discover_references can't see them.
@@ -66,15 +64,32 @@ SOFT_REFERENCE_TABLES = [
 	("Comment", "reference_doctype", "reference_name"),
 	("ToDo", "reference_type", "reference_name"),
 	("Communication", "reference_doctype", "reference_name"),
+	# Communication also carries a separate timeline target (what shows on a
+	# record's Activity feed); it can differ from reference_name, so move it too.
+	("Communication", "timeline_doctype", "timeline_name"),
 	("Communication Link", "link_doctype", "link_name"),
 	("Notification Log", "document_type", "document_name"),
-	("Email Queue Recipient", "reference_doctype", "reference_name"),
+	# The document-reference columns live on the Email Queue parent, NOT on the
+	# Email Queue Recipient child (which only has recipient/status/error).
+	("Email Queue", "reference_doctype", "reference_name"),
 	("Tag Link", "document_type", "document_name"),
 	("Energy Point Log", "reference_doctype", "reference_name"),
 	("Document Follow", "ref_doctype", "ref_docname"),
 	("Activity Log", "reference_doctype", "reference_name"),
 	("Version", "ref_doctype", "docname"),
 ]
+
+
+def _is_duplicate_entry_error(exc):
+	"""True if ``exc`` is a DB duplicate/unique-key violation (MariaDB 1062).
+
+	Used to tell a *genuine* collision (the survivor already owns the equivalent
+	row — drop the loser's redundant one) apart from any other error (which must
+	abort the merge, never silently delete data)."""
+	args = getattr(exc, "args", None) or ()
+	if args and args[0] == 1062:
+		return True
+	return "Duplicate entry" in str(exc)
 
 # Free-text bodies scanned for a bare mention of the loser's name (manual-review
 # flags only — never rewritten). (doctype, [text columns]).
@@ -439,6 +454,8 @@ def execute_merge_job(doctype, survivor, loser, user):
 	hard_refs = discover_references(doctype, loser, include_cancelled=True, respect_ignore_hook=False)
 	soft_rows = _soft_reference_rows(doctype, loser)
 	try:
+		# _execute_merge is atomic and rolls back + logs on failure; here we only
+		# turn its outcome into a realtime notice for the initiating user.
 		summary = _execute_merge(doctype, survivor, loser, hard_refs, soft_rows)
 		frappe.publish_realtime(
 			"document_merge_done",
@@ -447,8 +464,6 @@ def execute_merge_job(doctype, survivor, loser, user):
 			user=user,
 		)
 	except Exception:
-		frappe.db.rollback()
-		frappe.log_error(frappe.get_traceback(), "Document Merge (background) failed")
 		frappe.publish_realtime(
 			"document_merge_done",
 			{"success": False, "doctype": doctype, "survivor": survivor, "loser": loser},
@@ -459,29 +474,56 @@ def execute_merge_job(doctype, survivor, loser, user):
 
 def _execute_merge(doctype, survivor, loser, hard_refs, soft_rows):
 	"""The actual work, shared by the inline and background paths. Assumes the
-	write guards have already run."""
+	write guards have already run.
+
+	**Atomic and fail-closed.** The whole merge is one transaction: backfill →
+	repoint hard refs → repoint soft refs → reconcile tags → delete the loser →
+	commit. If anything raises, the transaction is rolled back and nothing is
+	changed or deleted — a partial merge (loser deleted while a reference still
+	points at it) is never committed. The loser is deleted **without** ``force``,
+	so Frappe's own ``LinkExistsError`` is a final backstop: if any hard reference
+	was somehow missed, the delete fails and the whole merge rolls back rather
+	than orphaning a link.
+	"""
 	survivor_doc = frappe.get_doc(doctype, survivor)
 	loser_doc = frappe.get_doc(doctype, loser)
 
-	# 1) Backfill the survivor's blanks + append the loser's child rows.
-	n_fields, n_rows = _apply_backfill(survivor_doc, loser_doc)
-	if n_fields or n_rows:
-		survivor_doc.save()
-
-	# 2) Repoint hard references (Link / Dynamic Link / child / Single), low-level.
-	hard_count = _repoint_hard_references(doctype, survivor, loser, hard_refs)
-
-	# 3) Repoint soft references (Files / Comments / ToDos / Communications / …).
-	soft_count = _repoint_soft_references(survivor, loser, soft_rows)
-
-	frappe.db.commit()
-
-	# 4) Delete the loser (references are clear, so no LinkExistsError).
-	frappe.delete_doc(doctype, loser, force=1, ignore_permissions=True)
-	frappe.db.commit()
-
-	# 5) Record the irreversible operation.
+	# Capture the manual-review flags BEFORE any mutation, so the logged flags
+	# match exactly what the preview showed (after repointing, the loser's own
+	# soft refs read as the survivor's and the exclusion would stop matching).
 	manual_review = _manual_review_flags(doctype, loser)
+
+	try:
+		# 1) Backfill the survivor's blanks + append the loser's child rows.
+		n_fields, n_rows = _apply_backfill(survivor_doc, loser_doc)
+		if n_fields or n_rows:
+			survivor_doc.save(ignore_permissions=True)
+
+		# 2) Repoint hard references (Link / Dynamic Link / child / Single).
+		hard_count, touched = _repoint_hard_references(doctype, survivor, loser, hard_refs)
+
+		# 3) Repoint soft references (Files / Comments / ToDos / Communications / …).
+		soft_count = _repoint_soft_references(doctype, survivor, loser, soft_rows)
+
+		# 3b) Union the loser's tags into the survivor's denormalized _user_tags
+		#     (the Tag Link rows moved above, but the sidebar reads _user_tags).
+		_merge_user_tags(doctype, survivor, loser_doc)
+
+		# 4) Delete the loser. No force: if a hard reference was missed, Frappe's
+		#    LinkExistsError fires and the whole merge rolls back (fail-closed).
+		frappe.delete_doc(doctype, loser, ignore_permissions=True)
+
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(frappe.get_traceback(), "Document Merge failed")
+		raise
+
+	# Scope the cache flush to the doctypes actually touched (not the whole site).
+	for dt in touched | {doctype}:
+		frappe.clear_cache(doctype=dt)
+
+	# 5) Record the irreversible operation (after commit; never blocks the merge).
 	_write_merge_log(
 		doctype, survivor, loser, n_fields, n_rows, hard_count, soft_count, manual_review
 	)
@@ -500,91 +542,115 @@ def _execute_merge(doctype, survivor, loser, hard_refs, soft_rows):
 	}
 
 
-def _repoint_hard_references(doctype, survivor, loser, refs):
-	"""Set every discovered Link/Dynamic Link/child/Single reference from loser to
-	survivor, low-level (bypasses validation so submitted referrers repoint too).
+def _repoint_one(table, name, name_field, value, doctype_field=None, doctype_value=None):
+	"""Repoint one reference row low-level (bypasses validation so submitted
+	referrers repoint too). Returns ``True`` if repointed, ``False`` if the row was
+	a genuine duplicate of one the survivor already owns and was dropped instead.
 
-	Handles two collision cases:
-	* A referrer that *is* the survivor would become a self-link — null it instead
-	  (avoids e.g. parent_project pointing at itself).
-	* A child/dynamic row whose parent already points at the survivor on the same
-	  field would duplicate — drop the loser row instead of repointing.
+	A duplicate-key violation (the survivor already has the equivalent unique row,
+	e.g. a Document Follow / Tag Link the survivor already carries) is the ONLY
+	error treated as "drop the loser's redundant row". Every other error is
+	re-raised — the caller fails the whole merge closed rather than guessing.
+	A per-row savepoint keeps a recoverable duplicate error from poisoning the
+	surrounding transaction.
+	"""
+	savepoint = "ee_merge_repoint"
+	frappe.db.savepoint(savepoint)
+	try:
+		frappe.db.set_value(table, name, name_field, value, update_modified=False)
+		if doctype_field:
+			frappe.db.set_value(table, name, doctype_field, doctype_value, update_modified=False)
+		return True
+	except Exception as exc:
+		frappe.db.rollback(save_point=savepoint)
+		if _is_duplicate_entry_error(exc):
+			frappe.db.delete(table, {"name": name})
+			return False
+		raise
+
+
+def _repoint_hard_references(doctype, survivor, loser, refs):
+	"""Repoint every discovered Link/Dynamic Link/child/Single reference from loser
+	to survivor. Returns (count, touched_doctypes).
+
+	Defaults to *repointing* every row; a row is only dropped on a genuine
+	duplicate-key collision (via :func:`_repoint_one`). A referrer that *is* the
+	survivor would become a self-link, so it is nulled instead. Any unexpected
+	error propagates (the merge is atomic and fails closed).
 	"""
 	count = 0
-	for i, ref in enumerate(refs):
-		try:
-			if ref.get("is_single"):
-				frappe.db.set_single_value(ref["doctype"], ref["fieldname"], survivor)
-				if ref.get("is_dynamic") and ref.get("doctype_field"):
-					frappe.db.set_single_value(ref["doctype"], ref["doctype_field"], doctype)
-				count += 1
-
-			elif ref.get("is_child"):
-				parent_dt, parent_name = ref["doctype"], ref["name"]
-				child_dt, child_name = ref["child_doctype"], ref["child_name"]
-				# Skip the loser's own rows (already filtered in discovery, belt-and-braces).
-				if parent_dt == doctype and parent_name == loser:
-					continue
-				# Collision: parent already has a sibling row pointing at survivor.
-				dup_filters = {"parent": parent_name, "parenttype": parent_dt, ref["fieldname"]: survivor}
-				if ref.get("is_dynamic") and ref.get("doctype_field"):
-					dup_filters[ref["doctype_field"]] = doctype
-				if frappe.db.exists(child_dt, {**dup_filters, "name": ["!=", child_name]}):
-					frappe.db.delete(child_dt, {"name": child_name})
-				else:
-					frappe.db.set_value(child_dt, child_name, ref["fieldname"], survivor, update_modified=False)
-					if ref.get("is_dynamic") and ref.get("doctype_field"):
-						frappe.db.set_value(child_dt, child_name, ref["doctype_field"], doctype, update_modified=False)
-				count += 1
-
-			else:
-				ref_dt, ref_name = ref["doctype"], ref["name"]
-				# A reference on the survivor itself would become a self-link; null it.
-				if ref_dt == doctype and ref_name == survivor:
-					frappe.db.set_value(ref_dt, ref_name, ref["fieldname"], None, update_modified=False)
-					if ref.get("is_dynamic") and ref.get("doctype_field"):
-						frappe.db.set_value(ref_dt, ref_name, ref["doctype_field"], None, update_modified=False)
-				else:
-					frappe.db.set_value(ref_dt, ref_name, ref["fieldname"], survivor, update_modified=False)
-					if ref.get("is_dynamic") and ref.get("doctype_field"):
-						frappe.db.set_value(ref_dt, ref_name, ref["doctype_field"], doctype, update_modified=False)
-				count += 1
-
-		except Exception:
-			frappe.log_error(
-				frappe.get_traceback(), f"Document Merge: failed to repoint reference {ref}"
-			)
-
-		if (i + 1) % COMMIT_EVERY == 0:
-			frappe.db.commit()
-
-	# Clear caches for parents touched (their cached child tables changed).
-	frappe.clear_cache()
-	return count
-
-
-def _repoint_soft_references(survivor, loser, soft_rows):
-	"""Repoint the framework soft-reference rows from loser to survivor, low-level.
-	A repoint that would duplicate (e.g. a Tag Link the survivor already has) is
-	dropped instead."""
-	count = 0
-	for i, ref in enumerate(soft_rows):
-		table, name_col, row = ref["table"], ref["name_col"], ref["row"]
-		try:
-			frappe.db.set_value(table, row, name_col, survivor, update_modified=False)
+	touched = set()
+	for ref in refs:
+		if ref.get("is_single"):
+			frappe.db.set_single_value(ref["doctype"], ref["fieldname"], survivor)
+			if ref.get("is_dynamic") and ref.get("doctype_field"):
+				frappe.db.set_single_value(ref["doctype"], ref["doctype_field"], doctype)
+			touched.add(ref["doctype"])
 			count += 1
-		except Exception:
-			# Likely a unique-key collision (survivor already has the equivalent row).
-			try:
-				frappe.db.delete(table, {"name": row})
-			except Exception:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Document Merge: failed to repoint soft reference {table} {row}",
+
+		elif ref.get("is_child"):
+			parent_dt, parent_name = ref["doctype"], ref["name"]
+			child_dt, child_name = ref["child_doctype"], ref["child_name"]
+			# Skip the loser's own rows (already filtered in discovery, belt-and-braces).
+			if parent_dt == doctype and parent_name == loser:
+				continue
+			_repoint_one(
+				child_dt,
+				child_name,
+				ref["fieldname"],
+				survivor,
+				ref["doctype_field"] if ref.get("is_dynamic") else None,
+				doctype,
+			)
+			touched.add(parent_dt)
+			count += 1
+
+		else:
+			ref_dt, ref_name = ref["doctype"], ref["name"]
+			# A reference on the survivor itself would become a self-link; null it.
+			if ref_dt == doctype and ref_name == survivor:
+				frappe.db.set_value(ref_dt, ref_name, ref["fieldname"], None, update_modified=False)
+				if ref.get("is_dynamic") and ref.get("doctype_field"):
+					frappe.db.set_value(ref_dt, ref_name, ref["doctype_field"], None, update_modified=False)
+			else:
+				_repoint_one(
+					ref_dt,
+					ref_name,
+					ref["fieldname"],
+					survivor,
+					ref["doctype_field"] if ref.get("is_dynamic") else None,
+					doctype,
 				)
-		if (i + 1) % COMMIT_EVERY == 0:
-			frappe.db.commit()
+			touched.add(ref_dt)
+			count += 1
+
+	return count, touched
+
+
+def _repoint_soft_references(doctype, survivor, loser, soft_rows):
+	"""Repoint the framework soft-reference rows from loser to survivor. A row that
+	would duplicate one the survivor already owns (e.g. a Tag Link / Document Follow
+	already present) is dropped; any other error propagates (fail-closed). The
+	companion ``*_doctype`` column never changes (same-doctype merge)."""
+	count = 0
+	for ref in soft_rows:
+		_repoint_one(ref["table"], ref["row"], ref["name_col"], survivor)
+		count += 1
 	return count
+
+
+def _merge_user_tags(doctype, survivor, loser_doc):
+	"""Union the loser's tags into the survivor's denormalized ``_user_tags`` column
+	(the desk tag sidebar and tag filters read this column, not raw Tag Link rows;
+	the Tag Link rows themselves are moved by the soft-reference pass)."""
+	loser_tags = [t for t in (loser_doc.get("_user_tags") or "").split(",") if t]
+	if not loser_tags:
+		return
+	survivor_tags = frappe.db.get_value(doctype, survivor, "_user_tags") or ""
+	tags = {t for t in survivor_tags.split(",") if t}
+	tags.update(loser_tags)
+	new_value = "," + ",".join(sorted(tags)) if tags else ""
+	frappe.db.set_value(doctype, survivor, "_user_tags", new_value, update_modified=False)
 
 
 def _write_merge_log(doctype, survivor, loser, n_fields, n_rows, hard_count, soft_count, manual_review):
