@@ -55,17 +55,7 @@
   "kpi_dashboards_enabled",
   "kpi_snapshot_retention_days",
   "desk_ux_section",
-  "field_description_icons_enabled",
-  "finance_dashboard_section",
-  "finance_new_jobs_enabled",
-  "finance_whos_working_enabled",
-  "finance_weather_enabled",
-  "finance_astrology_enabled",
-  "finance_calendar_enabled",
-  "finance_dashboard_column_break",
-  "finance_calendar_id",
-  "finance_calendar_max_events",
-  "horoscope_api_base"
+  "field_description_icons_enabled"
  ],
  "fields": [
   {
@@ -405,69 +395,6 @@
    "fieldname": "field_description_icons_enabled",
    "fieldtype": "Check",
    "label": "Field Description Info Icons"
-  },
-  {
-   "fieldname": "finance_dashboard_section",
-   "fieldtype": "Section Break",
-   "label": "Finance Dashboard Widgets"
-  },
-  {
-   "default": "0",
-   "description": "Show the New Jobs Queue widget (most recently created Active Projects) on the Finance Dashboard. Each widget appears only where the block is placed (the Finance Dashboard workspace) and only for finance roles.",
-   "fieldname": "finance_new_jobs_enabled",
-   "fieldtype": "Check",
-   "label": "Enable New Jobs Queue Widget"
-  },
-  {
-   "default": "0",
-   "description": "Show the Who's Working widget (employees currently clocked in, from open/paused Job Intervals) on the Finance Dashboard.",
-   "fieldname": "finance_whos_working_enabled",
-   "fieldtype": "Check",
-   "label": "Enable Who's Working Widget"
-  },
-  {
-   "default": "0",
-   "description": "Show the Weather chip on the Finance Dashboard (uses the same keyless Open-Meteo coordinates as the Wall display, configured above).",
-   "fieldname": "finance_weather_enabled",
-   "fieldtype": "Check",
-   "label": "Enable Weather Widget"
-  },
-  {
-   "default": "0",
-   "description": "Show the daily horoscope widget (pick-a-sign) on the Finance Dashboard.",
-   "fieldname": "finance_astrology_enabled",
-   "fieldtype": "Check",
-   "label": "Enable Astrology Widget"
-  },
-  {
-   "default": "0",
-   "description": "Show upcoming events from the Finance Google Calendar on the Finance Dashboard. Requires the calendar id below, the Calendar API enabled on the Drive service account's GCP project, and the calendar shared with that service account.",
-   "fieldname": "finance_calendar_enabled",
-   "fieldtype": "Check",
-   "label": "Enable Finance Calendar Widget"
-  },
-  {
-   "fieldname": "finance_dashboard_column_break",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "The Google Calendar id of the \"Finance\" calendar (e.g. the long ...@group.calendar.google.com id, or an email address). The calendar must be shared with the Drive service account's client_email. Use the calendar widget's list helper to discover it.",
-   "fieldname": "finance_calendar_id",
-   "fieldtype": "Data",
-   "label": "Finance Google Calendar ID"
-  },
-  {
-   "default": "10",
-   "description": "Maximum number of upcoming events the Finance Calendar widget shows.",
-   "fieldname": "finance_calendar_max_events",
-   "fieldtype": "Int",
-   "label": "Finance Calendar Max Events"
-  },
-  {
-   "description": "Optional override for the public horoscope API base URL (no key). Leave blank to use the built-in default.",
-   "fieldname": "horoscope_api_base",
-   "fieldtype": "Data",
-   "label": "Horoscope API Base URL"
   }
  ],
  "issingle": 1,

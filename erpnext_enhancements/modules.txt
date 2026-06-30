@@ -20,4 +20,3 @@ Accounting Intake
 Stripe Payments
 Water Engineering
 KPI Dashboards
-Plaid Banking
