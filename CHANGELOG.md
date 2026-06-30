@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.138.0] - 2026-06-30
+
+### Added
+- **Fleet Maintenance module — track routine company-vehicle maintenance.** A new module for the weekly / 3-month / 6-month vehicle maintenance schedule:
+  - **`Fleet Vehicle`** master — one record per vehicle (make/model/year, plate, VIN, fuel type, assigned driver, odometer, photo) plus a "last done" date per cadence. Each save derives the matching "due" dates and a headline **Maintenance Status** (`No Data` / `OK` / `Due Soon` / `Overdue`) from those dates and the configured intervals.
+  - **`Vehicle Maintenance Log`** (submittable) — the form crew fill in. Picking a **Maintenance Type** (Weekly / Oil Change (3-Month) / Dealership Check-Up (6-Month) / Windshield Wipers (6-Month) / Other / Repair) auto-loads that type's standard checklist (`Vehicle Maintenance Task` child rows); required items block submit until they have a status. On submit it rolls the vehicle's matching last-done date forward, advances the odometer (forward only), and recomputes status; on cancel it re-derives from the remaining submitted logs.
+  - **Nightly status refresh + reminders** — ages every non-retired vehicle's status as dates pass and, when reminders are on, sends a desk notification to fleet managers (users with the *Fleet Manager* or *Maintenance Manager* role, else System Managers) the day a vehicle newly becomes Due Soon / Overdue.
+  - **In-desk `Fleet Maintenance Schedule` page** (the cadence reference, incl. the standing daily "check gas, refill if ≤ half" instruction), a **Fleet Maintenance** workspace, and a printable **Vehicle Maintenance Checklist** Print Format (print a draft for a blank sheet to keep in the vehicle).
+  - New **Fleet Manager** role (seeded, assign post-deploy) with full access to both doctypes alongside the stock Maintenance Manager / Maintenance User roles.
+  - Gated by a new **ERPNext Enhancements Settings → Fleet Maintenance** section: a default-OFF master switch (`Enable Fleet Maintenance`), a default-ON `Send Fleet Reminders` toggle, and the four cadence intervals + the Due Soon window. The forms work regardless; only the background job + reminders are gated. Design + SOP in `docs/FLEET_VEHICLE_MAINTENANCE.md`; module notes in `erpnext_enhancements/fleet_maintenance/README.md`.
+
 ## [1.137.0] - 2026-06-30
 
 ### Added

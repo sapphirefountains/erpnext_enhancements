@@ -73,6 +73,28 @@ def field_description_icons_enabled():
 	)
 
 
+def fleet_maintenance_enabled():
+	"""True when the Fleet Maintenance suite is switched on.
+
+	Default OFF (the staged-rollout contract): the nightly status refresh and
+	reminders stay dormant until the checkbox in **ERPNext Enhancements Settings
+	→ Fleet Maintenance** is flipped. The doctypes/forms themselves are always
+	usable; this gates only the background automation.
+	"""
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "fleet_maintenance_enabled"))
+	)
+
+
+def fleet_reminders_enabled():
+	"""True when fleet status changes notify fleet managers (default ON once the
+	suite is enabled — see the ``default_fleet_reminders_on`` patch). Turn off to
+	keep the due dashboard without the desk notifications."""
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "fleet_reminders_enabled"))
+	)
+
+
 def throw_if_process_automation_disabled():
 	"""Guard for whitelisted entry points — explains instead of misbehaving."""
 	if not process_automation_enabled():
