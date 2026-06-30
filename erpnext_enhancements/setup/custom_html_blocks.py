@@ -43,14 +43,6 @@ BLOCKS = [
 	# additionally surfaced on Home and each department dashboard below, where the
 	# block auto-locks to a department by route (role-gated per department).
 	("KPI Cockpit", "kpi_cockpit"),
-	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
-	# workspace (see FINANCE_DASHBOARD_BLOCKS), each gated by its own toggle.
-	("Finance New Jobs", "finance_new_jobs"),
-	("Finance Who's Working", "finance_whos_working"),
-	("Finance Bank Balances", "finance_bank_balances"),
-	("Finance Weather", "finance_weather"),
-	("Finance Astrology", "finance_astrology"),
-	("Finance Calendar", "finance_calendar"),
 ]
 
 # Subset of BLOCKS appended to the Home workspace. KPI Cockpit reaches Home via
@@ -74,20 +66,6 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Production Dashboard",
 	"Marketing Dashboard",
 	"Executive Dashboard",
-)
-
-# Operational widgets placed only on the Finance Dashboard workspace (in this
-# order, after the KPI Cockpit). Site-created workspace; placement is skipped
-# silently if it's absent. Each block is additionally role-gated + toggle-gated
-# server-side, so a placed-but-disabled block just renders a muted notice.
-FINANCE_DASHBOARD = "Finance Dashboard"
-FINANCE_DASHBOARD_BLOCKS = (
-	"Finance New Jobs",
-	"Finance Who's Working",
-	"Finance Bank Balances",
-	"Finance Weather",
-	"Finance Astrology",
-	"Finance Calendar",
 )
 
 
@@ -159,12 +137,6 @@ def sync_custom_html_blocks():
 		for workspace in (HOME_WORKSPACE, *KPI_DEPARTMENT_DASHBOARDS):
 			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
 				changed = True
-
-	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
-	# workspace, in FINANCE_DASHBOARD_BLOCKS order (a missing workspace is skipped).
-	finance_blocks = [name for name in FINANCE_DASHBOARD_BLOCKS if name in synced]
-	if finance_blocks and _append_custom_blocks(FINANCE_DASHBOARD, finance_blocks):
-		changed = True
 
 	if changed:
 		frappe.clear_cache()
