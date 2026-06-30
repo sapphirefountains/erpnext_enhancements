@@ -1,0 +1,178 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_section",
+  "plaid_enabled",
+  "plaid_environment",
+  "company",
+  "column_break_conn",
+  "plaid_status",
+  "plaid_status_message",
+  "plaid_last_sync",
+  "keys_section",
+  "plaid_client_id",
+  "plaid_secret",
+  "column_break_keys",
+  "refresh_poll_minutes",
+  "item_section",
+  "plaid_access_token",
+  "plaid_item_id",
+  "column_break_item",
+  "plaid_institution_name",
+  "plaid_auth_blocked"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. When off, balances are not refreshed and the Bank Balances widget shows a disabled notice.",
+   "fieldname": "plaid_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Plaid Bank Balances"
+  },
+  {
+   "default": "Sandbox",
+   "description": "Sandbox uses Plaid test credentials (user_good / pass_good). Real KeyBank data requires Production access (an approval step in the Plaid dashboard) and re-running Connect Bank.",
+   "fieldname": "plaid_environment",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Environment",
+   "options": "Sandbox\nProduction",
+   "reqd": 1
+  },
+  {
+   "description": "Optional. Company these accounts belong to (for labelling).",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "column_break_conn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Connected",
+   "fieldname": "plaid_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Not Connected\nConnected\nError\nReconnect Required",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plaid_status_message",
+   "fieldtype": "Small Text",
+   "label": "Status Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plaid_last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Successful Sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "keys_section",
+   "fieldtype": "Section Break",
+   "label": "API Keys"
+  },
+  {
+   "description": "Plaid client_id (an identifier, sent in every request).",
+   "fieldname": "plaid_client_id",
+   "fieldtype": "Data",
+   "label": "Client ID"
+  },
+  {
+   "description": "Plaid secret for the selected environment. Stored encrypted.",
+   "fieldname": "plaid_secret",
+   "fieldtype": "Password",
+   "label": "Secret"
+  },
+  {
+   "fieldname": "column_break_keys",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "240",
+   "description": "How often (minutes) the scheduled job may refresh balances. Balances change slowly, so ~240 (4h) keeps Plaid calls low.",
+   "fieldname": "refresh_poll_minutes",
+   "fieldtype": "Int",
+   "label": "Refresh Throttle (Minutes)"
+  },
+  {
+   "fieldname": "item_section",
+   "fieldtype": "Section Break",
+   "label": "Connected Item"
+  },
+  {
+   "description": "Long-lived Plaid access token, set after Connect Bank. Stored encrypted; never displayed.",
+   "fieldname": "plaid_access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plaid_item_id",
+   "fieldtype": "Data",
+   "label": "Item ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_item",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "plaid_institution_name",
+   "fieldtype": "Data",
+   "label": "Institution",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when Plaid reports a non-retryable error (e.g. login required, bad keys). While set, the scheduler stops refreshing so a dead connection can't storm the API. Cleared automatically when you edit credentials or reconnect successfully.",
+   "fieldname": "plaid_auth_blocked",
+   "fieldtype": "Check",
+   "label": "Auth Blocked (Paused)",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Plaid Banking",
+ "name": "Plaid Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
