@@ -1,0 +1,178 @@
+{
+ "actions": [],
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "option_key",
+  "option_type",
+  "option_label",
+  "module_key",
+  "column_break_choice",
+  "choice_code",
+  "choice_label",
+  "is_default",
+  "min_qty",
+  "max_qty",
+  "default_qty",
+  "section_pricing",
+  "parts_cost",
+  "labor_hours",
+  "flat_labor_cost",
+  "qty_multiplier_option",
+  "section_warnings",
+  "warning_condition",
+  "warning_text",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "option_key",
+   "fieldtype": "Data",
+   "label": "Option Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Token in the part-number template and in step conditions (e.g. estop_qty). Choice rows of one group share the same key."
+  },
+  {
+   "fieldname": "option_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Base\nChoice\nQuantity",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Base = always included once. Choice = pick one of the rows sharing this key. Quantity = 0-N of this module."
+  },
+  {
+   "fieldname": "option_label",
+   "fieldtype": "Data",
+   "label": "Label",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "module_key",
+   "fieldtype": "Data",
+   "label": "Module Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Joins this module to its component rows and build steps (e.g. mounting_flush)."
+  },
+  {
+   "fieldname": "column_break_choice",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "choice_code",
+   "fieldtype": "Data",
+   "label": "Choice Code",
+   "in_list_view": 1,
+   "columns": 1,
+   "depends_on": "eval:doc.option_type==='Choice'",
+   "mandatory_depends_on": "eval:doc.option_type==='Choice'",
+   "description": "The part-number digit for this choice (e.g. 1 = Flush)."
+  },
+  {
+   "fieldname": "choice_label",
+   "fieldtype": "Data",
+   "label": "Choice",
+   "in_list_view": 1,
+   "columns": 1,
+   "depends_on": "eval:doc.option_type==='Choice'"
+  },
+  {
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "label": "Default Choice",
+   "depends_on": "eval:doc.option_type==='Choice'"
+  },
+  {
+   "fieldname": "min_qty",
+   "fieldtype": "Int",
+   "label": "Min Qty",
+   "depends_on": "eval:doc.option_type==='Quantity'"
+  },
+  {
+   "fieldname": "max_qty",
+   "fieldtype": "Int",
+   "label": "Max Qty",
+   "depends_on": "eval:doc.option_type==='Quantity'"
+  },
+  {
+   "fieldname": "default_qty",
+   "fieldtype": "Int",
+   "label": "Default Qty",
+   "depends_on": "eval:doc.option_type==='Quantity'"
+  },
+  {
+   "fieldname": "section_pricing",
+   "fieldtype": "Section Break",
+   "label": "Module Pricing"
+  },
+  {
+   "fieldname": "parts_cost",
+   "fieldtype": "Currency",
+   "label": "Parts Cost",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Module-level pricing estimate — deliberately independent of the component-list sum (which drives the BOM, not the price)."
+  },
+  {
+   "fieldname": "labor_hours",
+   "fieldtype": "Float",
+   "label": "Labor Hours",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "flat_labor_cost",
+   "fieldtype": "Currency",
+   "label": "Flat Labor Cost",
+   "description": "When > 0, overrides Labor Hours × the product's labor rate (e.g. Surface mounting's flat $175)."
+  },
+  {
+   "fieldname": "qty_multiplier_option",
+   "fieldtype": "Data",
+   "label": "Multiply Cost by Option",
+   "description": "Option Key of a Quantity option whose value multiplies this module's cost and parts (mounting rows use estop_qty: each e-stop needs its own mounting)."
+  },
+  {
+   "fieldname": "section_warnings",
+   "fieldtype": "Section Break",
+   "label": "Warning",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "warning_condition",
+   "fieldtype": "Data",
+   "label": "Warning Condition",
+   "description": "Restricted expression over the option keys, e.g. contactor_qty == 3. Shows the warning text on matching configurations."
+  },
+  {
+   "fieldname": "warning_text",
+   "fieldtype": "Data",
+   "label": "Warning Text"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Configurator Product Option",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

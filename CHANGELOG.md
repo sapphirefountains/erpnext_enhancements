@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.142.0] - 2026-07-02
+
+### Added
+- **Product Configurator — configure-to-order tool, seeded with the PDT-0040 STILLWATER E-Stop.** A **Configurable Product** defines a product's option modules (base unit, pick-one choices, 0–N quantity modules) with per-module parts cost, labor hours (or a flat labor amount) and part-number digits, plus its component parts and condition-driven build-instruction templates. A **Product Configuration** picks the options with a **live price preview** and computes the part number (`PDT-0040-1-1-1-2-0`), a module-by-module pricing breakdown (labor rate × hours, 30% markup, additional-cost passthrough), the exploded parts list, and config-aware build instructions ("2 timers → use triple-pole terminals", "insert 3 cable glands"). On demand it generates the native ERPNext records **atomically**: the configured **Item** (part number = item code), a **submitted default BOM** from the parts list (duplicate components aggregated, costed by valuation with seeded unit costs), and a **Standard Selling Item Price** — plus, one click on the product, the ~23 component **Items with Suppliers** (Amazon, Automation Direct, Grainger, Digikey, Galco, …) and buying prices. Three print formats ship per configuration: shop-floor **Build Instructions**, **QC Checklist** with sign-off, and a **Pricing Summary** quote sheet. The PDT-0040 seed reproduces the source pricing workbook's own worked examples to the third decimal (goldens 1685.008 / 1512.979, verified bench-free in CI), fixes the workbook's mounting-digit bug (digit no longer multiplied by e-stop qty; the cost still is), and future products are added entirely through the UI. Gated behind the new **default-OFF** `product_configurator_enabled` switch (ERPNext Enhancements Settings → Product Configurator): configurations, pricing and printing always work; only ERPNext-master generation is switched. New "Product Engineer" role; docs in `docs/PRODUCT_CONFIGURATOR.md`.
+
 ## [1.141.0] - 2026-06-30
 
 ### Added

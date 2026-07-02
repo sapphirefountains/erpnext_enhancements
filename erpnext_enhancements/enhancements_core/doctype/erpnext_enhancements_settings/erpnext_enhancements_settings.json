@@ -58,6 +58,8 @@
   "field_description_icons_enabled",
   "document_merge_section",
   "document_merge_enabled",
+  "product_configurator_section",
+  "product_configurator_enabled",
   "fleet_section",
   "fleet_maintenance_enabled",
   "fleet_reminders_enabled",
@@ -428,6 +430,18 @@
    "fieldname": "document_merge_enabled",
    "fieldtype": "Check",
    "label": "Enable Document Merge Tool"
+  },
+  {
+   "fieldname": "product_configurator_section",
+   "fieldtype": "Section Break",
+   "label": "Product Configurator"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the Product Configurator's ERPNext generation. ON: configurations get the \"Item + BOM + Selling Price\" button (creates the configured Item, a submitted default BOM from the parts list, and a Standard Selling Item Price) and products get \"Create Component Items\" (creates the component Items and their Suppliers). OFF (default): configurations, live pricing and the printable build/QC/pricing sheets all still work — only the buttons that create Items/BOMs/Suppliers are disabled and their server endpoints refuse. Users also need the usual Item/BOM/Item Price permissions; the \"Product Engineer\" role covers only the configurator doctypes.",
+   "fieldname": "product_configurator_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Product Configurator Generation"
   },
   {
    "fieldname": "fleet_section",
