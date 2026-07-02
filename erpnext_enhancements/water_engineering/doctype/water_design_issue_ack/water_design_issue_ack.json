@@ -1,0 +1,67 @@
+{
+ "actions": [],
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "issue_key",
+  "title",
+  "acknowledged_by",
+  "acknowledged_on",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "issue_key",
+   "fieldtype": "Data",
+   "label": "Issue Key",
+   "read_only": 1,
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3,
+   "description": "Stable issue key (code | row label). An acknowledgement is dropped automatically when its issue no longer exists; deleting a row un-acknowledges."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Warning",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 4
+  },
+  {
+   "fieldname": "acknowledged_by",
+   "fieldtype": "Link",
+   "label": "Acknowledged By",
+   "options": "User",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "acknowledged_on",
+   "fieldtype": "Datetime",
+   "label": "Acknowledged On",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Water Engineering",
+ "name": "Water Design Issue Ack",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

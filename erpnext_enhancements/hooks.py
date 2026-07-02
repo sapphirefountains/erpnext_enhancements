@@ -387,6 +387,17 @@ scheduler_events = {
 # read from ERPNext Enhancements Settings — see boot.py and api/collab.py.
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
 
+# Jinja methods available to Print Formats / web templates. The print sandbox
+# cannot parse the Water Feature Design pipe segments' fittings/components JSON
+# rows, so the aggregation (DOC-0121 Fitting Schedule) and the typed design
+# issues (Design Review section) are exposed as callables instead.
+jinja = {
+	"methods": [
+		"erpnext_enhancements.water_engineering.issues.we_fitting_schedule",
+		"erpnext_enhancements.water_engineering.issues.we_design_issues",
+	],
+}
+
 # Run after each `bench migrate` (from global_enhancements)
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
@@ -417,6 +428,9 @@ after_migrate = [
 	# water_engineering: the Results + Calculation Audit Print Formats for a design
 	# (idempotent + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.water_engineering.setup_print_formats.ensure_water_print_formats",
+	# water_engineering: workspace triage Number Cards over the denormalized
+	# issue counters (Designs with Blockers / Ready to Issue). Idempotent + guarded.
+	"erpnext_enhancements.water_engineering.setup.ensure_water_number_cards",
 	# fleet_maintenance: the Vehicle Maintenance Checklist Print Format (idempotent
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",

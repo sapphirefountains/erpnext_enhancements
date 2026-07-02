@@ -19,6 +19,7 @@ from .constants import (
     HW_CONSTANT,
     HW_EXPONENT_D,
     HW_EXPONENT_Q,
+    SELF_CLEANING_MIN_FPS,
     VELOCITY_COEFF,
 )
 from .data.pipe_specs import DEFAULT_PIPE_MATERIAL, PIPE_SPECS, get_pipe_pressure
@@ -28,6 +29,7 @@ STATUS_OKAY = "Okay"
 STATUS_INCREASE = "Increase Size"
 STATUS_EXCEEDS = "Exceeds Legal Limit"
 STATUS_OVER_PRESSURE = "Exceeds Pressure Rating"
+STATUS_SETTLING = "Below Self-Cleaning"
 
 
 def pipe_pressure_rating(material: str, size: str, temp_f: float = 73.0) -> CalcResult:
@@ -129,13 +131,17 @@ def velocity_status(
     max_discharge_fps: float,
     legal_fps: float,
 ) -> str:
-    """Band a velocity for a suction or discharge line."""
+    """Band a velocity for a suction or discharge line. Below ~0.5 FPS the run
+    is under the self-cleaning velocity (solids settle; DOC-0049's major-loss
+    tables are blank there) — flagged as its own advisory band."""
     v = float(velocity_fps)
     if v > legal_fps:
         return STATUS_EXCEEDS
     limit = max_suction_fps if (line or "").lower() == "suction" else max_discharge_fps
     if v > limit:
         return STATUS_INCREASE
+    if 0 < v < SELF_CLEANING_MIN_FPS:
+        return STATUS_SETTLING
     return STATUS_OKAY
 
 
@@ -230,10 +236,22 @@ def size_pipe(
 
     warnings = []
     if recommended is None:
-        warnings.append(
-            f"No {material} size keeps {flow_gpm} GPM within the {line} velocity limit; "
-            "split the flow across parallel runs or reduce it."
-        )
+        # A tiny flow can be below the self-cleaning band in EVERY size — the
+        # smallest run is still the right pick; it just needs a flushing plan.
+        settling = next((o for o in options if o.detail.get("status") == STATUS_SETTLING), None)
+        if settling:
+            recommended = settling.key
+            settling.recommended = True
+            warnings.append(
+                f"{flow_gpm} GPM runs below the {SELF_CLEANING_MIN_FPS:g} FPS self-cleaning "
+                f"velocity in every {material} size — use the smallest run and plan for "
+                "sediment flushing."
+            )
+        else:
+            warnings.append(
+                f"No {material} size keeps {flow_gpm} GPM within the {line} velocity limit; "
+                "split the flow across parallel runs or reduce it."
+            )
     rec_detail = next((o.detail for o in options if o.key == recommended), {})
     return CalcResult(
         calc="size_pipe",

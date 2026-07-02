@@ -137,3 +137,7 @@ erpnext_enhancements.patches.default_fleet_reminders_on
 # create-if-missing + role-gate each department workspace (replaces the v1.139.0
 # desk-page approach, whose pages are removed as orphans)
 erpnext_enhancements.patches.setup_department_kpi_workspaces
+# v1.142.0 Water Engineering Design Health: backfill the typed-issue counters
+# (blocker/warning counts, issues+readiness JSON) on existing designs from their
+# PERSISTED audit rows — no engine re-run, submitted docs untouched
+erpnext_enhancements.patches.backfill_water_design_issue_fields

@@ -23,6 +23,8 @@
   "velocity_fps",
   "velocity_status",
   "head_loss_ft",
+  "pressure_status",
+  "pressure_margin_psi",
   "is_mandatory"
  ],
  "fields": [
@@ -143,6 +145,20 @@
    "read_only": 1,
    "in_list_view": 1,
    "columns": 1
+  },
+  {
+   "fieldname": "pressure_status",
+   "fieldtype": "Data",
+   "label": "Pressure Status",
+   "read_only": 1,
+   "description": "Discharge lines: system pressure (TDH) vs. the pipe's temperature-derated rating (DOC-0049 Pipe Specs)."
+  },
+  {
+   "fieldname": "pressure_margin_psi",
+   "fieldtype": "Float",
+   "label": "Pressure Margin (psi)",
+   "read_only": 1,
+   "description": "Rated − system psi at 73 °F; negative = under-rated."
   },
   {
    "fieldname": "is_mandatory",

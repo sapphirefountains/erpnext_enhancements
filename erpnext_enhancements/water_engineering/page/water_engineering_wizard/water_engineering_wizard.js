@@ -242,9 +242,34 @@ function render_design_state($el, st) {
 	]
 		.map(([k, v]) => `<tr><td>${k}</td><td>${v == null ? "—" : esc(String(v))}</td></tr>`)
 		.join("");
-	const needs = (st.next_inputs_needed || []).length
-		? `<div class="we-warn"><b>${__("Still needed")}:</b> ${st.next_inputs_needed.map(esc).join(", ")}</div>`
-		: `<div class="we-ok-note">${__("All Phase-1 inputs provided.")}</div>`;
+
+	// Design-health chips + the top issues (same typed payload the form's
+	// Design Health panel renders) — a design with a red chip is findable here
+	// without opening the form.
+	const chips =
+		(st.blocker_count ? `<span class="we-badge we-bad">${st.blocker_count} ${__("blockers")}</span> ` : "") +
+		(st.warning_count ? `<span class="we-badge we-warn">${st.warning_count} ${__("warnings")}</span> ` : "") +
+		(!st.blocker_count && !st.warning_count ? `<span class="we-badge we-ok">${__("No issues")}</span> ` : "") +
+		(st.issue_ready ? `<span class="we-badge we-ok">${__("Package ready")}</span>` : "");
+	const top_issues = (st.issues || [])
+		.filter((i) => i.severity !== "info")
+		.slice(0, 6)
+		.map((i) => `<div class="we-issue we-issue-${esc(i.severity)}">${esc(i.title)}</div>`)
+		.join("");
+
+	// Itemized readiness (the two gates) — what's still owed, per section.
+	const readiness = st.readiness || {};
+	const ready_rows = (readiness.sections || [])
+		.filter((s) => s.state !== "n/a" && s.state !== "complete")
+		.map((s) => {
+			const missing = (s.missing || []).map((m) => esc(m.label)).join("; ");
+			return `<div class="we-ready-row">&#9675; <b>${esc(s.label)}</b>${missing ? ` — ${missing}` : ""}</div>`;
+		})
+		.join("");
+	const needs = ready_rows
+		? `<div class="we-warn"><b>${__("Still needed")}:</b>${ready_rows}</div>`
+		: `<div class="we-ok-note">${__("All readiness items satisfied.")}</div>`;
+
 	$el.html(`
 		<div class="we-state">
 			<div class="we-row">
@@ -252,6 +277,8 @@ function render_design_state($el, st) {
 				<span class="we-badge we-${st.completion_percent >= 100 ? "ok" : "warn"}">${st.completion_percent || 0}%</span>
 				<button class="btn btn-default btn-xs" id="we-open-form">${__("Open in Form")}</button>
 			</div>
+			<div class="we-chips">${chips}</div>
+			${top_issues}
 			<table class="we-rollups">${roll}</table>
 			${needs}
 		</div>

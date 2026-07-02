@@ -16,6 +16,7 @@ import json
 import frappe
 from frappe import _
 
+from erpnext_enhancements.water_engineering import issues as design_issues
 from erpnext_enhancements.water_engineering.engine import (
     basin_volume,
     calc_lighting,
@@ -85,6 +86,8 @@ EDITABLE_CHILD_TABLES = ("basins", "features", "pipe_segments", "pumps", "electr
 PREVIEW_PARENT_FIELDS = EDITABLE_DESIGN_FIELDS | {
     "chem_water_type",
     "chem_chlorine_pct",
+    "chem_cya_ppm",
+    "chem_free_cl_ppm",
     "drain_nominal_size",
     "drain_slope_in_per_ft",
     "surge_pool_area_sf",
@@ -465,6 +468,14 @@ def design_state(design=None, project=None, include_results=True):
             "has_warnings": bool(doc.has_warnings),
             "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
             "counts": {t: len(doc.get(t) or []) for t in EDITABLE_CHILD_TABLES},
+            # Typed issues + per-section readiness (additive; the legacy
+            # warnings/next_inputs_needed shapes above are unchanged).
+            "issues": _parse(doc.design_issues_json) if doc.get("design_issues_json") else [],
+            "readiness": _parse(doc.readiness_json) if doc.get("readiness_json") else {},
+            "blocker_count": doc.get("blocker_count") or 0,
+            "warning_count": doc.get("warning_count") or 0,
+            "issue_ready": bool(doc.get("issue_ready")),
+            "fitting_schedule": design_issues.fitting_schedule(doc),
             # The fountain-canvas state so the AI walkthrough can draw the same
             # picture the desk form shows (see api ``_canvas_state``).
             "canvas": _canvas_state(doc),
@@ -612,6 +623,57 @@ def save_inputs(payload):
 
 
 @frappe.whitelist()
+def get_design_issues(design):
+    """The persisted typed issues + readiness for one design (thin reader for
+    the wizard page and anything that doesn't need the full state)."""
+    _require("read")
+    if not frappe.has_permission(DESIGN_DOCTYPE, "read", doc=design):
+        frappe.throw(_("No read permission for {0}").format(design), frappe.PermissionError)
+    doc = frappe.get_doc(DESIGN_DOCTYPE, design)
+    return {
+        "design": doc.name,
+        "issues": _parse(doc.design_issues_json) if doc.get("design_issues_json") else [],
+        "readiness": _parse(doc.readiness_json) if doc.get("readiness_json") else {},
+        "blocker_count": doc.get("blocker_count") or 0,
+        "warning_count": doc.get("warning_count") or 0,
+        "issue_ready": bool(doc.get("issue_ready")),
+    }
+
+
+@frappe.whitelist()
+def acknowledge_issue(design, issue_key, note=None):
+    """Record a sign-off on one warning-severity issue (who/when/note). The ack
+    is keyed to the issue's stable key; it survives recomputes and is dropped
+    automatically if the issue clears (see the controller's _drop_stale_acks).
+    Draft docs only — an issued/submitted design's record is frozen."""
+    _require("write")
+    doc = frappe.get_doc(DESIGN_DOCTYPE, design)
+    if not doc.has_permission("write"):
+        frappe.throw(_("No write permission for {0}").format(design), frappe.PermissionError)
+    if doc.docstatus != 0:
+        frappe.throw(_("Cannot acknowledge issues on a submitted design."))
+
+    live = {i.get("key"): i for i in (_parse(doc.design_issues_json) or [])}
+    issue = live.get(issue_key)
+    if not issue:
+        frappe.throw(_("Issue {0} is not open on this design (it may have cleared — reload).").format(issue_key))
+    if issue.get("severity") != "warning":
+        frappe.throw(_("Only warning-severity issues take acknowledgements; blockers must be resolved."))
+
+    if issue_key not in {a.issue_key for a in doc.get("issue_acks") or []}:
+        doc.append("issue_acks", {
+            "issue_key": issue_key,
+            "title": (issue.get("title") or "")[:140],
+            "acknowledged_by": frappe.session.user,
+            "acknowledged_on": frappe.utils.now_datetime(),
+            "note": note,
+        })
+        doc.save()
+        frappe.db.commit()
+    return design_state(doc.name)
+
+
+@frappe.whitelist()
 def preview_design(payload):
     """Recompute a design IN MEMORY from the live form (no save), so the desk form
     can show rollups, per-row velocity/flow/head-loss, warnings, and completion as
@@ -633,6 +695,12 @@ def preview_design(payload):
             doc.set(table, [])
             for row in payload[table] or []:
                 doc.append(table, row)
+    # Acknowledgement keys from the saved doc, so the live readiness/issue view
+    # doesn't re-count warnings the engineer has already signed off on.
+    for ack in payload.get("issue_acks") or []:
+        key = (ack or {}).get("issue_key")
+        if key:
+            doc.append("issue_acks", {"issue_key": key})
 
     try:
         doc.recompute()
@@ -668,6 +736,14 @@ def preview_design(payload):
         "has_warnings": bool(doc.has_warnings),
         "next_inputs_needed": [s for s in (doc.next_inputs_needed or "").split("\n") if s],
         "warnings": warnings,
+        # Typed issues + readiness (additive) — recompute() already produced them
+        # on the in-memory doc, so the live panel costs zero extra engine work.
+        "issues": _parse(doc.design_issues_json) if doc.get("design_issues_json") else [],
+        "readiness": _parse(doc.readiness_json) if doc.get("readiness_json") else {},
+        "blocker_count": doc.get("blocker_count") or 0,
+        "warning_count": doc.get("warning_count") or 0,
+        "issue_ready": bool(doc.get("issue_ready")),
+        "fitting_schedule": design_issues.fitting_schedule(doc),
         "basins": [{"volume_gal": b.volume_gal, "weight_lb": b.weight_lb} for b in doc.get("basins") or []],
         "features": [{"flow_gpm": f.flow_gpm} for f in doc.get("features") or []],
         "pipe_segments": [
@@ -675,6 +751,8 @@ def preview_design(payload):
                 "velocity_fps": s.velocity_fps,
                 "velocity_status": s.velocity_status,
                 "head_loss_ft": s.head_loss_ft,
+                "pressure_status": s.pressure_status,
+                "pressure_margin_psi": s.pressure_margin_psi,
                 "segment_label": s.segment_label,
             }
             for s in doc.get("pipe_segments") or []

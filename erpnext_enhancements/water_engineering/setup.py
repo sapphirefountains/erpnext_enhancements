@@ -215,3 +215,52 @@ def ensure_nozzle_profiles():
 			frappe.logger().info(f"[water_engineering] seeded nozzle profiles: {result['created']}")
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Water Engineering nozzle profile seed")
+
+
+# Workspace triage cards over the denormalized issue counters recompute()
+# writes onto every design (see issues.py) — "which designs need attention"
+# without opening a single one.
+WATER_NUMBER_CARDS = [
+	{
+		"name": "Water Designs with Blockers",
+		"label": "Designs with Blockers",
+		"document_type": "Water Feature Design",
+		"filters_json": '[["Water Feature Design","blocker_count",">",0],["Water Feature Design","docstatus","<",2]]',
+		"color": "#CB2929",
+	},
+	{
+		"name": "Water Designs Ready to Issue",
+		"label": "Designs Ready to Issue",
+		"document_type": "Water Feature Design",
+		"filters_json": '[["Water Feature Design","issue_ready","=",1],["Water Feature Design","status","!=","Issued"],["Water Feature Design","docstatus","=",0]]',
+		"color": "#29CD42",
+	},
+]
+
+
+def ensure_water_number_cards():
+	"""after_migrate entry: upsert the Water Engineering workspace Number Cards
+	(idempotent + guarded, like the other water_engineering setup entries)."""
+	try:
+		for spec in WATER_NUMBER_CARDS:
+			if frappe.db.exists("Number Card", spec["name"]):
+				card = frappe.get_doc("Number Card", spec["name"])
+			else:
+				card = frappe.new_doc("Number Card")
+				card.name = spec["name"]
+			card.update(
+				{
+					"label": spec["label"],
+					"type": "Document Type",
+					"document_type": spec["document_type"],
+					"function": "Count",
+					"filters_json": spec["filters_json"],
+					"is_public": 1,
+					"show_percentage_stats": 0,
+					"color": spec["color"],
+				}
+			)
+			card.save(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering number cards")
