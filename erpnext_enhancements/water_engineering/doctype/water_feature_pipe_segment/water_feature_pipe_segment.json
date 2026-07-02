@@ -48,9 +48,9 @@
    "fieldname": "flow_gpm",
    "fieldtype": "Float",
    "label": "Flow (GPM)",
-   "reqd": 1,
    "in_list_view": 1,
-   "columns": 1
+   "columns": 1,
+   "description": "Leave blank (or 0) to carry the full design flow — most segments do. Enter a GPM only when this run carries a split/partial flow."
   },
   {
    "fieldname": "material",

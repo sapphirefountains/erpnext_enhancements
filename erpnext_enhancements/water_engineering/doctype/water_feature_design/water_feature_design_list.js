@@ -8,6 +8,9 @@
 
 frappe.listview_settings["Water Feature Design"] = {
 	add_fields: ["blocker_count", "warning_count", "issue_ready", "status"],
+	// Without this, frappe.get_indicator short-circuits every docstatus-0 row of a
+	// submittable doctype to a red "Draft" BEFORE consulting get_indicator below.
+	has_indicator_for_draft: true,
 	get_indicator(doc) {
 		if (cint(doc.blocker_count) > 0) {
 			return [__("{0} Blockers", [cint(doc.blocker_count)]), "red", "blocker_count,>,0"];
