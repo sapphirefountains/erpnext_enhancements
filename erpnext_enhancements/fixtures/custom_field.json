@@ -8295,7 +8295,7 @@
  },
  {
   "alignment": "",
-  "allow_in_quick_entry": 0,
+  "allow_in_quick_entry": 1,
   "allow_on_submit": 0,
   "bold": 0,
   "button_color": "",
@@ -9571,7 +9571,7 @@
  },
  {
   "alignment": "",
-  "allow_in_quick_entry": 0,
+  "allow_in_quick_entry": 1,
   "allow_on_submit": 0,
   "bold": 0,
   "button_color": "",
@@ -19141,7 +19141,7 @@
  },
  {
   "alignment": "",
-  "allow_in_quick_entry": 0,
+  "allow_in_quick_entry": 1,
   "allow_on_submit": 0,
   "bold": 0,
   "button_color": "",
@@ -19547,7 +19547,7 @@
  },
  {
   "alignment": "",
-  "allow_in_quick_entry": 0,
+  "allow_in_quick_entry": 1,
   "allow_on_submit": 0,
   "bold": 0,
   "button_color": "",
@@ -23259,7 +23259,7 @@
  },
  {
   "alignment": null,
-  "allow_in_quick_entry": 0,
+  "allow_in_quick_entry": 1,
   "allow_on_submit": 0,
   "bold": 0,
   "button_color": null,
