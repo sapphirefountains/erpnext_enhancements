@@ -1,24 +1,28 @@
 steps:
 
   # ============================================================================
-  # DEBUG STEP: FIND THE RIGHT DIRECTORY
+  # STEP 0: FIX REPOSITORY PATH SYMLINKS FOR RUNNER CONTAINER
   # ============================================================================
   - name: 'ubuntu'
-    id: 'Workspace Directory Mapping Debug'
+    id: 'Fix Module Path Contexts'
     entrypoint: 'sh'
     args:
       - '-c'
       - |
-        echo "=== CURRENT DIRECTORY ==="
-        pwd
-        echo "=== LIST ROOT CONTENTS ==="
+        echo "Validating current repository layout context..."
         ls -la
-        echo "=== SEARCH FOR INFRA PATHS ==="
-        find . -type d -name "infra"
+        
+        # Ensures a clean framework pointer folder maps out if directory blocks are displaced
+        if [ -d "modules" ] && [ ! -d "infra/modules" ]; then
+          echo "🔗 Linking modules directory context..."
+          ln -s /workspace/modules /workspace/infra/modules
+        fi
+
   # ============================================================================
   # STEP 1: INITIALIZE TERRAFORM WITH REMOTE STATE
   # ============================================================================
-  - name: 'hashicorp/terraform:1.5.7'
+  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 to satisfy the >= 1.12.2 constraint check!
+  - name: 'hashicorp/terraform:1.13.0'
     id: 'Terraform Init'
     dir: 'infra'
     entrypoint: 'sh'
@@ -33,16 +37,16 @@ steps:
   # ============================================================================
   # STEP 2: RUN THE CONDITIONAL EXECUTION (APPLY OR DESTROY)
   # ============================================================================
-  - name: 'hashicorp/terraform:1.5.7'
+  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 here as well!
+  - name: 'hashicorp/terraform:1.13.0'
     id: 'Terraform Execution'
     dir: 'infra'
     entrypoint: 'sh'
-    # 🎯 THE CRITICAL FIX: Explicitly links the global secret container to this runtime container step
     secretEnv: ['SECRET_TFVARS']
     args:
       - '-c'
       - |
-        # 🎯 THE EXTRA PASS: Writes the secure string dynamically out to your TF folder environment
+        # Materialize standard text straight to the default tfvars file
         echo "$$SECRET_TFVARS" > terraform.tfvars
 
         # Check if this invocation was triggered by the designated trigger action
