@@ -1,0 +1,13 @@
+certificates:
+  ${ssl_cert_name}:
+    managed:
+      domains:
+        - ${domain_name}
+map:
+  name: ${ssl_map_name}
+  description: "Managed SSL Certificate Map for Web Applications"
+  entries:
+    app-domain:
+      certificates:
+        - ${ssl_cert_name}
+      hostname: ${domain_name}

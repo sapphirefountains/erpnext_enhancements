@@ -1,0 +1,25 @@
+app-glb:
+  protocol: "HTTPS"
+  use_classic_version: false
+  urlmap_config:
+    description: "Application Gateway routing rules"
+    default_service: "frontend-neg"
+  neg_configs:
+    frontend-neg:
+      cloudrun:
+        region: ${region}
+        target_service:
+          name: "frontend-service"
+  backend_service_configs:
+    frontend-neg:
+      backends:
+        - backend: "frontend-neg"
+      health_checks: []
+      port_name: ""
+  backend_buckets_config: {}
+  forwarding_rules_config:
+    https-rule:
+      address: "$$addresses:global:${glb_ip_name}"
+  ssl_certificates:
+    certificate_map: "$$ssl_certificates:${ssl_map_name}"
+  health_check_configs: {}

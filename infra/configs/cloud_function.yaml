@@ -1,0 +1,10 @@
+billing-notifier:
+  region: ${region}
+  bucket_name: ${cloud_function_bucket}
+  bundle_config:
+    path: "assets/sample-function/"
+  iam:
+    "roles/cloudfunctions.invoker":
+      - "allUsers"
+  trigger_config: null
+  vpc_connector: null

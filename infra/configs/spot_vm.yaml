@@ -1,0 +1,20 @@
+batch-job-vm:
+  zone: ${region}-b
+  machine_type: ${spot_machine_type}
+  network_interfaces:
+    - network: ${network}
+      subnetwork: "https://www.googleapis.com/compute/v1/projects/gemini-ent-sinjini-demo-v11/regions/us-central1/subnetworks/playbook-subnet-us-central1"
+      nat: true
+      addresses: null
+  boot_disk:
+    initialize_params:
+      image: "projects/debian-cloud/global/images/family/debian-12"
+      size: 50
+      type: "pd-ssd"
+  attached_disks: {}
+  service_account:
+    auto_create: true
+  metadata: {}
+  labels:
+    role: "batch-processor"
+  termination_action: "DELETE"

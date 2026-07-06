@@ -1,0 +1,90 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Compute VM Module: Provisions standard VM instances
+locals {
+  compute_vm_config = yamldecode(templatefile("${path.module}/configs/compute_vm.yaml", {
+    compute_machine_type = var.compute_machine_type
+    region               = var.region
+    network              = var.network
+    subnetwork           = var.subnetwork
+  }))
+  spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
+    region            = var.region
+    spot_machine_type = var.spot_machine_type
+    network           = var.network
+    subnetwork        = var.subnetwork
+  }))
+}
+
+module "compute_vm" {
+  for_each     = var.provision_compute_vm ? local.compute_vm_config : {}
+  source       = "../modules/compute-vm"
+  project_id   = module.project.project_id
+  zone         = coalesce(try(each.value.zone, null), "${var.region}-b")
+  name         = each.key
+  machine_type = try(each.value.machine_type, null)
+  network_interfaces = [
+    for ni in try(each.value.network_interfaces, []) : {
+      network    = ni.network
+      subnetwork = ni.subnetwork
+      nat        = coalesce(try(ni.nat, null), var.ip_external)
+      addresses  = try(ni.addresses, null)
+    }
+  ]
+  boot_disk       = try(each.value.boot_disk, null)
+  attached_disks  = try(each.value.attached_disks, null)
+  service_account = try(each.value.service_account, null)
+  metadata        = try(each.value.metadata, null)
+  labels          = try(each.value.labels, null)
+}
+
+# Spot VM Module: Provisions ephemeral VM instances using Spot pricing
+module "spot_vm" {
+  for_each     = var.provision_spot_vm ? local.spot_vm_config : {}
+  source       = "../modules/compute-vm"
+  project_id   = module.project.project_id
+  zone         = coalesce(try(each.value.zone, null), "${var.region}-b")
+  name         = each.key
+  machine_type = try(each.value.machine_type, null)
+  # network_interfaces = [
+  #   for ni in try(each.value.network_interfaces, []) : {
+  #     network    = ni.network
+  #     subnetwork = ni.subnetwork
+  #     nat        = coalesce(try(ni.nat, null), var.ip_external)
+  #     addresses  = try(ni.addresses, null)
+  #   }
+  # ]
+  # 🎯 THE FIX: Revert to the module's standard parameter schema signature
+  network_interfaces = [
+    for ni in try(each.value.network_interfaces, []) : {
+      network    = ni.network
+      subnetwork = ni.subnetwork
+      nat        = coalesce(try(ni.nat, null), var.ip_external)
+      addresses  = try(ni.addresses, null)
+    }
+  ]
+  boot_disk       = try(each.value.boot_disk, null)
+  attached_disks  = try(each.value.attached_disks, null)
+  service_account = try(each.value.service_account, null)
+  metadata        = try(each.value.metadata, null)
+  labels          = try(each.value.labels, null)
+
+  scheduling_config = {
+    provisioning_model = "SPOT"
+    termination_action = try(each.value.termination_action, null)
+  }
+}

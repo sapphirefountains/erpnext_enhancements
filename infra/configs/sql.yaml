@@ -1,0 +1,5 @@
+application-db:
+  database_version: ${db_version}
+  tier: ${db_tier}
+  network: "projects/${project_id}/global/networks/${network}"
+  ip_external: null

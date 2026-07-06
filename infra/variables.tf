@@ -1,0 +1,307 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+variable "api_url" {
+  description = "The API URL used by the frontend service container."
+  type        = string
+  default     = "https://api.example.com"
+}
+
+variable "billing_account_id" {
+  description = "The billing account ID to associate with the created project."
+  type        = string
+  default     = null
+}
+
+variable "cloud_build_connection" {
+  description = "The name of the Cloud Build connection."
+  type        = string
+  default     = "github-pipeline-connection"
+}
+
+variable "cloud_build_github_token" {
+  description = "The GitHub Personal Access Token (PAT) for Cloud Build connection."
+  type        = string
+  default     = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+}
+
+variable "cloud_build_installation_id" {
+  description = "The GitHub App installation ID on the repo."
+  type        = number
+  default     = 12345678
+}
+
+variable "cloud_build_repo_uri" {
+  description = "The remote URI of the repository for Cloud Build connection."
+  type        = string
+  default     = "https://github.com/example-org/example-repo.git"
+}
+
+variable "cloud_function_bucket" {
+  description = "Bucket name where Cloud Function source archives are uploaded."
+  type        = string
+  default     = "demo-function-deploy-bucket"
+}
+
+variable "cloud_run_image" {
+  description = "The container image to deploy to Cloud Run."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "compute_machine_type" {
+  description = "The machine type for standard Compute Engine VM instances."
+  type        = string
+  default     = "e2-medium"
+}
+
+variable "create_project" {
+  description = "Whether to create a new project or reuse an existing one."
+  type        = bool
+  default     = true
+}
+
+variable "domain_name" {
+  description = "The domain name for the managed SSL certificate."
+  type        = string
+  default     = "app.example.com"
+}
+
+variable "glb_ip_name" {
+  description = "The name of the global external IP address for the load balancer."
+  type        = string
+  default     = "glb-ip"
+}
+
+variable "ip_external" {
+  description = "Toggle static IPs, Cloud SQL, VMs, and Cloud Run to be external (true) or internal (false)."
+  type        = bool
+  default     = false
+}
+
+variable "network" {
+  description = "The VPC network to deploy resources into."
+  type        = string
+  default     = "default"
+}
+
+variable "prefix" {
+  description = "An optional prefix applied to created resources."
+  type        = string
+  default     = null
+}
+
+variable "project_id" {
+  description = "The ID of the project to create or reuse."
+  type        = string
+}
+
+variable "provision_artifact_registry" {
+  description = "Toggle to enable/disable Artifact Registry setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_cloud_build" {
+  description = "Toggle to enable/disable Cloud Build setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_cloud_function" {
+  description = "Toggle to enable/disable Cloud Function setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_cloud_run" {
+  description = "Toggle to enable/disable Cloud Run setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_compute_vm" {
+  description = "Toggle to enable/disable standard Compute Engine VM setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_iam" {
+  description = "Toggle to enable/disable IAM permissions setup."
+  type        = bool
+  default     = true
+}
+
+variable "provision_iam_artifact_registry" {
+  description = "Toggle to enable/disable Artifact Registry IAM permissions."
+  type        = bool
+  default     = true
+}
+
+variable "provision_iam_cloud_build" {
+  description = "Toggle to enable/disable Cloud Build IAM permissions."
+  type        = bool
+  default     = true
+}
+
+variable "provision_iam_secret_manager" {
+  description = "Toggle to enable/disable Secret Manager IAM permissions."
+  type        = bool
+  default     = true
+}
+
+variable "provision_iam_sql" {
+  description = "Toggle to enable/disable Cloud SQL IAM client permissions."
+  type        = bool
+  default     = true
+}
+
+variable "provision_ips" {
+  description = "Toggle to enable/disable static IP setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_load_balancer" {
+  description = "Toggle to enable/disable Load Balancer setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_spot_vm" {
+  description = "Toggle to enable/disable Spot VM setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_sql" {
+  description = "Toggle to enable/disable Cloud SQL database setup."
+  type        = bool
+  default     = false
+}
+
+variable "provision_ssl" {
+  description = "Toggle to enable/disable Managed SSL setup."
+  type        = bool
+  default     = false
+}
+
+variable "region" {
+  description = "The default GCP region to deploy regional resources."
+  type        = string
+  default     = "us-central1"
+}
+
+variable "spot_machine_type" {
+  description = "The machine type for Spot VM instances."
+  type        = string
+  default     = "n2-standard-4"
+}
+
+variable "sql_db_version" {
+  description = "The database version for Cloud SQL (e.g. POSTGRES_15)."
+  type        = string
+  default     = "POSTGRES_15"
+}
+
+variable "sql_tier" {
+  description = "The machine tier for the Cloud SQL instance."
+  type        = string
+  default     = "db-f1-micro"
+}
+
+variable "ssl_cert_name" {
+  description = "The name of the SSL certificate resource."
+  type        = string
+  default     = "web-ssl-cert"
+}
+
+variable "ssl_map_name" {
+  description = "The name of the Certificate Map."
+  type        = string
+  default     = "web-ssl-map"
+}
+
+variable "subnetwork" {
+  description = "The subnetwork to deploy resources into."
+  type        = string
+  default     = "default"
+}
+
+variable "web_ip_name" {
+  description = "The name of the regional external/internal static IP address."
+  type        = string
+  default     = "web-ip"
+}
+
+
+variable "secret_manager_secret_id" {
+  description = "The short ID string of the Secret Manager secret container."
+  type        = string
+  default     = "github-token"
+}
+
+variable "certificate_map_id" {
+  description = "The fully qualified resource URI for the Certificate Manager map."
+  type        = string
+  default     = ""
+}
+
+#--- Pipeline Automation Variables ---
+variable "state_bucket_name" {
+  description = "The globally unique name of the GCS bucket for remote state storage."
+  type        = string
+}
+
+variable "github_repo_url" {
+  description = "The target GitHub repository remote URL link."
+  type        = string
+}
+
+variable "github_token_secret" {
+  description = "The payload value of the GitHub PAT to store securely in Secret Manager."
+  type        = string
+  sensitive   = true
+}
+
+variable "github_app_installation_id" {
+  description = "The unique numerical identifier of the GitHub App on your repo."
+  type        = number
+}
+
+variable "cloudbuild_yaml_path" {
+  description = "The contextual file directory path inside the repo pointing to cloudbuild.yaml."
+  type        = string
+  default     = "cloudbuild.yaml"
+}
+
+variable "cloudbuild_service_account" {
+  description = "Custom service account string to run the build pipelines. If null, uses compute engine agent default."
+  type        = string
+  default     = null
+}
+
+variable "deploy_branch_regex" {
+  description = "The regex pattern matching the branch used for infrastructure creation."
+  type        = string
+  default     = "^main$"
+}
+
+variable "destroy_branch_regex" {
+  description = "The regex pattern matching the branch used for infrastructure destruction."
+  type        = string
+  default     = "^destroy-env$"
+}

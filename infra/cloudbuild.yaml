@@ -1,0 +1,42 @@
+steps:
+  # ============================================================================
+  # STEP 1: INITIALIZE TERRAFORM WITH REMOTE STATE
+  # ============================================================================
+  - name: 'hashicorp/terraform:1.5.7'
+    id: 'Terraform Init'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "Configuring remote GCS backend utilizing bucket: $_STATE_BUCKET"
+        terraform init \
+          -backend-config="bucket=$_STATE_BUCKET" \
+          -backend-config="prefix=terraform/state"
+
+  # ============================================================================
+  # STEP 2: RUN THE CONDITIONAL EXECUTION (APPLY OR DESTROY)
+  # ============================================================================
+  - name: 'hashicorp/terraform:1.5.7'
+    id: 'Terraform Execution'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        # Check if this invocation was triggered by the designated trigger action
+        if [ "$_ACTION" = "destroy" ]; then
+          echo "⚠️ Deletion action detected. Initiating teardown protocols..."
+          terraform destroy -auto-approve
+        elif [ "$_ACTION" = "refresh" ]; then
+          echo "🔄 Refresh-only action detected. Reconciling state file..."
+          terraform apply -refresh-only -auto-approve
+        else
+          echo "🚀 Deployment action detected. Initiating mutation passes..."
+          terraform apply -auto-approve
+        fi
+
+# ============================================================================
+# TIMEOUT AND LOGGING CONTROLS
+# ============================================================================
+timeout: '1800s' # 30-minute absolute execution safety threshold
+options:
+  logging: CLOUD_LOGGING_ONLY
