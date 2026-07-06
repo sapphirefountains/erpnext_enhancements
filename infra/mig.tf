@@ -85,8 +85,9 @@ resource "google_compute_instance_template" "prod_template" {
   tags = ["erpnext-mig-node"]
 
   network_interface {
-    network    = google_compute_network.custom_vpc.id
-    subnetwork = google_compute_subnetwork.custom_subnet.id
+    network            = google_compute_network.custom_vpc.id
+    subnetwork         = google_compute_subnetwork.custom_subnet.self_link
+    subnetwork_project = module.project.project_id
     dynamic "access_config" {
       for_each = var.ip_external ? [""] : []
       content {}
@@ -179,6 +180,10 @@ resource "google_compute_instance_group_manager" "prod_mig" {
     max_surge_fixed       = 0
     max_unavailable_fixed = 1
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "google_compute_autoscaler" "prod_autoscaler" {
@@ -213,8 +218,9 @@ resource "google_compute_instance_template" "test_template" {
   tags = ["erpnext-mig-node"]
 
   network_interface {
-    network    = google_compute_network.custom_vpc.id
-    subnetwork = google_compute_subnetwork.custom_subnet.id
+    network            = google_compute_network.custom_vpc.id
+    subnetwork         = google_compute_subnetwork.custom_subnet.self_link
+    subnetwork_project = module.project.project_id
     dynamic "access_config" {
       for_each = var.ip_external ? [""] : []
       content {}
@@ -308,6 +314,10 @@ resource "google_compute_instance_group_manager" "test_mig" {
     replacement_method    = "RECREATE"
     max_surge_fixed       = 0
     max_unavailable_fixed = 1
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

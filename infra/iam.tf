@@ -132,6 +132,7 @@ resource "google_project_iam_member" "terraform_provisioner_roles" {
     "roles/storage.admin",
     "roles/serviceusage.serviceUsageAdmin",
     "roles/compute.networkAdmin",
+    "roles/compute.securityAdmin",
     "roles/compute.loadBalancerAdmin",
     "roles/compute.instanceAdmin.v1",
     "roles/run.admin",
