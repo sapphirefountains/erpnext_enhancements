@@ -3,7 +3,7 @@ batch-job-vm:
   machine_type: ${spot_machine_type}
   network_interfaces:
     - network: ${network}
-      subnetwork: "https://www.googleapis.com/compute/v1/projects/gemini-ent-sinjini-demo-v11/regions/us-central1/subnetworks/playbook-subnet-us-central1"
+      subnetwork: ${subnetwork}
       nat: true
       addresses: null
   boot_disk:

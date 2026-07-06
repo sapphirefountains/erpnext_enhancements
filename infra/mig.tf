@@ -59,7 +59,7 @@ resource "google_compute_health_check" "mig_health_check" {
 resource "google_compute_firewall" "allow_lb_to_mig" {
   count   = (var.provision_prod_mig || var.provision_test_mig) ? 1 : 0
   name    = "allow-lb-to-mig"
-  network = var.network
+  network = google_compute_network.custom_vpc.name
   project = module.project.project_id
 
   allow {
@@ -85,8 +85,8 @@ resource "google_compute_instance_template" "prod_template" {
   tags = ["erpnext-mig-node"]
 
   network_interface {
-    network    = var.network
-    subnetwork = var.subnetwork
+    network    = google_compute_network.custom_vpc.id
+    subnetwork = google_compute_subnetwork.custom_subnet.id
     dynamic "access_config" {
       for_each = var.ip_external ? [""] : []
       content {}
@@ -175,6 +175,7 @@ resource "google_compute_instance_group_manager" "prod_mig" {
   update_policy {
     type                  = "PROACTIVE"
     minimal_action        = "REPLACE"
+    replacement_method    = "RECREATE"
     max_surge_fixed       = 0
     max_unavailable_fixed = 1
   }
@@ -212,8 +213,8 @@ resource "google_compute_instance_template" "test_template" {
   tags = ["erpnext-mig-node"]
 
   network_interface {
-    network    = var.network
-    subnetwork = var.subnetwork
+    network    = google_compute_network.custom_vpc.id
+    subnetwork = google_compute_subnetwork.custom_subnet.id
     dynamic "access_config" {
       for_each = var.ip_external ? [""] : []
       content {}
@@ -304,6 +305,7 @@ resource "google_compute_instance_group_manager" "test_mig" {
   update_policy {
     type                  = "PROACTIVE"
     minimal_action        = "REPLACE"
+    replacement_method    = "RECREATE"
     max_surge_fixed       = 0
     max_unavailable_fixed = 1
   }

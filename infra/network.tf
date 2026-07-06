@@ -2,13 +2,13 @@
 # Provisions an isolated Custom VPC Network for your services
 
 resource "google_compute_network" "custom_vpc" {
-  name                    = "playbook-vpc"
+  name                    = var.network
   project                 = module.project.project_id
   auto_create_subnetworks = false
 }
 
 resource "google_compute_subnetwork" "custom_subnet" {
-  name          = "playbook-subnet-us-central1"
+  name          = var.subnetwork
   project       = module.project.project_id
   region        = var.region
   network       = google_compute_network.custom_vpc.id
