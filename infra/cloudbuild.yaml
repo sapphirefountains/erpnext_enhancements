@@ -1,4 +1,20 @@
 steps:
+
+  # ============================================================================
+  # DEBUG STEP: FIND THE RIGHT DIRECTORY
+  # ============================================================================
+  - name: 'ubuntu'
+    id: 'Workspace Directory Mapping Debug'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "=== CURRENT DIRECTORY ==="
+        pwd
+        echo "=== LIST ROOT CONTENTS ==="
+        ls -la
+        echo "=== SEARCH FOR INFRA PATHS ==="
+        find . -type d -name "infra"
   # ============================================================================
   # STEP 1: INITIALIZE TERRAFORM WITH REMOTE STATE
   # ============================================================================
