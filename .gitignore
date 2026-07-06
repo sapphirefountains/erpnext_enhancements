@@ -7,3 +7,12 @@ node_modules
 __pycache__
 bench.log
 .aider*
+
+
+#infra-terraform files to ignore
+
+.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/*.tfvars
+infra/*.tfvars.json
