@@ -20,7 +20,7 @@ steps:
   # ============================================================================
   - name: 'hashicorp/terraform:1.5.7'
     id: 'Terraform Init'
-    dir: 'erpnext_enhancements/infra'
+    dir: 'infra'
     entrypoint: 'sh'
     args:
       - '-c'
@@ -35,7 +35,7 @@ steps:
   # ============================================================================
   - name: 'hashicorp/terraform:1.5.7'
     id: 'Terraform Execution'
-    dir: 'erpnext_enhancements/infra'
+    dir: 'infra'
     entrypoint: 'sh'
     # 🎯 THE CRITICAL FIX: Explicitly links the global secret container to this runtime container step
     secretEnv: ['SECRET_TFVARS']
