@@ -26,4 +26,5 @@ terraform {
       version = ">= 7.27.0, < 8.0.0"
     }
   }
+  backend "gcs" {}
 }
