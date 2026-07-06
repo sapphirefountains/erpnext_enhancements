@@ -75,8 +75,13 @@
 
 # Context variables to cleanly map your execution roles
 locals {
-  # Dynamically defaults to standard compute service account identity string if variable input isn't defined
-  cb_service_account = var.cloudbuild_service_account != null ? var.cloudbuild_service_account : "projects/${var.project_id}/serviceAccounts/${module.project.number}-compute@developer.gserviceaccount.com"
+  # Dynamically defaults to the custom Terraform provisioner service account if IAM and Cloud Build are enabled,
+  # otherwise falls back to the standard Compute Engine default service account.
+  cb_service_account = var.cloudbuild_service_account != null ? var.cloudbuild_service_account : (
+    (var.provision_iam && var.provision_cloud_build)
+    ? "projects/${module.project.project_id}/serviceAccounts/sa-terraform-provisioner@${module.project.project_id}.iam.gserviceaccount.com"
+    : "projects/${var.project_id}/serviceAccounts/${module.project.number}-compute@developer.gserviceaccount.com"
+  )
 
   cloud_build_config = yamldecode(templatefile("${path.module}/configs/cloud_build.yaml", {
     connection_name            = var.cloud_build_connection

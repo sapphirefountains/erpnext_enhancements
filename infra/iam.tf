@@ -118,19 +118,50 @@ locals {
   )
 }
 
-# Automate granting Cloud Build service account project editor and IAM admin roles to enable self-provisioning.
-resource "google_project_iam_member" "cloudbuild_project_editor" {
-  count   = var.provision_iam && var.provision_iam_cloud_build && var.provision_cloud_build ? 1 : 0
-  project = module.project.project_id
-  role    = "roles/editor"
-  member  = "serviceAccount:${module.project.number}@cloudbuild.gserviceaccount.com"
+# Create dedicated Custom Service Account for Terraform Provisioner (CI/CD runner)
+resource "google_service_account" "terraform_provisioner" {
+  count        = var.provision_iam && var.provision_cloud_build ? 1 : 0
+  account_id   = "sa-terraform-provisioner"
+  display_name = "Terraform Provisioner Service Account"
+  project      = module.project.project_id
 }
 
-resource "google_project_iam_member" "cloudbuild_project_iam_admin" {
-  count   = var.provision_iam && var.provision_iam_cloud_build && var.provision_cloud_build ? 1 : 0
-  project = module.project.project_id
-  role    = "roles/resourcemanager.projectIamAdmin"
-  member  = "serviceAccount:${module.project.number}@cloudbuild.gserviceaccount.com"
+# Grant granular roles to the Custom Terraform Provisioner Service Account
+resource "google_project_iam_member" "terraform_provisioner_roles" {
+  for_each = (var.provision_iam && var.provision_cloud_build) ? toset([
+    "roles/storage.admin",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/compute.networkAdmin",
+    "roles/compute.loadBalancerAdmin",
+    "roles/compute.instanceAdmin.v1",
+    "roles/run.admin",
+    "roles/cloudfunctions.admin",
+    "roles/cloudsql.admin",
+    "roles/artifactregistry.admin",
+    "roles/secretmanager.admin",
+    "roles/certificatemanager.owner",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/iam.serviceAccountUser"
+  ]) : []
+  project  = module.project.project_id
+  role     = each.value
+  member   = "serviceAccount:sa-terraform-provisioner@${module.project.project_id}.iam.gserviceaccount.com"
+
+  depends_on = [
+    google_service_account.terraform_provisioner
+  ]
+}
+
+# Grant the Cloud Build service agent permission to act as the Terraform provisioner service account
+resource "google_service_account_iam_member" "cloudbuild_service_agent_user" {
+  count              = var.provision_iam && var.provision_cloud_build ? 1 : 0
+  service_account_id = "projects/${module.project.project_id}/serviceAccounts/sa-terraform-provisioner@${module.project.project_id}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${module.project.number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+
+  depends_on = [
+    google_service_account.terraform_provisioner
+  ]
 }
 
 # # Grant Secret Manager secretAccessor role for github token
