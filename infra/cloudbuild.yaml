@@ -4,6 +4,7 @@ steps:
   # ============================================================================
   - name: 'hashicorp/terraform:1.5.7'
     id: 'Terraform Init'
+    dir: 'erpnext_enhancements/infra'
     entrypoint: 'sh'
     args:
       - '-c'
@@ -18,10 +19,16 @@ steps:
   # ============================================================================
   - name: 'hashicorp/terraform:1.5.7'
     id: 'Terraform Execution'
+    dir: 'erpnext_enhancements/infra'
     entrypoint: 'sh'
+    # 🎯 THE CRITICAL FIX: Explicitly links the global secret container to this runtime container step
+    secretEnv: ['SECRET_TFVARS']
     args:
       - '-c'
       - |
+        # 🎯 THE EXTRA PASS: Writes the secure string dynamically out to your TF folder environment
+        echo "$$SECRET_TFVARS" > terraform.tfvars
+
         # Check if this invocation was triggered by the designated trigger action
         if [ "$_ACTION" = "destroy" ]; then
           echo "⚠️ Deletion action detected. Initiating teardown protocols..."
@@ -33,6 +40,14 @@ steps:
           echo "🚀 Deployment action detected. Initiating mutation passes..."
           terraform apply -auto-approve
         fi
+
+# ============================================================================
+# SECRET MANAGER MAPPING DEFINITIONS
+# ============================================================================
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/SECRET_TFVARS/versions/latest
+      env: 'SECRET_TFVARS'
 
 # ============================================================================
 # TIMEOUT AND LOGGING CONTROLS
