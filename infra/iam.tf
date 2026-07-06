@@ -141,7 +141,8 @@ resource "google_project_iam_member" "terraform_provisioner_roles" {
     "roles/secretmanager.admin",
     "roles/certificatemanager.owner",
     "roles/resourcemanager.projectIamAdmin",
-    "roles/iam.serviceAccountUser"
+    "roles/iam.serviceAccountUser",
+    "roles/cloudbuild.admin"
   ]) : []
   project  = module.project.project_id
   role     = each.value
