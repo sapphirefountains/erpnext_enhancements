@@ -59,6 +59,13 @@ Provisions Google Cloud Artifact Registry Docker repositories dynamically using 
 * Dynamically parses configurations from `configs/artifact_registry.yaml` to create repositories.
 * Grants the `roles/artifactregistry.reader` role on the repository to the Cloud Run Service Agent (`service-${project_number}@serverless-robot-prod.iam.gserviceaccount.com`), enabling Cloud Run to fetch container images securely.
 
+### 12. Managed Instance Groups (MIG) & Autoscaling
+Provisions regional/zonal Managed Instance Groups (MIGs) and Templates designed for ERPNext database consolidation.
+* **Cost Optimization Strategy**: Employs standard N2D AMD instances for the Production environment (eligible for 1-Year Committed Use Discounts) and Spot preemptible N2D AMD instances for the Testing environment to minimize compute charges.
+* **Stateful Storage**: Implements `stateful_disk` rules (`delete_rule = "NEVER"`) ensuring the 200GB Balanced Persistent Disk (`pd-balanced`) carrying database records and Frappe user files is preserved and re-attached when instances are preempted or updated.
+* **Local SSD Scratch Disks**: Configures high-performance NVMe Local SSDs (375GB) dynamically inside templates to optimize database IOPS for the self-managed MariaDB server.
+* **Autoscaling & Cost Cap Toggles**: Configures optional CPU-based autoscalers constrained to a default maximum replica size of 1 instance to prevent unexpected billing.
+
 ---
 
 ## Deployment & Usage
@@ -106,6 +113,8 @@ Modify [terraform.tfvars](terraform.tfvars) to set the following toggles to `tru
 | `provision_sql` | Cloud SQL Instances | [configs/sql.yaml](configs/sql.yaml) | Managed databases, Private Services Access (PSA) |
 | `provision_load_balancer` | Application Load Balancer | [configs/load_balancer.yaml](configs/load_balancer.yaml) | Global HTTP/HTTPS Load Balancer, routing rules, backend groups |
 | `provision_cloud_build` | Cloud Build CI/CD | [configs/cloud_build.yaml](configs/cloud_build.yaml) | GitHub repository mirroring, webhook validation triggers |
+| `provision_prod_mig` | Production MIG | - | Production environment MIG (N2D AMD family, stateful data disk, Local SSD) |
+| `provision_test_mig` | Testing MIG | - | Testing environment MIG (N2D AMD Spot family, stateful data disk, Local SSD) |
 
 ---
 
@@ -182,10 +191,18 @@ terraform apply
 | [compute_machine_type](variables.tf#L65) | The machine type for standard Compute Engine VM instances. | <code>string</code> |  | <code>&#34;e2-medium&#34;</code> |
 | [create_project](variables.tf#L71) | Whether to create a new project or reuse an existing one. | <code>bool</code> |  | <code>true</code> |
 | [domain_name](variables.tf#L77) | The domain name for the managed SSL certificate. | <code>string</code> |  | <code>&#34;app.example.com&#34;</code> |
+| [enable_prod_autoscaling](variables.tf#L338) | Toggle to enable/disable autoscaling for the production MIG. | <code>bool</code> |  | <code>false</code> |
+| [enable_test_autoscaling](variables.tf#L344) | Toggle to enable/disable autoscaling for the testing MIG. | <code>bool</code> |  | <code>false</code> |
 | [glb_ip_name](variables.tf#L83) | The name of the global external IP address for the load balancer. | <code>string</code> |  | <code>&#34;glb-ip&#34;</code> |
 | [ip_external](variables.tf#L89) | Toggle static IPs, Cloud SQL, VMs, and Cloud Run to be external (true) or internal (false). | <code>bool</code> |  | <code>false</code> |
+| [mig_data_disk_size](variables.tf#L362) | The storage capacity in GB for the stateful Balanced Persistent Disk attached to MIG instances. | <code>number</code> |  | <code>200</code> |
+| [mig_health_check_port](variables.tf#L374) | The application/health-check port for the ERPNext instances. | <code>number</code> |  | <code>8000</code> |
+| [mig_local_ssd_count](variables.tf#L368) | Number of high-performance Local SSDs to attach to each MIG instance (each is 375 GB). | <code>number</code> |  | <code>1</code> |
 | [network](variables.tf#L95) | The VPC network to deploy resources into. | <code>string</code> |  | <code>&#34;default&#34;</code> |
 | [prefix](variables.tf#L101) | An optional prefix applied to created resources. | <code>string</code> |  | <code>null</code> |
+| [prod_autoscaling_max_replicas](variables.tf#L350) | The maximum number of instances for the production MIG autoscaler. | <code>number</code> |  | <code>1</code> |
+| [prod_mig_machine_type](variables.tf#L320) | Machine type for the production MIG instances (N2D AMD family recommended for Committed Use Discounts). | <code>string</code> |  | <code>&#34;n2d-standard-8&#34;</code> |
+| [prod_mig_zone](variables.tf#L332) | The zone to provision the production MIG in. | <code>string</code> |  | <code>&#34;us-central1-a&#34;</code> |
 | [provision_artifact_registry](variables.tf#L112) | Toggle to enable/disable Artifact Registry setup. | <code>bool</code> |  | <code>false</code> |
 | [provision_cloud_build](variables.tf#L118) | Toggle to enable/disable Cloud Build setup. | <code>bool</code> |  | <code>false</code> |
 | [provision_cloud_function](variables.tf#L124) | Toggle to enable/disable Cloud Function setup. | <code>bool</code> |  | <code>false</code> |
@@ -198,9 +215,11 @@ terraform apply
 | [provision_iam_sql](variables.tf#L166) | Toggle to enable/disable Cloud SQL IAM client permissions. | <code>bool</code> |  | <code>true</code> |
 | [provision_ips](variables.tf#L172) | Toggle to enable/disable static IP setup. | <code>bool</code> |  | <code>false</code> |
 | [provision_load_balancer](variables.tf#L178) | Toggle to enable/disable Load Balancer setup. | <code>bool</code> |  | <code>false</code> |
+| [provision_prod_mig](variables.tf#L308) | Toggle to enable/disable the Production Managed Instance Group. | <code>bool</code> |  | <code>false</code> |
 | [provision_spot_vm](variables.tf#L184) | Toggle to enable/disable Spot VM setup. | <code>bool</code> |  | <code>false</code> |
 | [provision_sql](variables.tf#L190) | Toggle to enable/disable Cloud SQL database setup. | <code>bool</code> |  | <code>false</code> |
 | [provision_ssl](variables.tf#L196) | Toggle to enable/disable Managed SSL setup. | <code>bool</code> |  | <code>false</code> |
+| [provision_test_mig](variables.tf#L314) | Toggle to enable/disable the Testing Managed Instance Group. | <code>bool</code> |  | <code>false</code> |
 | [region](variables.tf#L202) | The default GCP region to deploy regional resources. | <code>string</code> |  | <code>&#34;us-central1&#34;</code> |
 | [spot_machine_type](variables.tf#L208) | The machine type for Spot VM instances. | <code>string</code> |  | <code>&#34;n2-standard-4&#34;</code> |
 | [sql_db_version](variables.tf#L214) | The database version for Cloud SQL (e.g. POSTGRES_15). | <code>string</code> |  | <code>&#34;POSTGRES_15&#34;</code> |
@@ -208,6 +227,9 @@ terraform apply
 | [ssl_cert_name](variables.tf#L226) | The name of the SSL certificate resource. | <code>string</code> |  | <code>&#34;web-ssl-cert&#34;</code> |
 | [ssl_map_name](variables.tf#L232) | The name of the Certificate Map. | <code>string</code> |  | <code>&#34;web-ssl-map&#34;</code> |
 | [subnetwork](variables.tf#L238) | The subnetwork to deploy resources into. | <code>string</code> |  | <code>&#34;default&#34;</code> |
+| [test_autoscaling_max_replicas](variables.tf#L356) | The maximum number of instances for the testing MIG autoscaler. | <code>number</code> |  | <code>1</code> |
+| [test_mig_machine_type](variables.tf#L326) | Machine type for the testing MIG instances (N2D AMD family with SPOT pricing). | <code>string</code> |  | <code>&#34;n2d-standard-8&#34;</code> |
+| [test_mig_zone](variables.tf#L338) | The zone to provision the testing MIG in. | <code>string</code> |  | <code>&#34;us-central1-b&#34;</code> |
 | [web_ip_name](variables.tf#L244) | The name of the regional external/internal static IP address. | <code>string</code> |  | <code>&#34;web-ip&#34;</code> |
 
 ## Outputs
@@ -220,8 +242,10 @@ terraform apply
 | [compute_vms](outputs.tf#L35) | The outputs of standard Compute VMs. |  |
 | [ips](outputs.tf#L41) | The outputs of the provisioned IP addresses. |  |
 | [load_balancers](outputs.tf#L47) | The outputs of the provisioned Load Balancers. |  |
+| [prod_mig](outputs.tf#L78) | The outputs and details of the production Managed Instance Group. |  |
 | [project_id](outputs.tf#L53) | The GCP Project ID where resources were provisioned. |  |
 | [spot_vms](outputs.tf#L59) | The outputs of provisioned Spot VMs. |  |
 | [sql_instances](outputs.tf#L65) | The outputs of the provisioned Cloud SQL database instances. | ✓ |
 | [ssl_certificates](outputs.tf#L72) | The outputs of the SSL Certificates Manager configuration. |  |
+| [test_mig](outputs.tf#L83) | The outputs and details of the testing Managed Instance Group. |  |
 <!-- END TFDOC -->

@@ -305,3 +305,82 @@ variable "destroy_branch_regex" {
   type        = string
   default     = "^destroy-env$"
 }
+
+# --- Managed Instance Group (MIG) & Autoscaling Variables ---
+variable "provision_prod_mig" {
+  description = "Toggle to enable/disable the Production Managed Instance Group."
+  type        = bool
+  default     = false
+}
+
+variable "provision_test_mig" {
+  description = "Toggle to enable/disable the Testing Managed Instance Group."
+  type        = bool
+  default     = false
+}
+
+variable "prod_mig_machine_type" {
+  description = "Machine type for the production MIG instances (N2D AMD family recommended for Committed Use Discounts)."
+  type        = string
+  default     = "n2d-standard-8"
+}
+
+variable "test_mig_machine_type" {
+  description = "Machine type for the testing MIG instances (N2D AMD family with SPOT pricing)."
+  type        = string
+  default     = "n2d-standard-8"
+}
+
+variable "prod_mig_zone" {
+  description = "The zone to provision the production MIG in."
+  type        = string
+  default     = "us-central1-a"
+}
+
+variable "test_mig_zone" {
+  description = "The zone to provision the testing MIG in."
+  type        = string
+  default     = "us-central1-b"
+}
+
+variable "enable_prod_autoscaling" {
+  description = "Toggle to enable/disable autoscaling for the production MIG."
+  type        = bool
+  default     = false
+}
+
+variable "enable_test_autoscaling" {
+  description = "Toggle to enable/disable autoscaling for the testing MIG."
+  type        = bool
+  default     = false
+}
+
+variable "prod_autoscaling_max_replicas" {
+  description = "The maximum number of instances for the production MIG autoscaler (defaulted to 1 to cap costs)."
+  type        = number
+  default     = 1
+}
+
+variable "test_autoscaling_max_replicas" {
+  description = "The maximum number of instances for the testing MIG autoscaler (defaulted to 1 to cap costs)."
+  type        = number
+  default     = 1
+}
+
+variable "mig_data_disk_size" {
+  description = "The storage capacity in GB for the stateful Balanced Persistent Disk attached to MIG instances."
+  type        = number
+  default     = 200
+}
+
+variable "mig_local_ssd_count" {
+  description = "Number of high-performance Local SSDs to attach to each MIG instance (each is 375 GB)."
+  type        = number
+  default     = 1
+}
+
+variable "mig_health_check_port" {
+  description = "The application/health-check port for the ERPNext instances."
+  type        = number
+  default     = 8000
+}

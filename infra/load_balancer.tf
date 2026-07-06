@@ -23,10 +23,23 @@
 
 # Load Balancer Module: Manages external application load balancer setups
 locals {
+  prod_mig_group      = var.provision_prod_mig && length(google_compute_instance_group_manager.prod_mig) > 0 ? google_compute_instance_group_manager.prod_mig[0].instance_group : ""
+  test_mig_group      = var.provision_test_mig && length(google_compute_instance_group_manager.test_mig) > 0 ? google_compute_instance_group_manager.test_mig[0].instance_group : ""
+  mig_health_check_id = length(google_compute_health_check.mig_health_check) > 0 ? google_compute_health_check.mig_health_check[0].id : ""
+  
+  default_service = (
+    var.provision_prod_mig ? "prod-mig-backend" :
+    (var.provision_test_mig ? "test-mig-backend" : "frontend-neg")
+  )
+
   load_balancer_config = yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
-    glb_ip_name  = var.glb_ip_name
-    region       = var.region
-    ssl_map_name = var.ssl_map_name
+    glb_ip_name          = var.glb_ip_name
+    region               = var.region
+    ssl_map_name         = var.ssl_map_name
+    provision_prod_mig   = var.provision_prod_mig
+    provision_test_mig   = var.provision_test_mig
+    provision_cloud_run  = var.provision_cloud_run
+    default_service      = local.default_service
   }))
 
   # 1. Decoupled IP Address Resolution
@@ -60,7 +73,24 @@ module "load_balancer" {
   project_id              = module.project.project_id
   name                    = each.key
   backend_buckets_config  = try(each.value.backend_buckets_config, {})
-  backend_service_configs = try(each.value.backend_service_configs, {})
+  backend_service_configs = {
+    for bs_k, bs_v in try(each.value.backend_service_configs, {}) :
+    bs_k => merge(bs_v, {
+      backends = [
+        for b in try(bs_v.backends, []) : merge(b, {
+          backend = (
+            b.backend == "$$prod_mig_group" ? local.prod_mig_group :
+            (b.backend == "$$test_mig_group" ? local.test_mig_group : b.backend)
+          )
+        })
+      ]
+      health_checks = [
+        for hc in try(bs_v.health_checks, []) : (
+          hc == "$$mig_health_check_id" ? local.mig_health_check_id : hc
+        )
+      ]
+    })
+  }
   health_check_configs    = try(each.value.health_check_configs, {})
   neg_configs             = try(each.value.neg_configs, {})
   protocol                = try(each.value.protocol, null)

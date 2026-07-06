@@ -75,3 +75,14 @@ output "ssl_certificates" {
   value       = try(module.ssl_certificates[0], null)
   depends_on  = [module.ssl_certificates]
 }
+
+output "prod_mig" {
+  description = "The outputs and details of the production Managed Instance Group."
+  value       = var.provision_prod_mig && length(google_compute_instance_group_manager.prod_mig) > 0 ? google_compute_instance_group_manager.prod_mig[0] : null
+}
+
+output "test_mig" {
+  description = "The outputs and details of the testing Managed Instance Group."
+  value       = var.provision_test_mig && length(google_compute_instance_group_manager.test_mig) > 0 ? google_compute_instance_group_manager.test_mig[0] : null
+}
+
