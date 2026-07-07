@@ -14,7 +14,10 @@ from frappe.utils import nowdate
 
 from erpnext_enhancements.api.finance_dashboard import _require_finance, _settings, _widget_enabled
 
-DEFAULT_API_BASE = "https://horoscope-app-api.vercel.app"
+# The API formerly at horoscope-app-api.vercel.app moved here (the old host now
+# 308-redirects) and renamed the payload field horoscope_data -> horoscope; the
+# parser below accepts both so a custom base pointing at either style works.
+DEFAULT_API_BASE = "https://freehoroscopeapi.com"
 CACHE_TTL_SECONDS = 6 * 3600  # refresh a few times a day at most
 
 ZODIAC_SIGNS = (
@@ -61,7 +64,8 @@ def get_horoscope(sign):
 		if response.status_code >= 400:
 			raise ValueError(f"status {response.status_code}")
 		payload = response.json() or {}
-		text = ((payload.get("data") or {}).get("horoscope_data") or "").strip()
+		data = payload.get("data") or {}
+		text = (data.get("horoscope") or data.get("horoscope_data") or "").strip()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Horoscope fetch failed")
 		return {"enabled": True, "sign": canonical, "text": None, "reason": "Horoscope service unavailable."}

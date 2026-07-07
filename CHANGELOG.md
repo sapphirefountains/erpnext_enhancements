@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.147.0] - 2026-07-07
+
+### Fixed
+- **Daily Horoscope widget works again — the free horoscope API moved.** `horoscope-app-api.vercel.app` now 308-redirects to **freehoroscopeapi.com**, which renamed the response field (`horoscope_data` → `horoscope`). Our fetch followed the redirect but parsed the old field, so the widget always showed "No horoscope available." The default API base is now `https://freehoroscopeapi.com` (skipping the redirect hop) and the parser accepts both field names, so a custom `horoscope_api_base` pointing at either style keeps working. No configuration needed: leave *Horoscope API Base URL* blank to use the new default.
+
 ## [1.146.0] - 2026-07-07
 
 ### Fixed
