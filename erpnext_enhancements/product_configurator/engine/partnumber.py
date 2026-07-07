@@ -56,6 +56,18 @@ def validate_selections(options, selections):
 	seen_choice_keys = {}
 	seen_qty_keys = set()
 
+	# Defense in depth (the product form validates this too): a key shared by
+	# anything other than Choice rows would price multiple modules silently.
+	types_by_key = {}
+	for row in options:
+		types_by_key.setdefault(row.get("option_key"), []).append(row.get("option_type"))
+	for key, types in types_by_key.items():
+		if len(types) > 1 and any(t != "Choice" for t in types):
+			errors.append(
+				f"Option key {key!r} is reused by {len(types)} rows — only Choice "
+				"rows may share a key"
+			)
+
 	for row in options:
 		key = row.get("option_key")
 		kind = row.get("option_type")

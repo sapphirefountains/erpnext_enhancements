@@ -154,6 +154,14 @@ def cleanup_generation_artifacts():
 		"Product Configuration", filters={"product": PRODUCT}, pluck="name"
 	):
 		item_code = frappe.db.get_value("Product Configuration", cfg_name, "item")
+		# Null the link-backs first — frappe's on-delete link check raises for
+		# ANY referencing Link row, so the BOM/Item Price/Item deletes below
+		# would otherwise abort on this config's own fields.
+		frappe.db.set_value(
+			"Product Configuration",
+			cfg_name,
+			{"item": None, "bom": None, "item_price": None},
+		)
 		if item_code:
 			for bom_name in frappe.get_all("BOM", filters={"item": item_code}, pluck="name"):
 				bom = frappe.get_doc("BOM", bom_name)
@@ -165,7 +173,6 @@ def cleanup_generation_artifacts():
 				"Item Price", filters={"item_code": item_code}, pluck="name"
 			):
 				frappe.delete_doc("Item Price", price_name, ignore_permissions=True)
-			frappe.db.set_value("Product Configuration", cfg_name, "item", None)
 			frappe.delete_doc("Item", item_code, ignore_permissions=True)
 			removed.append(item_code)
 		frappe.delete_doc("Product Configuration", cfg_name, ignore_permissions=True)

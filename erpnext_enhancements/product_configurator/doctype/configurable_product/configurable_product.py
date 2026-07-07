@@ -39,6 +39,21 @@ class ConfigurableProduct(Document):
 		return selections
 
 	def _validate_option_rows(self):
+		# One costed module per key: only Choice rows may share an option_key
+		# (they form the pick-one group). A duplicated Quantity/Base key would
+		# silently price both rows and make the config grid last-row-wins.
+		types_by_key = {}
+		for row in self.options:
+			types_by_key.setdefault(row.option_key, []).append(row.option_type)
+		for key, types in types_by_key.items():
+			if len(types) > 1 and any(t != "Choice" for t in types):
+				frappe.throw(
+					_(
+						"Option key {0} is used by {1} rows — only Choice rows may "
+						"share a key (one row per choice)."
+					).format(frappe.bold(key), len(types))
+				)
+
 		defaults_per_choice = {}
 		for row in self.options:
 			if row.option_type == "Choice":

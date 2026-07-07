@@ -197,7 +197,15 @@ def _ensure_buying_price(item_code, uom, rate):
 	if rate <= 0 or not frappe.db.exists("Price List", BUYING_PRICE_LIST):
 		return
 	if frappe.db.exists(
-		"Item Price", {"item_code": item_code, "price_list": BUYING_PRICE_LIST, "uom": uom}
+		"Item Price",
+		{
+			"item_code": item_code,
+			"price_list": BUYING_PRICE_LIST,
+			"uom": uom,
+			"customer": ("is", "not set"),
+			"supplier": ("is", "not set"),
+			"batch_no": ("is", "not set"),
+		},
 	):
 		return
 	frappe.get_doc(
@@ -364,13 +372,26 @@ def _upsert_selling_price(cfg, item_code):
 		)
 		return None
 	rate = flt(cfg.sell_price, 2)
+	# Pin the party/batch dimensions: Item Price treats customer/supplier/
+	# batch_no as distinguishing, so an unconstrained filter could match (and
+	# silently overwrite) a customer-specific negotiated price instead of the
+	# configurator's generic list price.
 	name = frappe.db.exists(
 		"Item Price",
-		{"item_code": item_code, "price_list": SELLING_PRICE_LIST, "uom": "Nos"},
+		{
+			"item_code": item_code,
+			"price_list": SELLING_PRICE_LIST,
+			"uom": "Nos",
+			"customer": ("is", "not set"),
+			"supplier": ("is", "not set"),
+			"batch_no": ("is", "not set"),
+		},
 	)
 	if name:
-		frappe.db.set_value("Item Price", name, "price_list_rate", rate)
-		return name
+		price = frappe.get_doc("Item Price", name)
+		price.price_list_rate = rate
+		price.save()
+		return price.name
 	price = frappe.get_doc(
 		{
 			"doctype": "Item Price",

@@ -45,26 +45,46 @@ class ProductConfiguration(Document):
 		previous = {
 			(row.option_key, row.choice_code or ""): row for row in (self.options or [])
 		}
-		fresh_doc = not previous
+
+		# Choice selection is reconciled PER GROUP, not per row: a selection
+		# carried from the saved rows always beats the definition's default,
+		# so moving the default to a new choice on the product can neither
+		# flip nor double-select an existing configuration. A carried
+		# selection whose choice was removed falls back to the default.
+		carried_choice = {}
+		default_choice = {}
+		for opt in product.options:
+			if opt.option_type != "Choice":
+				continue
+			code = str(opt.choice_code or "")
+			old = previous.get((opt.option_key, code))
+			if old is not None and old.selected and opt.option_key not in carried_choice:
+				carried_choice[opt.option_key] = code
+			if opt.is_default or opt.option_key not in default_choice:
+				default_choice[opt.option_key] = code
 
 		rows = []
 		for opt in product.options:
 			if opt.option_type == "Base":
 				continue  # the base module prices implicitly; nothing to choose
-			key = (opt.option_key, str(opt.choice_code or "") if opt.option_type == "Choice" else "")
-			old = previous.get(key)
 			if opt.option_type == "Choice":
-				selected = (1 if opt.is_default else 0) if (fresh_doc or old is None) else (old.selected or 0)
+				code = str(opt.choice_code or "")
+				group_selection = carried_choice.get(
+					opt.option_key, default_choice.get(opt.option_key)
+				)
+				selected = 1 if code == group_selection else 0
 				qty = 0
 			else:
-				qty = int(opt.default_qty or 0) if (fresh_doc or old is None) else int(old.qty or 0)
+				old = previous.get((opt.option_key, ""))
+				qty = int(opt.default_qty or 0) if old is None else int(old.qty or 0)
 				selected = 0
+				code = ""
 			rows.append(
 				{
 					"option_key": opt.option_key,
 					"option_type": opt.option_type,
 					"option_label": opt.option_label,
-					"choice_code": str(opt.choice_code or "") if opt.option_type == "Choice" else "",
+					"choice_code": code,
 					"choice_label": opt.choice_label or "",
 					"module_key": opt.module_key,
 					"selected": selected,

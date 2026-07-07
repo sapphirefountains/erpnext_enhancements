@@ -131,6 +131,16 @@ class TestValidation(unittest.TestCase):
 		errors = validate_selections(PDT_0040["options"], dict(MOST_COMMON, timer_qty="lots"))
 		self.assertTrue(any("Timer & Button Qty" in e for e in errors))
 
+	def test_duplicate_non_choice_option_key_rejected(self):
+		# A copy-pasted Quantity row must not silently double-price the module.
+		options = PDT_0040["options"] + [dict(PDT_0040["options"][4])]  # estop_qty again
+		errors = validate_selections(options, MOST_COMMON)
+		self.assertTrue(any("estop_qty" in e and "reused" in e for e in errors))
+		with self.assertRaises(ValueError):
+			price_configuration(dict(PDT_0040, options=options), MOST_COMMON)
+		# ...while Choice rows legitimately share their group key
+		self.assertEqual(validate_selections(PDT_0040["options"], MOST_COMMON), [])
+
 
 class TestConditions(unittest.TestCase):
 	CTX = {"timer_qty": 2, "estop_qty": 1, "mounting": "2", "relay_qty": 0}

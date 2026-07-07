@@ -26,22 +26,22 @@ PRICING_PF = "Product Configuration - Pricing Summary"
 
 _HEADER = """
   <div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:2px solid #333; padding-bottom:6px;">
-    <h2 style="margin:0;">{{ title }} &mdash; {{ doc.part_number }}</h2>
-    <span style="color:#777;">{{ doc.name }} &middot; {{ frappe.utils.formatdate(doc.modified) }}</span>
+    <h2 style="margin:0;">{{ title }} &mdash; {{ doc.part_number | e }}</h2>
+    <span style="color:#777;">{{ doc.name | e }} &middot; {{ frappe.utils.formatdate(doc.modified) }}</span>
   </div>
 
   <table style="width:100%; border-collapse:collapse; margin:10px 0 14px; font-size:12px;">
     <tr>
       <td style="padding:3px 8px; color:#777; width:18%;">Product</td>
-      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ doc.product }}</td>
+      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ doc.product | e }}</td>
       <td style="padding:3px 8px; color:#777; width:18%;">Customer</td>
-      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ doc.customer or "&mdash;" }}</td>
+      <td style="padding:3px 8px; font-weight:bold; width:32%;">{{ (doc.customer or "") | e or "&mdash;" }}</td>
     </tr>
     <tr>
       <td style="padding:3px 8px; color:#777;">Title</td>
-      <td style="padding:3px 8px; font-weight:bold;">{{ doc.config_title or "" }}</td>
+      <td style="padding:3px 8px; font-weight:bold;">{{ (doc.config_title or "") | e }}</td>
       <td style="padding:3px 8px; color:#777;">Project</td>
-      <td style="padding:3px 8px; font-weight:bold;">{{ doc.project or "&mdash;" }}</td>
+      <td style="padding:3px 8px; font-weight:bold;">{{ (doc.project or "") | e or "&mdash;" }}</td>
     </tr>
   </table>
 """
@@ -57,9 +57,9 @@ _DECODE_TABLE = """
       {% for row in doc.options %}
       {% if row.option_type != "Choice" or row.selected %}
       <tr>
-        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ row.option_label }}</td>
-        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ row.choice_label if row.option_type == "Choice" else "Quantity" }}</td>
-        <td style="padding:4px 8px; border-bottom:1px solid #eee; text-align:right;">{{ row.choice_code if row.option_type == "Choice" else row.qty }}</td>
+        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ row.option_label | e }}</td>
+        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ (row.choice_label if row.option_type == "Choice" else "Quantity") | e }}</td>
+        <td style="padding:4px 8px; border-bottom:1px solid #eee; text-align:right;">{{ (row.choice_code if row.option_type == "Choice" else row.qty) | e }}</td>
       </tr>
       {% endif %}
       {% endfor %}
@@ -68,7 +68,7 @@ _DECODE_TABLE = """
 
   {% if doc.warnings_text %}
   <div style="margin:0 0 14px; border:1px solid #fedf89; background:#fffaeb; border-radius:4px; padding:6px 10px;">
-    <b style="color:#b54708;">&#9888;</b> {{ doc.warnings_text | replace("\\n", " &middot; ") }}
+    <b style="color:#b54708;">&#9888;</b> {{ doc.warnings_text | e | replace("\\n", " &middot; ") }}
   </div>
   {% endif %}
 """
@@ -86,10 +86,10 @@ BUILD_HTML = (
   {% for s in build_steps %}
     {% if loop.changed(s.section_title) %}
       {% if not loop.first %}</ol>{% endif %}
-      <h3 style="margin:14px 0 4px; border-bottom:1px solid #ccc; padding-bottom:2px;">{{ s.section_title }}</h3>
+      <h3 style="margin:14px 0 4px; border-bottom:1px solid #ccc; padding-bottom:2px;">{{ s.section_title | e }}</h3>
       <ol style="margin:4px 0 10px 18px; padding:0;">
     {% endif %}
-    <li style="padding:2px 0;">{{ s.instruction }}</li>
+    <li style="padding:2px 0;">{{ s.instruction | e }}</li>
     {% if loop.last %}</ol>{% endif %}
   {% endfor %}
   {% if not build_steps %}
@@ -108,9 +108,9 @@ QC_HTML = (
   {% set qc_steps = doc.build_steps | selectattr("step_type", "equalto", "QC") | list %}
   {% for s in qc_steps %}
     {% if loop.changed(s.section_title) %}
-      <h3 style="margin:14px 0 4px; border-bottom:1px solid #ccc; padding-bottom:2px;">{{ s.section_title }}</h3>
+      <h3 style="margin:14px 0 4px; border-bottom:1px solid #ccc; padding-bottom:2px;">{{ s.section_title | e }}</h3>
     {% endif %}
-    <div style="padding:4px 0 4px 4px;">&#9744;&nbsp; {{ s.instruction }}</div>
+    <div style="padding:4px 0 4px 4px;">&#9744;&nbsp; {{ s.instruction | e }}</div>
   {% endfor %}
   {% if not qc_steps %}
   <div style="color:#999; font-style:italic;">No QC steps defined for this configuration.</div>
@@ -144,7 +144,7 @@ PRICING_HTML = (
     <tbody>
       {% for ln in doc.price_lines %}
       <tr>
-        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ ln.module_label }}</td>
+        <td style="padding:4px 8px; border-bottom:1px solid #eee;">{{ ln.module_label | e }}</td>
         <td style="padding:4px 8px; border-bottom:1px solid #eee; text-align:right;">{{ ln.qty }}</td>
         <td style="padding:4px 8px; border-bottom:1px solid #eee; text-align:right;">{{ frappe.utils.fmt_money(ln.unit_price) }}</td>
         <td style="padding:4px 8px; border-bottom:1px solid #eee; text-align:right;">{{ frappe.utils.fmt_money(ln.line_price) }}</td>
@@ -170,10 +170,10 @@ PRICING_HTML = (
     <tbody>
       {% for p in doc.parts %}
       <tr>
-        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ p.item_code }}</td>
-        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ p.component_name }}</td>
+        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ p.item_code | e }}</td>
+        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ p.component_name | e }}</td>
         <td style="padding:3px 8px; border-bottom:1px solid #eee; text-align:right;">{{ p.qty }}</td>
-        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ p.supplier_name or "" }}</td>
+        <td style="padding:3px 8px; border-bottom:1px solid #eee;">{{ (p.supplier_name or "") | e }}</td>
       </tr>
       {% endfor %}
     </tbody>
