@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+data "google_compute_zones" "available" {
+  project = module.project.project_id
+  region  = var.region
+  status  = "UP"
+}
+
 locals {
   resolved_prod_mig_groups = concat(
     (var.provision_prod_mig && var.use_zonal_mig && length(google_compute_instance_group_manager.prod_mig) > 0) ? [google_compute_instance_group_manager.prod_mig[0].instance_group] : [],
@@ -23,6 +29,7 @@ locals {
     (var.provision_test_mig && var.use_zonal_mig && length(google_compute_instance_group_manager.test_mig) > 0) ? [google_compute_instance_group_manager.test_mig[0].instance_group] : [],
     (var.provision_test_mig && var.use_regional_mig && length(google_compute_region_instance_group_manager.test_mig) > 0) ? [google_compute_region_instance_group_manager.test_mig[0].instance_group] : []
   )
+  zone_count = length(data.google_compute_zones.available.names)
 }
 
 # ============================================================================
@@ -228,11 +235,12 @@ resource "google_compute_region_instance_group_manager" "prod_mig" {
   }
 
   update_policy {
-    type                  = "PROACTIVE"
-    minimal_action        = "REPLACE"
-    replacement_method    = "RECREATE"
-    max_surge_fixed       = 0
-    max_unavailable_fixed = 1
+    type                         = "PROACTIVE"
+    minimal_action               = "REPLACE" 
+    replacement_method           = "RECREATE"
+    max_surge_fixed              = 0
+    max_unavailable_fixed        = local.zone_count
+    instance_redistribution_type = "NONE" # Added to fix the error
   }
 
   lifecycle {
@@ -424,11 +432,12 @@ resource "google_compute_region_instance_group_manager" "test_mig" {
   }
 
   update_policy {
-    type                  = "PROACTIVE"
-    minimal_action        = "REPLACE"
-    replacement_method    = "RECREATE"
-    max_surge_fixed       = 0
-    max_unavailable_fixed = 1
+    type                         = "PROACTIVE"
+    minimal_action               = "REPLACE"
+    replacement_method           = "RECREATE"
+    max_surge_fixed              = 0
+    max_unavailable_fixed        = local.zone_count
+    instance_redistribution_type = "NONE" # Added to fix the error
   }
 
   lifecycle {
