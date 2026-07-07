@@ -108,8 +108,17 @@ class WaterFeatureDesign(Document):
 	def _enforce_status_gates(self):
 		"""Reviewed/Issued are earned states: no blockers may exist, and Issued
 		additionally requires the package readiness gate + every warning
-		acknowledged. (Submission re-checks in before_submit.)"""
+		acknowledged. (Submission re-checks in before_submit.)
+
+		The gate fires only on the status TRANSITION — a doc already sitting in
+		Reviewed/Issued (e.g. saved before these gates existed, or one that
+		gained a finding from external state) must stay saveable, and the
+		acknowledge endpoint's own save must not trip the gate it remedies.
+		before_submit re-checks everything regardless of transition."""
 		if self.status not in ("Reviewed", "Issued"):
+			return
+		before = self.get_doc_before_save()
+		if before and (before.status or "") == (self.status or ""):
 			return
 		issues = self._live_issues()
 		blockers = [i for i in issues if i.get("severity") == "blocker"]

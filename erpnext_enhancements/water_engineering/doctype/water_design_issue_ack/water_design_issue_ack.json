@@ -16,11 +16,12 @@
    "fieldname": "issue_key",
    "fieldtype": "Data",
    "label": "Issue Key",
+   "length": 250,
    "read_only": 1,
    "reqd": 1,
    "in_list_view": 1,
    "columns": 3,
-   "description": "Stable issue key (code | row label). An acknowledgement is dropped automatically when its issue no longer exists; deleting a row un-acknowledges."
+   "description": "Stable issue key (code | scope). An acknowledgement is dropped automatically when its issue no longer exists; deleting a row un-acknowledges."
   },
   {
    "fieldname": "title",

@@ -36,6 +36,7 @@ This module deliberately imports no frappe (stub-testable like the engine).
 from __future__ import annotations
 
 import json
+import zlib
 
 from erpnext_enhancements.water_engineering.engine.constants import (
     CIT_CHEM_TARGETS,
@@ -339,7 +340,17 @@ def _calc_result_issues(doc):
     rows_have_pressure = any(
         (getattr(r, "pressure_status", "") or "") for r in _rows(doc, "pipe_segments")
     )
-    chem_user_basis = bool(_flt(doc.get("chem_cya_ppm")) or _flt(doc.get("chem_free_cl_ppm")))
+    cya_user_basis = bool(_flt(doc.get("chem_cya_ppm")))
+    # The TDH rollup re-copies every per-segment envelope's warnings (fitting /
+    # component sentences) — suppress those exact duplicates on the rollup row so
+    # one finding yields one issue (keyed to the segment-scoped envelope).
+    segment_envelope_warnings = {
+        w
+        for r in _rows(doc, "calc_results")
+        if (getattr(r, "calc", "") or "").lower().startswith(("fitting loss", "component loss", "pipe friction"))
+        for w in (getattr(r, "warnings", "") or "").split("\n")
+        if w
+    }
 
     for r in _rows(doc, "calc_results"):
         calc = getattr(r, "calc", "") or ""
@@ -353,6 +364,9 @@ def _calc_result_issues(doc):
             for rule_calc, pattern, code, severity, rule_section, fix in STATUS_RULES:
                 if _match_calc(rule_calc, calc) and pattern in status:
                     if code == "PIPE_PRESSURE_UNDER_RATED" and rows_have_pressure:
+                        # Superseded by the row-addressable version — swallow the
+                        # row's warning sentences too, or they leak back as notes.
+                        matched_warnings.update(warnings)
                         break
                     issues.append(_issue(
                         code, severity,
@@ -361,24 +375,38 @@ def _calc_result_issues(doc):
                         detail="\n".join(warnings),
                         fix_hint=fix, citation=citation, calc=calc,
                     ))
-                    matched_warnings.update(w for w in warnings)
+                    matched_warnings.update(warnings)
                     break
 
         for w in warnings:
             if w in matched_warnings:
                 continue
+            if calc.lower() == "total_dynamic_head" and w in segment_envelope_warnings:
+                continue
             wl = w.lower()
             if any(q in wl for q in _QUIET_WARNINGS):
                 continue
+            # Scope per warning SENTENCE (not per calc): one calc row can carry
+            # several distinct findings (two components over max), and the same
+            # code must not collapse them — nor let one ack cover them all. The
+            # sentence is deterministic engine output (hashed to keep the key
+            # short — acks store it in a bounded field), so keys stay stable
+            # across re-saves and correctly change when the numbers change.
+            w_scope = f"{calc[:80]}|{zlib.crc32(w.encode('utf-8')) & 0xFFFFFFFF:08x}"
             for rule_calc, pattern, code, severity, rule_section, fix in WARNING_RULES:
                 if _match_calc(rule_calc, calc) and pattern in wl:
-                    if code == "CHEM_FC_BELOW_CYA_FLOOR" and not chem_user_basis:
-                        # Default-basis floor (no CYA/FC entered): advisory, not a warning.
-                        severity = INFO
-                        fix = ("Enter the planned CYA / free-chlorine levels on the Treatment "
-                               "tab to check the real floor.")
+                    if code == "CHEM_FC_BELOW_CYA_FLOOR":
+                        # "Free chlorine X ppm is below the floor" is inherently a
+                        # user-FC-basis finding and stays a warning. The "At CYA X
+                        # ppm the floor is above the standard target" variant only
+                        # gates when the CYA figure is the user's own — on the
+                        # default basis it's an advisory.
+                        if not wl.startswith("free chlorine") and not cya_user_basis:
+                            severity = INFO
+                            fix = ("Enter the planned CYA / free-chlorine levels on the "
+                                   "Treatment tab to check the real floor.")
                     issues.append(_issue(
-                        code, severity, w, rule_section, scope=calc,
+                        code, severity, w, rule_section, scope=w_scope,
                         ref={"table": None, "row_name": None, "row_idx": None,
                              "field": "chem_cya_ppm"} if code == "CHEM_FC_BELOW_CYA_FLOOR" else None,
                         fix_hint=fix, citation=citation, calc=calc,
@@ -388,7 +416,7 @@ def _calc_result_issues(doc):
                 # Unmatched engine warning: surface as an advisory rather than
                 # dropping it silently (the audit trail keeps the full text).
                 issues.append(_issue(
-                    "ENGINE_NOTE", INFO, w, section, scope=calc,
+                    "ENGINE_NOTE", INFO, w, section, scope=w_scope,
                     citation=citation, calc=calc,
                 ))
     return issues

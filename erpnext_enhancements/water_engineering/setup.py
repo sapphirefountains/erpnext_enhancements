@@ -243,24 +243,27 @@ def ensure_water_number_cards():
 	(idempotent + guarded, like the other water_engineering setup entries)."""
 	try:
 		for spec in WATER_NUMBER_CARDS:
+			values = {
+				"label": spec["label"],
+				"type": "Document Type",
+				"document_type": spec["document_type"],
+				"function": "Count",
+				"filters_json": spec["filters_json"],
+				"is_public": 1,
+				"show_percentage_stats": 0,
+				"color": spec["color"],
+			}
 			if frappe.db.exists("Number Card", spec["name"]):
 				card = frappe.get_doc("Number Card", spec["name"])
+				card.update(values)
+				card.save(ignore_permissions=True)
 			else:
 				card = frappe.new_doc("Number Card")
-				card.name = spec["name"]
-			card.update(
-				{
-					"label": spec["label"],
-					"type": "Document Type",
-					"document_type": spec["document_type"],
-					"function": "Count",
-					"filters_json": spec["filters_json"],
-					"is_public": 1,
-					"show_percentage_stats": 0,
-					"color": spec["color"],
-				}
-			)
-			card.save(ignore_permissions=True)
+				card.update(values)
+				# insert(set_name=...) survives autoname; assigning card.name
+				# before save() does NOT (set_new_name wipes it -> the workspace
+				# block would point at a card that doesn't exist).
+				card.insert(ignore_permissions=True, set_name=spec["name"])
 		frappe.db.commit()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Water Engineering number cards")

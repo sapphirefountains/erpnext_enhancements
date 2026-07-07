@@ -98,16 +98,19 @@ class SegmentIssueTests(unittest.TestCase):
 
     def test_row_pressure_supersedes_doc_level_envelope(self):
         # Same finding via the audit row AND the row field -> only the
-        # row-addressable one survives.
+        # row-addressable one survives — and the suppressed envelope's warning
+        # sentence must NOT leak back in as an ENGINE_NOTE advisory.
         doc = FakeDoc(
             pipe_segments=[FakeRow(segment_label="Main", velocity_status="Okay", velocity_fps=3,
                                    nominal_size='2"', pressure_status="Exceeds Pressure Rating")],
             calc_results=[_calc_row("pipe_pressure_check", status="Exceeds Pressure Rating",
                                     warnings="System 100 psi exceeds the 83 psi rating")],
         )
-        issues = [i for i in di.build_issues(doc) if i["code"] == "PIPE_PRESSURE_UNDER_RATED"]
-        self.assertEqual(len(issues), 1)
-        self.assertIsNotNone(issues[0]["ref"])
+        all_issues = di.build_issues(doc)
+        pressure = [i for i in all_issues if i["code"] == "PIPE_PRESSURE_UNDER_RATED"]
+        self.assertEqual(len(pressure), 1)
+        self.assertIsNotNone(pressure[0]["ref"])
+        self.assertFalse([i for i in all_issues if i["code"] == "ENGINE_NOTE"])
 
     def test_no_flow_segment_warns_only_without_design_flow(self):
         seg = FakeRow(segment_label="X", nominal_size='3"', pipe_length_ft=50, flow_gpm=0)
@@ -171,6 +174,30 @@ class CalcResultMappingTests(unittest.TestCase):
         self.assertEqual(issues[0]["code"], "COMPONENT_OVER_MAX_FLOW")
         self.assertEqual(issues[0]["severity"], "warning")
 
+    def test_tdh_rollup_duplicates_are_suppressed(self):
+        # The TDH rollup re-copies every per-segment envelope's warning strings —
+        # one finding must yield ONE issue (keyed to the segment envelope), not two.
+        w = "Over rated flow: SKIMMER is rated to 75 GPM but carries 90 GPM — split flow or size up."
+        doc = FakeDoc(calc_results=[
+            _calc_row("Component loss — Pump discharge", warnings=w),
+            _calc_row("total_dynamic_head", warnings=w),
+        ])
+        issues = [i for i in di.build_issues(doc) if i["code"] == "COMPONENT_OVER_MAX_FLOW"]
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["calc"], "Component loss — Pump discharge")
+
+    def test_distinct_findings_in_one_calc_row_keep_distinct_keys(self):
+        # Two components over max in the SAME envelope: both must survive de-dup
+        # (and each needs its own acknowledgement key).
+        doc = FakeDoc(calc_results=[_calc_row(
+            "Component loss — Pump discharge",
+            warnings="Over rated flow: SKIMMER is rated to 75 GPM but carries 90 GPM — split flow or size up.\n"
+                     "Over rated flow: HEATER is rated to 60 GPM but carries 90 GPM — split flow or size up.",
+        )])
+        issues = [i for i in di.build_issues(doc) if i["code"] == "COMPONENT_OVER_MAX_FLOW"]
+        self.assertEqual(len(issues), 2)
+        self.assertNotEqual(issues[0]["key"], issues[1]["key"])
+
     def test_cya_floor_severity_tracks_input_basis(self):
         floor_warning = (
             "At CYA 50 ppm the free-chlorine floor is 3.75 ppm, above the standard "
@@ -182,6 +209,19 @@ class CalcResultMappingTests(unittest.TestCase):
         self.assertEqual(di.build_issues(default_basis)[0]["severity"], "info")
         self.assertEqual(di.build_issues(user_basis)[0]["severity"], "warning")
         self.assertEqual(di.build_issues(user_basis)[0]["code"], "CHEM_FC_BELOW_CYA_FLOOR")
+
+    def test_cya_floor_user_fc_variant_always_warns(self):
+        # "Free chlorine X is below the floor" is inherently a user-FC finding —
+        # it gates even when the CYA figure came from the default target band.
+        fc_warning = (
+            "Free chlorine 2 ppm is below the 3.75 ppm floor for CYA 50 ppm "
+            "(DOC-0119) — chlorine is under-effective; raise it."
+        )
+        doc = FakeDoc(chem_free_cl_ppm=2,
+                      calc_results=[_calc_row("chemistry_targets", warnings=fc_warning)])
+        issue = di.build_issues(doc)[0]
+        self.assertEqual(issue["code"], "CHEM_FC_BELOW_CYA_FLOOR")
+        self.assertEqual(issue["severity"], "warning")
 
     def test_unmatched_warning_surfaces_as_advisory_and_quiet_list_is_quiet(self):
         doc = FakeDoc(calc_results=[

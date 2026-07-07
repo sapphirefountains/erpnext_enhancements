@@ -568,7 +568,7 @@ function wfd_health_html(frm, p) {
 						<summary style="display:flex;align-items:baseline;gap:7px;cursor:pointer;list-style:none">
 							<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:${sev.dot};display:inline-block;position:relative;top:-1px" title="${sev.label}"></span>
 							<span style="flex:1">${esc(i.title)}${ack ? ` <span style="color:var(--text-muted);font-size:11px">— ${__("acknowledged by {0}", [esc(ack.acknowledged_by || "")])}</span>` : ""}</span>
-							${i.ref ? `<a class="wfd-jump" data-i="${idx}" style="font-size:11px;white-space:nowrap">${__("Go")}</a>` : ""}
+							${i.ref || WFD_SECTION_ANCHORS[i.section] ? `<a class="wfd-jump" data-i="${idx}" style="font-size:11px;white-space:nowrap">${__("Go")}</a>` : ""}
 							${can_ack ? `<a class="wfd-ack" data-i="${idx}" style="font-size:11px;white-space:nowrap;color:#c2700a">${__("Acknowledge…")}</a>` : ""}
 						</summary>
 						${meta.length ? `<div style="margin:3px 0 3px 15px;font-size:11px;color:var(--text-color)">${meta.join("<br>")}</div>` : ""}
@@ -631,7 +631,8 @@ function wfd_wire_health(frm, $wrapper, p) {
 		e.preventDefault();
 		e.stopPropagation();
 		const issue = issues[cint($(this).data("i"))];
-		if (issue) wfd_jump(frm, issue.ref);
+		// Doc-scoped issues (no row ref) fall back to their section's anchor field.
+		if (issue) wfd_jump(frm, issue.ref || { field: WFD_SECTION_ANCHORS[issue.section] });
 	});
 	$wrapper.find(".wfd-goto").on("click", function (e) {
 		e.preventDefault();
@@ -643,6 +644,14 @@ function wfd_wire_health(frm, $wrapper, p) {
 		e.stopPropagation();
 		const issue = issues[cint($(this).data("i"))];
 		if (!issue) return;
+		// The sign-off is recorded on the SAVED record and the form reloads after —
+		// acknowledging from a dirty form would silently discard the unsaved edits.
+		if (frm.is_dirty()) {
+			frappe.msgprint(
+				__("Save the design first — acknowledging records the sign-off on the saved document and reloads the form, which would discard your unsaved changes.")
+			);
+			return;
+		}
 		frappe.prompt(
 			[
 				{
@@ -659,7 +668,8 @@ function wfd_wire_health(frm, $wrapper, p) {
 					})
 					.then(() => frm.reload_doc());
 			},
-			__("Acknowledge: {0}", [issue.title]),
+			// dialog titles render as HTML — the issue title embeds user-typed row labels
+			__("Acknowledge: {0}", [frappe.utils.escape_html(issue.title)]),
 			__("Acknowledge")
 		);
 	});
