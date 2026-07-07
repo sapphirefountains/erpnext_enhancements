@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.145.0] - 2026-07-07
+
+### Added
+- **Quick Entry across the common masters.** The lightweight "+ New" dialog (list views, awesomebar, "Create a new…" inside link fields) now works on 22 frequently-used doctypes, each showing every required field plus a curated handful of high-value ones. Newly enabled: **Opportunity** (with "Opportunity From" defaulting to Customer and correctly restricted to Lead/Customer/Prospect inside the dialog), **Employee, Warehouse, Item Group, Customer Group, Supplier Group, Serial No, Event** — and **Item + Customer are re-enabled** (reversing the old deliberate disables) with curated dialogs. Existing dialogs got useful fields added: Supplier (group/country/tax ID), Lead (last name, service interest), Project (customer, stage, requested dates), Task, Issue, Batch, ToDo, Note — and **Payment Term's dialog, which shipped broken upstream (enabled but empty, so it silently never opened), now works**. Contact & Address are deliberately excluded (dialog-created records would be orphaned — their party links are only wired on the full form). Details in `docs/UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md`.
+
+### Changed
+- **The 7 procurement forms redesigned around the 90 % data-entry case** — Item, Material Request, Purchase Order, Purchase Receipt, Purchase Invoice, Supplier Quotation, Request for Quotation. First tab = identity block → items grid → taxes → totals; the five purchase documents now share one tab grammar (**Details → Contacts & Addresses → Terms → More Info → Connections → Comments**) so learning one form teaches all; auxiliary sections (accounting dimensions, pricing rules, tax breakup, printing, auto-repeat, status trackers) moved to More Info as collapsible sections. Purchase Invoice's required **Credit To** moved up to the first tab. Item's Details tab opens with the create-an-item essentials and its domain tabs are reordered most-used-first. Nothing deleted or hidden — except the **duplicate empty "Comments" tab on Purchase Order / Supplier Quotation**, which is fixed. Also repairs the stale pre-v16 `field_order` arrays (Purchase Invoice was missing 14 v16 fields; MR/PI carried phantom fieldnames; Item was missing the pump-spec fields).
+- The `field_order` fixtures are now **generated** from declarative specs by `scripts/layout/generate_field_order.py` (hard lints: exact field coverage, no stray column breaks, no empty tabs, required fields on the first tab). **Re-run it after every ERPNext upgrade** to keep the arrays fresh.
+
 ## [1.144.0] - 2026-07-07
 
 ### Added

@@ -1,0 +1,98 @@
+{
+ "doctype": "Purchase Order",
+ "reqd_after_first_tab_ok": [
+  "status"
+ ],
+ "layout": [
+  "supplier_section",
+  "naming_series",
+  "supplier",
+  "supplier_name",
+  "order_confirmation_no",
+  "order_confirmation_date",
+  "column_break_7",
+  "transaction_date",
+  "transaction_time",
+  "schedule_date",
+  "project",
+  "column_break1",
+  "company",
+  "is_subcontracted",
+  "supplier_warehouse",
+  "has_unit_price_items",
+  "amended_from",
+  {
+   "section": "currency_and_price_list"
+  },
+  {
+   "section": "before_items_section"
+  },
+  {
+   "section": "items_section"
+  },
+  {
+   "section": "sb_last_purchase"
+  },
+  {
+   "section": "taxes_section"
+  },
+  {
+   "section": "section_break_52"
+  },
+  {
+   "section": "totals"
+  },
+  {
+   "section": "totals_section"
+  },
+  {
+   "section": "base_totals_section"
+  },
+  {
+   "section": "section_break_tnkm"
+  },
+  {
+   "section": "discount_section"
+  },
+  {
+   "tab": "address_and_contact_tab"
+  },
+  {
+   "tab": "drop_ship"
+  },
+  {
+   "tab": "terms_tab"
+  },
+  "more_info_tab",
+  {
+   "section": "tracking_section"
+  },
+  {
+   "section": "accounting_dimensions_section"
+  },
+  {
+   "section": "section_break_48"
+  },
+  {
+   "section": "sec_tax_breakup"
+  },
+  "raw_material_details",
+  "supplied_items",
+  {
+   "section": "column_break5"
+  },
+  {
+   "section": "auto_repeat_section"
+  },
+  {
+   "section": "additional_info_section"
+  },
+  {
+   "tab": "connections_tab"
+  },
+  "custom_comments_tab",
+  "custom_comments_field",
+  "custom_comments"
+ ],
+ "setters": []
+}
