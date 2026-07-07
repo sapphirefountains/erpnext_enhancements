@@ -6,8 +6,9 @@ This playbook is a reusable, modular Terraform configuration designed to provisi
 
 The playbook is built on top of Google Cloud Foundation Fabric (CFF) modules. It features:
 * **Independent Enablement:** Every resource group is wrapped in conditional statements driven by `provision_*` toggles.
-* **Unified Network Toggling:** The `ip_external` variable acts as a master toggle to switch resources between public-facing configurations (assigning public IPs, setting open ingress rules) and private-only configurations.
-* **Parameterizable Settings:** All configurable fields are mapped to variables that can be modified directly in the `terraform.tfvars` file, removing any hardcoded environment details.
+* **Unified Network Toggling**: The `ip_external` variable acts as a master toggle to switch resources between public-facing configurations (assigning public IPs, setting open ingress rules) and private-only configurations.
+* **VPC Networking Options**: Allows choosing between a custom VPC network/subnetwork setup or reusing the pre-existing default VPC network and subnet via the `use_default_vpc` toggle.
+* **Parameterizable Settings**: All configurable fields are mapped to variables that can be modified directly in the `terraform.tfvars` file, removing any hardcoded environment details.
 
 ## Detailed Service Configurations
 
@@ -35,12 +36,11 @@ Provisions v2 Cloud Functions, including custom runtime configuration, memory, b
 
 ### 6. Standard Compute VMs
 Provisions standard Compute Engine virtual machines.
-* If `ip_external` is set to `true`, the instance's network interfaces are assigned an ephemeral external IP (`nat = true`).
-* If `ip_external` is set to `false`, they are provisioned with internal-only access.
+* **External IP Control**: Uses `vm_ip_external` to control external IP assignment, falling back to the master `ip_external` toggle if not set.
 
 ### 7. Spot Compute VMs
 Provisions ephemeral, cost-efficient Spot VMs.
-* Integrates the same `ip_external` public/private IP toggle logic as standard VMs.
+* **External IP Control**: Integrates the same `vm_ip_external` (falling back to `ip_external`) public/private IP toggle logic.
 * Supports customizable termination actions (`STOP` or `DELETE`).
 
 ### 8. Cloud SQL Database Instances
@@ -60,7 +60,8 @@ Provisions Google Cloud Artifact Registry Docker repositories dynamically using 
 * Grants the `roles/artifactregistry.reader` role on the repository to the Cloud Run Service Agent (`service-${project_number}@serverless-robot-prod.iam.gserviceaccount.com`), enabling Cloud Run to fetch container images securely.
 
 ### 12. Managed Instance Groups (MIG) & Autoscaling
-Provisions regional/zonal Managed Instance Groups (MIGs) and Templates designed for ERPNext database consolidation.
+Provisions regional and/or zonal Managed Instance Groups (MIGs) and Templates designed for ERPNext database consolidation.
+* **Flexibility**: Supports provisioning zonal only, regional only, or both concurrently via `use_zonal_mig` and `use_regional_mig` toggles.
 * **Cost Optimization Strategy**: Employs standard N2D AMD instances for the Production environment (eligible for 1-Year Committed Use Discounts) and Spot preemptible N2D AMD instances for the Testing environment to minimize compute charges.
 * **Stateful Storage**: Implements `stateful_disk` rules (`delete_rule = "NEVER"`) ensuring the 200GB Balanced Persistent Disk (`pd-balanced`) carrying database records and Frappe user files is preserved and re-attached when instances are preempted or updated.
 * **Local SSD Scratch Disks**: Configures high-performance NVMe Local SSDs (375GB) dynamically inside templates to optimize database IOPS for the self-managed MariaDB server.
@@ -228,9 +229,13 @@ terraform apply
 | [ssl_map_name](variables.tf#L232) | The name of the Certificate Map. | <code>string</code> |  | <code>&#34;web-ssl-map&#34;</code> |
 | [subnetwork](variables.tf#L238) | The subnetwork to deploy resources into. | <code>string</code> |  | <code>&#34;default&#34;</code> |
 | [test_autoscaling_max_replicas](variables.tf#L356) | The maximum number of instances for the testing MIG autoscaler. | <code>number</code> |  | <code>1</code> |
-| [test_mig_machine_type](variables.tf#L326) | Machine type for the testing MIG instances (N2D AMD family with SPOT pricing). | <code>string</code> |  | <code>&#34;n2d-standard-8&#34;</code> |
-| [test_mig_zone](variables.tf#L338) | The zone to provision the testing MIG in. | <code>string</code> |  | <code>&#34;us-central1-b&#34;</code> |
-| [web_ip_name](variables.tf#L244) | The name of the regional external/internal static IP address. | <code>string</code> |  | <code>&#34;web-ip&#34;</code> |
+| [test_mig_machine_type](variables.tf#L346) | Machine type for the testing MIG instances (N2D AMD family with SPOT pricing). | <code>string</code> |  | <code>&#34;n2d-standard-8&#34;</code> |
+| [test_mig_zone](variables.tf#L358) | The zone to provision the testing MIG in. | <code>string</code> |  | <code>&#34;us-central1-b&#34;</code> |
+| [use_default_vpc](variables.tf#L95) | Toggle to use the pre-existing default VPC and default subnet in the project instead of creating a custom VPC. | <code>bool</code> |  | <code>false</code> |
+| [use_regional_mig](variables.tf#L334) | Toggle to use regional Managed Instance Groups (and regional autoscalers). | <code>bool</code> |  | <code>false</code> |
+| [use_zonal_mig](variables.tf#L328) | Toggle to use zonal Managed Instance Groups (and zonal autoscalers). | <code>bool</code> |  | <code>true</code> |
+| [vm_ip_external](variables.tf#L95) | Toggle to assign external (public) IPs to VMs (Compute Engine instances, Spot VMs, and MIG templates). If null, defaults to the global ip_external setting. | <code>bool</code> |  | <code>null</code> |
+| [web_ip_name](variables.tf#L250) | The name of the regional external/internal static IP address. | <code>string</code> |  | <code>&#34;web-ip&#34;</code> |
 
 ## Outputs
 
@@ -242,10 +247,12 @@ terraform apply
 | [compute_vms](outputs.tf#L35) | The outputs of standard Compute VMs. |  |
 | [ips](outputs.tf#L41) | The outputs of the provisioned IP addresses. |  |
 | [load_balancers](outputs.tf#L47) | The outputs of the provisioned Load Balancers. |  |
-| [prod_mig](outputs.tf#L78) | The outputs and details of the production Managed Instance Group. |  |
+| [prod_mig](outputs.tf#L79) | The outputs and details of the production zonal Managed Instance Group. |  |
+| [prod_region_mig](outputs.tf#L84) | The outputs and details of the production regional Managed Instance Group. |  |
 | [project_id](outputs.tf#L53) | The GCP Project ID where resources were provisioned. |  |
 | [spot_vms](outputs.tf#L59) | The outputs of provisioned Spot VMs. |  |
 | [sql_instances](outputs.tf#L65) | The outputs of the provisioned Cloud SQL database instances. | ✓ |
-| [ssl_certificates](outputs.tf#L72) | The outputs of the SSL Certificates Manager configuration. |  |
-| [test_mig](outputs.tf#L83) | The outputs and details of the testing Managed Instance Group. |  |
+| [ssl_certificates](outputs.tf#L73) | The outputs of the SSL Certificates Manager configuration. |  |
+| [test_mig](outputs.tf#L89) | The outputs and details of the testing zonal Managed Instance Group. |  |
+| [test_region_mig](outputs.tf#L94) | The outputs and details of the testing regional Managed Instance Group. |  |
 <!-- END TFDOC -->

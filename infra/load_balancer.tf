@@ -23,8 +23,8 @@
 
 # Load Balancer Module: Manages external application load balancer setups
 locals {
-  prod_mig_group      = var.provision_prod_mig && length(google_compute_instance_group_manager.prod_mig) > 0 ? google_compute_instance_group_manager.prod_mig[0].instance_group : ""
-  test_mig_group      = var.provision_test_mig && length(google_compute_instance_group_manager.test_mig) > 0 ? google_compute_instance_group_manager.test_mig[0].instance_group : ""
+  prod_mig_groups     = local.resolved_prod_mig_groups
+  test_mig_groups     = local.resolved_test_mig_groups
   mig_health_check_id = length(google_compute_health_check.mig_health_check) > 0 ? google_compute_health_check.mig_health_check[0].id : ""
   
   default_service = (
@@ -76,14 +76,16 @@ module "load_balancer" {
   backend_service_configs = {
     for bs_k, bs_v in try(each.value.backend_service_configs, {}) :
     bs_k => merge(bs_v, {
-      backends = [
-        for b in try(bs_v.backends, []) : merge(b, {
-          backend = (
-            b.backend == "$$prod_mig_group" ? local.prod_mig_group :
-            (b.backend == "$$test_mig_group" ? local.test_mig_group : b.backend)
-          )
-        })
-      ]
+      backends = flatten([
+        for b in try(bs_v.backends, []) : (
+          b.backend == "$$prod_mig_group" ? [
+            for mig in local.prod_mig_groups : merge(b, { backend = mig })
+          ] :
+          b.backend == "$$test_mig_group" ? [
+            for mig in local.test_mig_groups : merge(b, { backend = mig })
+          ] : [b]
+        )
+      ])
       health_checks = [
         for hc in try(bs_v.health_checks, []) : (
           hc == "$$mig_health_check_id" ? local.mig_health_check_id : hc

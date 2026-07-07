@@ -19,14 +19,14 @@ locals {
   compute_vm_config = yamldecode(templatefile("${path.module}/configs/compute_vm.yaml", {
     compute_machine_type = var.compute_machine_type
     region               = var.region
-    network              = var.network
-    subnetwork           = var.subnetwork
+    network              = local.network_id
+    subnetwork           = local.subnetwork_self_link
   }))
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
     region            = var.region
     spot_machine_type = var.spot_machine_type
-    network           = var.network
-    subnetwork        = var.subnetwork
+    network           = local.network_id
+    subnetwork        = local.subnetwork_self_link
   }))
 }
 
@@ -41,7 +41,7 @@ module "compute_vm" {
     for ni in try(each.value.network_interfaces, []) : {
       network    = ni.network
       subnetwork = ni.subnetwork
-      nat        = coalesce(try(ni.nat, null), var.ip_external)
+      nat        = coalesce(try(ni.nat, null), local.resolved_vm_ip_external)
       addresses  = try(ni.addresses, null)
     }
   ]
@@ -73,7 +73,7 @@ module "spot_vm" {
     for ni in try(each.value.network_interfaces, []) : {
       network    = ni.network
       subnetwork = ni.subnetwork
-      nat        = coalesce(try(ni.nat, null), var.ip_external)
+      nat        = coalesce(try(ni.nat, null), local.resolved_vm_ip_external)
       addresses  = try(ni.addresses, null)
     }
   ]

@@ -92,6 +92,18 @@ variable "ip_external" {
   default     = false
 }
 
+variable "vm_ip_external" {
+  description = "Toggle to assign external (public) IPs to VMs (Compute Engine instances, Spot VMs, and MIG templates). If null, defaults to the global ip_external setting."
+  type        = bool
+  default     = false
+}
+
+variable "use_default_vpc" {
+  description = "Toggle to use the pre-existing default VPC and default subnet in the project instead of creating a custom VPC."
+  type        = bool
+  default     = false
+}
+
 variable "network" {
   description = "The VPC network to deploy resources into."
   type        = string
@@ -315,6 +327,18 @@ variable "provision_prod_mig" {
 
 variable "provision_test_mig" {
   description = "Toggle to enable/disable the Testing Managed Instance Group."
+  type        = bool
+  default     = false
+}
+
+variable "use_zonal_mig" {
+  description = "Toggle to use zonal Managed Instance Groups (and zonal autoscalers)."
+  type        = bool
+  default     = true
+}
+
+variable "use_regional_mig" {
+  description = "Toggle to use regional Managed Instance Groups (and regional autoscalers)."
   type        = bool
   default     = false
 }

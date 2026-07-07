@@ -20,7 +20,7 @@ locals {
     db_tier    = var.sql_tier
     db_version = var.sql_db_version
     project_id = module.project.project_id
-    network    = var.network
+    network    = local.network_name
   }))
 }
 
@@ -56,13 +56,13 @@ resource "google_compute_global_address" "psa_range" {
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
   prefix_length = 16
-  network       = "projects/${module.project.project_id}/global/networks/${var.network}"
+  network       = local.network_id
 }
 
 # Create a private connection for Service Networking
 resource "google_service_networking_connection" "psa_connection" {
   count                   = var.provision_sql && !var.ip_external ? 1 : 0
-  network                 = "projects/${module.project.project_id}/global/networks/${var.network}"
+  network                 = local.network_id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.psa_range[0].name]
   depends_on              = [module.project]

@@ -19,7 +19,7 @@ locals {
   ips_config = yamldecode(templatefile("${path.module}/configs/ips.yaml", {
     glb_ip_name = var.glb_ip_name
     region      = var.region
-    subnetwork  = var.subnetwork
+    subnetwork  = local.subnetwork_self_link
     web_ip_name = var.web_ip_name
   }))
 }

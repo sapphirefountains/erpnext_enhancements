@@ -77,12 +77,22 @@ output "ssl_certificates" {
 }
 
 output "prod_mig" {
-  description = "The outputs and details of the production Managed Instance Group."
+  description = "The outputs and details of the production zonal Managed Instance Group."
   value       = var.provision_prod_mig && length(google_compute_instance_group_manager.prod_mig) > 0 ? google_compute_instance_group_manager.prod_mig[0] : null
 }
 
+output "prod_region_mig" {
+  description = "The outputs and details of the production regional Managed Instance Group."
+  value       = var.provision_prod_mig && length(google_compute_region_instance_group_manager.prod_mig) > 0 ? google_compute_region_instance_group_manager.prod_mig[0] : null
+}
+
 output "test_mig" {
-  description = "The outputs and details of the testing Managed Instance Group."
+  description = "The outputs and details of the testing zonal Managed Instance Group."
   value       = var.provision_test_mig && length(google_compute_instance_group_manager.test_mig) > 0 ? google_compute_instance_group_manager.test_mig[0] : null
+}
+
+output "test_region_mig" {
+  description = "The outputs and details of the testing regional Managed Instance Group."
+  value       = var.provision_test_mig && length(google_compute_region_instance_group_manager.test_mig) > 0 ? google_compute_region_instance_group_manager.test_mig[0] : null
 }
 
