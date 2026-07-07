@@ -278,6 +278,12 @@ variable "state_bucket_name" {
   type        = string
 }
 
+variable "state_bucket_region" {
+  description = "The GCP region/location where the state GCS bucket is located."
+  type        = string
+  default     = "us-central1"
+}
+
 variable "github_repo_url" {
   description = "The target GitHub repository remote URL link."
   type        = string

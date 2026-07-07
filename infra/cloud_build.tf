@@ -98,7 +98,7 @@ locals {
 resource "google_storage_bucket" "tf_state" {
   name                        = var.state_bucket_name
   project                     = module.project.project_id
-  location                    = var.region
+  location                    = var.state_bucket_region
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
   force_destroy               = true
@@ -108,7 +108,7 @@ resource "google_storage_bucket" "tf_state" {
   }
 
   lifecycle {
-    prevent_destroy = false
+    prevent_destroy = true
   }
 }
 

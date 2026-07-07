@@ -231,8 +231,8 @@ resource "google_compute_region_instance_group_manager" "prod_mig" {
     type                  = "PROACTIVE"
     minimal_action        = "REPLACE"
     replacement_method    = "RECREATE"
-    max_surge_fixed       = 3
-    max_unavailable_fixed = 0
+    max_surge_fixed       = 0
+    max_unavailable_fixed = 1
   }
 
   lifecycle {
@@ -427,8 +427,8 @@ resource "google_compute_region_instance_group_manager" "test_mig" {
     type                  = "PROACTIVE"
     minimal_action        = "REPLACE"
     replacement_method    = "RECREATE"
-    max_surge_fixed       = 3
-    max_unavailable_fixed = 0
+    max_surge_fixed       = 0
+    max_unavailable_fixed = 1
   }
 
   lifecycle {

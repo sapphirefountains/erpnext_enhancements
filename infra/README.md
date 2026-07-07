@@ -227,6 +227,8 @@ terraform apply
 | [sql_tier](variables.tf#L220) | The machine tier for the Cloud SQL instance. | <code>string</code> |  | <code>&#34;db-f1-micro&#34;</code> |
 | [ssl_cert_name](variables.tf#L226) | The name of the SSL certificate resource. | <code>string</code> |  | <code>&#34;web-ssl-cert&#34;</code> |
 | [ssl_map_name](variables.tf#L232) | The name of the Certificate Map. | <code>string</code> |  | <code>&#34;web-ssl-map&#34;</code> |
+| [state_bucket_name](variables.tf#L270) | The globally unique name of the GCS bucket for remote state storage. | <code>string</code> | ✓ |  |
+| [state_bucket_region](variables.tf#L275) | The GCP region/location where the state GCS bucket is located. | <code>string</code> |  | <code>&#34;us-central1&#34;</code> |
 | [subnetwork](variables.tf#L238) | The subnetwork to deploy resources into. | <code>string</code> |  | <code>&#34;default&#34;</code> |
 | [test_autoscaling_max_replicas](variables.tf#L356) | The maximum number of instances for the testing MIG autoscaler. | <code>number</code> |  | <code>1</code> |
 | [test_mig_machine_type](variables.tf#L346) | Machine type for the testing MIG instances (N2D AMD family with SPOT pricing). | <code>string</code> |  | <code>&#34;n2d-standard-8&#34;</code> |
