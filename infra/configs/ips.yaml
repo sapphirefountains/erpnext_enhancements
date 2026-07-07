@@ -1,0 +1,13 @@
+# configs/ips.yaml
+# 🎯 THE FIX: Separate the address types explicitly so the mapping engine doesn't collide
+
+external_addresses:
+  "${web_ip_name}":
+    region: "${region}"
+    subnetwork: null #  Forces the API to keep the private subnetwork blank for public routing
+
+global_addresses:
+  "${glb_ip_name}": {}
+
+internal_addresses: {}
+addresses: {}

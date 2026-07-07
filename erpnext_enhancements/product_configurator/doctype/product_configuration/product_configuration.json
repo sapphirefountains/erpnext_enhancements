@@ -1,0 +1,316 @@
+{
+ "actions": [],
+ "autoname": "format:PCFG-{YYYY}-{#####}",
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "product",
+  "config_title",
+  "status",
+  "column_break_head",
+  "customer",
+  "project",
+  "company",
+  "section_options",
+  "options",
+  "section_additional",
+  "additional_description",
+  "column_break_additional",
+  "additional_cost",
+  "section_results",
+  "part_number",
+  "price_preview",
+  "column_break_results",
+  "total_parts_cost",
+  "total_labor_hours",
+  "total_labor_cost",
+  "total_cost",
+  "sell_price",
+  "sell_price_exact",
+  "warnings_text",
+  "section_price_lines",
+  "price_lines",
+  "section_parts",
+  "parts",
+  "section_build_steps",
+  "build_steps",
+  "section_generated",
+  "item",
+  "bom",
+  "column_break_generated",
+  "item_price",
+  "generated_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "product",
+   "fieldtype": "Link",
+   "label": "Configurable Product",
+   "options": "Configurable Product",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "config_title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "description": "Defaults to the part number."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nFinal",
+   "default": "Draft",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "description": "Optional — for quotes tied to a customer."
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project",
+   "description": "Optional."
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "description": "Used on the generated BOM. Defaults to the default company."
+  },
+  {
+   "fieldname": "section_options",
+   "fieldtype": "Section Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Table",
+   "label": "Options",
+   "options": "Product Configuration Option"
+  },
+  {
+   "fieldname": "section_additional",
+   "fieldtype": "Section Break",
+   "label": "Additional Cost",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "additional_description",
+   "fieldtype": "Data",
+   "label": "Description"
+  },
+  {
+   "fieldname": "column_break_additional",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "additional_cost",
+   "fieldtype": "Currency",
+   "label": "Additional Cost",
+   "description": "Passthrough — added to the total as-is, no markup (matches the pricing workbook)."
+  },
+  {
+   "fieldname": "section_results",
+   "fieldtype": "Section Break",
+   "label": "Results"
+  },
+  {
+   "fieldname": "part_number",
+   "fieldtype": "Data",
+   "label": "Part Number",
+   "read_only": 1,
+   "bold": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "price_preview",
+   "fieldtype": "HTML",
+   "label": "Live Preview"
+  },
+  {
+   "fieldname": "column_break_results",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_parts_cost",
+   "fieldtype": "Currency",
+   "label": "Total Parts Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_labor_hours",
+   "fieldtype": "Float",
+   "label": "Total Labor Hours",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_labor_cost",
+   "fieldtype": "Currency",
+   "label": "Total Labor Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "label": "Total Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sell_price",
+   "fieldtype": "Currency",
+   "label": "Selling Price",
+   "read_only": 1,
+   "bold": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sell_price_exact",
+   "fieldtype": "Float",
+   "label": "Selling Price (exact)",
+   "read_only": 1,
+   "hidden": 1,
+   "precision": "6",
+   "description": "Full-float engine total (the Currency field rounds to 2 dp)."
+  },
+  {
+   "fieldname": "warnings_text",
+   "fieldtype": "Small Text",
+   "label": "Warnings",
+   "read_only": 1,
+   "depends_on": "warnings_text"
+  },
+  {
+   "fieldname": "section_price_lines",
+   "fieldtype": "Section Break",
+   "label": "Pricing Breakdown"
+  },
+  {
+   "fieldname": "price_lines",
+   "fieldtype": "Table",
+   "label": "Price Lines",
+   "options": "Product Configuration Price Line",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_parts",
+   "fieldtype": "Section Break",
+   "label": "Parts List"
+  },
+  {
+   "fieldname": "parts",
+   "fieldtype": "Table",
+   "label": "Parts",
+   "options": "Product Configuration Part",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_build_steps",
+   "fieldtype": "Section Break",
+   "label": "Build Instructions",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "build_steps",
+   "fieldtype": "Table",
+   "label": "Build Steps",
+   "options": "Product Configuration Build Step",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_generated",
+   "fieldtype": "Section Break",
+   "label": "Generated Records",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bom",
+   "fieldtype": "Link",
+   "label": "BOM",
+   "options": "BOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_generated",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_price",
+   "fieldtype": "Link",
+   "label": "Item Price",
+   "options": "Item Price",
+   "read_only": 1
+  },
+  {
+   "fieldname": "generated_on",
+   "fieldtype": "Datetime",
+   "label": "Generated On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Product Configuration",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Product Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "config_title",
+ "track_changes": 1
+}

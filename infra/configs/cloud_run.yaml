@@ -1,0 +1,15 @@
+frontend-service:
+  region: ${region}
+  deletion_protection: false
+  containers:
+    frontend:
+      image: ${container_image}
+      env:
+        API_URL: ${api_url}
+  iam:
+    "roles/run.invoker":
+      - "allUsers"
+  service_config:
+    ingress: "INGRESS_TRAFFIC_ALL"
+    execution_environment: "EXECUTION_ENVIRONMENT_GEN2"
+  volumes: {}

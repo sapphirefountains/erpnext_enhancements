@@ -1,0 +1,45 @@
+app-glb:
+  protocol: "HTTPS"
+  use_classic_version: false
+  urlmap_config:
+    description: "Application Gateway routing rules"
+    default_service: "${default_service}"
+  neg_configs:
+    %{ if provision_cloud_run }
+    frontend-neg:
+      cloudrun:
+        region: ${region}
+        target_service:
+          name: "frontend-service"
+    %{ endif }
+  backend_service_configs:
+    %{ if provision_cloud_run }
+    frontend-neg:
+      backends:
+        - backend: "frontend-neg"
+      health_checks: []
+      port_name: ""
+    %{ endif }
+    %{ if provision_prod_mig }
+    prod-mig-backend:
+      backends:
+        - backend: "$$prod_mig_group"
+          balancing_mode: "UTILIZATION"
+      health_checks: ["$$mig_health_check_id"]
+      port_name: "http"
+    %{ endif }
+    %{ if provision_test_mig }
+    test-mig-backend:
+      backends:
+        - backend: "$$test_mig_group"
+          balancing_mode: "UTILIZATION"
+      health_checks: ["$$mig_health_check_id"]
+      port_name: "http"
+    %{ endif }
+  backend_buckets_config: {}
+  forwarding_rules_config:
+    https-rule:
+      address: "$$addresses:global:${glb_ip_name}"
+  ssl_certificates:
+    certificate_map: "$$ssl_certificates:${ssl_map_name}"
+  health_check_configs: {}

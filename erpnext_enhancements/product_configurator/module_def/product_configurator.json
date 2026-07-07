@@ -1,0 +1,12 @@
+{
+ "app_name": "erpnext_enhancements",
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "Module Def",
+ "module_name": "Product Configurator",
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Product Configurator",
+ "owner": "Administrator",
+ "package": "ERPNext Enhancements",
+ "restrict_to_domain": ""
+}

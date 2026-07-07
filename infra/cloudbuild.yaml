@@ -1,0 +1,77 @@
+steps:
+
+  # ============================================================================
+  # STEP 0: FIX REPOSITORY PATH SYMLINKS FOR RUNNER CONTAINER
+  # ============================================================================
+  - name: 'ubuntu'
+    id: 'Fix Module Path Contexts'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "Validating current repository layout context..."
+        ls -la
+        
+        # Ensures a clean framework pointer folder maps out if directory blocks are displaced
+        if [ -d "modules" ] && [ ! -d "infra/modules" ]; then
+          echo "🔗 Linking modules directory context..."
+          ln -s /workspace/modules /workspace/infra/modules
+        fi
+
+  # ============================================================================
+  # STEP 1: INITIALIZE TERRAFORM WITH REMOTE STATE
+  # ============================================================================
+  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 to satisfy the >= 1.12.2 constraint check!
+  - name: 'hashicorp/terraform:1.13.0'
+    id: 'Terraform Init'
+    dir: 'infra'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        echo "Configuring remote GCS backend utilizing bucket: $_STATE_BUCKET"
+        terraform init \
+          -backend-config="bucket=$_STATE_BUCKET" \
+          -backend-config="prefix=terraform/state"
+
+  # ============================================================================
+  # STEP 2: RUN THE CONDITIONAL EXECUTION (APPLY OR DESTROY)
+  # ============================================================================
+  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 here as well!
+  - name: 'hashicorp/terraform:1.13.0'
+    id: 'Terraform Execution'
+    dir: 'infra'
+    entrypoint: 'sh'
+    secretEnv: ['SECRET_TFVARS']
+    args:
+      - '-c'
+      - |
+        # Materialize standard text straight to the default tfvars file
+        echo "$$SECRET_TFVARS" > terraform.tfvars
+
+        # Check if this invocation was triggered by the designated trigger action
+        if [ "$_ACTION" = "destroy" ]; then
+          echo "⚠️ Deletion action detected. Initiating teardown protocols..."
+          terraform destroy -auto-approve
+        elif [ "$_ACTION" = "refresh" ]; then
+          echo "🔄 Refresh-only action detected. Reconciling state file..."
+          terraform apply -refresh-only -auto-approve
+        else
+          echo "🚀 Deployment action detected. Initiating mutation passes..."
+          terraform apply -auto-approve
+        fi
+
+# ============================================================================
+# SECRET MANAGER MAPPING DEFINITIONS
+# ============================================================================
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/SECRET_TFVARS/versions/latest
+      env: 'SECRET_TFVARS'
+
+# ============================================================================
+# TIMEOUT AND LOGGING CONTROLS
+# ============================================================================
+timeout: '1800s' # 30-minute absolute execution safety threshold
+options:
+  logging: CLOUD_LOGGING_ONLY

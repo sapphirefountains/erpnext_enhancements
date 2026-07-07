@@ -1,0 +1,15 @@
+connection_name: ${connection_name}
+location: ${region}
+github_app_installation_id: ${github_app_installation_id}
+github_token_secret: ${github_token_secret}
+repositories:
+  infra-repo:
+    remote_uri: ${repo_remote_uri}
+    triggers:
+      apply-on-push:
+        description: "Trigger to run apply on merge to main"
+        filename: "cloudbuild.yaml"
+        push:
+          branch: "^main$$"
+        substitutions:
+          "_ENVIRONMENT": "production"

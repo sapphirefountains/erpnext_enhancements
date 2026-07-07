@@ -10,6 +10,7 @@ from erpnext_enhancements.feature_flags import (
 	document_merge_enabled,
 	field_description_icons_enabled,
 	process_automation_enabled,
+	product_configurator_enabled,
 )
 
 
@@ -37,9 +38,15 @@ def boot_session(bootinfo):
 	``frappe.boot.ee_merge_tool`` gates the global "Merge into…" form button and
 	list-view bulk action (see ``public/js/merge_tool/merge_tool.js``); the
 	server-side guards in ``document_merge`` remain the authority.
+
+	``frappe.boot.ee_product_configurator`` gates the Product Configuration /
+	Configurable Product generation buttons (Item + BOM + Selling Price,
+	Create Component Items); the server-side guards in
+	``product_configurator.api`` remain the authority.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
 	bootinfo.ee_desk_shortcuts = get_visible_shortcuts_for_user()
 	bootinfo.ee_field_description_icons = 1 if field_description_icons_enabled() else 0
 	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
+	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0

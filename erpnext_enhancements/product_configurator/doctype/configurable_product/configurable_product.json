@@ -1,0 +1,190 @@
+{
+ "actions": [],
+ "autoname": "field:product_code",
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "product_code",
+  "product_name",
+  "disabled",
+  "column_break_head",
+  "labor_rate",
+  "markup_percent",
+  "section_partnumber",
+  "part_number_template",
+  "column_break_groups",
+  "item_group",
+  "component_item_group",
+  "section_description",
+  "description",
+  "section_options",
+  "options",
+  "section_components",
+  "components",
+  "section_build_steps",
+  "build_steps"
+ ],
+ "fields": [
+  {
+   "fieldname": "product_code",
+   "fieldtype": "Data",
+   "label": "Product Code",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "Base part number, e.g. PDT-0040."
+  },
+  {
+   "fieldname": "product_name",
+   "fieldtype": "Data",
+   "label": "Product Name",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "labor_rate",
+   "fieldtype": "Currency",
+   "label": "Labor Rate (per hour)",
+   "reqd": 1,
+   "default": "85"
+  },
+  {
+   "fieldname": "markup_percent",
+   "fieldtype": "Percent",
+   "label": "Markup %",
+   "reqd": 1,
+   "default": "30",
+   "description": "Applied to every module's parts + labor. The Additional Cost line on a configuration is a passthrough and is NOT marked up."
+  },
+  {
+   "fieldname": "section_partnumber",
+   "fieldtype": "Section Break",
+   "label": "Part Number & Item Groups"
+  },
+  {
+   "fieldname": "part_number_template",
+   "fieldtype": "Data",
+   "label": "Part Number Template",
+   "reqd": 1,
+   "description": "{tokens} are Option Keys: quantities render as the number, choices as their Choice Code. Example: PDT-0040-{mounting}-{estop_qty}-{timer_qty}-{contactor_qty}-{relay_qty}"
+  },
+  {
+   "fieldname": "column_break_groups",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Data",
+   "label": "Configured Item Group",
+   "default": "Configured Products",
+   "description": "Item Group for generated configured-product Items (created on demand)."
+  },
+  {
+   "fieldname": "component_item_group",
+   "fieldtype": "Data",
+   "label": "Component Item Group",
+   "default": "E-Stop Components",
+   "description": "Item Group for generated component Items (created on demand)."
+  },
+  {
+   "fieldname": "section_description",
+   "fieldtype": "Section Break",
+   "label": "Description",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "section_options",
+   "fieldtype": "Section Break",
+   "label": "Option Modules"
+  },
+  {
+   "fieldname": "options",
+   "fieldtype": "Table",
+   "label": "Options",
+   "options": "Configurator Product Option",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_components",
+   "fieldtype": "Section Break",
+   "label": "Components (drives the manufacturing BOM)"
+  },
+  {
+   "fieldname": "components",
+   "fieldtype": "Table",
+   "label": "Components",
+   "options": "Configurator Product Component"
+  },
+  {
+   "fieldname": "section_build_steps",
+   "fieldtype": "Section Break",
+   "label": "Build Instruction Templates"
+  },
+  {
+   "fieldname": "build_steps",
+   "fieldtype": "Table",
+   "label": "Build Steps",
+   "options": "Configurator Build Step Template"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Configurable Product",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Product Engineer",
+   "read": 1,
+   "report": 1,
+   "email": 1,
+   "print": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1,
+   "export": 1
+  },
+  {
+   "role": "Projects Manager",
+   "read": 1,
+   "report": 1,
+   "print": 1,
+   "export": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "product_name",
+ "track_changes": 1
+}

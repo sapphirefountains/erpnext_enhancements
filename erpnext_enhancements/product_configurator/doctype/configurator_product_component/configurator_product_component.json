@@ -1,0 +1,107 @@
+{
+ "actions": [],
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "module_key",
+  "component_name",
+  "item_code",
+  "qty_per_module",
+  "uom",
+  "unit_cost",
+  "column_break_vendor",
+  "supplier_name",
+  "manufacturer",
+  "manufacturer_part_no",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "module_key",
+   "fieldtype": "Data",
+   "label": "Module Key",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Which option module this part belongs to (matches the option row's Module Key; base = always included)."
+  },
+  {
+   "fieldname": "component_name",
+   "fieldtype": "Data",
+   "label": "Component",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Data",
+   "label": "Item Code",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "The code the ERPNext Item gets when \"Create Component Items\" runs (manufacturer part number where available)."
+  },
+  {
+   "fieldname": "qty_per_module",
+   "fieldtype": "Float",
+   "label": "Qty / Module",
+   "default": "1",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Data",
+   "label": "UOM",
+   "default": "Nos"
+  },
+  {
+   "fieldname": "unit_cost",
+   "fieldtype": "Currency",
+   "label": "Unit Cost",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "column_break_vendor",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "Supplier",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Resolved to (or created as) a Supplier record when component Items are generated."
+  },
+  {
+   "fieldname": "manufacturer",
+   "fieldtype": "Data",
+   "label": "Manufacturer"
+  },
+  {
+   "fieldname": "manufacturer_part_no",
+   "fieldtype": "Data",
+   "label": "Mfr Part No"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Configurator Product Component",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

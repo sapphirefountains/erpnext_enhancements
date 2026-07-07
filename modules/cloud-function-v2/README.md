@@ -1,0 +1,490 @@
+# Cloud Function Module (v2)
+
+Cloud Function management, with support for IAM roles, optional bucket creation and bundle via GCS URI, local zip, or local source folder.
+
+<!-- BEGIN TOC -->
+- [TODO](#todo)
+- [Examples](#examples)
+  - [HTTP trigger](#http-trigger)
+  - [PubSub and non-HTTP triggers](#pubsub-and-non-http-triggers)
+  - [Controlling HTTP access](#controlling-http-access)
+  - [GCS bucket creation](#gcs-bucket-creation)
+  - [Service account management](#service-account-management)
+  - [Custom bundle config](#custom-bundle-config)
+  - [Private Cloud Build Pool](#private-cloud-build-pool)
+  - [Multiple Cloud Functions within project](#multiple-cloud-functions-within-project)
+  - [Mounting secrets from Secret Manager](#mounting-secrets-from-secret-manager)
+- [VPC Access Connector](#vpc-access-connector)
+  - [Direct VPC Egress](#direct-vpc-egress)
+- [Variables](#variables)
+- [Outputs](#outputs)
+- [Fixtures](#fixtures)
+<!-- END TOC -->
+
+## TODO
+
+- [ ] add support for `source_repository`
+
+## Examples
+
+### HTTP trigger
+
+This deploys a Cloud Function with an HTTP endpoint, using a pre-existing GCS bucket for deployment, setting the service account to the Cloud Function default one, and delegating access control to the containing project.
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=http-trigger.yaml fixtures=fixtures/functions-default-sa-iam-grants.tf e2e
+```
+
+### PubSub and non-HTTP triggers
+
+Other trigger types other than HTTP are configured via the `trigger_config` variable. This example shows a PubSub trigger via [Eventarc](https://cloud.google.com/eventarc/docs):
+
+```hcl
+module "trigger-service-account" {
+  source     = "./fabric/modules/iam-service-account"
+  project_id = var.project_id
+  name       = "sa-cloudfunction"
+  iam_project_roles = {
+    (var.project_id) = [
+      "roles/run.invoker"
+    ]
+  }
+}
+
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  trigger_config = {
+    event_type            = "google.cloud.pubsub.topic.v1.messagePublished"
+    pubsub_topic          = module.pubsub.topic.id
+    service_account_email = module.trigger-service-account.email
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=pubsub-non-http-trigger.yaml fixtures=fixtures/pubsub.tf,fixtures/functions-default-sa-iam-grants.tf e2e
+```
+
+Ensure that pubsub service identity (`service-[project number]@gcp-sa-pubsub.iam.gserviceaccount.com` has `roles/iam.serviceAccountTokenCreator`
+as documented [here](https://cloud.google.com/eventarc/docs/roles-permissions#pubsub-topic).
+
+### Controlling HTTP access
+
+To allow anonymous access to the function, grant the `roles/run.invoker` role to the special `allUsers` identifier. Use specific identities (service accounts, groups, etc.) instead of `allUsers` to only allow selective access. The Cloud Run role needs to be used as explained in the [gcloud documentation](https://cloud.google.com/sdk/gcloud/reference/functions/add-invoker-policy-binding#DESCRIPTION).
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  iam = {
+    "roles/run.invoker" = ["allUsers"]
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest fixtures=fixtures/functions-default-sa-iam-grants.tf inventory=iam.yaml e2e
+```
+
+### GCS bucket creation
+
+You can have the module auto-create the GCS bucket used for deployment via the `bucket_config` variable. Setting `bucket_config.location` to `null` will also use the function region for GCS.
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  prefix      = var.prefix
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bucket_config = {
+    force_destroy             = true
+    lifecycle_delete_age_days = 1
+  }
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest fixtures=fixtures/functions-default-sa-iam-grants.tf inventory=bucket-creation.yaml e2e
+```
+
+### Service account management
+
+To use a custom service account managed by the module, set `service_account_create` to `true` and leave `service_account` set to `null` value (default).
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  service_account_config = {
+    create = true
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=service-account-1.yaml fixtures=fixtures/functions-default-sa-iam-grants.tf e2e
+```
+
+To use an externally managed service account, pass its email in `service_account` and leave `service_account_create` to `false` (the default).
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  service_account_config = {
+    create = false
+    email  = var.service_account.email
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=service-account-2.yaml fixtures=fixtures/functions-default-sa-iam-grants.tf e2e
+```
+
+### Custom bundle config
+
+The Cloud Function bundle can be configured via the `bundle_config` variable. The only mandatory argument is `bundle_config.path` which can point to:
+
+- a GCS URI of a ZIP archive
+- a local path to a ZIP archive
+- a local path to a source folder
+
+When a GCS URI or a local zip file are used, a change in their names will trigger redeployment. When a local source folder is used a ZIP archive will be automatically generated and its internally derived checksum will drive redeployment. You can optionally control its name and exclusions via the attributes in `bundle_config.folder_options`.
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+    folder_options = {
+      archive_path = "bundle.zip"
+      excludes     = ["__pycache__"]
+    }
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=custom-bundle.yaml fixtures=fixtures/functions-default-sa-iam-grants.tf e2e
+```
+
+### Private Cloud Build Pool
+
+This deploys a Cloud Function with an HTTP endpoint, using a pre-existing GCS bucket for deployment using a pre existing private Cloud Build worker pool.
+
+```hcl
+module "cf-http" {
+  source            = "./fabric/modules/cloud-function-v2"
+  project_id        = var.project_id
+  region            = var.regions.secondary
+  name              = "test-cf-http"
+  bucket_name       = var.bucket
+  build_worker_pool = google_cloudbuild_worker_pool.pool.id
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest inventory=private-build-pool.yaml fixtures=fixtures/functions-default-sa-iam-grants.tf,fixtures/cloudbuild-custom-pool.tf e2e
+```
+
+### Multiple Cloud Functions within project
+
+When deploying multiple functions via local folders do not reuse `bundle_config.archive_path` between instances as the result is undefined. Default `archive_path` creates file in `/tmp` folder using project Id and function name to avoid name conflicts.
+
+```hcl
+module "cf-http-one" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http-one"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+}
+
+module "cf-http-two" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http-two"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+# tftest fixtures=fixtures/functions-default-sa-iam-grants.tf inventory=multiple_functions.yaml e2e
+```
+
+### Mounting secrets from Secret Manager
+
+This provides the latest value of the secret `var_secret` as `VARIABLE_SECRET` environment variable and three values of `path_secret` mounted in filesystem:
+
+- `/app/secret/ver1` contains version referenced by `module.secret-manager.version_versions["credentials:v1"]`
+
+Remember to grant access to secrets to the service account running Cloud Function.
+
+```hcl
+module "cf-http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  secrets = {
+    VARIABLE_SECRET = {
+      is_volume  = false
+      project_id = var.project_id
+      secret     = reverse(split("/", module.secret-manager.secrets["credentials"].name))[0]
+      versions = [
+        "latest"
+      ]
+    }
+    "/app/secret" = {
+      is_volume  = true
+      project_id = var.project_id
+      secret     = reverse(split("/", module.secret-manager.secrets["credentials"].name))[0]
+      versions = [
+        "${module.secret-manager.version_versions["credentials/v1"]}:ver1"
+      ]
+    }
+  }
+  depends_on = [
+    google_project_iam_member.bucket_default_compute_account_grant,
+  ]
+}
+
+module "secret-manager" {
+  source     = "./fabric/modules/secret-manager"
+  project_id = var.project_id
+  secrets = {
+    credentials = {
+      iam = {
+        "roles/secretmanager.secretAccessor" = [module.cf-http.service_account_iam_email]
+      }
+      versions = {
+        v1 = { data = "manual foo bar spam" }
+      }
+    }
+  }
+}
+# tftest fixtures=fixtures/functions-default-sa-iam-grants.tf inventory=secrets.yaml e2e skip-tofu
+```
+
+## VPC Access Connector
+
+You can use an existing [VPC Access Connector](https://cloud.google.com/vpc/docs/serverless-vpc-access) to connect to a VPC from Cloud Run.
+
+```hcl
+module "cf_http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  vpc_connector = {
+    name           = google_vpc_access_connector.connector.id
+    egress_setting = "ALL_TRAFFIC"
+  }
+}
+# tftest fixtures=fixtures/vpc-connector.tf inventory=service-vpc-access-connector.yaml
+```
+
+If creation of the VPC Access Connector is required, use the `vpc_connector.create` and `vpc_connector_create` variable which also supports optional attributes like number of instances, machine type, or throughput.
+
+```hcl
+module "cf_http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  vpc_connector = {
+    create = true
+  }
+  vpc_connector_create = {
+    ip_cidr_range = "10.10.10.0/28"
+    network       = var.vpc.self_link
+    instances = {
+      max = 10
+      min = 3
+    }
+  }
+}
+# tftest inventory=service-vpc-access-connector-create.yaml
+```
+
+Note that if you are using a Shared VPC for the connector, you need to specify a subnet and the host project if this is not where the Cloud Run service is deployed.
+
+```hcl
+module "cf_http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "test-cf-http"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  vpc_connector = {
+    create = true
+  }
+  vpc_connector_create = {
+    machine_type = "e2-standard-4"
+    subnet = {
+      name       = module.net-vpc-host.subnets["${var.region}/fixture-subnet-28"].name
+      project_id = module.project-host.project_id
+    }
+    throughput = {
+      max = 300
+      min = 200
+    }
+  }
+}
+# tftest fixtures=fixtures/shared-vpc.tf inventory=service-vpc-access-connector-create-sharedvpc.yaml
+```
+
+### Direct VPC Egress
+
+You can also configure Direct VPC Egress instead of using a VPC Access Connector.
+
+```hcl
+module "cf_http" {
+  source      = "./fabric/modules/cloud-function-v2"
+  project_id  = var.project_id
+  region      = var.region
+  name        = "direct-vpc-egress"
+  bucket_name = var.bucket
+  bundle_config = {
+    path = "assets/sample-function/"
+  }
+  direct_vpc_egress = {
+    network    = var.vpc.id
+    subnetwork = var.subnet.id
+    tags       = ["tag1", "tag2"]
+    mode       = "VPC_EGRESS_ALL_TRAFFIC"
+  }
+}
+# tftest inventory=direct-vpc-egress.yaml
+```
+<!-- BEGIN TFDOC -->
+## Variables
+
+| name | description | type | required | default |
+|---|---|:---:|:---:|:---:|
+| [bucket_name](variables.tf#L27) | Name of the bucket that will be used for the function code. It will be created with prefix prepended if bucket_config is not null. | <code>string</code> | ✓ |  |
+| [bundle_config](variables.tf#L51) | Cloud function source. Path can point to a GCS object URI, or a local path. A local path to a zip archive will generate a GCS object using its basename, a folder will be zipped and the GCS object name inferred when not specified. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> | ✓ |  |
+| [name](variables.tf#L186) | Name used for cloud function and associated resources. | <code>string</code> | ✓ |  |
+| [project_id](variables.tf#L201) | Project id used for all resources. | <code>string</code> | ✓ |  |
+| [region](variables.tf#L206) | Region used for all resources. | <code>string</code> | ✓ |  |
+| [bucket_config](variables.tf#L17) | Enable and configure auto-created bucket. Set fields to null to use defaults. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [build_environment_variables](variables.tf#L33) | A set of key/value environment variable pairs available during build time. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#125;</code> |
+| [build_service_account](variables.tf#L39) | Build service account email. | <code>string</code> |  | <code>null</code> |
+| [build_worker_pool](variables.tf#L45) | Build worker pool, in projects/<PROJECT-ID>/locations/<REGION>/workerPools/<POOL_NAME> format. | <code>string</code> |  | <code>null</code> |
+| [context](variables.tf#L84) | Context-specific interpolations. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [description](variables.tf#L102) | Optional description. | <code>string</code> |  | <code>&#34;Terraform managed.&#34;</code> |
+| [direct_vpc_egress](variables.tf#L108) | Direct VPC egress configuration. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [docker_repository_id](variables.tf#L126) | User managed repository created in Artifact Registry. | <code>string</code> |  | <code>null</code> |
+| [environment_variables](variables.tf#L132) | Cloud function environment variables. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
+| [function_config](variables.tf#L140) | Cloud function configuration. Defaults to using main as entrypoint, 1 instance with 256MiB of memory, and 180 second timeout. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#8230;&#125;</code> |
+| [iam](variables.tf#L162) | IAM bindings for topic in {ROLE => [MEMBERS]} format. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [ingress_settings](variables.tf#L168) | Control traffic that reaches the cloud function. Allowed values are ALLOW_ALL, ALLOW_INTERNAL_AND_GCLB and ALLOW_INTERNAL_ONLY . | <code>string</code> |  | <code>null</code> |
+| [kms_key](variables.tf#L174) | Resource name of a KMS crypto key (managed by the user) used to encrypt/decrypt function resources in key id format. If specified, you must also provide an artifact registry repository using the docker_repository_id field that was created with the same KMS crypto key. | <code>string</code> |  | <code>null</code> |
+| [labels](variables.tf#L180) | Resource labels. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#125;</code> |
+| [prefix](variables.tf#L191) | Optional prefix used for resource names. | <code>string</code> |  | <code>null</code> |
+| [secrets](variables.tf#L211) | Secret Manager secrets. Key is the variable name or mountpoint, volume versions are in version:path format. | <code>map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [service_account_config](variables-serviceaccount.tf#L17) | Service account configurations. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [trigger_config](variables.tf#L223) | Function trigger configuration. Leave null for HTTP trigger. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [vpc_connector](variables.tf#L241) | VPC connector configuration. Set create to 'true' if a new connector needs to be created. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [vpc_connector_create](variables-vpcconnector.tf#L17) | VPC connector network configuration. Must be provided if new VPC connector is being created. | <code>object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+
+## Outputs
+
+| name | description | sensitive |
+|---|---|:---:|
+| [bucket](outputs.tf#L17) | Bucket resource (only if auto-created). |  |
+| [bucket_name](outputs.tf#L24) | Bucket name. |  |
+| [function](outputs.tf#L29) | Cloud function resources. |  |
+| [function_name](outputs.tf#L34) | Cloud function name. |  |
+| [id](outputs.tf#L39) | Fully qualified function id. |  |
+| [invoke_command](outputs.tf#L44) | Command to invoke Cloud Run Function. |  |
+| [service_account](outputs.tf#L53) | Service account resource. |  |
+| [service_account_email](outputs.tf#L58) | Service account email. |  |
+| [service_account_iam_email](outputs.tf#L63) | Service account email. |  |
+| [trigger_service_account](outputs.tf#L71) | Service account resource. |  |
+| [trigger_service_account_email](outputs.tf#L76) | Service account email. |  |
+| [trigger_service_account_iam_email](outputs.tf#L81) | Service account email. |  |
+| [uri](outputs.tf#L89) | Cloud function service uri. |  |
+| [vpc_connector](outputs.tf#L94) | VPC connector resource if created. |  |
+
+## Fixtures
+
+- [cloudbuild-custom-pool.tf](../../tests/fixtures/cloudbuild-custom-pool.tf)
+- [functions-default-sa-iam-grants.tf](../../tests/fixtures/functions-default-sa-iam-grants.tf)
+- [pubsub.tf](../../tests/fixtures/pubsub.tf)
+- [shared-vpc.tf](../../tests/fixtures/shared-vpc.tf)
+- [vpc-connector.tf](../../tests/fixtures/vpc-connector.tf)
+<!-- END TFDOC -->

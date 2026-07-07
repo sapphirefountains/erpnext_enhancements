@@ -1,0 +1,23 @@
+web-server-vm:
+  zone: ${region}-a
+  machine_type: ${compute_machine_type}
+  network_interfaces:
+    - network: ${network}
+      subnetwork: ${subnetwork}
+      nat: true
+      addresses: null
+  boot_disk:
+    initialize_params:
+      image: "projects/debian-cloud/global/images/family/debian-12"
+      size: 30
+      type: "pd-balanced"
+  attached_disks: {}
+  service_account:
+    auto_create: true
+  metadata:
+    startup-script: |
+      #!/bin/bash
+      apt-get update
+      apt-get install -y nginx
+  labels:
+    role: "web-frontend"
