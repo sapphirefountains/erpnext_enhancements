@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_title",
+  "step_type",
+  "condition",
+  "instruction"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_title",
+   "fieldtype": "Data",
+   "label": "Section",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "step_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Build\nQC",
+   "default": "Build",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "condition",
+   "fieldtype": "Data",
+   "label": "Condition",
+   "in_list_view": 1,
+   "columns": 2,
+   "description": "Restricted expression over the option keys; empty = always. Quantities compare as numbers (timer_qty == 2), choices as strings (mounting == \"3\")."
+  },
+  {
+   "fieldname": "instruction",
+   "fieldtype": "Small Text",
+   "label": "Instruction",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 5,
+   "description": "Supports {expr} placeholders, e.g. \"Insert {estop_qty + timer_qty} cable glands\"."
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Configurator Build Step Template",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

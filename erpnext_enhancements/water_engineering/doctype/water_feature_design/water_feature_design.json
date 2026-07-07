@@ -9,27 +9,25 @@
   "project",
   "customer",
   "serial_no",
+  "cb_ident",
   "design_title",
   "fountain_type",
   "status",
   "sb_state",
   "dashboard",
   "completion_percent",
-  "has_warnings",
-  "next_inputs_needed",
-  "sb_inputs",
-  "turnover_per_hr",
-  "hazen_williams_c",
-  "pipe_material",
-  "cb_inputs",
-  "static_lift_ft",
   "sb_basin",
+  "turnover_per_hr",
   "basins",
   "sb_features",
   "features",
   "sb_tiers",
   "tiers",
   "sb_piping",
+  "pipe_material",
+  "hazen_williams_c",
+  "cb_piping",
+  "static_lift_ft",
   "pipe_segments",
   "sb_pumps",
   "pumps",
@@ -38,6 +36,8 @@
   "sb_chemistry",
   "chem_water_type",
   "chem_chlorine_pct",
+  "chem_cya_ppm",
+  "chem_free_cl_ppm",
   "cb_chemistry",
   "chlorinator_feed_gph",
   "chemistry_targets_summary",
@@ -50,6 +50,16 @@
   "surge_basin_area_sf",
   "surge_basin_gallons",
   "tab_results",
+  "sb_review",
+  "blocker_count",
+  "warning_count",
+  "issue_summary",
+  "issue_ready",
+  "cb_review",
+  "has_warnings",
+  "next_inputs_needed",
+  "sb_acks",
+  "issue_acks",
   "sb_results",
   "total_basin_gallons",
   "required_circulation_gpm",
@@ -58,6 +68,8 @@
   "selected_pump",
   "cb_results",
   "calc_results",
+  "design_issues_json",
+  "readiness_json",
   "amended_from"
  ],
  "fields": [
@@ -84,10 +96,15 @@
    "options": "Serial No"
   },
   {
+   "fieldname": "cb_ident",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "design_title",
    "fieldtype": "Data",
    "label": "Design Title",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "description": "Titles the design on every package print."
   },
   {
    "fieldname": "fountain_type",
@@ -103,47 +120,38 @@
    "label": "Status",
    "options": "Draft\nInputs Gathered\nCalculated\nReviewed\nIssued",
    "default": "Draft",
+   "in_list_view": 1,
+   "description": "Reviewed / Issued are gated: blocking issues must be resolved, and Issued additionally needs the package readiness checklist green with every warning acknowledged."
+  },
+  {
+   "fieldname": "sb_state",
+   "fieldtype": "Section Break",
+   "label": "Design Health"
+  },
+  {
+   "fieldname": "dashboard",
+   "fieldtype": "HTML",
+   "label": "Dashboard"
+  },
+  {
+   "fieldname": "completion_percent",
+   "fieldtype": "Percent",
+   "label": "Completed",
+   "read_only": 1,
    "in_list_view": 1
   },
   {
-   "fieldname": "sb_inputs",
+   "fieldname": "sb_basin",
    "fieldtype": "Section Break",
-   "label": "Global Inputs"
+   "label": "1 · Basin & Volume",
+   "description": "Basin geometry sets the system volume — circulation, chemistry, and surge all size off it."
   },
   {
    "fieldname": "turnover_per_hr",
    "fieldtype": "Float",
    "label": "Turnovers / hr",
-   "default": "2"
-  },
-  {
-   "fieldname": "hazen_williams_c",
-   "fieldtype": "Int",
-   "label": "Hazen-Williams C",
-   "default": "130",
-   "description": "PVC = 130"
-  },
-  {
-   "fieldname": "pipe_material",
-   "fieldtype": "Select",
-   "label": "Default Pipe Material",
-   "options": "SCH40 PVC\nSCH80 PVC\nType K Copper",
-   "default": "SCH40 PVC"
-  },
-  {
-   "fieldname": "cb_inputs",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "static_lift_ft",
-   "fieldtype": "Float",
-   "label": "Static Lift (ft)",
-   "description": "Elevation gain from pump to highest discharge"
-  },
-  {
-   "fieldname": "sb_basin",
-   "fieldtype": "Section Break",
-   "label": "Basin"
+   "default": "2",
+   "description": "Full-volume turnovers per hour. 2/hr is the company display-fountain standard (DOC-0048 Basin)."
   },
   {
    "fieldname": "basins",
@@ -154,7 +162,8 @@
   {
    "fieldname": "sb_features",
    "fieldtype": "Section Break",
-   "label": "Features / Nozzles / Weirs"
+   "label": "2 · Water Features",
+   "description": "The spray/spill requirements — feature flow vs. circulation sets the design flow everything downstream sizes to (DOC-0119 design order)."
   },
   {
    "fieldname": "features",
@@ -163,9 +172,47 @@
    "options": "Water Feature Nozzle"
   },
   {
+   "fieldname": "sb_tiers",
+   "fieldtype": "Section Break",
+   "label": "Tiers (Cascading Fountain)",
+   "collapsible": 1,
+   "description": "For a Tiered Fountain feature: one row per tier, top of the table = top of the fountain."
+  },
+  {
+   "fieldname": "tiers",
+   "fieldtype": "Table",
+   "label": "Tiers",
+   "options": "Water Feature Tier"
+  },
+  {
    "fieldname": "sb_piping",
    "fieldtype": "Section Break",
-   "label": "Piping (TDH Segments)"
+   "label": "3 · Piping (TDH Segments)",
+   "description": "Suction and discharge runs — friction + fittings + components build the TDH the pump must overcome; velocity and pressure ratings are checked per segment."
+  },
+  {
+   "fieldname": "pipe_material",
+   "fieldtype": "Select",
+   "label": "Default Pipe Material",
+   "options": "SCH40 PVC\nSCH80 PVC\nType K Copper",
+   "default": "SCH40 PVC"
+  },
+  {
+   "fieldname": "hazen_williams_c",
+   "fieldtype": "Int",
+   "label": "Hazen-Williams C",
+   "default": "130",
+   "description": "Pipe roughness for friction loss. New PVC = 130 (DOC-0049 A - Pipe Size)."
+  },
+  {
+   "fieldname": "cb_piping",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "static_lift_ft",
+   "fieldtype": "Float",
+   "label": "Static Lift (ft)",
+   "description": "Elevation gain from pump to highest discharge — added to friction losses in TDH."
   },
   {
    "fieldname": "pipe_segments",
@@ -176,7 +223,8 @@
   {
    "fieldname": "sb_pumps",
    "fieldtype": "Section Break",
-   "label": "Pumps & Electrical"
+   "label": "4 · Pump & Electrical",
+   "description": "The design flow + TDH duty point picks the pump; loads feed the panel & breaker schedule."
   },
   {
    "fieldname": "pumps",
@@ -189,6 +237,173 @@
    "fieldtype": "Table",
    "label": "Electrical Loads",
    "options": "Water Feature Electrical Load"
+  },
+  {
+   "fieldname": "tab_treatment",
+   "fieldtype": "Tab Break",
+   "label": "5 · Treatment & Drainage"
+  },
+  {
+   "fieldname": "sb_chemistry",
+   "fieldtype": "Section Break",
+   "label": "Water Chemistry"
+  },
+  {
+   "fieldname": "chem_water_type",
+   "fieldtype": "Select",
+   "label": "Water Type",
+   "options": "Outdoor\nIndoor\nSaltwater",
+   "default": "Outdoor"
+  },
+  {
+   "fieldname": "chem_chlorine_pct",
+   "fieldtype": "Float",
+   "label": "Chlorine %",
+   "default": "10",
+   "description": "Liquid chlorine concentration for the chlorinator feed calc."
+  },
+  {
+   "fieldname": "chem_cya_ppm",
+   "fieldtype": "Float",
+   "label": "CYA / Stabilizer (ppm)",
+   "description": "Planned or measured cyanuric acid. With CYA present, free chlorine must hold at least max(2, 7.5% × CYA) ppm (DOC-0119)."
+  },
+  {
+   "fieldname": "chem_free_cl_ppm",
+   "fieldtype": "Float",
+   "label": "Planned Free Chlorine (ppm)",
+   "description": "The free-chlorine level you intend to run — flagged when it falls below the CYA floor."
+  },
+  {
+   "fieldname": "cb_chemistry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "chlorinator_feed_gph",
+   "fieldtype": "Float",
+   "label": "Chlorinator Feed (gal/hr)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "chemistry_targets_summary",
+   "fieldtype": "Small Text",
+   "label": "Target Ranges",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_drainage",
+   "fieldtype": "Section Break",
+   "label": "Drainage & Surge Basin"
+  },
+  {
+   "fieldname": "drain_nominal_size",
+   "fieldtype": "Select",
+   "label": "Drain Size",
+   "options": "\n1-1/2\"\n2\"\n2-1/2\"\n3\"\n4\"\n6\"\n8\"\n10\"\n12\""
+  },
+  {
+   "fieldname": "drain_slope_in_per_ft",
+   "fieldtype": "Float",
+   "label": "Drain Slope (in/ft)",
+   "default": "0.25",
+   "description": "Gravity drains run 1/16–1/2 in/ft (DOC-0119); default 1/4 in/ft."
+  },
+  {
+   "fieldname": "drain_capacity_gpm",
+   "fieldtype": "Float",
+   "label": "Drain Capacity (GPM)",
+   "read_only": 1,
+   "description": "Conservative half-full Manning capacity (DOC-0049); DOC-0119's full-pipe tables read higher."
+  },
+  {
+   "fieldname": "cb_drainage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "surge_pool_area_sf",
+   "fieldtype": "Float",
+   "label": "Pool Surface Area (sq ft)"
+  },
+  {
+   "fieldname": "surge_basin_area_sf",
+   "fieldtype": "Float",
+   "label": "Surge Basin Area (sq ft)"
+  },
+  {
+   "fieldname": "surge_basin_gallons",
+   "fieldtype": "Float",
+   "label": "Surge Basin (gal)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tab_results",
+   "fieldtype": "Tab Break",
+   "label": "Review & Issue"
+  },
+  {
+   "fieldname": "sb_review",
+   "fieldtype": "Section Break",
+   "label": "Review & Sign-off"
+  },
+  {
+   "fieldname": "blocker_count",
+   "fieldtype": "Int",
+   "label": "Blockers",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "warning_count",
+   "fieldtype": "Int",
+   "label": "Warnings",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "issue_summary",
+   "fieldtype": "Data",
+   "label": "Issue Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "issue_ready",
+   "fieldtype": "Check",
+   "label": "Package Ready",
+   "read_only": 1,
+   "default": "0",
+   "description": "Every readiness item satisfied and zero blockers — the DOC-0121 design-package gate."
+  },
+  {
+   "fieldname": "cb_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "has_warnings",
+   "fieldtype": "Check",
+   "label": "Has Warnings",
+   "read_only": 1,
+   "in_list_view": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "next_inputs_needed",
+   "fieldtype": "Small Text",
+   "label": "Next Inputs Needed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_acks",
+   "fieldtype": "Section Break",
+   "label": "Acknowledged Warnings",
+   "collapsible": 1,
+   "description": "Recorded sign-offs on engineering-limit warnings (required to Issue). Delete a row to un-acknowledge; stale acknowledgements drop automatically when their issue clears."
+  },
+  {
+   "fieldname": "issue_acks",
+   "fieldtype": "Table",
+   "label": "Acknowledgements",
+   "options": "Water Design Issue Ack"
   },
   {
    "fieldname": "sb_results",
@@ -237,113 +452,20 @@
    "options": "Water Feature Calc Result"
   },
   {
-   "fieldname": "sb_state",
-   "fieldtype": "Section Break",
-   "label": "Live Summary"
-  },
-  {
-   "fieldname": "completion_percent",
-   "fieldtype": "Percent",
-   "label": "Completed",
+   "fieldname": "design_issues_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Design Issues (JSON)",
    "read_only": 1,
-   "in_list_view": 1
+   "hidden": 1
   },
   {
-   "fieldname": "has_warnings",
-   "fieldtype": "Check",
-   "label": "Has Warnings",
+   "fieldname": "readiness_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Readiness (JSON)",
    "read_only": 1,
-   "in_list_view": 1,
-   "default": "0"
-  },
-  {
-   "fieldname": "next_inputs_needed",
-   "fieldtype": "Small Text",
-   "label": "Next Inputs Needed",
-   "read_only": 1
-  },
-  {
-   "fieldname": "dashboard",
-   "fieldtype": "HTML",
-   "label": "Dashboard"
-  },
-  {
-   "fieldname": "sb_chemistry",
-   "fieldtype": "Section Break",
-   "label": "Water Chemistry"
-  },
-  {
-   "fieldname": "chem_water_type",
-   "fieldtype": "Select",
-   "label": "Water Type",
-   "options": "Outdoor\nIndoor\nSaltwater",
-   "default": "Outdoor"
-  },
-  {
-   "fieldname": "chem_chlorine_pct",
-   "fieldtype": "Float",
-   "label": "Chlorine %",
-   "default": "10",
-   "description": "Liquid chlorine concentration for the chlorinator feed calc."
-  },
-  {
-   "fieldname": "cb_chemistry",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "chlorinator_feed_gph",
-   "fieldtype": "Float",
-   "label": "Chlorinator Feed (gal/hr)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "chemistry_targets_summary",
-   "fieldtype": "Small Text",
-   "label": "Target Ranges",
-   "read_only": 1
-  },
-  {
-   "fieldname": "sb_drainage",
-   "fieldtype": "Section Break",
-   "label": "Drainage & Surge Basin"
-  },
-  {
-   "fieldname": "drain_nominal_size",
-   "fieldtype": "Select",
-   "label": "Drain Size",
-   "options": "\n1-1/2\"\n2\"\n2-1/2\"\n3\"\n4\"\n6\"\n8\"\n10\"\n12\""
-  },
-  {
-   "fieldname": "drain_slope_in_per_ft",
-   "fieldtype": "Float",
-   "label": "Drain Slope (in/ft)",
-   "default": "0.25"
-  },
-  {
-   "fieldname": "drain_capacity_gpm",
-   "fieldtype": "Float",
-   "label": "Drain Capacity (GPM)",
-   "read_only": 1
-  },
-  {
-   "fieldname": "cb_drainage",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "surge_pool_area_sf",
-   "fieldtype": "Float",
-   "label": "Pool Surface Area (sq ft)"
-  },
-  {
-   "fieldname": "surge_basin_area_sf",
-   "fieldtype": "Float",
-   "label": "Surge Basin Area (sq ft)"
-  },
-  {
-   "fieldname": "surge_basin_gallons",
-   "fieldtype": "Float",
-   "label": "Surge Basin (gal)",
-   "read_only": 1
+   "hidden": 1
   },
   {
    "fieldname": "amended_from",
@@ -357,35 +479,12 @@
   {
    "fieldname": "tab_model",
    "fieldtype": "Tab Break",
-   "label": "Model"
-  },
-  {
-   "fieldname": "tab_treatment",
-   "fieldtype": "Tab Break",
-   "label": "Treatment & Drainage"
-  },
-  {
-   "fieldname": "tab_results",
-   "fieldtype": "Tab Break",
-   "label": "Results & Audit"
-  },
-  {
-   "fieldname": "sb_tiers",
-   "fieldtype": "Section Break",
-   "label": "Tiers (Cascading Fountain)",
-   "collapsible": 1,
-   "description": "For a Tiered Fountain feature: one row per tier, top of the table = top of the fountain."
-  },
-  {
-   "fieldname": "tiers",
-   "fieldtype": "Table",
-   "label": "Tiers",
-   "options": "Water Feature Tier"
+   "label": "Design"
   }
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-06-23 12:00:00.000000",
+ "modified": "2026-07-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Feature Design",

@@ -3,6 +3,12 @@
  "charts": [],
  "content": "[{\"id\":\"kpi_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Department KPIs</b></span>\",\"col\":12}},{\"id\":\"kpi_block\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"KPI Cockpit\",\"col\":12}},{\"id\":\"kpi_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"kpi_manage_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Setup</b></span>\",\"col\":12}},{\"id\":\"kpi_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"KPI Setup\",\"col\":4}}]",
  "creation": "2026-06-25 12:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "KPI Cockpit",
+   "label": "KPI Cockpit"
+  }
+ ],
  "doctype": "Workspace",
  "for_user": "",
  "hide_custom": 0,
@@ -64,7 +70,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-06-25 12:00:00.000000",
+ "modified": "2026-07-07 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "KPI Dashboards",

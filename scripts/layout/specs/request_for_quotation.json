@@ -1,0 +1,26 @@
+{
+ "doctype": "Request for Quotation",
+ "layout": [
+  "naming_series",
+  "company",
+  "custom_project",
+  "vendor",
+  "column_break1",
+  "transaction_date",
+  "schedule_date",
+  "status",
+  "has_unit_price_items",
+  "amended_from",
+  {"section": "suppliers_section"},
+  {"section": "items_section"},
+  {"section": "supplier_response_section"},
+  {"section": "sec_break_email_2"},
+  {"section": "terms_section_break"},
+  {"section": "printing_settings"},
+  {"section": "more_info"},
+  {"tab": "address_and_contact_tab"}
+ ],
+ "setters": [
+  {"field": "address_and_contact_tab", "property": "label", "value": "Contacts & Addresses", "property_type": "Data"}
+ ]
+}

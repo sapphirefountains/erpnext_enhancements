@@ -138,3 +138,32 @@
 	padding: 24px;
 	color: var(--text-muted, #6c7680);
 }
+
+/* Design-health chips + typed issues on the Designs pane */
+.we-chips {
+	margin: 4px 0 6px;
+}
+.we-chips .we-badge {
+	margin-left: 0;
+	margin-right: 6px;
+}
+.we-issue {
+	font-size: var(--text-sm, 13px);
+	padding: 3px 8px;
+	margin: 3px 0;
+	border-left: 3px solid var(--border-color, #d1d8dd);
+	border-radius: 3px;
+}
+.we-issue-blocker {
+	border-left-color: var(--red-500, #c0392b);
+	background: var(--bg-red, #fce8e8);
+	color: var(--text-on-red, #b52a2a);
+}
+.we-issue-warning {
+	border-left-color: var(--orange-500, #c2700a);
+	background: var(--bg-yellow, #fef3c7);
+	color: var(--text-on-yellow, #7a5b00);
+}
+.we-ready-row {
+	padding: 2px 0;
+}

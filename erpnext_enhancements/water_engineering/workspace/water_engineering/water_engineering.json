@@ -1,7 +1,17 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"we_sc_head\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\", \"col\": 12}}, {\"id\": \"we_sc_wizard\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Water Engineering Wizard\", \"col\": 4}}, {\"id\": \"we_sc_new\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"New Water Feature Design\", \"col\": 4}}, {\"id\": \"we_spacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"we_head2\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Designs & Tools</b></span>\", \"col\": 12}}, {\"id\": \"we_card_designs\", \"type\": \"card\", \"data\": {\"card_name\": \"Designs\", \"col\": 4}}, {\"id\": \"we_card_tools\", \"type\": \"card\", \"data\": {\"card_name\": \"Tools\", \"col\": 4}}]",
+ "content": "[{\"id\": \"we_nc_head\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Design Health</b></span>\", \"col\": 12}}, {\"id\": \"we_nc_blockers\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Water Designs with Blockers\", \"col\": 4}}, {\"id\": \"we_nc_ready\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Water Designs Ready to Issue\", \"col\": 4}}, {\"id\": \"we_sc_head\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\", \"col\": 12}}, {\"id\": \"we_sc_wizard\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Water Engineering Wizard\", \"col\": 4}}, {\"id\": \"we_sc_new\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"New Water Feature Design\", \"col\": 4}}, {\"id\": \"we_spacer\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"we_head2\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Designs & Tools</b></span>\", \"col\": 12}}, {\"id\": \"we_card_designs\", \"type\": \"card\", \"data\": {\"card_name\": \"Designs\", \"col\": 4}}, {\"id\": \"we_card_tools\", \"type\": \"card\", \"data\": {\"card_name\": \"Tools\", \"col\": 4}}]",
+ "number_cards": [
+  {
+   "label": "Designs with Blockers",
+   "number_card_name": "Water Designs with Blockers"
+  },
+  {
+   "label": "Designs Ready to Issue",
+   "number_card_name": "Water Designs Ready to Issue"
+  }
+ ],
  "creation": "2026-06-23 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -72,7 +82,7 @@
    "link_to": "water-engineering-wizard"
   }
  ],
- "modified": "2026-06-23 12:00:00.000000",
+ "modified": "2026-07-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Water Engineering",
  "name": "Water Engineering",

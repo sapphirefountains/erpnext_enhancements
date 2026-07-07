@@ -1,0 +1,140 @@
+{
+ "doctype": "Purchase Invoice",
+ "layout": [
+  "naming_series",
+  "supplier",
+  "supplier_name",
+  "tax_id",
+  "column_break_6",
+  "posting_date",
+  "posting_time",
+  "set_posting_time",
+  "due_date",
+  "project",
+  "column_break1",
+  "company",
+  "credit_to",
+  "is_paid",
+  "is_return",
+  "return_against",
+  "update_outstanding_for_self",
+  "update_billed_amount_in_purchase_order",
+  "update_billed_amount_in_purchase_receipt",
+  "apply_tds",
+  "amended_from",
+  {
+   "section": "supplier_invoice_details"
+  },
+  {
+   "section": "currency_and_price_list"
+  },
+  {
+   "section": "sec_warehouse"
+  },
+  {
+   "section": "items_section"
+  },
+  {
+   "section": "section_break_26"
+  },
+  {
+   "section": "taxes_section"
+  },
+  {
+   "section": "section_break_51"
+  },
+  {
+   "section": "section_tax_withholding_entry"
+  },
+  {
+   "section": "totals"
+  },
+  {
+   "section": "totals_section"
+  },
+  {
+   "section": "base_totals_section"
+  },
+  {
+   "section": "section_break_ttrv"
+  },
+  {
+   "section": "section_break_44"
+  },
+  {
+   "tab": "address_and_contact_tab"
+  },
+  {
+   "tab": "terms_tab"
+  },
+  {
+   "tab": "payments_tab"
+  },
+  "more_info_tab",
+  {
+   "section": "status_section"
+  },
+  "accounting_details_section",
+  "party_account_currency",
+  "is_opening",
+  "against_expense_account",
+  "column_break_63",
+  "unrealized_profit_loss_account",
+  {
+   "section": "accounting_dimensions_section"
+  },
+  {
+   "section": "sec_tax_breakup"
+  },
+  {
+   "section": "pricing_rule_details"
+  },
+  {
+   "section": "raw_materials_supplied"
+  },
+  {
+   "section": "sb_14"
+  },
+  {
+   "section": "subscription_section"
+  },
+  "automation_section",
+  "auto_repeat",
+  "update_auto_repeat_reference",
+  "sender",
+  {
+   "section": "printing_settings"
+  },
+  "additional_info_section",
+  "is_internal_supplier",
+  "represents_company",
+  "supplier_group",
+  "column_break_147",
+  "inter_company_invoice_reference",
+  "is_old_subcontracting_flow",
+  "title",
+  "remarks",
+  "custom_source_document_intake",
+  "custom_qbo_id",
+  "workflow_state",
+  {
+   "tab": "connections_tab"
+  },
+  "custom_comments",
+  "custom_comments_field"
+ ],
+ "setters": [
+  {
+   "field": "address_and_contact_tab",
+   "property": "label",
+   "value": "Contacts & Addresses",
+   "property_type": "Data"
+  },
+  {
+   "field": "supplier_invoice_details",
+   "property": "collapsible",
+   "value": "0",
+   "property_type": "Check"
+  }
+ ]
+}

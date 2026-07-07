@@ -81,6 +81,51 @@ RESULTS_HTML = """
       {% endfor %}
     </tbody>
   </table>
+
+  {% set issues = we_design_issues(doc) %}
+  {% if issues %}
+  <h3 style="margin:16px 0 4px; font-size:13px;">Design review — open issues</h3>
+  <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
+    <thead><tr style="background:#f4f5f7;">
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Severity</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Section</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Issue</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Source</th>
+    </tr></thead>
+    <tbody>
+      {% for i in issues %}
+      <tr>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; font-weight:bold; color:{{ '#b52a2a' if i.severity == 'blocker' else ('#b54708' if i.severity == 'warning' else '#555') }};">{{ i.severity|title }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ i.section }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ i.title }}{% if i.fix_hint %}<br><span style="color:#777; font-size:11px;">Fix: {{ i.fix_hint }}</span>{% endif %}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#999; font-size:11px;">{{ i.citation or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if doc.issue_acks %}
+  <h3 style="margin:16px 0 4px; font-size:13px;">Acknowledged warnings</h3>
+  <table style="width:100%; border-collapse:collapse;">
+    <thead><tr style="background:#f4f5f7;">
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Warning</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Acknowledged by</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">On</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Note</th>
+    </tr></thead>
+    <tbody>
+      {% for a in doc.issue_acks %}
+      <tr>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ a.title or a.issue_key }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ a.acknowledged_by or '' }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ a.acknowledged_on or '' }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#555;">{{ a.note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </div>
 """.strip()
 
@@ -201,6 +246,31 @@ SCHEDULES_HTML = """
       </tr>{% endfor %}
     </tbody>
   </table>
+
+  {% set schedule = we_fitting_schedule(doc) %}
+  {% if schedule %}
+  <h3 style="margin:16px 0 4px; font-size:13px;">Fitting Schedule</h3>
+  <table style="width:100%; border-collapse:collapse;">
+    <thead><tr style="background:#f4f5f7;">
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Type</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Fitting / Component</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Material</th>
+      <th style="text-align:left; padding:6px 8px; border-bottom:2px solid #ccc;">Size</th>
+      <th style="text-align:right; padding:6px 8px; border-bottom:2px solid #ccc;">Qty</th>
+    </tr></thead>
+    <tbody>
+      {% for f in schedule %}
+      <tr>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; color:#777;">{{ f.kind }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.type }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.material }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee;">{{ f.size }}</td>
+        <td style="padding:5px 8px; border-bottom:1px solid #eee; text-align:right; font-weight:bold;">{{ f.qty }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </div>
 """.strip()
 

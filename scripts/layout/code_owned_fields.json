@@ -1,0 +1,90 @@
+{
+ "Item": [
+  {
+   "fieldname": "custom_pump_section",
+   "fieldtype": "Section Break",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_rated_gpm",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_rated_tdh_ft",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_hp",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_phase",
+   "fieldtype": "Select",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_voltage",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_fla_amps",
+   "fieldtype": "Float",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_cut_sheet",
+   "fieldtype": "Attach",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_curve",
+   "fieldtype": "Table",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_pump_curve_chart",
+   "fieldtype": "HTML",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_source_configuration",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "reqd": 0
+  }
+ ],
+ "Purchase Invoice": [
+  {
+   "fieldname": "custom_source_document_intake",
+   "fieldtype": "Link",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "custom_qbo_id",
+   "fieldtype": "Data",
+   "hidden": 0,
+   "reqd": 0
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "reqd": 0
+  }
+ ]
+}

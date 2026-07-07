@@ -1,0 +1,98 @@
+{
+ "actions": [],
+ "creation": "2026-07-02 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "option_label",
+  "choice_label",
+  "selected",
+  "qty",
+  "line_price",
+  "option_key",
+  "option_type",
+  "choice_code",
+  "module_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "option_label",
+   "fieldtype": "Data",
+   "label": "Option",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "choice_label",
+   "fieldtype": "Data",
+   "label": "Choice",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "selected",
+   "fieldtype": "Check",
+   "label": "Selected",
+   "in_list_view": 1,
+   "columns": 1,
+   "description": "Tick exactly one row per choice group (e.g. one mounting style)."
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Int",
+   "label": "Qty",
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "line_price",
+   "fieldtype": "Currency",
+   "label": "Line Price",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 2
+  },
+  {
+   "fieldname": "option_key",
+   "fieldtype": "Data",
+   "label": "Option Key",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "option_type",
+   "fieldtype": "Data",
+   "label": "Type",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "choice_code",
+   "fieldtype": "Data",
+   "label": "Choice Code",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "module_key",
+   "fieldtype": "Data",
+   "label": "Module Key",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Product Configuration Option",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
