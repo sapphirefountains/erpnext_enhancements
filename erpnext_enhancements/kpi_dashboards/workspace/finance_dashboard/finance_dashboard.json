@@ -1,0 +1,37 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\": \"ee_chb_finance_new_jobs\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance New Jobs\", \"col\": 12}}, {\"id\": \"ee_chb_finance_who's_working\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance Who's Working\", \"col\": 12}}, {\"id\": \"ee_chb_finance_bank_balances\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance Bank Balances\", \"col\": 12}}, {\"id\": \"ee_chb_finance_weather\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance Weather\", \"col\": 12}}, {\"id\": \"ee_chb_finance_astrology\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance Astrology\", \"col\": 12}}, {\"id\": \"ee_chb_finance_calendar\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Finance Calendar\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "creation": "2026-07-07 12:00:00.000000",
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "dashboard",
+ "is_hidden": 0,
+ "is_standard": 1,
+ "label": "Finance Dashboard",
+ "links": [],
+ "modified": "2026-07-07 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "Finance Dashboard",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "sequence_id": 50,
+ "shortcuts": [],
+ "title": "Finance Dashboard",
+ "type": "Workspace"
+}

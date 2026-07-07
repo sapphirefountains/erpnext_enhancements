@@ -63,10 +63,12 @@ HOME_WORKSPACE = "Home"
 
 # The KPI Cockpit (with its department picker) lands on Home and on each
 # department workspace below, where it auto-locks to that department by route
-# (see custom_html_blocks/kpi_cockpit.js). These workspaces are role-gated and
-# created-if-missing by patches.setup_department_kpi_workspaces, so each
-# department gets its own private, editable KPI dashboard; this tuple is the
-# single source of truth for those workspace names.
+# (see custom_html_blocks/kpi_cockpit.js). The department workspaces ship as
+# role-gated standard workspaces of the KPI Dashboards module
+# (kpi_dashboards/workspace/) so they group with the app's other module
+# sidebars; their JSONs already carry these blocks, and this append is the
+# backstop that restores a block if a site's workspace lost it. Keep this tuple
+# in sync with those workspace names.
 KPI_COCKPIT = "KPI Cockpit"
 KPI_DEPARTMENT_DASHBOARDS = (
 	"Finance Dashboard",
@@ -79,10 +81,10 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Executive Dashboard",
 )
 
-# Operational widgets placed only on the Finance Dashboard workspace (in this
-# order, after the KPI Cockpit). Site-created workspace; placement is skipped
-# silently if it's absent. Each block is additionally role-gated + toggle-gated
-# server-side, so a placed-but-disabled block just renders a muted notice.
+# Operational widgets placed only on the Finance Dashboard workspace (shipped
+# in its module workspace JSON; this append is the backstop if a block goes
+# missing). Each block is additionally role-gated + toggle-gated server-side,
+# so a placed-but-disabled block just renders a muted notice.
 FINANCE_DASHBOARD = "Finance Dashboard"
 FINANCE_DASHBOARD_BLOCKS = (
 	"Finance New Jobs",
@@ -217,9 +219,9 @@ def _append_custom_blocks(workspace_name, block_names):
 	"""Append any missing block to ``workspace_name``'s content (idempotent).
 
 	Returns True if the content changed. A missing workspace is skipped silently
-	(the department dashboards are site-created and need not exist on every site).
-	The column is written directly (not ``doc.save``) so saving a standard/public
-	workspace can't trigger a JSON file export in developer-mode benches."""
+	(sync order or a partially-set-up site may leave one absent). The column is
+	written directly (not ``doc.save``) so saving a standard/public workspace
+	can't trigger a JSON file export in developer-mode benches."""
 	if not frappe.db.exists("Workspace", workspace_name):
 		return False
 

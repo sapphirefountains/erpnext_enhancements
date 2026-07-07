@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.146.0] - 2026-07-07
+
+### Changed
+- **The 8 department dashboards (Finance, Sales, Operations, Design, Production, Marketing, Product, Executive) are now real module pages.** They previously lived as loose site workspaces (no module, `app: erpnext` or none, sequence 0 — the Finance one was hand-made in February and the rest piggy-backed on it), so they didn't group with the app's other sidebars in the desk's app-scoped sidebar. Each now ships as a standard **KPI Dashboards**-module workspace JSON (`kpi_dashboards/workspace/`) with `app: erpnext_enhancements`, its department role gate (per `api/kpi.py` DEPARTMENT_ROLES + System Manager) baked in, and sequence 50–57 so the dashboards sit together. On migrate, Frappe's workspace sync replaces the existing site docs in place — names, routes, and the KPI Cockpit's route-based department auto-lock are unchanged, and the Finance Dashboard JSON carries its exact production layout (6 finance widgets, cockpit last) so nothing moves visually.
+- The `setup_department_kpi_workspaces` patch (v1.140.0) is retired — fresh installs now get the dashboards, roles included, from JSON sync. The Custom HTML Block seeder still appends the cockpit/widget blocks as a backstop if a site's workspace loses one.
+- **The dashboards now ship real sidebars.** The v16 desk resolves a workspace route to the *Workspace Sidebar doc named exactly like the workspace* — and Frappe's v16 upgrade had auto-created one-link stubs ("Home" → the workspace itself) for each dashboard, which is why opening the Finance Dashboard showed a useless one-item sidebar. Nine standard sidebar JSONs now ship in the app-level `workspace_sidebar/` folder (one per dashboard + a "KPI Dashboards" one that also suppresses the auto-generated module sidebar), each carrying the same items: KPI Overview (the cockpit-with-picker workspace) → the 8 department dashboards (role-filtered per user by the desk) → a collapsed *KPI Setup* group (KPI Target, Marketing Spend, KPI Snapshot, Enhancements Settings). Sync replaces the site's stubs in place (verified untouched on production), and because sidebars with those names now exist, Frappe's `after_app_install` stub generator can never recreate the junk.
+- **Stale browser sidebar picks self-heal.** The desk remembers which sidebar to show per route in localStorage and trusts it blindly (entries are appended, never validated), so browsers that had visited a dashboard would keep resolving to the now-deleted stub and the sidebar would silently stop switching. A new global desk script (`global_enhancements/sidebar_pref_heal.js`) prunes remembered names that no longer exist in the boot payload.
+- Trade-off note: the dashboards are no longer freely site-editable across releases — a future change to a dashboard's JSON (with a bumped `modified` stamp) re-imports it and replaces that site's layout edits. Repo is the source of truth, same philosophy as the widget seeder.
+
 ## [1.145.0] - 2026-07-07
 
 ### Added
