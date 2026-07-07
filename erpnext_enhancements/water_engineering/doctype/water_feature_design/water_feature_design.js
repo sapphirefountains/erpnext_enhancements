@@ -192,7 +192,8 @@ const WFD_TEMPLATE_TABLES = ["basins", "features", "pipe_segments", "tiers"];
 
 const WFD_PREVIEW_FIELDS = [
 	"turnover_per_hr", "hazen_williams_c", "pipe_material", "static_lift_ft",
-	"chem_water_type", "chem_chlorine_pct", "drain_nominal_size", "drain_slope_in_per_ft",
+	"chem_water_type", "chem_chlorine_pct", "chem_cya_ppm", "chem_free_cl_ppm",
+	"drain_nominal_size", "drain_slope_in_per_ft",
 	"surge_pool_area_sf", "surge_basin_area_sf",
 ];
 const WFD_TABLES = ["basins", "features", "pipe_segments", "pumps", "electrical_loads", "tiers"];
@@ -202,6 +203,17 @@ frappe.ui.form.on("Water Feature Design", {
 		frm.add_custom_button(__("Open Wizard"), () => frappe.set_route("water-engineering-wizard"));
 		if (!frm.is_new()) {
 			frm.add_custom_button(__("Recalculate"), () => frm.save());
+		}
+
+		// Blockers get a headline above the form — visible from every tab.
+		if (!frm.is_new() && cint(frm.doc.blocker_count) > 0) {
+			frm.dashboard.clear_headline();
+			frm.dashboard.set_headline_alert(
+				__("{0} blocking issue(s) — this design cannot be Reviewed, Issued, or submitted. See Design Health.", [
+					cint(frm.doc.blocker_count),
+				]),
+				"red"
+			);
 		}
 		WFD_TEMPLATE_NAMES.forEach((name) => {
 			frm.add_custom_button(__(name), () => apply_template(frm, name), __("New from Template"));
@@ -265,6 +277,8 @@ function run_preview(frm) {
 	const payload = { fields: {} };
 	WFD_PREVIEW_FIELDS.forEach((f) => (payload.fields[f] = frm.doc[f]));
 	WFD_TABLES.forEach((t) => (payload[t] = frm.doc[t] || []));
+	// Ack keys ride along so the live panel doesn't re-count signed-off warnings.
+	payload.issue_acks = (frm.doc.issue_acks || []).map((a) => ({ issue_key: a.issue_key }));
 
 	frappe.call({
 		method: "erpnext_enhancements.water_engineering.api.water_design.preview_design",
@@ -299,6 +313,8 @@ function apply_preview(frm, p) {
 				row.velocity_fps = s.velocity_fps;
 				row.velocity_status = s.velocity_status;
 				row.head_loss_ft = s.head_loss_ft;
+				row.pressure_status = s.pressure_status;
+				row.pressure_margin_psi = s.pressure_margin_psi;
 			}
 		});
 
@@ -317,15 +333,17 @@ function apply_preview(frm, p) {
 
 function pill_class(status) {
 	const s = (status || "").toLowerCase();
-	if (s.includes("exceed")) return "red";
-	if (s.includes("increase")) return "orange";
+	if (s.includes("exceed") || s.includes("cavitation") || s.includes("entrapment")) return "red";
+	if (s.includes("increase") || s.includes("marginal")) return "orange";
+	if (s.includes("below")) return "blue";
 	if (s.includes("okay")) return "green";
 	return "gray";
 }
 function pill_color(status) {
 	const s = (status || "").toLowerCase();
-	if (s.includes("exceed")) return "#c0392b";
-	if (s.includes("increase")) return "#c2700a";
+	if (s.includes("exceed") || s.includes("cavitation") || s.includes("entrapment")) return "#c0392b";
+	if (s.includes("increase") || s.includes("marginal")) return "#c2700a";
+	if (s.includes("below")) return "#2490ef";
 	if (s.includes("okay")) return "#1f9d55";
 	return "var(--text-muted)";
 }
@@ -418,26 +436,21 @@ function render_dashboard(frm, p) {
 	let segs = "";
 	if ((p.pipe_segments || []).length) {
 		const rows = p.pipe_segments
-			.map((s, i) => `
+			.map((s, i) => {
+				const pressure = s.pressure_status && !/okay/i.test(s.pressure_status)
+					? ` <span class="indicator-pill ${pill_class(s.pressure_status)}" style="margin-left:4px">${esc(s.pressure_status)}</span>`
+					: "";
+				return `
 				<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px solid var(--border-color)">
 					<span>${esc(s.segment_label || __("Segment") + " " + (i + 1))}</span>
-					<span><span style="color:var(--text-muted);font-size:12px">${num(s.velocity_fps)} ft/s</span> <span class="indicator-pill ${pill_class(s.velocity_status)}" style="margin-left:6px">${esc(s.velocity_status || "—")}</span></span>
-				</div>`)
+					<span><span style="color:var(--text-muted);font-size:12px">${num(s.velocity_fps)} ft/s</span> <span class="indicator-pill ${pill_class(s.velocity_status)}" style="margin-left:6px">${esc(s.velocity_status || "—")}</span>${pressure}</span>
+				</div>`;
+			})
 			.join("");
 		segs = `<div style="margin-top:14px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pipe segments")}</div>${rows}</div>`;
 	}
 
-	let warn = `<div style="margin-top:12px;color:var(--text-muted);font-size:12px">${__("No warnings.")}</div>`;
-	if ((p.warnings || []).length) {
-		warn = `<div style="margin-top:14px;font-size:12px"><div style="color:var(--text-muted);margin-bottom:4px">${__("Warnings")} (${p.warnings.length})</div>${p.warnings
-			.map((w) => `<div style="display:flex;gap:6px;padding:2px 0"><span style="color:#c2700a">&#9888;</span><span>${esc(w)}</span></div>`)
-			.join("")}</div>`;
-	}
-
-	let needs = "";
-	if ((p.next_inputs_needed || []).length) {
-		needs = `<div style="margin-top:10px;padding:6px 10px;border-radius:6px;background:rgba(127,127,127,.12);font-size:12px"><b>${__("Still needed")}:</b> ${p.next_inputs_needed.map(esc).join(", ")}</div>`;
-	}
+	const health = wfd_health_html(frm, p);
 
 	const hasMath = (p.calc_results || []).length > 0;
 	const mathToggle = hasMath
@@ -446,13 +459,13 @@ function render_dashboard(frm, p) {
 
 	const empty = !d.basins?.length && !d.features?.length;
 	const body = empty
-		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>`
+		? `<div style="color:var(--text-muted);padding:6px 0">${__("Start by adding a basin or a feature — or use New from Template.")}</div>${health}`
 		: `<div style="overflow-x:auto">${canvas}</div>
 			<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
 				${duty ? `<div style="flex:1;min-width:280px"><div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Pump duty point")}</div>${duty}</div>` : ""}
 				<div style="flex:1;min-width:280px">${tdhBar}${segs}</div>
 			</div>
-			${warn}${needs}${WFD_MATH.show ? math_html(p) : ""}`;
+			${health}${WFD_MATH.show ? math_html(p) : ""}`;
 
 	frm.get_field("dashboard").$wrapper.html(`
 		<div style="border:1px solid var(--border-color);border-radius:var(--border-radius-lg,8px);padding:14px 16px;background:var(--card-bg,var(--fg-color))">
@@ -460,6 +473,7 @@ function render_dashboard(frm, p) {
 				<div style="font-weight:600">${__("Hydraulic model")}</div>
 				<div style="display:flex;align-items:center;gap:8px;min-width:150px">
 					${mathToggle}
+					${wfd_chips_html(p)}
 					<div style="flex:1;height:8px;border-radius:4px;background:rgba(128,128,128,.2)"><div style="width:${pct}%;height:8px;border-radius:4px;background:var(--primary,#2490ef)"></div></div>
 					<span style="color:var(--text-muted);font-size:12px">${pct}%</span>
 				</div>
@@ -467,13 +481,243 @@ function render_dashboard(frm, p) {
 			${body}
 		</div>`);
 
-	frm.get_field("dashboard").$wrapper
+	const $wrapper = frm.get_field("dashboard").$wrapper;
+	$wrapper
 		.find(".wfd-math-toggle")
 		.off("click")
 		.on("click", () => {
 			WFD_MATH.show = !WFD_MATH.show;
 			render_dashboard(WFD_MATH.frm, WFD_MATH.p);
 		});
+	wfd_wire_health(frm, $wrapper, p);
+}
+
+// ------------------------------------------------------ Design Health panel
+// One place that answers "what is wrong and where, and what do I still owe":
+// severity chips, the typed issue list (click-to-jump, per-warning acknowledge),
+// and the itemized readiness checklist behind completion_percent + issue_ready.
+
+const WFD_SECTION_ANCHORS = {
+	project: "design_title",
+	basin: "basins",
+	features: "features",
+	tiers: "tiers",
+	piping: "pipe_segments",
+	pump: "pumps",
+	electrical: "electrical_loads",
+	safety: "pipe_segments",
+	chemistry: "chem_water_type",
+	drainage: "drain_nominal_size",
+	deliverables: "pipe_segments",
+};
+
+const WFD_SEVERITY_STYLE = {
+	blocker: { dot: "#c0392b", label: __("Blocker") },
+	warning: { dot: "#c2700a", label: __("Warning") },
+	info: { dot: "#2490ef", label: __("Advisory") },
+};
+
+function wfd_chips_html(p) {
+	const issues = p.issues || [];
+	const n = (sev) => issues.filter((i) => i.severity === sev).length;
+	const chip = (count, cls, label) =>
+		count ? `<span class="indicator-pill ${cls}" style="white-space:nowrap">${count} ${label}</span>` : "";
+	const parts =
+		chip(n("blocker"), "red", __("blockers")) +
+		chip(n("warning"), "orange", __("warnings")) +
+		chip(n("info"), "blue", __("advisories"));
+	return parts || `<span class="indicator-pill green" style="white-space:nowrap">${__("No issues")}</span>`;
+}
+
+function wfd_health_html(frm, p) {
+	const esc = frappe.utils.escape_html;
+	const issues = p.issues || [];
+	const readiness = p.readiness || {};
+	const acked = {};
+	(frm.doc.issue_acks || []).forEach((a) => (acked[a.issue_key] = a));
+
+	// --- issues, grouped in section (design-procession) order ---------------
+	const order = (readiness.sections || []).map((s) => s.key);
+	if (!order.includes("safety")) order.push("safety");
+	const groups = {};
+	issues.forEach((i) => {
+		(groups[i.section] = groups[i.section] || []).push(i);
+	});
+	const section_label = (key) => {
+		const s = (readiness.sections || []).find((x) => x.key === key);
+		return s ? s.label : key;
+	};
+
+	let issue_html = "";
+	Object.keys(groups)
+		.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+		.forEach((key) => {
+			const rows = groups[key]
+				.map((i) => {
+					const idx = issues.indexOf(i);
+					const sev = WFD_SEVERITY_STYLE[i.severity] || WFD_SEVERITY_STYLE.info;
+					const ack = acked[i.key];
+					const can_ack = i.severity === "warning" && !frm.is_new() && !ack;
+					const meta = [
+						i.detail ? esc(i.detail) : "",
+						i.fix_hint ? `<b>${__("Fix")}:</b> ${esc(i.fix_hint)}` : "",
+						i.citation ? `<span style="color:var(--text-muted)">${__("Source")}: ${esc(i.citation)}</span>` : "",
+					].filter(Boolean);
+					return `
+					<details class="wfd-issue" style="padding:3px 0;${ack ? "opacity:.55" : ""}">
+						<summary style="display:flex;align-items:baseline;gap:7px;cursor:pointer;list-style:none">
+							<span style="flex-shrink:0;width:8px;height:8px;border-radius:50%;background:${sev.dot};display:inline-block;position:relative;top:-1px" title="${sev.label}"></span>
+							<span style="flex:1">${esc(i.title)}${ack ? ` <span style="color:var(--text-muted);font-size:11px">— ${__("acknowledged by {0}", [esc(ack.acknowledged_by || "")])}</span>` : ""}</span>
+							${i.ref || WFD_SECTION_ANCHORS[i.section] ? `<a class="wfd-jump" data-i="${idx}" style="font-size:11px;white-space:nowrap">${__("Go")}</a>` : ""}
+							${can_ack ? `<a class="wfd-ack" data-i="${idx}" style="font-size:11px;white-space:nowrap;color:#c2700a">${__("Acknowledge…")}</a>` : ""}
+						</summary>
+						${meta.length ? `<div style="margin:3px 0 3px 15px;font-size:11px;color:var(--text-color)">${meta.join("<br>")}</div>` : ""}
+					</details>`;
+				})
+				.join("");
+			issue_html += `
+				<div style="margin-top:6px">
+					<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em">${esc(section_label(key))}</div>
+					${rows}
+				</div>`;
+		});
+
+	// --- readiness checklist (two gates, itemized) ---------------------------
+	const gate_rows = (gate, title) => {
+		const rows = (readiness.sections || [])
+			.filter((s) => s.gate === gate && s.state !== "n/a")
+			.map((s) => {
+				const ok = s.state === "complete";
+				const blocked = s.state === "blocked";
+				const icon = blocked
+					? `<span style="color:#c0392b">&#9679;</span>`
+					: ok
+						? `<span style="color:#1f9d55">&#10003;</span>`
+						: `<span style="color:var(--text-muted)">&#9675;</span>`;
+				const missing = (s.missing || [])
+					.map(
+						(m) => `
+						<div style="margin-left:18px;font-size:11px;color:var(--text-muted)">
+							${esc(m.label)}${m.why ? ` — ${esc(m.why)}` : ""}
+							${m.field ? ` <a class="wfd-goto" data-field="${esc(m.field)}" style="font-size:11px">${__("Go")}</a>` : ""}
+						</div>`
+					)
+					.join("");
+				return `<div style="padding:2px 0">${icon} ${esc(s.label)}${missing}</div>`;
+			})
+			.join("");
+		return rows
+			? `<div style="flex:1;min-width:220px"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px">${title}</div>${rows}</div>`
+			: "";
+	};
+	const calc_ok = readiness.calc_ready;
+	const issue_ok = readiness.issue_ready;
+	const checklist = (readiness.sections || []).length
+		? `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(127,127,127,.08);font-size:12px">
+			${gate_rows("calc", __("To calculate") + (calc_ok ? " ✓" : ""))}
+			${gate_rows("issue", __("To issue the package") + (issue_ok ? " ✓" : ""))}
+		</div>`
+		: "";
+
+	const head = issues.length
+		? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:2px">${__("Issues")} (${issues.length})</div>`
+		: `<div style="font-size:12px;color:var(--text-muted)">${__("No open issues.")}</div>`;
+	return `<div class="wfd-health" style="margin-top:14px;font-size:12px">${head}${issue_html}${checklist}</div>`;
+}
+
+function wfd_wire_health(frm, $wrapper, p) {
+	const issues = p.issues || [];
+	$wrapper.find(".wfd-jump").on("click", function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		const issue = issues[cint($(this).data("i"))];
+		// Doc-scoped issues (no row ref) fall back to their section's anchor field.
+		if (issue) wfd_jump(frm, issue.ref || { field: WFD_SECTION_ANCHORS[issue.section] });
+	});
+	$wrapper.find(".wfd-goto").on("click", function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		wfd_jump(frm, { field: $(this).data("field") });
+	});
+	$wrapper.find(".wfd-ack").on("click", function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		const issue = issues[cint($(this).data("i"))];
+		if (!issue) return;
+		// The sign-off is recorded on the SAVED record and the form reloads after —
+		// acknowledging from a dirty form would silently discard the unsaved edits.
+		if (frm.is_dirty()) {
+			frappe.msgprint(
+				__("Save the design first — acknowledging records the sign-off on the saved document and reloads the form, which would discard your unsaved changes.")
+			);
+			return;
+		}
+		frappe.prompt(
+			[
+				{
+					fieldname: "note",
+					fieldtype: "Small Text",
+					label: __("Note (why this warning is acceptable)"),
+				},
+			],
+			(values) => {
+				frappe
+					.call({
+						method: "erpnext_enhancements.water_engineering.api.water_design.acknowledge_issue",
+						args: { design: frm.doc.name, issue_key: issue.key, note: values.note },
+					})
+					.then(() => frm.reload_doc());
+			},
+			// dialog titles render as HTML — the issue title embeds user-typed row labels
+			__("Acknowledge: {0}", [frappe.utils.escape_html(issue.title)]),
+			__("Acknowledge")
+		);
+	});
+}
+
+// Scroll to (and flash) the thing an issue points at: a parent field, or a
+// specific child-table row. Grid internals are semi-internal — everything is
+// wrapped so a framework change degrades to a section scroll, never an error.
+function wfd_jump(frm, ref) {
+	if (!ref) return;
+	wfd_flash_style();
+	try {
+		if (ref.table) {
+			const grid = frm.fields_dict[ref.table] && frm.fields_dict[ref.table].grid;
+			const gr =
+				grid &&
+				((ref.row_name && grid.grid_rows_by_docname && grid.grid_rows_by_docname[ref.row_name]) ||
+					(grid.grid_rows || [])[ref.row_idx]);
+			if (gr && gr.row && gr.row[0]) {
+				gr.row[0].scrollIntoView({ behavior: "smooth", block: "center" });
+				gr.row.addClass("wfd-flash");
+				setTimeout(() => gr.row.removeClass("wfd-flash"), 1800);
+				return;
+			}
+			frm.scroll_to_field(ref.table);
+			return;
+		}
+		if (ref.field) frm.scroll_to_field(ref.field);
+	} catch (e) {
+		try {
+			frm.scroll_to_field(ref.field || ref.table);
+		} catch (e2) {
+			/* nothing to anchor to */
+		}
+	}
+}
+
+let _wfd_flash_css = false;
+function wfd_flash_style() {
+	if (_wfd_flash_css) return;
+	_wfd_flash_css = true;
+	$("<style>")
+		.text(
+			".wfd-flash{outline:2px solid var(--primary,#2490ef);outline-offset:-2px;transition:outline .3s} " +
+				".wfd-issue summary::-webkit-details-marker{display:none} " +
+				".wfd-issue summary a{text-decoration:none}"
+		)
+		.appendTo(document.head);
 }
 
 // Load a template's rows + inputs into the form. `from_field` = the user picked

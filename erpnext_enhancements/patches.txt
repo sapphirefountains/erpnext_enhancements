@@ -142,3 +142,7 @@ erpnext_enhancements.patches.seed_product_engineer_role
 # v1.142.0 Product Configurator: seed the PDT-0040 STILLWATER E-Stop product
 # definition (options/components/build steps; insert-only, site edits survive)
 erpnext_enhancements.patches.seed_pdt_0040_product
+# v1.144.0 Water Engineering Design Health: backfill the typed-issue counters
+# (blocker/warning counts, issues+readiness JSON) on existing designs from their
+# PERSISTED audit rows — no engine re-run, submitted docs untouched
+erpnext_enhancements.patches.backfill_water_design_issue_fields

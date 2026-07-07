@@ -67,6 +67,12 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       - name: KPI dashboard metrics (pure math)
         run: python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v
+      - name: Water engineering (pure engine + design issues + controller helpers)
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_water_engine
+          erpnext_enhancements.tests.test_water_design_issues
+          erpnext_enhancements.tests.test_water_design_controller -v
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

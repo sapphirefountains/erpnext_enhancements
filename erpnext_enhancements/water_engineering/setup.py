@@ -215,3 +215,55 @@ def ensure_nozzle_profiles():
 			frappe.logger().info(f"[water_engineering] seeded nozzle profiles: {result['created']}")
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Water Engineering nozzle profile seed")
+
+
+# Workspace triage cards over the denormalized issue counters recompute()
+# writes onto every design (see issues.py) — "which designs need attention"
+# without opening a single one.
+WATER_NUMBER_CARDS = [
+	{
+		"name": "Water Designs with Blockers",
+		"label": "Designs with Blockers",
+		"document_type": "Water Feature Design",
+		"filters_json": '[["Water Feature Design","blocker_count",">",0],["Water Feature Design","docstatus","<",2]]',
+		"color": "#CB2929",
+	},
+	{
+		"name": "Water Designs Ready to Issue",
+		"label": "Designs Ready to Issue",
+		"document_type": "Water Feature Design",
+		"filters_json": '[["Water Feature Design","issue_ready","=",1],["Water Feature Design","status","!=","Issued"],["Water Feature Design","docstatus","=",0]]',
+		"color": "#29CD42",
+	},
+]
+
+
+def ensure_water_number_cards():
+	"""after_migrate entry: upsert the Water Engineering workspace Number Cards
+	(idempotent + guarded, like the other water_engineering setup entries)."""
+	try:
+		for spec in WATER_NUMBER_CARDS:
+			values = {
+				"label": spec["label"],
+				"type": "Document Type",
+				"document_type": spec["document_type"],
+				"function": "Count",
+				"filters_json": spec["filters_json"],
+				"is_public": 1,
+				"show_percentage_stats": 0,
+				"color": spec["color"],
+			}
+			if frappe.db.exists("Number Card", spec["name"]):
+				card = frappe.get_doc("Number Card", spec["name"])
+				card.update(values)
+				card.save(ignore_permissions=True)
+			else:
+				card = frappe.new_doc("Number Card")
+				card.update(values)
+				# insert(set_name=...) survives autoname; assigning card.name
+				# before save() does NOT (set_new_name wipes it -> the workspace
+				# block would point at a card that doesn't exist).
+				card.insert(ignore_permissions=True, set_name=spec["name"])
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Water Engineering number cards")

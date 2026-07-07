@@ -160,6 +160,10 @@ class PipeTests(unittest.TestCase):
         self.assertEqual(velocity_status(2.58, "discharge", 4.5, 6.5, 8.0), "Okay")
         self.assertEqual(velocity_status(5.79, "suction", 4.5, 6.5, 8.0), "Increase Size")
         self.assertEqual(velocity_status(8.5, "discharge", 4.5, 6.5, 8.0), "Exceeds Legal Limit")
+        # Below ~0.5 FPS solids settle (DOC-0049 sheets 5/6 blank under 0.5) —
+        # its own advisory band; zero (no flow) stays Okay to avoid noise.
+        self.assertEqual(velocity_status(0.3, "discharge", 4.5, 6.5, 8.0), "Below Self-Cleaning")
+        self.assertEqual(velocity_status(0, "discharge", 4.5, 6.5, 8.0), "Okay")
 
     def test_pipe_pressure_rating_and_check(self):
         # 2" SCH40 PVC: 166 psi @73F, derates to 83 @110F (DOC-0049 1,2,3).
@@ -193,6 +197,15 @@ class PipeTests(unittest.TestCase):
         self.assertEqual(r.value, '3"')
         self.assertEqual(r.status, "Okay")
         self.assertTrue(any(o.recommended for o in r.options))
+
+    def test_size_pipe_tiny_flow_falls_back_to_smallest_settling_size(self):
+        # 0.5 GPM runs under the 0.5 FPS self-cleaning band in every Sch40 size —
+        # the smallest run is still the right answer, with a flushing advisory
+        # (NOT the misleading "no size keeps within limit" message).
+        r = size_pipe(0.5, 10, "SCH40 PVC", "discharge")
+        self.assertEqual(r.value, '3/4"')
+        self.assertEqual(r.status, "Below Self-Cleaning")
+        self.assertTrue(any("self-cleaning" in w.lower() for w in r.warnings))
 
 
 class TdhTests(unittest.TestCase):
@@ -349,6 +362,20 @@ class DrainageTests(unittest.TestCase):
 
     def test_manning_unknown_size_warns(self):
         self.assertTrue(manning_drain_flow('99"', 0.25).warnings)
+
+    def test_manning_slope_band(self):
+        # DOC-0119: gravity drains run 1/16 - 1/2 in/ft; outside the band warns
+        # (the capacity value itself is unchanged — same Manning math).
+        self.assertTrue(any("outside" in w for w in manning_drain_flow('3"', 0.75).warnings))
+        self.assertTrue(any("outside" in w for w in manning_drain_flow('3"', 0.03).warnings))
+        self.assertFalse(manning_drain_flow('3"', 0.25).warnings)
+
+    def test_manning_shows_full_pipe_divergence_basis(self):
+        # The half-full figure stays the conservative authority (DOC-0049); the
+        # steps must show the full-pipe basis so DOC-0119's bigger tables don't
+        # read as an engine bug.
+        r = manning_drain_flow('4"', 0.25)
+        self.assertTrue(any("full-pipe" in s for s in r.steps))
 
     def test_size_drain_picks_smallest_adequate(self):
         # @ 1/4"/ft: 3"=30.4, 4"=58.2 GPM -> 50 GPM needs 4", 25 GPM needs 3"

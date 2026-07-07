@@ -17,6 +17,8 @@ from .constants import (
     CIT_GRAVITY,
     DRAIN_AREA_PI,
     DRAIN_GAL_PER_CF,
+    DRAIN_SLOPE_MAX_IN_FT,
+    DRAIN_SLOPE_MIN_IN_FT,
     MANNING_CONSTANT,
     SURGE_EVAP_IN_DAY,
     SURGE_FREEBOARD_IN,
@@ -61,6 +63,15 @@ def manning_drain_flow(nominal_size: str, slope_in_per_ft: float = 0.25) -> Calc
     slope = float(slope_in_per_ft) / 12.0
     q = _drain_flow(id_in, n, slope)
     velocity = 0.4085 * 2 * q / id_in**2
+    warnings = []
+    if float(slope_in_per_ft) and not (
+        DRAIN_SLOPE_MIN_IN_FT <= float(slope_in_per_ft) <= DRAIN_SLOPE_MAX_IN_FT
+    ):
+        warnings.append(
+            f"Drain slope {float(slope_in_per_ft):g} in/ft is outside the "
+            f"{DRAIN_SLOPE_MIN_IN_FT:g}-{DRAIN_SLOPE_MAX_IN_FT:g} in/ft gravity-drainage band "
+            "(DOC-0119 / IPC) — too flat silts, too steep outruns its venting."
+        )
     return CalcResult(
         calc="manning_drain_flow",
         value=q,
@@ -76,8 +87,15 @@ def manning_drain_flow(nominal_size: str, slope_in_per_ft: float = 0.25) -> Calc
             f"A = 3.14*{id_in}^2/8/144 = {_half_full_area(id_in):.6f} ft^2",
             f"R = ({id_in}/4)/12 = {_hydraulic_radius(id_in):.6f} ft ; S = {slope_in_per_ft}/12 = {slope:.6f}",
             f"Q = {q:.4f} GPM ; velocity = {velocity:.3f} FPS",
+            # Divergence note (DOC-0119 tables are full-pipe): keep the conservative
+            # half-full figure as the authority, but show the full-pipe basis so the
+            # guideline tables don't look "wrong" next to the engine.
+            f"full-pipe basis (same R, 2x area) = {2 * q:.1f} GPM — DOC-0119's drainage "
+            "tables are full-pipe and read higher; this half-full figure is the "
+            "conservative authority (DOC-0049)",
         ],
         citations=[CIT_GRAVITY],
+        warnings=warnings,
     )
 
 

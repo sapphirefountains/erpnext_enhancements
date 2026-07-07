@@ -25,6 +25,9 @@ GAL_PER_CUBIC_FOOT = 7.480519
 
 # --- pipe velocity (DOC-0049 A - Pipe Size!C7 ; H - TDH!E20) ----------------
 VELOCITY_COEFF = 0.4085  # V_fps = GPM * 0.4085 / ID_in^2
+# Below ~0.5 FPS solids settle out in horizontal runs — DOC-0049's major-loss
+# tables (sheets 5/6) are deliberately blank under 0.5 FPS for this reason.
+SELF_CLEANING_MIN_FPS = 0.5
 
 # --- Hazen-Williams head loss -----------------------------------------------
 # A - Pipe Size!G7:  hf = 10.44 * L * Q^1.85 / (C^1.85 * D^4.8655)
@@ -90,6 +93,11 @@ CT_CRYPTO_3LOG = 7.4
 MANNING_CONSTANT = 1.486
 DRAIN_GAL_PER_CF = 7.48  # the drain sheet's gal/ft^3 (matches its golden cells)
 DRAIN_AREA_PI = 3.14  # literal 3.14 used in the half-full area cell
+# Gravity-drain slope band (DOC-0119: 1/16" to 1/2" per foot, per IPC drainage
+# practice). Outside the band the drain either silts (too flat) or outruns its
+# vent/air balance (too steep).
+DRAIN_SLOPE_MIN_IN_FT = 0.0625
+DRAIN_SLOPE_MAX_IN_FT = 0.5
 
 # --- surge basin (DOC-0049 B - Surge Basin) green-cell defaults -------------
 SURGE_EVAP_IN_DAY = 0.25

@@ -21,6 +21,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
+from erpnext_enhancements.water_engineering import issues as design_issues
 from erpnext_enhancements.water_engineering.api.water_design import nozzle_profile_params, pump_curves
 from erpnext_enhancements.water_engineering.engine import (
 	basin_volume,
@@ -33,6 +34,7 @@ from erpnext_enhancements.water_engineering.engine import (
 	manning_drain_flow,
 	nozzle_array_flow,
 	nozzle_flow,
+	pipe_pressure_check,
 	pipe_velocity,
 	run_spine,
 	surge_basin_volume,
@@ -40,6 +42,7 @@ from erpnext_enhancements.water_engineering.engine import (
 	velocity_status,
 	weir_flow,
 )
+from erpnext_enhancements.water_engineering.engine.constants import FT_PER_PSI
 from erpnext_enhancements.water_engineering.engine.data.pipe_specs import get_pipe_spec
 from erpnext_enhancements.water_engineering.engine.units import gallons_to_pounds
 
@@ -48,6 +51,8 @@ class WaterFeatureDesign(Document):
 	def validate(self):
 		self.recompute()
 		self.completion_percent = compute_completion_percent(self)
+		self._drop_stale_acks()
+		self._enforce_status_gates()
 
 	def before_submit(self):
 		if not self.get("basins") and not self.get("features"):
@@ -55,16 +60,101 @@ class WaterFeatureDesign(Document):
 				_("Add at least one basin or feature before submitting the design."),
 				title=_("Nothing to Calculate"),
 			)
-		# Don't freeze an incomplete/garbage design silently — warn (non-blocking)
-		# if the recompute left warnings or still-needed inputs.
-		if self.has_warnings or (self.next_inputs_needed or "").strip():
+		issues = self._live_issues()
+		blockers = [i for i in issues if i.get("severity") == "blocker"]
+		if blockers:
+			frappe.throw(
+				_("Resolve these blocking issues before submitting:")
+				+ "<br>"
+				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in blockers),
+				title=_("Blocking Issues"),
+			)
+		unacked = design_issues.unacknowledged_warnings(self, issues)
+		if unacked:
+			frappe.throw(
+				_("Acknowledge each open warning in Design Health (or resolve it) before submitting:")
+				+ "<br>"
+				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in unacked),
+				title=_("Unacknowledged Warnings"),
+			)
+		# Advisories / still-needed inputs stay non-blocking — say so and proceed.
+		if (self.next_inputs_needed or "").strip():
 			frappe.msgprint(
-				_("Submitting with unresolved items: {0}").format(
-					(self.next_inputs_needed or _("see warnings")).replace("\n", "; ")
+				_("Submitting with open items: {0}").format(
+					self.next_inputs_needed.replace("\n", "; ")
 				),
 				title=_("Design Not Fully Resolved"),
 				indicator="orange",
 			)
+
+	# --------------------------------------------------------------- gating
+	def _live_issues(self):
+		"""The issues recompute just produced (parsed once, cached per validate)."""
+		if getattr(self, "_issues_cache", None) is None:
+			try:
+				self._issues_cache = json.loads(self.design_issues_json or "[]")
+			except ValueError:
+				self._issues_cache = []
+		return self._issues_cache
+
+	def _drop_stale_acks(self):
+		"""A stale acknowledgement must never grandfather a new problem: keep only
+		acks whose issue key still matches a live issue."""
+		live = {i.get("key") for i in self._live_issues()}
+		kept = [a for a in (self.get("issue_acks") or []) if a.issue_key in live]
+		if len(kept) != len(self.get("issue_acks") or []):
+			self.set("issue_acks", kept)
+
+	def _enforce_status_gates(self):
+		"""Reviewed/Issued are earned states: no blockers may exist, and Issued
+		additionally requires the package readiness gate + every warning
+		acknowledged. (Submission re-checks in before_submit.)
+
+		The gate fires only on the status TRANSITION — a doc already sitting in
+		Reviewed/Issued (e.g. saved before these gates existed, or one that
+		gained a finding from external state) must stay saveable, and the
+		acknowledge endpoint's own save must not trip the gate it remedies.
+		before_submit re-checks everything regardless of transition."""
+		if self.status not in ("Reviewed", "Issued"):
+			return
+		before = self.get_doc_before_save()
+		if before and (before.status or "") == (self.status or ""):
+			return
+		issues = self._live_issues()
+		blockers = [i for i in issues if i.get("severity") == "blocker"]
+		if blockers:
+			frappe.throw(
+				_("Cannot set status {0} with blocking issues open:").format(_(self.status))
+				+ "<br>"
+				+ "<br>".join(f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in blockers),
+				title=_("Blocking Issues"),
+			)
+		if self.status == "Issued":
+			unacked = design_issues.unacknowledged_warnings(self, issues)
+			if unacked:
+				frappe.throw(
+					_("Acknowledge each open warning in Design Health before issuing:")
+					+ "<br>"
+					+ "<br>".join(
+						f"• {frappe.utils.escape_html(i.get('title') or '')}" for i in unacked
+					),
+					title=_("Unacknowledged Warnings"),
+				)
+			if not self.issue_ready:
+				missing = []
+				try:
+					readiness = json.loads(self.readiness_json or "{}")
+				except ValueError:
+					readiness = {}
+				for section in readiness.get("sections") or []:
+					for m in section.get("missing") or []:
+						missing.append(m.get("label") or "")
+				frappe.throw(
+					_("The design package is not complete enough to issue:")
+					+ "<br>"
+					+ "<br>".join(f"• {frappe.utils.escape_html(m)}" for m in missing if m),
+					title=_("Package Not Ready"),
+				)
 
 	# ---------------------------------------------------------------- bridge
 	def recompute(self):
@@ -73,12 +163,13 @@ class WaterFeatureDesign(Document):
 		Never raises out of validate on a calc error — a bad row records a
 		warning instead of blocking the save (the audit trail and
 		``next_inputs_needed`` surface the problem)."""
+		self._issues_cache = None
 		try:
 			out = run_spine(_engine_inputs(self))
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Water Feature Design recompute")
-			self.has_warnings = 1
 			self.next_inputs_needed = _("Calculation error — see Error Log.")
+			self._apply_issue_state(extra=[design_issues.calc_error_issue()])
 			return
 
 		self.total_basin_gallons = out.get("total_basin_gallons")
@@ -86,16 +177,22 @@ class WaterFeatureDesign(Document):
 		self.design_flow_gpm = out.get("design_flow_gpm")
 		self.computed_tdh_ft = out.get("tdh_ft")
 		self.next_inputs_needed = "\n".join(out.get("next_inputs_needed") or [])
-		self.has_warnings = 1 if out.get("warnings") else 0
 
+		extra_issues = []
 		selected = out.get("selected_pump")
 		if selected and not frappe.db.exists("Item", selected):
 			# Don't drop a recommendation silently — say why it vanished.
 			self.next_inputs_needed = (
 				(self.next_inputs_needed + "\n") if self.next_inputs_needed else ""
 			) + _("Recommended pump {0} is not in the Item catalog.").format(selected)
-			self.has_warnings = 1
 			self.selected_pump = None
+			extra_issues.append(design_issues._issue(
+				"PUMP_NOT_IN_CATALOG", design_issues.WARNING,
+				f"Recommended pump {selected} is not in the Item catalog",
+				"pump", scope=str(selected),
+				fix_hint="Create the pump Item (item_group 'Pumps') or pick a cataloged candidate.",
+				calc="select_pump",
+			))
 		else:
 			self.selected_pump = selected or None
 
@@ -105,14 +202,59 @@ class WaterFeatureDesign(Document):
 		self._fill_basin_rows()
 		self._fill_feature_rows()
 		self._fill_segment_rows()
+		self._fill_segment_pressure()
 		self._mark_selected_pump_row()
+		self._apply_issue_state(extra=extra_issues)
+
+	def _apply_issue_state(self, extra=None):
+		"""Derive + persist the typed issues, readiness, and the denormalized
+		counters (list view / workspace cards / Triton read them without loading
+		the doc). ``has_warnings`` now means "any blocker or warning issue" —
+		deliberately wider than the old spine-warnings-only flag, so chemistry /
+		drainage findings finally flip it (the SOURCE_DATA_AUDIT 'CYA never
+		warns' gap)."""
+		issues = design_issues.build_issues(self, extra=extra)
+		readiness = design_issues.build_readiness(self, issues)
+		counts = design_issues.summarize(issues)
+		self.design_issues_json = json.dumps(issues)
+		self.readiness_json = json.dumps(readiness)
+		self.blocker_count = counts["blocker_count"]
+		self.warning_count = counts["warning_count"]
+		self.issue_summary = counts["summary"]
+		self.issue_ready = 1 if readiness.get("issue_ready") else 0
+		self.has_warnings = 1 if (counts["blocker_count"] or counts["warning_count"]) else 0
+		self._issues_cache = issues
+
+	def _fill_segment_pressure(self):
+		"""Per-segment pressure-rating status (DOC-0049 Pipe Specs): the pump puts
+		~TDH ft (= TDH/2.31 psi) on the discharge side; every discharge run's pipe
+		must be rated for it. Surfaced as row fields so the grid (not just the
+		audit trail) shows an under-rated pipe."""
+		tdh = flt(self.computed_tdh_ft)
+		system_psi = tdh / FT_PER_PSI if tdh > 0 else 0
+		default_material = self.pipe_material or "SCH40 PVC"
+		for row in self.get("pipe_segments") or []:
+			is_discharge = (row.line_type or "Discharge").lower().startswith("dis")
+			if not (system_psi and is_discharge and row.nominal_size):
+				row.pressure_status = ""
+				row.pressure_margin_psi = 0
+				continue
+			chk = pipe_pressure_check(row.material or default_material, row.nominal_size, system_psi)
+			row.pressure_status = chk.status or ""
+			row.pressure_margin_psi = flt(chk.value)
 
 	def _compute_chemistry(self):
 		"""Phase-2 water treatment sized off the system (basin) volume; appends
-		its envelopes to the audit trail written by _write_audit_trail."""
+		its envelopes to the audit trail written by _write_audit_trail. The
+		planned CYA / free-chlorine levels thread through so the DOC-0119
+		CYA-coupled chlorine floor can actually warn."""
 		volume = flt(self.total_basin_gallons)
 		feed = chlorinator_feed(volume, flt(self.chem_chlorine_pct) or 10)
-		targets = chemistry_targets(self.chem_water_type or "Outdoor")
+		targets = chemistry_targets(
+			self.chem_water_type or "Outdoor",
+			flt(self.chem_cya_ppm) or None,
+			flt(self.chem_free_cl_ppm) or None,
+		)
 		self.chlorinator_feed_gph = feed.value or 0
 		self.chemistry_targets_summary = "; ".join(targets.steps)
 		for r in (feed, targets):
