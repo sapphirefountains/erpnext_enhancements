@@ -110,6 +110,10 @@ class ProductConfiguration(Document):
 		steps, step_warnings = render_build_steps(product_dict["build_steps"], result["context"])
 		parts = explode_parts(product_dict["components"], result["module_qtys"])
 
+		line_price_by_module = {ln["module_key"]: ln["line_price"] for ln in result["lines"]}
+		for row in self.options:
+			row.line_price = line_price_by_module.get(row.module_key, 0)
+
 		self.part_number = result["part_number"]
 		self.total_parts_cost = flt(result["total_parts_cost"], 2)
 		self.total_labor_hours = result["total_labor_hours"]
