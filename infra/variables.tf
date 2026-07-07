@@ -414,3 +414,9 @@ variable "mig_health_check_port" {
   type        = number
   default     = 8000
 }
+
+variable "provision_cloud_nat" {
+  type        = bool
+  description = "Toggle to active or completely tear down the Cloud NAT egress network gateways"
+  default     = true # Keeps it enabled by default for active VM work
+}
