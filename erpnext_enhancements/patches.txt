@@ -137,3 +137,8 @@ erpnext_enhancements.patches.default_fleet_reminders_on
 # create-if-missing + role-gate each department workspace (replaces the v1.139.0
 # desk-page approach, whose pages are removed as orphans)
 erpnext_enhancements.patches.setup_department_kpi_workspaces
+# v1.142.0 Product Configurator: seed the "Product Engineer" role (insert-only)
+erpnext_enhancements.patches.seed_product_engineer_role
+# v1.142.0 Product Configurator: seed the PDT-0040 STILLWATER E-Stop product
+# definition (options/components/build steps; insert-only, site edits survive)
+erpnext_enhancements.patches.seed_pdt_0040_product

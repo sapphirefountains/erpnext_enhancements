@@ -420,6 +420,11 @@ after_migrate = [
 	# fleet_maintenance: the Vehicle Maintenance Checklist Print Format (idempotent
 	# + guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.fleet_maintenance.setup_print_formats.ensure_fleet_print_formats",
+	# product_configurator: Item provenance field (marks configurator-generated
+	# Items so regenerate can safely reuse them) + the Build Instructions /
+	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
+	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
+	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

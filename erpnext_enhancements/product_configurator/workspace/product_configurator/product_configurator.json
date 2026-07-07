@@ -1,0 +1,133 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"pc_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pc_sc_configs\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Product Configurations\",\"col\":4}},{\"id\":\"pc_sc_products\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Configurable Products\",\"col\":4}},{\"id\":\"pc_sc_boms\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"BOMs\",\"col\":4}},{\"id\":\"pc_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pc_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Product Configurator</b></span>\",\"col\":12}},{\"id\":\"pc_card_config\",\"type\":\"card\",\"data\":{\"card_name\":\"Configurator\",\"col\":4}},{\"id\":\"pc_card_generated\",\"type\":\"card\",\"data\":{\"card_name\":\"Generated Records\",\"col\":4}},{\"id\":\"pc_card_settings\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "creation": "2026-07-02 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "setting-gear",
+ "is_hidden": 0,
+ "label": "Product Configurator",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Configurator",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Product Configuration",
+   "link_count": 0,
+   "link_to": "Product Configuration",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Configurable Product",
+   "link_count": 0,
+   "link_to": "Configurable Product",
+   "link_type": "DocType",
+   "onboard": 1,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Generated Records",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item",
+   "link_count": 0,
+   "link_to": "Item",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "BOM",
+   "link_count": 0,
+   "link_to": "BOM",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Item Price",
+   "link_count": 0,
+   "link_to": "Item Price",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "ERPNext Enhancements Settings",
+   "link_count": 0,
+   "link_to": "ERPNext Enhancements Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-07-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Product Configurator",
+ "name": "Product Configurator",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 46,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Product Configurations",
+   "link_to": "Product Configuration",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Configurable Products",
+   "link_to": "Configurable Product",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "BOMs",
+   "link_to": "BOM",
+   "type": "DocType"
+  }
+ ],
+ "title": "Product Configurator"
+}

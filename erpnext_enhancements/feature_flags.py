@@ -122,6 +122,26 @@ def throw_if_process_automation_disabled():
 		)
 
 
+def product_configurator_enabled():
+	"""True when the Product Configurator's ERPNext generation is switched on.
+
+	Default OFF (the staged-rollout contract): configurations, live pricing and
+	the printable sheets always work — this gates only the endpoints that
+	create ERPNext masters (component Items/Suppliers, the configured Item,
+	BOM and Item Price) and their desk buttons. Flip the checkbox in
+	**ERPNext Enhancements Settings → Product Configurator** — no deploy
+	needed (server guards read the live value; desk buttons pick the flag up
+	from bootinfo on the next page load).
+	"""
+	return bool(
+		cint(
+			frappe.db.get_single_value(
+				"ERPNext Enhancements Settings", "product_configurator_enabled"
+			)
+		)
+	)
+
+
 def throw_if_document_merge_disabled():
 	"""Guard for the Document Merge whitelisted endpoints."""
 	if not document_merge_enabled():
@@ -129,6 +149,18 @@ def throw_if_document_merge_disabled():
 			frappe._(
 				"The Document Merge tool is currently switched off "
 				"(ERPNext Enhancements Settings → Document Merge)."
+			),
+			title=frappe._("Feature Disabled"),
+		)
+
+
+def throw_if_product_configurator_disabled():
+	"""Guard for the Product Configurator generation endpoints."""
+	if not product_configurator_enabled():
+		frappe.throw(
+			frappe._(
+				"The Product Configurator's ERPNext generation is currently switched "
+				"off (ERPNext Enhancements Settings → Product Configurator)."
 			),
 			title=frappe._("Feature Disabled"),
 		)
