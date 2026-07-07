@@ -60,7 +60,7 @@
         const body = container.querySelector("#fas-body");
         const select = container.querySelector("#fas-sign");
 
-        const current = storedSign() && SIGNS.includes(storedSign()) ? storedSign() : "Leo";
+        const current = storedSign() && SIGNS.includes(storedSign()) ? storedSign() : "Capricorn";
         select.innerHTML = SIGNS.map(
             (s) => `<option value="${s}"${s === current ? " selected" : ""}>${s}</option>`,
         ).join("");
