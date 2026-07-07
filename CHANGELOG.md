@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.148.0] - 2026-07-07
+
+### Changed
+- The Daily Horoscope widget's default sign is now **Capricorn** (was Leo). Applies only to browsers that haven't picked a sign yet — a sign chosen via the widget's dropdown is remembered per browser (localStorage) and always wins.
+
 ## [1.147.0] - 2026-07-07
 
 ### Fixed
