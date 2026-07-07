@@ -74,18 +74,39 @@ resource "google_compute_health_check" "mig_health_check" {
   unhealthy_threshold = 3
 }
 
+# 🌐 Updated Load Balancer Firewall Rule (Supports App Traffic + Health Checks)
 resource "google_compute_firewall" "allow_lb_to_mig" {
-  count   = (var.provision_prod_mig || var.provision_test_mig) ? 1 : 0
-  name    = "allow-lb-to-mig"
-  network = local.network_name
-  project = module.project.project_id
+  count     = (var.provision_prod_mig || var.provision_test_mig) ? 1 : 0
+  name      = "allow-lb-to-mig"
+  network   = local.network_id 
+  project   = module.project.project_id
+  direction = "INGRESS"
 
   allow {
     protocol = "tcp"
-    ports    = [var.mig_health_check_port]
+    ports    = [var.mig_health_check_port, "80", "443"]
   }
 
   source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
+  target_tags   = ["erpnext-mig-node"]
+}
+
+# 🔒 New Secure SSH Tunneling Rule (Enables Secure gcloud compute ssh)
+resource "google_compute_firewall" "allow_ssh_to_mig" {
+  count     = (var.provision_prod_mig || var.provision_test_mig) ? 1 : 0
+  name      = "allow-ssh-to-mig"
+  network   = local.network_id
+  project   = module.project.project_id
+  direction = "INGRESS"
+  priority  = 1000
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  # Strictly limited to Google Cloud's secure internal IAP proxy range
+  source_ranges = ["35.235.240.0/20"] 
   target_tags   = ["erpnext-mig-node"]
 }
 
