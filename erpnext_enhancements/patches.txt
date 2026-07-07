@@ -133,10 +133,10 @@ erpnext_enhancements.patches.seed_fleet_manager_role
 # v1.138.0 Fleet Maintenance: default the "Send Fleet Reminders" toggle ON for
 # existing installs (new sites get it from the Check field default at doc creation)
 erpnext_enhancements.patches.default_fleet_reminders_on
-# v1.140.0 per-department KPI dashboards become role-gated, editable Workspaces:
-# create-if-missing + role-gate each department workspace (replaces the v1.139.0
-# desk-page approach, whose pages are removed as orphans)
-erpnext_enhancements.patches.setup_department_kpi_workspaces
+# v1.140.0 patch setup_department_kpi_workspaces (create + role-gate the
+# department KPI workspaces) was RETIRED in v1.146.0: the 8 dashboards now ship
+# as standard KPI Dashboards module workspaces (kpi_dashboards/workspace/), so
+# fresh installs get them — roles included — from JSON sync
 # v1.142.0 Product Configurator: seed the "Product Engineer" role (insert-only)
 erpnext_enhancements.patches.seed_product_engineer_role
 # v1.142.0 Product Configurator: seed the PDT-0040 STILLWATER E-Stop product

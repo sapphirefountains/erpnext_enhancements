@@ -63,10 +63,12 @@ HOME_WORKSPACE = "Home"
 
 # The KPI Cockpit (with its department picker) lands on Home and on each
 # department workspace below, where it auto-locks to that department by route
-# (see custom_html_blocks/kpi_cockpit.js). These workspaces are role-gated and
-# created-if-missing by patches.setup_department_kpi_workspaces, so each
-# department gets its own private, editable KPI dashboard; this tuple is the
-# single source of truth for those workspace names.
+# (see custom_html_blocks/kpi_cockpit.js). The department workspaces ship as
+# role-gated standard workspaces of the KPI Dashboards module
+# (kpi_dashboards/workspace/) so they group with the app's other module
+# sidebars; their JSONs already carry these blocks, and this append is the
+# backstop that restores a block if a site's workspace lost it. Keep this tuple
+# in sync with those workspace names.
 KPI_COCKPIT = "KPI Cockpit"
 KPI_DEPARTMENT_DASHBOARDS = (
 	"Finance Dashboard",
@@ -79,10 +81,10 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Executive Dashboard",
 )
 
-# Operational widgets placed only on the Finance Dashboard workspace (in this
-# order, after the KPI Cockpit). Site-created workspace; placement is skipped
-# silently if it's absent. Each block is additionally role-gated + toggle-gated
-# server-side, so a placed-but-disabled block just renders a muted notice.
+# Operational widgets placed only on the Finance Dashboard workspace (shipped
+# in its module workspace JSON; this append is the backstop if a block goes
+# missing). Each block is additionally role-gated + toggle-gated server-side,
+# so a placed-but-disabled block just renders a muted notice.
 FINANCE_DASHBOARD = "Finance Dashboard"
 FINANCE_DASHBOARD_BLOCKS = (
 	"Finance New Jobs",
@@ -216,10 +218,10 @@ def _merge_blocks(blocks, block_names):
 def _append_custom_blocks(workspace_name, block_names):
 	"""Append any missing block to ``workspace_name``'s content (idempotent).
 
-	Returns True if the content changed. A missing workspace is skipped silently
-	(the department dashboards are site-created and need not exist on every site).
-	The column is written directly (not ``doc.save``) so saving a standard/public
-	workspace can't trigger a JSON file export in developer-mode benches."""
+	Returns True if anything changed. A missing workspace is skipped silently
+	(sync order or a partially-set-up site may leave one absent). The column is
+	written directly (not ``doc.save``) so saving a standard/public workspace
+	can't trigger a JSON file export in developer-mode benches."""
 	if not frappe.db.exists("Workspace", workspace_name):
 		return False
 
@@ -232,4 +234,48 @@ def _append_custom_blocks(workspace_name, block_names):
 	blocks, changed = _merge_blocks(blocks, block_names)
 	if changed:
 		frappe.db.set_value("Workspace", workspace_name, "content", json.dumps(blocks))
+	if _ensure_custom_block_rows(workspace_name, block_names):
+		changed = True
 	return changed
+
+
+def _ensure_custom_block_rows(workspace_name, block_names):
+	"""Insert any missing "Workspace Custom Block" child row (idempotent).
+
+	The v16 desk renders a content ``custom_block`` only when the Workspace also
+	carries a matching child row — the server builds the block payload from
+	``doc.custom_blocks``, not from content (frappe desktop.py get_custom_blocks),
+	so a content-only placement silently renders an empty div. Runs even when the
+	content already lists the block (pre-v1.146.0 placements wrote content only).
+	Rows are inserted directly for the same no-``doc.save`` reason as above.
+	Returns True if a row was added."""
+	existing = {
+		row.custom_block_name
+		for row in frappe.get_all(
+			"Workspace Custom Block",
+			filters={"parenttype": "Workspace", "parent": workspace_name},
+			fields=["custom_block_name"],
+		)
+	}
+
+	added = False
+	next_idx = len(existing)
+	for name in block_names:
+		if name in existing:
+			continue
+		next_idx += 1
+		frappe.get_doc(
+			{
+				"doctype": "Workspace Custom Block",
+				"parenttype": "Workspace",
+				"parentfield": "custom_blocks",
+				"parent": workspace_name,
+				"custom_block_name": name,
+				"label": name,
+				"idx": next_idx,
+			}
+		).insert(ignore_permissions=True)
+		existing.add(name)
+		added = True
+
+	return added

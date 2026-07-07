@@ -46,6 +46,9 @@ import "./telephony_client.js";
 // global_enhancements
 import "./global_enhancements/quill_mentions.js";
 import "./global_enhancements/global_sidebar.js";
+// Drops localStorage sidebar picks that point at deleted Workspace Sidebars
+// (the desk trusts them blindly and never validates them)
+import "./global_enhancements/sidebar_pref_heal.js";
 import "./global_enhancements/auto_collapse_sidebar.js";
 import "./global_enhancements/unlink_and_delete.js";
 // Generic document merge — global "Merge into…" form button + list bulk merge
