@@ -60,14 +60,22 @@ class FieldInfo:
 def build_universe(doctype, bench_root, custom_fields, registry):
     """Ordered standard fields + custom/registry fields for one doctype."""
     dt_json = load_json(Path(bench_root) / DOCTYPE_PATHS[doctype])
-    # the JSON's "fields" array is not in display order — "field_order" is
+    # the JSON's "fields" array is not in display order — "field_order" is.
+    # Fields present in "fields" but absent from "field_order" DO exist in live
+    # meta: Frappe appends them at the end (doctype.py prepare_for_import), so
+    # mirror that. The reverse (field_order naming a field with no definition)
+    # is real corruption.
     defs = {f["fieldname"]: f for f in dt_json["fields"]}
-    if set(dt_json["field_order"]) != set(defs):
-        raise LintError(f"{doctype}: bench JSON field_order does not match fields array")
+    unknown = [n for n in dt_json["field_order"] if n not in defs]
+    if unknown:
+        raise LintError(f"{doctype}: bench field_order references undefined fields: {unknown}")
+    display_order = list(dt_json["field_order"]) + [
+        f["fieldname"] for f in dt_json["fields"] if f["fieldname"] not in set(dt_json["field_order"])
+    ]
     standard = [
         FieldInfo(n, defs[n].get("fieldtype"), defs[n].get("reqd"), defs[n].get("hidden"),
                   "standard", defs[n].get("show_dashboard"))
-        for n in dt_json["field_order"]
+        for n in display_order
     ]
     extra = [
         FieldInfo(r["fieldname"], r.get("fieldtype"), r.get("reqd"), r.get("hidden"), "fixture")
@@ -205,9 +213,11 @@ def lint(doctype, order, universe, spec):
         if not has and not hidden[t] and not universe[t].show_dashboard:
             errors.append(f"visible Tab Break {t!r} has no visible leaf fields")
 
-    # 4. reqd fields visible and before the first Tab Break
+    # 4. reqd fields visible and on the first tab (a layout may open with an
+    # explicit Tab Break — Item does — so the first tab ends at the next one)
     whitelist = set(spec.get("reqd_after_first_tab_ok", []))
-    first_tab = next((i for i, n in enumerate(order) if ft[n] == "Tab Break"), len(order))
+    start = 1 if order and ft[order[0]] == "Tab Break" else 0
+    first_tab = next((i for i, n in enumerate(order) if i >= start and ft[n] == "Tab Break"), len(order))
     for i, n in enumerate(order):
         if not universe[n].reqd or n in whitelist:
             continue

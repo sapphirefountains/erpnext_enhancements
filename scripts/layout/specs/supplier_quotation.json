@@ -1,0 +1,93 @@
+{
+ "doctype": "Supplier Quotation",
+ "layout": [
+  "supplier_section",
+  "naming_series",
+  "supplier",
+  "supplier_name",
+  "quotation_number",
+  "company",
+  "column_break1",
+  "transaction_date",
+  "valid_till",
+  "status",
+  "project",
+  "has_unit_price_items",
+  "amended_from",
+  {
+   "section": "currency_and_price_list"
+  },
+  {
+   "section": "items_section"
+  },
+  {
+   "section": "section_break_22"
+  },
+  {
+   "section": "taxes_section"
+  },
+  {
+   "section": "section_break_38"
+  },
+  {
+   "section": "totals"
+  },
+  {
+   "section": "section_break_46"
+  },
+  {
+   "section": "section_break_41"
+  },
+  {
+   "tab": "address_and_contact_tab"
+  },
+  {
+   "tab": "terms_tab"
+  },
+  "more_info_tab",
+  {
+   "section": "accounting_dimensions_section"
+  },
+  {
+   "section": "tax_breakup"
+  },
+  {
+   "section": "pricing_rule_details"
+  },
+  {
+   "section": "printing_settings"
+  },
+  {
+   "section": "auto_repeat_section"
+  },
+  {
+   "section": "more_info"
+  },
+  {
+   "tab": "connections_tab"
+  },
+  "custom_comments_tab",
+  "custom_comments_field",
+  "custom_comments"
+ ],
+ "setters": [
+  {
+   "field": "pricing_rule_details",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  },
+  {
+   "field": "auto_repeat_section",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  },
+  {
+   "field": "accounting_dimensions_section",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  }
+ ]
+}

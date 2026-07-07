@@ -1,0 +1,101 @@
+{
+ "doctype": "Item",
+ "layout": [
+  "details",
+  "naming_series",
+  "item_code",
+  "custom_sku",
+  "custom_item_identifier",
+  "item_name",
+  "item_group",
+  "stock_uom",
+  "image",
+  "column_break0",
+  "disabled",
+  "is_stock_item",
+  "is_fixed_asset",
+  "auto_create_assets",
+  "is_grouped_asset",
+  "asset_category",
+  "asset_naming_series",
+  {
+   "section": "section_break_zlmj"
+  },
+  "section_break_gjns",
+  "standard_rate",
+  "custom_purchase_link",
+  "column_break_ixrh",
+  "opening_stock",
+  {
+   "section": "section_break_11"
+  },
+  "custom_pump_section",
+  "custom_rated_gpm",
+  "custom_rated_tdh_ft",
+  "custom_pump_hp",
+  "custom_pump_phase",
+  "custom_pump_voltage",
+  "custom_pump_fla_amps",
+  "custom_pump_cut_sheet",
+  "custom_pump_curve",
+  "custom_pump_curve_chart",
+  {
+   "section": "section_break_znra"
+  },
+  {
+   "tab": "inventory_section"
+  },
+  {
+   "tab": "purchasing_tab"
+  },
+  {
+   "tab": "sales_details"
+  },
+  {
+   "tab": "uom_tab"
+  },
+  {
+   "tab": "item_tax_section_break"
+  },
+  {
+   "tab": "accounting"
+  },
+  {
+   "tab": "manufacturing"
+  },
+  {
+   "tab": "quality_tab"
+  },
+  {
+   "tab": "variants_section"
+  },
+  "pricing_tab",
+  "prices_html",
+  "item_prices_column",
+  {
+   "tab": "dashboard_tab"
+  },
+  "custom_comments",
+  "custom_comments_field"
+ ],
+ "setters": [
+  {
+   "field": "section_break_znra",
+   "property": "label",
+   "value": "Tolerances",
+   "property_type": "Data"
+  },
+  {
+   "field": "section_break_znra",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  },
+  {
+   "field": "section_break_gjns",
+   "property": "label",
+   "value": "Pricing",
+   "property_type": "Data"
+  }
+ ]
+}

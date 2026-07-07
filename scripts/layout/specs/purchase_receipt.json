@@ -1,0 +1,108 @@
+{
+ "doctype": "Purchase Receipt",
+ "reqd_after_first_tab_ok": [
+  "status"
+ ],
+ "layout": [
+  "supplier_section",
+  "naming_series",
+  "supplier",
+  "supplier_name",
+  "supplier_delivery_note",
+  "column_break0",
+  "posting_date",
+  "posting_time",
+  "set_posting_time",
+  "column_break1",
+  "company",
+  "project",
+  "subcontracting_receipt",
+  "column_break_12",
+  "apply_putaway_rule",
+  "is_return",
+  "return_against",
+  {
+   "section": "currency_and_price_list"
+  },
+  {
+   "section": "sec_warehouse"
+  },
+  {
+   "section": "items_section"
+  },
+  {
+   "section": "section_break0"
+  },
+  {
+   "section": "taxes_charges_section"
+  },
+  {
+   "section": "taxes_section"
+  },
+  {
+   "section": "totals"
+  },
+  {
+   "section": "totals_section"
+  },
+  {
+   "section": "base_totals_section"
+  },
+  {
+   "section": "section_break_42"
+  },
+  {
+   "tab": "address_and_contact_tab"
+  },
+  {
+   "tab": "terms_tab"
+  },
+  "more_info_tab",
+  {
+   "section": "status_section"
+  },
+  {
+   "section": "accounting_dimensions_section"
+  },
+  {
+   "section": "sec_tax_breakup"
+  },
+  {
+   "section": "pricing_rule_details"
+  },
+  {
+   "section": "raw_material_details"
+  },
+  {
+   "section": "subscription_detail"
+  },
+  {
+   "section": "printing_settings"
+  },
+  {
+   "section": "transporter_info"
+  },
+  {
+   "section": "additional_info_section"
+  },
+  {
+   "tab": "connections_tab"
+  },
+  "custom_comments",
+  "custom_comments_field"
+ ],
+ "setters": [
+  {
+   "field": "subscription_detail",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  },
+  {
+   "field": "additional_info_section",
+   "property": "collapsible",
+   "value": "1",
+   "property_type": "Check"
+  }
+ ]
+}
