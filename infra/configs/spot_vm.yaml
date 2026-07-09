@@ -11,7 +11,10 @@ ${spot_vm_name}:
       image: "projects/debian-cloud/global/images/family/debian-12"
       size: 50
       type: "pd-ssd"
-  attached_disks: {}
+  
+  # 🎯 THE FIX: Pass a pre-encoded JSON string array here to avoid YAML syntax clashing
+  attached_disks: ${attached_disks_json}
+
   service_account:
     auto_create: true
   metadata: {}

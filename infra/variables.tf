@@ -163,6 +163,25 @@ variable "provision_compute_vm" {
   default     = false
 }
 
+variable "enable_vm_persistence" {
+  type        = bool
+  description = "If true, attaches a secondary data disk and local SSD scratch disk to the VMs"
+  default     = false
+}
+
+variable "vm_data_disk_size" {
+  type        = number
+  description = "The capacity in GB for the persistent storage block"
+  default     = 200
+}
+
+variable "vm_local_ssd_count" {
+  type        = number
+  description = "The number of local SSD scratch arrays to provision"
+  default     = 1
+}
+
+
 variable "standard_vm_name" {
   type        = string
   description = "The deployment name for the standard compute VM instance"

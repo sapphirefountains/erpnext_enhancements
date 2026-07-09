@@ -16,6 +16,30 @@
 
 # Compute VM Module: Provisions standard VM instances
 locals {
+  # 1. Dynamically construct the disk list array purely in HCL logic
+  raw_attached_disks = var.enable_vm_persistence ? concat(
+    [
+      {
+        device_name  = "erpnext-data"
+        disk_size_gb = var.vm_data_disk_size
+        disk_type    = "pd-balanced"
+        mode         = "READ_WRITE"
+        type         = "PERSISTENT"
+      }
+    ],
+    [
+      for i in range(var.vm_local_ssd_count) : {
+        device_name  = "local-ssd-${i}"
+        disk_size_gb = 375
+        disk_type    = "local-ssd"
+        interface    = "NVME"
+        mode         = "READ_WRITE"
+        type         = "SCRATCH"
+      }
+    ]
+  ) : []
+
+  # 2. Inject configuration keys and pre-encoded strings cleanly into templates
   compute_vm_config = yamldecode(templatefile("${path.module}/configs/compute_vm.yaml", {
     compute_machine_type      = var.compute_machine_type
     standard_vm_name          = var.standard_vm_name
@@ -23,14 +47,17 @@ locals {
     region                    = var.region
     network                   = local.network_id
     subnetwork                = local.subnetwork_self_link
+    attached_disks_json       = jsonencode(local.raw_attached_disks) 
   }))
+
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
-    region                    = var.region
-    spot_machine_type         = var.spot_machine_type
-    spot_vm_name              = var.spot_vm_name
-    enable_spot_public_ip     = var.enable_spot_public_ip
-    network                   = local.network_id
-    subnetwork                = local.subnetwork_self_link
+    region                = var.region
+    spot_machine_type     = var.spot_machine_type
+    spot_vm_name          = var.spot_vm_name
+    enable_spot_public_ip = var.enable_spot_public_ip
+    network               = local.network_id
+    subnetwork            = local.subnetwork_self_link
+    attached_disks_json   = jsonencode(local.raw_attached_disks) 
   }))
 }
 
