@@ -4,38 +4,84 @@ app-glb:
   urlmap_config:
     description: "Application Gateway routing rules"
     default_service: "${default_service}"
+  
+  # ============================================================================
+  # 1. Network Endpoint Groups (NEGs) for Standalone Backends
+  # ============================================================================
   neg_configs:
-    %{ if provision_cloud_run }
+    # 🎯 Zonal NEG setup for Standalone Production VM
+    #%{ if provision_compute_vm }
+    ${standalone_vm_neg_name}:
+      type: zonal
+      zone: ${region}-b
+    #%{ endif }
+    # 🎯 Zonal NEG setup for Staging Spot VM
+    #%{ if provision_spot_vm }
+    ${spot_vm_neg_name}:
+      type: zonal
+      zone: ${region}-b
+    #%{ endif }
+    # Serverless NEG setup for Cloud Run
+    #%{ if provision_cloud_run }
     frontend-neg:
       cloudrun:
         region: ${region}
         target_service:
           name: "frontend-service"
-    %{ endif }
+    #%{ endif }
+
+  # ============================================================================
+  # 2. Backend Service Route Assignments
+  # ============================================================================
   backend_service_configs:
-    %{ if provision_cloud_run }
+    # Standalone Production VM Routing Entry Block
+    #%{ if provision_compute_vm }
+    production-vm-backend:
+      backends:
+        - backend: "${standalone_vm_neg_name}"
+      health_checks: ["$$mig_health_check_id"]
+      port_name: "http"
+    #%{ endif }
+
+    # Staging Spot VM Routing Entry Block
+    #%{ if provision_spot_vm }
+    spot_vm_backend:
+      backends:
+        - backend: "${spot_vm_neg_name}"
+      health_checks: ["$$mig_health_check_id"]
+      port_name: "http"
+    #%{ endif }
+
+    # Cloud Run Routing Entry Block
+    #%{ if provision_cloud_run }
     frontend-neg:
       backends:
         - backend: "frontend-neg"
       health_checks: []
       port_name: ""
-    %{ endif }
-    %{ if provision_prod_mig }
+    #%{ endif }
+
+    # Legacy MIG Entry Blocks (Kept for backwards compatibility fallback)
+    #%{ if provision_prod_mig }
     prod-mig-backend:
       backends:
         - backend: "$$prod_mig_group"
           balancing_mode: "UTILIZATION"
       health_checks: ["$$mig_health_check_id"]
       port_name: "http"
-    %{ endif }
-    %{ if provision_test_mig }
+    #%{ endif }
+    #%{ if provision_test_mig }
     test-mig-backend:
       backends:
         - backend: "$$test_mig_group"
           balancing_mode: "UTILIZATION"
       health_checks: ["$$mig_health_check_id"]
       port_name: "http"
-    %{ endif }
+    #%{ endif }
+
+  # ============================================================================
+  # 3. Global Edge Network Infrastructure Blocks
+  # ============================================================================
   backend_buckets_config: {}
   forwarding_rules_config:
     https-rule:

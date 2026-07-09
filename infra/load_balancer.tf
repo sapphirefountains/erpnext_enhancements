@@ -29,18 +29,25 @@ locals {
   mig_health_check_id = length(google_compute_health_check.erpnext_standalone_health_check) > 0 ? google_compute_health_check.erpnext_standalone_health_check[0].id : ""
 
   default_service = (
-    var.provision_prod_mig ? "prod-mig-backend" :
-    (var.provision_test_mig ? "test-mig-backend" : "frontend-neg")
+    var.provision_prod_mig   ? "prod-mig-backend" :
+    var.provision_test_mig   ? "test-mig-backend" :
+    var.provision_compute_vm ? "production-vm-backend" :
+    var.provision_spot_vm    ? "spot-vm-backend" :
+    var.provision_cloud_run  ? "frontend-neg" : "production-vm-backend"
   )
 
   load_balancer_config = yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
-    glb_ip_name          = var.glb_ip_name
-    region               = var.region
-    ssl_map_name         = var.ssl_map_name
-    provision_prod_mig   = var.provision_prod_mig
-    provision_test_mig   = var.provision_test_mig
-    provision_cloud_run  = var.provision_cloud_run
-    default_service      = local.default_service
+    glb_ip_name            = var.glb_ip_name
+    region                 = var.region
+    ssl_map_name           = var.ssl_map_name
+    provision_prod_mig     = var.provision_prod_mig
+    provision_test_mig     = var.provision_test_mig
+    provision_compute_vm   = var.provision_compute_vm
+    provision_spot_vm      = var.provision_spot_vm        # 🚀 ADD THIS ENTRY
+    provision_cloud_run    = var.provision_cloud_run
+    standalone_vm_neg_name = try(var.standalone_vm_neg_name, "production-vm-neg")
+    spot_vm_neg_name       = try(var.spot_vm_neg_name, "test-erpnext-spot-vm-neg") # 🚀 ADD THIS ENTRY
+    default_service        = local.default_service
   }))
 
   # 1. Decoupled IP Address Resolution

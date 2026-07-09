@@ -205,6 +205,29 @@ variable "enable_iap_ssh_firewall" {
   default     = true
 }
 
+variable "provision_cloud_run" {
+  type        = bool
+  description = "If true, configures the load balancer to route traffic to Cloud Run serverless backends"
+  default     = false
+}
+
+variable "cloud_run_service_name" {
+  type        = string
+  description = "The target deployment name of the Cloud Run service container microapp"
+  default     = "sapphire-microservice"
+}
+
+variable "standalone_vm_neg_name" {
+  type        = string
+  description = "The identifier name for the unmanaged/zonal network endpoint group wrapping the production VM"
+  default     = "production-vm-neg"
+}
+variable "spot_vm_neg_name" {
+  type        = string
+  description = "The network endpoint group identifier name for the staging spot VM routing block"
+  default     = "test-erpnext-spot-vm-neg"
+}
+
 
 variable "standard_vm_name" {
   type        = string
