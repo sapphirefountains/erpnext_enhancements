@@ -205,11 +205,11 @@ variable "enable_iap_ssh_firewall" {
   default     = true
 }
 
-variable "provision_cloud_run" {
-  type        = bool
-  description = "If true, configures the load balancer to route traffic to Cloud Run serverless backends"
-  default     = false
-}
+# variable "provision_cloud_run" {
+#   type        = bool
+#   description = "If true, configures the load balancer to route traffic to Cloud Run serverless backends"
+#   default     = false
+# }
 
 variable "cloud_run_service_name" {
   type        = string
