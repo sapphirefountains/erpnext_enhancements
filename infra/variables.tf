@@ -98,6 +98,18 @@ variable "vm_ip_external" {
   default     = false
 }
 
+variable "enable_standard_public_ip" {
+  type        = bool
+  description = "If true, assigns a public external IP to the standard VM"
+  default     = false
+}
+
+variable "enable_spot_public_ip" {
+  type        = bool
+  description = "If true, assigns a public external IP to the spot VM"
+  default     = false
+}
+
 variable "use_default_vpc" {
   description = "Toggle to use the pre-existing default VPC and default subnet in the project instead of creating a custom VPC."
   type        = bool

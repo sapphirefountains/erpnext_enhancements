@@ -4,7 +4,7 @@ ${standard_vm_name}::
   network_interfaces:
     - network: ${network}
       subnetwork: ${subnetwork}
-      nat: true
+      nat: "${enable_standard_public_ip ? \"true\" : \"null\"}"
       addresses: null
   boot_disk:
     initialize_params:
