@@ -1,4 +1,4 @@
-web-server-vm:
+${standard_vm_name}::
   zone: ${region}-a
   machine_type: ${compute_machine_type}
   network_interfaces:

@@ -18,6 +18,7 @@
 locals {
   compute_vm_config = yamldecode(templatefile("${path.module}/configs/compute_vm.yaml", {
     compute_machine_type = var.compute_machine_type
+    standard_vm_name     = var.standard_vm_name
     region               = var.region
     network              = local.network_id
     subnetwork           = local.subnetwork_self_link
@@ -25,6 +26,7 @@ locals {
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
     region            = var.region
     spot_machine_type = var.spot_machine_type
+    spot_vm_name      = var.spot_vm_name
     network           = local.network_id
     subnetwork        = local.subnetwork_self_link
   }))

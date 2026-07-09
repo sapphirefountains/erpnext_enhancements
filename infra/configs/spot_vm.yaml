@@ -1,4 +1,4 @@
-batch-job-vm:
+${spot_vm_name}:
   zone: ${region}-b
   machine_type: ${spot_machine_type}
   network_interfaces:

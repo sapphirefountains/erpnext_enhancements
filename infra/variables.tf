@@ -151,6 +151,18 @@ variable "provision_compute_vm" {
   default     = false
 }
 
+variable "standard_vm_name" {
+  type        = string
+  description = "The deployment name for the standard compute VM instance"
+  default     = "standard-vm"
+}
+
+variable "spot_vm_name" {
+  type        = string
+  description = "The deployment name for the ephemeral spot VM instance"
+  default     = "spot-vm"
+}
+
 variable "provision_iam" {
   description = "Toggle to enable/disable IAM permissions setup."
   type        = bool
