@@ -121,8 +121,25 @@
 # }
 
 
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+# Compute VM Module: Provisions standard VM instances
 locals {
-  # 1. 🎯 FIXED: Construct disks as a structured MAP of objects instead of a list using merge()
+  # 1. Construct disks as a structured MAP of objects instead of a list using merge()
   raw_attached_disks = var.enable_vm_persistence ? merge(
     {
       "data-disk" = {
@@ -175,8 +192,15 @@ module "compute_vm" {
   name         = each.key
   machine_type = try(each.value.machine_type, null)
 
-  # 🎯 FIXED: Passed directly as a Boolean to match your module input type requirements
-  network_interfaces = try(each.value.network_interfaces, null) != null ? true : false
+  # 🎯 RECONCILED FIX: Build a clean list of objects to satisfy type validation constraints
+  network_interfaces = [
+    for ni in try(each.value.network_interfaces, []) : {
+      network    = ni.network
+      subnetwork = ni.subnetwork
+      nat        = ni.nat == "true" ? true : false  # Translates string literal into real HCL boolean
+      addresses  = try(ni.addresses, null)
+    }
+  ]
 
   boot_disk       = try(each.value.boot_disk, null)
   attached_disks  = try(each.value.attached_disks, null)
@@ -194,8 +218,15 @@ module "spot_vm" {
   name         = each.key
   machine_type = try(each.value.machine_type, null)
 
-  # 🎯 FIXED: Passed directly as a Boolean to match your module input type requirements
-  network_interfaces = try(each.value.network_interfaces, null) != null ? true : false
+  # 🎯 RECONCILED FIX: Build a clean list of objects to satisfy type validation constraints
+  network_interfaces = [
+    for ni in try(each.value.network_interfaces, []) : {
+      network    = ni.network
+      subnetwork = ni.subnetwork
+      nat        = ni.nat == "true" ? true : false  # Translates string literal into real HCL boolean
+      addresses  = try(ni.addresses, null)
+    }
+  ]
 
   boot_disk       = try(each.value.boot_disk, null)
   attached_disks  = try(each.value.attached_disks, null)
