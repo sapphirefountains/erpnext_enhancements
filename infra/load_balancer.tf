@@ -25,8 +25,9 @@
 locals {
   prod_mig_groups     = local.resolved_prod_mig_groups
   test_mig_groups     = local.resolved_test_mig_groups
-  mig_health_check_id = length(google_compute_health_check.mig_health_check) > 0 ? google_compute_health_check.mig_health_check[0].id : ""
-  
+  # mig_health_check_id = length(google_compute_health_check.mig_health_check) > 0 ? google_compute_health_check.mig_health_check[0].id : ""
+  mig_health_check_id = length(google_compute_health_check.erpnext_standalone_health_check) > 0 ? google_compute_health_check.erpnext_standalone_health_check[0].id : ""
+
   default_service = (
     var.provision_prod_mig ? "prod-mig-backend" :
     (var.provision_test_mig ? "test-mig-backend" : "frontend-neg")
@@ -74,7 +75,7 @@ module "load_balancer" {
   name                    = each.key
   backend_buckets_config  = try(each.value.backend_buckets_config, {})
   backend_service_configs = {
-    for bs_k, bs_v in try(each.value.backend_service_configs, {}) :
+    for bs_k, bs_v in coalesce(try(each.value.backend_service_configs, {}), {}) :
     bs_k => merge(bs_v, {
       backends = flatten([
         for b in try(bs_v.backends, []) : (
