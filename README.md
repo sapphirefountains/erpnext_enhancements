@@ -56,6 +56,7 @@ erpnext_enhancements/                 ← the Python package (one folder per Fra
 ├── script_migrations/               ← Python ports of legacy DB-stored Client/Server Scripts
 ├── patches/                          ← one-time migration scripts (run by `bench migrate`)
 ├── setup/                            ← idempotent setup run after every migrate (custom fields, etc.)
+├── scripts/                          ← build/codegen tools (contract template pipeline, form-layout generator)
 ├── utils/                            ← shared helpers (global Triton sync, delete patching)
 ├── fixtures/                         ← exported records installed on migrate (custom fields, workflows…)
 ├── public/                           ← browser assets (JS form scripts, CSS, kiosk front-end)
@@ -95,6 +96,7 @@ Shared / cross-cutting code (not a Frappe module):
 | `api/` | Whitelisted HTTP endpoints | [README](erpnext_enhancements/api/README.md) |
 | `script_migrations/` | Ported Client/Server Scripts (wired via `doc_events`) | [README](erpnext_enhancements/script_migrations/README.md) |
 | `patches/` | One-time migration scripts | [README](erpnext_enhancements/patches/README.md) |
+| `scripts/` | Build/codegen tools — contract template pipeline (docx→Jinja) and form-layout spec compiler that regenerates Property Setter fixtures | [README](scripts/layout/README.md) · [README](scripts/contract_templates/README.md) |
 | `public/` | Browser assets (JS/CSS) | [README](erpnext_enhancements/public/README.md) |
 | `www/` | Time Kiosk PWA shell | [README](erpnext_enhancements/www/README.md) |
 | `tests/` | Test suite | [README](erpnext_enhancements/tests/README.md) |
@@ -211,6 +213,7 @@ Two suites are deliberately bench-free and run with plain `pytest`/`unittest`: `
 
 - **Server modules:** [Enhancements Core](erpnext_enhancements/enhancements_core/README.md) · [Project Enhancements](erpnext_enhancements/project_enhancements/README.md) · [Sapphire Maintenance](erpnext_enhancements/sapphire_maintenance/README.md) · [CRM Enhancements](erpnext_enhancements/crm_enhancements/README.md) · [Global Enhancements](erpnext_enhancements/global_enhancements/README.md) · [Task Enhancements](erpnext_enhancements/task_enhancements/README.md) · [Travel Management](erpnext_enhancements/travel_management/README.md) · [QuickBooks Time Integration](erpnext_enhancements/quickbooks_time_integration/README.md)
 - **Cross-cutting:** [API endpoints](erpnext_enhancements/api/README.md) · [Script migrations](erpnext_enhancements/script_migrations/README.md) · [Patches](erpnext_enhancements/patches/README.md) · [Frontend assets](erpnext_enhancements/public/README.md) · [Time Kiosk PWA](erpnext_enhancements/www/README.md) · [Tests](erpnext_enhancements/tests/README.md) · [Custom HTML Block](Custom%20HTML%20Block/README.md)
+- **Build/codegen tools:** [Contract template pipeline](scripts/contract_templates/README.md) · [Form layout generator](scripts/layout/README.md)
 - **Reference:** [`CHANGELOG.md`](CHANGELOG.md) · [`hooks.py`](erpnext_enhancements/hooks.py) (annotated)
 
 ## Contributing
