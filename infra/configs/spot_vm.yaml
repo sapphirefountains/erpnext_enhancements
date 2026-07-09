@@ -4,7 +4,7 @@ ${spot_vm_name}:
   network_interfaces:
     - network: ${network}
       subnetwork: ${subnetwork}
-      nat: "${enable_spot_public_ip ? \"true\" : \"null\"}"
+      nat: "${nat_ip_resolved}"
       addresses: null
   boot_disk:
     initialize_params:
