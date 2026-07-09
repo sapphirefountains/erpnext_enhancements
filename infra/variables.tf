@@ -181,6 +181,30 @@ variable "vm_local_ssd_count" {
   default     = 1
 }
 
+variable "enable_standalone_health_check" {
+  type        = bool
+  description = "Toggles the creation of the global HTTP health check for backend load balancing"
+  default     = true
+}
+
+variable "health_check_port" {
+  type        = number
+  description = "The target port the load balancer will query (80 for production NGINX)"
+  default     = 80
+}
+
+variable "enable_lb_firewall" {
+  type        = bool
+  description = "If true, provisions the firewall rule allowing external HTTP/HTTPS load balancer traffic and health checks"
+  default     = true
+}
+
+variable "enable_iap_ssh_firewall" {
+  type        = bool
+  description = "If true, provisions the firewall rule allowing secure SSH tunneling via Google Identity-Aware Proxy (IAP)"
+  default     = true
+}
+
 
 variable "standard_vm_name" {
   type        = string

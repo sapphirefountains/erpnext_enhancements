@@ -239,3 +239,60 @@ module "spot_vm" {
     termination_action = try(each.value.termination_action, null)
   }
 }
+
+# ============================================================================
+# 3. Decoupled Health Check & Firewall Infrastructure
+# ============================================================================
+
+resource "google_compute_health_check" "erpnext_standalone_health_check" {
+  # 🎯 DECOUPLED: Managed completely by its own standalone variable block toggle
+  count   = var.enable_standalone_health_check ? 1 : 0
+  name    = "erpnext-standalone-health-check"
+  project = module.project.project_id
+
+  http_health_check {
+    port         = var.health_check_port
+    request_path = "/"
+  }
+
+  check_interval_sec  = 10
+  timeout_sec         = 5
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+}
+
+# 🌐 Load Balancer Ingress (Targets Standalone Web Frontends)
+resource "google_compute_firewall" "allow_lb_to_vm" {
+  count     = var.enable_lb_firewall ? 1 : 0
+  name      = "allow-lb-to-production-vm"
+  network   = local.network_id 
+  project   = module.project.project_id
+  direction = "INGRESS"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+
+  # Standard Google Load Balancer probing ranges
+  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
+  target_tags   = ["web-frontend"] 
+}
+
+# 🔒 Secure SSH Tunneling (Targets both Prod and Staging Spot VMs securely via IAP)
+resource "google_compute_firewall" "allow_iap_ssh" {
+  count     = var.enable_iap_ssh_firewall ? 1 : 0
+  name      = "allow-iap-ssh-to-vms"
+  network   = local.network_id
+  project   = module.project.project_id
+  direction = "INGRESS"
+  priority  = 1000
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["35.235.240.0/20"] 
+  target_tags   = ["web-frontend", "batch-processor"]
+}
