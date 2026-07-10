@@ -108,6 +108,18 @@
    "icon": "chart",
    "indent": 0,
    "keep_closed": 0,
+   "label": "HR",
+   "link_to": "HR Dashboard",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "chart",
+   "indent": 0,
+   "keep_closed": 0,
    "label": "Executive",
    "link_to": "Executive Dashboard",
    "link_type": "Workspace",
@@ -152,6 +164,18 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "notepad-text",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "HR Stat Entry",
+   "link_to": "HR Stat Entry",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "book-open-text",
    "indent": 0,
    "keep_closed": 0,
@@ -174,7 +198,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-07-07 12:00:00.000000",
+ "modified": "2026-07-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "Design Dashboard",

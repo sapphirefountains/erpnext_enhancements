@@ -86,6 +86,24 @@ def fmt_value(value, unit=""):
 	return f"{v:,.2f} {unit}"
 
 
+def turnover_rate_pct(separations, headcount_start, headcount_end):
+	"""Separations over a window / two-point average headcount * 100.
+
+	The classic annualized-turnover formula: the denominator averages the
+	headcount at the start and end of the window so a growing (or shrinking)
+	team isn't over- or under-penalized. None when inputs are non-numeric or
+	the average headcount is zero (a rate over nobody is meaningless).
+	"""
+	try:
+		separations = float(separations)
+		avg = (float(headcount_start) + float(headcount_end)) / 2.0
+	except (TypeError, ValueError):
+		return None
+	if avg <= 0:
+		return None
+	return separations / avg * 100.0
+
+
 def _parse_dt(value):
 	"""Coerce a frappe datetime/date or its string form to a naive datetime."""
 	if isinstance(value, datetime):

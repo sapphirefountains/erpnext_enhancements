@@ -37,9 +37,18 @@
  * Presence is best-effort: a 30s heartbeat re-asserts the focus and receivers
  * expire highlights after a 75s TTL, so a missed blur (crashed tab, dropped
  * connection) self-heals. Document-level presence ("currently viewing"
- * avatars) is Frappe's built-in FormViewers — nothing here touches it (which
- * is also why teardown() never calls doc_unsubscribe: the form lifecycle owns
- * the room).
+ * avatars) is Frappe's built-in FormViewers — this file only *reads* its
+ * doc_viewers roster event, never the room membership (teardown() never calls
+ * doc_unsubscribe: the form lifecycle owns the room).
+ *
+ * Save toast ("Updated by X"): presence-gated. Frappe's doc_update event
+ * fires for EVERY server-side save — scheduler jobs, webhooks, API sessions,
+ * list-view bulk edits — and carries no author, so an ungated toast reads as
+ * a phantom edit (an "Updated by <name>" popping up with nobody there). The
+ * toast therefore only shows when the writer is demonstrably co-present on
+ * this document (doc_viewers roster / live field edits / focus events, with
+ * a short grace window for saved-then-closed); every other save keeps the
+ * silent reload/merge.
  */
 (function () {
 	if (window.__ee_live_form_sync_loaded) return;
@@ -66,6 +75,14 @@
 	// collaborator's screen. The actual colors live in css/collab.css with
 	// light- and dark-theme variants (keep the class count in sync).
 	const FOCUS_COLOR_COUNT = 6;
+	// Save-toast presence gate: how long after a peer's last co-presence proof
+	// (roster membership, live edit, focus event) their save still toasts.
+	// Covers "saved and immediately closed the form" — the roster departure
+	// reaches us before the after-commit doc_update does.
+	const PEER_GRACE_MS = 30 * 1000;
+	// Scheduled/queued jobs run as Administrator; a job write landing while a
+	// human admin merely has the form open must not read as that admin's edit.
+	const SYSTEM_WRITERS = new Set(["Administrator", "Guest"]);
 	const CLIENT_ID =
 		((frappe.session && frappe.session.user) || "unknown") +
 		":" +
@@ -133,6 +150,8 @@
 			this._local_focus = null; // {fieldname, child_doctype, child_name} currently held locally
 			this._focus_heartbeat = null;
 			this._blur_timer = null;
+			this._peer_roster = new Set(); // users in the doc's open_doc room (last doc_viewers event)
+			this._peer_last_seen = {}; // user -> Date.now() of last co-presence proof
 		}
 
 		_key(dt, dn, fieldname) {
@@ -147,10 +166,12 @@
 			this._bound_doc_update = (data) => this._on_doc_saved(data);
 			this._bound_reconnect = () => this._on_reconnect();
 			this._bound_remote_focus = (data) => this._on_remote_focus(data);
+			this._bound_doc_viewers = (data) => this._on_doc_viewers(data);
 			frappe.realtime.on("collab_field_update", this._bound_remote_field);
 			frappe.realtime.on("doc_update", this._bound_doc_update);
 			frappe.realtime.on("connect", this._bound_reconnect);
 			frappe.realtime.on("collab_focus", this._bound_remote_focus);
+			frappe.realtime.on("doc_viewers", this._bound_doc_viewers);
 			// namespaced per-instance so teardown only unbinds its own handlers
 			this._focus_ns = ".ee_collab_" + Math.random().toString(36).slice(2, 8);
 			$(this.frm.wrapper)
@@ -172,6 +193,7 @@
 			frappe.realtime.off("doc_update", this._bound_doc_update);
 			frappe.realtime.off("connect", this._bound_reconnect);
 			frappe.realtime.off("collab_focus", this._bound_remote_focus);
+			frappe.realtime.off("doc_viewers", this._bound_doc_viewers);
 			if (active_syncs[this.doctype + "/" + this.docname] === this) {
 				delete active_syncs[this.doctype + "/" + this.docname];
 			}
@@ -252,6 +274,7 @@
 		_on_remote_field(data) {
 			if (!data || data.origin === CLIENT_ID) return;
 			if (data.doctype !== this.doctype || data.docname !== this.docname) return;
+			this._mark_peer(data.user);
 			let target_dt = this.doctype;
 			let target_dn = this.docname;
 			if (data.child_doctype) {
@@ -442,6 +465,7 @@
 		_on_remote_focus(data) {
 			if (!data || data.origin === CLIENT_ID) return;
 			if (data.doctype !== this.doctype || data.docname !== this.docname) return;
+			this._mark_peer(data.user); // a blur event is still co-presence proof
 			if (!data.focused) {
 				this._clear_focus(data.origin);
 				return;
@@ -530,6 +554,55 @@
 			return df && df.fieldname;
 		}
 
+		// ------------------------------------------------------ peer presence
+		// Backs the presence gate on the save toast. Three signals prove a user
+		// currently has this document open: membership in Frappe's doc_viewers
+		// roster (the open_doc room — background writers never join it), a live
+		// field edit relayed to us, or a focus/blur event. All three carry a
+		// server-stamped user.
+
+		_on_doc_viewers(data) {
+			if (!data || data.doctype !== this.doctype || data.docname !== this.docname) return;
+			const now = Date.now();
+			// members leaving with this event were present until this very
+			// moment — stamping them starts the grace window that keeps the
+			// toast for a peer who saved and immediately closed the form.
+			this._peer_roster.forEach((user) => {
+				this._peer_last_seen[user] = now;
+			});
+			const peers = (data.users || []).filter((u) => u && u !== frappe.session.user);
+			peers.forEach((user) => {
+				this._peer_last_seen[user] = now;
+			});
+			this._peer_roster = new Set(peers);
+		}
+
+		_mark_peer(user) {
+			if (user && user !== frappe.session.user) {
+				this._peer_last_seen[user] = Date.now();
+			}
+		}
+
+		_is_active_peer(user) {
+			if (this._peer_roster.has(user)) return true;
+			// FormViewers' own copy covers a roster event that predates attach()
+			const viewers = (this.frm.viewers && this.frm.viewers.active_users) || [];
+			if (viewers.includes(user)) return true;
+			const seen = this._peer_last_seen[user];
+			return !!seen && Date.now() - seen <= PEER_GRACE_MS;
+		}
+
+		reassert_peer_listener() {
+			// Frappe v16's FormViewers.setup_events() calls
+			// frappe.realtime.off("doc_viewers") with NO handler — removing
+			// every listener for the event, ours included — each time a Form
+			// object for a new doctype is first constructed. Re-bind on every
+			// form refresh; off-then-on keeps our handler single-bound.
+			if (!this._bound_doc_viewers) return;
+			frappe.realtime.off("doc_viewers", this._bound_doc_viewers);
+			frappe.realtime.on("doc_viewers", this._bound_doc_viewers);
+		}
+
 		// --------------------------------------------------------- save sync
 
 		_is_visible() {
@@ -548,7 +621,7 @@
 				// clean form: Frappe's built-in doc_update handler already
 				// reloads it silently (visible) or flags __needs_refresh
 				// (background) — just add awareness.
-				if (this._is_visible()) this._notify_remote_save(null);
+				if (this._is_visible()) this._notify_remote_save(null, data.modified);
 				return;
 			}
 			// dirty form: model.js flagged a conflict; merge silently instead.
@@ -674,9 +747,16 @@
 			frm.refresh_field(parentfield);
 		}
 
-		_notify_remote_save(modified_by) {
+		_notify_remote_save(modified_by, event_modified) {
 			const show = (user) => {
 				if (!user || user === frappe.session.user) return;
+				// presence gate: doc_update fires for every server-side save
+				// (jobs, webhooks, API sessions, list-view bulk edits) — only a
+				// writer who demonstrably has this form open earns a toast;
+				// everything else stays a silent reload/merge.
+				if (SYSTEM_WRITERS.has(user)) return;
+				if (!this._is_active_peer(user)) return;
+				if (document.hidden) return; // a 3s alert would expire unseen
 				const info = frappe.user_info(user);
 				frappe.show_alert(
 					{
@@ -691,8 +771,16 @@
 				return;
 			}
 			frappe.db
-				.get_value(this.doctype, this.docname, "modified_by")
-				.then((r) => show(r && r.message && r.message.modified_by));
+				.get_value(this.doctype, this.docname, ["modified_by", "modified"])
+				.then((r) => {
+					const msg = r && r.message;
+					if (!msg) return;
+					// re-saved between event and fetch: the newer save's own
+					// doc_update owns the notification, and this fetched
+					// modified_by may not even be the event's author.
+					if (event_modified && msg.modified !== event_modified) return;
+					show(msg.modified_by);
+				});
 		}
 
 		// ------------------------------------------------- local save events
@@ -753,6 +841,9 @@
 					attach_or_reattach(frm);
 					// refresh re-rendered the controls, dropping highlight DOM
 					frm._live_sync && frm._live_sync.rerender_focus();
+					// FormViewers may have wiped the doc_viewers listener since
+					// we bound it (see reassert_peer_listener)
+					frm._live_sync && frm._live_sync.reassert_peer_listener();
 				},
 				before_save(frm) {
 					frm._live_sync && frm._live_sync.on_local_before_save();
