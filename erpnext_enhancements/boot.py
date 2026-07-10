@@ -10,6 +10,7 @@ from erpnext_enhancements.feature_flags import (
 	contacts_ux_enabled,
 	document_merge_enabled,
 	field_description_icons_enabled,
+	package_dispatch_enabled,
 	process_automation_enabled,
 	product_configurator_enabled,
 )
@@ -50,6 +51,11 @@ def boot_session(bootinfo):
 	Configurable Product generation buttons (Item + BOM + Selling Price,
 	Create Component Items); the server-side guards in
 	``product_configurator.api`` remain the authority.
+
+	``frappe.boot.ee_package_dispatch`` gates the Package Dispatch form's auto-fill
+	triggers (catalog-item value + customer address); the form itself works with
+	it off (hand-typed), and the server-side guards in ``package_dispatch.api``
+	remain the authority.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -58,3 +64,4 @@ def boot_session(bootinfo):
 	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0
+	bootinfo.ee_package_dispatch = 1 if package_dispatch_enabled() else 0

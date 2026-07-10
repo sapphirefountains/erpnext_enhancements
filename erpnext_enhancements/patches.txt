@@ -160,3 +160,7 @@ erpnext_enhancements.patches.default_contacts_ux_on
 # first Customer link (the field is now editable + server-synced; old client
 # mirror values were stale/missing) — db-level, update_modified=False, idempotent
 erpnext_enhancements.patches.backfill_contact_custom_account
+# v1.153.0 Package Dispatch: seed the "Dispatch User" role (insert-only) so the
+# Package Dispatch doctype permissions never reference a missing role on fresh
+# sites; assign it to users post-deploy
+erpnext_enhancements.patches.seed_dispatch_user_role

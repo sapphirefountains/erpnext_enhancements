@@ -1,0 +1,95 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"pd_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pd_sc_all\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"All Dispatches\",\"col\":3}},{\"id\":\"pd_sc_toship\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"To Ship\",\"col\":3}},{\"id\":\"pd_sc_transit\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"In Transit\",\"col\":3}},{\"id\":\"pd_sc_delivered\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivered\",\"col\":3}},{\"id\":\"pd_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pd_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Package Dispatch</b></span>\",\"col\":12}},{\"id\":\"pd_card_main\",\"type\":\"card\",\"data\":{\"card_name\":\"Dispatch\",\"col\":4}},{\"id\":\"pd_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "creation": "2026-07-10 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "stock",
+ "is_hidden": 0,
+ "label": "Shipping",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Dispatch",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Package Dispatch",
+   "link_count": 0,
+   "link_to": "Package Dispatch",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Package Dispatch Settings",
+   "link_count": 0,
+   "link_to": "ERPNext Enhancements Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-07-10 14:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Package Dispatch",
+ "name": "Shipping",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 60,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "All Dispatches",
+   "link_to": "Package Dispatch",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "To Ship",
+   "link_to": "Package Dispatch",
+   "stats_filter": "{\"shipment_status\":\"Not Shipped\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "In Transit",
+   "link_to": "Package Dispatch",
+   "stats_filter": "{\"shipment_status\":\"Shipped\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "label": "Delivered",
+   "link_to": "Package Dispatch",
+   "stats_filter": "{\"shipment_status\":\"Delivered\"}",
+   "type": "DocType"
+  }
+ ],
+ "title": "Shipping"
+}
