@@ -2,7 +2,7 @@
  "app": "erpnext_enhancements",
  "charts": [],
  "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
- "creation": "2026-07-07 18:00:00.000000",
+ "creation": "2026-07-10 12:00:00.000000",
  "custom_blocks": [
   {
    "custom_block_name": "KPI Cockpit",
@@ -15,29 +15,29 @@
  "icon": "dashboard",
  "is_hidden": 0,
  "is_standard": 1,
- "label": "Executive Dashboard",
+ "label": "HR Dashboard",
  "links": [],
  "modified": "2026-07-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
- "name": "Executive Dashboard",
+ "name": "HR Dashboard",
  "owner": "Administrator",
  "parent_page": "",
  "public": 1,
  "quick_lists": [],
  "roles": [
   {
-   "role": "Accounts Manager"
+   "role": "HR Manager"
   },
   {
-   "role": "Sales Manager"
+   "role": "HR Team"
   },
   {
    "role": "System Manager"
   }
  ],
- "sequence_id": 58,
+ "sequence_id": 57,
  "shortcuts": [],
- "title": "Executive Dashboard",
+ "title": "HR Dashboard",
  "type": "Workspace"
 }

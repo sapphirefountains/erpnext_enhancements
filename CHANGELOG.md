@@ -7,10 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.148.3] - 2026-07-10
+## [1.150.1] - 2026-07-10
 
 ### Fixed
 - **Live-collab forms no longer show phantom "Updated by <name>" toasts for background writes.** Frappe's `doc_update` event fires for *every* server-side save — scheduler jobs, webhooks, API sessions, list-view bulk edits — and carries no author, so the collab layer's save toast surfaced any background write to an open document as if a person had just edited the page (e.g. the 2026-07-10 bulk cleanup of "Unknown Caller" customer groups toasted 30 times to anyone with one of those Customers open). The toast is now **presence-gated**: it only shows when the writer demonstrably has the same document open (Frappe's `doc_viewers` roster, live collab field edits, or focus events — with a 30s grace window so a peer who saves and immediately closes the form still toasts). Administrator/Guest writes never toast (background jobs run as Administrator), hidden tabs skip the 3s alert, and a stale-fetch race (doc re-saved between event and author lookup) no longer misattributes the author. Background saves keep the existing behavior minus the toast: clean forms silently reload, dirty forms silently merge.
+
+## [1.150.0] - 2026-07-10
+
+### Added
+- **HR joins the KPI Dashboards module as the 9th department** — aggregator, dept-locked cockpit workspace, sidebar, native charts, and a manual-entry doctype. Grounded-data notes: the hrms app is **not installed** on this site (no Attendance/Leave/Recruiting/Payroll/Appraisal tables; payroll lives in QuickBooks), so the 12 automatic KPIs read only the fully-populated `tabEmployee`: active headcount, full-time count, employment-type completeness, hires/separations (90d + 1y), net headcount change, **turnover rate (12m)** (two-point average headcount reconstructed from joining/relieving dates — pure helper `metrics.turnover_rate_pct`, unit-tested), average tenure, tenure at exit, and span of control. Small-n stance for a 14-person team: headline KPIs are counts and the only rate windows are 365-day (one exit moves turnover ~7 points); demographic KPIs are deliberately excluded for privacy.
+- **3 workforce-time KPIs that wake up with the time-kiosk rollout** — field labor hours (30d) and distinct field staff clocking in (30d) from Job Interval, plus submitted Timesheet hours (30d). All guarded and sum-based, so they stay silent (skipped, not zero) until real intervals/timesheets exist.
+- **HR Stat Entry doctype** (KPI Dashboards module) — the one-row-per-month manual paste for **Open Positions** and **eNPS** (there is no Job Opening doctype or survey tool on this site). Month normalizes to the first of the month (autoname enforces one row per month); eNPS 0 is documented as "not surveyed"; an entry older than the previous calendar month flags the source stale (Watch badge). Linked from the KPI Setup sidebar group and the KPI Overview workspace.
+- **HR Dashboard workspace** (`/app/hr-dashboard`, sequence 57 with Executive bumped to 58 so Executive stays last) with the KPI Cockpit auto-locked to HR by route, plus an "HR" nav link and the HR Stat Entry setup link in all 10 workspace sidebars. Executive's rollup now re-surfaces the HR turnover rate (its own headcount/revenue-per-employee KPIs are unchanged).
+- **Access is gated to HR Manager + HR Team** — deliberately not HR User, which every employee on this site holds. HR Team is an instance-created role; a new insert-only patch (`seed_hr_team_role`) makes fresh sites match so the workspace/doctype role references never dangle.
+- **"HR Overview" native dashboard** — Active Headcount by Department (donut), Active Headcount by Employment Type (donut), Hires by Month (bar), fixture-filtered by name like the other shipped dashboards.
+- Docs: `docs/KPI_DASHBOARD_DESIGN.md` gains the full 17-KPI **HR (People)** section (12 Auto / 3 Semi / 2 Manual) with data-gaps and minimal-manual-entry guidance; catalog now 131 KPIs across 8 departments.
+- Rollout: everything rides the existing `kpi_dashboards_enabled` master switch (default off; already enabled on production). Operator follow-ups: assign the HR Team role, fill the 3 blank employment_type values, optionally seed KPI Targets (turnover ≤ 15, completeness = 100, open positions = 0) and a first HR Stat Entry row.
+
+## [1.149.0] - 2026-07-10
+
+### Removed
+- **The "Won Reason" field is gone from Opportunities.** Marking an Opportunity **Closed Won** no longer captures or requires a reason — the `custom_won_reason` Select field (Price / Relationship / Product Fit / Timing / Other) and its required-on-win validation were both removed. Existing sites drop the leftover field (and its stored values) on migrate via `patches.remove_opportunity_won_reason`. **Lost Reason is unchanged** — it's still shown on Lost opportunities and still required when marking an Opportunity Lost.
+
+### Changed
+- The Sales **Close-Reason Capture (90d)** KPI is now **Loss-Reason Capture (90d)** — with won reasons gone, it measures the share of *Lost* opportunities that recorded a Lost Reason (same `close_reason_capture_90` key, so the history carries over). The **Opportunity Loss Reasons** donut and **Lost to Competitor (90d)** KPI are unaffected.
+
+## [1.148.2] - 2026-07-10
 
 ### Fixed
 - **Customers auto-created from incoming Triton calls no longer default to the "Government" customer group.** Same arbitrary "first non-group leaf" fallback as the territory bug — with no Customer Group configured in Selling Settings, the unknown-caller auto-create landed every caller in **Government**. `_default_customer_group()` now returns the Selling Settings default when it's a usable (non-group) leaf, and otherwise leaves the field **blank** (via `ignore_mandatory`) instead of picking an arbitrary group. Also fixes the `update_caller_info` rename-create path, which hardcoded `"All Customer Groups"` — a group node that erpnext v16 rejects outright.
