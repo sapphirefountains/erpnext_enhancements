@@ -14,10 +14,18 @@ from frappe.utils import cint, getdate
 
 
 class HRStatEntry(Document):
+	def before_naming(self):
+		# Normalize BEFORE autoname runs (naming happens before validate), so the
+		# HRSTAT-{month} name enforces one-row-per-month regardless of which day
+		# was picked.
+		self._normalize_month()
+
 	def validate(self):
-		# Normalize to the first of the month so the autoname enforces
-		# one-row-per-month regardless of which day was picked.
-		if self.month:
-			self.month = getdate(self.month).replace(day=1)
+		# Re-normalize on edits too (the name keeps its original month).
+		self._normalize_month()
 		if self.enps and not -100 <= cint(self.enps) <= 100:
 			frappe.throw(frappe._("eNPS must be between -100 and 100."))
+
+	def _normalize_month(self):
+		if self.month:
+			self.month = getdate(self.month).replace(day=1)
