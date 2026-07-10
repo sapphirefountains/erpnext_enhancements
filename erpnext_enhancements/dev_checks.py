@@ -9,6 +9,7 @@ functions that create data, assert, clean up, and return a result string:
 
     bench --site dev.localhost execute \
         erpnext_enhancements.dev_checks.check_last_activity_guard
+    ... dev_checks.check_caller_upsert_idempotent
 
 These cover the app-root hooks (``script_migrations``/``api``) that have no
 bench-free harness.
@@ -82,3 +83,55 @@ def check_last_activity_guard():
 	_cleanup()
 	frappe.db.commit()
 	return "OK — stamp fires on create/real edits only"
+
+
+def check_caller_upsert_idempotent():
+	"""Repeated caller resolution and a same-name caller_resolved replay must
+	not bump Customer/Contact ``modified`` or mint a Version."""
+	import inspect
+
+	from erpnext_enhancements.api import telephony
+
+	# strip @frappe.whitelist + @validate_webhook_secret (both functools.wraps
+	# layers): the secret check reads frappe.request, absent under bench execute
+	update_caller_info = inspect.unwrap(telephony.update_caller_info)
+
+	_cleanup()
+	first = telephony._get_caller_info(TEST_PHONE)  # pass 1: auto-creates
+	cust = first.get("customer")
+	assert cust, "first pass should auto-create the Customer"
+	modified_1 = str(frappe.db.get_value("Customer", cust, "modified"))
+
+	second = telephony._get_caller_info(TEST_PHONE)  # pass 2: pure lookup
+	assert second.get("customer") == cust, "lookup should return the same Customer"
+	assert (
+		str(frappe.db.get_value("Customer", cust, "modified")) == modified_1
+	), "read-only caller lookup bumped modified"
+
+	# genuine rename first
+	renamed = update_caller_info(TEST_PHONE, "Testy McTester")
+	assert renamed["updated"], "a real rename must report updated=True"
+	contact = renamed.get("contact")
+
+	cust_modified = str(frappe.db.get_value("Customer", cust, "modified"))
+	cont_modified = contact and str(frappe.db.get_value("Contact", contact, "modified"))
+	versions = frappe.db.count("Version", {"ref_doctype": "Customer", "docname": cust})
+
+	# gateway replay with the SAME name — must write nothing
+	replay = update_caller_info(TEST_PHONE, "Testy McTester")
+	assert not replay["updated"], "same-name replay must report updated=False"
+	assert (
+		str(frappe.db.get_value("Customer", cust, "modified")) == cust_modified
+	), "no-op replay bumped Customer.modified"
+	if contact:
+		assert (
+			str(frappe.db.get_value("Contact", contact, "modified")) == cont_modified
+		), "no-op replay bumped Contact.modified"
+	assert (
+		frappe.db.count("Version", {"ref_doctype": "Customer", "docname": cust})
+		== versions
+	), "no-op replay minted a Version"
+
+	_cleanup()
+	frappe.db.commit()
+	return "OK — repeated caller resolution leaves Customer/Contact untouched"
