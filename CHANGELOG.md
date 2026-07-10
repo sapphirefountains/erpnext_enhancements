@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.149.0] - 2026-07-10
+## [1.150.0] - 2026-07-10
 
 ### Added
 - **HR joins the KPI Dashboards module as the 9th department** — aggregator, dept-locked cockpit workspace, sidebar, native charts, and a manual-entry doctype. Grounded-data notes: the hrms app is **not installed** on this site (no Attendance/Leave/Recruiting/Payroll/Appraisal tables; payroll lives in QuickBooks), so the 12 automatic KPIs read only the fully-populated `tabEmployee`: active headcount, full-time count, employment-type completeness, hires/separations (90d + 1y), net headcount change, **turnover rate (12m)** (two-point average headcount reconstructed from joining/relieving dates — pure helper `metrics.turnover_rate_pct`, unit-tested), average tenure, tenure at exit, and span of control. Small-n stance for a 14-person team: headline KPIs are counts and the only rate windows are 365-day (one exit moves turnover ~7 points); demographic KPIs are deliberately excluded for privacy.
@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"HR Overview" native dashboard** — Active Headcount by Department (donut), Active Headcount by Employment Type (donut), Hires by Month (bar), fixture-filtered by name like the other shipped dashboards.
 - Docs: `docs/KPI_DASHBOARD_DESIGN.md` gains the full 17-KPI **HR (People)** section (12 Auto / 3 Semi / 2 Manual) with data-gaps and minimal-manual-entry guidance; catalog now 131 KPIs across 8 departments.
 - Rollout: everything rides the existing `kpi_dashboards_enabled` master switch (default off; already enabled on production). Operator follow-ups: assign the HR Team role, fill the 3 blank employment_type values, optionally seed KPI Targets (turnover ≤ 15, completeness = 100, open positions = 0) and a first HR Stat Entry row.
+
+## [1.149.0] - 2026-07-10
+
+### Removed
+- **The "Won Reason" field is gone from Opportunities.** Marking an Opportunity **Closed Won** no longer captures or requires a reason — the `custom_won_reason` Select field (Price / Relationship / Product Fit / Timing / Other) and its required-on-win validation were both removed. Existing sites drop the leftover field (and its stored values) on migrate via `patches.remove_opportunity_won_reason`. **Lost Reason is unchanged** — it's still shown on Lost opportunities and still required when marking an Opportunity Lost.
+
+### Changed
+- The Sales **Close-Reason Capture (90d)** KPI is now **Loss-Reason Capture (90d)** — with won reasons gone, it measures the share of *Lost* opportunities that recorded a Lost Reason (same `close_reason_capture_90` key, so the history carries over). The **Opportunity Loss Reasons** donut and **Lost to Competitor (90d)** KPI are unaffected.
 
 ## [1.148.2] - 2026-07-10
 

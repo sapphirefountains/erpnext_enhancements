@@ -567,7 +567,7 @@ fixtures = [
 					# Product Management KPI dashboard (KPI dashboards, v1.124.0)
 					"Catalog by Item Group",
 					"Catalog Additions (Monthly)",
-					# HR department (KPI dashboards, v1.149.0)
+					# HR department (KPI dashboards, v1.150.0)
 					"Active Headcount by Department",
 					"Active Headcount by Employment Type",
 					"Hires by Month",

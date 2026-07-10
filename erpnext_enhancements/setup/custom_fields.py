@@ -182,13 +182,17 @@ def create_primary_contact_fields():
 
 
 def create_opportunity_winloss_fields():
-	"""``after_migrate`` entry point: win/loss reason capture on Opportunity.
+	"""``after_migrate`` entry point: loss reason capture on Opportunity.
 
-	Three custom fields shown only at close (depends_on status), feeding the
-	Sales win/loss KPIs + the Loss Reasons chart. Idempotent — existing fields
-	are skipped. The Select options are safe to edit later (they're just option
-	lists); validation that requires a reason on close lives in
-	``script_migrations.opportunity.validate_close_reason``.
+	Two custom fields shown only when the Opportunity is Lost (depends_on
+	status), feeding the Sales loss KPIs + the Loss Reasons chart. Idempotent —
+	existing fields are skipped. The Select options are safe to edit later
+	(they're just option lists); validation that requires a reason on close lives
+	in ``script_migrations.opportunity.validate_close_reason``.
+
+	NOTE (v1.149.0): the ``custom_won_reason`` field was removed — winning an
+	Opportunity no longer captures or requires a reason. Existing sites drop the
+	leftover field via ``patches.remove_opportunity_won_reason``.
 	"""
 	if not frappe.db.exists("DocType", "Opportunity"):
 		return
@@ -196,19 +200,11 @@ def create_opportunity_winloss_fields():
 	meta = frappe.get_meta("Opportunity")
 	fields = [
 		{
-			"fieldname": "custom_won_reason",
-			"label": "Won Reason",
-			"fieldtype": "Select",
-			"options": "\nPrice\nRelationship\nProduct Fit\nTiming\nOther",
-			"insert_after": "status",
-			"depends_on": "eval:doc.status=='Closed Won'",
-		},
-		{
 			"fieldname": "custom_lost_reason",
 			"label": "Lost Reason",
 			"fieldtype": "Select",
 			"options": "\nPrice\nCompetitor\nNo Budget\nTiming\nNo Decision\nOther",
-			"insert_after": "custom_won_reason",
+			"insert_after": "status",
 			"depends_on": "eval:doc.status=='Lost'",
 		},
 		{

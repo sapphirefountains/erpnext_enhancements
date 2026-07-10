@@ -1,4 +1,4 @@
-"""Seed the "HR Team" role (v1.149.0).
+"""Seed the "HR Team" role (v1.150.0).
 
 Gates the HR KPI dashboard (api/kpi.py DEPARTMENT_ROLES) and the HR Stat Entry
 doctype alongside HR Manager. The role already exists on the production site
