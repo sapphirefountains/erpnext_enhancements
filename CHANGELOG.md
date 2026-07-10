@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.151.2] - 2026-07-10
+
+### Added
+- **"Hand-Off Process Coverage" report** (CRM Enhancements → Reports, `ref_doctype` Opportunity). One row per Opportunity that has a linked Project, showing whether that project's hand-off tracker (PRO-0204 Project Process Steps) has been started, the step count, and the currently-live step. It surfaces the population that used to render a blank "Hand-Off Process" tab — Closed-Won opportunities whose linked project has no started tracker. Default filters (Opportunity Status = Closed Won, Tracker = Not Started) land exactly on that set, so the report doubles as an audit of hand-off coverage. Roles: System Manager, Sales Manager, Sales User.
+
 ## [1.151.1] - 2026-07-10
 
 ### Fixed
