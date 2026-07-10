@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.154.0] - 2026-07-10
+
+### Fixed
+- **Desk Global Search now lists matching DocTypes, so pressing Enter in the search bar no longer "loses" them.** Typing in the top desk search bar (awesomebar) shows DocTypes live in the dropdown, but pressing **Enter** opens Frappe's full Global Search page, which only searches document *content* (the `__global_search` index) and never listed DocTypes — so a DocType you saw a moment ago vanished, and a DocType name with no matching document content produced "No Results found". The Global Search results page now leads with a **DocTypes** section built from the *same* `frappe.search.utils.get_doctypes()` the dropdown uses (one primary navigation entry per matched DocType — its List/Tree, or the form for single-types), rendered through the dialog's existing `fetch_type: "Nav"` support and clickable straight through to the list. Injection is scoped to unfiltered global-search mode: drilling into a single DocType's content via a filter pill, and `#tag` searches, are left untouched. Implemented as a focused `SearchDialog.parse_results` prototype patch in `public/js/global_enhancements/global_search_doctypes.js`; complements the existing awesomebar live-search enhancement.
+
 ## [1.153.0] - 2026-07-10
 
 ### Added
