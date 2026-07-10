@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.148.1] - 2026-07-10
+
+### Fixed
+- **Customers auto-created from incoming Triton calls no longer default to the "Asia" territory.** The unknown-caller auto-create picked the first non-group Territory when Selling Settings had no default configured, which landed on **Asia**. New callers are now created with **no territory** set (the field is left blank via `ignore_mandatory`), on both the `get_caller_info` auto-create and the `update_caller_info` rename-create paths.
+
 ## [1.148.0] - 2026-07-07
 
 ### Changed
