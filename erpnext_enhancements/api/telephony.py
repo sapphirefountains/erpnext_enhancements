@@ -192,14 +192,6 @@ def _default_customer_group():
     return frappe.db.get_value("Customer Group", {"is_group": 0}, "name") or default
 
 
-def _default_territory():
-    """Same leaf-node rule for Territory ("All Territories" is a group)."""
-    default = frappe.db.get_single_value("Selling Settings", "territory")
-    if default and not frappe.db.get_value("Territory", default, "is_group"):
-        return default
-    return frappe.db.get_value("Territory", {"is_group": 0}, "name") or default
-
-
 def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=True):
     """Internal, auth-free implementation of ``get_caller_info`` — call THIS
     from server-side code. The whitelisted wrapper above exists for the Triton
@@ -253,9 +245,13 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
             "customer_name": fallback_name,
             "customer_type": "Residential",
             "customer_group": _default_customer_group(),
-            "territory": _default_territory(),
             "custom_accounts_phone_number": phone_number
         })
+        # Leave territory blank for auto-created callers. We deliberately do NOT
+        # fall back to the first leaf Territory (that produced a bogus "Asia" on
+        # every unknown caller). territory is a mandatory field on Customer, so
+        # ignore_mandatory lets the insert succeed with it unset.
+        cust.flags.ignore_mandatory = True
         cust.insert(ignore_permissions=True)
         customer_name = cust.name
         display_name = cust.customer_name
@@ -390,9 +386,10 @@ def update_caller_info(phone_number, new_name):
                 "customer_name": new_name,
                 "customer_type": "Residential",
                 "customer_group": "All Customer Groups",
-                "territory": "All Territories",
                 "custom_accounts_phone_number": phone_number
             })
+            # Leave territory blank (mandatory field -> ignore_mandatory).
+            cust.flags.ignore_mandatory = True
             cust.insert(ignore_permissions=True)
             customer_name = cust.name
 
