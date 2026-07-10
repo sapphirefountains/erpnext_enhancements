@@ -241,3 +241,11 @@ resource "google_project_iam_member" "cloudsql_client_spot_vm" {
   role     = "roles/cloudsql.client"
   member   = each.value.service_account_iam_email
 }
+
+# Grant IAP Tunnel access so operators can SSH into VMs without public IPs
+resource "google_project_iam_member" "iap_tunnel_user" {
+  for_each = toset(var.iap_tunnel_members)
+  project  = module.project.project_id
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = each.value
+}

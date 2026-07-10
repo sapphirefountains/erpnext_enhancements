@@ -41,6 +41,12 @@ jobs:
   # (no live frappe / FAC), so they run here as plain unittest. A final check
   # (test_doctype_modules) asserts every custom DocType sits in its declared
   # module — pure filesystem, no stubs.
+  #
+  # The QuickBooks Online suite is bench-free too but is plain pytest functions
+  # (the `monkeypatch` fixture), which `python -m unittest` silently cannot
+  # collect — it ran nowhere in CI and broke unnoticed for weeks. It gets its
+  # own pytest step below; any future pytest-style bench-free suite belongs on
+  # that step, not the unittest module list.
   # ---------------------------------------------------------------------------
   unit-tests:
     name: Standalone unit tests
@@ -52,7 +58,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip httpx
+      - run: python -m pip install --upgrade pip httpx pytest
       - run: python -m unittest test_sync_time_kiosk.py -v
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
@@ -76,6 +82,8 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      - name: QuickBooks Online sync (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

@@ -37,11 +37,21 @@ Provisions v2 Cloud Functions, including custom runtime configuration, memory, b
 ### 6. Standard Compute VMs
 Provisions standard Compute Engine virtual machines.
 * **External IP Control**: Uses `vm_ip_external` to control external IP assignment, falling back to the master `ip_external` toggle if not set.
+* **Disk Configuration**: Boot disk is 50GB pd-balanced, sized by `vm_boot_disk_size`.
+* **Disk Lifecycle**: Supports the same `reuse_existing_disks` toggle as Spot VMs. When `true`, the boot disk is promoted to an independent resource (named `<vm>-boot`) that persists across VM recreation.
 
 ### 7. Spot Compute VMs
-Provisions ephemeral, cost-efficient Spot VMs.
+Provisions ephemeral, cost-efficient Spot VMs. Supports two disk lifecycle strategies controlled by `reuse_existing_disks`.
+
 * **External IP Control**: Integrates the same `vm_ip_external` (falling back to `ip_external`) public/private IP toggle logic.
 * Supports customizable termination actions (`STOP` or `DELETE`).
+* **Load Balancer Backend**: Controlled by `provision_spot_vm_lb_backend`. When `true`, creates an unmanaged instance group and registers the VM as a backend in the Load Balancer. When `false` (default), the VM is standalone with no LB integration.
+* **Disk Configuration**:
+  * **Boot Disk**: 50GB pd-balanced, sized by `vm_boot_disk_size`.
+  * **Data Disk**: 200GB pd-balanced, sized by `vm_data_disk_size`, created as an independent resource.
+* **Disk Lifecycle** (`reuse_existing_disks` toggle):
+  * `false` (default): Boot disk is inline with `auto_delete = false` — survives VM deletion but a new one is created on each replacement. Orphan disks accumulate.
+  * `true`: Boot disk is promoted to an independent `google_compute_disk` resource (named `<vm>-boot`). Both boot and data disks persist fully independently and are reattached on VM recreation. No orphan accumulation.
 
 ### 8. Cloud SQL Database Instances
 Deploys Cloud SQL database instances dynamically using the `cloudsql-instance` module.
@@ -49,17 +59,30 @@ Deploys Cloud SQL database instances dynamically using the `cloudsql-instance` m
 * If `ip_external` is set to `false`, the instance is configured with private IP access via Private Services Access (PSA) on the specified VPC network.
 
 ### 9. External Application Load Balancers
-Provisions Global External Application Load Balancers (HTTP/HTTPS) with custom URL maps, backend buckets, Network Endpoint Groups (NEGs), and SSL certificate map bindings.
+Provisions Global External Application Load Balancers (HTTP/HTTPS) with custom URL maps, backend services, Network Endpoint Groups (NEGs), and SSL certificate map bindings.
 
-### 10. CI/CD Cloud Build Triggers
+* **Dynamic Backend Selection**: The `default_service` is automatically resolved from the first provisioned backend in priority order: Prod MIG → Test MIG → Standard VM → Spot VM → Cloud Run. The LB module is skipped entirely when no backends are provisioned (`default_service` is `null`).
+* **Multiple Backend Support**: Backend types can be combined arbitrarily by enabling their respective `provision_*` toggles. Each backend type is defined as a conditional block in `configs/load_balancer.yaml`.
+* **Spot VM Integration**: Use `provision_spot_vm_lb_backend` to toggle whether the Spot VM is included as a backend. When enabled, the module automatically creates an unmanaged instance group for the VM.
+* **Firewall**: `allow-lb-to-production-vm` ingress rule opens ports 80/443 to Google Cloud Load Balancer health checker ranges (`130.211.0.0/22`, `35.191.0.0/16`). Targets VMs tagged `web-frontend`.
+
+### 10. IAP SSH Tunnel Access (Secure VM Connectivity)
+Enables secure SSH access to VM instances without public IPs via Identity-Aware Proxy (IAP) TCP forwarding.
+
+* **Firewall Rule**: `allow-iap-ssh-to-vms` allows TCP port 22 from the IAP proxy range (`35.235.240.0/20`) to **all instances** in the VPC network (no tag restriction). Controlled by `enable_iap_ssh_firewall`.
+* **IAM Binding**: Grants `roles/iap.tunnelResourceAccessor` to users listed in `iap_tunnel_members`, enabling them to tunnel through IAP.
+* **Usage**: Connect with `gcloud compute ssh --tunnel-through-iap --project <PROJECT> --zone <ZONE> <VM_NAME>`.
+* **Dependencies**: Requires `iap.googleapis.com` to be enabled (included in `base_apis`).
+
+### 11. CI/CD Cloud Build Triggers
 Deploys Cloud Build (v2) connections and triggers securely, utilizing Google Secret Manager to store GitHub Personal Access Tokens (PATs) for repository mirroring and validation.
 
-### 11. Artifact Registry
+### 12. Artifact Registry
 Provisions Google Cloud Artifact Registry Docker repositories dynamically using the `artifact-registry` module.
 * Dynamically parses configurations from `configs/artifact_registry.yaml` to create repositories.
 * Grants the `roles/artifactregistry.reader` role on the repository to the Cloud Run Service Agent (`service-${project_number}@serverless-robot-prod.iam.gserviceaccount.com`), enabling Cloud Run to fetch container images securely.
 
-### 12. Managed Instance Groups (MIG) & Autoscaling
+### 13. Managed Instance Groups (MIG) & Autoscaling
 Provisions regional and/or zonal Managed Instance Groups (MIGs) and Templates designed for ERPNext database consolidation.
 * **Flexibility**: Supports provisioning zonal only, regional only, or both concurrently via `use_zonal_mig` and `use_regional_mig` toggles.
 * **Cost Optimization Strategy**: Employs standard N2D AMD instances for the Production environment (eligible for 1-Year Committed Use Discounts) and Spot preemptible N2D AMD instances for the Testing environment to minimize compute charges.
@@ -111,11 +134,15 @@ Modify [terraform.tfvars](terraform.tfvars) to set the following toggles to `tru
 | `provision_cloud_function` | Cloud Functions (v2) | [configs/cloud_function.yaml](configs/cloud_function.yaml) | Event-driven code deployment from Cloud Storage |
 | `provision_compute_vm` | Standard Compute VMs | [configs/compute_vm.yaml](configs/compute_vm.yaml) | Compute Engine VMs, startup scripts, network interfaces |
 | `provision_spot_vm` | Spot VMs | [configs/spot_vm.yaml](configs/spot_vm.yaml) | Cost-effective VM instances with termination actions |
+| `provision_spot_vm_lb_backend` | Spot VM LB Backend | [configs/spot_vm.yaml](configs/spot_vm.yaml) | Registers Spot VM as LB backend (creates instance group) |
 | `provision_sql` | Cloud SQL Instances | [configs/sql.yaml](configs/sql.yaml) | Managed databases, Private Services Access (PSA) |
 | `provision_load_balancer` | Application Load Balancer | [configs/load_balancer.yaml](configs/load_balancer.yaml) | Global HTTP/HTTPS Load Balancer, routing rules, backend groups |
 | `provision_cloud_build` | Cloud Build CI/CD | [configs/cloud_build.yaml](configs/cloud_build.yaml) | GitHub repository mirroring, webhook validation triggers |
 | `provision_prod_mig` | Production MIG | - | Production environment MIG (N2D AMD family, stateful data disk, Local SSD) |
 | `provision_test_mig` | Testing MIG | - | Testing environment MIG (N2D AMD Spot family, stateful data disk, Local SSD) |
+| `reuse_existing_disks` | VM Disk Lifecycle | [configs/spot_vm.yaml](configs/spot_vm.yaml), [configs/compute_vm.yaml](configs/compute_vm.yaml) | Promotes boot disk to independent resource — persists across VM recreation for both Spot and Standard VMs |
+| `enable_iap_ssh_firewall` | IAP SSH Tunnel | - | Allows IAP SSH access to all VMs, no public IP required |
+| `iap_tunnel_members` | IAP Tunnel Users | - | IAM members granted `roles/iap.tunnelResourceAccessor` |
 
 ---
 
@@ -173,6 +200,62 @@ Run the final apply to deploy the Cloud Run service:
 ```bash
 terraform apply
 ```
+
+### Step-by-Step Scenario: Spot VM with Persistent Disks and Load Balancer Backend
+
+This scenario provisions a Spot VM with independent (reusable) disks and registers it as a backend behind the Application Load Balancer.
+
+#### 1. Enable Services and Configure Disks
+
+In `terraform.tfvars`, set the provisioning toggles and disk settings:
+
+```hcl
+provision_spot_vm              = true
+provision_spot_vm_lb_backend   = true
+provision_load_balancer        = true
+reuse_existing_disks           = true
+vm_boot_disk_size              = 50
+vm_data_disk_size              = 200
+```
+
+#### 2. Run Terraform Apply
+
+```bash
+terraform apply
+```
+
+This creates the following resources:
+
+| Resource | Name Pattern | Details |
+|---|---|---|
+| Spot VM | `<prefix>-spot-vm` | N2-standard-4, Spot provisioning, no public IP |
+| Boot Disk | `<prefix>-spot-vm-boot` | 50GB pd-balanced, independent resource |
+| Data Disk | `<prefix>-spot-vm-data-disk` | 200GB pd-balanced, independent resource |
+| Instance Group | `<prefix>-spot-vm-ig` | Unmanaged, single VM |
+| LB Backend Service | `<prefix>-l7-xlb-backend-default` | Points to the instance group |
+
+Both disks have `auto_delete = false` and persist as standalone resources. If the Spot VM is preempted or you run `terraform destroy` and re-apply, the disks are reattached to the new VM — no data loss, no orphan accumulation.
+
+#### 3. Connect via IAP
+
+Since no public IP is assigned, use IAP SSH tunneling:
+
+```bash
+gcloud compute ssh --tunnel-through-iap --project <PROJECT> --zone <ZONE> <prefix>-spot-vm
+```
+
+#### 4. Switching Disk Lifecycle Strategies
+
+To switch from independent disks back to inline disks (default behavior):
+
+```hcl
+reuse_existing_disks = false
+```
+
+**Important**: There is a one-time transition when switching from `false` → `true`:
+- Terraform detaches the inline boot disk and creates a new independent disk.
+- The old inline disk becomes an orphan — delete it manually via `gcloud compute disks delete`.
+- All future applies reuse the independent disk cleanly.
 
 ---
 <!-- BEGIN TFDOC -->

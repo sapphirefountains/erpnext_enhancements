@@ -22,33 +22,37 @@
  */
 
 # Load Balancer Module: Manages external application load balancer setups
+# Load Balancer Module: Manages external application load balancer setups
 locals {
   prod_mig_groups     = local.resolved_prod_mig_groups
   test_mig_groups     = local.resolved_test_mig_groups
-  # mig_health_check_id = length(google_compute_health_check.mig_health_check) > 0 ? google_compute_health_check.mig_health_check[0].id : ""
   mig_health_check_id = length(google_compute_health_check.erpnext_standalone_health_check) > 0 ? google_compute_health_check.erpnext_standalone_health_check[0].id : ""
 
-  default_service = (
-    var.provision_prod_mig   ? "prod-mig-backend" :
-    var.provision_test_mig   ? "test-mig-backend" :
-    var.provision_compute_vm ? "production-vm-backend" :
-    var.provision_spot_vm    ? "spot-vm-backend" :
-    var.provision_cloud_run  ? "frontend-neg" : "production-vm-backend"
-  )
+  has_spot_vm_backend = var.provision_spot_vm && var.provision_spot_vm_lb_backend
 
-  load_balancer_config = yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
+  provisioned_backends = compact([
+    var.provision_prod_mig     ? "prod-mig-backend"     : "",
+    var.provision_test_mig     ? "test-mig-backend"     : "",
+    var.provision_compute_vm   ? "production-vm-backend" : "",
+    local.has_spot_vm_backend  ? "spot-vm-backend"      : "",
+    var.provision_cloud_run    ? "frontend-neg"         : "",
+  ])
+
+  default_service = length(local.provisioned_backends) > 0 ? local.provisioned_backends[0] : null
+
+  load_balancer_config = local.default_service != null ? yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
     glb_ip_name            = var.glb_ip_name
     region                 = var.region
     ssl_map_name           = var.ssl_map_name
     provision_prod_mig     = var.provision_prod_mig
     provision_test_mig     = var.provision_test_mig
     provision_compute_vm   = var.provision_compute_vm
-    provision_spot_vm      = var.provision_spot_vm        # 🚀 ADD THIS ENTRY
+    provision_spot_vm      = local.has_spot_vm_backend
     provision_cloud_run    = var.provision_cloud_run
     standalone_vm_neg_name = try(var.standalone_vm_neg_name, "production-vm-neg")
-    spot_vm_neg_name       = try(var.spot_vm_neg_name, "test-erpnext-spot-vm-neg") # 🚀 ADD THIS ENTRY
+    spot_vm_neg_name       = format("projects/%s/zones/%s-b/instanceGroups/%s", var.project_id, var.region, var.spot_vm_name)
     default_service        = local.default_service
-  }))
+  })) : {}
 
   # 1. Decoupled IP Address Resolution
   glb_addresses = (
@@ -69,14 +73,13 @@ locals {
       "$$ssl_certificates:${var.ssl_map_name}" = "//certificatemanager.googleapis.com/${module.ssl_certificates[0].map_id}"
     }
     : {
-      # 🎯 THE FIX: If provision_ssl is false, mapping fallback resolves gracefully to the pattern instead of crashing
       "$$ssl_certificates:${var.ssl_map_name}" = local.constructed_fallback_map_id
     }
   )
 }
 
 module "load_balancer" {
-  for_each                = var.provision_load_balancer ? local.load_balancer_config : {}
+  for_each                = var.provision_load_balancer && local.default_service != null ? local.load_balancer_config : {}
   source                  = "../modules/net-lb-app-ext"
   project_id              = module.project.project_id
   name                    = each.key
@@ -127,7 +130,7 @@ module "load_balancer" {
       : lookup(
         local.cert_maps,
         each.value.ssl_certificates.certificate_map,
-        local.constructed_fallback_map_id # 🎯 THE FIX: Safer generic fallback alternative default
+        local.constructed_fallback_map_id
       )
     )
   }
@@ -138,4 +141,8 @@ module "load_balancer" {
     create_configs  = try(each.value.ssl_certificates.create_configs, {})
     managed_configs = try(each.value.ssl_certificates.managed_configs, {})
   }
+
+  depends_on = [
+    module.spot_vm
+  ]
 }
