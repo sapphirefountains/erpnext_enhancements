@@ -1064,16 +1064,20 @@ def _hr_metrics():
 		)
 
 	# --- hiring & separations (counts headline both windows so the raw numerator
-	#     always sits next to the 12-month rate) ---
+	#     always sits next to the 12-month rate). Windows are half-open
+	#     (a, b] to match _headcount_on's "relieving_date > day" convention: an
+	#     employee relieved exactly on the window-start day is already absent
+	#     from the start headcount, so counting them as a window separation
+	#     would put them in the turnover numerator but neither endpoint. ---
 	hires_90 = flt(
 		_scalar(
-			"select count(*) from `tabEmployee` where date_of_joining between %(a)s and %(b)s",
+			"select count(*) from `tabEmployee` where date_of_joining > %(a)s and date_of_joining <= %(b)s",
 			{"a": d90, "b": today},
 		)
 	)
 	seps_90 = flt(
 		_scalar(
-			"select count(*) from `tabEmployee` where status='Left' and relieving_date between %(a)s and %(b)s",
+			"select count(*) from `tabEmployee` where status='Left' and relieving_date > %(a)s and relieving_date <= %(b)s",
 			{"a": d90, "b": today},
 		)
 	)
@@ -1084,7 +1088,7 @@ def _hr_metrics():
 		"new_hires_365",
 		"New Hires (1y)",
 		_scalar(
-			"select count(*) from `tabEmployee` where date_of_joining between %(a)s and %(b)s",
+			"select count(*) from `tabEmployee` where date_of_joining > %(a)s and date_of_joining <= %(b)s",
 			{"a": d365, "b": today},
 		),
 		"count",
@@ -1093,7 +1097,7 @@ def _hr_metrics():
 	)
 	seps_365 = flt(
 		_scalar(
-			"select count(*) from `tabEmployee` where status='Left' and relieving_date between %(a)s and %(b)s",
+			"select count(*) from `tabEmployee` where status='Left' and relieving_date > %(a)s and relieving_date <= %(b)s",
 			{"a": d365, "b": today},
 		)
 	)
@@ -1124,9 +1128,13 @@ def _hr_metrics():
 		"avg_tenure_at_exit_12m",
 		"Avg Tenure at Exit (12m)",
 		_scalar(
+			# Same (a, b] window as separations_365 — the upper bound matters:
+			# a Left row with a future relieving_date (notice period logged in
+			# advance) is not yet an exit and _headcount_on still counts it.
 			"select avg(datediff(relieving_date, date_of_joining)) / 365.25 from `tabEmployee` "
-			"where status='Left' and date_of_joining is not null and relieving_date >= %(d)s",
-			{"d": d365},
+			"where status='Left' and date_of_joining is not null "
+			"and relieving_date > %(a)s and relieving_date <= %(b)s",
+			{"a": d365, "b": today},
 		),
 		"years",
 		"Employee",
