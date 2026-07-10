@@ -1,6 +1,6 @@
 # Sapphire Fountains — Department KPI Dashboard Catalog
 
-_Auto-generated design reference. 114 KPIs across 7 departments. Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
+_Auto-generated design reference. 131 KPIs across 8 departments. Tiers: **Auto** = computable now from existing data; **Semi-Auto** = needs one light new field/input; **Manual** = needs human entry or an un-integrated external system._
 
 ## Automation summary
 
@@ -13,7 +13,8 @@ _Auto-generated design reference. 114 KPIs across 7 departments. Tiers: **Auto**
 | Executive | 15 | 7 | 8 | 0 |
 | Production (Build) | 15 | 8 | 5 | 2 |
 | Operations (Field-Service / Maintenance / Workforce) | 17 | 11 | 5 | 1 |
-| **TOTAL** | **114** | **66** | **41** | **7** |
+| HR (People) | 17 | 12 | 3 | 2 |
+| **TOTAL** | **131** | **78** | **44** | **9** |
 
 ---
 ## Finance
@@ -1090,6 +1091,137 @@ _Auto-generated design reference. 114 KPIs across 7 departments. Tiers: **Auto**
 - Log field safety incidents and near-misses in a lightweight Safety Incident doctype (date, employee, project, type, severity, near-miss flag) — only filed when an event occurs, so volume is near-zero but coverage is complete.
 - Set reorder levels on A-class field consumables (biocides, clarifiers, filters, common nozzles) per truck/warehouse — a one-time config in ERPNext Item/Reorder, after which stockout risk is fully automatic.
 - Optional: supervisor records a pass/fail QA spot-check on a sample of submitted visits (a single select field on the Maintenance Record) to ground a visit-quality score beyond the automatic chemistry/photo signals.
+
+---
+## HR (People)
+
+> A 17-KPI catalog built for what this site actually has: the **hrms app is not installed** (no Attendance, Leave, Job Opening/Applicant, Salary Slip, Appraisal, or Training tables) and payroll lives in QuickBooks, so the automatic KPIs read only `tabEmployee` — which is fully populated (date_of_joining, department, designation on every row; relieving_date on every Left row). Of the 17, 12 are Auto (headcount, mix, hiring/separation counts, 12-month turnover, tenure, span of control — snapshot nightly by the `_hr_metrics` aggregator), 3 are Semi (labor-hours KPIs wired to the custom Job Interval / Timesheet doctypes that exist but carry no real data yet; sum-based and self-suppressing until crews clock in), and 2 are Manual (open positions and eNPS via the one-row-per-month **HR Stat Entry** doctype). Small-n design stance for a ~14-person company: headline KPIs are counts, the only rate KPIs use a 365-day window (one exit at n=14 moves turnover ~7 points, so a 90-day rate would whipsaw), and demographic KPIs (gender/age) are deliberately excluded — at this headcount they de-anonymize individuals. Dashboard access is gated to HR Manager + HR Team (not HR User, which every employee holds).
+
+### 1. Active Headcount — 🟢 Auto
+- **Definition:** count(Employee where status='Active').
+- **Why it matters:** The base denominator for every people metric and the plainest growth signal.
+- **Target:** informational (set a KPI Target only when a hiring plan exists)
+- **Data source:** Employee (status).
+- **Implementation:** `_hr_metrics` in kpi_dashboards/snapshots.py; nightly KPI Snapshot (department=HR, kpi_key=active_headcount).
+- **Refresh:** Daily snapshot
+
+### 2. Full-Time Employees — 🟢 Auto
+- **Definition:** count(Active Employees with employment_type='Full-time').
+- **Why it matters:** Separates the committed core team from part-time/contract flex capacity.
+- **Target:** informational
+- **Data source:** Employee (employment_type).
+- **Refresh:** Daily snapshot (kpi_key=full_time_count)
+
+### 3. Employment Type Completeness — 🟢 Auto
+- **Definition:** % of Active employees with employment_type filled.
+- **Why it matters:** Data-quality guard for KPI #2 and the employment-type mix chart — 3 of 14 Active rows are blank today.
+- **Target:** 100%
+- **Data source:** Employee (employment_type).
+- **Refresh:** Daily snapshot (kpi_key=employment_type_completeness_pct)
+
+### 4. New Hires (90d) — 🟢 Auto
+- **Definition:** count(Employees with date_of_joining in the last 90 days).
+- **Why it matters:** Near-term hiring velocity; pairs with separations for net growth.
+- **Target:** informational
+- **Data source:** Employee (date_of_joining).
+- **Refresh:** Daily snapshot (kpi_key=new_hires_90d; 1-year window companion new_hires_365)
+
+### 5. Separations (90d) — 🟢 Auto
+- **Definition:** count(Employees with status='Left' and relieving_date in the last 90 days).
+- **Why it matters:** The raw exit count — at n=14 the count is more honest than any short-window rate.
+- **Target:** 0
+- **Data source:** Employee (status, relieving_date).
+- **Refresh:** Daily snapshot (kpi_key=separations_90d; 1-year companion separations_365)
+
+### 6. Net Headcount Change (90d) — 🟢 Auto
+- **Definition:** new hires (90d) − separations (90d).
+- **Why it matters:** One glance answers "are we growing or shrinking?"
+- **Target:** ≥ 0
+- **Data source:** Employee.
+- **Refresh:** Daily snapshot (kpi_key=net_headcount_change_90d)
+
+### 7. Turnover Rate (12m) — 🟢 Auto
+- **Definition:** separations in the last 365 days / two-point average headcount (reconstructed on the window's start and end dates from date_of_joining/relieving_date) × 100.
+- **Why it matters:** The classic annualized attrition rate; replacing a trained fountain tech costs months of ramp. Also rolled up onto the Executive dashboard.
+- **Target:** ≤ 15% (Lower is better)
+- **Data source:** Employee (date_of_joining, relieving_date, status).
+- **Implementation:** pure helper `metrics.turnover_rate_pct` (unit-tested); historical headcount reconstructed date-based, so no snapshot history needed.
+- **Refresh:** Daily snapshot (kpi_key=turnover_rate_12m)
+
+### 8. Avg Tenure (Active) — 🟢 Auto
+- **Definition:** avg(today − date_of_joining) over Active employees, in years.
+- **Why it matters:** Institutional knowledge proxy; a falling average flags a churn-and-replace pattern.
+- **Target:** informational (trend up)
+- **Data source:** Employee (date_of_joining).
+- **Refresh:** Daily snapshot (kpi_key=avg_tenure_years)
+
+### 9. Avg Tenure at Exit (12m) — 🟢 Auto
+- **Definition:** avg(relieving_date − date_of_joining) over employees who left in the last 365 days, in years.
+- **Why it matters:** Distinguishes losing new hires (onboarding problem) from losing veterans (retention problem). Skipped automatically when there were no exits.
+- **Target:** informational
+- **Data source:** Employee (date_of_joining, relieving_date).
+- **Refresh:** Daily snapshot (kpi_key=avg_tenure_at_exit_12m)
+
+### 10. Span of Control — 🟢 Auto
+- **Definition:** Active employees with an Active manager / distinct Active managers (via reports_to self-join).
+- **Why it matters:** Org-shape sanity check — a ballooning span means managers can't coach; near-1 means layers.
+- **Target:** informational (typical field-service span 4–8)
+- **Data source:** Employee (reports_to, status).
+- **Refresh:** Daily snapshot (kpi_key=span_of_control)
+
+### 11–12. New Hires / Separations (1y) — 🟢 Auto
+- **Definition:** the 365-day companions to #4/#5, so the turnover rate's numerator is always visible next to it.
+- **Data source:** Employee.
+- **Refresh:** Daily snapshot (kpi_keys=new_hires_365, separations_365)
+
+### 13. Field Labor Hours (30d) — 🟡 Semi
+- **Definition:** sum of completed Job Interval durations (end − start − paused) over the last 30 days, in hours.
+- **Why it matters:** The people-side view of field capacity actually deployed; the base for future utilization math.
+- **Target:** informational until the kiosk rollout
+- **Data source:** Job Interval (start_time, end_time, total_paused_seconds, status) — the table exists but is empty today.
+- **Implementation:** guarded + sum-based, so the KPI stays silent (NULL → skipped) until real intervals exist; appears the day crews start clocking in.
+- **Refresh:** Daily snapshot (kpi_key=field_labor_hours_30d)
+
+### 14. Field Staff Clocking In (30d) — 🟡 Semi
+- **Definition:** distinct employees with any Job Interval in the last 30 days.
+- **Why it matters:** Adoption gauge for the time-kiosk rollout — hours without breadth means one tech is carrying the data.
+- **Data source:** Job Interval (employee). Only emitted once #13 has data (a standing 0 pre-rollout would read as "nobody works here").
+- **Refresh:** Daily snapshot (kpi_key=field_staff_clocking_30d)
+
+### 15. Timesheet Hours (30d) — 🟡 Semi
+- **Definition:** sum(Timesheet.total_hours) over submitted Timesheets started in the last 30 days.
+- **Why it matters:** The ERPNext-native labor capture channel (maintenance visits auto-draft Timesheets); complements #13.
+- **Data source:** Timesheet (docstatus=1, start_date, total_hours) — only 2 draft test rows exist today, so this self-suppresses.
+- **Refresh:** Daily snapshot (kpi_key=timesheet_hours_30)
+
+### 16. Open Positions — 🔴 Manual
+- **Definition:** roles actively being hired for, from the newest monthly HR Stat Entry row.
+- **Why it matters:** There is no Job Opening doctype on this site; without this one number the hiring pipeline is invisible to the dashboard.
+- **Target:** 0 = fully staffed (Lower is better)
+- **Data source:** HR Stat Entry (month, open_positions) — one row per month, ~30 seconds of entry.
+- **Implementation:** newest row wins; an entry older than the previous calendar month flags the source stale (Watch badge).
+- **Refresh:** Monthly manual entry, read nightly (kpi_key=open_positions)
+
+### 17. eNPS — 🔴 Manual
+- **Definition:** Employee Net Promoter Score (−100…100) from the newest HR Stat Entry row, when surveyed.
+- **Why it matters:** The only sentiment signal available without a survey tool integration.
+- **Target:** ≥ 20 (informal small-team benchmark)
+- **Data source:** HR Stat Entry (enps). 0 is treated as "not surveyed" (documented on the field) so blank months don't masquerade as a neutral score.
+- **Refresh:** Whenever surveyed, read nightly (kpi_key=enps)
+
+**Data gaps (why the rest of the classic HR catalog is out of reach):**
+- No Attendance / Employee Checkin doctypes: absenteeism and overtime are unmeasurable (hrms not installed).
+- No Leave Application/Allocation/Type: leave utilization and balances have no source.
+- No Job Opening/Applicant/Offer: time-to-hire, offer-acceptance, and funnel KPIs would need hrms or an ATS; interim coverage is the manual open-positions count.
+- Payroll lives in QuickBooks: labor cost as % of revenue is a Finance-side GL KPI (see Finance #11), not an HR doctype read.
+- No Appraisal or Training Event: performance and training-completion KPIs are unbuilt.
+- Demographic KPIs (gender balance, age distribution) are computable — the fields are 100% filled — but deliberately excluded at n=14 for privacy; revisit if headcount triples.
+
+**Recommended minimal manual entry:**
+- Fill the 3 blank employment_type values on Active employees (drives KPI #3 to 100 and makes the employment-type donut truthful).
+- Keep the existing discipline: every departure gets status='Left' + relieving_date (all 4 historical exits have it — the turnover math depends on this).
+- One HR Stat Entry row per month (open positions; eNPS when surveyed).
+- Optional KPI Targets to light the Good/Watch/Bad badges: turnover_rate_12m ≤ 15 (Lower is better), employment_type_completeness_pct = 100, open_positions = 0 (Lower is better).
 
 ---
 ## Cross-cutting plan

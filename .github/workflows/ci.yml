@@ -65,8 +65,11 @@ jobs:
           erpnext_enhancements.tests.test_drive_match -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
-      - name: KPI dashboard metrics (pure math)
-        run: python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v
+      - name: KPI dashboard metrics (pure math) + cockpit workspace constants
+        run: >-
+          python -m unittest
+          erpnext_enhancements.tests.test_kpi_metrics
+          erpnext_enhancements.tests.test_custom_html_blocks -v
       - name: Water engineering (pure engine + design issues + controller helpers)
         run: >-
           python -m unittest

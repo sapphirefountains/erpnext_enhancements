@@ -388,5 +388,45 @@
     "type": "Donut",
     "filters_json": "[[\"Item\",\"disabled\",\"=\",0,false]]",
     "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Active Headcount by Department",
+    "chart_name": "Active Headcount by Department",
+    "chart_type": "Group By",
+    "document_type": "Employee",
+    "group_by_type": "Count",
+    "group_by_based_on": "department",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Employee\",\"status\",\"=\",\"Active\",false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Active Headcount by Employment Type",
+    "chart_name": "Active Headcount by Employment Type",
+    "chart_type": "Group By",
+    "document_type": "Employee",
+    "group_by_type": "Count",
+    "group_by_based_on": "employment_type",
+    "number_of_groups": 0,
+    "type": "Donut",
+    "filters_json": "[[\"Employee\",\"status\",\"=\",\"Active\",false],[\"Employee\",\"employment_type\",\"!=\",\"\",false]]",
+    "is_public": 1
+  },
+  {
+    "doctype": "Dashboard Chart",
+    "name": "Hires by Month",
+    "chart_name": "Hires by Month",
+    "chart_type": "Count",
+    "document_type": "Employee",
+    "based_on": "date_of_joining",
+    "timeseries": 1,
+    "timespan": "Last Year",
+    "time_interval": "Monthly",
+    "type": "Bar",
+    "filters_json": "[]",
+    "is_public": 1
   }
 ]

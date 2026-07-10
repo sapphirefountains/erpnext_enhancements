@@ -23,6 +23,9 @@ DEPARTMENT_ROLES = {
 	"Design": {"Projects Manager"},
 	"Production": {"Projects Manager"},
 	"Product": {"Item Manager", "Stock Manager", "Sales Manager"},
+	# HR Team is an instance-defined role (seeded by patches.seed_hr_team_role);
+	# deliberately NOT "HR User", which every employee on this site holds.
+	"HR": {"HR Manager", "HR Team"},
 	"Executive": {"Accounts Manager", "Sales Manager"},
 }
 

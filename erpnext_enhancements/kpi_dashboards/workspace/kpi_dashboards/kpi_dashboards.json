@@ -21,7 +21,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "KPI Setup",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -51,6 +51,17 @@
    "dependencies": "",
    "hidden": 0,
    "is_query_report": 0,
+   "label": "HR Stat Entry",
+   "link_count": 0,
+   "link_to": "HR Stat Entry",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "KPI Snapshot",
    "link_count": 0,
    "link_to": "KPI Snapshot",
@@ -70,7 +81,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-07-07 18:00:00.000000",
+ "modified": "2026-07-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
  "name": "KPI Dashboards",

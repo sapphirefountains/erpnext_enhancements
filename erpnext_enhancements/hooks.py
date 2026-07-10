@@ -567,6 +567,10 @@ fixtures = [
 					# Product Management KPI dashboard (KPI dashboards, v1.124.0)
 					"Catalog by Item Group",
 					"Catalog Additions (Monthly)",
+					# HR department (KPI dashboards, v1.150.0)
+					"Active Headcount by Department",
+					"Active Headcount by Employment Type",
+					"Hires by Month",
 				],
 			]
 		],
@@ -575,7 +579,7 @@ fixtures = [
 		"dt": "Number Card",
 		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review", "AR Outstanding", "Overdue Sales Invoices", "AP Outstanding", "Draft Sales Invoices"]]],
 	},
-	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health", "Product Catalog"]]]},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health", "Product Catalog", "HR Overview"]]]},
 	# Public legal pages (guest-accessible Web Pages). stripe_payments adds the
 	# payment/surcharge + refund policies (counsel-review-pending).
 	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy", "payment-terms", "refund-policy"]]]},
