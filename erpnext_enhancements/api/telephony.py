@@ -181,15 +181,16 @@ def get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tru
 
 
 def _default_customer_group():
-    """A NON-GROUP Customer Group for auto-created callers. erpnext v16
-    rejects group nodes ("Cannot select a Group type Customer Group"), which
-    broke every unknown-caller auto-create while it hard-coded
-    "All Customer Groups". Selling Settings' default wins when it's a leaf;
-    otherwise the first leaf group (e.g. "Individual")."""
+    """Customer Group for auto-created callers: the Selling Settings default
+    when it's a usable leaf (erpnext v16 rejects group nodes -- "Cannot select
+    a Group type Customer Group" -- so a group-typed default can't be used).
+    Otherwise return None so the field is left blank rather than falling back
+    to an arbitrary first leaf; that fallback stamped every unknown caller with
+    "Government". Callers set ignore_mandatory so a blank group still inserts."""
     default = frappe.db.get_single_value("Selling Settings", "customer_group")
     if default and not frappe.db.get_value("Customer Group", default, "is_group"):
         return default
-    return frappe.db.get_value("Customer Group", {"is_group": 0}, "name") or default
+    return None
 
 
 def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=True):
@@ -247,10 +248,12 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
             "customer_group": _default_customer_group(),
             "custom_accounts_phone_number": phone_number
         })
-        # Leave territory blank for auto-created callers. We deliberately do NOT
-        # fall back to the first leaf Territory (that produced a bogus "Asia" on
-        # every unknown caller). territory is a mandatory field on Customer, so
-        # ignore_mandatory lets the insert succeed with it unset.
+        # Leave territory (and customer group, when Selling Settings has no
+        # default) unset for auto-created callers rather than falling back to an
+        # arbitrary first leaf -- that produced a bogus "Asia" territory and
+        # "Government" customer group on every unknown caller. Both are
+        # mandatory on Customer, so ignore_mandatory lets the insert succeed
+        # with them blank.
         cust.flags.ignore_mandatory = True
         cust.insert(ignore_permissions=True)
         customer_name = cust.name
@@ -385,10 +388,13 @@ def update_caller_info(phone_number, new_name):
                 "doctype": "Customer",
                 "customer_name": new_name,
                 "customer_type": "Residential",
-                "customer_group": "All Customer Groups",
+                "customer_group": _default_customer_group(),
                 "custom_accounts_phone_number": phone_number
             })
-            # Leave territory blank (mandatory field -> ignore_mandatory).
+            # Leave territory (and customer group, absent a Selling Settings
+            # default) blank; both are mandatory -> ignore_mandatory. Note the
+            # old hard-coded "All Customer Groups" was a group node that v16
+            # rejects outright.
             cust.flags.ignore_mandatory = True
             cust.insert(ignore_permissions=True)
             customer_name = cust.name

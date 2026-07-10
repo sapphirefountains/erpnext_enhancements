@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.148.2] - 2026-07-10
+
+### Fixed
+- **Customers auto-created from incoming Triton calls no longer default to the "Government" customer group.** Same arbitrary "first non-group leaf" fallback as the territory bug — with no Customer Group configured in Selling Settings, the unknown-caller auto-create landed every caller in **Government**. `_default_customer_group()` now returns the Selling Settings default when it's a usable (non-group) leaf, and otherwise leaves the field **blank** (via `ignore_mandatory`) instead of picking an arbitrary group. Also fixes the `update_caller_info` rename-create path, which hardcoded `"All Customer Groups"` — a group node that erpnext v16 rejects outright.
+
 ## [1.148.1] - 2026-07-10
 
 ### Fixed
