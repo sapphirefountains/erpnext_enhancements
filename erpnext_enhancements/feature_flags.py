@@ -86,7 +86,14 @@ def contacts_ux_enabled():
 	The server-side ``contacts_ux.sync_contact_account_links`` invariant and the
 	editable Account field stay active either way — an editable field with a
 	disabled sync would silently drift from the Links grid.
+
+	Missing-field-safe: this runs inside ``boot_session`` on every desk page
+	load, and v16's ``db.get_single_value`` THROWS when the field is not yet in
+	the Settings meta (new code live before migrate has synced the doctype) —
+	which would 500 every desk page. Treated as OFF until the field exists.
 	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("contacts_ux_enabled"):
+		return False
 	return bool(
 		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "contacts_ux_enabled"))
 	)
