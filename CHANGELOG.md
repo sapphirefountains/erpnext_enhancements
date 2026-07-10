@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.150.2] - 2026-07-10
+
+### Fixed
+- **No-op Customer re-saves no longer manufacture "last activity" Version diffs.** The `set_last_activity` before-save hook stamped `custom_last_activity_date = today()` on **every** Customer save, so even a value-identical background re-save (bulk edits, sync/webhook replays — e.g. the 2026-07-10 "Unknown Caller" cleanup burst) produced a genuine one-field diff, a Version record, and an "updated" realtime event. The stamp now fires only on create or when the save changes something besides the stamp itself (measured with the same diff engine Frappe's Version feature uses) — so a truly no-op `doc.save()` mints no Version at all, and a manual edit of the date survives instead of being clobbered to today. The inactivity-reminder semantics are unchanged: any real edit still counts as activity.
+
 ## [1.150.1] - 2026-07-10
 
 ### Fixed
