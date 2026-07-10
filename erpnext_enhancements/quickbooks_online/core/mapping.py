@@ -83,10 +83,13 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	  1. No mapper / no Id          -> ``skipped``.
 	  2. Preflight validation fails -> ``manual_review`` (records a pending mapping).
 	  3. Already mapped & exists    -> update it, unless user edits collide with
-	     QBO-owned values and ``overwrite`` is False -> ``conflict``.
+	     QBO-owned values and ``overwrite`` is False -> ``conflict``. A value-identical
+	     payload skips the doc.save (-> ``unchanged``) and only refreshes the mapping.
 	  4. Unmapped but a fuzzy match exists -> auto-link (fill only blank fields);
 	     multiple candidates -> ``manual_review``.
 	  5. Otherwise                  -> create a new record (after required-field check).
+	     Exception: a QBO job never creates a Project (link-only) -- it consolidates
+	     to its parent Customer, or parks for review when the parent isn't imported.
 
 	``preview=True`` computes the would-be action without writing (verbs become
 	create/update/link/delete). ``overwrite=True`` lets QBO win conflicts.
@@ -137,14 +140,28 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		if preview:
 			return {"action": "update", "doctype": erpnext_doctype, "name": doc.name, "fields": list(values)}
 		_drop_self_parent_account(erpnext_doctype, values, doc.name)
-		apply_values(doc, values)
+		changed = apply_values(doc, values)
+		# The Account group fixups mutate the doc AFTER apply_values, so they must
+		# force the save (today they only fire alongside a real is_group change, but
+		# a skipped save would silently drop their healing if that ever shifts).
 		if _keep_account_as_group(erpnext_doctype, doc):
 			values["is_group"] = 1
+			changed = True
 		if _clear_account_type_for_group_conversion(erpnext_doctype, doc):
 			values.pop("account_type", None)
-		review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
-		if review:
-			return review
+			changed = True
+		# Save only when a mapped value actually moved. A value-identical re-sync
+		# (full import replay, CDC echo of our own writeback) skips the doc.save --
+		# no modified/modified_by churn, no doc_update realtime event to viewers, no
+		# whole-doc re-validation -- but still refreshes the Sync Mapping below
+		# (SyncToken / LastUpdatedTime cursor, conflict status), which touches only
+		# QBO Sync Mapping. URL healing (_heal_invalid_urls) is save-scoped, so
+		# skipping the save also skips it: healing exists solely to let the save
+		# pass validation, and the next real change still heals before saving.
+		if changed:
+			review = _save_or_manual_review(entity_type, qbo_id, payload, erpnext_doctype, doc)
+			if review:
+				return review
 		# A clean in-place update means this record is synced. If it was previously parked
 		# ("Pending Review" -- e.g. a transient validation failure on an earlier run that
 		# has since been resolved), clear that now-stale flag so it doesn't sit in review
@@ -153,6 +170,8 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		if mapping.match_status == "Pending Review":
 			mapping_extra["match_status"] = "Auto Matched"
 		save_mapping(entity_type, qbo_id, payload, erpnext_doctype, doc.name, values, **mapping_extra)
+		if not changed:
+			return {"action": "unchanged", "doctype": erpnext_doctype, "name": doc.name}
 		return {"action": "updated", "doctype": erpnext_doctype, "name": doc.name}
 
 	# Settled job-consolidation guard. A QBO job the remediation tool consolidated onto
@@ -278,6 +297,51 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			"name": doc.name,
 			"match_rule": existing_match["rule"],
 			"filled_fields": list(applied_values),
+		}
+
+	# Link-only guard for QBO jobs: live sync must never CREATE a Project. Projects
+	# are ERPNext-owned (minted by the Closed-Won hand-off); a job links to its
+	# existing PRJ-### Project via the auto-link branch above, and a job with no
+	# matching Project must not fabricate one -- that is exactly how the colon-bug
+	# import minted hundreds of duplicate records (see job_remediation.py, which
+	# consolidated 571 of them). Mirror the remediation's no-project policy: link
+	# the job to its top-level parent Customer (its transactions roll up untagged;
+	# the settled-consolidation guard above keeps it quiet on later polls, and the
+	# doctype-flip guard parks it for relinking once a matching Project appears).
+	# When the parent isn't imported yet, park for manual review instead of guessing.
+	if erpnext_doctype == "Project" and _is_qbo_customer_job(payload):
+		parent_customer = _top_level_customer(payload, settings)
+		if parent_customer:
+			if not preview:
+				save_mapping(
+					entity_type,
+					qbo_id,
+					payload,
+					"Customer",
+					parent_customer,
+					{},
+					conflict_status="Clean",
+					match_status="Manual Matched",
+					match_rule="job_merge_no_project",
+				)
+			return {
+				"action": "skipped",
+				"doctype": "Customer",
+				"name": parent_customer,
+				"qbo_id": qbo_id,
+				"reason": "Job consolidated to parent customer (no matching project; live sync never creates Projects)",
+			}
+		no_create_reason = (
+			"QBO job has no matching ERPNext Project and its parent customer is not imported yet; "
+			"live sync never creates Projects (link-only)"
+		)
+		if not preview:
+			save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, [no_create_reason])
+		return {
+			"action": "manual_review",
+			"doctype": erpnext_doctype,
+			"qbo_id": qbo_id,
+			"reason": no_create_reason,
 		}
 
 	if preview:
@@ -774,11 +838,27 @@ def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
 	return conflicts
 
 
-def apply_values(doc, values: dict):
-	"""Set every non-None mapped value on the doc (full overwrite of mapped fields)."""
+def apply_values(doc, values: dict) -> bool:
+	"""Set every non-None mapped value on the doc (full overwrite of mapped fields).
+
+	Returns True when any applied value actually differs from what the doc already
+	holds, so the in-place update path can skip the ``doc.save()`` entirely when a
+	re-sync carries nothing new -- a full import / CDC replay used to re-save 1000+
+	value-identical Customers/Suppliers/Items/Projects per run, churning
+	``modified``/``modified_by`` and firing a ``doc_update`` realtime event at
+	anyone viewing those records. Equality is judged with the same ``_normalize``
+	as ``detect_conflicts`` (via ``_values_equal``) so "unchanged" and "conflict"
+	agree on what equal means; list / child-table values are conservatively always
+	treated as changed (see ``_values_equal``), so transactions still save.
+	"""
+	changed = False
 	for fieldname, value in values.items():
-		if value is not None:
-			doc.set(fieldname, value)
+		if value is None:
+			continue
+		if not _values_equal(doc.get(fieldname), value):
+			changed = True
+		doc.set(fieldname, value)
+	return changed
 
 
 def apply_blank_values(doc, values: dict) -> dict:
@@ -829,6 +909,37 @@ def find_existing_match(entity_type: str, payload: dict, settings):
 def _normalize(value):
 	"""Coerce a value to a string for tolerant equality comparison (None -> "")."""
 	return "" if value is None else str(value)
+
+
+def _values_equal(current, incoming) -> bool:
+	"""True when writing ``incoming`` over ``current`` would store the same value.
+
+	The comparison behind ``apply_values``' changed flag. Primary test is the same
+	``_normalize`` string coercion ``detect_conflicts`` uses (dates stored as
+	``datetime.date`` equal their ``YYYY-MM-DD`` string form). A numeric fallback
+	keeps representation drift (a Float/Check field stored as ``1.0``/``1`` vs an
+	incoming ``1``/``True``/``"1"``) from reporting a change on every poll --
+	Frappe casts on save, so the stored value would be identical. The fallback
+	only applies when at least one side is a real number: two *strings* that
+	differ only numerically ("0123" vs "123" in a Data field that keeps leading
+	zeros) stay unequal, so a genuine change is never skipped. Anything uncertain
+	(lists/child tables -- live child rows are DocType objects that can't be
+	compared to the mapped plain dicts, same reason detect_conflicts skips them --
+	or values ``float()`` can't coerce) reports "not equal", which errs toward
+	saving: the pre-fix behavior.
+	"""
+	if isinstance(current, list) or isinstance(incoming, list):
+		return False
+	if _normalize(current) == _normalize(incoming):
+		return True
+	if isinstance(current, str) and isinstance(incoming, str):
+		return False
+	if isinstance(current, (int, float)) or isinstance(incoming, (int, float)):
+		try:
+			return float(current) == float(incoming)
+		except (TypeError, ValueError):
+			return False
+	return False
 
 
 def _display_name(payload):

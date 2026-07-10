@@ -701,6 +701,117 @@ def test_detect_conflicts_ignores_child_tables_and_flags_scalars():
 	assert detect_conflicts(doc, incoming, mapping) == ["remark"]
 
 
+def _stub_doc(**fields):
+	"""A minimal doc double with get/set/flags, tracking save() calls."""
+	doc = types.SimpleNamespace(flags=types.SimpleNamespace(), saves=[], **fields)
+	doc.get = lambda fieldname: getattr(doc, fieldname, None)
+	doc.set = lambda fieldname, value: setattr(doc, fieldname, value)
+	doc.save = lambda **kwargs: doc.saves.append(kwargs)
+	return doc
+
+
+def test_apply_values_returns_changed_flag():
+	"""apply_values reports whether any mapped value actually differs from the doc."""
+	install_frappe_stub()
+	from datetime import date
+
+	from erpnext_enhancements.quickbooks_online.core.mapping import apply_values
+
+	doc = _stub_doc(
+		doctype="Customer",
+		customer_name="Acme Supply",
+		customer_type="Commercial",
+		disabled=0,
+		conversion_rate=1.0,
+		posting_date=date(2026, 6, 2),
+		account_number="0123",
+	)
+
+	# Value-identical payload -> unchanged, even across representations Frappe
+	# would cast to the same stored value: int over float (1 vs 1.0), bool over
+	# Check int (False vs 0), and a date object vs its YYYY-MM-DD string form.
+	assert (
+		apply_values(
+			doc,
+			{
+				"customer_name": "Acme Supply",
+				"customer_type": "Commercial",
+				"disabled": False,
+				"conversion_rate": 1,
+				"posting_date": "2026-06-02",
+				"skipped_none": None,  # None values are never applied nor compared
+			},
+		)
+		is False
+	)
+	assert doc.saves == []
+
+	# Two STRINGS that differ only numerically are a genuine change (a Data field
+	# keeps leading zeros), so the numeric fallback must not swallow it.
+	assert apply_values(doc, {"account_number": "123"}) is True
+	assert doc.account_number == "123"
+
+	# A real scalar change flags, and the value is applied.
+	assert apply_values(doc, {"customer_type": "Residential"}) is True
+	assert doc.customer_type == "Residential"
+
+	# Child-table (list) values can't be compared reliably -> always "changed".
+	doc.items = [types.SimpleNamespace(item_code="X")]
+	assert apply_values(doc, {"items": [{"item_code": "X"}]}) is True
+
+
+def test_update_branch_skips_save_when_nothing_changed(monkeypatch):
+	"""A value-identical re-sync refreshes the Sync Mapping but never doc.save()s.
+
+	This is the no-op-save guard: a full import / CDC replay used to re-save 1000+
+	identical Customers per run, churning modified/modified_by and firing doc_update
+	realtime events at anyone viewing them.
+	"""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	values = {"customer_name": "Acme Supply", "customer_type": "Commercial"}
+	# What the last sync stored (detect_conflicts' baseline) -- deliberately frozen
+	# so the second, value-moved upsert below reads as QBO moving, not a user edit.
+	owned = json.dumps(values)
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", dict(values)))
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "_ensure_group_parent", lambda *args: None)
+	monkeypatch.setattr(
+		mapping,
+		"get_mapping",
+		lambda *args: types.SimpleNamespace(
+			erpnext_doctype="Customer",
+			erpnext_name="Acme Supply",
+			owned_fields=owned,
+			match_status="Auto Matched",
+			conflict_status="Clean",
+		),
+	)
+	doc = _stub_doc(doctype="Customer", name="Acme Supply", **values)
+	monkeypatch.setattr(frappe.db, "exists", lambda doctype, name: True, raising=False)
+	monkeypatch.setattr(frappe, "get_doc", lambda doctype, name: doc, raising=False)
+	saved_mappings = []
+	monkeypatch.setattr(mapping, "save_mapping", lambda *args, **kwargs: saved_mappings.append(kwargs))
+
+	settings = types.SimpleNamespace(company="Sapphire Fountains")
+	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+
+	assert result == {"action": "unchanged", "doctype": "Customer", "name": "Acme Supply"}
+	assert doc.saves == []  # the whole point: no doc write, no modified churn
+	# The mapping bookkeeping (SyncToken/cursor refresh, conflict status) still ran.
+	assert saved_mappings == [{"conflict_status": "Clean"}]
+
+	# The same payload with one moved value saves and reports "updated".
+	values["customer_type"] = "Residential"
+	result = mapping.upsert_entity("Customer", {"Id": "1", "DisplayName": "Acme Supply"}, settings)
+
+	assert result == {"action": "updated", "doctype": "Customer", "name": "Acme Supply"}
+	assert len(doc.saves) == 1
+	assert doc.customer_type == "Residential"
+	assert len(saved_mappings) == 2
+
+
 def test_credit_card_account_is_untyped_liability():
 	"""QBO Credit Card accounts map to an untyped Liability ledger, not a Payable.
 
@@ -2439,6 +2550,87 @@ def test_match_project_links_existing_job_by_prj_number(monkeypatch):
 	assert match["status"] == "matched"
 	assert match["name"] == "PRJ-00401"
 	assert match["rule"] == "prj_number"
+
+
+def _upsert_job_no_match(monkeypatch, parent_customer):
+	"""Drive upsert_entity with a NEW QBO job (no mapping, no matching Project).
+
+	Returns (result, recorded) where recorded captures save_mapping /
+	save_manual_review_mapping calls. frappe.new_doc is trapped so any attempt to
+	CREATE a record fails the test.
+	"""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	monkeypatch.setattr(
+		mapping,
+		"map_qbo_to_erpnext",
+		lambda *args: ("Project", {"project_name": "Daybreak Splash Pad", "status": "Open"}),
+	)
+	monkeypatch.setattr(mapping, "validate_mapped_values", lambda *args, **kwargs: [])
+	monkeypatch.setattr(mapping, "_ensure_group_parent", lambda *args: None)
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: None)
+	monkeypatch.setattr(mapping, "find_existing_match", lambda *args: None)
+	monkeypatch.setattr(mapping, "_top_level_customer", lambda *args: parent_customer)
+
+	def trap_new_doc(doctype):
+		raise AssertionError(f"live sync must never create a {doctype} for a QBO job")
+
+	monkeypatch.setattr(frappe, "new_doc", trap_new_doc, raising=False)
+	recorded = {}
+	monkeypatch.setattr(
+		mapping,
+		"save_mapping",
+		lambda entity_type, qbo_id, payload, doctype, name, values, **extra: recorded.update(
+			mapping=dict(doctype=doctype, name=name, values=values, **extra)
+		),
+	)
+	monkeypatch.setattr(
+		mapping,
+		"save_manual_review_mapping",
+		lambda entity_type, qbo_id, payload, doctype, issues: recorded.update(review=issues),
+	)
+
+	payload = {
+		"Id": "3001",
+		"DisplayName": "PRJ-777 Daybreak Splash Pad",
+		"Job": True,
+		"ParentRef": {"value": "1225"},
+	}
+	result = mapping.upsert_entity("Customer", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+	return result, recorded
+
+
+def test_new_job_consolidates_to_parent_instead_of_creating_project(monkeypatch):
+	"""Link-only: a new QBO job with no matching Project never mints one -- it is
+	consolidated onto its top-level parent Customer, mirroring the colon-bug
+	remediation's no-project policy (job_merge_no_project)."""
+	result, recorded = _upsert_job_no_match(monkeypatch, parent_customer="Landmark Aquatics")
+
+	assert result["action"] == "skipped"
+	assert result["doctype"] == "Customer"
+	assert result["name"] == "Landmark Aquatics"
+	assert "never creates Projects" in result["reason"]
+	assert recorded["mapping"] == {
+		"doctype": "Customer",
+		"name": "Landmark Aquatics",
+		"values": {},
+		"conflict_status": "Clean",
+		"match_status": "Manual Matched",
+		"match_rule": "job_merge_no_project",
+	}
+
+
+def test_new_job_without_imported_parent_parks_for_review(monkeypatch):
+	"""Link-only: when the job's parent Customer isn't imported yet there is nothing
+	safe to link to, so the job parks for manual review rather than creating a Project."""
+	result, recorded = _upsert_job_no_match(monkeypatch, parent_customer=None)
+
+	assert result["action"] == "manual_review"
+	assert result["doctype"] == "Project"
+	assert "link-only" in result["reason"]
+	assert recorded["review"] == [result["reason"]]
+	assert "mapping" not in recorded
 
 
 def test_customers_imported_top_level_first(monkeypatch):

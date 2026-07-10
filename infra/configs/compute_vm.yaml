@@ -7,9 +7,13 @@ ${standard_vm_name}:
       nat: "${nat_ip_resolved}"
       addresses: null
   boot_disk:
+    auto_delete: false
+    #%{ if reuse_existing_disks }
+    use_independent_disk: {}
+    #%{ endif }
     initialize_params:
       image: "projects/debian-cloud/global/images/family/debian-12"
-      size: 30
+      size: ${vm_boot_disk_size}
       type: "pd-balanced"
 
   # 🎯 FIXED: Uses pre-encoded string array to dynamic mount points safely
