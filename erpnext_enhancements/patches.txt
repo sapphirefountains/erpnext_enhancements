@@ -153,3 +153,10 @@ erpnext_enhancements.patches.remove_opportunity_won_reason
 # exists on prod) so the HR Dashboard workspace roles + HR Stat Entry perms
 # never reference a missing role on fresh sites
 erpnext_enhancements.patches.seed_hr_team_role
+# v1.151.0 Contacts UX: default the "Contact & Address Quick Entry" toggle ON for
+# existing installs (new sites get it from the Check field default at doc creation)
+erpnext_enhancements.patches.default_contacts_ux_on
+# v1.151.0 Contacts UX: one-time normalization of Contact.custom_account to the
+# first Customer link (the field is now editable + server-synced; old client
+# mirror values were stale/missing) — db-level, update_modified=False, idempotent
+erpnext_enhancements.patches.backfill_contact_custom_account
