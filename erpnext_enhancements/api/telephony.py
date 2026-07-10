@@ -366,7 +366,12 @@ def update_caller_info(phone_number, new_name):
     creates, via ``get_caller_info``) the records for ``phone_number``. If the
     Customer name does NOT start with "Unknown Caller" it is treated as
     established and left untouched (``updated: False``). Otherwise the Customer
-    name and Contact first/last name are set from ``new_name``. Commits.
+    name and Contact first/last name are set from ``new_name`` — but only when
+    the stored values actually differ: the gateway replays caller_resolved on
+    every call, usually with the name already on file, and an unconditional
+    write bumps ``modified`` on Customer+Contact each time (broadcasting a
+    doc_update to any open desk form and risking TimestampMismatchError for
+    users mid-edit). ``updated`` reports whether anything was written. Commits.
     """
     frappe.set_user("triton@sapphirefountains.com")
 
@@ -380,9 +385,12 @@ def update_caller_info(phone_number, new_name):
         if current_cust_name and not str(current_cust_name).startswith("Unknown Caller"):
             is_established = True
 
+    changed = False
     if not is_established:
         if customer_name:
-            frappe.db.set_value("Customer", customer_name, "customer_name", new_name)
+            if (current_cust_name or "") != (new_name or ""):
+                frappe.db.set_value("Customer", customer_name, "customer_name", new_name)
+                changed = True
         else:
             cust = frappe.get_doc({
                 "doctype": "Customer",
@@ -398,14 +406,21 @@ def update_caller_info(phone_number, new_name):
             cust.flags.ignore_mandatory = True
             cust.insert(ignore_permissions=True)
             customer_name = cust.name
+            changed = True
 
         parts = new_name.split(" ", 1)
         first = parts[0]
         last = parts[1] if len(parts) > 1 else ""
 
         if contact_name:
-            frappe.db.set_value("Contact", contact_name, "first_name", first)
-            frappe.db.set_value("Contact", contact_name, "last_name", last)
+            cur_first, cur_last = frappe.db.get_value(
+                "Contact", contact_name, ["first_name", "last_name"]
+            )
+            if (cur_first or "") != first or (cur_last or "") != last:
+                frappe.db.set_value(
+                    "Contact", contact_name, {"first_name": first, "last_name": last}
+                )
+                changed = True
         else:
             cont = frappe.get_doc({
                 "doctype": "Contact",
@@ -417,9 +432,10 @@ def update_caller_info(phone_number, new_name):
             cont.append("links", {"link_doctype": "Customer", "link_name": customer_name})
             cont.insert(ignore_permissions=True)
             contact_name = cont.name
-    
+            changed = True
+
     frappe.db.commit()
-    return {"status": "success", "customer": customer_name, "contact": contact_name, "updated": not is_established}
+    return {"status": "success", "customer": customer_name, "contact": contact_name, "updated": changed}
 
 def locate_customer(phone_number):
     """Internal helper: return just the Customer name for a phone number.

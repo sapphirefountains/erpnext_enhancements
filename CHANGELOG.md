@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.148.5] - 2026-07-10
+
+### Fixed
+- **Triton caller_resolved replays no longer touch unchanged Customers/Contacts.** The gateway replays `update_caller_info` on every call, usually with the name already on file, and the handler unconditionally rewrote `customer_name` and the Contact's first/last name — bumping `modified` on both records each call, which broadcast a `doc_update` to any open desk form and set up `TimestampMismatchError` for users mid-edit. The handler now compares before writing and skips entirely when nothing differs, and the response's `updated` flag reports whether anything was actually written (it previously just meant "not established").
+
 ## [1.148.4] - 2026-07-10
 
 ### Fixed
