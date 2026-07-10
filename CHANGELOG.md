@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.151.1] - 2026-07-10
+## [1.151.2] - 2026-07-10
 
 ### Fixed
 - **QBO sync no longer re-saves documents that didn't change.** The already-linked update path applied every mapped value and unconditionally `doc.save()`d, so a full import or CDC replay re-saved 1000+ value-identical Customers/Suppliers/Items/Projects per run — churning `modified`/`modified_by`, firing `doc_update` realtime events at anyone viewing those records, and (before v1.150.2) minting phantom Version rows. `apply_values` now reports whether any value actually moved (same normalization as conflict detection, with a numeric fallback so `1` vs `1.0` isn't "changed"; child tables conservatively always are, so transactions still save), and a value-identical re-sync skips the document save entirely — it only refreshes the QBO Sync Mapping bookkeeping (SyncToken/cursor, conflict status) and reports a new `unchanged` action (uncounted in sync-log tallies, like `skipped`).
 - **Live sync never creates Projects from QBO jobs anymore (link-only).** A new QBO job (sub-customer) still auto-links to its existing `PRJ-###` Project, but when no matching Project exists the sync now consolidates the job onto its top-level parent Customer (`job_merge_no_project`, the same policy as the colon-bug remediation — transactions roll up to the parent untagged) instead of minting a Project, and parks the job for manual review when the parent Customer isn't imported yet. Once a matching Project appears later, the existing doctype-flip guard flags the mapping for relinking via the job remediation tool. This was the remaining blocker for re-enabling the paused QBO sync.
 - Repaired `test_save_or_manual_review_parks_validation_errors` (its doc stub predated the `ignore_links` flag and had been failing silently — CI doesn't run the pytest-based QBO suite).
+
+## [1.151.1] - 2026-07-10
+
+### Fixed
+- **The Opportunity "Hand-Off Process" tab no longer renders blank when the linked project's tracker was never started.** The tab mirrors the linked Project's first three hand-off steps; when that project had no steps (which is the normal state for in-flight projects — they're not auto-seeded and opt in via the Project's "Start Hand-Off Process" button, plus anything imported or created before the automation switch was on), the client blanked the field instead of falling back, so the tab looked empty/broken. On production this affected **47 of the 56** Closed-Won opportunities that have a linked project. The client now falls back to a **project-aware derived view** (Mark Won ✓, Hold Hand-Off Meeting = live step, Create Project ✓) with a pointer to the linked project, and also renders the derived view if the mirror call errors — so the tab is never blank for a saved Opportunity while the master switch is on. No data change: the underlying projects keep their (empty) trackers until someone starts them.
 
 ## [1.151.0] - 2026-07-10
 
@@ -27,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contacts & Addresses section no longer shows stale data after you create or edit a contact via the full form.** Frappe routes back to the party form without reloading it, so the section re-rendered from the old server payload. Contact/Address saves now push fresh directory data into every open party form they link to (no reload — unsaved edits on the party form are preserved), and dialog-created records refresh both the stock section and the directory widget in place.
 - **Opportunity's directory widget now includes the party's contacts/addresses.** The source scan checked `party_type`, but Opportunity's discriminator field is `opportunity_from`, so the Customer/Lead/Prospect behind the deal was missed entirely.
 - The directory widget re-registered its form event handlers on every refresh, piling up duplicate handlers that all re-rendered the tables on each customer/party field change.
+
 ## [1.150.3] - 2026-07-10
 
 ### Fixed
