@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.153.0] - 2026-07-10
+
+### Added
+- **Package Dispatch — an official form for sending packages out.** A new self-contained module (surfaced on the **Shipping** desk workspace) replaces the messy, handwritten one-off with a repeatable document. Each dispatch captures: **what's being sent, with a value per item** — add a line per item and optionally pick a catalog **Item** to pull its name and selling value (Standard Selling price, falling back to the Item master rate), or type a one-off description and value by hand; the form totals a **Total Declared Value** (your reference for how much to insure) and shows an "Insure for …" headline. A **structured recipient address** (name, company, street, city, state, ZIP, phone) you type — no handwriting, searchable later — with an optional **Customer** picker that auto-fills from their primary address. A plain-English **"what's being sent" summary** to tell the store, auto-written from the item list if left blank. And **delivery tracking** — store/carrier, tracking number, shipped/delivered dates, and a Not Shipped → Shipped → Delivered status derived from those dates, plus a **Mark Delivered** button on submitted dispatches. Submit to finalize it as a locked official record; print the **Package Dispatch Sheet** to hand over at the counter or keep on file. Permissions go to **System Manager** and a new insert-only **Dispatch User** role. The two auto-fill conveniences (catalog value + customer address) are gated by a default-OFF **Package Dispatch Auto-fill** switch (ERPNext Enhancements Settings → Package Dispatch) — the form, totals, print sheet and submit all work regardless; flip it on to enable auto-fill (no deploy needed).
+
 ## [1.152.0] - 2026-07-10
 
 ### Added

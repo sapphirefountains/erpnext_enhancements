@@ -1,0 +1,303 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-07-10 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "dispatch_date",
+  "requested_by",
+  "column_break_head",
+  "carrier",
+  "service_level",
+  "shipment_status",
+  "ship_to_section",
+  "ship_to_customer",
+  "recipient_name",
+  "recipient_company",
+  "recipient_phone",
+  "column_break_shipto",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "pincode",
+  "country",
+  "contents_section",
+  "contents_summary",
+  "items",
+  "totals_section",
+  "total_declared_value",
+  "column_break_totals",
+  "insured_value",
+  "tracking_section",
+  "tracking_number",
+  "shipped_date",
+  "delivered_date",
+  "column_break_tracking",
+  "shipping_cost",
+  "notes",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "PKG-.YYYY.-.#####",
+   "print_hide": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "dispatch_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dispatch Date",
+   "reqd": 1
+  },
+  {
+   "description": "Who is sending this package. Defaults to you.",
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "label": "Requested By",
+   "options": "User"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Where you're dropping this off / who's carrying it.",
+   "fieldname": "carrier",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Shipping Store / Carrier",
+   "options": "\nThe UPS Store\nUPS\nUSPS\nFedEx\nFedEx Office\nDHL\nOther"
+  },
+  {
+   "description": "e.g. Ground, 2-Day, Overnight (optional).",
+   "fieldname": "service_level",
+   "fieldtype": "Data",
+   "label": "Service Level"
+  },
+  {
+   "default": "Not Shipped",
+   "description": "Set automatically from the Shipped / Delivered dates below.",
+   "fieldname": "shipment_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Delivery Status",
+   "options": "Not Shipped\nShipped\nDelivered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ship_to_section",
+   "fieldtype": "Section Break",
+   "label": "Ship To"
+  },
+  {
+   "description": "Optional. Pick a customer to fill the recipient name, address and phone below from their primary address — then edit anything as needed.",
+   "fieldname": "ship_to_customer",
+   "fieldtype": "Link",
+   "label": "Auto-fill from Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "recipient_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Recipient Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "recipient_company",
+   "fieldtype": "Data",
+   "label": "Company (optional)"
+  },
+  {
+   "fieldname": "recipient_phone",
+   "fieldtype": "Data",
+   "label": "Phone",
+   "options": "Phone"
+  },
+  {
+   "fieldname": "column_break_shipto",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "address_line1",
+   "fieldtype": "Data",
+   "label": "Address Line 1",
+   "reqd": 1
+  },
+  {
+   "fieldname": "address_line2",
+   "fieldtype": "Data",
+   "label": "Address Line 2"
+  },
+  {
+   "fieldname": "city",
+   "fieldtype": "Data",
+   "label": "City",
+   "reqd": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Data",
+   "label": "State / Province",
+   "reqd": 1
+  },
+  {
+   "fieldname": "pincode",
+   "fieldtype": "Data",
+   "label": "ZIP / Postal Code",
+   "reqd": 1
+  },
+  {
+   "default": "United States",
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country"
+  },
+  {
+   "fieldname": "contents_section",
+   "fieldtype": "Section Break",
+   "label": "Package Contents"
+  },
+  {
+   "description": "A plain-English summary to tell the shipping store what's inside. Leave blank to auto-fill it from the item list below when you save.",
+   "fieldname": "contents_summary",
+   "fieldtype": "Small Text",
+   "label": "What's Being Sent (tell the store)"
+  },
+  {
+   "description": "One row per thing you're shipping. Pick a catalog item to pull its value, or just type a description and value by hand.",
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Package Dispatch Item"
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Declared Value"
+  },
+  {
+   "description": "Sum of the item values above — your reference for how much to insure the package for.",
+   "fieldname": "total_declared_value",
+   "fieldtype": "Currency",
+   "label": "Total Declared Value",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Defaults to the total declared value; change it if you insure for a different amount (e.g. rounded up).",
+   "fieldname": "insured_value",
+   "fieldtype": "Currency",
+   "label": "Amount to Insure For"
+  },
+  {
+   "fieldname": "tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Shipping & Delivery"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Add the tracking number once you've dropped the package off — editable after the dispatch is submitted.",
+   "fieldname": "tracking_number",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Tracking Number"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "shipped_date",
+   "fieldtype": "Date",
+   "label": "Shipped On"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "delivered_date",
+   "fieldtype": "Date",
+   "label": "Delivered On"
+  },
+  {
+   "fieldname": "column_break_tracking",
+   "fieldtype": "Column Break"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "shipping_cost",
+   "fieldtype": "Currency",
+   "label": "Shipping Cost Paid"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Package Dispatch",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-07-10 13:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Package Dispatch",
+ "name": "Package Dispatch",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Dispatch User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "recipient_name,carrier,tracking_number",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "recipient_name",
+ "track_changes": 1
+}

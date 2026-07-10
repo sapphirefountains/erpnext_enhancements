@@ -62,6 +62,8 @@
   "document_merge_enabled",
   "product_configurator_section",
   "product_configurator_enabled",
+  "package_dispatch_section",
+  "package_dispatch_enabled",
   "fleet_section",
   "fleet_maintenance_enabled",
   "fleet_reminders_enabled",
@@ -458,6 +460,18 @@
    "label": "Enable Product Configurator Generation"
   },
   {
+   "fieldname": "package_dispatch_section",
+   "fieldtype": "Section Break",
+   "label": "Package Dispatch"
+  },
+  {
+   "default": "0",
+   "description": "Switch for the Package Dispatch form's auto-fill conveniences. ON: picking a catalog Item on a dispatch line pulls its name + selling value, and picking a Customer fills the recipient name/address/phone from their primary address. OFF (default): the form, its declared-value total, the printable Package Dispatch Sheet and the submit flow all still work — you just type the item values and address by hand. Applies on each user's next page load (desk reads the flag from bootinfo); the server auto-fill endpoints read the live value.",
+   "fieldname": "package_dispatch_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Package Dispatch Auto-fill"
+  },
+  {
    "fieldname": "fleet_section",
    "fieldtype": "Section Break",
    "label": "Fleet Maintenance"
@@ -587,7 +601,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2024-05-22 12:00:00.000000",
+ "modified": "2026-07-10 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

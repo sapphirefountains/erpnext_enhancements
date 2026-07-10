@@ -447,6 +447,9 @@ after_migrate = [
 	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
+	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
+	# guarded; re-upserts the HTML so template edits deploy on migrate).
+	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
