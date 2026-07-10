@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.155.0] - 2026-07-10
+
+### Changed
+- **The Global Search "DocTypes" section now offers each DocType's standard views (List, Report, Dashboard, Kanban, Calendar/Gantt, Tree, …), not just one link.** Building on v1.154.0: instead of a single "List" entry per matched DocType, the results now expand each into every view frappe's own list-view switcher would offer — **List**, **Report** (when you can access it), **Dashboard**, **Kanban** (opened via frappe's real board lookup / "create board" flow), **Calendar** and **Gantt** (when a standard calendar is registered for the DocType), **Tree** (for tree DocTypes), and **Image**/**Map** (when the DocType's meta supports them). Availability uses the same conditions as `list_view_select.js`, all evaluated client-side so results stay instant. It never routes to the DocType definition form for editing — only to data views; single-type DocTypes (System Settings, etc.) keep a single link to their settings form, since that is their only view. Same gating as before (unfiltered global-search mode only; drill-down filters and `#tag` searches untouched). Implemented in `public/js/global_enhancements/global_search_doctypes.js`.
+
 ## [1.154.0] - 2026-07-10
 
 ### Fixed
