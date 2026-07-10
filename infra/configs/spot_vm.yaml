@@ -7,10 +7,14 @@ ${spot_vm_name}:
       nat: "${nat_ip_resolved}"
       addresses: null
   boot_disk:
+    auto_delete: false
+    #%{ if reuse_existing_disks }
+    use_independent_disk: {}
+    #%{ endif }
     initialize_params:
       image: "projects/debian-cloud/global/images/family/debian-12"
-      size: 50
-      type: "pd-ssd"
+      size: ${vm_boot_disk_size}
+      type: "pd-balanced"
   
   # 🎯 THE FIX: Pass a pre-encoded JSON string array here to avoid YAML syntax clashing
   attached_disks: ${attached_disks_json}

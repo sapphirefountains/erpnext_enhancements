@@ -6,10 +6,10 @@ app-glb:
     default_service: "${default_service}"
   
   # ============================================================================
-  # 1. Network Endpoint Groups (NEGs) - Only for Serverless Cloud Run
+  # 1. Network Endpoint Groups (NEGs) - Strictly for Serverless Cloud Run
   # ============================================================================
   neg_configs:
-    # Handle Cloud Run exclusively; VMs do not use module-managed NEGs
+    # Handle Cloud Run exclusively; VMs pass target descriptors via backends block
     #%{ if provision_cloud_run }
     frontend-neg:
       cloudrun:
@@ -26,16 +26,16 @@ app-glb:
     #%{ if provision_compute_vm }
     production-vm-backend:
       backends:
-        - backend: "${standalone_vm_neg_name}" # Passes the UMIG/NEG self-link directly
+        - backend: "${standalone_vm_neg_name}"
       health_checks: ["$$mig_health_check_id"]
       port_name: "http"
     #%{ endif }
 
-    # Staging Spot VM Routing Entry Block
+    # 🎯 SYNCHRONIZED TARGET: Matches new hyphen key and uses fully qualified resource path
     #%{ if provision_spot_vm }
-    spot_vm_backend:
+    spot-vm-backend:
       backends:
-        - backend: "${spot_vm_neg_name}" # Passes the UMIG/NEG self-link directly
+        - backend: "${spot_vm_neg_name}"
       health_checks: ["$$mig_health_check_id"]
       port_name: "http"
     #%{ endif }

@@ -144,20 +144,24 @@ locals {
     {
       "data-disk" = {
         device_name  = "erpnext-data"
-        disk_size_gb = var.vm_data_disk_size
-        disk_type    = "pd-balanced"
         mode         = "READ_WRITE"
         type         = "PERSISTENT"
+        initialize_params = {
+          size = var.vm_data_disk_size
+          type = "pd-balanced"
+        }
       }
     },
     {
       for i in range(var.vm_local_ssd_count) : "local-ssd-${i}" => {
         device_name  = "local-ssd-${i}"
-        disk_size_gb = 375
-        disk_type    = "local-ssd"
-        interface    = "NVME"
         mode         = "READ_WRITE"
         type         = "SCRATCH"
+        interface    = "NVME"
+        initialize_params = {
+          size = 375
+          type = "local-ssd"
+        }
       }
     }
   ) : {}
@@ -170,7 +174,9 @@ locals {
     region                    = var.region
     network                   = local.network_id
     subnetwork                = local.subnetwork_self_link
-    attached_disks_json       = jsonencode(local.raw_attached_disks) 
+    attached_disks_json       = jsonencode(local.raw_attached_disks)
+    vm_boot_disk_size         = var.vm_boot_disk_size
+    reuse_existing_disks      = var.reuse_existing_disks
   }))
 
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
@@ -180,7 +186,9 @@ locals {
     nat_ip_resolved       = var.enable_spot_public_ip ? "true" : "null"
     network               = local.network_id
     subnetwork            = local.subnetwork_self_link
-    attached_disks_json   = jsonencode(local.raw_attached_disks) 
+    attached_disks_json   = jsonencode(local.raw_attached_disks)
+    vm_boot_disk_size     = var.vm_boot_disk_size
+    reuse_existing_disks  = var.reuse_existing_disks
   }))
 }
 
@@ -233,6 +241,7 @@ module "spot_vm" {
   service_account = try(each.value.service_account, null)
   metadata        = try(each.value.metadata, null)
   labels          = try(each.value.labels, null)
+  group           = var.provision_spot_vm_lb_backend ? { named_ports = {} } : null
 
   scheduling_config = {
     provisioning_model = "SPOT"
@@ -293,6 +302,5 @@ resource "google_compute_firewall" "allow_iap_ssh" {
     ports    = ["22"]
   }
 
-  source_ranges = ["35.235.240.0/20"] 
-  target_tags   = ["web-frontend", "batch-processor"]
+  source_ranges = ["35.235.240.0/20"]
 }

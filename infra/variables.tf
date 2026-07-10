@@ -175,6 +175,18 @@ variable "vm_data_disk_size" {
   default     = 200
 }
 
+variable "vm_boot_disk_size" {
+  type        = number
+  description = "The capacity in GB for the VM boot disk"
+  default     = 50
+}
+
+variable "reuse_existing_disks" {
+  type        = bool
+  description = "When true, boot disk uses an independent resource that persists across VM recreation and gets reattached. When false, a new boot disk is created each time the VM is replaced."
+  default     = false
+}
+
 variable "vm_local_ssd_count" {
   type        = number
   description = "The number of local SSD scratch arrays to provision"
@@ -505,8 +517,20 @@ variable "mig_health_check_port" {
   default     = 8000
 }
 
+variable "provision_spot_vm_lb_backend" {
+  type        = bool
+  description = "Toggle to include the Spot VM as a backend in the load balancer. Set false for a standalone spot VM without LB routing."
+  default     = false
+}
+
 variable "provision_cloud_nat" {
   type        = bool
   description = "Toggle to active or completely tear down the Cloud NAT egress network gateways"
   default     = true # Keeps it enabled by default for active VM work
+}
+
+variable "iap_tunnel_members" {
+  type        = list(string)
+  description = "List of members (users/groups/SAs) to grant IAP tunnel access for SSH. Each entry should be in the format 'user:email@example.com' or 'group:group@example.com' or 'serviceAccount:sa@project.iam.gserviceaccount.com'"
+  default     = []
 }
