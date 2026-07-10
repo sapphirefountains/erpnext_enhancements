@@ -26,6 +26,11 @@
 	color: var(--text-muted);
 }
 
+/* Host the column resize handles (see column_resizer.js) on the header cells. */
+.task-grid-header > .task-grid-cell {
+	position: relative;
+}
+
 .task-grid-row {
 	display: flex;
 	align-items: center;

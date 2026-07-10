@@ -64,7 +64,46 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			this.columnVisibility = JSON.parse(savedColumns);
 		}
 
+		// Drag-to-resize column widths (per user). The first (Task) column stays
+		// elastic and the tiny Actions column is left alone; the rest get a right-
+		// edge drag handle. Widths are applied as a fixed flex-basis on the cells
+		// carrying the matching `data-column`, so no width is set until the user
+		// drags — the CSS defaults (task_tree.css) remain the baseline, and
+		// "Reset column widths" clears the overrides. Guarded so a missing bundle
+		// asset can't break the whole tree.
+		const ColumnResizer = (erpnext_enhancements.dashboard_components || {}).ColumnResizer;
+		this.columnResizer = ColumnResizer
+			? new ColumnResizer(
+					`taskTreeWidths_${frappe.session.user}`,
+					[
+						{ key: "owner", minWidth: 90, maxWidth: 360 },
+						{ key: "status", minWidth: 90, maxWidth: 320 },
+						{ key: "priority", minWidth: 80, maxWidth: 280 },
+						{ key: "start_date", minWidth: 90, maxWidth: 260 },
+						{ key: "due_date", minWidth: 90, maxWidth: 260 },
+						{ key: "progress", minWidth: 90, maxWidth: 320 },
+						{ key: "duration", minWidth: 90, maxWidth: 280 },
+					],
+					{
+						applyWidth: (root, key, px) => {
+							const $cells = root.find(`.task-grid-cell[data-column="${key}"]`);
+							$cells.css("flex", px == null ? "" : `0 1 ${px}px`);
+						},
+						measureWidth: (root, key) => {
+							const $cell = root
+								.find(`.task-grid-header .task-grid-cell[data-column="${key}"]`)
+								.first();
+							return $cell.length ? $cell.outerWidth() : 120;
+						},
+					}
+			  )
+			: null;
+
 		this.init();
+	}
+
+	applyColumnWidths() {
+		if (this.columnResizer) this.columnResizer.apply(this.wrapper);
 	}
 
 	init() {
@@ -146,6 +185,8 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                                         <input class="form-check-input column-toggle-cb" type="checkbox" value="duration" id="cb-col-duration" ${this.columnVisibility.duration ? "checked" : ""}>
                                         <label class="form-check-label" for="cb-col-duration">Expected Time</label>
                                     </div>
+                                    <div class="dropdown-divider"></div>
+                                    <a href="#" class="dropdown-item px-0 reset-col-widths-btn"><i class="fa fa-arrows-h mr-1"></i> Reset column widths</a>
                                 </div>
                             </div>
                         </div>
@@ -184,6 +225,18 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
             </div>
         `);
 		this.bindEvents();
+
+		// Attach resize handles to the (persistent) header cells and apply any
+		// saved widths. The header is built once here; renderGrid/fetchChildren
+		// only rebuild the body, so they re-apply widths but don't re-attach.
+		if (this.columnResizer) {
+			this.columnResizer.attach_handles(
+				this.wrapper,
+				this.wrapper.find(".task-grid-header .task-grid-cell"),
+				($cell) => $cell.attr("data-column")
+			);
+			this.applyColumnWidths();
+		}
 	}
 
 	updateStatusFilterOptions() {
@@ -243,11 +296,13 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 		if (!tasks || tasks.length === 0) {
 			gridBody.html('<div class="p-4 text-center text-muted">No tasks match filters.</div>');
 			gridBody.append(this.createQuickAddRow(null, 0));
+			this.applyColumnWidths();
 			return;
 		}
 		tasks.forEach((task) => this.renderTaskNode(task, gridBody, 0));
 		gridBody.prepend(this.createQuickAddRow(null, 0));
 		this.initializeTaskSorting();
+		this.applyColumnWidths();
 	}
 
 	renderTaskNode(task, container, level) {
@@ -325,6 +380,7 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 					container.html('<div class="p-2 text-muted small">No subtasks.</div>');
 				}
 				this.initializeTaskSorting();
+				this.applyColumnWidths();
 			}
 		});
 	}
@@ -488,6 +544,11 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			localStorage.setItem(`taskTreeColumns_${frappe.session.user}`, JSON.stringify(me.columnVisibility));
 			const $cells = me.wrapper.find(`.task-grid-cell[data-column="${column}"]`);
 			isVisible ? $cells.removeClass("hidden-column") : $cells.addClass("hidden-column");
+		});
+
+		this.wrapper.on("click", ".reset-col-widths-btn", function (e) {
+			e.preventDefault();
+			if (me.columnResizer) me.columnResizer.reset(me.wrapper);
 		});
 
 		this.wrapper.on("click", ".editable-date a", function (e) {

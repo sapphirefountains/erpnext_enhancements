@@ -67,6 +67,7 @@ import "./global_enhancements/triton_widget.js";
 // erpnext_enhancements.* namespaces immediately)
 import "./project_enhancements/task_tree_manager.js";
 import "./project_enhancements/dashboard_components/column_selector.js";
+import "./project_enhancements/dashboard_components/column_resizer.js";
 import "./project_enhancements/gantt_zoom.js";
 // Live collaborative form sync (COLLAB_DOCTYPES allowlist inside)
 import "./collab/live_form_sync.js";

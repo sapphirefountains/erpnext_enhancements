@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.152.0] - 2026-07-10
+
+### Added
+- **Drag-to-resize column widths on the Projects Dashboard tables and the Tasks tree.** On the **Projects Dashboard** Custom HTML Block, the three list tabs (Priority Overview, Active Internal Projects, Completed Projects) now let you drag a column header's right edge to widen/narrow it; a **Reset widths** button in each tab's toolbar restores the defaults. On the **Tasks tree** (the `custom_tasks_html` HTML field on the Project form's Scope tab and the Project Dashboard "Tasks" tab), every column except the elastic Task column and the tiny Actions column gained the same drag handle, with a **Reset column widths** entry in the existing Columns (⧉) dropdown. Widths are saved **per user** in the browser (localStorage), alongside the existing per-user show/hide-columns choices — one person's sizing never changes anyone else's. Implemented as a reusable `ColumnResizer` component (sibling of `ColumnSelector`); the dashboard tables switch to a fixed table layout so the chosen widths are authoritative and the tables scroll horizontally once the columns outgrow the widget, while the flex-based tree redistributes width within the widget.
+
 ## [1.151.4] - 2026-07-10
 
 ### Fixed

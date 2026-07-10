@@ -19,12 +19,16 @@
  * Table edits and Gantt date drags persist back via the same whitelisted methods.
  */
 (function() {
-    // The ColumnSelector class lives in a separate asset registered via app_include_js.
-    // Don't assume that bundle has already executed when this block renders -- load it
-    // explicitly so the dashboard works regardless of asset load order / build state.
+    // The ColumnSelector / ColumnResizer classes live in separate assets registered
+    // via app_include_js. Don't assume that bundle has already executed when this
+    // block renders -- load them explicitly so the dashboard works regardless of
+    // asset load order / build state.
     frappe.provide("erpnext_enhancements.dashboard_components");
     frappe.require(
-        "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
+        [
+            "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_selector.js",
+            "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/column_resizer.js",
+        ],
         init_dashboard
     );
 
@@ -107,11 +111,75 @@
         ])
     };
 
+    // Per-tab drag-to-resize column widths (persisted per user in localStorage).
+    // Defaults roughly match the columns' historical min-widths so the baseline
+    // look is preserved under the fixed table layout the resizer relies on.
+    const ColumnResizer = erpnext_enhancements.dashboard_components.ColumnResizer;
+    const make_table_resizer = (storageKey, columns) =>
+        new ColumnResizer(storageKey, columns, {
+            applyWidth: (root, key, px) => {
+                const $cells = root.find(`.dashcol-${key}`);
+                $cells.css("width", px == null ? "" : px + "px");
+            },
+            measureWidth: (root, key) => {
+                const $th = root.find(`th.dashcol-${key}`).filter(":visible").first();
+                return $th.length ? $th.outerWidth() : 130;
+            },
+        });
+    const column_resizers = {
+        'priority-overview': make_table_resizer('chb_priority_overview_widths', [
+            { key: 'project_name', defaultWidth: 220, minWidth: 140, maxWidth: 520 },
+            { key: 'project_id', defaultWidth: 130, minWidth: 90, maxWidth: 320 },
+            { key: 'company_priority', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
+            { key: 'project_priority', defaultWidth: 170, minWidth: 120, maxWidth: 340 },
+            { key: 'percent_complete', defaultWidth: 160, minWidth: 120, maxWidth: 320 },
+            { key: 'spend_percent', defaultWidth: 140, minWidth: 90, maxWidth: 300 }
+        ]),
+        'active-internal-projects': make_table_resizer('chb_active_internal_widths', [
+            { key: 'project_name', defaultWidth: 220, minWidth: 140, maxWidth: 520 },
+            { key: 'project_id', defaultWidth: 130, minWidth: 90, maxWidth: 320 },
+            { key: 'status', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
+            { key: 'custom_project_priority', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
+            { key: 'percent_complete', defaultWidth: 160, minWidth: 120, maxWidth: 320 },
+            { key: 'project_user', defaultWidth: 160, minWidth: 110, maxWidth: 320 }
+        ]),
+        'completed-projects': make_table_resizer('chb_completed_widths', [
+            { key: 'project_name', defaultWidth: 220, minWidth: 140, maxWidth: 520 },
+            { key: 'project_id', defaultWidth: 130, minWidth: 90, maxWidth: 320 },
+            { key: 'status', defaultWidth: 140, minWidth: 100, maxWidth: 300 },
+            { key: 'project_type', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
+            { key: 'project_user', defaultWidth: 160, minWidth: 110, maxWidth: 320 },
+            { key: 'completed_on', defaultWidth: 150, minWidth: 110, maxWidth: 300 }
+        ])
+    };
+
+    // Column key parsed from a header cell's `dashcol-<key>` class.
+    function resizer_key_of($th) {
+        const m = (($th.attr('class') || '').match(/dashcol-([A-Za-z0-9_]+)/));
+        return m ? m[1] : null;
+    }
+
+    // Apply saved widths and (re)attach the drag handles after a tab re-renders.
+    function apply_column_resizing(container) {
+        const resizer = column_resizers[current_tab];
+        if (!resizer) return;
+        resizer.apply(container);
+        resizer.attach_handles(container, container.find('table thead th'), resizer_key_of);
+    }
+
     function render_column_toolbar(container) {
         let selector = column_selectors[current_tab];
         if (!selector) return;
         let toolbar = $('<div class="dashboard-list-toolbar"></div>');
         container.append(toolbar);
+        if (column_resizers[current_tab]) {
+            let reset_btn = $('<button type="button" class="btn btn-sm btn-default dashboard-reset-widths" title="Reset column widths to default"><i class="fa fa-arrows-h mr-1"></i> Reset widths</button>');
+            reset_btn.on('click', () => {
+                column_resizers[current_tab].reset(container);
+                render_current_tab();
+            });
+            toolbar.append(reset_btn);
+        }
         selector.render_button(toolbar, () => selector.apply(container));
     }
 
@@ -784,7 +852,7 @@
     function build_priority_table(projects) {
         let wrapper = $('<div class="table-responsive mb-4"></div>');
         let table = $(`
-            <table class="table table-bordered mb-0">
+            <table class="table table-bordered mb-0 dashboard-resizable-table">
                 <thead class="thead-light">
                     <tr>
                         ${th('project_name', 'Project Name')}
@@ -923,12 +991,13 @@
         }
 
         column_selectors['priority-overview'].apply(container);
+        apply_column_resizing(container);
     }
 
     function build_internal_table(projects) {
         let wrapper = $('<div class="table-responsive mb-4"></div>');
         let table = $(`
-            <table class="table table-bordered mb-0">
+            <table class="table table-bordered mb-0 dashboard-resizable-table">
                 <thead class="thead-light">
                     <tr>
                         ${th('project_name', 'Project Name')}
@@ -1022,6 +1091,7 @@
         });
 
         column_selectors['active-internal-projects'].apply(container);
+        apply_column_resizing(container);
     }
 
     function render_completed_projects() {
@@ -1051,7 +1121,7 @@
 
         let wrapper = $('<div class="table-responsive mb-4"></div>');
         let table = $(`
-            <table class="table table-bordered table-hover mb-0">
+            <table class="table table-bordered table-hover mb-0 dashboard-resizable-table">
                 <thead class="thead-light">
                     <tr>
                         ${th('project_name', 'Project Name')}
@@ -1091,6 +1161,7 @@
         else {
             container.append(wrapper);
             column_selectors['completed-projects'].apply(container);
+            apply_column_resizing(container);
         }
     }
 
