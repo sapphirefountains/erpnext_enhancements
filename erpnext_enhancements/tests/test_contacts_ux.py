@@ -237,7 +237,11 @@ class TestGetDirectoryOnload(FrappeTestCase):
 					"opportunity_from": "Customer",
 					"party_name": self.customer.name,
 				}
-			).insert(ignore_permissions=True)
+			)
+			# Site-required custom fields (opportunity name/value stream/owner)
+			# are irrelevant to the directory merge under test.
+			opp.flags.ignore_mandatory = True
+			opp.insert(ignore_permissions=True)
 
 		data = get_directory_onload("Opportunity", opp.name)
 		# The party's contact must appear even though it isn't linked to the
