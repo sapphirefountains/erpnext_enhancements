@@ -76,8 +76,29 @@ class TestFormat(unittest.TestCase):
 	def test_unknown_unit(self):
 		self.assertEqual(metrics.fmt_value(3.5, "ratio"), "3.50 ratio")
 
+	def test_years_unit_renders_via_fallback(self):
+		# HR tenure KPIs use the free-text "years" unit
+		self.assertEqual(metrics.fmt_value(3.25, "years"), "3.25 years")
+
 	def test_non_numeric_passthrough(self):
 		self.assertEqual(metrics.fmt_value(None, "USD"), "")
+
+
+class TestTurnoverRate(unittest.TestCase):
+	def test_one_exit_on_fourteen(self):
+		# 1 separation, headcount 14 -> 13: avg 13.5 -> ~7.41% (the small-n swing
+		# that justifies the 365-day window)
+		self.assertAlmostEqual(metrics.turnover_rate_pct(1, 14, 13), 7.4074, places=3)
+
+	def test_zero_headcount_returns_none(self):
+		self.assertIsNone(metrics.turnover_rate_pct(0, 0, 0))
+
+	def test_zero_separations_is_zero_not_none(self):
+		self.assertEqual(metrics.turnover_rate_pct(0, 14, 14), 0.0)
+
+	def test_non_numeric_returns_none(self):
+		self.assertIsNone(metrics.turnover_rate_pct("x", 14, 14))
+		self.assertIsNone(metrics.turnover_rate_pct(1, None, 14))
 
 
 class TestSourceStale(unittest.TestCase):

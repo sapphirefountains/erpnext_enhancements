@@ -149,3 +149,7 @@ erpnext_enhancements.patches.backfill_water_design_issue_fields
 # v1.149.0 drop the Opportunity "Won Reason" field — winning no longer captures
 # or requires a reason (Lost Reason unchanged)
 erpnext_enhancements.patches.remove_opportunity_won_reason
+# v1.150.0 HR KPI dashboard: seed the "HR Team" role (insert-only; already
+# exists on prod) so the HR Dashboard workspace roles + HR Stat Entry perms
+# never reference a missing role on fresh sites
+erpnext_enhancements.patches.seed_hr_team_role

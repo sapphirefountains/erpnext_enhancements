@@ -47,7 +47,7 @@ class TestCustomHtmlBlockConstants(unittest.TestCase):
 		self.assertIn(self.ns["KPI_COCKPIT"], names)
 
 	def test_department_dashboards_cover_the_kpi_departments(self):
-		expected = {"Finance", "Sales", "Operations", "Design", "Production", "Marketing", "Product", "Executive"}
+		expected = {"Finance", "Sales", "Operations", "Design", "Production", "Marketing", "Product", "HR", "Executive"}
 		got = {ws.replace(" Dashboard", "") for ws in self.ns["KPI_DEPARTMENT_DASHBOARDS"]}
 		self.assertEqual(got, expected)
 		for ws in self.ns["KPI_DEPARTMENT_DASHBOARDS"]:
