@@ -40,6 +40,11 @@ import "./crm_enhancements/create_project_prompt.js";
 import "./performance_fixes.js";
 import "./activity_log_numbering.js";
 import "./filter_help.js";
+// Injects a "DocTypes" navigation section into the desk Global Search results
+// page (frappe.searchdialog), so DocTypes typed into the awesomebar and opened
+// with Enter stay reachable. Complements the awesomebar live-search patch in
+// erpnext_enhancements.js. See the file header for the full rationale.
+import "./global_enhancements/global_search_doctypes.js";
 // Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
 import "./global_enhancements/field_description_icons.js";
 // Contact/Address quick-entry dialogs + in-place directory refresh (gated by
