@@ -640,7 +640,8 @@ def test_save_or_manual_review_parks_validation_errors(monkeypatch):
 	)
 
 	def make_doc(exc=None):
-		doc = types.SimpleNamespace(name="CUST-1", doctype="Customer")
+		# flags is required: the non-insert save path sets doc.flags.ignore_links.
+		doc = types.SimpleNamespace(name="CUST-1", doctype="Customer", flags=types.SimpleNamespace())
 
 		def save(**kwargs):
 			if exc:

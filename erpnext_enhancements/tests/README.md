@@ -15,6 +15,8 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 ```
 
 > CI currently runs only the standalone `unit-tests` job; the Frappe integration-test job was removed in v0.2.9 (see [`CHANGELOG.md`](../../CHANGELOG.md)) because it gated PRs on upstream/environment churn. The `FrappeTestCase` files remain and run against a real bench locally.
+>
+> Within that job, the unittest-style suites run via `python -m unittest` with an explicit module list, and `test_quickbooks_online.py` runs via a dedicated `python -m pytest` step — it is plain pytest functions (the `monkeypatch` fixture), which unittest cannot collect. A new bench-free suite must be added to one of those two steps in [`ci.yml`](../../.github/workflows/ci.yml) (pytest-style → the pytest step), or it will never run in CI.
 
 ## Coverage map
 

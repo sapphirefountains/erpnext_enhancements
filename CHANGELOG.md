@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.151.2] - 2026-07-10
+## [1.151.3] - 2026-07-10
+
+### Fixed
+- **CI now actually runs the bench-free QuickBooks Online test suite.** The `unit-tests` job runs suites via `python -m unittest` with an explicit module list, which cannot collect `tests/test_quickbooks_online.py` — its 100+ tests are plain pytest functions (the `monkeypatch` fixture), so the whole QBO suite (mapping, ordering, signature, datetime, preflight, result tracking) ran nowhere in CI and one test sat silently broken for weeks. The job gains a dedicated `python -m pytest` step for it (pytest added to the job's installs; all unittest steps unchanged), and the tests README now says where a new bench-free suite must be registered. Also carries the one-line stub fix for `test_save_or_manual_review_parks_validation_errors` (the doc double needs `.flags`; identical to the fix on the open no-op-save PR, so either merge order resolves cleanly) — a sweep confirmed no other pytest-only test files are missing from the matrix.
 
 ### Added
 - **"Hand-Off Process Coverage" report** (CRM Enhancements → Reports, `ref_doctype` Opportunity). One row per Opportunity that has a linked Project, showing whether that project's hand-off tracker (PRO-0204 Project Process Steps) has been started, the step count, and the currently-live step. It surfaces the population that used to render a blank "Hand-Off Process" tab — Closed-Won opportunities whose linked project has no started tracker. Default filters (Opportunity Status = Closed Won, Tracker = Not Started) land exactly on that set, so the report doubles as an audit of hand-off coverage. Roles: System Manager, Sales Manager, Sales User.
