@@ -21,7 +21,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "KPI Setup",
-   "link_count": 4,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -43,6 +43,17 @@
    "label": "Marketing Spend",
    "link_count": 0,
    "link_to": "Marketing Spend",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "HR Stat Entry",
+   "link_count": 0,
+   "link_to": "HR Stat Entry",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

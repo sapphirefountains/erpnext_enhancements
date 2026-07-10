@@ -1,6 +1,6 @@
 {
  "app": "erpnext_enhancements",
- "creation": "2026-07-07 12:00:00.000000",
+ "creation": "2026-07-10 12:00:00.000000",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
  "header_icon": "dashboard",
@@ -198,11 +198,11 @@
    "type": "Link"
   }
  ],
- "modified": "2026-07-07 12:00:00.000000",
+ "modified": "2026-07-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "KPI Dashboards",
- "name": "Sales Dashboard",
+ "name": "HR Dashboard",
  "owner": "Administrator",
  "standard": 1,
- "title": "Sales Dashboard"
+ "title": "HR Dashboard"
 }

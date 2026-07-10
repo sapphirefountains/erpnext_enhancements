@@ -42,6 +42,7 @@
         "production dashboard": "Production",
         "marketing dashboard": "Marketing",
         "product dashboard": "Product",
+        "hr dashboard": "HR",
         "executive dashboard": "Executive",
     };
 

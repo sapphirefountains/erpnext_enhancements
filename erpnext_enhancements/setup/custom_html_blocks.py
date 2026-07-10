@@ -78,6 +78,7 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Production Dashboard",
 	"Marketing Dashboard",
 	"Product Dashboard",
+	"HR Dashboard",
 	"Executive Dashboard",
 )
 

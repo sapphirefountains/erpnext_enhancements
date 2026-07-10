@@ -282,5 +282,26 @@
       }
     ],
     "cards": []
+  },
+  {
+    "doctype": "Dashboard",
+    "name": "HR Overview",
+    "dashboard_name": "HR Overview",
+    "is_default": 0,
+    "charts": [
+      {
+        "chart": "Active Headcount by Department",
+        "width": "Half"
+      },
+      {
+        "chart": "Active Headcount by Employment Type",
+        "width": "Half"
+      },
+      {
+        "chart": "Hires by Month",
+        "width": "Full"
+      }
+    ],
+    "cards": []
   }
 ]
