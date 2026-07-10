@@ -80,8 +80,26 @@
 
 .check-dropdown .dropdown-menu.show { display: block !important; }
 
+/* Resizable dashboard tables — fixed layout makes the per-column widths the
+   drag handles set authoritative (content no longer stretches a column); the
+   parent .table-responsive scrolls horizontally when the columns outgrow it. */
+.dashboard-resizable-table { table-layout: fixed; width: 100%; }
+.dashboard-resizable-table th { position: relative; }
+.dashboard-resizable-table th,
+.dashboard-resizable-table td { overflow: hidden; text-overflow: ellipsis; }
+/* Project Name may wrap to two lines; don't let the desk's max-width cap the
+   column the user widened. */
+.dashboard-resizable-table td.project-name-cell { max-width: none; white-space: normal; }
+
+/* Column resize handle (also injected into <head> by ColumnResizer; duplicated
+   here so the block styles it even where the injected sheet is unavailable). */
+.ee-col-resize-handle { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; z-index: 5; touch-action: none; }
+.ee-col-resize-handle::after { content: ""; position: absolute; top: 15%; right: 2px; width: 2px; height: 70%; border-radius: 2px; background: var(--border-color); opacity: 0; transition: opacity 0.15s; }
+.ee-col-resize-handle:hover::after { opacity: 1; background: var(--primary); }
+body.ee-col-resizing, body.ee-col-resizing * { cursor: col-resize !important; user-select: none !important; }
+
 /* Column Selector Dropdown */
-.dashboard-list-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 0.5rem; }
+.dashboard-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 0.5rem; }
 .dashboard-column-selector { position: relative; display: inline-block; }
 .column-selector-menu {
     display: none;
