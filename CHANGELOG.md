@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.150.0] - 2026-07-10
+## [1.151.0] - 2026-07-10
 
 ### Added
 - **Contact & Address quick-entry dialogs — creating a contact no longer leaves the page.** Every "new Contact/Address" entry point (the Contacts & Addresses section buttons, list **+ New**, the awesome bar, a link field's *Create a new…*) now opens a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project, Master Project, Supplier, Lead or Prospect form, the dialog pre-fills the **Account**, shows *"Will be linked to …"*, and links the new record automatically — from an Opportunity/Project it links to **both** the customer and the Opportunity/Project itself, with the party row first so the record keeps its familiar `Name-Customer` naming. An **Edit Full Form** escape hatch remains, and the injected links survive into the full form. Gated by a new default-ON **Contact & Address Quick Entry** toggle (ERPNext Enhancements Settings → Contacts & Addresses); off restores the stock full-form flow on the next page load.

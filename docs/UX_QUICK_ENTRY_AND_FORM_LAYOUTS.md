@@ -49,7 +49,7 @@ this release reverses that on purpose — the dialogs are now curated.
 
 - **Contact / Address** — ~~dialog-created records would be orphaned: the party
   link (`links` child table) is only wired up by the full-form scripts~~
-  **superseded in v1.150.0**: these two now get app-owned quick-entry dialogs
+  **superseded in v1.151.0**: these two now get app-owned quick-entry dialogs
   (`public/js/global_enhancements/contact_address_quick_entry.js`) that resolve
   the party form they were opened from and inject the `links` rows client-side
   before insert. Different mechanism from this sweep on purpose — no

@@ -149,10 +149,10 @@ erpnext_enhancements.patches.backfill_water_design_issue_fields
 # v1.149.0 drop the Opportunity "Won Reason" field — winning no longer captures
 # or requires a reason (Lost Reason unchanged)
 erpnext_enhancements.patches.remove_opportunity_won_reason
-# v1.150.0 Contacts UX: default the "Contact & Address Quick Entry" toggle ON for
+# v1.151.0 Contacts UX: default the "Contact & Address Quick Entry" toggle ON for
 # existing installs (new sites get it from the Check field default at doc creation)
 erpnext_enhancements.patches.default_contacts_ux_on
-# v1.150.0 Contacts UX: one-time normalization of Contact.custom_account to the
+# v1.151.0 Contacts UX: one-time normalization of Contact.custom_account to the
 # first Customer link (the field is now editable + server-synced; old client
 # mirror values were stale/missing) — db-level, update_modified=False, idempotent
 erpnext_enhancements.patches.backfill_contact_custom_account
