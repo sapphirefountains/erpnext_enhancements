@@ -410,7 +410,8 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-	# Win/loss reason capture (custom_won_reason / custom_lost_reason).
+	# Loss reason capture (custom_lost_reason). Winning no longer captures a
+	# reason as of v1.149.0 (custom_won_reason removed).
 	if frappe.db.has_column("Opportunity", "custom_lost_reason"):
 		add(
 			"lost_to_competitor_90",
@@ -423,24 +424,22 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-		closed = flt(
+		lost_total = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where status in ('Closed Won','Lost') and modified >= %(d)s",
+				"select count(*) from `tabOpportunity` where status='Lost' and modified >= %(d)s",
 				{"d": d90},
 			)
 		)
 		with_reason = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where modified >= %(d)s and ("
-				"(status='Closed Won' and coalesce(custom_won_reason,'')<>'') or "
-				"(status='Lost' and coalesce(custom_lost_reason,'')<>''))",
+				"select count(*) from `tabOpportunity` where status='Lost' and coalesce(custom_lost_reason,'')<>'' and modified >= %(d)s",
 				{"d": d90},
 			)
 		)
 		add(
 			"close_reason_capture_90",
-			"Close-Reason Capture (90d)",
-			(with_reason / closed * 100.0) if closed else None,
+			"Loss-Reason Capture (90d)",
+			(with_reason / lost_total * 100.0) if lost_total else None,
 			"%",
 			"Opportunity",
 			metrics.HIGHER,

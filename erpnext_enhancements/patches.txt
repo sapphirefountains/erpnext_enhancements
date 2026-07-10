@@ -146,6 +146,9 @@ erpnext_enhancements.patches.seed_pdt_0040_product
 # (blocker/warning counts, issues+readiness JSON) on existing designs from their
 # PERSISTED audit rows — no engine re-run, submitted docs untouched
 erpnext_enhancements.patches.backfill_water_design_issue_fields
+# v1.149.0 drop the Opportunity "Won Reason" field — winning no longer captures
+# or requires a reason (Lost Reason unchanged)
+erpnext_enhancements.patches.remove_opportunity_won_reason
 # v1.150.0 Contacts UX: default the "Contact & Address Quick Entry" toggle ON for
 # existing installs (new sites get it from the Check field default at doc creation)
 erpnext_enhancements.patches.default_contacts_ux_on

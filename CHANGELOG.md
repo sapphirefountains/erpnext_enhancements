@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Opportunity's directory widget now includes the party's contacts/addresses.** The source scan checked `party_type`, but Opportunity's discriminator field is `opportunity_from`, so the Customer/Lead/Prospect behind the deal was missed entirely.
 - The directory widget re-registered its form event handlers on every refresh, piling up duplicate handlers that all re-rendered the tables on each customer/party field change.
 
+## [1.149.0] - 2026-07-10
+
+### Removed
+- **The "Won Reason" field is gone from Opportunities.** Marking an Opportunity **Closed Won** no longer captures or requires a reason — the `custom_won_reason` Select field (Price / Relationship / Product Fit / Timing / Other) and its required-on-win validation were both removed. Existing sites drop the leftover field (and its stored values) on migrate via `patches.remove_opportunity_won_reason`. **Lost Reason is unchanged** — it's still shown on Lost opportunities and still required when marking an Opportunity Lost.
+
+### Changed
+- The Sales **Close-Reason Capture (90d)** KPI is now **Loss-Reason Capture (90d)** — with won reasons gone, it measures the share of *Lost* opportunities that recorded a Lost Reason (same `close_reason_capture_90` key, so the history carries over). The **Opportunity Loss Reasons** donut and **Lost to Competitor (90d)** KPI are unaffected.
+
 ## [1.148.2] - 2026-07-10
 
 ### Fixed
