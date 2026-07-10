@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.151.1] - 2026-07-10
+
+### Fixed
+- **The Opportunity "Hand-Off Process" tab no longer renders blank when the linked project's tracker was never started.** The tab mirrors the linked Project's first three hand-off steps; when that project had no steps (which is the normal state for in-flight projects — they're not auto-seeded and opt in via the Project's "Start Hand-Off Process" button, plus anything imported or created before the automation switch was on), the client blanked the field instead of falling back, so the tab looked empty/broken. On production this affected **47 of the 56** Closed-Won opportunities that have a linked project. The client now falls back to a **project-aware derived view** (Mark Won ✓, Hold Hand-Off Meeting = live step, Create Project ✓) with a pointer to the linked project, and also renders the derived view if the mirror call errors — so the tab is never blank for a saved Opportunity while the master switch is on. No data change: the underlying projects keep their (empty) trackers until someone starts them.
+
 ## [1.151.0] - 2026-07-10
 
 ### Added
@@ -20,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Contacts & Addresses section no longer shows stale data after you create or edit a contact via the full form.** Frappe routes back to the party form without reloading it, so the section re-rendered from the old server payload. Contact/Address saves now push fresh directory data into every open party form they link to (no reload — unsaved edits on the party form are preserved), and dialog-created records refresh both the stock section and the directory widget in place.
 - **Opportunity's directory widget now includes the party's contacts/addresses.** The source scan checked `party_type`, but Opportunity's discriminator field is `opportunity_from`, so the Customer/Lead/Prospect behind the deal was missed entirely.
 - The directory widget re-registered its form event handlers on every refresh, piling up duplicate handlers that all re-rendered the tables on each customer/party field change.
+
 ## [1.150.3] - 2026-07-10
 
 ### Fixed
