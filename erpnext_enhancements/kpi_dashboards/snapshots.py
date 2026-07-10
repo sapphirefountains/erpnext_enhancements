@@ -21,7 +21,7 @@ convention) and ``kpi_snapshot_retention_days``.
 import json
 
 import frappe
-from frappe.utils import add_days, cint, flt, getdate, now_datetime, nowdate
+from frappe.utils import add_days, add_months, cint, flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.kpi_dashboards import metrics
 
@@ -410,7 +410,8 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-	# Win/loss reason capture (custom_won_reason / custom_lost_reason).
+	# Loss reason capture (custom_lost_reason). Winning no longer captures a
+	# reason as of v1.149.0 (custom_won_reason removed).
 	if frappe.db.has_column("Opportunity", "custom_lost_reason"):
 		add(
 			"lost_to_competitor_90",
@@ -423,24 +424,22 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-		closed = flt(
+		lost_total = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where status in ('Closed Won','Lost') and modified >= %(d)s",
+				"select count(*) from `tabOpportunity` where status='Lost' and modified >= %(d)s",
 				{"d": d90},
 			)
 		)
 		with_reason = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where modified >= %(d)s and ("
-				"(status='Closed Won' and coalesce(custom_won_reason,'')<>'') or "
-				"(status='Lost' and coalesce(custom_lost_reason,'')<>''))",
+				"select count(*) from `tabOpportunity` where status='Lost' and coalesce(custom_lost_reason,'')<>'' and modified >= %(d)s",
 				{"d": d90},
 			)
 		)
 		add(
 			"close_reason_capture_90",
-			"Close-Reason Capture (90d)",
-			(with_reason / closed * 100.0) if closed else None,
+			"Loss-Reason Capture (90d)",
+			(with_reason / lost_total * 100.0) if lost_total else None,
 			"%",
 			"Opportunity",
 			metrics.HIGHER,
@@ -792,6 +791,7 @@ _EXEC_ROLLUP = (
 	("on_time_milestone_rate", "On-Time Milestone Rate", "Production", "on_time_milestone_rate", "%", metrics.HIGHER),
 	("active_contracts", "Active Maintenance Contracts", "Operations", "active_contracts", "count", metrics.HIGHER),
 	("chem_oor_rate", "Maintenance Out-of-Range Rate", "Operations", "chem_oor_rate", "%", metrics.LOWER),
+	("turnover_rate_12m", "Turnover Rate (12m)", "HR", "turnover_rate_12m", "%", metrics.LOWER),
 )
 
 
@@ -1001,6 +1001,209 @@ def _product_metrics():
 	return {"values": values, "freshness": {}}
 
 
+def _hr_metrics():
+	"""HR / People — Employee-master-driven. The hrms app is not installed on this
+	site (no Attendance / Leave / Job Opening / Salary tables; payroll lives in
+	QuickBooks), so the automatic KPIs read only ``tabEmployee``, which is fully
+	populated (joining/relieving dates, department, designation).
+
+	Small-n stance (14 active employees): headline KPIs are counts; the only rate
+	KPIs use a 365-day window — one exit at n=14 moves a turnover rate ~7 points,
+	so a 90-day rate would whipsaw. Historical headcount for the turnover
+	denominator is reconstructed from date_of_joining/relieving_date, so no
+	snapshot history is needed.
+
+	Time-tracking KPIs (Job Interval / Timesheet) are guarded and self-suppressing:
+	sum() over zero rows is NULL, which ``add`` skips — they appear the day crews
+	start clocking in. The two manual KPIs read the newest HR Stat Entry row and
+	carry a freshness entry so a forgotten month shows the stale badge.
+	"""
+	today = getdate(nowdate())
+	d30 = add_days(today, -30)
+	d90 = add_days(today, -90)
+	d365 = add_days(today, -365)
+	values, add = _collector()
+	freshness = {}
+
+	def _headcount_on(day):
+		"""Employed on ``day``, reconstructed from joining/relieving dates.
+		Inactive/Suspended count as employed (they are); Left rows missing a
+		relieving_date are excluded rather than counted as employed forever."""
+		return flt(
+			_scalar(
+				"select count(*) from `tabEmployee` "
+				"where date_of_joining is not null and date_of_joining <= %(d)s "
+				"and (relieving_date is null or relieving_date > %(d)s) "
+				"and not (status='Left' and relieving_date is null)",
+				{"d": day},
+			)
+		)
+
+	# --- headcount & mix ---
+	active = flt(_scalar("select count(*) from `tabEmployee` where status='Active'"))
+	add("active_headcount", "Active Headcount", active, "count", "Employee", metrics.HIGHER)
+	add(
+		"full_time_count",
+		"Full-Time Employees",
+		_scalar("select count(*) from `tabEmployee` where status='Active' and employment_type='Full-time'"),
+		"count",
+		"Employee",
+		metrics.HIGHER,
+	)
+	if active:
+		classified = flt(
+			_scalar("select count(*) from `tabEmployee` where status='Active' and coalesce(employment_type,'')<>''")
+		)
+		add(
+			"employment_type_completeness_pct",
+			"Employment Type Completeness",
+			classified / active * 100.0,
+			"%",
+			"Employee",
+			metrics.HIGHER,
+		)
+
+	# --- hiring & separations (counts headline both windows so the raw numerator
+	#     always sits next to the 12-month rate). Windows are half-open
+	#     (a, b] to match _headcount_on's "relieving_date > day" convention: an
+	#     employee relieved exactly on the window-start day is already absent
+	#     from the start headcount, so counting them as a window separation
+	#     would put them in the turnover numerator but neither endpoint. ---
+	hires_90 = flt(
+		_scalar(
+			"select count(*) from `tabEmployee` where date_of_joining > %(a)s and date_of_joining <= %(b)s",
+			{"a": d90, "b": today},
+		)
+	)
+	seps_90 = flt(
+		_scalar(
+			"select count(*) from `tabEmployee` where status='Left' and relieving_date > %(a)s and relieving_date <= %(b)s",
+			{"a": d90, "b": today},
+		)
+	)
+	add("new_hires_90d", "New Hires (90d)", hires_90, "count", "Employee", metrics.HIGHER)
+	add("separations_90d", "Separations (90d)", seps_90, "count", "Employee", metrics.LOWER)
+	add("net_headcount_change_90d", "Net Headcount Change (90d)", hires_90 - seps_90, "count", "Employee", metrics.HIGHER)
+	add(
+		"new_hires_365",
+		"New Hires (1y)",
+		_scalar(
+			"select count(*) from `tabEmployee` where date_of_joining > %(a)s and date_of_joining <= %(b)s",
+			{"a": d365, "b": today},
+		),
+		"count",
+		"Employee",
+		metrics.HIGHER,
+	)
+	seps_365 = flt(
+		_scalar(
+			"select count(*) from `tabEmployee` where status='Left' and relieving_date > %(a)s and relieving_date <= %(b)s",
+			{"a": d365, "b": today},
+		)
+	)
+	add("separations_365", "Separations (1y)", seps_365, "count", "Employee", metrics.LOWER)
+	add(
+		"turnover_rate_12m",
+		"Turnover Rate (12m)",
+		metrics.turnover_rate_pct(seps_365, _headcount_on(d365), _headcount_on(today)),
+		"%",
+		"Employee",
+		metrics.LOWER,
+	)
+
+	# --- tenure ---
+	add(
+		"avg_tenure_years",
+		"Avg Tenure (Active)",
+		_scalar(
+			"select avg(datediff(%(t)s, date_of_joining)) / 365.25 from `tabEmployee` "
+			"where status='Active' and date_of_joining is not null",
+			{"t": today},
+		),
+		"years",
+		"Employee",
+		metrics.HIGHER,
+	)
+	add(
+		"avg_tenure_at_exit_12m",
+		"Avg Tenure at Exit (12m)",
+		_scalar(
+			# Same (a, b] window as separations_365 — the upper bound matters:
+			# a Left row with a future relieving_date (notice period logged in
+			# advance) is not yet an exit and _headcount_on still counts it.
+			"select avg(datediff(relieving_date, date_of_joining)) / 365.25 from `tabEmployee` "
+			"where status='Left' and date_of_joining is not null "
+			"and relieving_date > %(a)s and relieving_date <= %(b)s",
+			{"a": d365, "b": today},
+		),
+		"years",
+		"Employee",
+		metrics.HIGHER,
+	)
+
+	# --- org shape ---
+	row = frappe.db.sql(
+		"select count(*), count(distinct e.reports_to) from `tabEmployee` e "
+		"join `tabEmployee` m on m.name = e.reports_to and m.status='Active' "
+		"where e.status='Active'"
+	)
+	directs, managers = (flt(row[0][0]), flt(row[0][1])) if row and row[0] else (0.0, 0.0)
+	add("span_of_control", "Avg Directs per Manager", (directs / managers) if managers else None, "", "Employee", metrics.HIGHER)
+
+	# --- SEMI: workforce time. Sum-based and guarded so these stay silent until
+	#     the time doctypes carry real data (today Job Interval is empty and the
+	#     only Timesheets are draft test rows). ---
+	if _exists("Job Interval"):
+		field_hours_30 = _scalar(
+			"select sum(greatest(timestampdiff(second, start_time, end_time) - coalesce(total_paused_seconds, 0), 0)) / 3600.0 "
+			"from `tabJob Interval` where status='Completed' and end_time >= %(d)s",
+			{"d": d30},
+		)
+		add("field_labor_hours_30d", "Field Labor Hours (30d)", field_hours_30, "hours", "Job Interval", metrics.HIGHER)
+		if field_hours_30 is not None:
+			# Only meaningful once intervals exist — a standing 0 before the
+			# kiosk rollout would read as "nobody works here".
+			add(
+				"field_staff_clocking_30d",
+				"Field Staff Clocking In (30d)",
+				_scalar("select count(distinct employee) from `tabJob Interval` where start_time >= %(d)s", {"d": d30}),
+				"count",
+				"Job Interval",
+				metrics.HIGHER,
+			)
+	if _exists("Timesheet"):
+		add(
+			"timesheet_hours_30",
+			"Timesheet Hours (30d)",
+			_scalar("select sum(total_hours) from `tabTimesheet` where docstatus=1 and start_date >= %(d)s", {"d": d30}),
+			"hours",
+			"Timesheet",
+			metrics.HIGHER,
+		)
+
+	# --- MANUAL: monthly HR Stat Entry paste (open roles, eNPS). Newest row wins;
+	#     an entry older than the previous calendar month flags the source stale. ---
+	if _exists("HR Stat Entry"):
+		latest = frappe.get_all(
+			"HR Stat Entry", fields=["month", "open_positions", "enps"], order_by="month desc", limit=1
+		)
+		if latest:
+			entry = latest[0]
+			add("open_positions", "Open Positions", entry.open_positions, "count", "HR Stat Entry", metrics.LOWER)
+			# Int fields store 0 when unfilled, and an eNPS of exactly 0 is rare —
+			# treat 0 as "not surveyed" (documented on the field) so a blank month
+			# doesn't masquerade as a neutral score.
+			enps = cint(entry.enps)
+			add("enps", "eNPS", enps if enps else None, "", "HR Stat Entry", metrics.HIGHER)
+			prev_month_start = add_months(today.replace(day=1), -1)
+			freshness["HR Stat Entry"] = {
+				"last_sync": str(entry.month),
+				"stale": bool(entry.month and getdate(entry.month) < prev_month_start),
+			}
+
+	return {"values": values, "freshness": freshness}
+
+
 AGGREGATORS = {
 	"Finance": _finance_metrics,
 	"Sales": _sales_metrics,
@@ -1010,6 +1213,8 @@ AGGREGATORS = {
 	"Marketing": _marketing_metrics,
 	# Product is built before Executive so a future exec rollup can read it.
 	"Product": _product_metrics,
+	# HR is built before Executive so the exec rollup reads today's turnover.
+	"HR": _hr_metrics,
 	# Executive is intentionally last: the nightly batch builds it after the
 	# source departments, so its rollup reads today's fresh snapshots.
 	"Executive": _executive_metrics,

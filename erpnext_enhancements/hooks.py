@@ -279,9 +279,17 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
 	"Contact": {
-		# Title field custom_full_name_and_role = "First Last-Party" (ported from a
-		# disabled Server Script; see script_migrations/contact.py)
-		"validate": "erpnext_enhancements.script_migrations.contact.set_full_name_and_role",
+		# custom_account <-> Customer link two-way sync also runs before naming:
+		# core Contact.autoname reads links[0], so an insert carrying only the
+		# Account must get its Customer row before the name is set (contacts_ux.py)
+		"before_insert": "erpnext_enhancements.contacts_ux.sync_contact_account_links",
+		"validate": [
+			# account/link sync first so the title below sees the final link set
+			"erpnext_enhancements.contacts_ux.sync_contact_account_links",
+			# Title field custom_full_name_and_role = "First Last-Party" (ported from a
+			# disabled Server Script; see script_migrations/contact.py)
+			"erpnext_enhancements.script_migrations.contact.set_full_name_and_role",
+		],
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
@@ -567,6 +575,10 @@ fixtures = [
 					# Product Management KPI dashboard (KPI dashboards, v1.124.0)
 					"Catalog by Item Group",
 					"Catalog Additions (Monthly)",
+					# HR department (KPI dashboards, v1.150.0)
+					"Active Headcount by Department",
+					"Active Headcount by Employment Type",
+					"Hires by Month",
 				],
 			]
 		],
@@ -575,7 +587,7 @@ fixtures = [
 		"dt": "Number Card",
 		"filters": [["name", "in", ["Total Calls", "High Risk Calls", "Missed Calls", "Avg CSAT", "Active Projects", "Overdue Tasks", "Avg Project Completion %", "Projects Completed", "Open Opportunities", "Open Pipeline Value", "Closed-Won Opportunities", "Active Leads", "Open Purchase Orders", "Open PO Value", "Pending Material Requests", "QuickBooks Failed Syncs", "QuickBooks Records Mapped", "QuickBooks Open Conflicts", "QuickBooks Pending Review", "AR Outstanding", "Overdue Sales Invoices", "AP Outstanding", "Draft Sales Invoices"]]],
 	},
-	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health", "Product Catalog"]]]},
+	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health", "Product Catalog", "HR Overview"]]]},
 	# Public legal pages (guest-accessible Web Pages). stripe_payments adds the
 	# payment/surcharge + refund policies (counsel-review-pending).
 	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy", "payment-terms", "refund-policy"]]]},

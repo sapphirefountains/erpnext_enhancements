@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.151.3] - 2026-07-10
+
+### Fixed
+- **QBO sync no longer re-saves documents that didn't change.** The already-linked update path applied every mapped value and unconditionally `doc.save()`d, so a full import or CDC replay re-saved 1000+ value-identical Customers/Suppliers/Items/Projects per run — churning `modified`/`modified_by`, firing `doc_update` realtime events at anyone viewing those records, and (before v1.150.2) minting phantom Version rows. `apply_values` now reports whether any value actually moved (same normalization as conflict detection, with a numeric fallback so `1` vs `1.0` isn't "changed"; child tables conservatively always are, so transactions still save), and a value-identical re-sync skips the document save entirely — it only refreshes the QBO Sync Mapping bookkeeping (SyncToken/cursor, conflict status) and reports a new `unchanged` action (uncounted in sync-log tallies, like `skipped`).
+- **Live sync never creates Projects from QBO jobs anymore (link-only).** A new QBO job (sub-customer) still auto-links to its existing `PRJ-###` Project, but when no matching Project exists the sync now consolidates the job onto its top-level parent Customer (`job_merge_no_project`, the same policy as the colon-bug remediation — transactions roll up to the parent untagged) instead of minting a Project, and parks the job for manual review when the parent Customer isn't imported yet. Once a matching Project appears later, the existing doctype-flip guard flags the mapping for relinking via the job remediation tool. This was the remaining blocker for re-enabling the paused QBO sync.
+- Repaired `test_save_or_manual_review_parks_validation_errors` (its doc stub predated the `ignore_links` flag and had been failing silently — CI doesn't run the pytest-based QBO suite).
+
+## [1.151.2] - 2026-07-10
+
+### Added
+- **"Hand-Off Process Coverage" report** (CRM Enhancements → Reports, `ref_doctype` Opportunity). One row per Opportunity that has a linked Project, showing whether that project's hand-off tracker (PRO-0204 Project Process Steps) has been started, the step count, and the currently-live step. It surfaces the population that used to render a blank "Hand-Off Process" tab — Closed-Won opportunities whose linked project has no started tracker. Default filters (Opportunity Status = Closed Won, Tracker = Not Started) land exactly on that set, so the report doubles as an audit of hand-off coverage. Roles: System Manager, Sales Manager, Sales User.
+
+## [1.151.1] - 2026-07-10
+
+### Fixed
+- **The Opportunity "Hand-Off Process" tab no longer renders blank when the linked project's tracker was never started.** The tab mirrors the linked Project's first three hand-off steps; when that project had no steps (which is the normal state for in-flight projects — they're not auto-seeded and opt in via the Project's "Start Hand-Off Process" button, plus anything imported or created before the automation switch was on), the client blanked the field instead of falling back, so the tab looked empty/broken. On production this affected **47 of the 56** Closed-Won opportunities that have a linked project. The client now falls back to a **project-aware derived view** (Mark Won ✓, Hold Hand-Off Meeting = live step, Create Project ✓) with a pointer to the linked project, and also renders the derived view if the mirror call errors — so the tab is never blank for a saved Opportunity while the master switch is on. No data change: the underlying projects keep their (empty) trackers until someone starts them.
+
+## [1.151.0] - 2026-07-10
+
+### Added
+- **Contact & Address quick-entry dialogs — creating a contact no longer leaves the page.** Every "new Contact/Address" entry point (the Contacts & Addresses section buttons, list **+ New**, the awesome bar, a link field's *Create a new…*) now opens a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project, Master Project, Supplier, Lead or Prospect form, the dialog pre-fills the **Account**, shows *"Will be linked to …"*, and links the new record automatically — from an Opportunity/Project it links to **both** the customer and the Opportunity/Project itself, with the party row first so the record keeps its familiar `Name-Customer` naming. An **Edit Full Form** escape hatch remains, and the injected links survive into the full form. Gated by a new default-ON **Contact & Address Quick Entry** toggle (ERPNext Enhancements Settings → Contacts & Addresses); off restores the stock full-form flow on the next page load.
+- **The directory widget can now create, not just link.** The Contact/Address directory on Customer/Supplier/Opportunity/Project/Master Project forms gained primary **New Contact / New Address** buttons (quick-entry dialogs; the New Address button defers to the Geolocation autocomplete dialog when that feature is on) — the old "Add" button is now labeled **Link Existing**.
+
+### Changed
+- **Contact's "Account" field is editable now** and kept in true two-way sync with the Links grid server-side (`contacts_ux.sync_contact_account_links`, on every save path including list-view bulk edit): changing the Account **replaces** the contact's Customer link in place (other links untouched), clearing it removes the link, and editing the grid updates the field. Replaces the old read-only client-side mirror, which only persisted when someone happened to save the form. A one-time patch normalizes every existing Contact's Account to its first Customer link (stale and orphaned values corrected). The sync is deliberately NOT behind the toggle — an editable field with a disabled sync would silently drift.
+
+### Fixed
+- **Contacts & Addresses section no longer shows stale data after you create or edit a contact via the full form.** Frappe routes back to the party form without reloading it, so the section re-rendered from the old server payload. Contact/Address saves now push fresh directory data into every open party form they link to (no reload — unsaved edits on the party form are preserved), and dialog-created records refresh both the stock section and the directory widget in place.
+- **Opportunity's directory widget now includes the party's contacts/addresses.** The source scan checked `party_type`, but Opportunity's discriminator field is `opportunity_from`, so the Customer/Lead/Prospect behind the deal was missed entirely.
+- The directory widget re-registered its form event handlers on every refresh, piling up duplicate handlers that all re-rendered the tables on each customer/party field change.
+
+## [1.150.3] - 2026-07-10
+
+### Fixed
+- **Triton caller_resolved replays no longer touch unchanged Customers/Contacts.** The gateway replays `update_caller_info` on every call, usually with the name already on file, and the handler unconditionally rewrote `customer_name` and the Contact's first/last name — bumping `modified` on both records each call, which broadcast a `doc_update` to any open desk form and set up `TimestampMismatchError` for users mid-edit. The handler now compares before writing and skips entirely when nothing differs, and the response's `updated` flag reports whether anything was actually written (it previously just meant "not established").
+
+## [1.150.2] - 2026-07-10
+
+### Fixed
+- **No-op Customer re-saves no longer manufacture "last activity" Version diffs.** The `set_last_activity` before-save hook stamped `custom_last_activity_date = today()` on **every** Customer save, so even a value-identical background re-save (bulk edits, sync/webhook replays — e.g. the 2026-07-10 "Unknown Caller" cleanup burst) produced a genuine one-field diff, a Version record, and an "updated" realtime event. The stamp now fires only on create or when the save changes something besides the stamp itself (measured with the same diff engine Frappe's Version feature uses) — so a truly no-op `doc.save()` mints no Version at all, and a manual edit of the date survives instead of being clobbered to today. The inactivity-reminder semantics are unchanged: any real edit still counts as activity.
+
+## [1.150.1] - 2026-07-10
+
+### Fixed
+- **Live-collab forms no longer show phantom "Updated by <name>" toasts for background writes.** Frappe's `doc_update` event fires for *every* server-side save — scheduler jobs, webhooks, API sessions, list-view bulk edits — and carries no author, so the collab layer's save toast surfaced any background write to an open document as if a person had just edited the page (e.g. the 2026-07-10 bulk cleanup of "Unknown Caller" customer groups toasted 30 times to anyone with one of those Customers open). The toast is now **presence-gated**: it only shows when the writer demonstrably has the same document open (Frappe's `doc_viewers` roster, live collab field edits, or focus events — with a 30s grace window so a peer who saves and immediately closes the form still toasts). Administrator/Guest writes never toast (background jobs run as Administrator), hidden tabs skip the 3s alert, and a stale-fetch race (doc re-saved between event and author lookup) no longer misattributes the author. Background saves keep the existing behavior minus the toast: clean forms silently reload, dirty forms silently merge.
+
+## [1.150.0] - 2026-07-10
+
+### Added
+- **HR joins the KPI Dashboards module as the 9th department** — aggregator, dept-locked cockpit workspace, sidebar, native charts, and a manual-entry doctype. Grounded-data notes: the hrms app is **not installed** on this site (no Attendance/Leave/Recruiting/Payroll/Appraisal tables; payroll lives in QuickBooks), so the 12 automatic KPIs read only the fully-populated `tabEmployee`: active headcount, full-time count, employment-type completeness, hires/separations (90d + 1y), net headcount change, **turnover rate (12m)** (two-point average headcount reconstructed from joining/relieving dates — pure helper `metrics.turnover_rate_pct`, unit-tested), average tenure, tenure at exit, and span of control. Small-n stance for a 14-person team: headline KPIs are counts and the only rate windows are 365-day (one exit moves turnover ~7 points); demographic KPIs are deliberately excluded for privacy.
+- **3 workforce-time KPIs that wake up with the time-kiosk rollout** — field labor hours (30d) and distinct field staff clocking in (30d) from Job Interval, plus submitted Timesheet hours (30d). All guarded and sum-based, so they stay silent (skipped, not zero) until real intervals/timesheets exist.
+- **HR Stat Entry doctype** (KPI Dashboards module) — the one-row-per-month manual paste for **Open Positions** and **eNPS** (there is no Job Opening doctype or survey tool on this site). Month normalizes to the first of the month (autoname enforces one row per month); eNPS 0 is documented as "not surveyed"; an entry older than the previous calendar month flags the source stale (Watch badge). Linked from the KPI Setup sidebar group and the KPI Overview workspace.
+- **HR Dashboard workspace** (`/app/hr-dashboard`, sequence 57 with Executive bumped to 58 so Executive stays last) with the KPI Cockpit auto-locked to HR by route, plus an "HR" nav link and the HR Stat Entry setup link in all 10 workspace sidebars. Executive's rollup now re-surfaces the HR turnover rate (its own headcount/revenue-per-employee KPIs are unchanged).
+- **Access is gated to HR Manager + HR Team** — deliberately not HR User, which every employee on this site holds. HR Team is an instance-created role; a new insert-only patch (`seed_hr_team_role`) makes fresh sites match so the workspace/doctype role references never dangle.
+- **"HR Overview" native dashboard** — Active Headcount by Department (donut), Active Headcount by Employment Type (donut), Hires by Month (bar), fixture-filtered by name like the other shipped dashboards.
+- Docs: `docs/KPI_DASHBOARD_DESIGN.md` gains the full 17-KPI **HR (People)** section (12 Auto / 3 Semi / 2 Manual) with data-gaps and minimal-manual-entry guidance; catalog now 131 KPIs across 8 departments.
+- Rollout: everything rides the existing `kpi_dashboards_enabled` master switch (default off; already enabled on production). Operator follow-ups: assign the HR Team role, fill the 3 blank employment_type values, optionally seed KPI Targets (turnover ≤ 15, completeness = 100, open positions = 0) and a first HR Stat Entry row.
+
+## [1.149.0] - 2026-07-10
+
+### Removed
+- **The "Won Reason" field is gone from Opportunities.** Marking an Opportunity **Closed Won** no longer captures or requires a reason — the `custom_won_reason` Select field (Price / Relationship / Product Fit / Timing / Other) and its required-on-win validation were both removed. Existing sites drop the leftover field (and its stored values) on migrate via `patches.remove_opportunity_won_reason`. **Lost Reason is unchanged** — it's still shown on Lost opportunities and still required when marking an Opportunity Lost.
+
+### Changed
+- The Sales **Close-Reason Capture (90d)** KPI is now **Loss-Reason Capture (90d)** — with won reasons gone, it measures the share of *Lost* opportunities that recorded a Lost Reason (same `close_reason_capture_90` key, so the history carries over). The **Opportunity Loss Reasons** donut and **Lost to Competitor (90d)** KPI are unaffected.
+
+## [1.148.2] - 2026-07-10
+
+### Fixed
+- **Customers auto-created from incoming Triton calls no longer default to the "Government" customer group.** Same arbitrary "first non-group leaf" fallback as the territory bug — with no Customer Group configured in Selling Settings, the unknown-caller auto-create landed every caller in **Government**. `_default_customer_group()` now returns the Selling Settings default when it's a usable (non-group) leaf, and otherwise leaves the field **blank** (via `ignore_mandatory`) instead of picking an arbitrary group. Also fixes the `update_caller_info` rename-create path, which hardcoded `"All Customer Groups"` — a group node that erpnext v16 rejects outright.
+
+## [1.148.1] - 2026-07-10
+
+### Fixed
+- **Customers auto-created from incoming Triton calls no longer default to the "Asia" territory.** The unknown-caller auto-create picked the first non-group Territory when Selling Settings had no default configured, which landed on **Asia**. New callers are now created with **no territory** set (the field is left blank via `ignore_mandatory`), on both the `get_caller_info` auto-create and the `update_caller_info` rename-create paths.
+
 ## [1.148.0] - 2026-07-07
 
 ### Changed

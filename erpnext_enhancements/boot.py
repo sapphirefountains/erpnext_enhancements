@@ -7,6 +7,7 @@ serialized into every desk page's boot payload.
 from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
 from erpnext_enhancements.feature_flags import (
+	contacts_ux_enabled,
 	document_merge_enabled,
 	field_description_icons_enabled,
 	process_automation_enabled,
@@ -39,6 +40,12 @@ def boot_session(bootinfo):
 	list-view bulk action (see ``public/js/merge_tool/merge_tool.js``); the
 	server-side guards in ``document_merge`` remain the authority.
 
+	``frappe.boot.ee_contacts_ux`` gates the Contact/Address quick-entry dialogs
+	and the in-place directory refresh (see
+	``public/js/global_enhancements/contact_address_quick_entry.js``). The
+	``contacts_ux.sync_contact_account_links`` server invariant is deliberately
+	NOT gated — see ``feature_flags.contacts_ux_enabled``.
+
 	``frappe.boot.ee_product_configurator`` gates the Product Configuration /
 	Configurable Product generation buttons (Item + BOM + Selling Price,
 	Create Component Items); the server-side guards in
@@ -49,4 +56,5 @@ def boot_session(bootinfo):
 	bootinfo.ee_desk_shortcuts = get_visible_shortcuts_for_user()
 	bootinfo.ee_field_description_icons = 1 if field_description_icons_enabled() else 0
 	bootinfo.ee_merge_tool = 1 if document_merge_enabled() else 0
+	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0

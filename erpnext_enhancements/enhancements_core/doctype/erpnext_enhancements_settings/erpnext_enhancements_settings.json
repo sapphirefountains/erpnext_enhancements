@@ -56,6 +56,8 @@
   "kpi_snapshot_retention_days",
   "desk_ux_section",
   "field_description_icons_enabled",
+  "contacts_ux_section",
+  "contacts_ux_enabled",
   "document_merge_section",
   "document_merge_enabled",
   "product_configurator_section",
@@ -418,6 +420,18 @@
    "fieldname": "field_description_icons_enabled",
    "fieldtype": "Check",
    "label": "Field Description Info Icons"
+  },
+  {
+   "fieldname": "contacts_ux_section",
+   "fieldtype": "Section Break",
+   "label": "Contacts & Addresses"
+  },
+  {
+   "default": "1",
+   "description": "Create Contacts and Addresses in a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project or other party form, the dialog pre-fills the Account, links the new record to the right documents automatically, and the form's contact/address lists refresh in place. Applies on each user's next page load; turn off to restore the standard full-form create flow. Note: the Contact \"Account\" field stays editable and kept in sync with the Links table regardless of this switch.",
+   "fieldname": "contacts_ux_enabled",
+   "fieldtype": "Check",
+   "label": "Contact & Address Quick Entry"
   },
   {
    "fieldname": "document_merge_section",

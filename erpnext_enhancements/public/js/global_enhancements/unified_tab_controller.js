@@ -11,11 +11,13 @@
  * (custom_comments_field) to ERPNext's CRMNotes widget.
  *
  * The key idea is `get_all_party_sources`: it gathers every related party for the
- * current doc — the doc itself, its customer/supplier/party_name links, and any
+ * current doc — the doc itself, its customer/supplier/party links, and any
  * child-table rows referencing parties or Dynamic Links — then asks the backend
  * (`sync_contact.*`) for all contacts/addresses linked to ANY of them. This is
- * why, e.g., a Project shows contacts attached to its Customer. Add / Set Primary
- * / Unlink actions all round-trip through the same sync_contact API and re-render.
+ * why, e.g., a Project shows contacts attached to its Customer. Link Existing /
+ * Set Primary / Unlink actions all round-trip through the same sync_contact API
+ * and re-render; New Contact / New Address open the quick-entry dialogs
+ * (contact_address_quick_entry.js), which re-render this widget after insert.
  */
 frappe.provide("erpnext_enhancements.unified_controller");
 
@@ -133,6 +135,11 @@ erpnext_enhancements.unified_controller = {
 		if (frm.doc.party_name && frm.doc.party_type) {
 			sources.push({ doctype: frm.doc.party_type, name: frm.doc.party_name });
 		}
+		// Opportunity's party discriminator is opportunity_from, not party_type —
+		// without this its party (Customer/Lead/Prospect) was missing entirely.
+		if (frm.doc.party_name && frm.doc.opportunity_from) {
+			sources.push({ doctype: frm.doc.opportunity_from, name: frm.doc.party_name });
+		}
 
 		(frm.meta.fields || []).forEach((f) => {
 			if (f.fieldtype === "Table" && frm.doc[f.fieldname]) {
@@ -172,6 +179,11 @@ erpnext_enhancements.unified_controller = {
 	setup_events: function () {
 		const frm = this.frm;
 
+		// frappe.ui.form.on APPENDS handlers — registering on every refresh
+		// piled up duplicates that all fired on each field change.
+		if (frm.__ee_utc_events_bound) return;
+		frm.__ee_utc_events_bound = true;
+
 		frappe.ui.form.on(frm.doctype, {
 			customer: (frm) => this.render_all(),
 			supplier: (frm) => this.render_all(),
@@ -204,7 +216,13 @@ erpnext_enhancements.unified_controller = {
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
 		).appendTo(wrapper);
 
-		$('<button class="btn btn-sm btn-default">Add Contact</button>')
+		// Quick-entry create (context self-resolves from the open form; falls
+		// back to the stock full form when the toggle is off).
+		$('<button class="btn btn-sm btn-primary">New Contact</button>')
+			.appendTo(btn_container)
+			.on("click", () => erpnext_enhancements.contacts_ux.new_contact());
+
+		$('<button class="btn btn-sm btn-default">Link Existing</button>')
 			.appendTo(btn_container)
 			.on("click", () => this.link_existing_record("Contact"));
 
@@ -330,7 +348,13 @@ erpnext_enhancements.unified_controller = {
 			'<div style="margin-bottom: 10px; display: flex; gap: 10px;"></div>',
 		).appendTo(wrapper);
 
-		$('<button class="btn btn-sm btn-default">Add Address</button>')
+		// Quick-entry create; respects the Geolocation autocomplete dialog when
+		// that feature is enabled (stock-section parity).
+		$('<button class="btn btn-sm btn-primary">New Address</button>')
+			.appendTo(btn_container)
+			.on("click", () => erpnext_enhancements.contacts_ux.new_address(frm));
+
+		$('<button class="btn btn-sm btn-default">Link Existing</button>')
 			.appendTo(btn_container)
 			.on("click", () => this.link_existing_record("Address"));
 

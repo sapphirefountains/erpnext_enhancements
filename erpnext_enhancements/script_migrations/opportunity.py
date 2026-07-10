@@ -55,27 +55,25 @@ def validate_ranks_on_won(doc, method=None):
 
 
 def validate_close_reason(doc, method=None):
-	"""Require a win/loss reason when an Opportunity transitions to Closed Won or
-	Lost, so win/loss analysis has data (mirrors ``validate_ranks_on_won``).
+	"""Require a Lost Reason when an Opportunity transitions to Lost, so loss
+	analysis has data (mirrors ``validate_ranks_on_won``).
 
-	Enforced on the *transition* only (previous status was not the same closed
-	value): editing a historical closed Opportunity that predates these fields is
-	not retroactively blocked. The reason fields are provisioned by
+	Enforced on the *transition* only (previous status was not already Lost):
+	editing a historical Lost Opportunity that predates this field is not
+	retroactively blocked. The reason field is provisioned by
 	``setup.custom_fields.create_opportunity_winloss_fields``.
+
+	NOTE (v1.149.0): winning an Opportunity no longer requires a Won Reason —
+	the ``custom_won_reason`` field was removed.
 	"""
-	if doc.status not in ("Closed Won", "Lost"):
+	if doc.status != "Lost":
 		return
 
 	previous = doc.get_doc_before_save()
 	if previous is not None and previous.status == doc.status:
-		return  # not a fresh transition — don't block edits of already-closed opps
+		return  # not a fresh transition — don't block edits of already-lost opps
 
-	if doc.status == "Closed Won" and not doc.get("custom_won_reason"):
-		frappe.throw(
-			"Please set a <b>Won Reason</b> before marking this Opportunity <b>Closed Won</b>.",
-			title="Won Reason Required",
-		)
-	if doc.status == "Lost" and not doc.get("custom_lost_reason"):
+	if not doc.get("custom_lost_reason"):
 		frappe.throw(
 			"Please set a <b>Lost Reason</b> before marking this Opportunity <b>Lost</b>.",
 			title="Lost Reason Required",

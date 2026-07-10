@@ -73,6 +73,32 @@ def field_description_icons_enabled():
 	)
 
 
+def contacts_ux_enabled():
+	"""True when the Contacts & Addresses quick-entry UX is switched on.
+
+	Default ON (see the ``default_contacts_ux_on`` patch): creating a Contact or
+	Address anywhere on the desk opens a quick-entry dialog that auto-links the
+	record to the party form it was opened from, and the source form's
+	contact/address lists refresh in place. Turning it off restores the stock
+	full-form create flow on the next page load.
+
+	Deliberately gates ONLY that client UX (via ``frappe.boot.ee_contacts_ux``).
+	The server-side ``contacts_ux.sync_contact_account_links`` invariant and the
+	editable Account field stay active either way — an editable field with a
+	disabled sync would silently drift from the Links grid.
+
+	Missing-field-safe: this runs inside ``boot_session`` on every desk page
+	load, and v16's ``db.get_single_value`` THROWS when the field is not yet in
+	the Settings meta (new code live before migrate has synced the doctype) —
+	which would 500 every desk page. Treated as OFF until the field exists.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("contacts_ux_enabled"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "contacts_ux_enabled"))
+	)
+
+
 def fleet_maintenance_enabled():
 	"""True when the Fleet Maintenance suite is switched on.
 

@@ -17,11 +17,46 @@ def set_last_activity(doc, method=None):
 	"""Source Server Script: "Update Last Activity on Customer Save"
 	(Customer, Before Save).
 
-	Stamp the last activity date every time a Customer is saved. Wired as a
-	Customer ``before_save`` doc_event. Mutates ``doc`` in place (the enclosing
-	save persists it); no DB write of its own.
+	Stamp the last activity date when a Customer is created or when the save
+	actually changes something. The stamp used to be unconditional, which
+	manufactured a one-field Version diff out of every no-op re-save (bulk
+	edits touching other records' fields, sync/webhook replays writing
+	identical values) — turning invisible background writes into visible
+	"updated" events. Guarded, a truly no-op ``doc.save()`` has zero field
+	changes, so Frappe mints no Version at all. A save whose only change is
+	the stamp field itself also skips (a manual edit of the date survives
+	instead of being clobbered to today). Wired as a Customer ``before_save``
+	doc_event. Mutates ``doc`` in place (the enclosing save persists it); no
+	DB write of its own.
 	"""
+	if not doc.is_new() and not _changed_besides_stamp(doc):
+		return
 	doc.custom_last_activity_date = frappe.utils.today()
+
+
+def _changed_besides_stamp(doc):
+	"""True when this save changes anything other than the stamp itself.
+
+	Uses the same diff engine Frappe's Version feature uses, so "changed"
+	matches exactly what would land in a Version record (scalar edits,
+	child-row adds/removes/edits; framework bookkeeping fields like
+	``modified`` are already excluded by it).
+	"""
+	before = doc.get_doc_before_save()
+	if before is None:
+		# no baseline mid-save (defensive) — keep the legacy always-stamp
+		return True
+
+	from frappe.core.doctype.version.version import get_diff
+
+	diff = get_diff(before, doc)
+	if not diff:
+		return False
+	changed = {row[0] for row in (diff.get("changed") or [])}
+	changed.discard("custom_last_activity_date")
+	return bool(
+		changed or diff.get("added") or diff.get("removed") or diff.get("row_changed")
+	)
 
 
 def customer_inactivity_reminder():
