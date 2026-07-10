@@ -8,9 +8,14 @@
  * On saved Contacts: mounts the custom Comments App into `custom_comments_field`
  * (see comments.js) and adds "Call via Triton" / "Send SMS" buttons that drive
  * the telephony client (erpnext_enhancements.api.telephony.trigger_outbound_call
- * and erpnext_enhancements.telephony.show_sms_dialer). A second form.on block,
- * migrated from the "Contact - Show Account Linked to Contact" Client Script,
- * mirrors the first linked Customer into the `custom_account` field.
+ * and erpnext_enhancements.telephony.show_sms_dialer).
+ *
+ * The `custom_account` field is editable and kept in sync with the Links grid
+ * SERVER-side (contacts_ux.sync_contact_account_links) — the old client-side
+ * refresh mirror was removed when the field stopped being read-only (it would
+ * clobber user edits on every refresh). after_save pushes fresh directory data
+ * at every cached party form this contact links to, so the Contacts &
+ * Addresses section is already up to date when the user routes back.
  */
 frappe.ui.form.on("Contact", {
     refresh: function (frm) {
@@ -18,6 +23,12 @@ frappe.ui.form.on("Contact", {
             frm.trigger("render_comments_section");
             frm.trigger("add_triton_call_button");
             frm.trigger("add_triton_sms_button");
+        }
+    },
+
+    after_save: function (frm) {
+        if (erpnext_enhancements && erpnext_enhancements.contacts_ux && erpnext_enhancements.contacts_ux.refresh_linked_sources) {
+            erpnext_enhancements.contacts_ux.refresh_linked_sources(frm);
         }
     },
 
@@ -80,17 +91,4 @@ frappe.ui.form.on("Contact", {
         btn.removeClass('btn-default').addClass('btn-primary');
         btn.html(`<svg class="icon icon-sm" style="margin-right: 5px;"><use href="#icon-message"></use></svg> ${__('Send SMS')}`);
     }
-});
-
-// Migrated from Client Script "Contact - Show Account Linked to Contact".
-// Mirror the first linked Customer into the custom_account field.
-frappe.ui.form.on("Contact", {
-    refresh: function (frm) {
-        let customer_link = (frm.doc.links || []).find((l) => l.link_doctype === "Customer");
-        if (customer_link) {
-            frm.set_value("custom_account", customer_link.link_name);
-        } else {
-            frm.set_value("custom_account", "");
-        }
-    },
 });

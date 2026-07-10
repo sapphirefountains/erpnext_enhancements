@@ -42,6 +42,10 @@ import "./activity_log_numbering.js";
 import "./filter_help.js";
 // Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
 import "./global_enhancements/field_description_icons.js";
+// Contact/Address quick-entry dialogs + in-place directory refresh (gated by
+// frappe.boot.ee_contacts_ux; must be global — list/awesomebar/link-field
+// create paths fire outside any doctype_js). Server: contacts_ux.py.
+import "./global_enhancements/contact_address_quick_entry.js";
 import "./telephony_client.js";
 // global_enhancements
 import "./global_enhancements/quill_mentions.js";

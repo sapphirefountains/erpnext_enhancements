@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.149.0] - 2026-07-10
+
+### Added
+- **Contact & Address quick-entry dialogs — creating a contact no longer leaves the page.** Every "new Contact/Address" entry point (the Contacts & Addresses section buttons, list **+ New**, the awesome bar, a link field's *Create a new…*) now opens a quick-entry dialog instead of routing to the full form. Opened from a Customer, Opportunity, Project, Master Project, Supplier, Lead or Prospect form, the dialog pre-fills the **Account**, shows *"Will be linked to …"*, and links the new record automatically — from an Opportunity/Project it links to **both** the customer and the Opportunity/Project itself, with the party row first so the record keeps its familiar `Name-Customer` naming. An **Edit Full Form** escape hatch remains, and the injected links survive into the full form. Gated by a new default-ON **Contact & Address Quick Entry** toggle (ERPNext Enhancements Settings → Contacts & Addresses); off restores the stock full-form flow on the next page load.
+- **The directory widget can now create, not just link.** The Contact/Address directory on Customer/Supplier/Opportunity/Project/Master Project forms gained primary **New Contact / New Address** buttons (quick-entry dialogs; the New Address button defers to the Geolocation autocomplete dialog when that feature is on) — the old "Add" button is now labeled **Link Existing**.
+
+### Changed
+- **Contact's "Account" field is editable now** and kept in true two-way sync with the Links grid server-side (`contacts_ux.sync_contact_account_links`, on every save path including list-view bulk edit): changing the Account **replaces** the contact's Customer link in place (other links untouched), clearing it removes the link, and editing the grid updates the field. Replaces the old read-only client-side mirror, which only persisted when someone happened to save the form. A one-time patch normalizes every existing Contact's Account to its first Customer link (stale and orphaned values corrected). The sync is deliberately NOT behind the toggle — an editable field with a disabled sync would silently drift.
+
+### Fixed
+- **Contacts & Addresses section no longer shows stale data after you create or edit a contact via the full form.** Frappe routes back to the party form without reloading it, so the section re-rendered from the old server payload. Contact/Address saves now push fresh directory data into every open party form they link to (no reload — unsaved edits on the party form are preserved), and dialog-created records refresh both the stock section and the directory widget in place.
+- **Opportunity's directory widget now includes the party's contacts/addresses.** The source scan checked `party_type`, but Opportunity's discriminator field is `opportunity_from`, so the Customer/Lead/Prospect behind the deal was missed entirely.
+- The directory widget re-registered its form event handlers on every refresh, piling up duplicate handlers that all re-rendered the tables on each customer/party field change.
+
 ## [1.148.2] - 2026-07-10
 
 ### Fixed

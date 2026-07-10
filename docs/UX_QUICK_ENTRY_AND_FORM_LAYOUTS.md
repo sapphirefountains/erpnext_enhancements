@@ -47,8 +47,15 @@ this release reverses that on purpose — the dialogs are now curated.
 
 ### Deliberately excluded
 
-- **Contact / Address** — dialog-created records would be orphaned: the party
-  link (`links` child table) is only wired up by the full-form scripts.
+- **Contact / Address** — ~~dialog-created records would be orphaned: the party
+  link (`links` child table) is only wired up by the full-form scripts~~
+  **superseded in v1.149.0**: these two now get app-owned quick-entry dialogs
+  (`public/js/global_enhancements/contact_address_quick_entry.js`) that resolve
+  the party form they were opened from and inject the `links` rows client-side
+  before insert. Different mechanism from this sweep on purpose — no
+  `quick_entry`/`allow_in_quick_entry` fixtures, so with the "Contact & Address
+  Quick Entry" toggle off (or the bundle unloaded) behavior reverts to the
+  stock full form, never to an orphan-creating stock dialog.
 - **Territory / Sales Person** — rare tree masters; the tree view's own New
   dialog is the right tool.
 - Tree masters that ARE enabled (Warehouse, the three group doctypes): the

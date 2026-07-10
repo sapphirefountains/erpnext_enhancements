@@ -279,9 +279,17 @@ doc_events = {
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
 	"Contact": {
-		# Title field custom_full_name_and_role = "First Last-Party" (ported from a
-		# disabled Server Script; see script_migrations/contact.py)
-		"validate": "erpnext_enhancements.script_migrations.contact.set_full_name_and_role",
+		# custom_account <-> Customer link two-way sync also runs before naming:
+		# core Contact.autoname reads links[0], so an insert carrying only the
+		# Account must get its Customer row before the name is set (contacts_ux.py)
+		"before_insert": "erpnext_enhancements.contacts_ux.sync_contact_account_links",
+		"validate": [
+			# account/link sync first so the title below sees the final link set
+			"erpnext_enhancements.contacts_ux.sync_contact_account_links",
+			# Title field custom_full_name_and_role = "First Last-Party" (ported from a
+			# disabled Server Script; see script_migrations/contact.py)
+			"erpnext_enhancements.script_migrations.contact.set_full_name_and_role",
+		],
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_contact",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},

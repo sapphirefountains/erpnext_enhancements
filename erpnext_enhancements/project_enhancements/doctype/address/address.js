@@ -19,6 +19,19 @@
  * the map live in the browser before a save round-trip.
  */
 frappe.ui.form.on("Address", {
+	after_save: function (frm) {
+		// Push fresh directory data at every cached party form this address
+		// links to (fixes the stale Contacts & Addresses section on route-back;
+		// see contact_address_quick_entry.js).
+		if (
+			window.erpnext_enhancements &&
+			erpnext_enhancements.contacts_ux &&
+			erpnext_enhancements.contacts_ux.refresh_linked_sources
+		) {
+			erpnext_enhancements.contacts_ux.refresh_linked_sources(frm);
+		}
+	},
+
 	refresh: function (frm) {
 		// Render the map immediately if we already have a full address; otherwise
 		// build the full address first (which then triggers the map render).
