@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.148.2] - 2026-07-10
+## [1.148.3] - 2026-07-10
+
+### Fixed
+- **Live-collab forms no longer show phantom "Updated by <name>" toasts for background writes.** Frappe's `doc_update` event fires for *every* server-side save — scheduler jobs, webhooks, API sessions, list-view bulk edits — and carries no author, so the collab layer's save toast surfaced any background write to an open document as if a person had just edited the page (e.g. the 2026-07-10 bulk cleanup of "Unknown Caller" customer groups toasted 30 times to anyone with one of those Customers open). The toast is now **presence-gated**: it only shows when the writer demonstrably has the same document open (Frappe's `doc_viewers` roster, live collab field edits, or focus events — with a 30s grace window so a peer who saves and immediately closes the form still toasts). Administrator/Guest writes never toast (background jobs run as Administrator), hidden tabs skip the 3s alert, and a stale-fetch race (doc re-saved between event and author lookup) no longer misattributes the author. Background saves keep the existing behavior minus the toast: clean forms silently reload, dirty forms silently merge.
 
 ### Fixed
 - **Customers auto-created from incoming Triton calls no longer default to the "Government" customer group.** Same arbitrary "first non-group leaf" fallback as the territory bug — with no Customer Group configured in Selling Settings, the unknown-caller auto-create landed every caller in **Government**. `_default_customer_group()` now returns the Selling Settings default when it's a usable (non-group) leaf, and otherwise leaves the field **blank** (via `ignore_mandatory`) instead of picking an arbitrary group. Also fixes the `update_caller_info` rename-create path, which hardcoded `"All Customer Groups"` — a group node that erpnext v16 rejects outright.
