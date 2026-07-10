@@ -54,7 +54,7 @@ PROCESSES = [
 				"responsible": "Brian Morisseau", "accountable": "Brian Morisseau",
 				"erpnext_doctype": "Opportunity", "erpnext_action": "Approve",
 				"enforcement": "Manual", "coverage": "Built / Existing",
-				"target_artifact": "custom_won_reason / custom_lost_reason (required on close)",
+				"target_artifact": "custom_lost_reason (required when marking Lost)",
 			},
 			{
 				"step_no": 5, "step_title": "Convert won Opportunity to Project",
