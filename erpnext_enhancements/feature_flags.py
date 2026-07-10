@@ -136,6 +136,41 @@ def document_merge_enabled():
 	)
 
 
+def package_dispatch_enabled():
+	"""True when the Package Dispatch auto-fill conveniences are switched on.
+
+	Default OFF (the staged-rollout contract). The Package Dispatch form, its
+	totals, the printable sheet and the submit flow all work regardless — this
+	gates ONLY the two auto-fill helpers (catalog-item value + customer address
+	lookup in ``package_dispatch.api``) and their client triggers via
+	``frappe.boot.ee_package_dispatch``. Flip the checkbox in **ERPNext
+	Enhancements Settings → Package Dispatch** — no deploy needed.
+
+	Missing-field-safe: this is read inside ``boot_session`` on every desk page
+	load, and v16's ``db.get_single_value`` THROWS when the field is not yet in
+	the Settings meta (new code live before migrate has synced the doctype), which
+	would 500 every desk page. Treated as OFF until the field exists.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("package_dispatch_enabled"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "package_dispatch_enabled"))
+	)
+
+
+def throw_if_package_dispatch_disabled():
+	"""Guard for the Package Dispatch auto-fill endpoints."""
+	if not package_dispatch_enabled():
+		frappe.throw(
+			frappe._(
+				"Package Dispatch auto-fill is currently switched off "
+				"(ERPNext Enhancements Settings → Package Dispatch). You can still "
+				"enter the item values and address by hand."
+			),
+			title=frappe._("Feature Disabled"),
+		)
+
+
 def throw_if_process_automation_disabled():
 	"""Guard for whitelisted entry points — explains instead of misbehaving."""
 	if not process_automation_enabled():
