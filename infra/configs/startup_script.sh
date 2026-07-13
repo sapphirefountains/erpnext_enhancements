@@ -12,27 +12,50 @@ else
 fi
 
 # ── Mount data disk ──────────────────────────────────────
-# Try fstab first (both VMs should have an entry)
+# Identify the root disk from the kernel device name
+RDEV=$(findmnt -n -o SOURCE /)             # e.g. /dev/sdb1
+ROOT_PKNAME=$(lsblk -ndo PKNAME "$RDEV")  # e.g. sdb
+
+# Find the unmounted disk that is NOT the root disk
+DATA_DEV=$(lsblk -dpno NAME,TYPE,MOUNTPOINT | awk -v root="/dev/$ROOT_PKNAME" '$2=="disk" && $3=="" && $1!=root {print $1; exit}')
+
+# If none unmounted, try any non-root disk with ext4
+if [ -z "$DATA_DEV" ]; then
+  for dev in /dev/sd* /dev/nvme*n*; do
+    [ -b "$dev" ] || continue
+    [ "$dev" = "/dev/$ROOT_PKNAME" ] && continue
+    if blkid "$dev" 2>/dev/null | grep -q ext4 && ! mount | grep -q "$dev"; then
+      DATA_DEV=$dev
+      break
+    fi
+  done
+fi
+
+# Try fstab first (if it has a UUID entry it may already be correct)
 mount -a 2>&1 || true
 
-# If nothing mounted yet, auto-detect and mount
-DATA_DEV=$(lsblk -dpno NAME | grep -E 'sd[b-z]|nvme[0-9]n[0-9]' | head -1)
 if [ -n "$DATA_DEV" ] && ! mount | grep -q "$DATA_DEV"; then
   echo "[$(date)] Data disk $DATA_DEV not mounted — mounting"
   blkid "$DATA_DEV" | grep -q ext4 || mkfs.ext4 -F "$DATA_DEV"
 
+  DATA_UUID=$(blkid -s UUID -o value "$DATA_DEV")
   # Try common mount points
   if [ -d /data ] && [ ! -L /data ]; then
-    mount "$DATA_DEV" /data || true
+    mount UUID="$DATA_UUID" /data || true
   elif [ -d /mnt/data ]; then
-    mount "$DATA_DEV" /mnt/data || true
+    mount UUID="$DATA_UUID" /mnt/data || true
   else
     mkdir -p /mnt/data
-    mount "$DATA_DEV" /mnt/data || true
+    mount UUID="$DATA_UUID" /mnt/data || true
   fi
 
-  # Add to fstab if not present
-  grep -q "$DATA_DEV" /etc/fstab || echo "$DATA_DEV /data ext4 defaults,nofail 0 2" >> /etc/fstab
+  # Add to fstab with UUID (remove any stale device-name entry for the same disk first)
+  sed -i "\|$DATA_DEV|d" /etc/fstab
+  grep -q "$DATA_UUID" /etc/fstab || echo "UUID=$DATA_UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
+fi
+
+if [ -z "$DATA_DEV" ]; then
+  echo "[$(date)] WARNING: Could not find a data disk to mount"
 fi
 
 # ── Create /data symlink if data disk is at /mnt/data ────
@@ -95,8 +118,7 @@ fi
 
 # ── Setup nginx if bench exists ──────────────────────────
 if [ -d /home/frappe/frappe-bench ]; then
-  cd /home/frappe/frappe-bench
-  sudo -u frappe bench setup production frappe --yes || true
+  sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup production frappe --yes' || true
 fi
 
 echo "[$(date)] Startup script completed"
