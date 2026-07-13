@@ -17,7 +17,7 @@ ${spot_lb_name}:
     http-rule:
       address: "$$addresses:global:${spot_glb_ip_name}"
   health_check_configs: {}
-#%{ endif %}
+#%{ endif }
 #%{ if provision_compute_vm && provision_standard_vm_lb_backend }
 ${production_lb_name}:
   protocol: "HTTP"
@@ -36,4 +36,4 @@ ${production_lb_name}:
     http-rule:
       address: "$$addresses:global:${glb_ip_name}"
   health_check_configs: {}
-#%{ endif %}
+#%{ endif }
