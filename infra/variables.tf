@@ -187,6 +187,12 @@ variable "reuse_existing_disks" {
   default     = false
 }
 
+variable "boot_disk_auto_delete" {
+  type        = bool
+  description = "Whether to automatically delete the boot disk when the instance is deleted."
+  default     = false
+}
+
 variable "vm_local_ssd_count" {
   type        = number
   description = "The number of local SSD scratch arrays to provision"
@@ -197,6 +203,48 @@ variable "enable_standalone_health_check" {
   type        = bool
   description = "Toggles the creation of the global HTTP health check for backend load balancing"
   default     = true
+}
+
+variable "vm_network_tags" {
+  type        = list(string)
+  description = "Network tags applied to standard VMs for firewall rule targeting."
+  default     = ["web-frontend"]
+}
+
+variable "spot_vm_network_tags" {
+  type        = list(string)
+  description = "Network tags applied to Spot VMs for firewall rule targeting."
+  default     = ["web-frontend"]
+}
+
+variable "vm_region" {
+  type        = string
+  description = "Region for standard VMs. If null, defaults to var.region."
+  default     = null
+}
+
+variable "spot_vm_region" {
+  type        = string
+  description = "Region for Spot VMs. If null, defaults to var.region."
+  default     = null
+}
+
+variable "boot_disk_source_attach" {
+  type        = string
+  description = "Self-link of an existing disk to attach as the boot disk. When set, overrides boot disk creation and initialize_params are ignored."
+  default     = null
+}
+
+variable "data_disk_source_attach" {
+  type        = string
+  description = "Self-link of an existing disk to attach as the persistent data disk. When set, overrides data disk creation."
+  default     = null
+}
+
+variable "vm_custom_image" {
+  type        = string
+  description = "Custom image self-link or family for the boot disk (e.g. projects/my-project/global/images/family/my-image). If null, defaults to debian-12."
+  default     = null
 }
 
 variable "health_check_port" {
@@ -227,6 +275,24 @@ variable "cloud_run_service_name" {
   type        = string
   description = "The target deployment name of the Cloud Run service container microapp"
   default     = "sapphire-microservice"
+}
+
+variable "spot_lb_name" {
+  description = "The name of the spot VM load balancer."
+  type        = string
+  default     = "spot-glb"
+}
+
+variable "production_lb_name" {
+  description = "The name of the production VM load balancer."
+  type        = string
+  default     = "production-glb"
+}
+
+variable "spot_glb_ip_name" {
+  description = "The name of the global external IP address for the spot VM load balancer."
+  type        = string
+  default     = "spot-glb-ip"
 }
 
 variable "standalone_vm_neg_name" {
@@ -523,10 +589,34 @@ variable "provision_spot_vm_lb_backend" {
   default     = false
 }
 
+variable "provision_standard_vm_lb_backend" {
+  type        = bool
+  description = "Toggle to include the standard VM as a backend in the load balancer. Requires a NEG or instance group for the VM."
+  default     = false
+}
+
 variable "provision_cloud_nat" {
   type        = bool
   description = "Toggle to active or completely tear down the Cloud NAT egress network gateways"
   default     = true # Keeps it enabled by default for active VM work
+}
+
+variable "nat_regions" {
+  type        = list(string)
+  description = "List of regions to provision Cloud NAT gateways. Each region gets its own router and NAT."
+  default     = ["us-central1", "us-east1"]
+}
+
+variable "nat_name_prefix" {
+  type        = string
+  description = "Prefix for NAT router and gateway names. Resources will be named {prefix}-nat-router-{region} and {prefix}-cloud-nat-{region}."
+  default     = "erpnext"
+}
+
+variable "enable_startup_script" {
+  type        = bool
+  description = "If true, attaches the startup script to both VMs (standard and spot) to auto-configure bench and nginx."
+  default     = false
 }
 
 variable "iap_tunnel_members" {

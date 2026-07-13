@@ -36,6 +36,7 @@ output "compute_vms" {
   description = "The outputs of standard Compute VMs."
   value       = module.compute_vm
   depends_on  = [module.compute_vm]
+  sensitive   = true
 }
 
 output "ips" {

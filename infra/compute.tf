@@ -138,9 +138,58 @@
  */
 
 # Compute VM Module: Provisions standard VM instances
+
+data "google_compute_zones" "compute_vm_available" {
+  count   = var.vm_region != null ? 1 : 0
+  project = module.project.project_id
+  region  = var.vm_region
+  status  = "UP"
+}
+
+data "google_compute_zones" "spot_vm_available" {
+  count   = var.spot_vm_region != null ? 1 : 0
+  project = module.project.project_id
+  region  = var.spot_vm_region
+  status  = "UP"
+}
+
 locals {
   # 1. Construct disks as a structured MAP of objects instead of a list using merge()
   raw_attached_disks = var.enable_vm_persistence ? merge(
+    {
+      "data-disk" = merge(
+        {
+          device_name  = "erpnext-data"
+          mode         = "READ_WRITE"
+          type         = "PERSISTENT"
+        },
+        var.data_disk_source_attach != null ? {
+          source = {
+            attach = var.data_disk_source_attach
+          }
+        } : {
+          initialize_params = {
+            size = var.vm_data_disk_size
+            type = "pd-balanced"
+          }
+        }
+      )
+    },
+    {
+      for i in range(var.vm_local_ssd_count) : "local-ssd-${i}" => {
+        device_name  = "local-ssd-${i}"
+        mode         = "READ_WRITE"
+        type         = "SCRATCH"
+        interface    = "NVME"
+        initialize_params = {
+          size = 375
+          type = "local-ssd"
+        }
+      }
+    }
+  ) : {}
+
+  spot_vm_attached_disks = var.enable_vm_persistence ? merge(
     {
       "data-disk" = {
         device_name  = "erpnext-data"
@@ -167,28 +216,43 @@ locals {
   ) : {}
 
   # 2. Inject configuration keys and pre-encoded strings cleanly into templates
+  startup_script_raw  = templatefile("${path.module}/configs/startup_script.sh", {})
+  startup_script_yaml = indent(6, "\n${local.startup_script_raw}")
+
   compute_vm_config = yamldecode(templatefile("${path.module}/configs/compute_vm.yaml", {
     compute_machine_type      = var.compute_machine_type
     standard_vm_name          = var.standard_vm_name
     nat_ip_resolved           = var.enable_standard_public_ip ? "true" : "null"
-    region                    = var.region
+    vm_zone                   = var.vm_region != null ? data.google_compute_zones.compute_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
+    vm_network_tags           = jsonencode(var.vm_network_tags)
     network                   = local.network_id
-    subnetwork                = local.subnetwork_self_link
+    subnetwork                = local.compute_vm_subnet
     attached_disks_json       = jsonencode(local.raw_attached_disks)
     vm_boot_disk_size         = var.vm_boot_disk_size
     reuse_existing_disks      = var.reuse_existing_disks
+    boot_disk_auto_delete     = var.boot_disk_auto_delete ? "true" : "false"
+    boot_disk_source_attach   = var.boot_disk_source_attach != null ? var.boot_disk_source_attach : ""
+    vm_boot_disk_image        = var.vm_custom_image != null ? var.vm_custom_image : "projects/debian-cloud/global/images/family/debian-12"
+    enable_startup_script     = var.enable_startup_script
+    startup_script            = var.enable_startup_script ? local.startup_script_yaml : ""
   }))
 
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
-    region                = var.region
+    vm_zone               = var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
     spot_machine_type     = var.spot_machine_type
     spot_vm_name          = var.spot_vm_name
     nat_ip_resolved       = var.enable_spot_public_ip ? "true" : "null"
+    vm_network_tags       = jsonencode(var.spot_vm_network_tags)
     network               = local.network_id
-    subnetwork            = local.subnetwork_self_link
-    attached_disks_json   = jsonencode(local.raw_attached_disks)
+    subnetwork            = local.spot_vm_subnet
+    attached_disks_json   = jsonencode(local.spot_vm_attached_disks)
     vm_boot_disk_size     = var.vm_boot_disk_size
     reuse_existing_disks  = var.reuse_existing_disks
+    boot_disk_auto_delete = var.boot_disk_auto_delete ? "true" : "false"
+    boot_disk_source_attach = ""
+    vm_boot_disk_image      = var.vm_custom_image != null ? var.vm_custom_image : "projects/debian-cloud/global/images/family/debian-12"
+    enable_startup_script   = var.enable_startup_script
+    startup_script          = var.enable_startup_script ? local.startup_script_yaml : ""
   }))
 }
 
@@ -215,6 +279,8 @@ module "compute_vm" {
   service_account = try(each.value.service_account, null)
   metadata        = try(each.value.metadata, null)
   labels          = try(each.value.labels, null)
+  tags            = try(each.value.tags, [])
+  group           = var.provision_standard_vm_lb_backend ? { named_ports = { http = var.health_check_port } } : null
 }
 
 # Spot VM Module: Provisions ephemeral VM instances using Spot pricing
@@ -241,7 +307,8 @@ module "spot_vm" {
   service_account = try(each.value.service_account, null)
   metadata        = try(each.value.metadata, null)
   labels          = try(each.value.labels, null)
-  group           = var.provision_spot_vm_lb_backend ? { named_ports = {} } : null
+  tags            = try(each.value.tags, [])
+  group           = var.provision_spot_vm_lb_backend ? { named_ports = { http = var.health_check_port } } : null
 
   scheduling_config = {
     provisioning_model = "SPOT"
@@ -280,7 +347,7 @@ resource "google_compute_firewall" "allow_lb_to_vm" {
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443"]
+    ports    = ["80", "443", "8000"]
   }
 
   # Standard Google Load Balancer probing ranges

@@ -17,10 +17,11 @@
 # IPS Module: Handles static and ephemeral IP address allocations
 locals {
   ips_config = yamldecode(templatefile("${path.module}/configs/ips.yaml", {
-    glb_ip_name = var.glb_ip_name
-    region      = var.region
-    subnetwork  = local.subnetwork_self_link
-    web_ip_name = var.web_ip_name
+    glb_ip_name      = var.glb_ip_name
+    spot_glb_ip_name = var.spot_glb_ip_name
+    region           = var.region
+    subnetwork       = local.subnetwork_self_link
+    web_ip_name      = var.web_ip_name
   }))
 }
 

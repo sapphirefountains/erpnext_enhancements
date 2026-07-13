@@ -130,6 +130,6 @@ resource "google_compute_instance_group_membership" "unmanaged" {
 resource "google_service_account" "service_account" {
   count        = try(var.service_account.auto_create, null) == true ? 1 : 0
   project      = local.project_id
-  account_id   = "tf-vm-${var.name}"
+  account_id   = substr("tf-vm-${var.name}", 0, 30)
   display_name = "Terraform VM ${var.name}."
 }

@@ -8,6 +8,7 @@ external_addresses:
 
 global_addresses:
   "${glb_ip_name}": {}
+  "${spot_glb_ip_name}": {}
 
 internal_addresses: {}
 addresses: {}

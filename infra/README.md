@@ -37,8 +37,9 @@ Provisions v2 Cloud Functions, including custom runtime configuration, memory, b
 ### 6. Standard Compute VMs
 Provisions standard Compute Engine virtual machines.
 * **External IP Control**: Uses `vm_ip_external` to control external IP assignment, falling back to the master `ip_external` toggle if not set.
-* **Disk Configuration**: Boot disk is 50GB pd-balanced, sized by `vm_boot_disk_size`.
+* **Disk Configuration**: Boot disk is 50GB pd-balanced, sized by `vm_boot_disk_size`, controlled by `boot_disk_auto_delete`.
 * **Disk Lifecycle**: Supports the same `reuse_existing_disks` toggle as Spot VMs. When `true`, the boot disk is promoted to an independent resource (named `<vm>-boot`) that persists across VM recreation.
+* **Boot Disk Deletion**: `boot_disk_auto_delete` (default `false`) controls whether the boot disk is deleted when the instance is deleted. Set to `true` to clean up automatically.
 
 ### 7. Spot Compute VMs
 Provisions ephemeral, cost-efficient Spot VMs. Supports two disk lifecycle strategies controlled by `reuse_existing_disks`.
@@ -47,11 +48,12 @@ Provisions ephemeral, cost-efficient Spot VMs. Supports two disk lifecycle strat
 * Supports customizable termination actions (`STOP` or `DELETE`).
 * **Load Balancer Backend**: Controlled by `provision_spot_vm_lb_backend`. When `true`, creates an unmanaged instance group and registers the VM as a backend in the Load Balancer. When `false` (default), the VM is standalone with no LB integration.
 * **Disk Configuration**:
-  * **Boot Disk**: 50GB pd-balanced, sized by `vm_boot_disk_size`.
+  * **Boot Disk**: 50GB pd-balanced, sized by `vm_boot_disk_size`, controlled by `boot_disk_auto_delete`.
   * **Data Disk**: 200GB pd-balanced, sized by `vm_data_disk_size`, created as an independent resource.
 * **Disk Lifecycle** (`reuse_existing_disks` toggle):
-  * `false` (default): Boot disk is inline with `auto_delete = false` — survives VM deletion but a new one is created on each replacement. Orphan disks accumulate.
+  * `false` (default): Boot disk is inline — survives VM deletion (if `boot_disk_auto_delete = false`) but a new one is created on each replacement. Orphan disks accumulate.
   * `true`: Boot disk is promoted to an independent `google_compute_disk` resource (named `<vm>-boot`). Both boot and data disks persist fully independently and are reattached on VM recreation. No orphan accumulation.
+* **Boot Disk Deletion**: `boot_disk_auto_delete` (default `false`) controls whether the boot disk is deleted when the instance is deleted. Set to `true` to clean up automatically.
 
 ### 8. Cloud SQL Database Instances
 Deploys Cloud SQL database instances dynamically using the `cloudsql-instance` module.
@@ -141,6 +143,7 @@ Modify [terraform.tfvars](terraform.tfvars) to set the following toggles to `tru
 | `provision_prod_mig` | Production MIG | - | Production environment MIG (N2D AMD family, stateful data disk, Local SSD) |
 | `provision_test_mig` | Testing MIG | - | Testing environment MIG (N2D AMD Spot family, stateful data disk, Local SSD) |
 | `reuse_existing_disks` | VM Disk Lifecycle | [configs/spot_vm.yaml](configs/spot_vm.yaml), [configs/compute_vm.yaml](configs/compute_vm.yaml) | Promotes boot disk to independent resource — persists across VM recreation for both Spot and Standard VMs |
+| `boot_disk_auto_delete` | Boot Disk Deletion | [configs/spot_vm.yaml](configs/spot_vm.yaml), [configs/compute_vm.yaml](configs/compute_vm.yaml) | Controls `auto_delete` flag on boot disk — `false` (default) preserves the disk when the VM is deleted |
 | `enable_iap_ssh_firewall` | IAP SSH Tunnel | - | Allows IAP SSH access to all VMs, no public IP required |
 | `iap_tunnel_members` | IAP Tunnel Users | - | IAM members granted `roles/iap.tunnelResourceAccessor` |
 
@@ -214,6 +217,7 @@ provision_spot_vm              = true
 provision_spot_vm_lb_backend   = true
 provision_load_balancer        = true
 reuse_existing_disks           = true
+boot_disk_auto_delete          = false
 vm_boot_disk_size              = 50
 vm_data_disk_size              = 200
 ```

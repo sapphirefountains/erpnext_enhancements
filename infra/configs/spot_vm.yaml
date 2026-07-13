@@ -1,5 +1,5 @@
 ${spot_vm_name}:
-  zone: ${region}-b
+  zone: ${vm_zone}
   machine_type: ${spot_machine_type}
   network_interfaces:
     - network: ${network}
@@ -7,21 +7,31 @@ ${spot_vm_name}:
       nat: "${nat_ip_resolved}"
       addresses: null
   boot_disk:
-    auto_delete: false
+    auto_delete: ${boot_disk_auto_delete}
+    #%{ if boot_disk_source_attach != "" }
+    source:
+      attach: ${boot_disk_source_attach}
+    initialize_params: null
+    #%{ else }
     #%{ if reuse_existing_disks }
     use_independent_disk: {}
     #%{ endif }
     initialize_params:
-      image: "projects/debian-cloud/global/images/family/debian-12"
+      image: ${vm_boot_disk_image}
       size: ${vm_boot_disk_size}
       type: "pd-balanced"
+    #%{ endif }
   
   # 🎯 THE FIX: Pass a pre-encoded JSON string array here to avoid YAML syntax clashing
   attached_disks: ${attached_disks_json}
-
+  tags: ${vm_network_tags}
   service_account:
     auto_create: true
-  metadata: {}
+#%{ if enable_startup_script }
+  metadata:
+    startup-script: |
+${startup_script}
+#%{ endif }
   labels:
     role: "batch-processor"
   termination_action: "DELETE"

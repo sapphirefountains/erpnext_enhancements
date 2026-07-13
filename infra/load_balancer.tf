@@ -30,29 +30,26 @@ locals {
 
   has_spot_vm_backend = var.provision_spot_vm && var.provision_spot_vm_lb_backend
 
-  provisioned_backends = compact([
-    var.provision_prod_mig     ? "prod-mig-backend"     : "",
-    var.provision_test_mig     ? "test-mig-backend"     : "",
-    var.provision_compute_vm   ? "production-vm-backend" : "",
-    local.has_spot_vm_backend  ? "spot-vm-backend"      : "",
-    var.provision_cloud_run    ? "frontend-neg"         : "",
-  ])
+  standalone_vm_zone = var.vm_region != null ? data.google_compute_zones.compute_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
 
-  default_service = length(local.provisioned_backends) > 0 ? local.provisioned_backends[0] : null
+  spot_vm_zone = var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
 
-  load_balancer_config = local.default_service != null ? yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
-    glb_ip_name            = var.glb_ip_name
-    region                 = var.region
-    ssl_map_name           = var.ssl_map_name
-    provision_prod_mig     = var.provision_prod_mig
-    provision_test_mig     = var.provision_test_mig
-    provision_compute_vm   = var.provision_compute_vm
-    provision_spot_vm      = local.has_spot_vm_backend
-    provision_cloud_run    = var.provision_cloud_run
-    standalone_vm_neg_name = try(var.standalone_vm_neg_name, "production-vm-neg")
-    spot_vm_neg_name       = format("projects/%s/zones/%s-b/instanceGroups/%s", var.project_id, var.region, var.spot_vm_name)
-    default_service        = local.default_service
-  })) : {}
+  load_balancer_config = yamldecode(templatefile("${path.module}/configs/load_balancer.yaml", {
+    glb_ip_name                    = var.glb_ip_name
+    spot_glb_ip_name               = var.spot_glb_ip_name
+    spot_lb_name                   = var.spot_lb_name
+    production_lb_name             = var.production_lb_name
+    region                         = var.region
+    ssl_map_name                   = var.ssl_map_name
+    provision_prod_mig             = var.provision_prod_mig
+    provision_test_mig             = var.provision_test_mig
+    provision_compute_vm           = var.provision_compute_vm
+    provision_standard_vm_lb_backend = var.provision_standard_vm_lb_backend
+    provision_spot_vm              = local.has_spot_vm_backend
+    provision_cloud_run            = var.provision_cloud_run
+    standalone_vm_neg_name         = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.standalone_vm_zone, var.standard_vm_name)
+    spot_vm_neg_name               = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)
+  }))
 
   # 1. Decoupled IP Address Resolution
   glb_addresses = (
@@ -79,13 +76,13 @@ locals {
 }
 
 module "load_balancer" {
-  for_each                = var.provision_load_balancer && local.default_service != null ? local.load_balancer_config : {}
+  for_each                = local.load_balancer_config
   source                  = "../modules/net-lb-app-ext"
   project_id              = module.project.project_id
   name                    = each.key
   backend_buckets_config  = try(each.value.backend_buckets_config, {})
   backend_service_configs = {
-    for bs_k, bs_v in coalesce(try(each.value.backend_service_configs, {}), {}) :
+    for bs_k, bs_v in try(each.value.backend_service_configs, {}) :
     bs_k => merge(bs_v, {
       backends = flatten([
         for b in try(bs_v.backends, []) : (
@@ -143,6 +140,7 @@ module "load_balancer" {
   }
 
   depends_on = [
-    module.spot_vm
+    module.spot_vm,
+    module.compute_vm
   ]
 }
