@@ -34,7 +34,7 @@ locals {
 
   spot_vm_zone = var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
 
-  _load_balancer_template = templatefile("${path.module}/configs/load_balancer.yaml", {
+  _lb_template = templatefile("${path.module}/configs/load_balancer.yaml", {
     glb_ip_name                    = var.glb_ip_name
     spot_glb_ip_name               = var.spot_glb_ip_name
     spot_lb_name                   = var.spot_lb_name
@@ -51,7 +51,7 @@ locals {
     spot_vm_neg_name               = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)
   })
 
-  load_balancer_config = trimspace(local._load_balancer_template) == "" ? {} : yamldecode(local._load_balancer_template)
+  load_balancer_config = try(yamldecode(local._lb_template), tomap({}))
 
   # 1. Decoupled IP Address Resolution
   glb_addresses = (
