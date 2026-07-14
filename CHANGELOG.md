@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.155.1] - 2026-07-14
+
+### Added
+- **The QuickBooks→ERPNext migration master plan now lives in the repo (documentation only — no code or behavior changes).** `PLAN.md` carries the plan built against the live systems on 14 Jul 2026: every planning-brief figure re-verified with discrepancies flagged (prod's accounting is an unposted QBO draft mirror; test already piloted the opening balances), a native-first audit of every requirement, the phase plan with the binding cutover-window ordering, the dependency graph and critical path to the 2027-01-01 cutover, a risk register, and the test→prod promotion strategy. `decisions/OPEN-DECISIONS.md` records the seven business decisions **with their 14 Jul 2026 resolutions** (no JDH company; follow-Utah-law stream-differentiated tax with the CPA's written matrix as the go-live sign-off gate; Rent renamed to Events; segment = project attribute with customer fallback; Jan 1 committed; draft-mirror bulk delete ratified; no card surcharge at launch). `work-items/` holds 65 self-contained work items (WI-001..WI-065, each with native-first check, verified field names, machine-checkable acceptance criteria, and rollback; WI-061 JDH is on hold per OD-1). Execution is tracked as Tasks under project **PRJ-00739 – ERPNext Accounting Migration** on the live site, mirroring this register including its dependency graph.
+
 ## [1.155.0] - 2026-07-10
 
 ### Changed
