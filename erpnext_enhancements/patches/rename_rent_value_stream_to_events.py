@@ -49,18 +49,30 @@ def _retag(table):
 	"""Swap the 'Rent' entry inside cached ``_user_tags`` strings.
 
 	``_user_tags`` is a comma-delimited cache (typically ``,A,B``); split and
-	rejoin per row so leading/trailing comma conventions are preserved
-	exactly and substrings like 'Rented' are never touched.
+	rejoin per row so leading/trailing comma conventions are preserved and
+	substrings like 'Rented' are never touched. The token match is
+	CASE-INSENSITIVE (prod Project caches store ``,rent`` lowercase while
+	Opportunity stores ``,Rent`` — and MariaDB's collation makes rename_doc
+	rewrite the canonical Tag Links for both), and duplicate non-empty tokens
+	are collapsed in case a hand-added 'Events' tag already coexists.
 	"""
 	rows = frappe.db.sql(
 		f"SELECT name, _user_tags FROM `tab{table}` WHERE _user_tags LIKE '%Rent%'"
 	)
 	for name, tags in rows:
 		parts = (tags or "").split(",")
-		if "Rent" not in parts:
+		if not any(p.strip().lower() == "rent" for p in parts):
 			continue
-		new_tags = ",".join("Events" if p == "Rent" else p for p in parts)
-		frappe.db.set_value(table, name, "_user_tags", new_tags, update_modified=False)
+		swapped = ["Events" if p.strip().lower() == "rent" else p for p in parts]
+		seen, deduped = set(), []
+		for p in swapped:
+			key = p.strip().lower()
+			if key and key in seen:
+				continue
+			if key:
+				seen.add(key)
+			deduped.append(p)
+		frappe.db.set_value(table, name, "_user_tags", ",".join(deduped), update_modified=False)
 
 
 def execute():
@@ -97,10 +109,12 @@ def execute():
 		_retag(table)
 
 	# 6. Process-map documentation text that names the old stream filter.
+	# (bound params: safe under any sql_mode, including ANSI_QUOTES)
 	frappe.db.sql(
 		"UPDATE `tabProcess Document Step` "
-		"SET target_artifact = REPLACE(target_artifact, \"project_type='Rent'\", \"project_type='Events'\") "
-		"WHERE target_artifact LIKE \"%project_type='Rent'%\""
+		"SET target_artifact = REPLACE(target_artifact, %s, %s) "
+		"WHERE target_artifact LIKE %s",
+		("project_type='Rent'", "project_type='Events'", "%project_type='Rent'%"),
 	)
 
 	frappe.clear_cache()

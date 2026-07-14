@@ -891,7 +891,7 @@ def _product_metrics():
 	if has("Project", "project_type"):
 		add(
 			"active_rentals",
-			"Active Rentals",
+			"Active Events",
 			_scalar("select count(*) from `tabProject` where project_type='Events' and status in ('Open','Active')"),
 			"count",
 			"Project",
@@ -899,7 +899,7 @@ def _product_metrics():
 		)
 		add(
 			"rentals_started_30",
-			"Rentals Started (30d)",
+			"Events Started (30d)",
 			_scalar("select count(*) from `tabProject` where project_type='Events' and creation >= %(d)s", {"d": d30}),
 			"count",
 			"Project",
@@ -908,7 +908,7 @@ def _product_metrics():
 		if has("Project", "custom_project_dollar_amount"):
 			add(
 				"rental_backlog_value",
-				"Rental Backlog Value",
+				"Events Backlog Value",
 				_scalar(
 					"select sum(custom_project_dollar_amount) from `tabProject` "
 					"where project_type='Events' and status in ('Open','Active')"
