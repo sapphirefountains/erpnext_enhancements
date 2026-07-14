@@ -1,6 +1,6 @@
-# WI-038: Utah sales-tax liability reporting from native reports (OD-2-gated)
+# WI-038: Utah sales-tax liability reporting from native reports (OD-2 direction set)
 **Phase:** 1   **Type:** CONFIG   **Size:** S
-**Blocked by:** OD-2, WI-036, WI-037   **Blocks:** nothing
+**Blocked by:** WI-036, WI-037 (OD-2 resolved in direction 2026-07-14: Utah-law stream-differentiated; filing columns split taxable vs exempt by stream)   **Blocks:** nothing
 
 ## Why
 Finance must file Utah sales tax (TC-62-family) from ERPNext after cutover. The stock 'Tax Detail' report is NOT present in this build (verified missing — prod_finance_native), so the filing procedure must be designed on what IS present.

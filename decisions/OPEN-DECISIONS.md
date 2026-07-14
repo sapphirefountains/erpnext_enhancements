@@ -2,6 +2,20 @@
 
 These are **business decisions, not engineering ones**. No work item resolves them; each OD-gated work item carries the decision as an explicit precondition and is written to execute under any branch. Facts cited were verified against the live systems on 14 Jul 2026.
 
+## Resolutions — 14 Jul 2026 (decided by the business)
+
+| OD | Resolution | Effect |
+|---|---|---|
+| OD-1 | **No** — JDH stays out of ERPNext (branch a) | WI-061 ON HOLD; WI-029 single-company scope; the branch-proof CoA design is kept as free insurance |
+| OD-2 | **"Follow the law"** → build the Utah-law stream-differentiated treatment (branch b). CPA **written confirmation of the taxability matrix remains a go-live sign-off gate** — direction is set, so WI-036/037/038 design work is unblocked now | WI-036/037/038 preconditions updated |
+| OD-3 | **Yes, same stream — rename 'Rent' → 'Events'** (branch b) | New WI-065 (atomic rename: master + ~60 verified code/fixture/data touch points); WI-027 now blocked by WI-065 |
+| OD-4 | **(a)** — segment is a project attribute with customer-level fallback for Products | WI-026 executes branch (a); WI-054 Accounting-Dimension approach confirmed; Project segment field ships as FIXTURE inside WI-054 |
+| OD-5 | **Jan 1 2027 committed; finish sooner if possible** | Plan stays anchored to Jan 1. Pulling forward is structurally possible at any month-end (the opening TB just cuts from that month's close), bounded by: close discipline in place, the kiosk-adoption month, and the parallel-run month. Decision point: if all Phase-0 items are green by late October, a Dec-1 cutover (Nov-30 close) can be evaluated at that go/no-go |
+| OD-6 | **(a)** — bulk-delete the draft mirror after the final sync | WI-028 precondition "OD-6 ratified" is satisfied; archival protections (QBO read-only + Raw Payload + CSV export) stand |
+| OD-7 | **Default accepted** — launch WITHOUT surcharge; enable later only via the 8-item compliance checklist | WI-055 stays Phase 2; `surcharge_enabled` stays 0 at go-live |
+
+**Note on OD-2:** "follow the law" sets the engineering direction (Utah differentiates real-property improvement from TPP repair/rental/product sales, so the config is built stream-differentiated), but the specific taxability matrix applied to Sapphire's actual offerings must still be confirmed in writing by the CPA before the tax configuration goes live — neither this plan nor its executing agents can serve as the tax authority. The request to the CPA should go out now.
+
 ---
 
 ## OD-1 — JDH (the CEO's second company): in ERPNext or not?

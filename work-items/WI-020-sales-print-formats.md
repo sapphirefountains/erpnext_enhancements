@@ -1,6 +1,6 @@
 # WI-020: Customer-facing print formats for Quotation, Sales Order, Sales Invoice
 **Phase:** 0   **Type:** FIXTURE   **Size:** M
-**Blocked by:** nothing (OD-2 noted, non-blocking)   **Blocks:** WI-022
+**Blocked by:** nothing (OD-2 direction set: Utah-law stream-differentiated — the formats render whatever tax rows exist; only wording could change on the CPA's written matrix)   **Blocks:** WI-022
 
 ## Why
 NO print formats exist for Quotation, Sales Order, or Sales Invoice (repo_ops §5: fixtures ship only Maintenance Record Print + Project Contract Print; migrate-generated formats cover fleet/dispatch/configurator/water only). On 2027-01-01 the first customer-facing quote and invoice MUST leave ERPNext looking professional — this is a hard cutover gate.

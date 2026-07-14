@@ -1,6 +1,6 @@
 # WI-055: Surcharge go-live compliance gate (stays OFF until the 8-item checklist passes)
 **Phase:** 2   **Type:** CONFIG   **Size:** M
-**Blocked by:** OD-7; WI-039; WI-041 (checklist item 7); completion of the 8-item go-live checklist in docs/stripe_surcharging_compliance.md (business/legal precondition — decision-complete before flipping)   **Blocks:** nothing
+**Blocked by:** WI-039; WI-041 (checklist item 7); completion of the 8-item go-live checklist in docs/stripe_surcharging_compliance.md (OD-7 RESOLVED 2026-07-14: launch WITHOUT surcharge — this item stays Phase 2 and only executes if/when the business later wants it, checklist-complete first)   **Blocks:** nothing
 
 ## Why
 Surcharging code is built and even enabled on TEST (`surcharge_enabled`=1 — test_vs_prod), but card surcharging is legally gated: credit-only, ≤3% and ≤ cost of acceptance, never debit/prepaid, banned states, 30-day network notice, disclosure requirements (repo_payments compliance summary). Flipping it on prod without the checklist is a compliance incident, not a feature launch.

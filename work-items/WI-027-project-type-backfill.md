@@ -1,15 +1,15 @@
 # WI-027: Project type backfill — 71 untyped projects, Rent/Events reconciliation, 2 'Group Projects'
 **Phase:** 1   **Type:** DATA   **Size:** S
-**Blocked by:** OD-3   **Blocks:** WI-054 (project-attribute branch)
+**Blocked by:** WI-065 (OD-3 resolved 2026-07-14: one stream, renamed 'Events' — the rename itself is WI-065; run this backfill AFTER it)   **Blocks:** WI-054
 
 ## Why
-Project-stream reporting keys on `project_type`, but 71 of 625 projects are untyped, and the taxonomy question OD-3 (Rent vs Events — the app models 'Rent'; 'Events' appears nowhere) is unresolved. Two projects carry the anomalous type 'Group Projects' (prod_projects_opps: Service 348, Build 75, none 71, Rent 61, Design 47, Internal 13, Other 8, Group Projects 2).
+Project-stream reporting keys on `project_type`, but 71 of 625 projects are untyped. OD-3 was resolved 2026-07-14: Rent and Events are ONE stream, renamed **'Events'** — WI-065 performs the rename (master + code sweep), after which the 61 former-Rent projects already carry `project_type='Events'`. This item backfills the 71 untyped rows (typing rentals/events work as 'Events') and dispositions the 2 anomalous 'Group Projects' rows (prod_projects_opps baseline: Service 348, Build 75, none 71, Rent→Events 61, Design 47, Internal 13, Other 8, Group Projects 2).
 
 ## Native-first check
 Native `Project.project_type` (Link → Project Type). Verdict: native field, DATA backfill only.
 
 ## Preconditions
-- **OD-3 resolved.** Branches: (a) Rent and Events are one stream → keep 'Rent', no new type; (b) separate streams → create Project Type 'Events' and reclassify the qualifying subset of the 61 Rent projects (business-provided list); (c) Events is a sub-flavor → keep 'Rent' + tag via an existing custom field (no new fields invented here).
+- **OD-3 resolved (2026-07-14): one stream, renamed 'Events'.** WI-065 deployed (Project Type renamed, code literals swept) — verify `SELECT COUNT(*) FROM tabProject WHERE project_type='Rent'` = 0 before starting; the classification worksheet uses 'Events' as the type name for rental/event work.
 - Ops produces the classification worksheet for the 71 untyped rows (name, customer, era, proposed type) and a disposition for the 2 'Group Projects' rows (expected: re-home to 'Internal' or convert their role to the existing `Project.custom_master_project` / Master Project doctype linkage — field verified in prod_projects_opps).
 
 ## Scope

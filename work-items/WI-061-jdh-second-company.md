@@ -1,6 +1,8 @@
-# WI-061: JDH as second Company
+# WI-061: JDH as second Company — **ON HOLD**
 **Phase:** 2   **Type:** CONFIG   **Size:** M
-**Blocked by:** OD-1 resolved as branch (b) or (c); WI-004 (the reusable CoA template)   **Blocks:** nothing
+**Blocked by:** OD-1 being REOPENED; WI-004 (the reusable CoA template)   **Blocks:** nothing
+
+> **ON HOLD (2026-07-14): OD-1 was resolved "No" — JDH stays out of ERPNext (branch a).** This item is retained unscheduled solely because the decision is cheap to reverse later: WI-004's company-agnostic numbered CoA template makes adding a second Company a clean import at any time. Do not execute unless the business reopens OD-1.
 
 ## Why
 The CEO's second company, JDH, may enter ERPNext (OD-1). The Phase-1 CoA was deliberately designed company-agnostic (numbered template, no 'SF' embedded in names) precisely so this item is a clean import rather than a rebuild. Verified: no JDH Company record exists on either instance today.

@@ -1,6 +1,6 @@
 # WI-042: Bank and Bank Account masters
 **Phase:** 1   **Type:** CONFIG   **Size:** S
-**Blocked by:** authoritative account list from finance (OD-1 only if JDH becomes a second company — accounts would need company scoping)   **Blocks:** WI-043, WI-056
+**Blocked by:** authoritative account list from finance (OD-1 RESOLVED "No" — single-company masters, no JDH scoping needed)   **Blocks:** WI-043, WI-056
 
 ## Why
 Bank, Bank Account, and Bank Transaction tables are all 0 rows on prod (prod_finance_native), so neither statement import nor the Reconciliation Tool can run. Masters are pure native config and prerequisite to any day-one reconciliation.

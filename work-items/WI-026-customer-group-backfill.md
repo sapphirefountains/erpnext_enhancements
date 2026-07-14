@@ -1,6 +1,6 @@
 # WI-026: Customer Group taxonomy backfill (1,146 ungrouped customers)
 **Phase:** 1   **Type:** DATA   **Size:** M
-**Blocked by:** OD-4   **Blocks:** WI-054
+**Blocked by:** nothing (OD-4 resolved 2026-07-14: branch (a))   **Blocks:** WI-054
 
 ## Why
 1,146 of 1,602 customers have empty `customer_group` (1 true NULL + 1,145 empty-string — the two states must be handled separately), 454 are 'Government', 1 'Individual', 1 sits on the root 'All Customer Groups' (prod_customers_items). Group-based reporting, pricing, and the Products-stream segment view are all dead until this is filled. Meanwhile `customer_type` ALREADY carries segment truth: Commercial=1040, Company=365, Residential=172, Individual=13, Partnership=12.
@@ -9,9 +9,7 @@
 Native Customer Group tree + native `Customer.customer_group` field; backfill via Data Import/db update. Verdict: native master data; no code.
 
 ## Preconditions
-- **OD-4 resolved** — branches this item must be ready to execute either way:
-  - (a) Segment is a project attribute AND Products needs customer-level segment (the brief's stated direction): build Customer Group children {Commercial, Residential, Government} (+ mapping rule for customer_type values 'Company'→Commercial and 'Partnership'→Commercial, ratified by sales) and backfill from `customer_type`; the WI-054 report unions project-segment with this customer-level segment.
-  - (b) Segment lives ONLY at project level: customer_group is repurposed for a channel/type taxonomy or every ungrouped customer moves to a neutral leaf group (e.g. a 'Commercial' catch-all) purely to un-break grouping.
+- **OD-4 RESOLVED (2026-07-14): branch (a)** — segment is a project attribute with customer-level fallback for the Products stream. Execute: build Customer Group children {Commercial, Residential, Government}, ratify the customer_type mapping rule with sales ('Company'→Commercial, 'Partnership'→Commercial, 'Individual'→Residential unless sales says otherwise), backfill from `customer_type`; WI-054's Accounting Dimension consumes project-segment first with this customer-level segment as the Products-stream fallback. (Branch (b), customer_group repurposed as channel taxonomy, was rejected.)
 
 ## Scope
 - Create the ratified Customer Group tree (CONFIG-scale side effect of a DATA item; groups are plain master records).

@@ -1,6 +1,6 @@
 # WI-029: Execute the Chart of Accounts rebuild on prod
 **Phase:** 1   **Type:** DATA   **Size:** L
-**Blocked by:** WI-004, WI-028 (OD-1 gates only the *scope* — one company or two)   **Blocks:** WI-030, WI-031, WI-032, WI-034, WI-036
+**Blocked by:** WI-004, WI-028 (OD-1 RESOLVED 2026-07-14: "No" — single-company scope; skip the JDH import step)   **Blocks:** WI-030, WI-031, WI-032, WI-034, WI-036
 
 ## Why
 The new numbered chart must exist on prod before any opening balance posts. Prod currently has 359 QBO-imported accounts and 4 stray GL Entries (posting_date 2025-11-04..2025-12-12 — prod_finance_native) that must be cleared for a clean import.

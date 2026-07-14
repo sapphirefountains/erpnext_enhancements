@@ -5,8 +5,8 @@ Sapphire Fountains (fountain/water-feature design, build, service, rentals, prod
 This plan was built against the **live systems on 14 July 2026** (production `erp.sapphirefountains.com`, test `sapphirefountainstest.v.frappe.cloud`, and the `erpnext_enhancements` v1.155.0 custom app repo), not against the planning brief's assumptions. Where the brief and the live system disagreed, the live system won and the conflict is flagged below.
 
 Companion documents:
-- [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) — 7 blocked business decisions, what each blocks, branches
-- [`work-items/`](work-items/) — 64 self-contained work items (WI-001 … WI-064)
+- [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) — the 7 business decisions **with their 14 Jul 2026 resolutions** (OD-1 No-JDH · OD-2 follow-Utah-law/branch-b w/ CPA written confirmation as sign-off gate · OD-3 rename Rent→Events · OD-4 branch a · OD-5 Jan 1 committed, sooner if possible · OD-6 bulk delete · OD-7 no surcharge at launch)
+- [`work-items/`](work-items/) — 65 self-contained work items (WI-001 … WI-065; WI-061 ON HOLD per OD-1)
 
 ---
 
@@ -162,12 +162,13 @@ graph TD
     WI043 --> WI056[WI-056 Plaid tx sync]
     WI039 --> WI055[WI-055 surcharge gate]
   end
-  OD2{{OD-2 CPA ruling}} -.-> WI036[WI-036/037/038 tax config+report]
-  OD4{{OD-4 segment placement}} -.-> WI026[WI-026 customer groups]
-  OD3{{OD-3 Rent/Events}} -.-> WI027[WI-027 project types]
-  OD6{{OD-6 draft disposition}} -.-> WI028
-  OD1{{OD-1 JDH}} -.-> WI061[WI-061 JDH company]
+  OD2{{OD-2 RESOLVED: Utah-law branch b — CPA written matrix = sign-off gate}} -.-> WI036[WI-036/037/038 tax config+report]
+  WI026[WI-026 customer groups — OD-4 resolved a]
+  WI065[WI-065 Rent→Events rename] --> WI027[WI-027 project types]
+  OD6{{OD-6 RESOLVED: bulk delete}} -.-> WI028
 ```
+
+*(Decision resolutions of 14 Jul 2026 baked in: OD-1 No → WI-061 ON HOLD and removed from the graph; OD-3 rename → WI-065 added; OD-4 branch a, OD-6 delete, OD-7 no-surcharge-at-launch recorded in the register.)*
 
 The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) + **WI-016** (costing rates) → labor actuals on jobs; **WI-014** → material actuals; both → **WI-057** (budgets have actuals to calibrate against) → **WI-058** (the 75% rule can finally fire). **WI-046 (QuickBooks Time retirement) is downstream of WI-021 adoption — retiring QB Time is a prerequisite chain-link, not a side quest** (though its unauthenticated guest webhook dies at cutover regardless).
 
@@ -181,7 +182,8 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 2. **QBO reconnect (WI-001 → WI-002) is this-sprint urgent** — every week widens the catch-up gap, and it unblocks the opening tools (CSV fallback documented: +2–4 days of manual keying).
 3. **People chain:** WI-010 → WI-011 by end-November; WI-021 kiosk pilot needs the FULL December window (human behavior change is not compressible), feeding WI-022 UAT → WI-051 go/no-go (~Dec 22).
 4. **Stripe chain:** WI-040 (the only L-size APP_CODE on the path) starts early against Stripe test mode; its degraded fallback (manual clearing-sweep JE per payout, in WI-043) means it cannot block go-live.
-5. **Everything else** (tax automation if OD-2 lands late, segment reporting, Plaid, surcharge, doc-AI) has a documented manual fallback or lives in Phase 2. Scope flexes; the date does not (OD-5).
+5. **Everything else** (tax automation if the CPA confirmation lands late, segment reporting, Plaid, surcharge, doc-AI) has a documented manual fallback or lives in Phase 2. Scope flexes; the date does not (OD-5: Jan 1 committed).
+6. **Finishing sooner (OD-5 note):** a cutover is structurally identical at any month-end — the opening TB just cuts from that month's close. The binding constraints on pulling forward are the close discipline being real, the kiosk-adoption month, and the parallel-run month. If every Phase-0 item is green by late October, evaluate a Dec-1 cutover (Nov-30 close) at that point; otherwise hold Jan 1.
 
 ---
 
@@ -214,9 +216,9 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-023](work-items/WI-023-quotation-disposition.md) | Disposition of 638 draft QBO-Estimate Quotations | 1 | DATA | M | WI-007 |
 | [WI-024](work-items/WI-024-opportunity-project-link-triage.md) | Opp↔Project canonical link + 196-orphan triage | 1 | DATA | M | — |
 | [WI-025](work-items/WI-025-item-group-rollout.md) | Item Group rollout (583 items into taxonomy) | 1 | DATA | M | — |
-| [WI-026](work-items/WI-026-customer-group-backfill.md) | Customer Group backfill (1,146 ungrouped) | 1 | DATA | M | OD-4 |
-| [WI-027](work-items/WI-027-project-type-backfill.md) | project_type backfill (71 untyped + 2 'Group Projects') | 1 | DATA | S | OD-3 |
-| [WI-028](work-items/WI-028-draft-mirror-quarantine.md) | Draft-mirror quarantine: bulk delete QBO drafts | 1 | DATA | M | OD-6, WI-023, final sync + webhook removed |
+| [WI-026](work-items/WI-026-customer-group-backfill.md) | Customer Group backfill (1,146 ungrouped) | 1 | DATA | M | — (OD-4 resolved: branch a) |
+| [WI-027](work-items/WI-027-project-type-backfill.md) | project_type backfill (71 untyped + 2 'Group Projects') | 1 | DATA | S | WI-065 (OD-3 resolved: rename) |
+| [WI-028](work-items/WI-028-draft-mirror-quarantine.md) | Draft-mirror quarantine: bulk delete QBO drafts | 1 | DATA | M | WI-023, final sync + webhook removed (OD-6 ratified: delete) |
 | [WI-029](work-items/WI-029-coa-rebuild-execution.md) | Execute CoA rebuild on prod | 1 | DATA | L | WI-004, WI-028 |
 | [WI-030](work-items/WI-030-fy2027-naming-hygiene.md) | FY2027 + disable legacy FYs + naming-series reset | 1 | CONFIG | S | WI-029 |
 | [WI-031](work-items/WI-031-mode-of-payment-rationalization.md) | Mode of Payment rationalization + defaults + AP run | 1 | CONFIG | M | WI-029, WI-042 |
@@ -224,9 +226,9 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-033](work-items/WI-033-opening-ar-ap-invoices.md) | Opening AR/AP as is_opening invoices | 1 | DATA | L | WI-032; autopay=0 gate |
 | [WI-034](work-items/WI-034-open-po-rekey.md) | Re-key open Purchase Orders (SOs confirmed zero) | 1 | DATA | S | WI-003, WI-029, WI-025 |
 | [WI-035](work-items/WI-035-opening-reconciliation-signoff.md) | Opening reconciliation + sign-off gate | 1 | DATA | S | WI-032/033/034 |
-| [WI-036](work-items/WI-036-sales-tax-templates.md) | Sales-tax templates rebuild | 1 | CONFIG | M | OD-2, WI-029 |
-| [WI-037](work-items/WI-037-tax-category-rule-automation.md) | Tax Category + Tax Rule automation | 1 | CONFIG | M | OD-2, WI-036 |
-| [WI-038](work-items/WI-038-sales-tax-filing-procedure.md) | Utah sales-tax filing procedure (native reports) | 1 | CONFIG | S | OD-2, WI-036/037 |
+| [WI-036](work-items/WI-036-sales-tax-templates.md) | Sales-tax templates rebuild (Utah-law branch b) | 1 | CONFIG | M | WI-029; CPA written matrix = sign-off gate |
+| [WI-037](work-items/WI-037-tax-category-rule-automation.md) | Tax Category + Tax Rule automation (branch b) | 1 | CONFIG | M | WI-036; CPA written matrix = sign-off gate |
+| [WI-038](work-items/WI-038-sales-tax-filing-procedure.md) | Utah sales-tax filing procedure (native reports) | 1 | CONFIG | S | WI-036/037 |
 | [WI-039](work-items/WI-039-stripe-production-golive.md) | Stripe production go-live (keys, webhook, /pay, autopay gate) | 1 | CONFIG | M | WI-005; enrollment gated on WI-033 |
 | [WI-040](work-items/WI-040-stripe-payout-ingestion.md) | Stripe payout ingestion → clearing-sweep JE + fee expense | 1 | APP_CODE | L | WI-005 |
 | [WI-041](work-items/WI-041-stripe-refund-dispute-handling.md) | Stripe refund-reversal PE + dispute alerting | 1 | APP_CODE | M | WI-005/039 |
@@ -242,19 +244,20 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-051](work-items/WI-051-cutover-runbook.md) | Cutover runbook, go/no-go checklist, day-1 support | 1 | DATA | M | WI-022 + gates |
 | [WI-052](work-items/WI-052-qbo-code-removal.md) | Remove QBO hooks; retire/tolerate QBO surfaces | 2 | APP_CODE | M | WI-045 + 30 days |
 | [WI-053](work-items/WI-053-period-summary-je-import.md) | Period-summary JE trend import (24 months; optional, recommended) | 2 | DATA | M | WI-003, WI-004, WI-035 |
-| [WI-054](work-items/WI-054-revenue-by-segment.md) | Revenue-by-segment via Accounting Dimension | 2 | CONFIG | M | OD-4, WI-026, WI-027 |
-| [WI-055](work-items/WI-055-stripe-surcharge-gate.md) | Surcharge go-live compliance gate (stays OFF until 8-item list) | 2 | CONFIG | M | OD-7, WI-039, WI-041 |
+| [WI-054](work-items/WI-054-revenue-by-segment.md) | Revenue-by-segment via Accounting Dimension (OD-4 branch a) | 2 | CONFIG | M | WI-026, WI-027 |
+| [WI-055](work-items/WI-055-stripe-surcharge-gate.md) | Surcharge go-live compliance gate (stays OFF until 8-item list; OD-7: no surcharge at launch) | 2 | CONFIG | M | WI-039, WI-041, 8-item checklist |
 | [WI-056](work-items/WI-056-plaid-transactions-sync.md) | Plaid /transactions/sync → Bank Transaction upserts | 2 | APP_CODE | L | WI-042, WI-043 stable 1 mo |
 | [WI-057](work-items/WI-057-project-budget-discipline.md) | Project budget discipline | 2 | DATA | M | WI-021 chain live, WI-014 |
 | [WI-058](work-items/WI-058-percentage-po-escalation.md) | Percentage-of-budget PO escalation, 85% cap + override | 2 | APP_CODE | M | WI-057, WI-013 |
 | [WI-059](work-items/WI-059-document-ai-intake-rollout.md) | Document-AI intake rollout (module built; enable + train) | 2 | CONFIG | M | WI-044 |
 | [WI-060](work-items/WI-060-inventory-perpetual-cogs.md) | Inventory: perpetual valuation + COGS reclassification | 2 | CONFIG | L | WI-025, WI-029 |
-| [WI-061](work-items/WI-061-jdh-second-company.md) | JDH as second Company | 2 | CONFIG | M | OD-1 branch (b)/(c), WI-004 |
+| [WI-061](work-items/WI-061-jdh-second-company.md) | JDH as second Company — **ON HOLD (OD-1 resolved: No)** | 2 | CONFIG | M | OD-1 reopened, WI-004 |
 | [WI-062](work-items/WI-062-cash-flow-forecasting.md) | Cash-flow projection / forecasting (native-first) | 2 | CONFIG | M | WI-035 + 2 close cycles |
 | [WI-063](work-items/WI-063-document-hub.md) | Document hub (Drive-backed; define before building) | 2 | CONFIG | S | WI-006 |
 | [WI-064](work-items/WI-064-triton-reporting-boundary.md) | Triton management-reporting integration (non-statutory only) | 2 | CONFIG | S | WI-035 |
+| [WI-065](work-items/WI-065-rent-to-events-rename.md) | Rename 'Rent' value stream → 'Events' (OD-3; ~60 verified touch points, atomic) | 1 | APP_CODE | M | — |
 
-Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 8 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code.
+Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 9 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
 
 ---
 
@@ -270,7 +273,7 @@ Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 8 APP_CODE (5 of which 
 | Stripe settings dangle after CoA rebuild (Single Link fields skip link-check) | High (as-designed pre-review) | High | WI-029 re-points `Stripe Payments Settings.deposit_account` (+ fee/payout fields); WI-039/040 precondition-verify it resolves. |
 | Live-quote deletion in draft-mirror purge | Med (pre-review) | High | WI-023 owns quotation triage and completes before WI-028; one shared keep-list; delete population = marked-historical only. |
 | Jan 1–15 AR gap (opening invoices land only after the Dec close) | Certain | Med | Interim on-account Payment Entries, reconciled to opening SIs via native Payment Reconciliation once WI-033 posts (WI-051 runbook). |
-| CPA ruling (OD-2) late → tax config + filing procedure slip | Med | Med | Rate templates work manually day one; Tax Rule automation is additive; escalate the ruling request now. |
+| CPA written tax matrix (OD-2 gate) late → tax-config sign-off slips | Med | Med | Direction already set (Utah-law branch b) so design proceeds; rate templates work manually day one; automation is additive; send the CPA request now. |
 | allow_self_approval=1 in shipped workflows defeats SoD | Certain (as-is) | Med | WI-015 fixes the fixture early (dormant); WI-044 activates with preparer ≠ approver verified in UAT. |
 | Workflow activation breaks Stripe's programmatic Payment Entries | Med | High | WI-044 scopes 'Payment Entry Approval' to payment_type='Pay' and proves the Stripe receive-PE path on TEST before prod. |
 | Bulk remediation triggers hook storms (Triton wildcard sync, Drive folders, closed-won prompt) | Med | Med | WI-050 gates every bulk DATA run: `frappe.db.set_value`/SQL, batching, toggle checks, off-hours. |

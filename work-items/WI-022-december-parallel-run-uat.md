@@ -14,7 +14,7 @@ Native ERPNext documents themselves are the test vehicle; no tooling to build. T
 - Master-data deltas on TEST vs prod acknowledged (items 266 vs 583, CoA 281 vs 359 — test_vs_prod); scripts must use entities present on TEST.
 
 ## Scope (population = the UAT script inventory below; each script = one checklist row with evidence)
-- O2C per stream: Design, Build, Rent — Quotation→won→handoff Project (PRJ- name check)→SO with project→SI→(Stripe link optional); Service — Maintenance Record submit → auto-draft SI with project (api/maintenance_workflow.py:408 behavior verified live).
+- O2C per stream: Design, Build, Events (renamed from Rent — WI-065 must be deployed to TEST before these scripts run) — Quotation→won→handoff Project (PRJ- name check)→SO with project→SI→(Stripe link optional); Service — Maintenance Record submit → auto-draft SI with project (api/maintenance_workflow.py:408 behavior verified live).
 - Purchasing: MR by team lead → PO by PM under threshold (submits) and over threshold (blocked; CEO submits) → PI → PE through the activated approval workflow with a DIFFERENT approver (self-approval must fail).
 - Time: kiosk Start/Switch/Stop day cycle → draft Timesheet → supervisor submit → Payroll Hours Export run → pilot payroll JE (WI-047) on TEST.
 - Training: role-based sessions (sales, PM/field, finance) using the SOPs from WI-007/WI-012/WI-021/WI-047/WI-018; attendance recorded.
