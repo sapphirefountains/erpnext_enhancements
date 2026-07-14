@@ -56,8 +56,8 @@
     ],
     "transitions": [
       { "state": "Draft", "action": "Submit for Approval", "next_state": "Pending Approval", "allowed": "Accounts User", "allow_self_approval": 1 },
-      { "state": "Pending Approval", "action": "Approve", "next_state": "Approved", "allowed": "Accounts Manager", "allow_self_approval": 1 },
-      { "state": "Pending Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Accounts Manager", "allow_self_approval": 1 },
+      { "state": "Pending Approval", "action": "Approve", "next_state": "Approved", "allowed": "Accounts Manager", "allow_self_approval": 0 },
+      { "state": "Pending Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Accounts Manager", "allow_self_approval": 0 },
       { "state": "Rejected", "action": "Submit for Approval", "next_state": "Pending Approval", "allowed": "Accounts User", "allow_self_approval": 1 }
     ]
   },
@@ -77,8 +77,8 @@
     ],
     "transitions": [
       { "state": "Draft", "action": "Submit for Approval", "next_state": "Pending Approval", "allowed": "Accounts User", "allow_self_approval": 1 },
-      { "state": "Pending Approval", "action": "Approve", "next_state": "Approved", "allowed": "Accounts Manager", "allow_self_approval": 1 },
-      { "state": "Pending Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Accounts Manager", "allow_self_approval": 1 },
+      { "state": "Pending Approval", "action": "Approve", "next_state": "Approved", "allowed": "Accounts Manager", "allow_self_approval": 0 },
+      { "state": "Pending Approval", "action": "Reject", "next_state": "Rejected", "allowed": "Accounts Manager", "allow_self_approval": 0 },
       { "state": "Rejected", "action": "Submit for Approval", "next_state": "Pending Approval", "allowed": "Accounts User", "allow_self_approval": 1 }
     ]
   }

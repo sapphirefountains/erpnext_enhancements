@@ -165,3 +165,4 @@ erpnext_enhancements.patches.backfill_contact_custom_account
 # sites; assign it to users post-deploy
 erpnext_enhancements.patches.seed_dispatch_user_role
 erpnext_enhancements.patches.rename_rent_value_stream_to_events
+erpnext_enhancements.patches.seed_project_naming_rule
