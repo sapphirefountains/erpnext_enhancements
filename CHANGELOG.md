@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.156.2] - 2026-07-14
+
+### Added
+- **The migration's target Chart of Accounts design + the 359-row mapping workbook (docs only — nothing imports until the WI-029 cutover-window rebuild).** `docs/migration/chart_of_accounts.csv` is the full 213-account numbered chart in the native Chart of Accounts Importer format — validated by the actual importer on the test site with zero errors — with per-stream income (Design/Build/Service/Events/Products) matched by per-stream COGS including first-class Subcontract Labor lines, the Stripe Clearing / Undeposited Funds / Merchant Fees payment plumbing, Utah sales- and use-tax liability sub-accounts, payroll summary-JE landing spots, perpetual-inventory structure for Phase 2, exactly one Temporary opening account, and a Historical P&L Offset equity account — all company-agnostic (no "SF" in names). `docs/migration/coa_mapping.csv` maps every one of the 359 production accounts (264 MAP / 95 RETIRE with reasons). `docs/migration/COA_DESIGN.md` carries the rationale, the Company default designations, and the explicit CPA ratification checklist (tax bucket shape, use-tax treatment, meals/entertainment deductibility, LLC member equity, the retirement list). Adversarially reviewed (mechanical constraints + accountant lens; all 11 findings applied, including Use Tax Payable and the meals/entertainment deductibility split).
+
+
 ## [1.156.1] - 2026-07-14
 
 ### Fixed
