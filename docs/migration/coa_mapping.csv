@@ -1,0 +1,360 @@
+prod_account_name,target_account_number,target_account_name,action,note
+1000 - Application of Funds (Assets) - SF,1000,Assets,MAP,root group (structural)
+1100-1600 - Current Assets - SF,1100,Current Assets,MAP,structural group
+1100 - Cash In Hand - SF,1110,Cash In Hand,MAP,structural group
+1110 - Cash - SF,1111,Petty Cash,MAP,
+1200 - Bank Accounts - SF,1120,Bank Accounts,MAP,structural group
+Bank Account - SF,1121,Operating Bank Account,MAP,ERPNext setup placeholder; real bank list lands in WI-042
+1400 - Stock Assets - SF,1150,Inventory,MAP,structural group
+1410 - Stock In Hand - SF,1151,Inventory On Hand,MAP,unused until WI-060 perpetual inventory
+1500 - Tax Assets - SF,,,RETIRE,ERPNext standard-chart group; unused (no input-tax assets in US sales-tax regime)
+1600 - Loans and Advances (Assets) - SF,1160,Other Current Assets,MAP,structural group
+1610 - Employee Advances - SF,1161,Employee Advances,MAP,
+1650 - Securities and Deposits - SF,1160,Other Current Assets,MAP,structural group
+1651 - Earnest Money - SF,1163,Security Deposits & Earnest Money,MAP,
+1700 - Fixed Assets - SF,1200,Fixed Assets,MAP,structural group
+1710 - Capital Equipments - SF,1220,Machinery & Shop Equipment,MAP,ERPNext default; folded into machinery & shop equipment
+1720 - Electronic Equipments - SF,1260,Computers & Electronics,MAP,
+1730 - Furnitures and Fixtures - SF,1250,Office Furniture & Equipment,MAP,
+1740 - Office Equipments - SF,1250,Office Furniture & Equipment,MAP,
+1750 - Plants and Machineries - SF,1220,Machinery & Shop Equipment,MAP,ERPNext default; unused
+1770 - Softwares - SF,1320,Software & Intangibles,MAP,
+1790 - CWIP Account - SF,1280,Capital Work in Progress,MAP,
+1800 - Investments - SF,,,RETIRE,ERPNext standard-chart group; no investment assets
+1900 - Temporary Accounts - SF,1900,Temporary Accounts,MAP,structural group
+1910 - Temporary Opening - SF,1910,Temporary Opening,MAP,the single Temporary-type account the opening tooling requires (WI-032)
+Key Bank Checking - SF,1121,Operating Bank Account,MAP,placeholder until WI-042 creates the real per-bank leaves
+Accumulated Amortization - SF,1390,Accumulated Amortization,MAP,
+America First Auto Loan - SF,2210,Vehicle & Equipment Loans,MAP,QBO tracked this loan as a bank-type asset; reclassified to long-term liability - CPA to confirm at opening
+America First Checking - SF,1121,Operating Bank Account,MAP,placeholder until WI-042 creates the real per-bank leaves
+America First Savings - SF,1122,Savings Bank Account,MAP,placeholder until WI-042 creates the real per-bank leaves
+Equipment (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Fixed Assets - 11100 (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Furniture and Office Equipment - SF,1250,Office Furniture & Equipment,MAP,
+Goodwill - SF,1310,Goodwill,MAP,
+Inventory Asset - SF,1151,Inventory On Hand,MAP,unused until WI-060 perpetual inventory
+Inventory Asset (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Inventory Asset (deleted-1) - SF,,,RETIRE,QBO '(deleted)' artifact
+Key Bank Savings - SF,1122,Savings Bank Account,MAP,placeholder until WI-042 creates the real per-bank leaves
+Key MM Savings - SF,1122,Savings Bank Account,MAP,placeholder until WI-042 creates the real per-bank leaves
+Machinery and Equipment - SF,1220,Machinery & Shop Equipment,MAP,structural group
+Rental Fountains - SF,1230,Event Rental Assets,MAP,OD-3 stream rename Rent->Events
+Shop Equipment - SF,1220,Machinery & Shop Equipment,MAP,
+Software Asset - SF,1320,Software & Intangibles,MAP,
+Uncategorized Asset - SF,,,RETIRE,QBO auto-created catch-all; nothing should book here
+Undeposited Funds - SF,1132,Undeposited Funds,MAP,
+us (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+US Bank Checking - SF,1121,Operating Bank Account,MAP,placeholder until WI-042; likely closed - finance to confirm
+US Bank Savings - SF,1122,Savings Bank Account,MAP,placeholder until WI-042; likely closed - finance to confirm
+Vehicles - SF,1240,Vehicles & Trailers,MAP,
+Warehouse Shelving & Storage. - SF,1270,Warehouse & Storage Equipment,MAP,
+1780 - Accumulated Depreciation - SF,1290,Accumulated Depreciation,MAP,
+1760 - Buildings - SF,1210,Buildings & Improvements,MAP,
+1300 - Accounts Receivable - SF,1140,Receivables,MAP,structural group
+1310 - Debtors - SF,1141,Accounts Receivable,MAP,Company default_receivable_account
+2000 - Source of Funds (Liabilities) - SF,2000,Liabilities,MAP,root group (structural)
+2100-2400 - Current Liabilities - SF,2100,Current Liabilities,MAP,structural group
+2200 - Stock Liabilities - SF,2150,Stock Liabilities,MAP,structural group
+2210 - Stock Received But Not Billed - SF,2151,Stock Received But Not Billed,MAP,unused until WI-060 perpetual inventory
+2211 - Asset Received But Not Billed - SF,2152,Asset Received But Not Billed,MAP,
+2300 - Duties and Taxes - SF,2130,Sales Tax Payable,MAP,structural group
+2310 - TDS Payable - SF,,,RETIRE,India-specific ERPNext default; unused
+ST 6% - SF,2132,Sales Tax Payable - UT 6%,MAP,live UT sales-tax rate account
+ST 4% - SF,2131,Sales Tax Payable - UT 4%,MAP,live UT sales-tax rate account
+ST 6.25% - SF,2133,Sales Tax Payable - UT 6.25%,MAP,live UT sales-tax rate account
+2400 - Loans (Liabilities) - SF,2200,Long-Term Liabilities,MAP,structural group
+2410 - Secured Loans - SF,2210,Vehicle & Equipment Loans,MAP,ERPNext default; unused
+2420 - Unsecured Loans - SF,2230,Notes Payable - Other,MAP,ERPNext default; unused
+2430 - Bank Overdraft Account - SF,2181,Bank Line of Credit 1,MAP,ERPNext default; unused
+Capital One Spark Card - SF,2122,Business Credit Card 2,MAP,card identity restored by WI-042 rename
+American Express Prime (1008) - SF,2121,Business Credit Card 1,MAP,card identity restored by WI-042 rename
+Sales Tax Agency Payable - SF,2134,Sales Tax Payable - UT Other Jurisdictions,MAP,QBO generic agency accrual; forward postings go to rate accounts 2131-2133 via WI-036 templates
+Accounts Payable (A/P) - SF,2111,Accounts Payable,MAP,Company default_payable_account
+Accrued Expense - SF,2171,Accrued Expenses,MAP,
+Accrued Payroll - SF,2147,Accrued Payroll,MAP,
+Advance Customer Payments (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+America First Auto Loan Liability - SF,2210,Vehicle & Equipment Loans,MAP,
+American Express - Deactivate (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+American Express Prime (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Capital One Visa (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Chase Visa (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Chaunine Harris Loan - SF,2220,Notes Payable - Related Parties,MAP,related-party note
+Davis County Council of Gov INC - SF,2230,Notes Payable - Other,MAP,economic-development revolving loan
+Davis County Payable - SF,2134,Sales Tax Payable - UT Other Jurisdictions,MAP,QBO locality agency accrual
+Deferred Revenue (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Deposits - SF,2161,Customer Deposits,MAP,customer deposits held
+Harris Equity - Liability (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Key Bank LOC - SF,2181,Bank Line of Credit 1,MAP,LOC identity restored by WI-042 rename
+Mileage Account (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+"Orem, Utah County Payable - SF",2134,Sales Tax Payable - UT Other Jurisdictions,MAP,QBO locality agency accrual
+Out Of Scope Agency Payable - SF,,,RETIRE,QBO automated-tax artifact; out-of-scope transactions accrue nothing
+Out of State Sales Tax Payable - SF,2135,Sales Tax Payable - Out of State,MAP,
+Payroll Tax Payable - SF,2140,Payroll Liabilities,MAP,structural group
+Federal Tax Payable - SF,2142,Federal Payroll Taxes Payable,MAP,WI-047 payroll-return JE landing
+FUTA - SF,2144,FUTA Payable,MAP,WI-047 payroll-return JE landing
+Garnishment Payable - SF,2146,Garnishments Payable,MAP,WI-047 payroll-return JE landing
+State Income Tax Payable - SF,2143,State Income Tax Withholding Payable,MAP,WI-047 payroll-return JE landing
+SUTA - SF,2145,SUTA Payable,MAP,WI-047 payroll-return JE landing
+Sandy City Payable - SF,2134,Sales Tax Payable - UT Other Jurisdictions,MAP,QBO locality agency accrual
+Tax Exempt Payable - SF,,,RETIRE,QBO artifact; exempt sales accrue no liability
+US Bank Cash Flow Manager - SF,2182,Bank Line of Credit 2,MAP,LOC identity restored by WI-042 rename
+Utah State Tax Commission Payable - SF,2134,Sales Tax Payable - UT Other Jurisdictions,MAP,"primary UT agency; opening balance lands here, forward postings via 2131-2133"
+Virginia Department of Taxation Payable - SF,2135,Sales Tax Payable - Out of State,MAP,VA registration presumed lapsed - CPA to confirm
+UT-Salt Lake-Salt Lake City - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT SPECIAL - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Utah - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Utah-Mapleton - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Salt Lake-Murray - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Salt Lake-South Salt Lake - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Weber - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Utah-Lehi - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+VA-Fredericksburg City - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Summit-Park - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Salt Lake - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+VA-Prince William-57310 - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Summit-Snyderville Basin Transit District - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Davis-Bountiful - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Utah-Highland - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Bid d - SF,,,RETIRE,"junk QBO tax-rate entry (customer name, typo duplicate of 'Big D')"
+Big D - SF,,,RETIRE,junk QBO tax-rate entry (customer name)
+Davis County - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Washington-St. George - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Salt Lake-Convention Centr Zone Ccrz - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Utah-Payson - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Salt Lake-18604 - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+UT-Sanpete - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Fountain Service/Assessment - Inactive - SF,,,RETIRE,inactive QBO rate entry
+Orem - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Orem - Inactive - SF,,,RETIRE,inactive QBO rate entry
+Out of State - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Out of scope - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Sandy Utah - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Tax Exempt - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Utah - Salt Lake City - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Utah - South Jordan - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Utah - Weber - Ogden - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Utah - Weber - Ogden - Inactive - SF,,,RETIRE,inactive QBO rate entry
+Utah - West Jordan - SF,,,RETIRE,QBO automated sales-tax jurisdiction component; replaced by WI-036 tax templates posting to the 2130 sub-accounts per the CPA rate matrix
+Utah Sales Tax - Inactive - SF,,,RETIRE,inactive QBO rate entry
+Sales Tax Payable (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+2100 - Accounts Payable - SF,2110,Payables,MAP,structural group
+2110 - Creditors - SF,2111,Accounts Payable,MAP,Company default_payable_account
+2120 - Payroll Payable - SF,2141,Net Pay Clearing,MAP,net-pay clearing (WI-047)
+3000 - Equity - SF,3000,Equity,MAP,root group (structural)
+3100 - Capital Stock - SF,3110,Member Contributions,MAP,ERPNext default; entity is an LLC - no capital stock
+3200 - Dividends Paid - SF,3120,Member Draws,MAP,ERPNext default; LLC draws
+F-150 Harris Loan - SF,2220,Notes Payable - Related Parties,MAP,recorded in equity in QBO; related-party vehicle loan reclassified to liability - CPA to confirm
+Member Contributions - JDH Business Investments - SF,3110,Member Contributions,MAP,contributor detail moves to JE remarks; account name kept company-agnostic
+Member Contributions - Oak Ventures LC (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Members Draw - SF,3120,Member Draws,MAP,
+3300 - Opening Balance Equity - SF,3300,Opening Balance Equity,MAP,QBO OBE artifact carried for tie-out only; must be zero after WI-035
+3400 - Retained Earnings - SF,3200,Retained Earnings,MAP,
+4000 - Income - SF,4000,Income,MAP,root group (structural)
+4100 - Direct Income - SF,4100,Direct Income,MAP,structural group
+4110 - Sales - SF,4150,Products Income,MAP,ERPNext default catch-all; item defaults re-pointed per stream in WI-029
+4120 - Service - SF,4130,Service Income,MAP,ERPNext default
+4200 - Indirect Income - SF,4200,Other Income,MAP,structural group
+Amazon Credit - SF,4250,Other Miscellaneous Income,MAP,vendor rebates/credits
+Billable Expense Income (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Billable Expense Income (deleted-1) - SF,,,RETIRE,QBO '(deleted)' artifact
+Build Income - SF,4120,Build Income,MAP,QBO parent; detail collapsed to single stream leaf
+Discounts Given - SF,4180,Discounts & Allowances,MAP,
+Build Products - SF,4150,Products Income,MAP,product sales split out of Build into the Products stream
+Contra-Income Subcontractors (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Design ??? (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Design Income - SF,4110,Design Income,MAP,
+Do Not Use - Fountain Resale Sales Revenue (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Grants (Tax Exempt) - SF,4230,Grant Income,MAP,
+Interest & Reimbursement Income - SF,4210,Interest Income,MAP,reimbursement portion may recode to 4160 at CPA review
+Late Fee Income - SF,4220,Late Fee Income,MAP,
+Mileage Service Income - SF,4160,Billable Expense Income,MAP,billable mileage recovery
+Other Income - SF,4200,Other Income,MAP,structural group
+Billable Expense Income - SF,4160,Billable Expense Income,MAP,
+Market Research (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Training and Documentation (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Product Sales (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+QuickBooks Payments Sales - SF,4250,Other Miscellaneous Income,MAP,QBO Payments artifact; review at first close
+Rent Income - SF,4140,Events Income,MAP,OD-3 stream rename Rent->Events
+Sales of Product Income - SF,4150,Products Income,MAP,
+Service Income - SF,4130,Service Income,MAP,QBO parent; detail collapsed to single stream leaf
+Markup on Billable Expenses - SF,4160,Billable Expense Income,MAP,markup folded into billable expense income
+Tip Revenue - SF,4240,Tip Income,MAP,
+Unapplied Cash Payment Income - SF,,,RETIRE,QBO cash-basis artifact; meaningless in ERPNext accrual books
+Uncategorized Income - SF,4250,Other Miscellaneous Income,MAP,QBO catch-all; recode at review
+5000 - Expenses - SF,5000,Expenses,MAP,root group (structural)
+5100 - Direct Expenses - SF,5110,Stock Expenses,MAP,structural; single-child wrapper flattened
+5110 - Stock Expenses - SF,5110,Stock Expenses,MAP,structural group
+5112 - Expenses Included In Asset Valuation - SF,5112,Expenses Included In Asset Valuation,MAP,
+5118 - Expenses Included In Valuation - SF,5118,Expenses Included In Valuation,MAP,
+5119 - Stock Adjustment - SF,5119,Stock Adjustment,MAP,
+5200 - Indirect Expenses - SF,5200,Indirect Expenses,MAP,structural group
+5202 - Commission on Sales - SF,55100,Sales Commissions,MAP,ERPNext default; unused
+5203 - Depreciation - SF,5203,Depreciation,MAP,
+5204 - Entertainment Expenses - SF,60420,Promotional Entertainment,MAP,ERPNext default; unused
+5205 - Freight and Forwarding Charges - SF,61150,Postage & Shipping,MAP,non-job freight; job freight uses the per-stream x300 accounts
+5206 - Legal Expenses - SF,61600,Legal Fees,MAP,ERPNext default; unused
+5207 - Marketing Expenses - SF,60410,Advertising & Promotion,MAP,ERPNext default; unused
+5208 - Office Maintenance Expenses - SF,61100,Office Expense & Supplies,MAP,ERPNext default; unused
+5209 - Office Rent - SF,60210,Building Rent & Lease,MAP,ERPNext default; unused
+5210 - Postal Expenses - SF,61150,Postage & Shipping,MAP,ERPNext default; unused
+5211 - Print and Stationery - SF,61100,Office Expense & Supplies,MAP,ERPNext default; unused
+5212 - Round Off - SF,5212,Round Off,MAP,system account (rounding)
+5213 - Salary - SF,60810,Salaries & Wages,MAP,ERPNext default; unused
+5214 - Sales Expenses - SF,60410,Advertising & Promotion,MAP,ERPNext default; unused
+5215 - Telephone Expenses - SF,60230,Telecom & Internet,MAP,ERPNext default; unused
+5216 - Travel Expenses - SF,61850,Overhead Travel & Lodging,MAP,ERPNext default; unused
+5217 - Utility Expenses - SF,60216,Utilities,MAP,ERPNext default; unused
+5218 - Write Off - SF,5218,Write Off,MAP,system account (write-off)
+5219 - Exchange Gain/Loss - SF,5219,Exchange Gain/Loss,MAP,system account
+5220 - Gain/Loss on Asset Disposal - SF,5220,Gain/Loss on Asset Disposal,MAP,system account
+61500 - SF,61500,Accounting & Bookkeeping Fees,MAP,number-only QBO import artifact; 61500 = Accounting & Bookkeeping in the QBO numbering
+Amortization - SF,5223,Amortization Expense,MAP,
+Ask My Accountant - SF,61900,Miscellaneous Expense,MAP,QBO holding account; items recoded at close review
+Bad Debt - SF,5222,Bad Debt Expense,MAP,
+Build COGS - SF,51000,Build COGS,MAP,structural group
+Build Freight & Delivery - SF,51300,Build Freight & Delivery,MAP,
+Build Insurance - SF,51700,Build Job Insurance,MAP,
+Build Inventory - SF,51100,Build Materials,MAP,periodic-inventory purchases fold into materials until WI-060
+Build Labor - SF,51500,Build Direct Labor,MAP,
+Build Materials - SF,51100,Build Materials,MAP,
+Build Professional Services & Subcontractors - SF,51200,Build Subcontract Labor,MAP,renamed Subcontract Labor - 77% of suppliers are staffing
+Build Tools - SF,51400,Build Tools & Equipment,MAP,
+Build Travel - SF,51600,Build Travel,MAP,
+Buy Out of Business (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+CC Processing fees - SF,5221,Merchant Fees,MAP,
+Cost of Goods Sold (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Cost of Goods Sold (deleted-1) - SF,,,RETIRE,QBO '(deleted)' artifact
+Depreciation Expense - SF,5203,Depreciation,MAP,
+Depreciation Expense (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Design COGS - SF,50000,Design COGS,MAP,structural group
+Design Freight & Delivery - SF,50300,Design Freight & Delivery,MAP,
+Design Insurance - SF,50700,Design Job Insurance,MAP,
+Design Inventory - SF,50100,Design Materials,MAP,periodic-inventory purchases fold into materials until WI-060
+Design Labor - SF,50500,Design Direct Labor,MAP,
+Design Materials - SF,50100,Design Materials,MAP,
+Design Professional Services & Subcontractors - SF,50200,Design Subcontract Labor,MAP,renamed Subcontract Labor - 77% of suppliers are staffing
+Design Tools - SF,50400,Design Tools & Equipment,MAP,
+Design Travel - SF,50600,Design Travel,MAP,
+Do Not Use - Control Systems Direct Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Do Not Use - Design Expense (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Do Not Use - Event Rentals Direct Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Do Not Use - Services Direct Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Do Not Use Fountain Resale Direct Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Do Not Use Fountain Sales Direct Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Equipment Rental (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Event Rental Project (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Fountain Sales - Materials (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+General & Administrative - SF,61000,General & Administrative,MAP,structural group
+Accounting & Bookkeeping - SF,61500,Accounting & Bookkeeping Fees,MAP,QBO parent; collapsed to single leaf
+Quickbooks Online - SF,60510,Software Subscriptions,MAP,software subscription (retires at cutover)
+QuickBooks Payments Fees - SF,5221,Merchant Fees,MAP,
+Bank Service Charges - SF,61200,Bank Service Charges,MAP,
+Business Consultants - SF,61700,Professional & Consulting Fees,MAP,
+Insurance - SF,61400,Insurance,MAP,structural group
+Commercial Auto Insurance - SF,61420,Commercial Auto Insurance,MAP,
+Commercial Umbrella - SF,61470,Commercial Umbrella Insurance,MAP,
+General Liability Insurance - SF,61430,General Liability Insurance,MAP,
+Pollution Insurance - SF,61440,Pollution Insurance,MAP,
+Professional Liability - SF,61450,Professional Liability Insurance,MAP,
+Workman's Compensation Insurance - SF,61460,Workers Compensation Insurance,MAP,
+Interest Charges - SF,61300,Interest Expense,MAP,
+Legal - SF,61600,Legal Fees,MAP,
+Membership Expense - SF,61060,Dues & Memberships,MAP,
+Office Expense - SF,61100,Office Expense & Supplies,MAP,
+5201 - Administrative Expenses - SF,61050,Administrative Expenses,MAP,
+Heating Supplies & Materials (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Indirect Costs (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Interest Expense - SF,61300,Interest Expense,MAP,
+Interest Expense (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Inventory Shrinkage - SF,5119,Stock Adjustment,MAP,shrinkage = stock adjustment under perpetual inventory
+Inventory Shrinkage (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Mileage Expense - SF,60120,Mileage Reimbursement,MAP,
+Miscellaneous Expense (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Office Supplies & Software - SF,61100,Office Expense & Supplies,MAP,software portion recodes to 60510
+Operating Expenses - SF,60000,Operating Expenses,MAP,structural group
+Auto and Trailer Expense - SF,60100,Auto & Trailer Expense,MAP,structural group
+Gasoline - SF,60110,Fuel & Gasoline,MAP,
+Vehicle Maintenance - SF,60130,Vehicle Maintenance & Repairs,MAP,
+Computer Hardware - SF,60530,Computer Hardware,MAP,
+Licenses & Permits - SF,60700,Licenses & Permits,MAP,
+Market Research - SF,60480,Market Research,MAP,
+Marketing Expense - SF,60400,Marketing & Advertising,MAP,structural group
+Events & Shows (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Network Memberships - Wedding - SF,60460,Memberships & Networking,MAP,
+Public Relations - SF,60450,Public Relations,MAP,
+Social Media/Facebook/Instagram - SF,60440,Social Media & Digital,MAP,
+Travel - SF,61850,Overhead Travel & Lodging,MAP,QBO marketing-travel parent; lodging/transport is 100%-deductible travel - meals child maps separately to 60425
+Meals- Promotional - SF,60425,Promotional & Business Meals,MAP,50%-deductible business meals kept separate from 0%-deductible entertainment (60420)
+Mileage Reimbursement - SF,60120,Mileage Reimbursement,MAP,
+Website - SF,60430,Website,MAP,
+Payroll Processing - SF,60800,Payroll & Benefits,MAP,structural group
+Payroll Expenses - SF,60800,Payroll & Benefits,MAP,structural group
+Bonus - SF,60830,Bonuses & Incentives,MAP,
+Education & Training - SF,60860,Training & Education,MAP,
+Employee Meals - SF,60870,Employee Meals,MAP,
+JDH Consulting - SF,61700,Professional & Consulting Fees,MAP,related-party consulting; account name kept company-agnostic
+Officer's Salary - SF,60820,Officer Compensation,MAP,
+Payroll Tax Expenses - SF,60840,Employer Payroll Taxes,MAP,WI-047 employer-taxes landing
+Salaries & Wages - SF,60810,Salaries & Wages,MAP,WI-047 gross-wages landing
+Travel-Related Meals - SF,61860,Travel Meals,MAP,50%-deductible travel meals kept separate from 100%-deductible lodging/transport (61850)
+Physical Facilities - SF,60200,Physical Facilities,MAP,structural group
+Building Maintenance & Repair - SF,60220,Building Repairs & Maintenance,MAP,
+Lease of Building - SF,60210,Building Rent & Lease,MAP,structural group
+Leasehold Improvements - SF,60215,Leasehold Improvements Expense,MAP,
+New Building Move - SF,60220,Building Repairs & Maintenance,MAP,one-off relocation costs
+Utilities Expense - SF,60216,Utilities,MAP,
+Storage Space Rent Expense - SF,60240,Storage Rent,MAP,
+Telecom - SF,60230,Telecom & Internet,MAP,
+Research & Development - SF,60300,Research & Development,MAP,structural group
+Build Research & Development - SF,60320,Build Research & Development,MAP,
+Design Research & Development - SF,60310,Design Research & Development,MAP,
+Rent Research & Development - SF,60340,Events Research & Development,MAP,OD-3 stream rename Rent->Events
+Service Research & Development - SF,60330,Service Research & Development,MAP,
+Software Purchased - SF,60520,Software Purchases,MAP,
+Software Subscriptions - SF,60510,Software Subscriptions,MAP,
+"Strategy Planning, Goals, & Initiatives - SF",61050,Administrative Expenses,MAP,strategic-planning costs
+Taxes Paid - SF,60900,Business Taxes,MAP,structural group
+Employment Tax Expense - Utah - SF,60840,Employer Payroll Taxes,MAP,employer payroll taxes
+Other Tax Expense - SF,60930,Other Taxes,MAP,
+Property Tax - Davis County - SF,60910,Property Taxes,MAP,locality detail moves to JE remarks
+Sales Tax Expense - Utah - SF,60920,Sales & Use Tax Expense,MAP,OD-2: Build-stream use tax on materials lands here
+Other (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Other Miscellaneous Expense - SF,61900,Miscellaneous Expense,MAP,
+Other Miscellaneous Expense - 80000 (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Purchases (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Purchases (deleted-1) - SF,,,RETIRE,QBO '(deleted)' artifact
+Reconciliation Discrepancies - SF,5218,Write Off,MAP,QBO reconciliation plug; investigate before posting
+Rent COGS - SF,53000,Events COGS,MAP,OD-3 stream rename Rent->Events; structural group
+Rent Freight & Delivery - SF,53300,Events Freight & Delivery,MAP,OD-3 rename
+Rent Insurance - SF,53700,Events Job Insurance,MAP,OD-3 rename
+Rent Inventory - SF,53100,Events Materials,MAP,OD-3 rename; periodic-inventory purchases fold into materials
+Rent Labor - SF,53500,Events Direct Labor,MAP,OD-3 rename
+Rent Materials - SF,53100,Events Materials,MAP,OD-3 rename; structural group collapsed
+Materials Art Glass Vase - SF,53100,Events Materials,MAP,per-fountain detail moves to Item/Project reporting
+Materials Dancing Pond - SF,53100,Events Materials,MAP,per-fountain detail moves to Item/Project reporting
+Materials Fountain Pillar - SF,53100,Events Materials,MAP,per-fountain detail moves to Item/Project reporting
+Materials Jumping Laminar - SF,53100,Events Materials,MAP,per-fountain detail moves to Item/Project reporting
+Materials Water Light - SF,53100,Events Materials,MAP,per-fountain detail moves to Item/Project reporting
+Video Water Screen (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Rent Professional Services & Subcontractors - SF,53200,Events Subcontract Labor,MAP,OD-3 rename + renamed Subcontract Labor
+Rent Tools - SF,53400,Events Tools & Equipment,MAP,OD-3 rename
+Rent Travel - SF,53600,Events Travel,MAP,OD-3 rename
+Repairs and Maintenance (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Sales Commission - SF,55100,Sales Commissions,MAP,
+Service COGS - SF,52000,Service COGS,MAP,structural group
+Service Freight & Delivery - SF,52300,Service Freight & Delivery,MAP,
+Service Insurance - SF,52700,Service Job Insurance,MAP,
+Service Inventory - SF,52100,Service Materials,MAP,periodic-inventory purchases fold into materials until WI-060
+Service Labor - SF,52500,Service Direct Labor,MAP,
+Service Materials - SF,52100,Service Materials,MAP,
+Service Professional Services & Subcontractors - SF,52200,Service Subcontract Labor,MAP,renamed Subcontract Labor - 77% of suppliers are staffing
+Service Tools - SF,52400,Service Tools & Equipment,MAP,
+Service Travel - SF,52600,Service Travel,MAP,
+Subcontractors (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Shipping (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Shop Supplies - SF,55200,Shop Supplies & Small Tools,MAP,
+Tax (deleted) - SF,,,RETIRE,QBO '(deleted)' artifact
+Unapplied Cash Bill Payment Expense - SF,,,RETIRE,QBO cash-basis artifact; meaningless in ERPNext accrual books
+Uncategorized Expense - SF,61900,Miscellaneous Expense,MAP,structural group
+Purchases - SF,61900,Miscellaneous Expense,MAP,uncategorized QBO purchases; recode at review
+5111 - Cost of Goods Sold - SF,5111,Cost of Goods Sold,MAP,WI-060 perpetual-inventory COGS landing
