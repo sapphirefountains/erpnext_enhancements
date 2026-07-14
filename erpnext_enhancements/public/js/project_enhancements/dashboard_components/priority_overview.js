@@ -9,7 +9,7 @@ frappe.provide("erpnext_enhancements.dashboard_components");
  * name; render()/unmount() on tab show/hide). `set_view("company_priority" |
  * "value_stream")` is driven by the dashboard's sub-view toggle.
  *
- * Shows client-facing projects (Build/Design/Rent/Service, still in progress)
+ * Shows client-facing projects (Build/Design/Events/Service, still in progress)
  * either ranked by company priority or grouped by value stream, with inline,
  * click-to-edit Company/Project priority cells and computed completion / spend-%
  * columns. Priorities are weighted by `get_priority_weight` for sorting and
@@ -27,7 +27,7 @@ frappe.provide("erpnext_enhancements.dashboard_components");
  * the stream groups follow this order rather than alphabetical. Any stream not
  * listed (e.g. Delivery, Uncategorized) sorts after these, alphabetically.
  */
-erpnext_enhancements.dashboard_components.VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Rent"];
+erpnext_enhancements.dashboard_components.VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Events"];
 
 erpnext_enhancements.dashboard_components.compare_value_streams = function (a, b) {
 	const order = erpnext_enhancements.dashboard_components.VALUE_STREAM_ORDER;
@@ -291,10 +291,10 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 
 			if (projectsRes.message && !projectsRes.message.error) {
 				// Priority Overview covers client-facing work: only the Build,
-				// Design, Rent, Service and Delivery value streams, and only
+				// Design, Events, Service and Delivery value streams, and only
 				// projects that are still in progress (is_active = "Yes" and a
 				// live status).
-				const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service", "Delivery"];
+				const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Events", "Service", "Delivery"];
 				this.projects = projectsRes.message.filter(
 					(p) =>
 						PRIORITY_PROJECT_TYPES.includes(p.project_type) &&
@@ -381,7 +381,7 @@ erpnext_enhancements.dashboard_components.PriorityOverview = class PriorityOverv
 			});
 
 			// Sort streams by the business-preferred value-stream order
-			// (Design, Build, Service, Rent); any other stream (e.g. Delivery,
+			// (Design, Build, Service, Events); any other stream (e.g. Delivery,
 			// Uncategorized) falls after these, alphabetically.
 			let sorted_streams = Object.keys(groups).sort((a, b) =>
 				erpnext_enhancements.dashboard_components.compare_value_streams(a, b)

@@ -115,7 +115,7 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 ## Gotchas
 
 - **Mixed indentation:** most files use tabs; `dashboard_overrides.py` uses 4 spaces.
-- `get_all_projects_for_gantt` deliberately drops the `check_permission()` gate (uses native Page roles) and filters the portfolio Gantt to client-facing `project_type in (Build, Design, Rent, Service)`.
+- `get_all_projects_for_gantt` deliberately drops the `check_permission()` gate (uses native Page roles) and filters the portfolio Gantt to client-facing `project_type in (Build, Design, Events, Service)`.
 - Several Task fields are queried conditionally via `frappe.get_meta(...).has_field(...)` (`custom_is_recurring`, `baseline_start_date/baseline_end_date`) because they are optional site-level custom fields.
 - `merge_projects` uses `frappe.db.set_value` for child tables/Singles (speed) but `doc.save()` for parents (to fire controller logic), and `log_error`s per-doc failures rather than aborting the whole merge. `get_linked_doctypes` discovers Project links dynamically from metadata, so any new Link-to-Project field automatically expands merge scope.
 - The Gantt/health logic in `project.js` monkey-patches the HTML field's `.refresh()` and depends on the global frappe-gantt UMD lib + `gantt_zoom.js` (both loaded via `app_include_js`); idempotency flags prevent rebinding across refreshes.

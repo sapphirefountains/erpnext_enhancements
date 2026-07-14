@@ -361,7 +361,7 @@ class TestProjectDashboard(unittest.TestCase):
 			{
 				"is_active": "Yes",
 				"status": ["!=", "Canceled"],
-				"project_type": ["in", ["Build", "Design", "Rent", "Service", "Delivery"]],
+				"project_type": ["in", ["Build", "Design", "Events", "Service", "Delivery"]],
 			},
 		)
 		self.assertIn("project_type", kwargs["fields"])
@@ -392,7 +392,7 @@ class TestProjectDashboard(unittest.TestCase):
 			{
 				"is_active": "Yes",
 				"status": ["in", ["Active"]],
-				"project_type": ["in", ["Build", "Design", "Rent", "Service", "Delivery"]],
+				"project_type": ["in", ["Build", "Design", "Events", "Service", "Delivery"]],
 			},
 		)
 		self.assertIn("parent_task", task_call.kwargs["fields"])

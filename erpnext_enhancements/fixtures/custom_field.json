@@ -9289,7 +9289,7 @@
   "collapsible_depends_on": null,
   "columns": 0,
   "default": null,
-  "depends_on": "eval:doc.custom_service_interest==\"Rent\"",
+  "depends_on": "eval:doc.custom_service_interest==\"Events\"",
   "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
@@ -9335,7 +9335,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -9347,7 +9348,7 @@
   "collapsible_depends_on": null,
   "columns": 0,
   "default": null,
-  "depends_on": "eval:doc.custom_service_interest==\"Rent\"",
+  "depends_on": "eval:doc.custom_service_interest==\"Events\"",
   "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
@@ -9393,7 +9394,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -9609,7 +9611,7 @@
   "name": "Lead-custom_service_interest",
   "no_copy": 0,
   "non_negative": 0,
-  "options": "Design\nBuild\nService\nRent\nProducts",
+  "options": "Design\nBuild\nService\nEvents\nProducts",
   "permlevel": 0,
   "placeholder": null,
   "precision": "",
@@ -9625,7 +9627,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": null,
@@ -9695,7 +9698,7 @@
   "collapsible_depends_on": null,
   "columns": 0,
   "default": null,
-  "depends_on": "eval:doc.custom_service_interest==\"Rent\"",
+  "depends_on": "eval:doc.custom_service_interest==\"Events\"",
   "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
@@ -9741,7 +9744,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -11989,7 +11993,7 @@
   "non_negative": 0,
   "options": null,
   "permlevel": 0,
-  "placeholder": "Outline the overall scope of work across Design, Build, Service, and Rent",
+  "placeholder": "Outline the overall scope of work across Design, Build, Service, and Events",
   "precision": "",
   "print_hide": 0,
   "print_hide_if_no_value": 0,
@@ -12003,7 +12007,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -12733,7 +12738,7 @@
   "insert_after": "custom_notes_for_scheduling",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Schedule",
+  "label": "Events Schedule",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -12757,7 +12762,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -12791,7 +12797,7 @@
   "insert_after": "custom_rent_scope",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Customer Requests",
+  "label": "Events Customer Requests",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -12815,7 +12821,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -12849,7 +12856,7 @@
   "insert_after": "custom_column_break_uu0wc",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Deliverables",
+  "label": "Events Deliverables",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -12873,7 +12880,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -12907,7 +12915,7 @@
   "insert_after": "custom_service_deliverables",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Scope",
+  "label": "Events Scope",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -12931,7 +12939,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -19751,7 +19760,7 @@
   "insert_after": "custom_rent_scope",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Customer Requests",
+  "label": "Events Customer Requests",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -19775,7 +19784,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -19809,7 +19819,7 @@
   "insert_after": "custom_column_break_tbqyo",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Deliverables",
+  "label": "Events Deliverables",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -19833,7 +19843,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -19845,7 +19856,7 @@
   "collapsible_depends_on": null,
   "columns": 0,
   "default": null,
-  "depends_on": "eval:doc.project_type == 'Rent'",
+  "depends_on": "eval:doc.project_type == 'Events'",
   "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
@@ -19867,7 +19878,7 @@
   "insert_after": "actual_end_date",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Schedule",
+  "label": "Events Schedule",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -19891,7 +19902,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",
@@ -19903,7 +19915,7 @@
   "collapsible_depends_on": null,
   "columns": 0,
   "default": null,
-  "depends_on": "eval:doc.project_type == 'Rent'",
+  "depends_on": "eval:doc.project_type == 'Events'",
   "description": null,
   "docstatus": 0,
   "doctype": "Custom Field",
@@ -19925,7 +19937,7 @@
   "insert_after": "custom_service_deliverables",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Rent Scope",
+  "label": "Events Scope",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
@@ -19949,7 +19961,8 @@
   "sort_options": 0,
   "translatable": 0,
   "unique": 0,
-  "width": null
+  "width": null,
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "alignment": "",

@@ -8,7 +8,7 @@
  *
  * Drives the custom Project UI:
  *  - Hides the `custom_master_project` link for external project types
- *    (Service/Rent/Build/Design).
+ *    (Service/Events/Build/Design).
  *  - Relocates the native Activity and Connections sections into the Details tab.
  *  - Renders the interactive task tree into the `custom_tasks_html` field on the
  *    Scope tab by lazily `frappe.require`-ing task_tree_manager.js, and renders the
@@ -22,7 +22,7 @@
  *  - Supports deep-linking to the Scope tab via the `#custom_scope` URL hash.
  *  - Hides the standard "View"/"View Tasks" button (CSS + API).
  */
-const EXTERNAL_PROJECT_TYPES = ["Service", "Rent", "Build", "Design"];
+const EXTERNAL_PROJECT_TYPES = ["Service", "Events", "Build", "Design"];
 
 function toggle_master_project(frm) {
 	const is_external = EXTERNAL_PROJECT_TYPES.includes(frm.doc.project_type);

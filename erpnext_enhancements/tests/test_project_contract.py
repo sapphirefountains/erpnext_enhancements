@@ -211,7 +211,7 @@ class TestScopeComposition(FrappeTestCase):
 		self.assertIn("Install basin &amp; pumps", out)  # escaped
 		# streams without rows are omitted entirely
 		self.assertNotIn("Service", out)
-		self.assertNotIn("Rent", out)
+		self.assertNotIn("Events", out)
 		# Build has no requests -> no empty Customer Requests block under it
 		build_section = out[out.index("<h4>Build</h4>") :]
 		self.assertNotIn("Customer Requests", build_section)

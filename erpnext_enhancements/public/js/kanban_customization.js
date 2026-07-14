@@ -80,7 +80,7 @@
             "Build": "#00609C",
             "Design": "#B34FC5",
             "Service": "#00A0DF",
-            "Rent": "#65CBC9"
+            "Events": "#65CBC9"
         };
 
         // Track seen colors to avoid duplicate dots for the same stream

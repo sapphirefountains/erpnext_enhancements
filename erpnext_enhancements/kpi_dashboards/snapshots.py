@@ -557,7 +557,7 @@ def _production_metrics():
 		metrics.HIGHER,
 	)
 	# Build-segment throughput. project_type already encodes the segment
-	# (Build / Service / Rent / Design) — no separate segment field needed.
+	# (Build / Service / Events / Design) — no separate segment field needed.
 	if has("Project", "project_type"):
 		add(
 			"builds_completed_30",
@@ -829,7 +829,7 @@ def _product_metrics():
 
 	Grounded-data notes (probed 2026-06-26): the product taxonomy is ``item_group``
 	(not a custom segment field); rentals are ``Project`` rows with
-	``project_type='Rent'`` and this site books live projects as ``status='Active'``
+	``project_type='Events'`` and this site books live projects as ``status='Active'``
 	(not 'Open'), so the rental KPIs accept both for portability; and QBO-synced
 	Sales Invoices are currently drafts, so the submitted-only (``docstatus=1``)
 	revenue KPIs populate once invoices are submitted — same convention as Finance.
@@ -887,20 +887,20 @@ def _product_metrics():
 		metrics.HIGHER,
 	)
 
-	# --- rentals (Project rows, project_type='Rent'; live status is 'Active' here) ---
+	# --- rentals (Project rows, project_type='Events'; live status is 'Active' here) ---
 	if has("Project", "project_type"):
 		add(
 			"active_rentals",
-			"Active Rentals",
-			_scalar("select count(*) from `tabProject` where project_type='Rent' and status in ('Open','Active')"),
+			"Active Events",
+			_scalar("select count(*) from `tabProject` where project_type='Events' and status in ('Open','Active')"),
 			"count",
 			"Project",
 			metrics.HIGHER,
 		)
 		add(
 			"rentals_started_30",
-			"Rentals Started (30d)",
-			_scalar("select count(*) from `tabProject` where project_type='Rent' and creation >= %(d)s", {"d": d30}),
+			"Events Started (30d)",
+			_scalar("select count(*) from `tabProject` where project_type='Events' and creation >= %(d)s", {"d": d30}),
 			"count",
 			"Project",
 			metrics.HIGHER,
@@ -908,10 +908,10 @@ def _product_metrics():
 		if has("Project", "custom_project_dollar_amount"):
 			add(
 				"rental_backlog_value",
-				"Rental Backlog Value",
+				"Events Backlog Value",
 				_scalar(
 					"select sum(custom_project_dollar_amount) from `tabProject` "
-					"where project_type='Rent' and status in ('Open','Active')"
+					"where project_type='Events' and status in ('Open','Active')"
 				),
 				"USD",
 				"Project",

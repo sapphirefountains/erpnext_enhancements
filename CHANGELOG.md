@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.156.0] - 2026-07-14
+
+### Changed
+- **The "Rent" value stream is now called "Events" everywhere** (migration decision OD-3, resolved 2026-07-14: rentals and events are one value stream, and the term changes). A one-time migration patch renames the three master records — **Project Type** `Rent`→`Events` (carrying every project's `project_type` with it), the **Value Streams** multiselect master, and the Opportunity **Rent tag** — and backfills the plain-string places the rename can't reach (Lead "Service Interest" values, cached `_user_tags`, process-map text). Everything that *compared against* the old name was updated in the same release so nothing breaks silently: the Closed-Won handoff's stream priority, the KPI snapshot rental queries (which would otherwise have quietly reported zero rentals), the Projects Dashboard / Priority Overview / Gantt stream lists, the Opportunity tag sync and kanban color, the contract scope builder, and the AI email/SMS guideline prompts. Form labels follow suit ("Events Schedule", "Events Scope", "Events Customer Requests", "Events Deliverables", "Events Guidelines", and the Lead Service Interest option). Internal identifiers deliberately keep their old names for stability (the `Rent Customer Requests` / `Rent Deliverables` child DocTypes and every `custom_rent_*` fieldname) — labels only. Idempotent patch; fresh sites and re-migrations are safe.
+
 ## [1.155.1] - 2026-07-14
 
 ### Added
