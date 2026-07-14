@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.156.1] - 2026-07-14
+
+### Fixed
+- **Custom Field fixtures now actually sync on production again.** Discovery: three Travel-Management custom fields target hrms-app doctypes (`Employee Advance`, `Expense Claim`, `Vehicle Log`) that were never installed on the production/test sites; importing any one of them raises DocType-not-found, and Frappe's fixture sync responds by **silently skipping the entire `custom_field.json` file** — so every custom-field fixture change since those records entered the file never reached production (this is also the long-unexplained cause of past "fixture didn't apply on deploy" incidents that needed backstop patches, e.g. v1.68.0). The three records now live in their own `fixtures/custom_field_hrms.json` (fixture sync skips a failing file per-file, so it degrades gracefully on hrms-less sites and still applies on dev benches that have hrms), the fixture export filter excludes those doctypes so `bench export-fixtures` cannot reintroduce them, and the deploy's migrate re-imports the cleaned `custom_field.json` in full — landing, among the accumulated drift, the v1.156.0 "Events" form labels and the Lead Service Interest options.
+
 ## [1.156.0] - 2026-07-14
 
 ### Changed
