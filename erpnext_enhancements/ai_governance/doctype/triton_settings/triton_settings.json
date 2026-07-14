@@ -57,7 +57,7 @@
   {
    "fieldname": "rent_guidelines",
    "fieldtype": "Text Editor",
-   "label": "Rent Guidelines"
+   "label": "Events Guidelines"
   },
   {
    "fieldname": "service_guidelines",
@@ -157,7 +157,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-12 21:00:00.000000",
+ "modified": "2026-07-14 15:16:02.559549",
  "modified_by": "Administrator",
  "module": "AI Governance",
  "name": "Triton Settings",

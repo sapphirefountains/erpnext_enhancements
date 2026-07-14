@@ -242,7 +242,7 @@ PROCESSES = [
 				"responsible": "Clegg Mabey / Brian Morisseau", "accountable": "Clegg Mabey",
 				"erpnext_doctype": "Project", "erpnext_action": "Draft / Create",
 				"enforcement": "Manual", "coverage": "Built / Existing",
-				"target_artifact": "Project project_type='Rent' — rental KPIs",
+				"target_artifact": "Project project_type='Events' — rental KPIs",
 			},
 			{
 				"step_no": 4, "step_title": "Review catalog revenue & data quality",

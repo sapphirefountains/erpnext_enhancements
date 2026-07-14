@@ -6,7 +6,7 @@
  *
  * Responsibilities:
  *  - Mirror the `custom_value_stream` child-table rows into the document's
- *    `_user_tags` so each value stream (Build/Design/Rent/Service) shows up as a
+ *    `_user_tags` so each value stream (Build/Design/Events/Service) shows up as a
  *    tag; for already-saved docs missing those tags it persists them directly via
  *    the `sync_opportunity_tags_for_existing` API instead of waiting for a save.
  *  - Reopen-on-load: an Opportunity already "Closed Won" with no project yet gets
@@ -28,7 +28,7 @@ function sync_tags_from_child_table(frm) {
 		.map((t) => t.trim())
 		.filter(Boolean);
 
-	let core_tags = ["Build", "Design", "Rent", "Service", "Delivery", "Products"];
+	let core_tags = ["Build", "Design", "Events", "Service", "Delivery", "Products"];
 	let other_tags = current_tags.filter((t) => !core_tags.includes(t));
 
 	let desired_tags = [...new Set([...other_tags, ...value_streams])];

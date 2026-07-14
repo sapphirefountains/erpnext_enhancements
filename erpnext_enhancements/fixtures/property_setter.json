@@ -2862,7 +2862,8 @@
   "property": "placeholder",
   "property_type": "Data",
   "row_name": null,
-  "value": "Outline the overall scope of work across Design, Build, Service, and Rent"
+  "value": "Outline the overall scope of work across Design, Build, Service, and Events",
+  "modified": "2026-07-14 15:16:02.559549"
  },
  {
   "default_value": null,

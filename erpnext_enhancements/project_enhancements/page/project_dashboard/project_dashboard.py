@@ -1415,7 +1415,7 @@ def get_all_projects_for_gantt(include_tasks=0, statuses=None):
 			"status": ["!=", "Canceled"],
 			# Restrict to client-facing work so internal/organizational projects
 			# stay off the Portfolio Gantt.
-			"project_type": ["in", ["Build", "Design", "Rent", "Service", "Delivery"]],
+			"project_type": ["in", ["Build", "Design", "Events", "Service", "Delivery"]],
 		}
 
 		if statuses:
