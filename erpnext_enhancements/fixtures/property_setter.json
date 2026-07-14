@@ -4288,7 +4288,7 @@
   "property": "default",
   "property_type": "Text",
   "row_name": null,
-  "value": "PROJ-.####"
+  "value": "PRJ-.#####"
  },
  {
   "default_value": null,
@@ -6014,5 +6014,35 @@
   "property_type": "check",
   "row_name": null,
   "value": "0"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Purchase Order Item",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "project",
+  "is_system_generated": 0,
+  "module": null,
+  "name": "Purchase Order Item-project-in_list_view",
+  "property": "in_list_view",
+  "property_type": "Check",
+  "row_name": null,
+  "value": "1"
+ },
+ {
+  "default_value": null,
+  "doc_type": "Purchase Invoice Item",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "project",
+  "is_system_generated": 0,
+  "module": null,
+  "name": "Purchase Invoice Item-project-in_list_view",
+  "property": "in_list_view",
+  "property_type": "Check",
+  "row_name": null,
+  "value": "1"
  }
 ]

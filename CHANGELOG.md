@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.157.0] - 2026-07-14
+
+### Changed
+- **The two vendor-payment approval workflows now enforce a real two-person rule (still dormant).** The shipped `Purchase Invoice Approval` and `Payment Entry Approval` workflows had `allow_self_approval` on every transition, which would have let whoever keyed a bill approve their own payment. The **Approve** and **Reject** transitions (the Accounts-Manager decisions) now forbid self-approval, while the preparer's own **Submit for Approval** transitions keep it (so the person who raised a draft can still send it up for review). Both workflows remain `is_active = 0` — nothing changes behaviourally until they are activated at cutover (WI-044). *(WI-015)*
+- **The `project` column now shows in the Purchase Order and Purchase Invoice line-item grids** (Property Setters), so job costing is visible at a glance while entering purchase lines. This is the visibility half of the change; whether `project` becomes *mandatory* on PO lines is deferred to the accountant. *(WI-014)*
+
+### Fixed
+- **The `PRJ-` project-numbering scheme is now version-controlled.** Every project is named `PRJ-#####` by a Document Naming Rule that existed only as a hand-created database record — a fresh site, a restore, or a second company would have silently fallen back to the stock `PROJ-.####` series and broken naming continuity (Drive folder names, PRJ- references, the migration's project IDs). An idempotent seed patch now establishes that rule on any site that lacks it, starting its counter after any existing `PRJ-` projects so it can never re-mint a name; sites that already have the rule (production/test) are untouched, including their live counter. The stale `naming_series` fallback default was aligned to `PRJ-.#####` for consistency. *(WI-009)*
+
 ## [1.156.2] - 2026-07-14
 
 ### Added
