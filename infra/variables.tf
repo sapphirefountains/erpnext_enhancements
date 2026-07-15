@@ -223,9 +223,21 @@ variable "vm_region" {
   default     = null
 }
 
+variable "vm_zone" {
+  type        = string
+  description = "Explicit zone for the standard VM. Overrides auto-selection from vm_region."
+  default     = null
+}
+
 variable "spot_vm_region" {
   type        = string
   description = "Region for Spot VMs. If null, defaults to var.region."
+  default     = null
+}
+
+variable "spot_vm_zone" {
+  type        = string
+  description = "Explicit zone for the Spot VM. Overrides auto-selection from spot_vm_region."
   default     = null
 }
 

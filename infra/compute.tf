@@ -223,7 +223,7 @@ locals {
     compute_machine_type      = var.compute_machine_type
     standard_vm_name          = var.standard_vm_name
     nat_ip_resolved           = var.enable_standard_public_ip ? "true" : "null"
-    vm_zone                   = var.vm_region != null ? data.google_compute_zones.compute_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
+    vm_zone                   = var.vm_zone != null ? var.vm_zone : (var.vm_region != null ? data.google_compute_zones.compute_vm_available[0].names[0] : data.google_compute_zones.available.names[0])
     vm_network_tags           = jsonencode(var.vm_network_tags)
     network                   = local.network_id
     subnetwork                = local.compute_vm_subnet
@@ -238,7 +238,7 @@ locals {
   }))
 
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
-    vm_zone               = var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
+    vm_zone               = var.spot_vm_zone != null ? var.spot_vm_zone : (var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0])
     spot_machine_type     = var.spot_machine_type
     spot_vm_name          = var.spot_vm_name
     nat_ip_resolved       = var.enable_spot_public_ip ? "true" : "null"

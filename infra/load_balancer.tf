@@ -30,9 +30,17 @@ locals {
 
   has_spot_vm_backend = var.provision_spot_vm && var.provision_spot_vm_lb_backend
 
-  standalone_vm_zone = var.vm_region != null ? data.google_compute_zones.compute_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
+  standalone_vm_zone = var.vm_zone != null ? var.vm_zone : (
+    var.vm_region != null
+    ? data.google_compute_zones.compute_vm_available[0].names[0]
+    : data.google_compute_zones.available.names[0]
+  )
 
-  spot_vm_zone = var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0]
+  spot_vm_zone = var.spot_vm_zone != null ? var.spot_vm_zone : (
+    var.spot_vm_region != null
+    ? data.google_compute_zones.spot_vm_available[0].names[0]
+    : data.google_compute_zones.available.names[0]
+  )
 
   _lb_template = templatefile("${path.module}/configs/load_balancer.yaml", {
     glb_ip_name                    = var.glb_ip_name
