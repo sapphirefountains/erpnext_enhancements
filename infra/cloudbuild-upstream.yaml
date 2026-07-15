@@ -13,28 +13,28 @@ steps:
 
         VM="$_VM_NAME"
         ZONE="$_VM_ZONE"
-        STATUS=$(gcloud compute instances describe "$VM" --zone="$ZONE" \
+        STATUS=$(gcloud compute instances describe "$$VM" --zone="$$ZONE" \
           --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
 
-        if [ "$STATUS" != "RUNNING" ]; then
+        if [ "$$STATUS" != "RUNNING" ]; then
           if [ "$_ALLOW_SKIP" = "true" ]; then
-            echo "⚠️  $VM is $STATUS — skipping"
+            echo "⚠️  $$VM is $$STATUS — skipping"
             exit 0
           else
-            echo "❌  $VM is $STATUS — aborting"
+            echo "❌  $$VM is $$STATUS — aborting"
             exit 1
           fi
         fi
 
-        echo "🚀 Updating all apps on $VM"
-        gcloud compute ssh deploy@"$VM" \
-          --zone="$ZONE" \
+        echo "🚀 Updating all apps on $$VM"
+        gcloud compute ssh deploy@"$$VM" \
+          --zone="$$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
             /home/frappe/.local/bin/bench update --pull --no-backup' && \
             sudo systemctl restart frappe-bench"
-        echo "✅  $VM updated"
+        echo "✅  $$VM updated"
 
 timeout: '1200s'
 options:
