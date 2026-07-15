@@ -10,6 +10,7 @@ steps:
         mkdir -p /root/.ssh && chmod 700 /root/.ssh
         echo "$$DEPLOY_SSH_KEY" > /root/.ssh/id_rsa
         chmod 600 /root/.ssh/id_rsa
+        ssh-keygen -y -f /root/.ssh/id_rsa > /root/.ssh/id_rsa.pub 2>/dev/null
 
         VM="$_VM_NAME"
         ZONE="$_VM_ZONE"
