@@ -255,7 +255,7 @@ module "cloud_build_connection" {
           }
           substitutions = {
             _VM_NAME     = var.spot_vm_name
-            _VM_ZONE     = "${var.spot_vm_region != null ? var.spot_vm_region : var.region}-b"
+            _VM_ZONE     = local.spot_vm_zone
             _ALLOW_SKIP  = "true"
           }
           tags = ["deploy", "test"]
@@ -270,7 +270,7 @@ module "cloud_build_connection" {
           }
           substitutions = {
             _VM_NAME     = var.standard_vm_name
-            _VM_ZONE     = "${var.vm_region != null ? var.vm_region : var.region}-a"
+            _VM_ZONE     = local.standalone_vm_zone
             _ALLOW_SKIP  = "false"
           }
           tags = ["deploy", "production"]
@@ -286,7 +286,7 @@ module "cloud_build_connection" {
           }
           substitutions = {
             _VM_NAME     = var.spot_vm_name
-            _VM_ZONE     = "${var.spot_vm_region != null ? var.spot_vm_region : var.region}-b"
+            _VM_ZONE     = local.spot_vm_zone
             _ALLOW_SKIP  = "true"
           }
           tags = ["upstream", "test"]
@@ -301,7 +301,7 @@ module "cloud_build_connection" {
           }
           substitutions = {
             _VM_NAME     = var.standard_vm_name
-            _VM_ZONE     = "${var.vm_region != null ? var.vm_region : var.region}-a"
+            _VM_ZONE     = local.standalone_vm_zone
             _ALLOW_SKIP  = "false"
           }
           tags = ["upstream", "production"]
