@@ -263,6 +263,7 @@ module "cloud_build_connection" {
 
         "deploy-prod" = {
           description     = "Deploy erpnext_enhancements app to production VM"
+          disabled        = true
           service_account = local.cb_service_account
           filename        = var.cloudbuild_deploy_yaml_path
           push = {
