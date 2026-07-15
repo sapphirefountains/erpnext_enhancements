@@ -255,5 +255,5 @@ resource "google_project_iam_member" "cloudbuild_iap_tunnel" {
   count   = var.provision_iam && var.provision_cloud_build ? 1 : 0
   project = module.project.project_id
   role    = "roles/iap.tunnelResourceAccessor"
-  member  = "serviceAccount:${module.project.number}@cloudbuild.gserviceaccount.com"
+  member  = "serviceAccount:${google_service_account.terraform_provisioner[0].email}"
 }
