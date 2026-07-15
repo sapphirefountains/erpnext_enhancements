@@ -38,7 +38,7 @@ locals {
 
   # Per-VM subnet self-links (default VPC has subnets in every region)
   compute_vm_region = var.vm_region != null ? var.vm_region : var.region
-  spot_vm_region   = var.spot_vm_region != null ? var.spot_vm_region : var.region
+  spot_vm_region    = var.spot_vm_region != null ? var.spot_vm_region : var.region
   compute_vm_subnet = (
     var.use_default_vpc
     ? "projects/${var.project_id}/regions/${local.compute_vm_region}/subnetworks/default"

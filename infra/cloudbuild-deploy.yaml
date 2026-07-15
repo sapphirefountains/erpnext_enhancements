@@ -1,6 +1,6 @@
 steps:
   - name: 'google/cloud-sdk:latest'
-    id: 'Update Upstream Apps'
+    id: 'Deploy'
     entrypoint: 'sh'
     secretEnv: ['DEPLOY_SSH_KEY']
     args:
@@ -26,17 +26,19 @@ steps:
           fi
         fi
 
-        echo "🚀 Updating all apps on $VM"
+        echo "🚀 Deploying to $VM"
         gcloud compute ssh deploy@"$VM" \
           --zone="$ZONE" \
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
-          --command="cd /home/frappe/frappe-bench && \
-            bench update --pull --no-backup && \
+          --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
+            /home/frappe/.local/bin/bench pull --apps erpnext_enhancements && \
+            /home/frappe/.local/bin/bench migrate && \
+            /home/frappe/.local/bin/bench build' && \
             sudo systemctl restart frappe-bench"
         echo "✅  $VM updated"
 
-timeout: '1200s'
+timeout: '600s'
 options:
   logging: CLOUD_LOGGING_ONLY
 

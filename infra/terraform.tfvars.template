@@ -1,0 +1,207 @@
+/**
+ * terraform.tfvars.template
+ * =============================================================================
+ * Copy this file to terraform.tfvars and replace all <PLACEHOLDER> values
+ * with your actual configuration.
+ *
+ *   cp terraform.tfvars.template terraform.tfvars
+ * =============================================================================
+ */
+
+# ============================================================================
+# 1. CORE ENVIRONMENT & PROJECT CONFIGURATION
+# ============================================================================
+project_id          = "<YOUR_GCP_PROJECT_ID>"
+billing_account_id  = "<BILLING_ACCOUNT_ID>" # Required if create_project=true
+create_project      = false                  # Set to true to create a new project
+prefix              = null                   # Optional resource name prefix
+region              = "us-east1"             # Default GCP region
+ip_external         = true                   # true = public IPs, false = private-only
+state_bucket_region = "us-central1"
+
+# ============================================================================
+# 2. DYNAMIC PROVISIONING TOGGLES
+# ============================================================================
+provision_artifact_registry      = false
+provision_ips                    = true
+provision_ssl                    = true
+provision_cloud_run              = false
+provision_cloud_function         = false
+provision_iam                    = true
+provision_compute_vm             = true
+provision_spot_vm                = true
+provision_spot_vm_lb_backend     = true
+provision_standard_vm_lb_backend = true
+provision_sql                    = false
+provision_load_balancer          = true
+provision_cloud_build            = true
+use_default_vpc                  = true
+provision_cloud_nat              = true
+nat_regions                      = ["us-east4", "us-east1", "us-central1"]
+
+# ============================================================================
+# 3. COMPUTE VM CONFIGURATION
+# ============================================================================
+standard_vm_name          = "production-erpnext-standard-vm"
+enable_standard_public_ip = false
+compute_machine_type      = "n2d-standard-8"
+
+spot_vm_name          = "test-erpnext-spot-vm"
+enable_spot_public_ip = false
+spot_machine_type     = "n2d-standard-8"
+
+enable_vm_persistence = true
+vm_data_disk_size     = 200
+vm_boot_disk_size     = 50
+reuse_existing_disks  = true
+vm_local_ssd_count    = 0
+enable_startup_script = true
+
+vm_network_tags = [
+  "web-frontend",
+  "prod-loadbalancer-target"
+]
+spot_vm_network_tags = [
+  "web-frontend",
+  "test-loadbalancer-target"
+]
+
+vm_region      = "us-east4"
+spot_vm_region = "us-central1"
+# spot_vm_zone = "us-east1-b"  # Explicit zone override (optional)
+
+# Boot disk persistence (attach existing disks by self-link)
+boot_disk_source_attach = "projects/<PROJECT>/zones/<ZONE>/disks/<DISK_NAME>"
+data_disk_source_attach = "projects/<PROJECT>/zones/<ZONE>/disks/<DISK_NAME>"
+
+# Snapshot-based restore (set to true + apply to recreate spot VM from latest snapshot)
+restore_spot_vm_from_snapshot = false
+
+# ============================================================================
+# 4. SERVICE PARAMETER VARIABLES
+# ============================================================================
+
+# --- IP Address Allocations ---
+web_ip_name      = "web-ip"
+glb_ip_name      = "sapphire-glb-ip"
+spot_glb_ip_name = "spot-glb-ip"
+
+# --- Network ---
+network    = "<VPC_NETWORK>"
+subnetwork = "<SUBNET_NAME>"
+
+# --- SSL ---
+ssl_cert_name = "web-ssl-cert"
+ssl_map_name  = "web-ssl-map"
+domain_name   = "app.example.com"
+
+# --- Cloud Run (optional) ---
+cloud_run_image = "us-docker.pkg.dev/cloudrun/container/hello"
+api_url         = "https://api.example.com"
+
+# --- Cloud Functions (optional) ---
+cloud_function_bucket = "demo-function-deploy-bucket"
+
+# --- Cloud SQL (optional) ---
+sql_db_version = "POSTGRES_15"
+sql_tier       = "db-f1-micro"
+
+# --- Secrets ---
+secret_manager_secret_id = "github-token"
+
+# --- Cloud Build ---
+cloud_build_connection     = "github-pipeline-connection"
+github_app_installation_id = <GITHUB_APP_INSTALLATION_ID>
+github_token_secret        = "<GITHUB_PAT_TOKEN>"
+github_repo_url            = "https://github.com/<ORG>/<REPO>.git"
+state_bucket_name          = "<TF_STATE_BUCKET>"
+iap_tunnel_members         = ["user:<YOUR_EMAIL>@example.com"]
+cloudbuild_yaml_path           = "infra/cloudbuild.yaml"
+cloudbuild_deploy_yaml_path    = "infra/cloudbuild-deploy.yaml"
+cloudbuild_upstream_yaml_path  = "infra/cloudbuild-upstream.yaml"
+deploy_branch_regex        = "refs/heads/master"
+destroy_branch_regex       = "refs/heads/master"
+
+# ============================================================================
+# 5. HEALTH CHECK CONFIGURATION
+# ============================================================================
+enable_standalone_health_check = true
+health_check_port              = 80
+health_check_interval_sec      = 10
+health_check_timeout_sec       = 5
+health_check_healthy_threshold   = 2
+health_check_unhealthy_threshold = 3
+health_check_request_path      = "/"
+
+# ============================================================================
+# 6. FIREWALL & NETWORK SECURITY
+# ============================================================================
+enable_lb_firewall      = true
+enable_iap_ssh_firewall = true
+lb_firewall_ports       = ["80", "443", "8000"]
+lb_source_ranges        = ["130.211.0.0/22", "35.191.0.0/16"]
+iap_source_range        = "35.235.240.0/20"
+
+# ============================================================================
+# 7. DISK CONFIGURATION
+# ============================================================================
+disk_type      = "pd-balanced"
+local_ssd_size = 375
+vm_boot_disk_size = 50
+vm_data_disk_size = 200
+
+# ============================================================================
+# 8. VM LABELS
+# ============================================================================
+vm_labels = {
+  role = "web-frontend"
+}
+spot_vm_labels = {
+  role = "batch-processor"
+}
+
+# ============================================================================
+# 9. STARTUP SCRIPT CONFIGURATION
+# ============================================================================
+startup_script_packages   = ["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]
+deploy_user               = "deploy"
+deploy_user_sudo_command  = "/usr/bin/systemctl restart frappe-bench"
+
+# ============================================================================
+# 10. CONDITIONAL IAM PERMISSIONS TOGGLES
+# ============================================================================
+provision_iam_artifact_registry = true
+provision_iam_cloud_build       = true
+provision_iam_secret_manager    = true
+provision_iam_sql               = true
+
+# ============================================================================
+# 11. MANAGED INSTANCE GROUP (MIG) & AUTOSCALING (optional)
+# ============================================================================
+provision_test_mig      = false
+provision_prod_mig      = false
+enable_prod_autoscaling = false
+enable_test_autoscaling = false
+vm_ip_external          = false
+use_zonal_mig           = false
+use_regional_mig        = false
+
+prod_mig_machine_type = "n2d-standard-8"
+test_mig_machine_type = "n2d-standard-8"
+prod_mig_zone         = "us-central1-c"
+test_mig_zone         = "us-central1-b"
+
+prod_autoscaling_max_replicas = 1
+test_autoscaling_max_replicas = 1
+
+mig_data_disk_size    = 200
+mig_local_ssd_count   = 1
+mig_health_check_port = 8000
+
+# ============================================================================
+# 12. SNAPSHOT SCHEDULE (Spot VM automated backups)
+# ============================================================================
+enable_spot_vm_snapshot_schedule = false         # Toggle for automated daily snapshots
+snapshot_schedule_start_time     = "02:00"       # UTC start time
+snapshot_schedule_retention_days = 7             # Retention in days
+snapshot_schedule_storage_location = "us"        # GCS storage region

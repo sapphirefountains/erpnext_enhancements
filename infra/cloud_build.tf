@@ -249,14 +249,14 @@ module "cloud_build_connection" {
         "deploy-test" = {
           description     = "Deploy erpnext_enhancements app to test VM"
           service_account = local.cb_service_account
-          filename        = "cloudbuild-deploy.yaml"
+          filename        = var.cloudbuild_deploy_yaml_path
           push = {
             branch = replace(var.deploy_branch_regex, "refs/heads/", "")
           }
           substitutions = {
-            _VM_NAME     = var.spot_vm_name
-            _VM_ZONE     = local.spot_vm_zone
-            _ALLOW_SKIP  = "true"
+            _VM_NAME    = var.spot_vm_name
+            _VM_ZONE    = local.spot_vm_zone
+            _ALLOW_SKIP = "true"
           }
           tags = ["deploy", "test"]
         }
@@ -264,14 +264,14 @@ module "cloud_build_connection" {
         "deploy-prod" = {
           description     = "Deploy erpnext_enhancements app to production VM"
           service_account = local.cb_service_account
-          filename        = "cloudbuild-deploy.yaml"
+          filename        = var.cloudbuild_deploy_yaml_path
           push = {
             branch = replace(var.deploy_branch_regex, "refs/heads/", "")
           }
           substitutions = {
-            _VM_NAME     = var.standard_vm_name
-            _VM_ZONE     = local.standalone_vm_zone
-            _ALLOW_SKIP  = "false"
+            _VM_NAME    = var.standard_vm_name
+            _VM_ZONE    = local.standalone_vm_zone
+            _ALLOW_SKIP = "false"
           }
           tags = ["deploy", "production"]
         }
@@ -280,14 +280,14 @@ module "cloud_build_connection" {
         "upstream-test" = {
           description     = "Update upstream apps on test VM"
           service_account = local.cb_service_account
-          filename        = "cloudbuild-upstream.yaml"
+          filename        = var.cloudbuild_upstream_yaml_path
           push = {
             branch = "manual-trigger-only"
           }
           substitutions = {
-            _VM_NAME     = var.spot_vm_name
-            _VM_ZONE     = local.spot_vm_zone
-            _ALLOW_SKIP  = "true"
+            _VM_NAME    = var.spot_vm_name
+            _VM_ZONE    = local.spot_vm_zone
+            _ALLOW_SKIP = "true"
           }
           tags = ["upstream", "test"]
         }
@@ -295,14 +295,14 @@ module "cloud_build_connection" {
         "upstream-prod" = {
           description     = "Update upstream apps on production VM"
           service_account = local.cb_service_account
-          filename        = "cloudbuild-upstream.yaml"
+          filename        = var.cloudbuild_upstream_yaml_path
           push = {
             branch = "manual-trigger-only"
           }
           substitutions = {
-            _VM_NAME     = var.standard_vm_name
-            _VM_ZONE     = local.standalone_vm_zone
-            _ALLOW_SKIP  = "false"
+            _VM_NAME    = var.standard_vm_name
+            _VM_ZONE    = local.standalone_vm_zone
+            _ALLOW_SKIP = "false"
           }
           tags = ["upstream", "production"]
         }

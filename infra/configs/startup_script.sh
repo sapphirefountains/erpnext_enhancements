@@ -68,7 +68,7 @@ if [ "$SKIP_FIRST_BOOT" = false ]; then
   echo "[$(date)] First boot — installing packages"
 
   apt-get update -qq
-  apt-get install -y -qq curl git nginx python3 python3-pip python3-venv pipx
+  apt-get install -y -qq ${packages}
 
   id -u frappe &>/dev/null || useradd -m -s /bin/bash frappe
   sudo -u frappe pipx install --system-site-packages frappe-bench
@@ -117,9 +117,9 @@ SERVICEEOF
 fi
 
 # ── Ensure deploy user exists for CI/CD SSH access ──────
-id deploy &>/dev/null || useradd -m -s /bin/bash deploy
-echo "deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart frappe-bench" \
-  > /etc/sudoers.d/deploy
+id ${deploy_user} &>/dev/null || useradd -m -s /bin/bash ${deploy_user}
+echo "${deploy_user} ALL=(ALL) NOPASSWD: ${deploy_user_sudo_command}" \
+  > /etc/sudoers.d/${deploy_user}
 
 # ── Setup nginx if bench exists ──────────────────────────
 if [ -d /home/frappe/frappe-bench ]; then

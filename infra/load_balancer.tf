@@ -43,20 +43,20 @@ locals {
   )
 
   _lb_template = templatefile("${path.module}/configs/load_balancer.yaml", {
-    glb_ip_name                    = var.glb_ip_name
-    spot_glb_ip_name               = var.spot_glb_ip_name
-    spot_lb_name                   = var.spot_lb_name
-    production_lb_name             = var.production_lb_name
-    region                         = var.region
-    ssl_map_name                   = var.ssl_map_name
-    provision_prod_mig             = var.provision_prod_mig
-    provision_test_mig             = var.provision_test_mig
-    provision_compute_vm           = var.provision_compute_vm
+    glb_ip_name                      = var.glb_ip_name
+    spot_glb_ip_name                 = var.spot_glb_ip_name
+    spot_lb_name                     = var.spot_lb_name
+    production_lb_name               = var.production_lb_name
+    region                           = var.region
+    ssl_map_name                     = var.ssl_map_name
+    provision_prod_mig               = var.provision_prod_mig
+    provision_test_mig               = var.provision_test_mig
+    provision_compute_vm             = var.provision_compute_vm
     provision_standard_vm_lb_backend = var.provision_standard_vm_lb_backend
-    provision_spot_vm              = local.has_spot_vm_backend
-    provision_cloud_run            = var.provision_cloud_run
-    standalone_vm_neg_name         = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.standalone_vm_zone, var.standard_vm_name)
-    spot_vm_neg_name               = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)
+    provision_spot_vm                = local.has_spot_vm_backend
+    provision_cloud_run              = var.provision_cloud_run
+    standalone_vm_neg_name           = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.standalone_vm_zone, var.standard_vm_name)
+    spot_vm_neg_name                 = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)
   })
 
   load_balancer_config = try(yamldecode(local._lb_template), tomap({}))
@@ -86,11 +86,11 @@ locals {
 }
 
 module "load_balancer" {
-  for_each                = local.load_balancer_config
-  source                  = "../modules/net-lb-app-ext"
-  project_id              = module.project.project_id
-  name                    = each.key
-  backend_buckets_config  = try(each.value.backend_buckets_config, {})
+  for_each               = local.load_balancer_config
+  source                 = "../modules/net-lb-app-ext"
+  project_id             = module.project.project_id
+  name                   = each.key
+  backend_buckets_config = try(each.value.backend_buckets_config, {})
   backend_service_configs = {
     for bs_k, bs_v in try(each.value.backend_service_configs, {}) :
     bs_k => merge(bs_v, {
@@ -111,11 +111,11 @@ module "load_balancer" {
       ]
     })
   }
-  health_check_configs    = try(each.value.health_check_configs, {})
-  neg_configs             = try(each.value.neg_configs, {})
-  protocol                = try(each.value.protocol, null)
-  urlmap_config           = try(each.value.urlmap_config, {})
-  use_classic_version     = try(each.value.use_classic_version, false)
+  health_check_configs = try(each.value.health_check_configs, {})
+  neg_configs          = try(each.value.neg_configs, {})
+  protocol             = try(each.value.protocol, null)
+  urlmap_config        = try(each.value.urlmap_config, {})
+  use_classic_version  = try(each.value.use_classic_version, false)
 
   # Resolve forwarding rule addresses using lookup
   forwarding_rules_config = {

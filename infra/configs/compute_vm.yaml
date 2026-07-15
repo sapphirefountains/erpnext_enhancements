@@ -19,7 +19,7 @@ ${standard_vm_name}:
     initialize_params:
       image: ${vm_boot_disk_image}
       size: ${vm_boot_disk_size}
-      type: "pd-balanced"
+      type: "${boot_disk_type}"
     #%{ endif }
 
   # 🎯 FIXED: Uses pre-encoded string array to dynamic mount points safely
@@ -32,5 +32,4 @@ ${standard_vm_name}:
     startup-script: |
 ${startup_script}
 #%{ endif }
-  labels:
-    role: "web-frontend"
+  labels: ${vm_labels_json}

@@ -481,9 +481,21 @@ variable "github_app_installation_id" {
 }
 
 variable "cloudbuild_yaml_path" {
-  description = "The contextual file directory path inside the repo pointing to cloudbuild.yaml."
+  description = "The file path inside the repo pointing to the infra cloudbuild.yaml."
   type        = string
-  default     = "cloudbuild.yaml"
+  default     = "infra/cloudbuild.yaml"
+}
+
+variable "cloudbuild_deploy_yaml_path" {
+  description = "The file path inside the repo pointing to cloudbuild-deploy.yaml."
+  type        = string
+  default     = "infra/cloudbuild-deploy.yaml"
+}
+
+variable "cloudbuild_upstream_yaml_path" {
+  description = "The file path inside the repo pointing to cloudbuild-upstream.yaml."
+  type        = string
+  default     = "infra/cloudbuild-upstream.yaml"
 }
 
 variable "cloudbuild_service_account" {
@@ -631,8 +643,150 @@ variable "enable_startup_script" {
   default     = false
 }
 
+variable "restore_spot_vm_from_snapshot" {
+  type        = bool
+  description = "If true, finds the latest snapshot matching the spot VM disk names, creates disks from them in the target zone, and attaches them to the new VM. Useful when recreating the VM in a different zone/region."
+  default     = false
+}
+
 variable "iap_tunnel_members" {
   type        = list(string)
   description = "List of members (users/groups/SAs) to grant IAP tunnel access for SSH. Each entry should be in the format 'user:email@example.com' or 'group:group@example.com' or 'serviceAccount:sa@project.iam.gserviceaccount.com'"
   default     = []
+}
+
+# ============================================================================
+# Health Check Configuration
+# ============================================================================
+variable "health_check_interval_sec" {
+  type        = number
+  description = "The interval in seconds between health check probes."
+  default     = 10
+}
+
+variable "health_check_timeout_sec" {
+  type        = number
+  description = "The timeout in seconds for each health check probe."
+  default     = 5
+}
+
+variable "health_check_healthy_threshold" {
+  type        = number
+  description = "The number of consecutive successes to mark a VM as healthy."
+  default     = 2
+}
+
+variable "health_check_unhealthy_threshold" {
+  type        = number
+  description = "The number of consecutive failures to mark a VM as unhealthy."
+  default     = 3
+}
+
+variable "health_check_request_path" {
+  type        = string
+  description = "The URL path used by health checks to probe VM readiness."
+  default     = "/"
+}
+
+# ============================================================================
+# Firewall & Network Security Configuration
+# ============================================================================
+variable "lb_firewall_ports" {
+  type        = list(string)
+  description = "List of TCP ports opened to the load balancer probe source ranges."
+  default     = ["80", "443", "8000"]
+}
+
+variable "lb_source_ranges" {
+  type        = list(string)
+  description = "Source IP ranges for Google Cloud Load Balancer health probes and traffic."
+  default     = ["130.211.0.0/22", "35.191.0.0/16"]
+}
+
+variable "iap_source_range" {
+  type        = string
+  description = "Source IP range for IAP SSH tunneling."
+  default     = "35.235.240.0/20"
+}
+
+# ============================================================================
+# Disk Configuration
+# ============================================================================
+variable "disk_type" {
+  type        = string
+  description = "Default disk type for VM boot and data disks (e.g. pd-balanced, pd-ssd, pd-standard)."
+  default     = "pd-balanced"
+}
+
+variable "local_ssd_size" {
+  type        = number
+  description = "Size in GB for each local SSD scratch disk."
+  default     = 375
+}
+
+# ============================================================================
+# VM Labels
+# ============================================================================
+variable "vm_labels" {
+  type        = map(string)
+  description = "Labels applied to the standard VM."
+  default = {
+    role = "web-frontend"
+  }
+}
+
+variable "spot_vm_labels" {
+  type        = map(string)
+  description = "Labels applied to the spot VM."
+  default = {
+    role = "batch-processor"
+  }
+}
+
+# ============================================================================
+# Startup Script Configuration
+# ============================================================================
+variable "startup_script_packages" {
+  type        = list(string)
+  description = "List of APT packages to install on first boot."
+  default     = ["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]
+}
+
+variable "deploy_user" {
+  type        = string
+  description = "Username for the CI/CD deploy user created on VMs."
+  default     = "deploy"
+}
+
+variable "deploy_user_sudo_command" {
+  type        = string
+  description = "The specific sudo command allowed for the deploy user without a password."
+  default     = "/usr/bin/systemctl restart frappe-bench"
+}
+
+# ============================================================================
+# Snapshot Schedule Configuration
+# ============================================================================
+variable "enable_spot_vm_snapshot_schedule" {
+  type        = bool
+  description = "If true, attaches a daily snapshot schedule to the spot VM's boot and data disks. Snapshots are created in the same region as the disk."
+  default     = null
+}
+
+variable "snapshot_schedule_start_time" {
+  type        = string
+  description = "The start time (HH:MM) in UTC for the daily snapshot schedule."
+  default     = "02:00"
+}
+
+variable "snapshot_schedule_retention_days" {
+  type        = number
+  description = "Number of days to retain automated snapshots."
+  default     = 7
+}
+
+variable "snapshot_schedule_storage_location" {
+  type        = string
+  description = "The GCS storage location (region) for snapshot data, e.g. 'us', 'us-east1', 'us-central1'."
+  default     = "us"
 }

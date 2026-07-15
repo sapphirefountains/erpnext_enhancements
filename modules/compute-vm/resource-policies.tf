@@ -140,7 +140,11 @@ resource "google_compute_disk_resource_policy_attachment" "boot" {
   disk = (
     !local.is_template && var.boot_disk.use_independent_disk != null
     ? google_compute_disk.boot[0].name
-    : var.name
+    : (
+      var.boot_disk.source.attach != null
+      ? try(reverse(split("/", var.boot_disk.source.attach))[0], var.boot_disk.source.attach)
+      : var.name
+    )
   )
   depends_on = [google_compute_instance.default]
 }
@@ -159,7 +163,7 @@ resource "google_compute_disk_resource_policy_attachment" "attached" {
   )
   disk = (
     each.value.source.attach != null
-    ? each.value.source.attach
+    ? try(reverse(split("/", each.value.source.attach))[0], each.value.source.attach)
     : google_compute_disk.disks[each.value.disk_key].name
   )
   depends_on = [

@@ -145,9 +145,9 @@ resource "google_project_iam_member" "terraform_provisioner_roles" {
     "roles/iam.serviceAccountUser",
     "roles/cloudbuild.admin"
   ]) : []
-  project  = module.project.project_id
-  role     = each.value
-  member   = "serviceAccount:sa-terraform-provisioner@${module.project.project_id}.iam.gserviceaccount.com"
+  project = module.project.project_id
+  role    = each.value
+  member  = "serviceAccount:sa-terraform-provisioner@${module.project.project_id}.iam.gserviceaccount.com"
 
   depends_on = [
     google_service_account.terraform_provisioner

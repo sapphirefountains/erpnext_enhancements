@@ -19,7 +19,11 @@ ${spot_vm_name}:
     initialize_params:
       image: ${vm_boot_disk_image}
       size: ${vm_boot_disk_size}
-      type: "pd-balanced"
+      type: "${boot_disk_type}"
+    #%{ endif }
+    #%{ if enable_spot_vm_snapshot_schedule }
+    snapshot_schedule:
+      - daily-snapshots
     #%{ endif }
   
   # 🎯 THE FIX: Pass a pre-encoded JSON string array here to avoid YAML syntax clashing
@@ -32,6 +36,18 @@ ${spot_vm_name}:
     startup-script: |
 ${startup_script}
 #%{ endif }
-  labels:
-    role: "batch-processor"
+  labels: ${spot_vm_labels_json}
   termination_action: "DELETE"
+  #%{ if enable_spot_vm_snapshot_schedule }
+  snapshot_schedules:
+    daily-snapshots:
+      schedule:
+        daily:
+          days_in_cycle: 1
+          start_time: "${snapshot_schedule_start_time}"
+      retention_policy:
+        max_retention_days: ${snapshot_schedule_retention_days}
+      snapshot_properties:
+        storage_locations:
+          - "${snapshot_schedule_storage_location}"
+  #%{ endif }

@@ -78,7 +78,7 @@ resource "google_compute_health_check" "mig_health_check" {
 resource "google_compute_firewall" "allow_lb_to_mig" {
   count     = (var.provision_prod_mig || var.provision_test_mig) ? 1 : 0
   name      = "allow-lb-to-mig"
-  network   = local.network_id 
+  network   = local.network_id
   project   = module.project.project_id
   direction = "INGRESS"
 
@@ -106,7 +106,7 @@ resource "google_compute_firewall" "allow_ssh_to_mig" {
   }
 
   # Strictly limited to Google Cloud's secure internal IAP proxy range
-  source_ranges = ["35.235.240.0/20"] 
+  source_ranges = ["35.235.240.0/20"]
   target_tags   = ["erpnext-mig-node"]
 }
 
@@ -257,7 +257,7 @@ resource "google_compute_region_instance_group_manager" "prod_mig" {
 
   update_policy {
     type                         = "PROACTIVE"
-    minimal_action               = "REPLACE" 
+    minimal_action               = "REPLACE"
     replacement_method           = "RECREATE"
     max_surge_fixed              = 0
     max_unavailable_fixed        = local.zone_count
