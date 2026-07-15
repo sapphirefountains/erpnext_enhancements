@@ -248,7 +248,7 @@ locals {
           source = {
             attach = "projects/${module.project.project_id}/zones/${local.spot_vm_zone}/disks/${google_compute_disk.spot_data_from_snapshot[0].name}"
           }
-        } : {
+          } : {
           initialize_params = {
             size = var.vm_data_disk_size
             type = var.disk_type
@@ -275,7 +275,7 @@ locals {
 
   # 2. Inject configuration keys and pre-encoded strings cleanly into templates
   startup_script_raw = templatefile("${path.module}/configs/startup_script.sh", {
-    packages                = join(" ", var.startup_script_packages)
+    packages                 = join(" ", var.startup_script_packages)
     deploy_user              = var.deploy_user
     deploy_user_sudo_command = var.deploy_user_sudo_command
   })
@@ -302,26 +302,26 @@ locals {
   }))
 
   spot_vm_config = yamldecode(templatefile("${path.module}/configs/spot_vm.yaml", {
-    vm_zone                 = var.spot_vm_zone != null ? var.spot_vm_zone : (var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0])
-    spot_machine_type       = var.spot_machine_type
-    spot_vm_name            = var.spot_vm_name
-    nat_ip_resolved         = var.enable_spot_public_ip ? "true" : "null"
-    vm_network_tags         = jsonencode(var.spot_vm_network_tags)
-    network                 = local.network_id
-    subnetwork              = local.spot_vm_subnet
-    attached_disks_json     = jsonencode(local.spot_vm_attached_disks)
-    vm_boot_disk_size       = var.vm_boot_disk_size
-    reuse_existing_disks    = var.reuse_existing_disks
-    boot_disk_auto_delete   = var.boot_disk_auto_delete ? "true" : "false"
-    boot_disk_source_attach = var.provision_spot_vm ? "projects/${module.project.project_id}/zones/${local.spot_vm_zone}/disks/${google_compute_disk.spot_boot_from_snapshot[0].name}" : ""
-    vm_boot_disk_image      = var.vm_custom_image != null ? var.vm_custom_image : "projects/debian-cloud/global/images/family/debian-12"
-    enable_startup_script   = var.enable_startup_script
-    startup_script          = var.enable_startup_script ? local.startup_script_yaml : ""
-    boot_disk_type                   = var.disk_type
-    spot_vm_labels_json              = jsonencode(var.spot_vm_labels)
-    enable_spot_vm_snapshot_schedule = var.enable_spot_vm_snapshot_schedule
-    snapshot_schedule_start_time     = var.snapshot_schedule_start_time
-    snapshot_schedule_retention_days = var.snapshot_schedule_retention_days
+    vm_zone                            = var.spot_vm_zone != null ? var.spot_vm_zone : (var.spot_vm_region != null ? data.google_compute_zones.spot_vm_available[0].names[0] : data.google_compute_zones.available.names[0])
+    spot_machine_type                  = var.spot_machine_type
+    spot_vm_name                       = var.spot_vm_name
+    nat_ip_resolved                    = var.enable_spot_public_ip ? "true" : "null"
+    vm_network_tags                    = jsonencode(var.spot_vm_network_tags)
+    network                            = local.network_id
+    subnetwork                         = local.spot_vm_subnet
+    attached_disks_json                = jsonencode(local.spot_vm_attached_disks)
+    vm_boot_disk_size                  = var.vm_boot_disk_size
+    reuse_existing_disks               = var.reuse_existing_disks
+    boot_disk_auto_delete              = var.boot_disk_auto_delete ? "true" : "false"
+    boot_disk_source_attach            = var.provision_spot_vm ? "projects/${module.project.project_id}/zones/${local.spot_vm_zone}/disks/${google_compute_disk.spot_boot_from_snapshot[0].name}" : ""
+    vm_boot_disk_image                 = var.vm_custom_image != null ? var.vm_custom_image : "projects/debian-cloud/global/images/family/debian-12"
+    enable_startup_script              = var.enable_startup_script
+    startup_script                     = var.enable_startup_script ? local.startup_script_yaml : ""
+    boot_disk_type                     = var.disk_type
+    spot_vm_labels_json                = jsonencode(var.spot_vm_labels)
+    enable_spot_vm_snapshot_schedule   = var.enable_spot_vm_snapshot_schedule
+    snapshot_schedule_start_time       = var.snapshot_schedule_start_time
+    snapshot_schedule_retention_days   = var.snapshot_schedule_retention_days
     snapshot_schedule_storage_location = var.snapshot_schedule_storage_location
   }))
 }
@@ -372,12 +372,12 @@ module "spot_vm" {
     }
   ]
 
-  boot_disk       = try(each.value.boot_disk, null)
-  attached_disks  = try(each.value.attached_disks, null)
-  service_account = try(each.value.service_account, null)
-  metadata        = try(each.value.metadata, null)
-  labels          = try(each.value.labels, null)
-  tags            = try(each.value.tags, [])
+  boot_disk          = try(each.value.boot_disk, null)
+  attached_disks     = try(each.value.attached_disks, null)
+  service_account    = try(each.value.service_account, null)
+  metadata           = try(each.value.metadata, null)
+  labels             = try(each.value.labels, null)
+  tags               = try(each.value.tags, [])
   group              = var.provision_spot_vm_lb_backend ? { named_ports = { http = var.health_check_port } } : null
   snapshot_schedules = try(each.value.snapshot_schedules, {})
 

@@ -16,3 +16,4 @@ infra/*.tfstate
 infra/*.tfstate.backup
 infra/*.tfvars
 infra/*.tfvars.json
+infra/tfplaninfra/tfplan

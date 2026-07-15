@@ -510,6 +510,12 @@ variable "deploy_branch_regex" {
   default     = "^main$"
 }
 
+variable "cloud_build_deploy_branch" {
+  description = "Branch name that triggers CI/CD app deployment (deploy-test, deploy-prod)."
+  type        = string
+  default     = "main"
+}
+
 variable "destroy_branch_regex" {
   description = "The regex pattern matching the branch used for infrastructure destruction."
   type        = string

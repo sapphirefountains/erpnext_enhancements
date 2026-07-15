@@ -251,7 +251,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_deploy_yaml_path
           push = {
-            branch = replace(var.deploy_branch_regex, "refs/heads/", "")
+            branch = var.cloud_build_deploy_branch
           }
           substitutions = {
             _VM_NAME    = var.spot_vm_name
@@ -266,7 +266,7 @@ module "cloud_build_connection" {
           service_account = local.cb_service_account
           filename        = var.cloudbuild_deploy_yaml_path
           push = {
-            branch = replace(var.deploy_branch_regex, "refs/heads/", "")
+            branch = var.cloud_build_deploy_branch
           }
           substitutions = {
             _VM_NAME    = var.standard_vm_name
