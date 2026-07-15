@@ -9,7 +9,7 @@
  * root node. It loads the shared ColumnSelector asset, then fetches data through
  * the project_dashboard page's whitelisted methods
  * (erpnext_enhancements.project_enhancements.page.project_dashboard.*) and renders:
- *   - Priority Overview   — client-facing value streams (Build/Design/Rent/Service),
+ *   - Priority Overview   — client-facing value streams (Build/Design/Events/Service),
  *                           with inline-editable company/project priority cells;
  *   - Active Internal Projects — grouped by master project, inline status/priority;
  *   - Completed Projects  — read-only list of inactive projects;
@@ -44,13 +44,13 @@
     // Portfolio Gantt fallback. Kept in one place so this Custom HTML Block stays
     // in sync with the page dashboard (priority_overview.js / the backend's
     // get_all_projects_for_gantt), which filter to exactly these project types.
-    const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Rent", "Service", "Delivery"];
+    const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Events", "Service", "Delivery"];
 
     // Business-preferred ordering for the value-stream groups on Priority
     // Overview (when sorted by Project Priority). Streams not listed (e.g.
     // Delivery, Uncategorized) fall after these, alphabetically. Kept in sync
     // with priority_overview.js's VALUE_STREAM_ORDER.
-    const VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Rent"];
+    const VALUE_STREAM_ORDER = ["Design", "Build", "Service", "Events"];
     const compare_value_streams = (a, b) => {
         let ia = VALUE_STREAM_ORDER.indexOf(a);
         let ib = VALUE_STREAM_ORDER.indexOf(b);
@@ -935,7 +935,7 @@
         let state = sort_state['priority-overview'];
 
         // Match the page dashboard: only client-facing value streams (Build,
-        // Design, Rent, Service) that are still active and in progress. The
+        // Design, Events, Service) that are still active and in progress. The
         // is_active flag is unreliable on its own, so we gate on project_type +
         // is_active + a live status rather than denylisting internal types.
         let projects_to_show = project_data.filter(p =>

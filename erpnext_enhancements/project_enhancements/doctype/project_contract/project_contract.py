@@ -81,7 +81,7 @@ SCOPE_STREAMS = [
 	 "custom_build_deliverables", "build_deliverables"),
 	("Service", "custom_service_customer_requests", "service_customer_requests",
 	 "custom_service_deliverables", "service_deliverables"),
-	("Rent", "custom_rent_customer_requests", "rent_customer_requests",
+	("Events", "custom_rent_customer_requests", "rent_customer_requests",
 	 "custom_rent_deliverables", "rent_deliverables"),
 ]
 
@@ -282,7 +282,7 @@ def _render_context(doc):
 def _compose_scope(source):
 	"""SOW scope HTML from a source doc's request/deliverable scope tables.
 
-	Walks the four value streams (Design/Build/Service/Rent); for each stream
+	Walks the four value streams (Design/Build/Service/Events); for each stream
 	with content, emits the Customer Requests (the customer's ask, verbatim)
 	and the Deliverables (the PM/Design breakdown — PRO-0204 Step 6) as
 	lists. Streams with no rows are omitted entirely.
@@ -371,7 +371,7 @@ def _prefill_from_opportunity(doc, opportunity):
 		if row.phase_key in wanted:
 			row.included = 1
 
-	# Rent deliverables become rental equipment lines.
+	# Events deliverables become rental equipment lines.
 	if doc.template_key == "rental" and not doc.get("equipment_items"):
 		for row in opp.get("custom_rent_deliverables") or []:
 			text = (row.get("rent_deliverables") or "").strip()

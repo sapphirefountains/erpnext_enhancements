@@ -87,7 +87,7 @@ function toggle_value_stream_fields(frm) {
         Design: ["custom_design_scope"],
         Build: ["custom_build_scope"],
         Service: ["custom_service_scope"],
-        Rent: ["custom_rent_scope", "custom_rent"],
+        Events: ["custom_rent_scope", "custom_rent"],
     };
 
     const selected_values = (frm.doc.custom_value_stream || [])

@@ -463,6 +463,22 @@ fixtures = [
 		"dt": "Custom Field",
 		"filters": [
 			["is_system_generated", "=", 0],
+			# hrms-app doctypes are NOT installed on prod/test. One record targeting a
+			# missing doctype raises DoesNotExistError, and sync_fixtures then skips the
+			# ENTIRE custom_field.json silently — which is exactly what had been happening
+			# on every prod deploy (discovered 2026-07-14 via the WI-065 label changes not
+			# landing). Their records live in fixtures/custom_field_hrms.json instead,
+			# which sync_fixtures skips gracefully PER-FILE where hrms is absent and
+			# applies on hrms-bearing benches. Keep this dt filter in sync with that file.
+			[
+				"dt",
+				"not in",
+				[
+					"Employee Advance",  # hrms
+					"Expense Claim",  # hrms
+					"Vehicle Log",  # hrms
+				],
+			],
 			[
 				"name",
 				"not in",

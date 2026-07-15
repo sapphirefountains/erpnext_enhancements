@@ -81,7 +81,7 @@ def generate_draft_response(communication_name):
 Value Stream Guidelines:
 Design: {design_guidelines}
 Build: {build_guidelines}
-Rent: {rent_guidelines}
+Events: {rent_guidelines}
 Service: {service_guidelines}
 """
 
@@ -176,7 +176,7 @@ def suggest_sms_reply(communication_name):
 Value Stream Guidelines:
 Design: {design_guidelines}
 Build: {build_guidelines}
-Rent: {rent_guidelines}
+Events: {rent_guidelines}
 Service: {service_guidelines}
 """
 

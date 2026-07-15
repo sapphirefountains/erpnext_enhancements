@@ -67,7 +67,7 @@ def sync_opportunity_tags(doc, method=None):
 
 	Wired in ``hooks.py`` as an Opportunity ``before_save`` doc_event. Mutates
 	``doc`` in place (no DB write of its own) so the tag set always reflects the
-	selected value streams (Build/Design/Rent/Service) while preserving any other
+	selected value streams (Build/Design/Events/Service) while preserving any other
 	user tags.
 
 	Args:
@@ -79,7 +79,7 @@ def sync_opportunity_tags(doc, method=None):
 		``None`` when empty).
 	"""
 	# 1. Define the possible value stream options
-	value_stream_options = {"Build", "Design", "Rent", "Service", "Delivery", "Products"}
+	value_stream_options = {"Build", "Design", "Events", "Service", "Delivery", "Products"}
 
 	# 2. Get the current selected value streams from the child table
 	selected_value_streams = set()
@@ -242,7 +242,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 			# Derive a single Project.project_type from the (possibly multiple)
 			# selected value streams, picking the highest-priority one present.
-			priority_order = ["Design", "Build", "Service", "Rent"]
+			priority_order = ["Design", "Build", "Service", "Events"]
 			project_type_value = None
 
 			value_streams = [d.get("value_stream") for d in opp.get("custom_value_stream")]

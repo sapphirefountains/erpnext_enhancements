@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.157.0] - 2026-07-14
+
+### Changed
+- **The two vendor-payment approval workflows now enforce a real two-person rule (still dormant).** The shipped `Purchase Invoice Approval` and `Payment Entry Approval` workflows had `allow_self_approval` on every transition, which would have let whoever keyed a bill approve their own payment. The **Approve** and **Reject** transitions (the Accounts-Manager decisions) now forbid self-approval, while the preparer's own **Submit for Approval** transitions keep it (so the person who raised a draft can still send it up for review). Both workflows remain `is_active = 0` — nothing changes behaviourally until they are activated at cutover (WI-044). *(WI-015)*
+- **The `project` column now shows in the Purchase Order and Purchase Invoice line-item grids** (Property Setters), so job costing is visible at a glance while entering purchase lines. This is the visibility half of the change; whether `project` becomes *mandatory* on PO lines is deferred to the accountant. *(WI-014)*
+
+### Fixed
+- **The `PRJ-` project-numbering scheme is now version-controlled.** Every project is named `PRJ-#####` by a Document Naming Rule that existed only as a hand-created database record — a fresh site, a restore, or a second company would have silently fallen back to the stock `PROJ-.####` series and broken naming continuity (Drive folder names, PRJ- references, the migration's project IDs). An idempotent seed patch now establishes that rule on any site that lacks it, starting its counter after any existing `PRJ-` projects so it can never re-mint a name; sites that already have the rule (production/test) are untouched, including their live counter. The stale `naming_series` fallback default was aligned to `PRJ-.#####` for consistency. *(WI-009)*
+
+## [1.156.2] - 2026-07-14
+
+### Added
+- **The migration's target Chart of Accounts design + the 359-row mapping workbook (docs only — nothing imports until the WI-029 cutover-window rebuild).** `docs/migration/chart_of_accounts.csv` is the full 213-account numbered chart in the native Chart of Accounts Importer format — validated by the actual importer on the test site with zero errors — with per-stream income (Design/Build/Service/Events/Products) matched by per-stream COGS including first-class Subcontract Labor lines, the Stripe Clearing / Undeposited Funds / Merchant Fees payment plumbing, Utah sales- and use-tax liability sub-accounts, payroll summary-JE landing spots, perpetual-inventory structure for Phase 2, exactly one Temporary opening account, and a Historical P&L Offset equity account — all company-agnostic (no "SF" in names). `docs/migration/coa_mapping.csv` maps every one of the 359 production accounts (264 MAP / 95 RETIRE with reasons). `docs/migration/COA_DESIGN.md` carries the rationale, the Company default designations, and the explicit CPA ratification checklist (tax bucket shape, use-tax treatment, meals/entertainment deductibility, LLC member equity, the retirement list). Adversarially reviewed (mechanical constraints + accountant lens; all 11 findings applied, including Use Tax Payable and the meals/entertainment deductibility split).
+
+
+## [1.156.1] - 2026-07-14
+
+### Fixed
+- **Custom Field fixtures now actually sync on production again.** Discovery: three Travel-Management custom fields target hrms-app doctypes (`Employee Advance`, `Expense Claim`, `Vehicle Log`) that were never installed on the production/test sites; importing any one of them raises DocType-not-found, and Frappe's fixture sync responds by **silently skipping the entire `custom_field.json` file** — so every custom-field fixture change since those records entered the file never reached production (this is also the long-unexplained cause of past "fixture didn't apply on deploy" incidents that needed backstop patches, e.g. v1.68.0). The three records now live in their own `fixtures/custom_field_hrms.json` (fixture sync skips a failing file per-file, so it degrades gracefully on hrms-less sites and still applies on dev benches that have hrms), the fixture export filter excludes those doctypes so `bench export-fixtures` cannot reintroduce them, and the deploy's migrate re-imports the cleaned `custom_field.json` in full — landing, among the accumulated drift, the v1.156.0 "Events" form labels and the Lead Service Interest options.
+
+## [1.156.0] - 2026-07-14
+
+### Changed
+- **The "Rent" value stream is now called "Events" everywhere** (migration decision OD-3, resolved 2026-07-14: rentals and events are one value stream, and the term changes). A one-time migration patch renames the three master records — **Project Type** `Rent`→`Events` (carrying every project's `project_type` with it), the **Value Streams** multiselect master, and the Opportunity **Rent tag** — and backfills the plain-string places the rename can't reach (Lead "Service Interest" values, cached `_user_tags`, process-map text). Everything that *compared against* the old name was updated in the same release so nothing breaks silently: the Closed-Won handoff's stream priority, the KPI snapshot rental queries (which would otherwise have quietly reported zero rentals), the Projects Dashboard / Priority Overview / Gantt stream lists, the Opportunity tag sync and kanban color, the contract scope builder, and the AI email/SMS guideline prompts. Form labels follow suit ("Events Schedule", "Events Scope", "Events Customer Requests", "Events Deliverables", "Events Guidelines", and the Lead Service Interest option). Internal identifiers deliberately keep their old names for stability (the `Rent Customer Requests` / `Rent Deliverables` child DocTypes and every `custom_rent_*` fieldname) — labels only. Idempotent patch; fresh sites and re-migrations are safe.
+
+## [1.155.1] - 2026-07-14
+
+### Added
+- **The QuickBooks→ERPNext migration master plan now lives in the repo (documentation only — no code or behavior changes).** `PLAN.md` carries the plan built against the live systems on 14 Jul 2026: every planning-brief figure re-verified with discrepancies flagged (prod's accounting is an unposted QBO draft mirror; test already piloted the opening balances), a native-first audit of every requirement, the phase plan with the binding cutover-window ordering, the dependency graph and critical path to the 2027-01-01 cutover, a risk register, and the test→prod promotion strategy. `decisions/OPEN-DECISIONS.md` records the seven business decisions **with their 14 Jul 2026 resolutions** (no JDH company; follow-Utah-law stream-differentiated tax with the CPA's written matrix as the go-live sign-off gate; Rent renamed to Events; segment = project attribute with customer fallback; Jan 1 committed; draft-mirror bulk delete ratified; no card surcharge at launch). `work-items/` holds 65 self-contained work items (WI-001..WI-065, each with native-first check, verified field names, machine-checkable acceptance criteria, and rollback; WI-061 JDH is on hold per OD-1). Execution is tracked as Tasks under project **PRJ-00739 – ERPNext Accounting Migration** on the live site, mirroring this register including its dependency graph.
+
 ## [1.155.0] - 2026-07-10
 
 ### Changed
