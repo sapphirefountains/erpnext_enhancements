@@ -244,7 +244,108 @@ module "cloud_build_connection" {
             "_ACTION"       = "refresh"
           }
         }
+
+        # --- App Deploy Triggers ---
+        "deploy-test" = {
+          description     = "Deploy erpnext_enhancements app to test VM"
+          service_account = local.cb_service_account
+          filename        = "cloudbuild-deploy.yaml"
+          push = {
+            branch = replace(var.deploy_branch_regex, "refs/heads/", "")
+          }
+          substitutions = {
+            _VM_NAME     = var.test_vm_name
+            _VM_ZONE     = var.test_vm_zone
+            _ALLOW_SKIP  = "true"
+          }
+          tags = ["deploy", "test"]
+        }
+
+        "deploy-prod" = {
+          description     = "Deploy erpnext_enhancements app to production VM"
+          service_account = local.cb_service_account
+          filename        = "cloudbuild-deploy.yaml"
+          push = {
+            branch = replace(var.deploy_branch_regex, "refs/heads/", "")
+          }
+          substitutions = {
+            _VM_NAME     = var.production_vm_name
+            _VM_ZONE     = var.production_vm_zone
+            _ALLOW_SKIP  = "false"
+          }
+          tags = ["deploy", "production"]
+        }
+
+        # --- Upstream Update Triggers (manual) ---
+        "upstream-test" = {
+          description     = "Update upstream apps on test VM"
+          service_account = local.cb_service_account
+          filename        = "cloudbuild-upstream.yaml"
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            _VM_NAME     = var.test_vm_name
+            _VM_ZONE     = var.test_vm_zone
+            _ALLOW_SKIP  = "true"
+          }
+          tags = ["upstream", "test"]
+        }
+
+        "upstream-prod" = {
+          description     = "Update upstream apps on production VM"
+          service_account = local.cb_service_account
+          filename        = "cloudbuild-upstream.yaml"
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            _VM_NAME     = var.production_vm_name
+            _VM_ZONE     = var.production_vm_zone
+            _ALLOW_SKIP  = "false"
+          }
+          tags = ["upstream", "production"]
+        }
       }
     }
   }
 }
+
+# ============================================================================
+# 5. DEPLOY SSH KEY FOR APP CI/CD
+# ============================================================================
+resource "tls_private_key" "deploy_ssh_key" {
+  count     = var.provision_cloud_build ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "google_secret_manager_secret" "deploy_ssh_key" {
+  count     = var.provision_cloud_build ? 1 : 0
+  project   = module.project.project_id
+  secret_id = "DEPLOY_SSH_KEY"
+  replication {
+    auto {}
+  }
+
+  depends_on = [
+    module.project
+  ]
+}
+
+resource "google_secret_manager_secret_version" "deploy_ssh_key" {
+  count       = var.provision_cloud_build ? 1 : 0
+  secret      = google_secret_manager_secret.deploy_ssh_key[0].id
+  secret_data = tls_private_key.deploy_ssh_key[0].private_key_openssh
+
+  depends_on = [
+    google_secret_manager_secret.deploy_ssh_key
+  ]
+}
+
+# Note: The deploy SSH public key is NOT managed via Terraform to avoid
+# overwriting existing project-level SSH keys. After apply, run:
+#   terraform output deploy_ssh_public_key >> ~/.ssh/deploy_key.pub
+# Then manually add the public key to project metadata:
+#   gcloud compute project-info add-metadata \
+#     --metadata-from-file ssh-keys=<(echo "deploy:$(cat ~/.ssh/deploy_key.pub)")

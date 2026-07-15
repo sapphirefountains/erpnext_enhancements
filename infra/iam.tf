@@ -186,8 +186,8 @@ resource "google_project_iam_member" "cloudbuild_secret_accessor_project_level" 
   # 🎯 THE ULTIMATE FIX: Dynamically grants access to BOTH secret paths across both project identifier formats
   condition {
     title       = "restrict_to_pipeline_secrets"
-    description = "Allow access to github-token and github-authorizer-credential variants across ID patterns"
-    expression  = "(resource.name.startsWith('projects/${module.project.project_id}/secrets/github-token') || resource.name.startsWith('projects/${module.project.number}/secrets/github-token')) || (resource.name.startsWith('projects/${module.project.project_id}/secrets/github-authorizer-credential') || resource.name.startsWith('projects/${module.project.number}/secrets/github-authorizer-credential'))"
+    description = "Allow access to pipeline secrets across ID patterns"
+    expression  = "(resource.name.startsWith('projects/${module.project.project_id}/secrets/github-token') || resource.name.startsWith('projects/${module.project.number}/secrets/github-token')) || (resource.name.startsWith('projects/${module.project.project_id}/secrets/github-authorizer-credential') || resource.name.startsWith('projects/${module.project.number}/secrets/github-authorizer-credential')) || (resource.name.startsWith('projects/${module.project.project_id}/secrets/DEPLOY_SSH_KEY') || resource.name.startsWith('projects/${module.project.number}/secrets/DEPLOY_SSH_KEY'))"
   }
 
   depends_on = [
@@ -248,4 +248,12 @@ resource "google_project_iam_member" "iap_tunnel_user" {
   project  = module.project.project_id
   role     = "roles/iap.tunnelResourceAccessor"
   member   = each.value
+}
+
+# Grant IAP Tunnel access to Cloud Build SA for app deployment CI/CD
+resource "google_project_iam_member" "cloudbuild_iap_tunnel" {
+  count   = var.provision_iam && var.provision_cloud_build ? 1 : 0
+  project = module.project.project_id
+  role    = "roles/iap.tunnelResourceAccessor"
+  member  = "serviceAccount:${module.project.number}@cloudbuild.gserviceaccount.com"
 }

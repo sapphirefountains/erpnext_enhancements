@@ -97,3 +97,15 @@ output "test_region_mig" {
   value       = var.provision_test_mig && length(google_compute_region_instance_group_manager.test_mig) > 0 ? google_compute_region_instance_group_manager.test_mig[0] : null
 }
 
+output "deploy_ssh_public_key" {
+  description = "The public key for the deploy user used by Cloud Build CI/CD. Add this to project SSH metadata."
+  value       = var.provision_cloud_build ? try(tls_private_key.deploy_ssh_key[0].public_key_openssh, "") : ""
+  sensitive   = false
+}
+
+output "deploy_ssh_private_key" {
+  description = "The private key for the deploy user. Also stored in Secret Manager as DEPLOY_SSH_KEY."
+  value       = var.provision_cloud_build ? try(tls_private_key.deploy_ssh_key[0].private_key_openssh, "") : ""
+  sensitive   = true
+}
+

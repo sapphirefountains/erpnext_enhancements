@@ -624,3 +624,27 @@ variable "iap_tunnel_members" {
   description = "List of members (users/groups/SAs) to grant IAP tunnel access for SSH. Each entry should be in the format 'user:email@example.com' or 'group:group@example.com' or 'serviceAccount:sa@project.iam.gserviceaccount.com'"
   default     = []
 }
+
+variable "test_vm_name" {
+  description = "Name of the test/spot VM for Cloud Build deploy triggers"
+  type        = string
+  default     = "test-erpnext-spot-vm"
+}
+
+variable "test_vm_zone" {
+  description = "Zone of the test/spot VM for Cloud Build deploy triggers"
+  type        = string
+  default     = "us-east1-b"
+}
+
+variable "production_vm_name" {
+  description = "Name of the production VM for Cloud Build deploy triggers"
+  type        = string
+  default     = "production-erpnext-standard-vm"
+}
+
+variable "production_vm_zone" {
+  description = "Zone of the production VM for Cloud Build deploy triggers"
+  type        = string
+  default     = "us-east4-a"
+}

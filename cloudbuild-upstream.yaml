@@ -1,0 +1,49 @@
+steps:
+  - name: 'google/cloud-sdk:latest'
+    id: 'Update Upstream Apps'
+    entrypoint: 'sh'
+    secretEnv: ['DEPLOY_SSH_KEY']
+    args:
+      - '-c'
+      - |
+        set -e
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        echo "$$DEPLOY_SSH_KEY" > /root/.ssh/id_rsa
+        chmod 600 /root/.ssh/id_rsa
+
+        VM="$_VM_NAME"
+        ZONE="$_VM_ZONE"
+        STATUS=$(gcloud compute instances describe "$VM" --zone="$ZONE" \
+          --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
+
+        if [ "$STATUS" != "RUNNING" ]; then
+          if [ "$_ALLOW_SKIP" = "true" ]; then
+            echo "⚠️  $VM is $STATUS — skipping"
+            exit 0
+          else
+            echo "❌  $VM is $STATUS — aborting"
+            exit 1
+          fi
+        fi
+
+        echo "🚀 Updating all apps on $VM"
+        gcloud compute ssh deploy@"$VM" \
+          --zone="$ZONE" \
+          --ssh-key-file=/root/.ssh/id_rsa \
+          --tunnel-through-iap \
+          --command="cd /home/frappe/frappe-bench && \
+            bench update --pull --no-backup && \
+            sudo systemctl restart frappe-bench"
+        echo "✅  $VM updated"
+
+timeout: '1200s'
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _ALLOW_SKIP: 'false'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/DEPLOY_SSH_KEY/versions/latest
+      env: 'DEPLOY_SSH_KEY'

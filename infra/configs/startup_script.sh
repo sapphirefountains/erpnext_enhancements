@@ -116,6 +116,11 @@ SERVICEEOF
   systemctl start frappe-bench
 fi
 
+# ── Ensure deploy user exists for CI/CD SSH access ──────
+id deploy &>/dev/null || useradd -m -s /bin/bash deploy
+echo "deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart frappe-bench" \
+  > /etc/sudoers.d/deploy
+
 # ── Setup nginx if bench exists ──────────────────────────
 if [ -d /home/frappe/frappe-bench ]; then
   sudo -u frappe PATH="/home/frappe/.local/bin:$PATH" bash -c 'cd /home/frappe/frappe-bench && bench setup production frappe --yes' || true
