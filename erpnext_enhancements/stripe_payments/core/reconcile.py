@@ -186,24 +186,19 @@ def _on_payout_paid(payout):
 
 def _on_payout_failed(payout):
 	"""A payout failed/was reversed at the bank -> alert; no GL entry is posted."""
-	try:
-		frappe.get_doc(
-			{
-				"doctype": "Notification Log",
-				"subject": f"Stripe payout {payout.get('id')} FAILED",
-				"email_content": (
-					f"Payout {payout.get('id')} for {from_minor_units(payout.get('amount'))} "
-					f"{(payout.get('currency') or 'usd').upper()} failed at the bank "
-					f"({payout.get('failure_message') or payout.get('failure_code') or 'no reason given'}). "
-					"No Journal Entry was posted; investigate in the Stripe dashboard."
-				),
-				"for_user": frappe.session.user,
-				"type": "Alert",
-			}
-		).insert(ignore_permissions=True)
-		frappe.db.commit()
-	except Exception:
-		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: payout.failed notify")
+	from erpnext_enhancements.stripe_payments.core import payouts
+
+	payouts._notify_review(
+		None,
+		payout.get("id"),
+		[
+			f"Stripe payout {payout.get('id')} for {from_minor_units(payout.get('amount'))} "
+			f"{(payout.get('currency') or 'usd').upper()} FAILED at the bank "
+			f"({payout.get('failure_message') or payout.get('failure_code') or 'no reason given'}). "
+			"No Journal Entry was posted; investigate in the Stripe dashboard."
+		],
+	)
+	frappe.db.commit()
 	return None
 
 

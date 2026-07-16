@@ -138,23 +138,21 @@ def retrieve_account(settings=None):
 	return _request("GET", "/account", settings=settings)
 
 
-def retrieve_payout(payout_id: str, settings=None):
-	"""Retrieve a single Payout object (net amount, arrival date, status)."""
-	return _request("GET", f"/payouts/{payout_id}", settings=settings)
-
-
 def list_balance_transactions_for_payout(payout_id: str, settings=None) -> list[dict]:
 	"""Return every Balance Transaction that makes up a payout (auto-paginated).
 
 	Each entry carries ``amount``/``fee``/``net`` in minor units and a
 	``reporting_category`` (charge, refund, dispute, fee, …). Stripe returns at
 	most 100 per page; we follow ``has_more`` with ``starting_after`` until the
-	list is exhausted, bounding the loop so a runaway response can't spin forever.
+	list is exhausted. The page loop is bounded so a runaway response can't spin
+	forever — but if that bound is hit with more pages still pending we raise
+	rather than return a silently-partial list (a truncated list would under-count
+	fees/gross and mis-book the Journal Entry).
 	"""
 	settings = settings or get_settings()
 	out: list[dict] = []
 	starting_after = None
-	for _ in range(200):  # hard cap: 200 pages * 100 = 20k txns/payout is far beyond real
+	for _ in range(200):  # 200 pages * 100 = 20k txns/payout is far beyond real
 		params = {"payout": payout_id, "limit": 100}
 		if starting_after:
 			params["starting_after"] = starting_after
@@ -162,9 +160,12 @@ def list_balance_transactions_for_payout(payout_id: str, settings=None) -> list[
 		data = page.get("data") or []
 		out.extend(data)
 		if not page.get("has_more") or not data:
-			break
+			return out
 		starting_after = data[-1].get("id")
-	return out
+	raise StripeError(
+		f"Payout {payout_id} has more balance transactions than the page cap; "
+		"refusing to post a Journal Entry from a partial list."
+	)
 
 
 def list_recent_payouts(limit: int = 20, settings=None) -> list[dict]:
