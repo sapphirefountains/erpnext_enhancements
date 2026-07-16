@@ -18,6 +18,7 @@ straight from ``checkout.session.completed``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 
 import frappe
@@ -44,12 +45,41 @@ HANDLED = {
 }
 
 
+@contextlib.contextmanager
+def _reconcile_as_system_user():
+	"""Run the reconciliation body as a system user.
+
+	The Stripe webhook route is ``allow_guest``, so ``process_event`` is enqueued from
+	a Guest session and the background job inherits it. ``get_payment_entry`` does a
+	permission-checked read of the Sales Invoice, which raises ``PermissionError`` for
+	Guest — silently failing every unattended charge. Elevate a Guest session to
+	Administrator for the duration and always restore the caller's user; non-guest
+	callers (the scheduled retry, a manual reprocess) are left untouched.
+	"""
+	original_user = frappe.session.user
+	switched = original_user == "Guest"
+	if switched:
+		frappe.set_user("Administrator")
+	try:
+		yield
+	finally:
+		if switched:
+			frappe.set_user(original_user)
+
+
 def process_event(event_name: str):
 	"""Dispatch one stored ``Stripe Event`` by type; record the outcome on the doc.
 
-	Idempotent: re-running for an already-processed event is a no-op, and the
-	terminal ``finalize_payment`` dedupes against existing Payment Entries.
+	Runs as a system user (see :func:`_reconcile_as_system_user`) so the guest webhook
+	context cannot trip the Sales Invoice permission check. Idempotent: re-running for
+	an already-processed event is a no-op, and the terminal ``finalize_payment``
+	dedupes against existing Payment Entries.
 	"""
+	with _reconcile_as_system_user():
+		_dispatch_event(event_name)
+
+
+def _dispatch_event(event_name: str):
 	event = frappe.get_doc("Stripe Event", event_name)
 	if event.processed:
 		return
