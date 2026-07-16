@@ -124,12 +124,16 @@ def posting_date_from_arrival(arrival) -> object:
 
 	``frappe.utils.get_datetime`` does NOT interpret an int as an epoch (it treats
 	any non-string as an invalid date and returns None), so the epoch must be
-	converted explicitly. Falls back to today for a missing/garbage value.
+	converted explicitly. Stripe expresses ``arrival_date`` as 00:00:00 **UTC** of
+	the arrival date, so the epoch is read in UTC (not the host's local timezone) —
+	otherwise a non-UTC server would shift the payout's posting date back a day and
+	could push it into the wrong (possibly closed) period. Falls back to today for a
+	missing/garbage value.
 	"""
 	if arrival in (None, ""):
 		return today()
 	try:
-		return datetime.datetime.fromtimestamp(int(arrival)).date()
+		return datetime.datetime.fromtimestamp(int(arrival), tz=datetime.timezone.utc).date()
 	except (TypeError, ValueError, OSError, OverflowError):
 		return today()
 
