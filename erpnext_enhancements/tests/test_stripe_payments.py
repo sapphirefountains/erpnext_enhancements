@@ -180,6 +180,37 @@ def test_enrich_reads_charge_and_session_without_api():
 	assert _enrich(session, None) == (None, "us_bank_account")
 
 
+def test_reconcile_elevates_guest_to_administrator_and_restores():
+	"""The webhook is allow_guest; reconciliation must run elevated, then restore.
+
+	Guards the fix for the guest-permission bug: without elevation get_payment_entry's
+	permission-checked Sales Invoice read raises PermissionError for Guest.
+	"""
+	frappe = install_frappe_stub()
+	frappe.session.user = "Guest"
+	seen = []
+	frappe.set_user = lambda user: (seen.append(user), setattr(frappe.session, "user", user))
+	from erpnext_enhancements.stripe_payments.core.reconcile import _reconcile_as_system_user
+
+	with _reconcile_as_system_user():
+		assert frappe.session.user == "Administrator"  # elevated inside the block
+	assert frappe.session.user == "Guest"  # caller's user restored
+	assert seen == ["Administrator", "Guest"]
+
+
+def test_reconcile_leaves_a_system_user_untouched():
+	"""A non-guest caller (scheduled retry / manual reprocess) is never switched."""
+	frappe = install_frappe_stub()
+	frappe.session.user = "operator@example.com"
+	seen = []
+	frappe.set_user = lambda user: seen.append(user)
+	from erpnext_enhancements.stripe_payments.core.reconcile import _reconcile_as_system_user
+
+	with _reconcile_as_system_user():
+		assert frappe.session.user == "operator@example.com"
+	assert seen == []  # no elevation, no restore
+
+
 # --- access control + API surface ------------------------------------------
 
 

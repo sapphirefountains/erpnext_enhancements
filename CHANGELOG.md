@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.158.2] - 2026-07-16
+
+### Fixed
+
+- **Stripe webhook reconciliation ran as Guest.** The Stripe webhook endpoint is
+  `allow_guest`, so the enqueued `reconcile.process_event` job inherited the Guest
+  session and `get_payment_entry`'s permission-checked Sales Invoice read raised
+  `PermissionError` — silently failing **every** unattended live charge (the Stripe
+  Event was left in `Error`, no Payment Entry posted). `process_event` now elevates a
+  Guest session to `Administrator` for the reconciliation via a
+  `_reconcile_as_system_user` context manager and restores the caller's user
+  afterwards; the scheduled retry and manual reprocess (already system users) are
+  untouched. Surfaced by the first true end-to-end card charge on TEST.
+
 ## [1.158.1] - 2026-07-16
 
 ### Fixed
