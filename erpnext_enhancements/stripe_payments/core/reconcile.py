@@ -314,7 +314,6 @@ def _create_payment_entry(sp, pi_id, charge_id, method_type) -> str:
 		pe.source_exchange_rate = 1
 		pe.target_exchange_rate = 1
 
-	_apply_surcharge(pe, sp)
 	pe.mode_of_payment = mode_of_payment
 	pe.reference_no = reference_no
 	pe.reference_date = today()
@@ -324,32 +323,85 @@ def _create_payment_entry(sp, pi_id, charge_id, method_type) -> str:
 	pe.flags.ignore_permissions = True
 	pe.insert()
 	pe.submit()
+	# A collected surcharge is booked as income by a companion Journal Entry, not on
+	# this Payment Entry: erpnext forces received == paid on a same-currency Receive,
+	# so a surcharge cannot ride on the invoice PE as a deduction (see _book_surcharge).
+	_book_surcharge(sp, pe, charge_id, pi_id)
 	return pe.name
 
 
-def _apply_surcharge(pe, sp):
-	"""Add the collected surcharge/fee to the Payment Entry as income.
+def _surcharge_je_legs(deposit_account, income_account, surcharge, cost_center):
+	"""The two balanced Journal Entry legs for a collected surcharge (pure function).
 
-	The bank/clearing account receives invoice + surcharge; the surcharge is credited
-	to the configured income account via a negative deduction row, so the invoice is
-	never over-allocated. Single-currency; the deduction sign is verified on the dev
-	site during end-to-end testing.
+	Dr deposit/clearing, Cr surcharge income — equal amounts, so the entry always
+	balances. Split out so the leg construction is unit-tested without a bench.
+	"""
+	amount = flt(surcharge, 2)
+	return [
+		{
+			"account": deposit_account,
+			"cost_center": cost_center,
+			"debit_in_account_currency": amount,
+			"credit_in_account_currency": 0,
+		},
+		{
+			"account": income_account,
+			"cost_center": cost_center,
+			"debit_in_account_currency": 0,
+			"credit_in_account_currency": amount,
+		},
+	]
+
+
+def _book_surcharge(sp, pe, charge_id, pi_id):
+	"""Book a collected surcharge as income via a companion Journal Entry.
+
+	erpnext's Payment Entry cannot model ``received_amount > paid_amount`` on a
+	same-currency Receive — ``set_amounts`` forces them equal, so a surcharge cannot
+	ride on the invoice Payment Entry as a deduction (submit fails with "Difference
+	Amount must be zero"). Instead the Payment Entry settles the invoice at face value
+	and this JE moves the extra the customer paid into surcharge income::
+
+	    Dr  Deposit / Clearing   surcharge
+	        Cr  Surcharge Income      surcharge
+
+	The deposit account ends at charge + surcharge — matching the real Stripe deposit
+	that the payout sweep (WI-040) later moves to the bank. Idempotent on the Stripe
+	charge/PaymentIntent id (JE ``cheque_no``) so a redelivered event never double-books.
+	Posted inside the same transaction as the Payment Entry, so any failure rolls the
+	whole reconciliation back together.
 	"""
 	surcharge = flt(getattr(sp, "surcharge_amount", 0))
 	if surcharge <= 0:
-		return
+		return None
 	settings = get_settings()
 	if not settings.surcharge_income_account:
 		frappe.throw("Stripe surcharge income account is not set, but a surcharge was collected.")
-	pe.received_amount = flt(pe.received_amount) + surcharge
-	pe.append(
-		"deductions",
-		{
-			"account": settings.surcharge_income_account,
-			"cost_center": frappe.get_cached_value("Company", pe.company, "cost_center"),
-			"amount": -surcharge,
-		},
+
+	key = f"stripe-surcharge:{charge_id or pi_id or sp.name}"
+	existing = frappe.db.get_value("Journal Entry", {"cheque_no": key, "docstatus": ["<", 2]}, "name")
+	if existing:
+		return existing
+
+	cost_center = frappe.get_cached_value("Company", pe.company, "cost_center")
+	je = frappe.new_doc("Journal Entry")
+	je.voucher_type = "Journal Entry"
+	je.company = pe.company
+	je.posting_date = pe.posting_date or today()
+	je.cheque_no = key
+	je.cheque_date = je.posting_date
+	je.user_remark = (
+		f"Stripe surcharge for {sp.name} ({charge_id or pi_id}); "
+		f"companion to Payment Entry {pe.name}."
 	)
+	for leg in _surcharge_je_legs(
+		settings.deposit_account, settings.surcharge_income_account, surcharge, cost_center
+	):
+		je.append("accounts", leg)
+	je.flags.ignore_permissions = True
+	je.insert()
+	je.submit()
+	return je.name
 
 
 def _mark_paid(sp, pe_name, pi_id, charge_id, method_type):
