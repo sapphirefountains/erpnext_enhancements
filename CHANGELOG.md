@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.158.1] - 2026-07-16
-
-### Fixed
-- **Stripe payout Journal Entries date correctly regardless of the server's timezone.** Stripe's `arrival_date` is a Unix timestamp at 00:00:00 **UTC** of the payout's arrival date; the conversion now reads it in UTC explicitly instead of the host's local timezone. On the current (UTC) infrastructure the date was already correct, but a non-UTC host would have shifted a payout's posting date back a day — which for a financial entry could land it in the wrong (possibly closed) period. Added a unit test covering the epoch → date conversion. *(WI-040 hardening)*
-
 ## [1.158.0] - 2026-07-16
 
 ### Added

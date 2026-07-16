@@ -412,17 +412,3 @@ def test_signed_legs_balance_and_sign_safety():
 	assert neg["BANK"] < 0  # bank credited (money leaves the bank)
 	assert neg["CLR"] > 0  # clearing debited
 	assert round(neg["CLR"], 2) == 45.00
-
-
-def test_posting_date_from_arrival_reads_epoch_as_utc():
-	"""arrival_date (a UTC Unix epoch int) -> the correct UTC date, host-tz-independent."""
-	install_frappe_stub()
-	import datetime as _dt
-
-	from erpnext_enhancements.stripe_payments.core.payouts import posting_date_from_arrival
-
-	# 1721088000 == 2024-07-16 00:00:00 UTC
-	assert posting_date_from_arrival(1721088000) == _dt.date(2024, 7, 16)
-	assert posting_date_from_arrival("1721088000") == _dt.date(2024, 7, 16)  # tolerate string epoch
-	assert posting_date_from_arrival(None) == "2026-06-18"  # stub today()
-	assert posting_date_from_arrival("garbage") == "2026-06-18"  # falls back, no raise
