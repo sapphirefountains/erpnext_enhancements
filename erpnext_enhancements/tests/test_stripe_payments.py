@@ -35,6 +35,7 @@ def install_frappe_stub():
 	frappe_utils.cint = lambda value=0, *args, **kwargs: int(_flt(value))
 	frappe_utils.today = lambda: "2026-06-18"
 	frappe_utils.now_datetime = lambda: None
+	frappe_utils.get_datetime = lambda value=None, *args, **kwargs: value
 	frappe_utils.add_to_date = lambda value=None, **kwargs: value
 	frappe_utils.get_url = lambda path=None, *args, **kwargs: f"https://erp.example.com{path or ''}"
 	frappe.utils = frappe_utils
@@ -282,3 +283,83 @@ def test_compute_surcharge_by_method():
 	assert _method_hint("card") == "card"
 	assert _method_hint("ach") == "us_bank_account"
 	assert _method_hint(None) is None
+
+
+# --- payout reconciliation (WI-040) -----------------------------------------
+
+
+def _charge_bt(amount_cents, fee_cents, txn="txn"):
+	"""A charge balance-transaction in Stripe minor units."""
+	return {
+		"id": txn,
+		"type": "charge",
+		"reporting_category": "charge",
+		"amount": amount_cents,
+		"fee": fee_cents,
+		"net": amount_cents - fee_cents,
+	}
+
+
+def test_payout_breakdown_charges_and_fees():
+	"""Two $100 card charges: net = gross - fees, and net + fees == gross (no refunds)."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.payouts import compute_payout_breakdown
+
+	bts = [_charge_bt(10000, 320, "txn_1"), _charge_bt(10000, 320, "txn_2")]
+	payout = {"id": "po_1", "amount": 19360, "currency": "usd", "status": "paid"}
+	b = compute_payout_breakdown(payout, bts)
+	assert b["gross"] == 200.0
+	assert b["fees"] == 6.40
+	assert b["net"] == 193.60
+	assert b["refunds"] == 0.0
+	assert b["charge_count"] == 2
+	assert b["other_count"] == 0
+	# The clearing-zero identity the Journal Entry relies on.
+	assert round(b["net"] + b["fees"], 2) == round(b["gross"] - b["refunds"], 2)
+
+
+def test_payout_breakdown_with_refund():
+	"""A refund in the payout reduces net; net + fees still equals gross - refunds."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.payouts import compute_payout_breakdown
+
+	bts = [
+		_charge_bt(10000, 320, "txn_1"),
+		_charge_bt(10000, 320, "txn_2"),
+		{"id": "txn_r", "type": "refund", "reporting_category": "refund", "amount": -3000, "fee": 0, "net": -3000},
+	]
+	payout = {"id": "po_2", "amount": 16360, "currency": "usd", "status": "paid"}
+	b = compute_payout_breakdown(payout, bts)
+	assert b["gross"] == 200.0
+	assert b["refunds"] == 30.0
+	assert b["fees"] == 6.40
+	assert b["net"] == 163.60
+	assert round(b["net"] + b["fees"], 2) == round(b["gross"] - b["refunds"], 2)  # 170.00
+
+
+def test_payout_breakdown_excludes_payout_line_and_flags_other():
+	"""The 'payout' line is ignored; a dispute is counted as 'other' for review."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.payouts import compute_payout_breakdown
+
+	bts = [
+		_charge_bt(10000, 320, "txn_1"),
+		{"id": "txn_p", "type": "payout", "amount": -9680, "fee": 0, "net": -9680},
+		{"id": "txn_d", "type": "dispute", "reporting_category": "dispute", "amount": -1500, "fee": 1500, "net": -3000},
+	]
+	payout = {"id": "po_3", "amount": 6680, "currency": "usd", "status": "paid"}
+	b = compute_payout_breakdown(payout, bts)
+	assert b["charge_count"] == 1  # payout line excluded
+	assert b["other_count"] == 1  # dispute flagged for review
+
+
+def test_fee_variance_flags_abnormal_and_passes_nominal():
+	"""_fee_variance flags a >20% deviation from card-nominal and passes a normal fee."""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.payouts import _fee_variance
+
+	# nominal: expected 0.029*200 + 0.30*2 = 6.40; actual 6.40 -> no note
+	assert _fee_variance({"gross": 200.0, "charge_count": 2, "fees": 6.40}) is None
+	# double the fee -> flagged
+	note = _fee_variance({"gross": 200.0, "charge_count": 2, "fees": 12.80})
+	assert note and "variance" in note.lower()

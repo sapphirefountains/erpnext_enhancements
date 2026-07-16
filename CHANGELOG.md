@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.158.0] - 2026-07-16
+
+### Added
+- **Stripe payouts now post their own reconciling Journal Entry, so the bank actually ties out.** Card and ACH charges land in the Stripe clearing account gross; Stripe then pays out the accumulated balance to the real bank account net of its processing fees, in lagged batches. Previously nothing booked that sweep, so the clearing account grew forever and the bank never reconciled. On each `payout.paid` webhook (with an hourly backstop poll for missed webhooks) the integration now fetches the payout's balance transactions and posts one Journal Entry — **Dr Payout Bank (net) + Dr Merchant Fees (Stripe's fees) / Cr Stripe Clearing (net + fees)** — self-balancing, sign-safe for refund-heavy (negative) payouts, and idempotent on the payout id. The journalled fee always comes from Stripe's data (the card/ACH rate constants only raise a soft variance flag); a payout carrying anything beyond charges/refunds/fees (a dispute or adjustment) still posts but is flagged for an Accounts Manager to reconcile the customer side. `payout.failed` raises an alert and books nothing. Two new fields on **Stripe Payments Settings** — *Merchant Fees Account* and *Payout Bank Account* — configure it; unset, payout reconciliation stays off. The clearing account nets to zero per payout once the customer Payment Entries and the refund reversals (a later change) are posted. *(WI-040)*
+
+### Fixed
+- The bench-free Stripe unit suite (`test_stripe_payments.py`) now runs in CI — like the QuickBooks suite before it, it existed but was wired into no CI step, so it ran nowhere.
+
 ## [1.157.0] - 2026-07-14
 
 ### Changed

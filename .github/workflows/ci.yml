@@ -84,6 +84,8 @@ jobs:
           erpnext_enhancements.tests.test_water_design_controller -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
+      - name: Stripe Payments (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_stripe_payments.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

@@ -138,6 +138,41 @@ def retrieve_account(settings=None):
 	return _request("GET", "/account", settings=settings)
 
 
+def retrieve_payout(payout_id: str, settings=None):
+	"""Retrieve a single Payout object (net amount, arrival date, status)."""
+	return _request("GET", f"/payouts/{payout_id}", settings=settings)
+
+
+def list_balance_transactions_for_payout(payout_id: str, settings=None) -> list[dict]:
+	"""Return every Balance Transaction that makes up a payout (auto-paginated).
+
+	Each entry carries ``amount``/``fee``/``net`` in minor units and a
+	``reporting_category`` (charge, refund, dispute, fee, …). Stripe returns at
+	most 100 per page; we follow ``has_more`` with ``starting_after`` until the
+	list is exhausted, bounding the loop so a runaway response can't spin forever.
+	"""
+	settings = settings or get_settings()
+	out: list[dict] = []
+	starting_after = None
+	for _ in range(200):  # hard cap: 200 pages * 100 = 20k txns/payout is far beyond real
+		params = {"payout": payout_id, "limit": 100}
+		if starting_after:
+			params["starting_after"] = starting_after
+		page = _request("GET", "/balance_transactions", params=params, settings=settings)
+		data = page.get("data") or []
+		out.extend(data)
+		if not page.get("has_more") or not data:
+			break
+		starting_after = data[-1].get("id")
+	return out
+
+
+def list_recent_payouts(limit: int = 20, settings=None) -> list[dict]:
+	"""List recent Payout objects (newest first) for the missed-webhook backstop."""
+	page = _request("GET", "/payouts", params={"limit": limit}, settings=settings)
+	return page.get("data") or []
+
+
 def create_payment_intent(params: dict, idempotency_key: str | None = None):
 	"""Create (and usually confirm) a PaymentIntent — used for off-session charges."""
 	return _request("POST", "/payment_intents", data=params, idempotency_key=idempotency_key)

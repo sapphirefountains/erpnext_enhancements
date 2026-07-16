@@ -380,6 +380,7 @@ scheduler_events = {
 		"erpnext_enhancements.accounting_intake.channels.poll_watched_folder",
 		# stripe_payments: backstop for missed webhooks + retry of errored events
 		"erpnext_enhancements.stripe_payments.core.tasks.poll_pending",
+		"erpnext_enhancements.stripe_payments.core.tasks.poll_payouts",
 		"erpnext_enhancements.stripe_payments.core.tasks.retry_failed",
 		# plaid_banking: refresh cached bank balances (self-throttled to
 		# refresh_poll_minutes; skips while paused, so a dead link can't storm)
