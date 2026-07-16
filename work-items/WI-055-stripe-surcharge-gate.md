@@ -16,7 +16,7 @@ On prod Single `Stripe Payments Settings` (fieldnames verified — repo_payments
 
 ## Acceptance criteria
 - tabSingles `surcharge_enabled`=1 with all four rate fields and `surcharge_income_account` set; checklist evidence filed (8 artifacts).
-- A live card payment shows the surcharge as a separate labelled line; the resulting Payment Entry carries the negative deduction row crediting `surcharge_income_account` (mechanism verified in reconcile._apply_surcharge — repo_payments).
+- A live card payment shows the surcharge as a separate labelled line; the Payment Entry settles the invoice at face value and a **companion Journal Entry** credits `surcharge_income_account` (`Dr Deposit/Clearing / Cr Surcharge Income`), so the deposit account ends at charge + surcharge (mechanism: `reconcile._book_surcharge`, fixed in v1.158.3 — erpnext forbids received > paid on a Receive PE, so the earlier `_apply_surcharge` deduction approach could never post).
 - A full refund returns the surcharge (test transaction).
 
 ## Rollback

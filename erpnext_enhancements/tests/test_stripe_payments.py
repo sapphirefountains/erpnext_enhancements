@@ -330,6 +330,29 @@ def test_compute_surcharge_by_method():
 	assert _method_hint(None) is None
 
 
+def test_surcharge_je_legs_balance_and_route_to_income():
+	"""The companion surcharge JE debits deposit / credits income for equal amounts.
+
+	erpnext forbids received > paid on a same-currency Receive PE, so the surcharge is
+	booked by this balanced JE instead of a PE deduction.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.reconcile import _surcharge_je_legs
+
+	legs = _surcharge_je_legs("Stripe Clearing - SF", "Stripe Surcharge Income - SF", 7.55, "Main - SF")
+	assert len(legs) == 2
+	deposit, income = legs
+	assert deposit["account"] == "Stripe Clearing - SF"
+	assert deposit["debit_in_account_currency"] == 7.55 and deposit["credit_in_account_currency"] == 0
+	assert income["account"] == "Stripe Surcharge Income - SF"
+	assert income["credit_in_account_currency"] == 7.55 and income["debit_in_account_currency"] == 0
+	# Balances: total debit == total credit.
+	total_debit = sum(leg["debit_in_account_currency"] for leg in legs)
+	total_credit = sum(leg["credit_in_account_currency"] for leg in legs)
+	assert total_debit == total_credit == 7.55
+	assert all(leg["cost_center"] == "Main - SF" for leg in legs)
+
+
 # --- payout reconciliation (WI-040) -----------------------------------------
 
 

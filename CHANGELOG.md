@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.158.3] - 2026-07-16
+
+### Fixed
+
+- **Stripe surcharge could never post to the ledger.** `_apply_surcharge` inflated the
+  Payment Entry's `received_amount` above `paid_amount` and added a negative deduction
+  — but erpnext forces `received == paid` on a same-currency Receive Payment Entry, so
+  every surcharged card/ACH payment died at submit with *"Difference Amount must be
+  zero."* The surcharge is now booked as income by a **companion Journal Entry**
+  (`Dr Deposit/Clearing / Cr Surcharge Income`) while the Payment Entry settles the
+  invoice at face value; the deposit account ends at charge + surcharge, matching the
+  real Stripe deposit that the payout sweep (WI-040) later moves to the bank. The JE is
+  idempotent on the Stripe charge/PaymentIntent id and posts inside the same
+  transaction as the Payment Entry, so any failure rolls the whole reconciliation back
+  together. Surcharge remains OFF at launch (OD-7); this unblocks the Phase-2 surcharge
+  go-live (WI-055). Surfaced by the first true end-to-end card charge on TEST.
+
 ## [1.158.2] - 2026-07-16
 
 ### Fixed
