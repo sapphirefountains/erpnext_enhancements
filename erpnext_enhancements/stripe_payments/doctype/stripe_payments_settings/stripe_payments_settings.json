@@ -22,6 +22,8 @@
   "webhook_url",
   "routing_section",
   "deposit_account",
+  "fee_expense_account",
+  "payout_bank_account",
   "card_mode_of_payment",
   "ach_mode_of_payment",
   "column_break_routing",
@@ -142,6 +144,20 @@
    "fieldname": "deposit_account",
    "fieldtype": "Link",
    "label": "Deposit / Clearing Account",
+   "options": "Account"
+  },
+  {
+   "description": "Expense account for Stripe's processing fees, debited from each payout (e.g. Merchant Fees). Required for payout reconciliation.",
+   "fieldname": "fee_expense_account",
+   "fieldtype": "Link",
+   "label": "Merchant Fees Account",
+   "options": "Account"
+  },
+  {
+   "description": "Real bank GL account Stripe pays out to. The payout Journal Entry debits this account with the net amount that lands in the bank. Required for payout reconciliation.",
+   "fieldname": "payout_bank_account",
+   "fieldtype": "Link",
+   "label": "Payout Bank Account",
    "options": "Account"
   },
   {

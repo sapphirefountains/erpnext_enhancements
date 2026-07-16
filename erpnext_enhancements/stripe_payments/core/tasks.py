@@ -64,6 +64,41 @@ def poll_pending():
 			frappe.log_error(error_snippet(frappe.get_traceback()), f"Stripe: poll_pending {name} failed")
 
 
+def poll_payouts():
+	"""Backstop for a missed ``payout.paid`` webhook: post JEs for recent payouts.
+
+	Lists the most recent payouts from Stripe and reconciles any that are ``paid``
+	but not yet journalled. ``process_payout`` is idempotent (keyed on the payout id
+	stamped in the Journal Entry's cheque_no), so re-running is safe. No-ops unless
+	the integration is enabled and the payout accounts are configured.
+	"""
+	settings = get_settings()
+	if not is_enabled(settings):
+		return
+	if not (settings.deposit_account and settings.fee_expense_account and settings.payout_bank_account):
+		return
+
+	from erpnext_enhancements.stripe_payments.core import payouts
+	from erpnext_enhancements.stripe_payments.core.client import list_recent_payouts
+
+	try:
+		recent = list_recent_payouts(limit=20, settings=settings)
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: poll_payouts list failed")
+		return
+
+	for payout in recent:
+		if payout.get("status") != "paid":
+			continue
+		try:
+			payouts.process_payout(payout)
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(
+				error_snippet(frappe.get_traceback()), f"Stripe: poll_payouts {payout.get('id')} failed"
+			)
+
+
 def retry_failed():
 	"""Re-run events whose processing errored (capped per run)."""
 	if not is_enabled():

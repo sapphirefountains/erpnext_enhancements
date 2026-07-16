@@ -39,6 +39,8 @@ HANDLED = {
 	"payment_intent.succeeded",
 	"payment_intent.payment_failed",
 	"charge.refunded",
+	"payout.paid",
+	"payout.failed",
 }
 
 
@@ -68,6 +70,8 @@ def process_event(event_name: str):
 			"payment_intent.succeeded": _on_payment_intent_succeeded,
 			"payment_intent.payment_failed": _on_payment_intent_failed,
 			"charge.refunded": _on_charge_refunded,
+			"payout.paid": _on_payout_paid,
+			"payout.failed": _on_payout_failed,
 		}[event_type]
 		sp = handler(obj)
 
@@ -167,6 +171,35 @@ def _on_payment_intent_failed(pi):
 		sp.db_set("error_message", error_snippet(err, 200))
 		frappe.db.commit()
 	return sp
+
+
+def _on_payout_paid(payout):
+	"""A Stripe payout settled to the bank -> post the clearing-sweep Journal Entry.
+
+	Returns None (a payout maps to a Journal Entry, not a Stripe Payment).
+	"""
+	from erpnext_enhancements.stripe_payments.core import payouts
+
+	payouts.process_payout(payout)
+	return None
+
+
+def _on_payout_failed(payout):
+	"""A payout failed/was reversed at the bank -> alert; no GL entry is posted."""
+	from erpnext_enhancements.stripe_payments.core import payouts
+
+	payouts._notify_review(
+		None,
+		payout.get("id"),
+		[
+			f"Stripe payout {payout.get('id')} for {from_minor_units(payout.get('amount'))} "
+			f"{(payout.get('currency') or 'usd').upper()} FAILED at the bank "
+			f"({payout.get('failure_message') or payout.get('failure_code') or 'no reason given'}). "
+			"No Journal Entry was posted; investigate in the Stripe dashboard."
+		],
+	)
+	frappe.db.commit()
+	return None
 
 
 def _on_charge_refunded(charge):
