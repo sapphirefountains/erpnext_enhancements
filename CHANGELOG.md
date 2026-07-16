@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The bench-free Stripe unit suite (`test_stripe_payments.py`) now runs in CI — like the QuickBooks suite before it, it existed but was wired into no CI step, so it ran nowhere.
+## [1.157.1] - 2026-07-16
+
+### Fixed
+- **The hourly QuickBooks Online sync jobs no longer race each other into intermittent failures.** The three QBO jobs — proactive token refresh, CDC change-poll, and failed-run retry — all fired at the top of the hour together. Each one writes the single *QuickBooks Online Settings* document (the token refresh in particular must save through the document so the encrypted token fields are re-encrypted, so it can't use the lightweight `db.set_value` path the cursor writes use), and when two of those saves landed within the same fraction of a second the loser aborted with a `TimestampMismatchError` — roughly two CDC runs a day showed up as "Failed" even though the sync was healthy (the next hourly run always caught up via the stored cursor, so no data was ever lost). The three jobs are now staggered across the hour — token refresh at :00, CDC poll at :20, retry at :40 — so their Settings writes can't collide, and the refresh still runs before the poll that depends on a fresh token. No behavioural change beyond timing; every one of these jobs already self-throttles and no-ops while disconnected, and all three are removed wholesale at QuickBooks retirement (WI-052).
 
 ## [1.157.0] - 2026-07-14
 

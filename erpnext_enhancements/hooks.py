@@ -333,6 +333,18 @@ scheduler_events = {
 		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
 		# KPI Snapshot per department. Handler enqueues the batch onto long.
 		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
+		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
+		# The three jobs each write the single QuickBooks Online Settings doc (token
+		# refresh must save() through the doc for Password-field encryption, so it
+		# can't use db.set_value like the cursor writes do); firing them at the same
+		# instant made two saves race and the loser fail with TimestampMismatchError
+		# (~2 CDC runs/day — self-healing, since the next tick re-reads last_cdc_sync,
+		# but it tripped monitoring). Offsets keep the writers apart. Ordered so the
+		# token is refreshed (:00) before CDC pulls (:20) and retries run last (:40).
+		# All three self-throttle/guard internally and no-op while disconnected.
+		"0 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed"],
+		"20 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll"],
+		"40 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs"],
 	},
 	"daily": [
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
@@ -364,9 +376,9 @@ scheduler_events = {
 		"erpnext_enhancements.fleet_maintenance.tasks.refresh_fleet_status",
 	],
 	"hourly": [
-		"erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed",
-		"erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll",
-		"erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs",
+		# QuickBooks Online sync jobs moved to staggered cron entries above to stop
+		# the three from racing on the Settings doc (TimestampMismatchError). See the
+		# "cron" section.
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
 		# Drive -> ERPNext half of the attachment sync (link-only shadows)
