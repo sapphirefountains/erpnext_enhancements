@@ -201,6 +201,7 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 	},
 	"Project": {
+		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 		"before_insert": "erpnext_enhancements.process_steps.seed_process_steps",
 		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
 		"before_save": [
@@ -220,6 +221,7 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Master Project": {
+		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Address": {
@@ -256,6 +258,7 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_vehicle_log_unlink",
 	},
 	"Opportunity": {
+		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
