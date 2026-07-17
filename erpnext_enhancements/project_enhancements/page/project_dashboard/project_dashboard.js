@@ -10,8 +10,9 @@
  *    (page/project_dashboard/project_dashboard.py) and renders an "Access Denied"
  *    panel for users whose roles are not permitted. Page access — not per-record
  *    Project permission — is the intended gate (see the server docstring).
+ *  - Header actions: "New Project" / "New Master Project" quick-create buttons.
  *  - Tabbed shell + routing: builds the tab bar (Priority Overview, Active Internal
- *    Projects, Completed Projects, Portfolio Gantt, Tasks View) and maps the sub-route
+ *    Projects, Completed Projects, Portfolio Gantt, Tasks View, Dashboard) and maps the sub-route
  *    (e.g. `project-dashboard/portfolio-gantt`) to a lazily `frappe.require`-loaded
  *    component class under `erpnext_enhancements.dashboard_components.*`. Each tab's
  *    actual rendering lives in a separate component file in
@@ -36,7 +37,7 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 	});
 
 	// Load the dashboard API utility first
-	frappe.require("/assets/erpnext_enhancements/js/dashboard_components/dashboard_api.js", () => {
+	frappe.require("/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/dashboard_api.js", () => {
 		// Check permissions before rendering the main dashboard
 		erpnext_enhancements.dashboard_api
 			.call({
@@ -67,6 +68,10 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 
 	function initialize_dashboard(page) {
 		console.log("Loading Project Dashboard JS - Refactored");
+
+		// --- Header actions: quick-create a Project or Master Project ---
+		page.set_primary_action(__("New Project"), () => frappe.new_doc("Project"), "add");
+		page.add_inner_button(__("New Master Project"), () => frappe.new_doc("Master Project"));
 
 		// --- UI Container ---
 		// Using standard Frappe layout classes
@@ -116,6 +121,9 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="javascript:void(0)" data-route="tasks-view">Tasks View</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="javascript:void(0)" data-route="dashboard">Dashboard</a>
                     </li>
                 </ul>
             </div>
@@ -204,33 +212,39 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 			// Map route to Component Class & File
 			let componentConfig;
 			switch (moduleRoute) {
+				case "dashboard":
+					componentConfig = {
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/dashboard_view.js",
+						className: "DashboardOverview",
+					};
+					break;
 				case "active-internal-projects":
 					componentConfig = {
-						file: "/assets/erpnext_enhancements/js/dashboard_components/active_internal_projects.js",
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/active_internal_projects.js",
 						className: "ActiveInternalProjects",
 					};
 					break;
 				case "priority-overview":
 					componentConfig = {
-						file: "/assets/erpnext_enhancements/js/dashboard_components/priority_overview.js",
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/priority_overview.js",
 						className: "PriorityOverview",
 					};
 					break;
 				case "portfolio-gantt":
 					componentConfig = {
-						file: "/assets/erpnext_enhancements/js/dashboard_components/portfolio_gantt.js",
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/portfolio_gantt.js",
 						className: "PortfolioGantt",
 					};
 					break;
 				case "tasks-view":
 					componentConfig = {
-						file: "/assets/erpnext_enhancements/js/dashboard_components/tasks_view.js",
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/tasks_view.js",
 						className: "TasksView",
 					};
 					break;
 				case "completed-projects":
 					componentConfig = {
-						file: "/assets/erpnext_enhancements/js/dashboard_components/completed_projects.js",
+						file: "/assets/erpnext_enhancements/js/project_enhancements/dashboard_components/completed_projects.js",
 						className: "CompletedProjects",
 					};
 					break;

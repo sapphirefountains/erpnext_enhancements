@@ -10,7 +10,14 @@ import json
 from datetime import timedelta
 
 import frappe
-from frappe.utils import getdate, nowdate
+from frappe.utils import flt, getdate, nowdate
+
+# Project types treated as "internal" (non client-facing) for the Active Internal
+# Projects tab. The client filters on these too (active_internal_projects.js); kept
+# here as the server-side source of truth so the Dashboard tab's internal count and
+# the list agree. Everything else (Design/Build/Service/Events/Delivery/External and
+# untyped projects) is considered client-facing and excluded from that tab.
+INTERNAL_PROJECT_TYPES = ("Internal", "Organizational Projects", "Group Projects", "Other")
 
 # Fields the dashboard is allowed to inline-edit on a Project via
 # update_project_details(). Kept deliberately narrow: this is a whitelisted
@@ -197,6 +204,101 @@ def get_project_data(is_active=None):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Error fetching project data")
 		return {"error": "Could not fetch project data. Please check the logs."}
+
+
+@frappe.whitelist()
+def get_dashboard_metrics():
+	"""Aggregate portfolio metrics for the "Dashboard" tab (native charts + cards).
+
+	Page-role gated via check_permission(), then aggregated with
+	``ignore_permissions`` so the overview reflects the full portfolio rather than
+	being silently narrowed by per-record User Permissions (mirrors the intent
+	documented on get_project_data()).
+
+	Returns a dict of:
+	  - ``cards``: headline counters (active, overdue, avg % complete, open tasks,
+	    master projects, completed).
+	  - ``by_status`` / ``by_type``: {label: count} of active projects, for charts.
+	  - ``completion_buckets``: active-project counts bucketed by % complete.
+	  - ``internal_active``: active projects whose type is internal (matches the
+	    Active Internal Projects tab).
+	On failure returns ``{"error": ...}`` so the client can surface a retry panel.
+	"""
+	if not check_permission():
+		return {"error": "You do not have permission to view the Project Dashboard."}
+	try:
+		today = getdate(nowdate())
+		active = frappe.get_all(
+			"Project",
+			filters={"status": ["!=", "Canceled"], "is_active": "Yes"},
+			fields=["name", "status", "project_type", "percent_complete", "expected_end_date"],
+			ignore_permissions=True,
+		)
+
+		total_active = len(active)
+		overdue = 0
+		pct_sum = 0.0
+		internal_active = 0
+		by_status = {}
+		by_type = {}
+		buckets = {"0–25%": 0, "25–50%": 0, "50–75%": 0, "75–99%": 0, "100%": 0}
+
+		for p in active:
+			pc = flt(p.percent_complete)
+			pct_sum += pc
+			if p.expected_end_date and getdate(p.expected_end_date) < today and pc < 100:
+				overdue += 1
+
+			if pc >= 100:
+				buckets["100%"] += 1
+			elif pc >= 75:
+				buckets["75–99%"] += 1
+			elif pc >= 50:
+				buckets["50–75%"] += 1
+			elif pc >= 25:
+				buckets["25–50%"] += 1
+			else:
+				buckets["0–25%"] += 1
+
+			status = p.status or "Unknown"
+			by_status[status] = by_status.get(status, 0) + 1
+			ptype = p.project_type or "Unassigned"
+			by_type[ptype] = by_type.get(ptype, 0) + 1
+			if p.project_type in INTERNAL_PROJECT_TYPES:
+				internal_active += 1
+
+		avg_complete = round(pct_sum / total_active, 1) if total_active else 0
+
+		completed = frappe.db.count("Project", {"status": ["!=", "Canceled"], "is_active": "No"})
+		master_projects = (
+			frappe.db.count("Master Project") if frappe.db.exists("DocType", "Master Project") else 0
+		)
+
+		open_tasks = 0
+		if active:
+			open_tasks = frappe.db.count(
+				"Task",
+				{"project": ["in", [p.name for p in active]], "status": ["not in", ["Completed", "Canceled"]]},
+			)
+
+		return {
+			"cards": {
+				"active_projects": total_active,
+				"overdue_projects": overdue,
+				"avg_percent_complete": avg_complete,
+				"open_tasks": open_tasks,
+				"master_projects": master_projects,
+				"completed_projects": completed,
+			},
+			"by_status": by_status,
+			"by_type": by_type,
+			"completion_buckets": buckets,
+			"internal_active": internal_active,
+		}
+
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Error fetching project dashboard metrics")
+		return {"error": "Could not fetch dashboard metrics. Please check the logs."}
 
 
 @frappe.whitelist()
