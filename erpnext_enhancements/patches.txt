@@ -170,3 +170,7 @@ erpnext_enhancements.patches.seed_project_naming_rule
 # duplicated ERPNext's native lost_reasons + competitors capture, which v1.159.0
 # unhides and repoints the loss KPIs at (no data migrated; see the patch docstring)
 erpnext_enhancements.patches.remove_opportunity_lost_reason
+# v1.159.2 remove the legacy EMPTY duplicate "Comments" tab-break that coexisted
+# with the real Comments tab on 12 doctypes (rendered as a blank second "Comments"
+# tab); the surviving tab + widget stay, fixtures repoint off the deleted field
+erpnext_enhancements.patches.remove_duplicate_comments_tabs
