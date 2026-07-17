@@ -422,7 +422,6 @@ jinja = {
 # Run after each `bench migrate` (from global_enhancements)
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
-	"erpnext_enhancements.setup.custom_fields.create_opportunity_winloss_fields",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
