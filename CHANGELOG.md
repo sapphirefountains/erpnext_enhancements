@@ -18,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (active, overdue, avg % complete, open tasks, master projects, completed) plus charts
   for active projects by status, by type, and by completion bucket. Charts use the desk
   `frappe.Chart` global with a CSS-bar fallback. Backed by a new whitelisted
-  `get_dashboard_metrics` (page-role gated, portfolio-wide aggregates). The dashboard
-  now lands on this tab by default (existing users keep their last-used tab via
-  localStorage).
+  `get_dashboard_metrics` (page-role gated, portfolio-wide aggregates). It is the last
+  tab; Priority Overview remains the default landing tab.
 
 ### Changed
 

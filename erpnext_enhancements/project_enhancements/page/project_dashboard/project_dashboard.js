@@ -11,8 +11,8 @@
  *    panel for users whose roles are not permitted. Page access — not per-record
  *    Project permission — is the intended gate (see the server docstring).
  *  - Header actions: "New Project" / "New Master Project" quick-create buttons.
- *  - Tabbed shell + routing: builds the tab bar (Dashboard, Priority Overview, Active
- *    Internal Projects, Completed Projects, Portfolio Gantt, Tasks View) and maps the sub-route
+ *  - Tabbed shell + routing: builds the tab bar (Priority Overview, Active Internal
+ *    Projects, Completed Projects, Portfolio Gantt, Tasks View, Dashboard) and maps the sub-route
  *    (e.g. `project-dashboard/portfolio-gantt`) to a lazily `frappe.require`-loaded
  *    component class under `erpnext_enhancements.dashboard_components.*`. Each tab's
  *    actual rendering lives in a separate component file in
@@ -108,9 +108,6 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
             <div class="dashboard-tabs p-3 pb-0 border-bottom">
                 <ul class="nav nav-tabs" role="tablist">
                     <li class="nav-item">
-                        <a class="nav-link" href="javascript:void(0)" data-route="dashboard">Dashboard</a>
-                    </li>
-                    <li class="nav-item">
                         <a class="nav-link" href="javascript:void(0)" data-route="priority-overview">Priority Overview</a>
                     </li>
                     <li class="nav-item">
@@ -124,6 +121,9 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="javascript:void(0)" data-route="tasks-view">Tasks View</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="javascript:void(0)" data-route="dashboard">Dashboard</a>
                     </li>
                 </ul>
             </div>
@@ -182,7 +182,7 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 			const moduleRoute =
 				route[1] ||
 				localStorage.getItem("project_dashboard_default_tab") ||
-				"dashboard";
+				"priority-overview";
 
 			// Save active tab preference
 			localStorage.setItem("project_dashboard_default_tab", moduleRoute);
@@ -249,8 +249,8 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 					};
 					break;
 				default:
-					// Fallback to the Dashboard overview tab
-					frappe.set_route("project-dashboard", "dashboard");
+					// Fallback to priority overview
+					frappe.set_route("project-dashboard", "priority-overview");
 					return;
 			}
 
@@ -504,7 +504,7 @@ frappe.pages["project-dashboard"].on_page_load = function (wrapper) {
 		if (currentRoute.length === 1 && currentRoute[0] === "project-dashboard") {
 			// No sub-route, default to priority overview or local storage preference
 			const defaultTab =
-				localStorage.getItem("project_dashboard_default_tab") || "dashboard";
+				localStorage.getItem("project_dashboard_default_tab") || "priority-overview";
 			frappe.set_route("project-dashboard", defaultTab);
 		} else {
 			// Trigger route logic for current route
