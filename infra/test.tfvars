@@ -12,7 +12,7 @@ use_default_vpc = true
 
 provision_spot_vm = true
 spot_vm_name      = "test-erpnext-spot-vm"
-spot_machine_type = "n2d-standard-8"
+spot_machine_type = "n2-standard-2"
 spot_vm_region    = "us-central1"
 spot_vm_network_tags = ["web-frontend", "test-loadbalancer-target"]
 
