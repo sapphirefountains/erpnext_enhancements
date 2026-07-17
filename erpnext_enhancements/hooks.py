@@ -423,6 +423,8 @@ jinja = {
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",
 	"erpnext_enhancements.setup.supplier_groups.create_supplier_group_customizations",
+	# Hide the "Project" DocType link in the core Projects module sidebar (user request)
+	"erpnext_enhancements.setup.workspace_tweaks.hide_core_sidebar_items",
 	# Mermaid.js Process Document charts — repo is the source of truth
 	"erpnext_enhancements.setup.process_documents.sync_process_documents",
 	# Projects-module dashboard widgets (Custom HTML Blocks) — repo is the source

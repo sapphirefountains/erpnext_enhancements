@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.6] - 2026-07-17
+
+### Changed
+
+- **Hid the "Project" link in the default Projects module sidebar** (user request, for
+  now). The core Projects Workspace Sidebar carried a `Project` DocType link; a new
+  `after_migrate` hook (`setup.workspace_tweaks.hide_core_sidebar_items`) removes it. The
+  Workspace Sidebar Item child has no `hidden` field, so the row is dropped rather than
+  flagged; everything else stays — including the "Dashboard" link (also points at Project
+  but is a Dashboard link), Task, Timesheet, Setup, and the reports. Idempotent, and it
+  re-applies after any core re-sync (the hook runs after Frappe syncs the standard
+  sidebars). Verified against the live sidebar: 18 items → 17, only the `Project` DocType
+  row removed.
+
 ## [1.159.3] - 2026-07-17
 
 ### Fixed
