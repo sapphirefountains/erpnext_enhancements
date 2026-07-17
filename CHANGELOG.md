@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.7] - 2026-07-17
+
+### Added
+
+- **The Projects Dashboard changes now apply to the surface users actually see — the
+  "Projects Dashboard" Custom HTML Block** (rendered on the Home / Projects workspaces).
+  v1.159.4 added the buttons / Dashboard tab / internal filter to the *desk page*
+  (`/app/project-dashboard`), a separate, parallel implementation, so the workspace
+  dashboard was unchanged. Ported the same three changes to
+  `custom_html_blocks/projects_dashboard.{js,html}` (auto-deployed by
+  `setup.custom_html_blocks.sync_custom_html_blocks` on migrate):
+  - **New Project** / **New Master Project** quick-create buttons in the toolbar.
+  - A **Dashboard** tab (last) — a native module overview computed client-side from the
+    already-fetched `project_data` (no extra server call): headline number cards
+    (active, overdue, avg % complete, open tasks, master projects, completed) plus
+    CSS-bar breakdowns by status / type / completion. Uses inline styles / CSS bars
+    rather than `frappe.Chart`, whose injected styles don't cross the block's shadow root.
+
+### Changed
+
+- **Active Internal Projects (Custom HTML Block) now lists only internal projects** —
+  active projects whose `project_type` is Internal / Organizational Projects / Group
+  Projects / Other (was: every active project). Mirrors the page dashboard's
+  `INTERNAL_PROJECT_TYPES`. Verified against live data: 14 active internal projects.
+
 ## [1.159.6] - 2026-07-17
 
 ### Changed
