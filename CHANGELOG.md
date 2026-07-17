@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.4] - 2026-07-17
+
+### Added
+
+- **Projects Dashboard: "New Project" / "New Master Project" header buttons.** Two
+  quick-create actions in the page header open the respective new-document forms.
+- **Projects Dashboard: a native "Dashboard" tab.** A new first/default tab renders a
+  Projects-module overview from real elements (no iframe): headline number cards
+  (active, overdue, avg % complete, open tasks, master projects, completed) plus charts
+  for active projects by status, by type, and by completion bucket. Charts use the desk
+  `frappe.Chart` global with a CSS-bar fallback. Backed by a new whitelisted
+  `get_dashboard_metrics` (page-role gated, portfolio-wide aggregates). The dashboard
+  now lands on this tab by default (existing users keep their last-used tab via
+  localStorage).
+
+### Changed
+
+- **Active Internal Projects now lists only genuinely internal projects.** Previously it
+  showed every active project; it now filters to active projects whose `project_type` is
+  one of Internal, Organizational Projects, Group Projects, or Other (client-facing
+  streams — Design/Build/Service/Events/Delivery/External — and untyped projects are
+  excluded). The set lives in `INTERNAL_PROJECT_TYPES` (server + client, kept in sync).
+
+### Fixed
+
+- **Projects Dashboard tabs failed to load (all of them).** Since the app-consolidation
+  commit, `project_dashboard.js` required its tab components (and the shared
+  `dashboard_api.js`) from `/assets/erpnext_enhancements/js/dashboard_components/…`, but
+  the files actually live under `…/js/project_enhancements/dashboard_components/…` — the
+  short path 404s, so the shell couldn't even load the API helper. Corrected every
+  `frappe.require` URL to the real path. (Verified against the live site: the short path
+  returns 404, the corrected path returns the JS.)
+
 ## [1.159.3] - 2026-07-17
 
 ### Fixed

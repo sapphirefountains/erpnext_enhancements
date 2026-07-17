@@ -115,7 +115,8 @@ These plug into the [Project Dashboard](../project_enhancements/README.md#projec
 | File | Tab | Notes |
 |---|---|---|
 | `dashboard_api.js` | (shared) | `frappe.call` wrapper with abort + 8s timeout |
-| `active_internal_projects.js` | Active Internal Projects | grouped by Master Project; inline status/priority edits |
+| `dashboard_view.js` | Dashboard | native module overview (default landing tab): number cards + `frappe.Chart` charts (status/type/completion) with a CSS-bar fallback; fed by `get_dashboard_metrics` |
+| `active_internal_projects.js` | Active Internal Projects | grouped by Master Project; inline status/priority edits; shows only active + internal `project_type` (`INTERNAL_PROJECT_TYPES`) |
 | `completed_projects.js` | Completed Projects | exponential-backoff retry (≤3) |
 | `priority_overview.js` | Priority Overview | `BufferManager` optimistic-edit engine (buffer → auto-commit w/ retry → rollback) |
 | `tasks_view.js` | Tasks | per-project Gantt/Tree in-page; Kanban/Calendar route to the Task list |
