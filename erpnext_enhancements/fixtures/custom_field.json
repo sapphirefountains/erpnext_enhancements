@@ -2351,7 +2351,7 @@
   "insert_after": "mobile_no",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Comments",
+  "label": "Additional Information",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,
