@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.1] - 2026-07-17
+
+### Fixed
+
+- **The "Created from Travel Trip" field (`custom_travel_trip`) no longer sits in the
+  wrong tab on Opportunity and Lead.** Its `insert_after` pointed at `source`, a field
+  that does not exist on either doctype in this ERPNext version (dangling reference), so
+  Frappe stranded it at the end of the form — on Opportunity that put it inside the
+  **Hand-Off Process** tab; on Lead, inside the **Comments** tab. It is a read-only
+  provenance back-link, so it now anchors next to the external-id provenance field
+  (`custom_zoho_crm_opportunity_id` on Opportunity, `custom_zoho_id` on Lead), landing
+  in the **Details** tab's More Information / Additional Information section. Fixed in
+  the fixtures: `insert_after` repointed in `custom_field.json` and the field inserted at
+  the matching spot in each doctype's `field_order` property setter. Verified by
+  simulating the resulting form layout against the live meta on both doctypes.
+- Audit note: a sweep of all 643 site custom fields for dangling `insert_after` found no
+  other of our fields stranded into a visibly wrong tab. Separately, it surfaced a
+  legacy **duplicate empty "Comments" tab** (`custom_comments_tab` alongside the real
+  `custom_comments` + `custom_comments_field`) on ~13 doctypes; that is a distinct
+  cleanup tracked separately.
+
 ## [1.159.0] - 2026-07-17
 
 ### Removed
