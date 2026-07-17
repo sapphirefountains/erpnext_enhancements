@@ -11,11 +11,16 @@
  * (erpnext_enhancements.project_enhancements.page.project_dashboard.*) and renders:
  *   - Priority Overview   — client-facing value streams (Build/Design/Events/Service),
  *                           with inline-editable company/project priority cells;
- *   - Active Internal Projects — grouped by master project, inline status/priority;
+ *   - Active Internal Projects — active projects whose project_type is internal
+ *                           (INTERNAL_PROJECT_TYPES), grouped by master project;
  *   - Completed Projects  — read-only list of inactive projects;
  *   - Portfolio Gantt     — frappe-gantt of projects (and optionally tasks), with
  *                           project/status filters, collapsible master/project/task
- *                           nodes, drag-to-reschedule, and scroll preservation.
+ *                           nodes, drag-to-reschedule, and scroll preservation;
+ *   - Dashboard           — native module overview computed client-side from the
+ *                           fetched project_data: headline number cards + CSS-bar
+ *                           breakdowns (status / type / completion).
+ * The toolbar also carries "New Project" / "New Master Project" quick-create buttons.
  * Table edits and Gantt date drags persist back via the same whitelisted methods.
  */
 (function() {
@@ -45,6 +50,12 @@
     // in sync with the page dashboard (priority_overview.js / the backend's
     // get_all_projects_for_gantt), which filter to exactly these project types.
     const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Events", "Service", "Delivery"];
+
+    // Internal (non client-facing) project types shown on the Active Internal
+    // Projects tab. Everything else — the client-facing streams above and untyped
+    // projects — is excluded. Mirrors INTERNAL_PROJECT_TYPES in the page dashboard
+    // (project_dashboard.py / active_internal_projects.js); keep the lists in sync.
+    const INTERNAL_PROJECT_TYPES = ["Internal", "Organizational Projects", "Group Projects", "Other"];
 
     // Business-preferred ordering for the value-stream groups on Priority
     // Overview (when sorted by Project Priority). Streams not listed (e.g.
@@ -1058,7 +1069,9 @@
         render_column_toolbar(container);
 
         let state = sort_state['active-internal-projects'];
-        let internal_projects = project_data.filter(p => p.is_active === "Yes");
+        let internal_projects = project_data.filter(
+            p => p.is_active === "Yes" && INTERNAL_PROJECT_TYPES.includes(p.project_type)
+        );
 
         let groups = {};
         internal_projects.forEach(p => {
@@ -1165,6 +1178,101 @@
         }
     }
 
+    // Dashboard tab — a native Projects-module overview computed client-side from
+    // the already-fetched project_data (no extra server call). Number cards + CSS
+    // bar breakdowns; deliberately no frappe.Chart, whose JS-injected styles don't
+    // cross into this block's shadow root.
+    function build_breakdown(title, obj, full) {
+        const labels = Object.keys(obj);
+        const max = Math.max(1, ...labels.map(l => obj[l]));
+        let rows = "";
+        labels.forEach(l => {
+            const v = obj[l];
+            const pct = Math.round((v / max) * 100);
+            rows += `
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between" style="font-size: 0.85rem;">
+                        <span>${frappe.utils.escape_html(l)}</span>
+                        <span class="text-muted">${v}</span>
+                    </div>
+                    <div style="height: 8px; background: var(--control-bg, #f0f4f7); border-radius: 4px; overflow: hidden;">
+                        <div style="height: 100%; width: ${pct}%; background: var(--blue-500, #2490ef);"></div>
+                    </div>
+                </div>`;
+        });
+        if (!labels.length) rows = '<div class="text-muted text-center py-3">No data</div>';
+        return `
+            <div class="${full ? 'col-12' : 'col-12 col-lg-6'} mb-4 px-2">
+                <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
+                    <h6 class="text-muted mb-3">${frappe.utils.escape_html(title)}</h6>
+                    ${rows}
+                </div>
+            </div>`;
+    }
+
+    function render_dashboard() {
+        let container = $root.find('#dashboard-content');
+        container.empty();
+
+        const today = frappe.datetime.get_today();
+        const active = project_data.filter(p => p.is_active === "Yes");
+        const total_active = active.length;
+
+        let overdue = 0, pct_sum = 0, open_tasks = 0;
+        const by_status = {}, by_type = {};
+        const buckets = { "0–25%": 0, "25–50%": 0, "50–75%": 0, "75–99%": 0, "100%": 0 };
+
+        active.forEach(p => {
+            const pc = parseFloat(p.percent_complete) || 0;
+            pct_sum += pc;
+            if (p.expected_end_date && p.expected_end_date < today && pc < 100) overdue++;
+            if (pc >= 100) buckets["100%"]++;
+            else if (pc >= 75) buckets["75–99%"]++;
+            else if (pc >= 50) buckets["50–75%"]++;
+            else if (pc >= 25) buckets["25–50%"]++;
+            else buckets["0–25%"]++;
+            const s = p.status || "Unknown"; by_status[s] = (by_status[s] || 0) + 1;
+            const t = p.project_type || "Unassigned"; by_type[t] = (by_type[t] || 0) + 1;
+            open_tasks += Math.max(0, (parseInt(p.total_tasks) || 0) - (parseInt(p.completed_tasks) || 0));
+        });
+
+        const avg_complete = total_active ? Math.round((pct_sum / total_active) * 10) / 10 : 0;
+        const completed = project_data.filter(p => p.is_active === "No").length;
+        const masters = new Set(project_data.map(p => p.custom_master_project).filter(Boolean));
+
+        const cards = [
+            { label: "Active Projects", value: total_active, color: "var(--blue-500, #2490ef)" },
+            { label: "Overdue", value: overdue, color: "var(--red-500, #e24c4c)" },
+            { label: "Avg % Complete", value: avg_complete + "%", color: "var(--green-500, #28a745)" },
+            { label: "Open Tasks", value: open_tasks, color: "var(--orange-500, #f5a623)" },
+            { label: "Master Projects", value: masters.size, color: "var(--purple-500, #7574d6)" },
+            { label: "Completed", value: completed, color: "var(--gray-600, #6c757d)" }
+        ];
+
+        let cardRow = $('<div class="row m-0 mb-2"></div>');
+        cards.forEach(c => {
+            cardRow.append(`
+                <div class="col-6 col-md-4 col-lg-2 mb-3 px-2">
+                    <div style="background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e6e9); border-radius: 8px; padding: 16px; height: 100%;">
+                        <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #6c757d);">${frappe.utils.escape_html(c.label)}</div>
+                        <div style="font-size: 1.7rem; font-weight: 700; line-height: 1.3; color: ${c.color};">${c.value}</div>
+                    </div>
+                </div>
+            `);
+        });
+        container.append(cardRow);
+
+        let chartRow = $('<div class="row m-0"></div>');
+        chartRow.append(build_breakdown("Active Projects by Status", by_status, false));
+        chartRow.append(build_breakdown("Active Projects by Type", by_type, false));
+        chartRow.append(build_breakdown("Active Projects by Completion", buckets, true));
+        container.append(chartRow);
+
+        if (total_active === 0) {
+            container.append('<div class="p-4 text-center text-muted">No active projects.</div>');
+        }
+    }
+
     function render_current_tab() {
         if (current_tab === "portfolio-gantt") {
             $root.find('#gantt-controls').show();
@@ -1177,7 +1285,8 @@
             if (current_tab === "priority-overview") render_priority_overview();
             else if (current_tab === "active-internal-projects") render_active_internal();
             else if (current_tab === "completed-projects") render_completed_projects();
-            
+            else if (current_tab === "dashboard") render_dashboard();
+
             setTimeout(apply_search_filter, 50);
         }
     }
@@ -1215,6 +1324,10 @@
         
         render_current_tab();
     });
+
+    // Header actions: quick-create a Project or Master Project.
+    $root.find('#btn-new-project').on('click', () => frappe.new_doc('Project'));
+    $root.find('#btn-new-master-project').on('click', () => frappe.new_doc('Master Project'));
 
     // Init
     fetch_initial_data();

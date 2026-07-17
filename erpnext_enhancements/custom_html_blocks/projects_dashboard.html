@@ -8,9 +8,10 @@
   — edit them here and paste back into the Custom HTML Block in the UI to deploy.
 
   This file is the static shell: a tabbed container (Priority Overview, Active
-  Internal Projects, Completed Projects, Portfolio Gantt), a search box, the
-  Gantt-only filter controls (project / status dropdowns, "Show Tasks", view-mode
-  buttons, Today), and an empty #dashboard-content target. projects_dashboard.js
+  Internal Projects, Completed Projects, Portfolio Gantt, Dashboard), a search box,
+  "New Project" / "New Master Project" quick-create buttons, the Gantt-only filter
+  controls (project / status dropdowns, "Show Tasks", view-mode buttons, Today), and
+  an empty #dashboard-content target. projects_dashboard.js
   fetches data via the project_dashboard page's whitelisted methods and renders the
   tables / Gantt into #dashboard-content; projects_dashboard.css styles it.
 -->
@@ -29,6 +30,9 @@
             <li class="nav-item">
                 <a class="nav-link" href="javascript:void(0)" data-route="portfolio-gantt">Portfolio Gantt</a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link" href="javascript:void(0)" data-route="dashboard">Dashboard</a>
+            </li>
         </ul>
     </div>
 
@@ -42,6 +46,11 @@
                     </div>
                     <input type="text" class="form-control" id="global-project-search" placeholder="Search projects...">
                 </div>
+            </div>
+
+            <div class="col-12 col-md-8 p-0 mb-2 mb-md-0 text-md-right" id="dashboard-actions">
+                <button type="button" class="btn btn-sm btn-primary" id="btn-new-project"><i class="fa fa-plus mr-1"></i>New Project</button>
+                <button type="button" class="btn btn-sm btn-default border ml-2" id="btn-new-master-project"><i class="fa fa-plus mr-1"></i>New Master Project</button>
             </div>
 
             <div class="col-12 p-0" id="gantt-controls" style="display: none;">
