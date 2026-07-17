@@ -2,13 +2,23 @@
 frappe.provide("erpnext_enhancements.dashboard_components");
 
 /**
+ * Project types considered "internal" (non client-facing) for this tab. A project
+ * is shown only if it is active AND its project_type is one of these — i.e. the
+ * client-facing streams (Design, Build, Service, Events, Delivery, External) and
+ * untyped projects are excluded. Mirrors INTERNAL_PROJECT_TYPES on the server
+ * (project_dashboard.py); keep the two lists in sync.
+ */
+const INTERNAL_PROJECT_TYPES = ["Internal", "Organizational Projects", "Group Projects", "Other"];
+
+/**
  * Project Dashboard tab — Active Internal Projects.
  *
  * Targets: the "Active Internal Projects" tab of the Project Dashboard page.
  * Loaded via: lazy `frappe.require` from project_dashboard.js, which constructs
  * this class (by name) and calls render()/unmount() as the tab is shown/hidden.
  *
- * Fetches all projects, keeps the active internal ones, groups them by Master
+ * Fetches all projects, keeps the active internal ones (is_active === "Yes" and
+ * an internal project_type — see INTERNAL_PROJECT_TYPES), groups them by Master
  * Project (Independent Projects sorted last), and renders an editable table where
  * inline status/priority edits emit a `dashboard_project_change` document event
  * for the parent dashboard to persist. Uses an AbortController so an in-flight
@@ -58,7 +68,9 @@ erpnext_enhancements.dashboard_components.ActiveInternalProjects = class ActiveI
 
 			if (projects.message && !projects.message.error) {
 				const filteredProjects = projects.message.filter(
-					(p) => p.is_active === "Yes"
+					(p) =>
+						p.is_active === "Yes" &&
+						INTERNAL_PROJECT_TYPES.includes(p.project_type)
 				);
 
 				this.render_list_view(filteredProjects);
