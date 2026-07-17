@@ -211,6 +211,31 @@ def set_supplier_primary_address_display(doc, method=None):
         doc.primary_address = full_address
 
 
+def sanitize_primary_address_link(doc, method=None):
+    """``before_validate`` doc_event: drop a ``primary_address`` value that isn't a
+    real Address docname.
+
+    On Opportunity / Project / Master Project (see hooks.py) ``primary_address`` is
+    a **Link** to Address. Legacy data — Zoho import / an older migration — left the
+    rendered address *display* (HTML, e.g. ``2600 Taylorsville BLVD<br>…``) in some
+    of these rows instead of an Address name. A Link field can't validate that, so
+    the record throws ``Could not find Address: …`` on every save and becomes
+    un-editable. This clears any non-resolvable value before validation so the doc
+    saves cleanly; the user can re-pick the primary address from the directory UI.
+
+    Only applies where ``primary_address`` is a Link — never to Customer/Supplier,
+    where it's a read-only Text Editor *display* and HTML is expected.
+    """
+    value = doc.get("primary_address")
+    if not value:
+        return
+    df = doc.meta.get_field("primary_address")
+    if not df or df.fieldtype != "Link":
+        return
+    if not frappe.db.exists("Address", value):
+        doc.primary_address = None
+
+
 @frappe.whitelist()
 def link_existing_record(doctype, docname, link_doctype=None, link_name=None, links=None):
     """Links an existing Contact or Address to a document(s)."""

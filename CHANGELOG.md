@@ -20,6 +20,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-applies after any core re-sync (the hook runs after Frappe syncs the standard
   sidebars). Verified against the live sidebar: 18 items → 17, only the `Project` DocType
   row removed.
+## [1.159.5] - 2026-07-17
+
+### Fixed
+
+- **Opportunities with a corrupted Primary Address could not be saved.** On
+  Opportunity/Project/Master Project, `primary_address` is a **Link** to Address, but
+  legacy data (Zoho import / an old migration) had stored the rendered address *display*
+  — HTML with `<br>` tags, e.g. `2600 Taylorsville BLVD<br>…` — in the field instead of
+  an Address docname. The Link then failed validation (`Could not find Address: …`) on
+  every save, making those records un-editable (5 Opportunities on production).
+  - A new `before_validate` hook (`sync_contact.sanitize_primary_address_link`, wired on
+    Opportunity/Project/Master Project) clears any `primary_address` that doesn't resolve
+    to a real Address, so the record saves; the user re-picks it from the directory UI.
+    It only acts on the Link-type field — Customer/Supplier `primary_address` is a
+    read-only Text Editor display where HTML is expected and is left untouched.
+  - `patches.clear_invalid_primary_address_links` proactively nulls the existing bad
+    values across the three doctypes on deploy (idempotent).
+## [1.159.4] - 2026-07-17
+
+### Added
+
+- **Projects Dashboard: "New Project" / "New Master Project" header buttons.** Two
+  quick-create actions in the page header open the respective new-document forms.
+- **Projects Dashboard: a native "Dashboard" tab.** A new first/default tab renders a
+  Projects-module overview from real elements (no iframe): headline number cards
+  (active, overdue, avg % complete, open tasks, master projects, completed) plus charts
+  for active projects by status, by type, and by completion bucket. Charts use the desk
+  `frappe.Chart` global with a CSS-bar fallback. Backed by a new whitelisted
+  `get_dashboard_metrics` (page-role gated, portfolio-wide aggregates). It is the last
+  tab; Priority Overview remains the default landing tab.
+
+### Changed
+
+- **Active Internal Projects now lists only genuinely internal projects.** Previously it
+  showed every active project; it now filters to active projects whose `project_type` is
+  one of Internal, Organizational Projects, Group Projects, or Other (client-facing
+  streams — Design/Build/Service/Events/Delivery/External — and untyped projects are
+  excluded). The set lives in `INTERNAL_PROJECT_TYPES` (server + client, kept in sync).
+
+### Fixed
+
+- **Projects Dashboard tabs failed to load (all of them).** Since the app-consolidation
+  commit, `project_dashboard.js` required its tab components (and the shared
+  `dashboard_api.js`) from `/assets/erpnext_enhancements/js/dashboard_components/…`, but
+  the files actually live under `…/js/project_enhancements/dashboard_components/…` — the
+  short path 404s, so the shell couldn't even load the API helper. Corrected every
+  `frappe.require` URL to the real path. (Verified against the live site: the short path
+  returns 404, the corrected path returns the JS.)
 
 ## [1.159.3] - 2026-07-17
 
