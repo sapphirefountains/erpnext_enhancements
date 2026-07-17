@@ -23,7 +23,7 @@ locals {
   ctx_p      = "$"
   project_id = lookup(local.ctx.project_ids, var.project_id, var.project_id)
   name       = var.connection_create ? try(google_cloudbuildv2_connection.connection[0].name, null) : var.name
-  triggers = merge([for k1, v1 in var.repositories : { for k2, v2 in v1.triggers : "${k1}-${k2}" => merge(v2, {
+  triggers = merge([for k1, v1 in var.repositories : { for k2, v2 in v1.triggers : k2 => merge(v2, {
     repository_name = k1
   }) }]...)
 }

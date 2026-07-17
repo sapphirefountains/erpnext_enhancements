@@ -28,7 +28,7 @@ locals {
   test_mig_groups     = local.resolved_test_mig_groups
   mig_health_check_id = length(google_compute_health_check.erpnext_standalone_health_check) > 0 ? google_compute_health_check.erpnext_standalone_health_check[0].id : ""
 
-  has_spot_vm_backend = var.provision_spot_vm && var.provision_spot_vm_lb_backend
+  has_spot_vm_backend  = var.provision_spot_vm_lb_backend
 
   standalone_vm_zone = var.vm_zone != null ? var.vm_zone : (
     var.vm_region != null
@@ -53,7 +53,7 @@ locals {
     provision_test_mig               = var.provision_test_mig
     provision_compute_vm             = var.provision_compute_vm
     provision_standard_vm_lb_backend = var.provision_standard_vm_lb_backend
-    provision_spot_vm                = local.has_spot_vm_backend
+    provision_spot_vm_lb_backend     = local.has_spot_vm_backend
     provision_cloud_run              = var.provision_cloud_run
     standalone_vm_neg_name           = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.standalone_vm_zone, var.standard_vm_name)
     spot_vm_neg_name                 = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)

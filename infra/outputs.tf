@@ -57,6 +57,37 @@ output "project_id" {
   depends_on  = [module.project]
 }
 
+output "project_number" {
+  description = "The numeric GCP Project number."
+  value       = module.project.number
+  depends_on  = [module.project]
+}
+
+output "network_name" {
+  description = "The VPC network name."
+  value       = local.network_name
+}
+
+output "network_id" {
+  description = "The VPC network self-link."
+  value       = local.network_id
+}
+
+output "subnetwork_self_link" {
+  description = "The subnetwork self-link."
+  value       = local.subnetwork_self_link
+}
+
+output "state_bucket_name" {
+  description = "The GCS bucket name for Terraform state."
+  value       = var.state_bucket_name
+}
+
+output "deployment_mode" {
+  description = "The active deployment mode."
+  value       = var.deployment_mode
+}
+
 output "spot_vms" {
   description = "The outputs of provisioned Spot VMs."
   value       = module.spot_vm

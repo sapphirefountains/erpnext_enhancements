@@ -31,4 +31,13 @@ terraform {
     }
   }
   backend "gcs" {}
+  # Backend config is passed via CLI:
+  # shared: terraform init -backend-config=backend-shared.hcl -reconfigure
+  # test:   terraform init -backend-config=backend-test.hcl -reconfigure
+  # prod:   terraform init -backend-config=backend-prod.hcl -reconfigure
 }
+
+# Apply with deployment-specific variable file:
+# shared: terraform apply -var-file=shared.tfvars
+# test:   terraform apply -var-file=test.tfvars
+# prod:   terraform apply -var-file=prod.tfvars

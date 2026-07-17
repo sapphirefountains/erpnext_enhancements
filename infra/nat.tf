@@ -1,6 +1,6 @@
 # Cloud Routers (per region)
 resource "google_compute_router" "nat_router" {
-  for_each = var.provision_cloud_nat ? toset(var.nat_regions) : toset([])
+  for_each = var.deployment_mode == "shared" && var.provision_cloud_nat ? toset(var.nat_regions) : toset([])
   name     = "${var.nat_name_prefix}-nat-router-${each.key}"
   network  = local.network_id
   region   = each.key
@@ -9,7 +9,7 @@ resource "google_compute_router" "nat_router" {
 
 # Cloud NAT Gateways (per region)
 resource "google_compute_router_nat" "cloud_nat" {
-  for_each                           = var.provision_cloud_nat ? toset(var.nat_regions) : toset([])
+  for_each                           = var.deployment_mode == "shared" && var.provision_cloud_nat ? toset(var.nat_regions) : toset([])
   name                               = "${var.nat_name_prefix}-cloud-nat-${each.key}"
   router                             = google_compute_router.nat_router[each.key].name
   region                             = each.key

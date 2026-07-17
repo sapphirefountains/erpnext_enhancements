@@ -350,7 +350,7 @@ module "compute_vm" {
   metadata        = try(each.value.metadata, null)
   labels          = try(each.value.labels, null)
   tags            = try(each.value.tags, [])
-  group           = var.provision_standard_vm_lb_backend ? { named_ports = { http = var.health_check_port } } : null
+  group           = { named_ports = { http = var.health_check_port } }
 }
 
 # Spot VM Module: Provisions ephemeral VM instances using Spot pricing
@@ -378,7 +378,7 @@ module "spot_vm" {
   metadata           = try(each.value.metadata, null)
   labels             = try(each.value.labels, null)
   tags               = try(each.value.tags, [])
-  group              = var.provision_spot_vm_lb_backend ? { named_ports = { http = var.health_check_port } } : null
+  group              = { named_ports = { http = var.health_check_port } }
   snapshot_schedules = try(each.value.snapshot_schedules, {})
 
   scheduling_config = {
@@ -393,7 +393,7 @@ module "spot_vm" {
 
 resource "google_compute_health_check" "erpnext_standalone_health_check" {
   # 🎯 DECOUPLED: Managed completely by its own standalone variable block toggle
-  count   = var.enable_standalone_health_check ? 1 : 0
+  count   = var.deployment_mode == "shared" && var.enable_standalone_health_check ? 1 : 0
   name    = "erpnext-standalone-health-check"
   project = module.project.project_id
 
@@ -410,7 +410,7 @@ resource "google_compute_health_check" "erpnext_standalone_health_check" {
 
 # 🌐 Load Balancer Ingress (Targets Standalone Web Frontends)
 resource "google_compute_firewall" "allow_lb_to_vm" {
-  count     = var.enable_lb_firewall ? 1 : 0
+  count     = var.deployment_mode == "shared" && var.enable_lb_firewall ? 1 : 0
   name      = "allow-lb-to-production-vm"
   network   = local.network_id
   project   = module.project.project_id
@@ -428,7 +428,7 @@ resource "google_compute_firewall" "allow_lb_to_vm" {
 
 # 🔒 Secure SSH Tunneling (Targets both Prod and Staging Spot VMs securely via IAP)
 resource "google_compute_firewall" "allow_iap_ssh" {
-  count     = var.enable_iap_ssh_firewall ? 1 : 0
+  count     = var.deployment_mode == "shared" && var.enable_iap_ssh_firewall ? 1 : 0
   name      = "allow-iap-ssh-to-vms"
   network   = local.network_id
   project   = module.project.project_id

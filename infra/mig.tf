@@ -37,21 +37,24 @@ locals {
 # ============================================================================
 
 resource "google_service_account" "mig_sa" {
+  count        = var.deployment_mode == "shared" ? 1 : 0
   account_id   = "erpnext-mig-sa"
   display_name = "ERPNext Managed Instance Group Service Account"
   project      = module.project.project_id
 }
 
 resource "google_project_iam_member" "mig_sa_logging" {
+  count   = var.deployment_mode == "shared" ? 1 : 0
   project = module.project.project_id
   role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.mig_sa.email}"
+  member  = "serviceAccount:${google_service_account.mig_sa[0].email}"
 }
 
 resource "google_project_iam_member" "mig_sa_monitoring" {
+  count   = var.deployment_mode == "shared" ? 1 : 0
   project = module.project.project_id
   role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${google_service_account.mig_sa.email}"
+  member  = "serviceAccount:${google_service_account.mig_sa[0].email}"
 }
 
 # ============================================================================
@@ -173,7 +176,7 @@ resource "google_compute_instance_template" "prod_template" {
   }
 
   service_account {
-    email  = google_service_account.mig_sa.email
+    email  = google_service_account.mig_sa[0].email
     scopes = ["cloud-platform"]
   }
 
@@ -370,7 +373,7 @@ resource "google_compute_instance_template" "test_template" {
   }
 
   service_account {
-    email  = google_service_account.mig_sa.email
+    email  = google_service_account.mig_sa[0].email
     scopes = ["cloud-platform"]
   }
 

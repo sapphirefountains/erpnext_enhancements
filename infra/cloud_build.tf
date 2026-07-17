@@ -96,6 +96,7 @@ locals {
 # 1. THE REMOTE STATE STORAGE BUCKET
 # ============================================================================
 resource "google_storage_bucket" "tf_state" {
+  count                       = var.deployment_mode == "shared" ? 1 : 0
   name                        = var.state_bucket_name
   project                     = module.project.project_id
   location                    = var.state_bucket_region
@@ -117,6 +118,7 @@ resource "google_storage_bucket" "tf_state" {
 # ============================================================================
 # Pause execution to give GCP control plane backend systems time to spin up identities completely
 resource "time_sleep" "wait_for_api_provisioning" {
+  count           = var.deployment_mode == "shared" ? 1 : 0
   create_duration = "45s"
 
   depends_on = [
@@ -128,7 +130,7 @@ resource "time_sleep" "wait_for_api_provisioning" {
 # 3. SECRET MANAGER CONFIGURATION
 # ============================================================================
 module "cloud_build_secret" {
-  count      = var.provision_cloud_build ? 1 : 0
+  count      = var.deployment_mode == "shared" && var.provision_cloud_build ? 1 : 0
   source     = "../modules/secret-manager"
   project_id = module.project.project_id
 
@@ -157,7 +159,7 @@ module "cloud_build_secret" {
   }
 
   depends_on = [
-    time_sleep.wait_for_api_provisioning
+    time_sleep.wait_for_api_provisioning[0]
   ]
 }
 
@@ -165,7 +167,7 @@ module "cloud_build_secret" {
 # 4. NATIVE CLOUD BUILD V2 CONNECTION & TRIGGERS
 # ============================================================================
 module "cloud_build_connection" {
-  count      = var.provision_cloud_build ? 1 : 0
+  count      = var.deployment_mode == "shared" && var.provision_cloud_build ? 1 : 0
   source     = "../modules/cloud-build-v2-connection"
   project_id = module.project.project_id
   name       = local.cloud_build_config.connection_name
@@ -188,65 +190,145 @@ module "cloud_build_connection" {
     "infra-repo" = {
       remote_uri = var.github_repo_url
       triggers = {
-        # Automated pipeline trigger on pushing modifications to main branch
-        "push-trigger" = {
-          description     = "Trigger to run apply on merge to main"
-          service_account = local.cb_service_account
-          filename        = "cloudbuild.yaml"
-          push = {
-            branch = replace(var.deploy_branch_regex, "refs/heads/", "")
-          }
-          substitutions = {
-            "_ENVIRONMENT" = "production"
-          }
-        }
-
-        # --- Manual On-Demand Automation Triggers ---
-        # 🎯 THE FIX: Satisfies the module's validation constraint by assigning a clean, non-matching string
-        "terraform-apply-pipeline" = {
-          description     = "Manual on-demand execution of terraform apply."
-          service_account = local.cb_service_account
-          filename        = var.cloudbuild_yaml_path
-          push = {
-            branch = "manual-trigger-only" # 👈 Satisfies variable check safely
-          }
-          substitutions = {
-            "_STATE_BUCKET" = google_storage_bucket.tf_state.name
-            "_PROJECT_ID"   = module.project.project_id
-            "_ACTION"       = "apply"
-          }
-        }
-
-        "terraform-destroy-pipeline" = {
-          description     = "Manual on-demand execution of terraform destroy."
+        # --- Manual Infra Triggers (3 environments × apply/destroy/refresh) ---
+        "infra-shared-apply" = {
+          description     = "Apply shared infrastructure state"
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
             branch = "manual-trigger-only"
           }
           substitutions = {
-            "_STATE_BUCKET" = google_storage_bucket.tf_state.name
-            "_PROJECT_ID"   = module.project.project_id
-            "_ACTION"       = "destroy"
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "shared"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "apply"
           }
+          tags = ["infra", "shared", "apply"]
         }
-
-        "terraform-refresh-pipeline" = {
-          description     = "Manual on-demand execution of terraform refresh."
+        "infra-shared-destroy" = {
+          description     = "Destroy shared infrastructure"
           service_account = local.cb_service_account
           filename        = var.cloudbuild_yaml_path
           push = {
             branch = "manual-trigger-only"
           }
           substitutions = {
-            "_STATE_BUCKET" = google_storage_bucket.tf_state.name
-            "_PROJECT_ID"   = module.project.project_id
-            "_ACTION"       = "refresh"
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "shared"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "destroy"
           }
+          tags = ["infra", "shared", "destroy"]
+        }
+        "infra-shared-refresh" = {
+          description     = "Refresh shared infrastructure state"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "shared"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "refresh"
+          }
+          tags = ["infra", "shared", "refresh"]
+        }
+        "infra-test-apply" = {
+          description     = "Apply test environment state"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "test"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "apply"
+          }
+          tags = ["infra", "test", "apply"]
+        }
+        "infra-test-destroy" = {
+          description     = "Destroy test environment"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "test"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "destroy"
+          }
+          tags = ["infra", "test", "destroy"]
+        }
+        "infra-test-refresh" = {
+          description     = "Refresh test environment state"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "test"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "refresh"
+          }
+          tags = ["infra", "test", "refresh"]
+        }
+        "infra-prod-apply" = {
+          description     = "Apply production environment state"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "prod"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "apply"
+          }
+          tags = ["infra", "production", "apply"]
+        }
+        "infra-prod-destroy" = {
+          description     = "Destroy production environment"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "prod"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "destroy"
+          }
+          tags = ["infra", "production", "destroy"]
+        }
+        "infra-prod-refresh" = {
+          description     = "Refresh production environment state"
+          service_account = local.cb_service_account
+          filename        = var.cloudbuild_yaml_path
+          push = {
+            branch = "manual-trigger-only"
+          }
+          substitutions = {
+            "_STATE_BUCKET"    = var.state_bucket_name
+            "_DEPLOYMENT_MODE" = "prod"
+            "_PROJECT_ID"      = module.project.project_id
+            "_ACTION"          = "refresh"
+          }
+          tags = ["infra", "production", "refresh"]
         }
 
         # --- App Deploy Triggers ---
-        "deploy-test" = {
+        "app-deploy-test" = {
           description     = "Deploy erpnext_enhancements app to test VM"
           service_account = local.cb_service_account
           filename        = var.cloudbuild_deploy_yaml_path
@@ -258,10 +340,10 @@ module "cloud_build_connection" {
             _VM_ZONE    = local.spot_vm_zone
             _ALLOW_SKIP = "true"
           }
-          tags = ["deploy", "test"]
+          tags = ["app", "deploy", "test"]
         }
 
-        "deploy-prod" = {
+        "app-deploy-prod" = {
           description     = "Deploy erpnext_enhancements app to production VM"
           disabled        = true
           service_account = local.cb_service_account
@@ -274,11 +356,11 @@ module "cloud_build_connection" {
             _VM_ZONE    = local.standalone_vm_zone
             _ALLOW_SKIP = "false"
           }
-          tags = ["deploy", "production"]
+          tags = ["app", "deploy", "production"]
         }
 
-        # --- Upstream Update Triggers (manual) ---
-        "upstream-test" = {
+        # --- App Upstream Update Triggers (manual) ---
+        "app-upstream-test" = {
           description     = "Update upstream apps on test VM"
           service_account = local.cb_service_account
           filename        = var.cloudbuild_upstream_yaml_path
@@ -290,10 +372,10 @@ module "cloud_build_connection" {
             _VM_ZONE    = local.spot_vm_zone
             _ALLOW_SKIP = "true"
           }
-          tags = ["upstream", "test"]
+          tags = ["app", "upstream", "test"]
         }
 
-        "upstream-prod" = {
+        "app-upstream-prod" = {
           description     = "Update upstream apps on production VM"
           service_account = local.cb_service_account
           filename        = var.cloudbuild_upstream_yaml_path
@@ -305,7 +387,7 @@ module "cloud_build_connection" {
             _VM_ZONE    = local.standalone_vm_zone
             _ALLOW_SKIP = "false"
           }
-          tags = ["upstream", "production"]
+          tags = ["app", "upstream", "production"]
         }
       }
     }
@@ -316,13 +398,13 @@ module "cloud_build_connection" {
 # 5. DEPLOY SSH KEY FOR APP CI/CD
 # ============================================================================
 resource "tls_private_key" "deploy_ssh_key" {
-  count     = var.provision_cloud_build ? 1 : 0
+  count     = var.deployment_mode == "shared" && var.provision_cloud_build ? 1 : 0
   algorithm = "RSA"
   rsa_bits  = 4096
 }
 
 resource "google_secret_manager_secret" "deploy_ssh_key" {
-  count     = var.provision_cloud_build ? 1 : 0
+  count     = var.deployment_mode == "shared" && var.provision_cloud_build ? 1 : 0
   project   = module.project.project_id
   secret_id = "DEPLOY_SSH_KEY"
   replication {
@@ -335,7 +417,7 @@ resource "google_secret_manager_secret" "deploy_ssh_key" {
 }
 
 resource "google_secret_manager_secret_version" "deploy_ssh_key" {
-  count       = var.provision_cloud_build ? 1 : 0
+  count       = var.deployment_mode == "shared" && var.provision_cloud_build ? 1 : 0
   secret      = google_secret_manager_secret.deploy_ssh_key[0].id
   secret_data = tls_private_key.deploy_ssh_key[0].private_key_openssh
 

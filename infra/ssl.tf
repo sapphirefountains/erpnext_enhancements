@@ -24,7 +24,7 @@ locals {
 }
 
 module "ssl_certificates" {
-  count      = var.provision_ssl ? 1 : 0
+  count      = (var.deployment_mode == "shared" || var.deployment_mode == "prod") && var.provision_ssl ? 1 : 0
   source     = "../modules/certificate-manager"
   project_id = module.project.project_id
 

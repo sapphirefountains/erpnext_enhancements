@@ -26,7 +26,7 @@ locals {
 }
 
 module "ips" {
-  count      = var.provision_ips ? 1 : 0
+  count      = var.deployment_mode == "shared" && var.provision_ips ? 1 : 0
   source     = "../modules/net-address"
   project_id = module.project.project_id
 

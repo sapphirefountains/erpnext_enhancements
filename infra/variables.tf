@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+variable "deployment_mode" {
+  description = "Controls which resources are managed by this state: 'shared' (project, VPC, NAT, IAM, CB connection, IPs, SSL), 'test' (spot VM, test LB/triggers), or 'prod' (standard VM, prod LB, SSL, prod triggers)."
+  type        = string
+  default     = "shared"
+}
+
 variable "api_url" {
   description = "The API URL used by the frontend service container."
   type        = string

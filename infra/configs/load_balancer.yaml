@@ -1,4 +1,4 @@
-#%{ if provision_spot_vm }
+#%{ if provision_spot_vm_lb_backend }
 ${spot_lb_name}:
   protocol: "HTTP"
   use_classic_version: false
@@ -18,7 +18,7 @@ ${spot_lb_name}:
       address: "$$addresses:global:${spot_glb_ip_name}"
   health_check_configs: {}
 #%{ endif }
-#%{ if provision_compute_vm && provision_standard_vm_lb_backend }
+#%{ if provision_standard_vm_lb_backend }
 ${production_lb_name}:
   protocol: "HTTP"
   use_classic_version: false

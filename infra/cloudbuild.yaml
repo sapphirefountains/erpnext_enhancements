@@ -14,14 +14,13 @@ steps:
         
         # Ensures a clean framework pointer folder maps out if directory blocks are displaced
         if [ -d "modules" ] && [ ! -d "infra/modules" ]; then
-          echo "🔗 Linking modules directory context..."
-          ln -s /workspace/modules /workspace/infra/modules
+          echo "Linking modules directory context..."
+          ln -sf /workspace/modules /workspace/infra/modules
         fi
 
   # ============================================================================
   # STEP 1: INITIALIZE TERRAFORM WITH REMOTE STATE
   # ============================================================================
-  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 to satisfy the >= 1.12.2 constraint check!
   - name: 'hashicorp/terraform:1.13.0'
     id: 'Terraform Init'
     dir: 'infra'
@@ -29,15 +28,15 @@ steps:
     args:
       - '-c'
       - |
-        echo "Configuring remote GCS backend utilizing bucket: $_STATE_BUCKET"
+        echo "Configuring remote GCS backend for $_DEPLOYMENT_MODE state"
         terraform init \
           -backend-config="bucket=$_STATE_BUCKET" \
-          -backend-config="prefix=terraform/state"
+          -backend-config="prefix=terraform/$_DEPLOYMENT_MODE" \
+          -reconfigure
 
   # ============================================================================
   # STEP 2: RUN THE CONDITIONAL EXECUTION (APPLY OR DESTROY)
   # ============================================================================
-  # 🎯 UPDATED IMAGE: Bumped image tags to 1.13.0 here as well!
   - name: 'hashicorp/terraform:1.13.0'
     id: 'Terraform Execution'
     dir: 'infra'
@@ -46,19 +45,24 @@ steps:
     args:
       - '-c'
       - |
-        # Materialize standard text straight to the default tfvars file
-        echo "$$SECRET_TFVARS" > terraform.tfvars
-
-        # Check if this invocation was triggered by the designated trigger action
-        if [ "$_ACTION" = "destroy" ]; then
-          echo "⚠️ Deletion action detected. Initiating teardown protocols..."
-          terraform destroy -auto-approve
-        elif [ "$_ACTION" = "refresh" ]; then
-          echo "🔄 Refresh-only action detected. Reconciling state file..."
-          terraform apply -refresh-only -auto-approve
+        # For shared state, use the secret-stored tfvars (contains GitHub token etc.)
+        # For test/prod, the in-repo tfvars file is used directly (no secrets)
+        if [ "$_DEPLOYMENT_MODE" = "shared" ]; then
+          echo "Using secret-stored tfvars for shared state"
+          echo "$$SECRET_TFVARS" > $_DEPLOYMENT_MODE.tfvars
         else
-          echo "🚀 Deployment action detected. Initiating mutation passes..."
-          terraform apply -auto-approve
+          echo "Using in-repo $_DEPLOYMENT_MODE.tfvars"
+        fi
+
+        if [ "$_ACTION" = "destroy" ]; then
+          echo "Deletion action detected. Initiating teardown protocols..."
+          terraform destroy -var-file=$_DEPLOYMENT_MODE.tfvars -auto-approve
+        elif [ "$_ACTION" = "refresh" ]; then
+          echo "Refresh-only action detected. Reconciling state file..."
+          terraform apply -var-file=$_DEPLOYMENT_MODE.tfvars -refresh-only -auto-approve
+        else
+          echo "Deployment action detected. Initiating mutation passes..."
+          terraform apply -var-file=$_DEPLOYMENT_MODE.tfvars -auto-approve
         fi
 
 # ============================================================================
@@ -72,6 +76,6 @@ availableSecrets:
 # ============================================================================
 # TIMEOUT AND LOGGING CONTROLS
 # ============================================================================
-timeout: '1800s' # 30-minute absolute execution safety threshold
+timeout: '1800s'
 options:
   logging: CLOUD_LOGGING_ONLY

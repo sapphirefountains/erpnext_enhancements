@@ -13,7 +13,9 @@ bench.log
 
 .terraform/
 infra/*.tfstate
-infra/*.tfstate.backup
-infra/*.tfvars
+infra/*.tfstate.*
+infra/*.backup
+infra/shared.tfvars
+infra/terraform.tfvars
 infra/*.tfvars.json
-infra/tfplaninfra/tfplan
+infra/tfplan
