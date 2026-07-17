@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.8] - 2026-07-17
+
+### Removed
+
+- **Consolidated the two parallel Projects Dashboards into one.** The app had *two*
+  ~1,200-line implementations of the same dashboard — the **Custom HTML Block**
+  (embedded on Home / Projects, what users see) and a standalone **desk page**
+  (`/app/project-dashboard`). They drifted independently (a change to one didn't touch
+  the other), which is what made recent edits appear not to take. The Custom HTML Block
+  is now the single dashboard; the desk page and its per-tab components were removed:
+  - Deleted `page/project_dashboard/project_dashboard.{js,json}` (the desk Page) and the
+    desk-only components `dashboard_api.js`, `dashboard_view.js`, `priority_overview.js`,
+    `active_internal_projects.js`, `completed_projects.js`, `portfolio_gantt.js`,
+    `tasks_view.js`. Kept the shared backend `project_dashboard.py` (the block calls it)
+    and the shared `column_selector.js` / `column_resizer.js`.
+  - Removed the now-unused `get_dashboard_metrics` endpoint (the block's Dashboard tab
+    computes its metrics client-side).
+  - The desk shortcut and the Project Enhancements workspace link that pointed at the
+    retired page now open the **Projects workspace** (`/app/projects`), where the block
+    lives. Existing sites are updated by `patches.retire_project_dashboard_desk_page`
+    (deletes the leftover `Page` record + repoints the seeded shortcut).
+  - Note: the desk page's **Tasks View** tab and page-role gating did not carry over
+    (the block gates by workspace visibility, and its Portfolio Gantt covers task
+    scheduling). Say the word if you want Tasks View ported onto the block.
+
 ## [1.159.7] - 2026-07-17
 
 ### Added

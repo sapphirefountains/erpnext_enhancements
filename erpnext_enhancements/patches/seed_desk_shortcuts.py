@@ -13,7 +13,8 @@ the roles/users below (handled in ``api.desk_shortcuts``).
 
 import frappe
 
-# label, icon (emoji), color, link_to (Page route), visible_to_all, roles, sequence
+# label, icon (emoji), color, visible_to_all, roles, sequence, and the target:
+# either link_to (a Page route; the default link_type="Page") or link_type="URL" + url.
 DEFAULTS = [
 	{
 		"label": "Time Kiosk",
@@ -71,7 +72,11 @@ DEFAULTS = [
 		"label": "Project Dashboard",
 		"icon": "\U0001f4ca",  # 📊
 		"color": "Purple",
-		"link_to": "project-dashboard",
+		# Opens the Projects workspace, which embeds the "Projects Dashboard" Custom
+		# HTML Block. (The standalone desk page this used to link to was retired when
+		# the two dashboards were consolidated — v1.159.8.)
+		"link_type": "URL",
+		"url": "/app/projects",
 		"visible_to_all": 1,
 		"roles": [],
 		"sequence": 60,
@@ -97,8 +102,11 @@ def execute():
 			doc.shortcut_label = d["label"]
 			doc.enabled = 1
 			doc.sequence = d["sequence"]
-			doc.link_type = "Page"
-			doc.link_to = d["link_to"]
+			doc.link_type = d.get("link_type", "Page")
+			if doc.link_type == "URL":
+				doc.url = d["url"]
+			else:
+				doc.link_to = d["link_to"]
 			doc.icon = d["icon"]
 			doc.color = d["color"]
 			doc.visible_to_all = d["visible_to_all"]

@@ -110,18 +110,23 @@ every deploy a fresh URL.
 
 ## Project Dashboard components (`js/project_enhancements/dashboard_components/`)
 
-These plug into the [Project Dashboard](../project_enhancements/README.md#project-dashboard) page. Each tab maps to a component **class** lazily `frappe.require`d on activation, constructed, and `render()`ed; switching away calls `unmount()` (aborting in-flight requests via `AbortController`). `dashboard_api.js` is required first and every component routes server calls through `dashboard_api.call` (8s timeout + abort). `column_selector.js` + `gantt_zoom.js` are preloaded globally so lazy tabs can use them immediately.
+The **single Projects Dashboard** is the "Projects Dashboard" Custom HTML Block
+(`custom_html_blocks/projects_dashboard.{js,html,css}`), embedded on the Home / Projects
+workspaces. It fetches through the whitelisted methods in
+[`project_dashboard.py`](../project_enhancements/README.md#project-dashboard) and renders all
+tabs itself; only these two **shared** helpers remain in this folder (preloaded globally
+so the block can `frappe.require` them):
 
-| File | Tab | Notes |
-|---|---|---|
-| `dashboard_api.js` | (shared) | `frappe.call` wrapper with abort + 8s timeout |
-| `dashboard_view.js` | Dashboard | native module overview: number cards + `frappe.Chart` charts (status/type/completion) with a CSS-bar fallback; fed by `get_dashboard_metrics` |
-| `active_internal_projects.js` | Active Internal Projects | grouped by Master Project; inline status/priority edits; shows only active + internal `project_type` (`INTERNAL_PROJECT_TYPES`) |
-| `completed_projects.js` | Completed Projects | exponential-backoff retry (≤3) |
-| `priority_overview.js` | Priority Overview | `BufferManager` optimistic-edit engine (buffer → auto-commit w/ retry → rollback) |
-| `tasks_view.js` | Tasks | per-project Gantt/Tree in-page; Kanban/Calendar route to the Task list |
-| `portfolio_gantt.js` | Portfolio Gantt | whole-portfolio Gantt grouped by Master Project, drag-to-reschedule write-back, scroll preservation |
-| `column_selector.js` | (shared) | reusable "Columns" dropdown; localStorage-persisted |
+| File | Notes |
+|---|---|
+| `column_selector.js` | reusable "Columns" dropdown; localStorage-persisted |
+| `column_resizer.js` | drag-to-resize table columns; localStorage-persisted per tab |
+
+> **Consolidated in v1.159.8.** A parallel *desk page* dashboard (`page/project_dashboard/`
+> + per-tab components `dashboard_api.js`, `dashboard_view.js`, `priority_overview.js`,
+> `active_internal_projects.js`, `completed_projects.js`, `portfolio_gantt.js`,
+> `tasks_view.js`) was removed — two ~1,200-line implementations of the same thing.
+> Everything now lives in the Custom HTML Block.
 
 ## Kiosk PWA front-end (`js/kiosk/`)
 

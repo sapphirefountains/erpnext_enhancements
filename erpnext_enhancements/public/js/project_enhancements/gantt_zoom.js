@@ -3,7 +3,7 @@
  * (the Project form "Schedule" tab and the Project Dashboard portfolio Gantt).
  *
  * Targets: shared helper (no DOM of its own); consumed by the Project form Gantt
- * and the dashboard portfolio_gantt.js.
+ * (project.js).
  * Loaded via: hooks.py `app_include_js` (global), so
  * `erpnext_enhancements.gantt_zoom` is always available before any Gantt renders.
  *

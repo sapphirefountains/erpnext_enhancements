@@ -4,10 +4,10 @@
  * TaskTreeManager — interactive, hierarchical task grid.
  *
  * Targets: rendered into a host element on the Project form's Scope tab
- * (`custom_tasks_html`) and into the Project Dashboard "Tasks" tab tree view.
+ * (`custom_tasks_html`).
  * Loaded via: hooks.py `app_include_js` (global), so the class is always defined;
- * callers (project_form_script.js, dashboard tasks_view.js) also `frappe.require`
- * it defensively before constructing.
+ * the caller (project_form_script.js) also `frappe.require`s it defensively before
+ * constructing.
  *
  * Renders an Asana-style tree of Tasks for one Project with: expand/collapse with
  * lazy child loading, inline editing of dates / expected time / status / priority,
