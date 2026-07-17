@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.3] - 2026-07-17
+
+### Fixed
+
+- **The Contact form no longer shows two tabs both labeled "Comments".** One is the
+  real Comments tab (`custom_comments` → the Comments-app widget); the other,
+  `custom_comments_tab`, was mislabeled — it actually holds a "More Information"
+  section and the core contact-detail fields (middle name, email, designation,
+  salutation, department, phones, image, etc.). Relabeled that tab to **"Additional
+  Information"** (fixture label change in `custom_field.json`; fixture sync applies it
+  on migrate, no patch). Deliberately not "Details": `setup.custom_fields.create_unified_tabs`
+  has a Contact special-case that adopts any Tab Break labeled exactly "Details" as the
+  address-widget host, so that name would have relocated the address/location widgets.
+  Verified against the live meta: Contact now shows one "Comments" tab (the widget) plus
+  "Additional Information", and no "Details" tab is introduced. Completes the
+  duplicate-Comments-tab cleanup started in v1.159.2.
+
 ## [1.159.1] - 2026-07-17
 
 ### Fixed
