@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.0] - 2026-07-17
+
+### Removed
+
+- **The Opportunity "Lost Reason" / "Lost To (Competitor)" custom fields are gone.**
+  They duplicated capture ERPNext already ships natively on the Lost section of the
+  Opportunity form — `lost_reasons` (a Table MultiSelect onto the curated
+  `Opportunity Lost Reason` master) and `competitors`. The duplicate `custom_lost_reason`
+  Select was only ever added (v1.122.0) because a Property Setter had hidden the native
+  `lost_reasons` field, making it invisible to the win/loss KPI work. Worse, since
+  v1.149.0 removed `custom_won_reason` the Select's `insert_after` pointed at that
+  now-missing field, so Frappe stranded it — and `custom_lost_competitor` — at the
+  bottom of the form, inside the unrelated **Hand-Off Process** tab, where nobody found
+  it (0 of 780 opps filled it on TEST; 3 of 798 on prod, all "Other" and each already
+  carrying an equal-or-better native reason). Removed via
+  `patches.remove_opportunity_lost_reason`; no data migrated (verified lossless on both
+  sites).
+
+### Changed
+
+- **Loss capture + analytics now run on the native `lost_reasons` field.** The Property
+  Setter that hid `lost_reasons` is flipped to visible, so marking an Opportunity Lost
+  reveals the reason picker in its proper place (the Lost section). `validate_close_reason`
+  now requires at least one native `lost_reasons` row on the transition to Lost (was:
+  `custom_lost_reason`). The two Sales KPIs — **Lost to Competitor (90d)** and
+  **Loss-Reason Capture (90d)** (same `close_reason_capture_90` key, history carries
+  over) — read the native child table instead of the removed Select; both had been
+  reporting zero because the old field was unfindable. On TEST they now read 2 and 69.2%.
+- **The "Opportunity Loss Reasons" donut is now backed by a Script Report.** A Group By
+  dashboard chart can only group on a base-doctype column and cannot traverse the
+  `lost_reasons` child table, so the chart is repointed to a new **Opportunity Loss
+  Reasons** report (`crm_enhancements/report/opportunity_loss_reasons`) that joins the
+  child rows to their Lost parent and counts distinct opportunities per reason.
+
 ## [1.158.3] - 2026-07-16
 
 ### Fixed

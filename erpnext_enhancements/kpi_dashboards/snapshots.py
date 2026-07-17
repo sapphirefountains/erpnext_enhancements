@@ -410,14 +410,20 @@ def _sales_metrics():
 			"Opportunity",
 			metrics.LOWER,
 		)
-	# Loss reason capture (custom_lost_reason). Winning no longer captures a
-	# reason as of v1.149.0 (custom_won_reason removed).
-	if frappe.db.has_column("Opportunity", "custom_lost_reason"):
+	# Loss-reason capture, from ERPNext's native `lost_reasons` (rows of
+	# `Opportunity Lost Reason Detail`). As of v1.159.0 this replaced the app's
+	# own `custom_lost_reason` Select, which duplicated the native taxonomy and
+	# was removed (patches.remove_opportunity_lost_reason). Winning captures no
+	# reason (v1.149.0, custom_won_reason removed).
+	if frappe.db.exists("DocType", "Opportunity Lost Reason Detail"):
 		add(
 			"lost_to_competitor_90",
 			"Lost to Competitor (90d)",
 			_scalar(
-				"select count(*) from `tabOpportunity` where status='Lost' and custom_lost_reason='Competitor' and modified >= %(d)s",
+				"""select count(distinct o.name) from `tabOpportunity` o
+				join `tabOpportunity Lost Reason Detail` d
+				  on d.parent = o.name and d.parenttype = 'Opportunity'
+				where o.status='Lost' and d.lost_reason like '%%Competit%%' and o.modified >= %(d)s""",
 				{"d": d90},
 			),
 			"count",
@@ -432,7 +438,10 @@ def _sales_metrics():
 		)
 		with_reason = flt(
 			_scalar(
-				"select count(*) from `tabOpportunity` where status='Lost' and coalesce(custom_lost_reason,'')<>'' and modified >= %(d)s",
+				"""select count(distinct o.name) from `tabOpportunity` o
+				join `tabOpportunity Lost Reason Detail` d
+				  on d.parent = o.name and d.parenttype = 'Opportunity'
+				where o.status='Lost' and o.modified >= %(d)s""",
 				{"d": d90},
 			)
 		)

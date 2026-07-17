@@ -166,3 +166,7 @@ erpnext_enhancements.patches.backfill_contact_custom_account
 erpnext_enhancements.patches.seed_dispatch_user_role
 erpnext_enhancements.patches.rename_rent_value_stream_to_events
 erpnext_enhancements.patches.seed_project_naming_rule
+# v1.159.0 drop the Opportunity "Lost Reason"/"Lost To (Competitor)" fields — they
+# duplicated ERPNext's native lost_reasons + competitors capture, which v1.159.0
+# unhides and repoints the loss KPIs at (no data migrated; see the patch docstring)
+erpnext_enhancements.patches.remove_opportunity_lost_reason

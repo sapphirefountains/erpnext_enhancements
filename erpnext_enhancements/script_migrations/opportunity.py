@@ -59,9 +59,16 @@ def validate_close_reason(doc, method=None):
 	analysis has data (mirrors ``validate_ranks_on_won``).
 
 	Enforced on the *transition* only (previous status was not already Lost):
-	editing a historical Lost Opportunity that predates this field is not
-	retroactively blocked. The reason field is provisioned by
-	``setup.custom_fields.create_opportunity_winloss_fields``.
+	editing a historical Lost Opportunity that predates this rule is not
+	retroactively blocked.
+
+	Reads ERPNext's native ``lost_reasons`` Table MultiSelect (rows of
+	``Opportunity Lost Reason Detail`` linking the ``Opportunity Lost Reason``
+	master), which is what the Lost section on the form captures.
+
+	NOTE (v1.159.0): this used to require the app's own ``custom_lost_reason``
+	Select. That field duplicated the native taxonomy and was removed — see
+	``patches.remove_opportunity_lost_reason``.
 
 	NOTE (v1.149.0): winning an Opportunity no longer requires a Won Reason —
 	the ``custom_won_reason`` field was removed.
@@ -73,9 +80,9 @@ def validate_close_reason(doc, method=None):
 	if previous is not None and previous.status == doc.status:
 		return  # not a fresh transition — don't block edits of already-lost opps
 
-	if not doc.get("custom_lost_reason"):
+	if not doc.get("lost_reasons"):
 		frappe.throw(
-			"Please set a <b>Lost Reason</b> before marking this Opportunity <b>Lost</b>.",
+			"Please set at least one <b>Lost Reason</b> before marking this Opportunity <b>Lost</b>.",
 			title="Lost Reason Required",
 		)
 
