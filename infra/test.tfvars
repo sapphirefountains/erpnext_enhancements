@@ -25,3 +25,4 @@ restore_spot_vm_from_snapshot = true
 enable_spot_vm_snapshot_schedule = true
 
 spot_vm_labels = { role = "batch-processor" }
+

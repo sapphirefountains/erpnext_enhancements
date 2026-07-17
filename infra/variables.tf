@@ -462,6 +462,7 @@ variable "certificate_map_id" {
 variable "state_bucket_name" {
   description = "The globally unique name of the GCS bucket for remote state storage."
   type        = string
+  default     = "tf-state-v8"
 }
 
 variable "state_bucket_region" {
@@ -473,17 +474,20 @@ variable "state_bucket_region" {
 variable "github_repo_url" {
   description = "The target GitHub repository remote URL link."
   type        = string
+  default     = ""
 }
 
 variable "github_token_secret" {
   description = "The payload value of the GitHub PAT to store securely in Secret Manager."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "github_app_installation_id" {
   description = "The unique numerical identifier of the GitHub App on your repo."
   type        = number
+  default     = 0
 }
 
 variable "cloudbuild_yaml_path" {
