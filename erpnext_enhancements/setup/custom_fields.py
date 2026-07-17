@@ -4,7 +4,8 @@ Entry point :func:`create_primary_contact_fields` is registered in
 ``after_migrate`` (hooks.py), so it runs on every ``bench migrate``. It injects
 the "Contacts & Addresses" tab — Primary Contact link, contact/address directory
 HTML widgets, primary address + location map — onto the relevant party doctypes,
-plus a "Comments" tab for Project / Master Project.
+plus a "Comments" tab for Master Project (every other doctype's Comments tab is
+fixture-owned).
 
 All creation goes through ``create_custom_fields(..., update=True)`` and existing
 fields are skipped (the unified tabs additionally reconcile ``insert_after`` for
@@ -177,18 +178,23 @@ def get_last_tab_fieldname(doctype):
 def create_primary_contact_fields():
 	"""``after_migrate`` entry point: provision the directory + comments tabs."""
 	create_unified_tabs()
-	create_comments_tab("Project")
+	# Master Project's Comments tab (custom_comments_tab + widget) is provisioned
+	# here because it has no fixture-owned Comments tab. Project is NOT listed:
+	# its Comments tab comes from the fixtures (custom_comments), and re-running
+	# create_comments_tab for it would resurrect the empty ``custom_comments_tab``
+	# duplicate removed in v1.159.2 (patches.remove_duplicate_comments_tabs).
 	create_comments_tab("Master Project")
 
 
 def create_comments_tab(doctype):
 	"""Add a "Comments" tab hosting the Comments-app HTML widget to a doctype.
 
-	Insert-only: fields that already exist are never touched. The Project pair
-	is a manual customization owned by the fixtures (which sync before this
-	after_migrate hook runs); rewriting it here with ``update=True`` would
-	silently override the fixture on every migrate. This only provisions
-	missing fields (fresh installs, Master Project).
+	Insert-only: fields that already exist are never touched. Used for Master
+	Project (and fresh installs of it), which has no fixture-owned Comments tab —
+	every other doctype's Comments tab lives in the fixtures (``custom_comments``
+	+ ``custom_comments_field``). Note this creates ``custom_comments_tab``, so do
+	not point it at a doctype that already carries the fixture ``custom_comments``
+	tab or the form gets two "Comments" tabs.
 	"""
 	if not frappe.db.exists("DocType", doctype):
 		return

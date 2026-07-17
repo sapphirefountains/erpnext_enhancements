@@ -24,6 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Additional Information", and no "Details" tab is introduced. Completes the
   duplicate-Comments-tab cleanup started in v1.159.2.
 
+## [1.159.2] - 2026-07-17
+
+### Fixed
+
+- **Removed a blank, duplicate "Comments" tab that showed on 12 doctypes.** The
+  canonical Comments UX is a `custom_comments` Tab Break followed by the
+  `custom_comments_field` widget, but many forms had accumulated a *second*
+  "Comments" Tab Break (usually `custom_comments_tab`) sitting empty — rendering as
+  a clickable, blank duplicate tab. Determined per-doctype from the live meta which
+  tab was empty (the one without the widget under it; on Employee, Purchase Order and
+  Supplier Quotation the empty one was `custom_comments`, inverted from the rest) and
+  deleted only that orphan. Affected: Address, Batch, Delivery Note, Employee, Lead,
+  Project, Purchase Order, Quotation, Serial No, Stock Entry, Supplier Quotation, Task.
+  - The surviving tab + widget are untouched; fixtures repoint `custom_comments_field`
+    (and Task's `custom_timeline`, Address's `custom_comments`) off the deleted field
+    so no dangling `insert_after` is left behind, and the deleted field is dropped from
+    each affected `field_order`. Removal is applied on existing sites by
+    `patches.remove_duplicate_comments_tabs`. Verified by simulating each form against
+    the live meta: every one ends with exactly one Comments tab holding the widget.
+  - `setup.custom_fields.create_primary_contact_fields` no longer calls
+    `create_comments_tab("Project")` — that would have resurrected Project's empty
+    `custom_comments_tab`; Project's Comments tab is fixture-owned. Master Project (no
+    fixture Comments tab) still uses `create_comments_tab`.
+  - **Not** included: `Contact`, whose second "Comments" tab is *not* empty (it holds a
+    "More Information" section and contact fields) — a mislabel, tracked separately.
 ## [1.159.1] - 2026-07-17
 
 ### Fixed
