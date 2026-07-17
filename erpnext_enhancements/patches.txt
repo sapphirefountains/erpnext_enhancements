@@ -178,3 +178,7 @@ erpnext_enhancements.patches.remove_duplicate_comments_tabs
 # primary_address Link field (Zoho import stored the address display instead of an
 # Address name), which blocked saving those records; sanitize hook prevents recurrence
 erpnext_enhancements.patches.clear_invalid_primary_address_links
+# v1.159.8 consolidate the two Projects Dashboards onto the Custom HTML Block:
+# delete the retired /app/project-dashboard desk Page + repoint its seeded desk
+# shortcut to the Projects workspace (the block's home)
+erpnext_enhancements.patches.retire_project_dashboard_desk_page
