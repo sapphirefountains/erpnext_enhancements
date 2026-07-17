@@ -174,3 +174,7 @@ erpnext_enhancements.patches.remove_opportunity_lost_reason
 # with the real Comments tab on 12 doctypes (rendered as a blank second "Comments"
 # tab); the surviving tab + widget stay, fixtures repoint off the deleted field
 erpnext_enhancements.patches.remove_duplicate_comments_tabs
+# v1.159.5 clear legacy HTML/junk left in the Opportunity/Project/Master Project
+# primary_address Link field (Zoho import stored the address display instead of an
+# Address name), which blocked saving those records; sanitize hook prevents recurrence
+erpnext_enhancements.patches.clear_invalid_primary_address_links

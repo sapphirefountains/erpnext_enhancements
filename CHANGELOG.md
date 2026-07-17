@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.159.5] - 2026-07-17
+
+### Fixed
+
+- **Opportunities with a corrupted Primary Address could not be saved.** On
+  Opportunity/Project/Master Project, `primary_address` is a **Link** to Address, but
+  legacy data (Zoho import / an old migration) had stored the rendered address *display*
+  — HTML with `<br>` tags, e.g. `2600 Taylorsville BLVD<br>…` — in the field instead of
+  an Address docname. The Link then failed validation (`Could not find Address: …`) on
+  every save, making those records un-editable (5 Opportunities on production).
+  - A new `before_validate` hook (`sync_contact.sanitize_primary_address_link`, wired on
+    Opportunity/Project/Master Project) clears any `primary_address` that doesn't resolve
+    to a real Address, so the record saves; the user re-picks it from the directory UI.
+    It only acts on the Link-type field — Customer/Supplier `primary_address` is a
+    read-only Text Editor display where HTML is expected and is left untouched.
+  - `patches.clear_invalid_primary_address_links` proactively nulls the existing bad
+    values across the three doctypes on deploy (idempotent).
 ## [1.159.4] - 2026-07-17
 
 ### Added
