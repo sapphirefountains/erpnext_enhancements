@@ -1,0 +1,49 @@
+# =============================================================================
+# SHARED INFRASTRUCTURE — terraform apply -var-file=shared.tfvars
+# Copy this to shared.tfvars and fill in your values:
+#   cp shared.tfvars.template shared.tfvars
+# =============================================================================
+
+# --- Project ---
+deployment_mode     = "shared"
+project_id          = "my-gcp-project"
+billing_account_id  = "XXXXXX-XXXXXX-XXXXXX"  # Only if create_project=true
+create_project      = false
+region              = "us-east1"
+ip_external         = true
+use_default_vpc     = true
+network             = "my-vpc"                # Existing VPC name
+subnetwork          = "my-subnet-us-central1" # Existing subnet name
+
+# --- IP Addresses ---
+provision_ips = true
+glb_ip_name   = "my-glb-ip"                  # Global LB IP name
+
+# --- Domains ---
+domains = ["erp.example.com", "beta.erp.example.com"]
+
+# --- VMs ---
+standard_vm_name = "production-erpnext-vm"
+spot_vm_name     = "test-erpnext-spot-vm"
+vm_region        = "us-east4"                # Production VM zone region
+spot_vm_region   = "us-central1"             # Spot VM zone region
+
+# --- Provisioning Toggles ---
+provision_spot_vm_lb_backend     = true
+provision_standard_vm_lb_backend = true
+provision_load_balancer          = true
+provision_cloud_build            = true
+provision_cloud_nat              = true
+nat_regions = ["us-east4", "us-east1", "us-central1"]
+
+# --- Cloud Build ---
+cloud_build_connection     = "github-pipeline-connection"
+github_app_installation_id = 123456789
+github_token_secret        = "ghp_xxxxxxxxxxxxxxxxxxxxxx"
+github_repo_url            = "https://github.com/myorg/myrepo.git"
+state_bucket_name          = "my-tf-state-bucket"
+deploy_branch_regex        = "refs/heads/master"
+destroy_branch_regex       = "refs/heads/master"
+
+# --- IAP ---
+iap_tunnel_members = ["user:you@example.com"]
