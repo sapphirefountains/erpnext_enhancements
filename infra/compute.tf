@@ -257,7 +257,7 @@ locals {
               type = var.disk_type
             }
           },
-          var.enable_spot_vm_snapshot_schedule ? {
+          coalesce(var.enable_spot_vm_snapshot_schedule, false) ? {
             snapshot_schedule = ["daily-snapshots"]
           } : {}
         )
