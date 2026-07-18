@@ -16,8 +16,8 @@ ${spot_lb_name}:
   forwarding_rules_config:
     https-rule:
       address: "$$addresses:global:${spot_glb_ip_name}"
-      ssl_certificates:
-        certificate_map: "$$ssl_certificates:${ssl_map_name}"
+  ssl_certificates:
+    certificate_map: "$$ssl_certificates:${ssl_map_name}"
   health_check_configs: {}
 #%{ endif }
 #%{ if provision_standard_vm_lb_backend }
@@ -37,7 +37,7 @@ ${production_lb_name}:
   forwarding_rules_config:
     https-rule:
       address: "$$addresses:global:${glb_ip_name}"
-      ssl_certificates:
-        certificate_map: "$$ssl_certificates:${ssl_map_name}"
+  ssl_certificates:
+    certificate_map: "$$ssl_certificates:${ssl_map_name}"
   health_check_configs: {}
 #%{ endif }
