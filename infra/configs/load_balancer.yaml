@@ -35,6 +35,7 @@ ${production_lb_name}:
       backends:
         - backend: "${standalone_vm_neg_name}"
       health_checks: ["$$mig_health_check_id"]
+      protocol: "HTTP"
       port_name: "http"
   backend_buckets_config: {}
   forwarding_rules_config:
