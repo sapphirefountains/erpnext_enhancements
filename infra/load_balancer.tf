@@ -48,7 +48,6 @@ locals {
     spot_lb_name                     = var.spot_lb_name
     production_lb_name               = var.production_lb_name
     region                           = var.region
-    ssl_map_name                     = var.ssl_map_name
     provision_prod_mig               = var.provision_prod_mig
     provision_test_mig               = var.provision_test_mig
     provision_compute_vm             = var.provision_compute_vm
@@ -57,6 +56,7 @@ locals {
     provision_cloud_run              = var.provision_cloud_run
     standalone_vm_neg_name           = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.standalone_vm_zone, var.standard_vm_name)
     spot_vm_neg_name                 = format("projects/%s/zones/%s/instanceGroups/%s", var.project_id, local.spot_vm_zone, var.spot_vm_name)
+    ssl_domains                      = var.domains
   })
 
   load_balancer_config = try(yamldecode(local._lb_template), tomap({}))
@@ -71,18 +71,6 @@ locals {
     : {}
   )
 
-  # 2. Decoupled SSL Certificate Map Resolution Pattern
-  constructed_fallback_map_id = "//certificatemanager.googleapis.com/projects/${var.project_id}/locations/global/certificateMaps/${var.ssl_map_name}"
-
-  cert_maps = (
-    var.provision_ssl && length(module.ssl_certificates) > 0 && try(module.ssl_certificates[0].map, null) != null
-    ? {
-      "$$ssl_certificates:${var.ssl_map_name}" = "//certificatemanager.googleapis.com/${module.ssl_certificates[0].map_id}"
-    }
-    : {
-      "$$ssl_certificates:${var.ssl_map_name}" = local.constructed_fallback_map_id
-    }
-  )
 }
 
 module "load_balancer" {
@@ -129,20 +117,7 @@ module "load_balancer" {
     })
   }
 
-  # Pass https_proxy_config and safely resolve the certificate map ID
-  https_proxy_config = {
-    certificate_map = (
-      try(each.value.ssl_certificates.certificate_map, null) == null
-      ? null
-      : lookup(
-        local.cert_maps,
-        each.value.ssl_certificates.certificate_map,
-        local.constructed_fallback_map_id
-      )
-    )
-  }
-
-  # Pass other ssl certificates configs
+  # Pass ssl certificates configs (managed_configs creates google_compute_managed_ssl_certificate)
   ssl_certificates = {
     certificate_ids = try(each.value.ssl_certificates.certificate_ids, [])
     create_configs  = try(each.value.ssl_certificates.create_configs, {})

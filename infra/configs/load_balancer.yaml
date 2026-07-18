@@ -17,7 +17,12 @@ ${spot_lb_name}:
     https-rule:
       address: "$$addresses:global:${spot_glb_ip_name}"
   ssl_certificates:
-    certificate_map: "$$ssl_certificates:${ssl_map_name}"
+    managed_configs:
+      web-ssl-cert:
+        domains:
+%{ for d in ssl_domains ~}
+          - "${d}"
+%{ endfor ~}
   health_check_configs: {}
 #%{ endif }
 #%{ if provision_standard_vm_lb_backend }
@@ -38,6 +43,11 @@ ${production_lb_name}:
     https-rule:
       address: "$$addresses:global:${glb_ip_name}"
   ssl_certificates:
-    certificate_map: "$$ssl_certificates:${ssl_map_name}"
+    managed_configs:
+      web-ssl-cert:
+        domains:
+%{ for d in ssl_domains ~}
+          - "${d}"
+%{ endfor ~}
   health_check_configs: {}
 #%{ endif }
