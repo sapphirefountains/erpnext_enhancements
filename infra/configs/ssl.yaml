@@ -2,12 +2,27 @@ certificates:
   ${ssl_cert_name}:
     managed:
       domains:
-        - ${domain_name}
+%{ for domain in domains ~}
+        - ${domain}
+%{ endfor ~}
+      %{ if enable_dns_authorization }
+      dns_authorizations:
+%{ for dns_key in dns_auth_keys ~}
+        - ${dns_key}
+%{ endfor ~}
+      %{ endif }
 map:
   name: ${ssl_map_name}
   description: "Managed SSL Certificate Map for Web Applications"
   entries:
-    app-domain:
+%{ for domain in domains ~}
+    ${replace(domain, ".", "-")}:
       certificates:
         - ${ssl_cert_name}
-      hostname: ${domain_name}
+      hostname: ${domain}
+%{ endfor ~}
+dns_authorizations:
+%{ for domain in domains ~}
+  dns-auth-${replace(domain, ".", "-")}:
+    domain: ${domain}
+%{ endfor ~}

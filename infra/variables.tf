@@ -80,10 +80,16 @@ variable "create_project" {
   default     = true
 }
 
-variable "domain_name" {
-  description = "The domain name for the managed SSL certificate."
-  type        = string
-  default     = "app.example.com"
+variable "domains" {
+  description = "List of domain names for the managed SSL certificate and map entries."
+  type        = list(string)
+  default     = ["app.example.com"]
+}
+
+variable "enable_dns_authorization" {
+  description = "Whether to create DNS authorization records for certificate issuance."
+  type        = bool
+  default     = true
 }
 
 variable "glb_ip_name" {
