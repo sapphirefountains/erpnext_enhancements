@@ -102,11 +102,8 @@ output "sql_instances" {
   depends_on  = [module.sql]
 }
 
-output "ssl_certificates" {
-  description = "The outputs of the SSL Certificates Manager configuration."
-  value       = try(module.ssl_certificates[0], null)
-  depends_on  = [module.ssl_certificates]
-}
+# SSL certificates are now managed as google_compute_managed_ssl_certificate
+# resources within the load balancer module (via ssl_certificates.managed_configs).
 
 output "prod_mig" {
   description = "The outputs and details of the production zonal Managed Instance Group."
