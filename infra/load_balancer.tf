@@ -135,9 +135,7 @@ module "load_balancer" {
 locals {
   http_redirect_configs = var.provision_ips && length(module.ips) > 0 ? {
     for k, v in local.load_balancer_config : k => {
-      ip_address = k == var.spot_lb_name
-        ? module.ips[0].global_addresses[var.spot_glb_ip_name].address
-        : module.ips[0].global_addresses[var.glb_ip_name].address
+      ip_address = local.glb_addresses["$$addresses:global:${k == var.spot_lb_name ? var.spot_glb_ip_name : var.glb_ip_name}"]
     }
   } : {}
 }
