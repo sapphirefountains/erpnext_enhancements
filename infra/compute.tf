@@ -319,7 +319,7 @@ locals {
     startup_script                     = var.enable_startup_script ? local.startup_script_yaml : ""
     boot_disk_type                     = var.disk_type
     spot_vm_labels_json                = jsonencode(var.spot_vm_labels)
-    enable_spot_vm_snapshot_schedule   = var.enable_spot_vm_snapshot_schedule
+    enable_spot_vm_snapshot_schedule   = coalesce(var.enable_spot_vm_snapshot_schedule, false)
     snapshot_schedule_start_time       = var.snapshot_schedule_start_time
     snapshot_schedule_retention_days   = var.snapshot_schedule_retention_days
     snapshot_schedule_storage_location = var.snapshot_schedule_storage_location
