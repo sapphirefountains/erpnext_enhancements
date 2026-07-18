@@ -1,6 +1,6 @@
 #%{ if provision_spot_vm_lb_backend }
 ${spot_lb_name}:
-  protocol: "HTTP"
+  protocol: "HTTPS"
   use_classic_version: false
   urlmap_config:
     description: "Spot VM load balancer"
@@ -14,8 +14,6 @@ ${spot_lb_name}:
       port_name: "http"
   backend_buckets_config: {}
   forwarding_rules_config:
-    http-rule:
-      address: "$$addresses:global:${spot_glb_ip_name}"
     https-rule:
       address: "$$addresses:global:${spot_glb_ip_name}"
       ssl_certificates:
@@ -24,7 +22,7 @@ ${spot_lb_name}:
 #%{ endif }
 #%{ if provision_standard_vm_lb_backend }
 ${production_lb_name}:
-  protocol: "HTTP"
+  protocol: "HTTPS"
   use_classic_version: false
   urlmap_config:
     description: "Production VM load balancer"
@@ -37,8 +35,6 @@ ${production_lb_name}:
       port_name: "http"
   backend_buckets_config: {}
   forwarding_rules_config:
-    http-rule:
-      address: "$$addresses:global:${glb_ip_name}"
     https-rule:
       address: "$$addresses:global:${glb_ip_name}"
       ssl_certificates:
