@@ -122,7 +122,6 @@ curl -sI --resolve beta.erp.sapphirefountains.com:443:34.149.67.36 https://beta.
 
 ## Known Quirks
 
-- **This WSL machine** has `127.0.0.1 erp.sapphirefountains.com` in the Windows hosts file — remove it to access prod
 - **Backend protocol** must be `HTTP` (not `HTTPS`). The LB terminates TLS at the edge, sends plain HTTP to the VM
 - **Spot VM snapshots** daily at 02:00 UTC, 7-day retention. Restore by tainting disk resources in test state
 - **State lock** can be forced: `terraform force-unlock <LOCK_ID>`
