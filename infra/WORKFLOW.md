@@ -1,5 +1,8 @@
 # Workflow Guide — Three-State Terraform
 
+> **Service toggle documentation** → see [README.md](README.md) (architecture, toggles, scenarios, variable reference)  
+> **Project-specific values** → see [GCP_SETUP.md](docs/GCP_SETUP.md) (actual IPs, domains, VM names)
+
 - [Quick Start](#quick-start)
 - [File Map](#file-map)
 - [Three-State Model](#three-state-model)
@@ -58,18 +61,7 @@ Every file is evaluated in **all three modes**, but resources are gated by `depl
 | `cloud_function.tf` | Cloud Functions v2 | `provision_cloud_function` |
 | `artifact_registry.tf` | Artifact Registry Docker repos | `provision_artifact_registry` |
 
-### Config files (`configs/`)
-
-| File | Used by | Purpose |
-|------|---------|---------|
-| `configs/cloud_build.yaml` | `cloud_build.tf` | Cloud Build connection + trigger definitions |
-| `configs/load_balancer.yaml` | `load_balancer.tf` | Backend service, URL map, TLS, forwarding rule config |
-| `configs/ips.yaml` | `ips.tf` | Static IP address definitions |
-| `configs/ssl.yaml` | `ssl.tf` | SSL certificate + map definitions |
-| `configs/sql.yaml` | `sql.tf` | Cloud SQL instance definitions |
-| `configs/cloud_run.yaml` | `cloud_run.tf` | Cloud Run service definitions |
-| `configs/artifact_registry.yaml` | `artifact_registry.tf` | Artifact Registry repo definitions |
-| `configs/startup_script.sh` | `compute.tf` | Rendered startup script template for VMs |
+> Config files in `configs/` are documented in [README.md](README.md#detailed-service-configurations) with their toggles and purpose.
 
 ### Backend + variable files
 
