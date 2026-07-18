@@ -202,25 +202,27 @@ resource "google_compute_disk" "spot_data_from_snapshot" {
 
 locals {
   # 1. Construct disks as a structured MAP of objects instead of a list using merge()
-  raw_attached_disks = var.enable_vm_persistence ? merge(
+  raw_attached_disks = merge(
     {
-      "data-disk" = merge(
-        {
-          device_name = "erpnext-data"
-          mode        = "READ_WRITE"
-          type        = "PERSISTENT"
-        },
-        var.data_disk_source_attach != null ? {
-          source = {
-            attach = var.data_disk_source_attach
+      for k, v in {
+        "data-disk" = merge(
+          {
+            device_name = "erpnext-data"
+            mode        = "READ_WRITE"
+            type        = "PERSISTENT"
+          },
+          var.data_disk_source_attach != null ? {
+            source = {
+              attach = var.data_disk_source_attach
+            }
+            } : {
+            initialize_params = {
+              size = var.vm_data_disk_size
+              type = var.disk_type
+            }
           }
-          } : {
-          initialize_params = {
-            size = var.vm_data_disk_size
-            type = var.disk_type
-          }
-        }
-      )
+        )
+      } : k => v if var.enable_vm_persistence
     },
     {
       for i in range(var.vm_local_ssd_count) : "local-ssd-${i}" => {
@@ -232,32 +234,34 @@ locals {
           size = var.local_ssd_size
           type = "local-ssd"
         }
-      }
+      } if var.enable_vm_persistence
     }
-  ) : {}
+  )
 
-  spot_vm_attached_disks = var.enable_vm_persistence ? merge(
+  spot_vm_attached_disks = merge(
     {
-      "data-disk" = merge(
-        {
-          device_name = "erpnext-data"
-          mode        = "READ_WRITE"
-          type        = "PERSISTENT"
-        },
-        var.enable_vm_persistence && var.provision_spot_vm ? {
-          source = {
-            attach = "projects/${module.project.project_id}/zones/${local.spot_vm_zone}/disks/${google_compute_disk.spot_data_from_snapshot[0].name}"
-          }
-          } : {
-          initialize_params = {
-            size = var.vm_data_disk_size
-            type = var.disk_type
-          }
-        },
-        var.enable_spot_vm_snapshot_schedule ? {
-          snapshot_schedule = ["daily-snapshots"]
-        } : {}
-      )
+      for k, v in {
+        "data-disk" = merge(
+          {
+            device_name = "erpnext-data"
+            mode        = "READ_WRITE"
+            type        = "PERSISTENT"
+          },
+          var.enable_vm_persistence && var.provision_spot_vm ? {
+            source = {
+              attach = "projects/${module.project.project_id}/zones/${local.spot_vm_zone}/disks/${google_compute_disk.spot_data_from_snapshot[0].name}"
+            }
+            } : {
+            initialize_params = {
+              size = var.vm_data_disk_size
+              type = var.disk_type
+            }
+          },
+          var.enable_spot_vm_snapshot_schedule ? {
+            snapshot_schedule = ["daily-snapshots"]
+          } : {}
+        )
+      } : k => v if var.enable_vm_persistence
     },
     {
       for i in range(var.vm_local_ssd_count) : "local-ssd-${i}" => {
@@ -269,9 +273,9 @@ locals {
           size = var.local_ssd_size
           type = "local-ssd"
         }
-      }
+      } if var.enable_vm_persistence
     }
-  ) : {}
+  )
 
   # 2. Inject configuration keys and pre-encoded strings cleanly into templates
   startup_script_raw = templatefile("${path.module}/configs/startup_script.sh", {

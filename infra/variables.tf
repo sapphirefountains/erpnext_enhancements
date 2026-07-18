@@ -208,7 +208,7 @@ variable "boot_disk_auto_delete" {
 variable "vm_local_ssd_count" {
   type        = number
   description = "The number of local SSD scratch arrays to provision"
-  default     = 1
+  default     = 0
 }
 
 variable "enable_standalone_health_check" {
