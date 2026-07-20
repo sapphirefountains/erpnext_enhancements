@@ -31,7 +31,7 @@
 
 	<noscript>
 		<div class="fm-notice fm-notice--error">
-			{{ _("This form needs JavaScript. Please enable it, or call us on (801) 292-3383 and we'll take your details over the phone.") }}
+			{{ _("This form needs JavaScript. Please enable it, or call us on") }} {{ boot.contact_phone }} {{ _("and we'll take your details over the phone.") }}
 		</div>
 	</noscript>
 
@@ -230,7 +230,7 @@
 		<h2>{{ _("Thanks — we've got it.") }}</h2>
 		<p>{{ _("Your request is with our team. We'll be in touch within one business day to talk through the move and get you a quote.") }}</p>
 		<p class="fm-reference">{{ _("Reference") }}: <b id="fm-reference"></b></p>
-		<p class="fm-hint">{{ _("Need us sooner? Call (801) 292-3383.") }}</p>
+		<p class="fm-hint">{{ _("Need us sooner? Call") }} {{ boot.contact_phone }}.</p>
 	</div>
 
 	<div id="fm-loading" class="fm-notice">{{ _("Loading the form…") }}</div>

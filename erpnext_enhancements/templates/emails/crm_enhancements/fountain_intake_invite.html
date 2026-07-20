@@ -1,5 +1,6 @@
 {# Invitation to the public fountain-move intake form. Sent to a customer.
-   Context: invite (Fountain Move Invite), url, sender_name, note, recipient_name.
+   Context: invite (Fountain Move Invite), url, sender_name, note, recipient_name,
+            contact_phone.
    NOTE: frappe's Jinja env has NO autoescape — |e every interpolated value.
    `note` and `recipient_name` are staff-authored free text. #}
 <p>{% if recipient_name %}Hi {{ recipient_name|e }},{% else %}Hello,{% endif %}</p>
@@ -36,7 +37,7 @@
 </p>
 
 <p>
-	Any questions, just reply to this email or call us on (801) 292-3383.
+	Any questions, just reply to this email or call us on {{ contact_phone|e }}.
 </p>
 
 <p>

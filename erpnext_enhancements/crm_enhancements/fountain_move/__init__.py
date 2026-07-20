@@ -142,10 +142,40 @@ HONEYPOT_FIELD_NAME = "company_website"
 #: Folder new intake photos are filed under before conversion attaches them.
 INTAKE_FILE_FOLDER = "Home/Fountain Move Intake"
 
+#: Company phone offered to customers when the form cannot help them — the
+#: no-JavaScript notice, the rate-limit and generic error messages, the success
+#: screen, and the invite email.
+#:
+#: Defined once because it appears in five customer-facing places; five copies
+#: would drift, and the failure mode is a real person dialling a wrong number at
+#: the exact moment our form has already let them down.
+#: :func:`get_contact_phone` prefers ``Company.phone_no`` when an operator has
+#: filled it in, so this is the fallback rather than the authority.
+CONTACT_PHONE = "(801) 837-2199"
+
 #: Automatic conversion attempts before a request is left Failed for a human.
 #: Lives here rather than in ``conversion`` because ``notify`` needs it too, and
 #: ``conversion`` already imports ``notify`` — the reverse import would be circular.
 MAX_CONVERSION_ATTEMPTS = 3
+
+
+def get_contact_phone():
+	"""The phone number to show a customer the form has failed.
+
+	Prefers ``Company.phone_no`` so an operator can change it without a deploy;
+	falls back to :data:`CONTACT_PHONE`. Never raises and never returns empty —
+	this is rendered into copy that already says "call us", so a blank here would
+	produce a sentence telling someone to call nobody.
+	"""
+	try:
+		company = frappe.defaults.get_defaults().get("company")
+		if company:
+			configured = frappe.db.get_value("Company", company, "phone_no")
+			if configured and str(configured).strip():
+				return str(configured).strip()
+	except Exception:
+		pass
+	return CONTACT_PHONE
 
 
 def get_store_locations(include_disabled=False):

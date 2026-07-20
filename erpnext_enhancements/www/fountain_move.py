@@ -24,6 +24,7 @@ import frappe
 
 from erpnext_enhancements.crm_enhancements.fountain_move import (
 	HONEYPOT_FIELD_NAME,
+	get_contact_phone,
 	get_store_locations,
 )
 from erpnext_enhancements.crm_enhancements.fountain_move.invites import resolve_invite
@@ -58,6 +59,7 @@ def get_context(context):
 		"max_photo_mb": _max_photo_mb(),
 		"locations": get_store_locations(),
 		"honeypot_field": HONEYPOT_FIELD_NAME,
+		"contact_phone": get_contact_phone(),
 		"terms_url": "/terms-of-use",
 		"privacy_url": "/privacy-policy",
 		# Attribution only. The token grants nothing, and pre-fills nothing but

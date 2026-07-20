@@ -538,13 +538,25 @@
 	 */
 	function describeError(err) {
 		if (err && err.status === 429) {
-			return "We've had a lot of requests from this connection. Please wait a few minutes and try again, or call us on (801) 292-3383.";
+			return (
+				"We've had a lot of requests from this connection. Please wait a few " +
+				"minutes and try again, or call us on " + contactPhone() + "."
+			);
 		}
 		if (err && err.status === 413) {
 			return "That photo is too large to upload. Please choose a smaller one.";
 		}
 		if (err && err.message) return err.message;
-		return "Something went wrong sending your request. Please try again, or call us on (801) 292-3383.";
+		return (
+			"Something went wrong sending your request. Please try again, or call us on " +
+			contactPhone() + "."
+		);
+	}
+
+	/* Server-provided so the number lives in exactly one place. The literal is a
+	   last resort for the case where the boot payload failed to render at all. */
+	function contactPhone() {
+		return BOOT.contact_phone || "(801) 837-2199";
 	}
 
 	function loadScript(src) {

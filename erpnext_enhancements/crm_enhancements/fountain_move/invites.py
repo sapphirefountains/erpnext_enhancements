@@ -27,6 +27,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import add_days, cint, get_datetime, get_url, now_datetime, validate_email_address
 
+from erpnext_enhancements.crm_enhancements.fountain_move import get_contact_phone
 from erpnext_enhancements.feature_flags import throw_if_fountain_move_disabled
 from erpnext_enhancements.utils.phone import is_nanp, normalize_phone
 
@@ -249,6 +250,7 @@ def _email_invite(invite, url):
 			"sender_name": sender_name,
 			"note": invite.message,
 			"recipient_name": invite.recipient_name,
+			"contact_phone": get_contact_phone(),
 		},
 	)
 	frappe.sendmail(

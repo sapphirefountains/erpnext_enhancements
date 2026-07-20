@@ -543,6 +543,59 @@ def test_timing_floor_is_plausible_for_a_human():
 	assert 2 <= MIN_FILL_SECONDS <= 10
 
 
+# --- 9b. the contact phone number -------------------------------------------
+
+
+def test_contact_phone_is_the_real_company_line():
+	"""Regression guard. An earlier revision shipped a MADE-UP number in five
+	customer-facing places — the no-JS notice, two error messages, the success
+	screen and the invite email. A wrong number here is worse than none: it is
+	handed to someone at the exact moment the form has already failed them."""
+	from erpnext_enhancements.crm_enhancements.fountain_move import CONTACT_PHONE
+
+	assert CONTACT_PHONE == "(801) 837-2199"
+
+
+def test_customer_facing_copy_does_not_hardcode_a_number():
+	"""The number must come from get_contact_phone()/FM_BOOT, not be re-typed.
+
+	Scoped to the three surfaces a customer actually reads. Server-side modules
+	are excluded on purpose: ``matching.py``'s docstring legitimately shows
+	"(801) 555-1212" as an example of the phone FORMATS it has to normalise, and
+	a guard that fires on documentation would just get deleted.
+
+	Two literals are allowed: the constant itself, and the JS last-resort
+	fallback for a boot payload that failed to render at all.
+	"""
+	import pathlib
+	import re
+
+	root = pathlib.Path(__file__).resolve().parents[1]
+	phone_like = re.compile(r"\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}")
+
+	surfaces = [
+		root / "www" / "fountain-move.html",
+		root / "public" / "js" / "fountain_move" / "fountain_move.js",
+		root / "templates" / "emails" / "crm_enhancements" / "fountain_intake_invite.html",
+		root / "crm_enhancements" / "fountain_move" / "__init__.py",
+	]
+
+	offenders = []
+	for path in surfaces:
+		if not path.exists():
+			continue
+		for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+			if not phone_like.search(line):
+				continue
+			allowed = (
+				path.name == "__init__.py" and line.strip().startswith("CONTACT_PHONE =")
+			) or (path.suffix == ".js" and "BOOT.contact_phone ||" in line)
+			if not allowed:
+				offenders.append(f"{path.name}:{number}: {line.strip()}")
+
+	assert not offenders, "phone number hardcoded in customer-facing copy:\n" + "\n".join(offenders)
+
+
 # --- 10. invite URLs --------------------------------------------------------
 
 
