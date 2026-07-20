@@ -1,0 +1,45 @@
+{# Daily backstop listing every fountain-move request that needs a human.
+   Sent only when at least one bucket is non-empty.
+   Context: buckets (ordered dict of label -> list of request dicts), base_url.
+   NOTE: no autoescape in frappe's Jinja env — |e every interpolated value. #}
+<h3>Fountain move requests needing attention</h3>
+
+<p>
+	These submissions are not moving on their own. Each one is a real person who
+	filled in a form and is waiting to hear from us.
+</p>
+
+{% for label, rows in buckets.items() %}
+	{% if rows %}
+	<h4>{{ label|e }} ({{ rows|length }})</h4>
+	<table>
+		<tr>
+			<td style="padding:2px 12px 2px 0"><b>Request</b></td>
+			<td style="padding:2px 12px 2px 0"><b>Name</b></td>
+			<td style="padding:2px 12px 2px 0"><b>City</b></td>
+			<td style="padding:2px 12px 2px 0"><b>Email</b></td>
+			<td style="padding:2px 0"><b>Last change</b></td>
+		</tr>
+		{% for row in rows %}
+		<tr>
+			<td style="padding:2px 12px 2px 0">
+				<a href="{{ base_url }}{{ row.name|urlencode }}">{{ row.name|e }}</a>
+			</td>
+			<td style="padding:2px 12px 2px 0">{{ row.first_name|e }} {{ row.last_name|e }}</td>
+			<td style="padding:2px 12px 2px 0">{{ row.city|e }}</td>
+			<td style="padding:2px 12px 2px 0">{{ row.email|e }}</td>
+			<td style="padding:2px 0">{{ row.modified|e }}</td>
+		</tr>
+		{% endfor %}
+	</table>
+	{% endif %}
+{% endfor %}
+
+<p style="color:#6c7680;font-size:90%">
+	<b>Failed</b> — conversion errored; open it for the traceback and a retry button.<br>
+	<b>Duplicate Review</b> — matched several accounts; a human must pick one.<br>
+	<b>Converting</b> — a worker claimed it and never finished, usually a killed job;
+	pressing Retry is safe, conversion resumes rather than duplicating.<br>
+	<b>New</b> — never converted. Often a captcha outage: the submission was kept
+	rather than thrown away, but was deliberately not auto-converted.
+</p>

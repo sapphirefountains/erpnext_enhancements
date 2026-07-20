@@ -82,7 +82,28 @@
   "finance_dashboard_column_break",
   "finance_calendar_id",
   "finance_calendar_max_events",
-  "horoscope_api_base"
+  "horoscope_api_base",
+  "fountain_move_section",
+  "fountain_move_intake_enabled",
+  "fountain_move_public_form_enabled",
+  "fountain_move_auto_convert",
+  "fountain_move_column_break_1",
+  "fountain_move_turnstile_site_key",
+  "fountain_move_turnstile_secret_key",
+  "fountain_move_maps_api_key",
+  "fountain_move_max_photo_mb",
+  "fountain_move_invite_expiry_days",
+  "fountain_move_defaults_section",
+  "fmr_default_owner",
+  "fmr_lead_source",
+  "fmr_value_stream",
+  "fmr_company",
+  "fountain_move_defaults_column_break",
+  "fmr_territory",
+  "fmr_customer_group_residential",
+  "fmr_customer_group_commercial",
+  "fountain_move_notify_emails",
+  "fountain_move_locations"
  ],
  "fields": [
   {
@@ -597,11 +618,150 @@
    "fieldname": "horoscope_api_base",
    "fieldtype": "Data",
    "label": "Horoscope API Base URL"
+  },
+  {
+   "fieldname": "fountain_move_section",
+   "fieldtype": "Section Break",
+   "label": "Fountain Move Intake"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the Cactus & Tropicals fountain-move intake feature. ON: the Fountain Move Request list, its \"Send Intake Link\" action and the invite emails become available in the desk. OFF (default): the code ships dormant — the doctypes exist but nothing is surfaced and the public form 404s regardless of the switch below. Applies on each user's next page load (desk reads the flag from bootinfo).",
+   "fieldname": "fountain_move_intake_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Fountain Move Intake"
+  },
+  {
+   "default": "0",
+   "depends_on": "fountain_move_intake_enabled",
+   "description": "Publishes the guest-accessible form at /fountain-move. This is the app's only unauthenticated write path — read the pre-flight checklist in crm_enhancements/README.md before flipping it. Requires a Turnstile secret key below (enabling without one throws), and requires confirming that the reverse proxy OVERWRITES X-Forwarded-For rather than appending to it. OFF: /fountain-move returns 404 while the desk list, retry and spam actions keep working.",
+   "fieldname": "fountain_move_public_form_enabled",
+   "fieldtype": "Check",
+   "label": "Publish Public Intake Form"
+  },
+  {
+   "default": "1",
+   "depends_on": "fountain_move_intake_enabled",
+   "description": "ON (default): a clean submission converts to Customer / Address / Contact / Lead / Opportunity automatically in a background job. OFF: submissions land as Fountain Move Requests and wait for someone to press \"Retry Conversion\" — useful while tuning the anti-spam settings or the field mapping.",
+   "fieldname": "fountain_move_auto_convert",
+   "fieldtype": "Check",
+   "label": "Convert Submissions Automatically"
+  },
+  {
+   "fieldname": "fountain_move_column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Cloudflare Turnstile site key (public — it is emitted into the page source by design). Create the widget for this site's hostname at dash.cloudflare.com → Turnstile.",
+   "fieldname": "fountain_move_turnstile_site_key",
+   "fieldtype": "Data",
+   "label": "Turnstile Site Key"
+  },
+  {
+   "description": "Cloudflare Turnstile secret key, used server-side for siteverify. Never leaves the server. The public form cannot be enabled while this is blank.",
+   "fieldname": "fountain_move_turnstile_secret_key",
+   "fieldtype": "Password",
+   "label": "Turnstile Secret Key"
+  },
+  {
+   "description": "Google Maps browser key for address autocomplete on the public form. Enable BOTH \"Maps JavaScript API\" and \"Places API (New)\", and restrict the key by HTTP referrer to this site's hostname — it is emitted into a page any anonymous visitor can read. Use a SEPARATE key from Travel Settings so a leak here can be rotated without breaking trip maps. Leave blank to ship plain manual address fields instead (the form works either way).",
+   "fieldname": "fountain_move_maps_api_key",
+   "fieldtype": "Data",
+   "label": "Fountain Move Maps API Key"
+  },
+  {
+   "default": "10",
+   "description": "Per-photo upload cap in MB. The effective cap is the lower of this and the site's own max_file_size (default 25 MB), read at request time.",
+   "fieldname": "fountain_move_max_photo_mb",
+   "fieldtype": "Int",
+   "label": "Max Photo Size (MB)"
+  },
+  {
+   "default": "60",
+   "description": "Days an emailed intake link stays valid. An expired link still opens the form — it just stops attributing the submission to the invite.",
+   "fieldname": "fountain_move_invite_expiry_days",
+   "fieldtype": "Int",
+   "label": "Invite Link Expiry (Days)"
+  },
+  {
+   "depends_on": "fountain_move_intake_enabled",
+   "fieldname": "fountain_move_defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Fountain Move Defaults"
+  },
+  {
+   "description": "Fallback owner for Opportunities created from the bare public URL (a submission that arrived through an emailed invite is owned by whoever sent it). Also the fallback notification recipient. Opportunity.opportunity_owner is mandatory, so conversion fails loudly when this is blank.",
+   "fieldname": "fmr_default_owner",
+   "fieldtype": "Link",
+   "label": "Default Opportunity Owner",
+   "options": "User"
+  },
+  {
+   "description": "Stamped onto Customer, Lead and Opportunity so every Cactus & Tropicals referral is filterable in one click. Seeded to \"Cactus & Tropicals\".",
+   "fieldname": "fmr_lead_source",
+   "fieldtype": "Link",
+   "label": "Lead Source",
+   "options": "Lead Source"
+  },
+  {
+   "description": "Value stream for the created Opportunity (mandatory on Opportunity). Seeded to \"Service\" — a move is labour on an existing product, not a design or a build.",
+   "fieldname": "fmr_value_stream",
+   "fieldtype": "Link",
+   "label": "Value Stream",
+   "options": "Value Streams"
+  },
+  {
+   "description": "Company for the created Lead and Opportunity. Defaults to the global default company when blank.",
+   "fieldname": "fmr_company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "fountain_move_defaults_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Territory for the created Customer, Lead and Opportunity. All three Cactus & Tropicals stores are in Utah. Leave blank to insert with the field empty (Customer inserts with ignore_mandatory).",
+   "fieldname": "fmr_territory",
+   "fieldtype": "Link",
+   "label": "Territory",
+   "options": "Territory"
+  },
+  {
+   "description": "Customer Group when the submitter picks \"Residential\". Must be a leaf group — v16 rejects group nodes outright.",
+   "fieldname": "fmr_customer_group_residential",
+   "fieldtype": "Link",
+   "label": "Customer Group (Residential)",
+   "options": "Customer Group"
+  },
+  {
+   "description": "Customer Group when the submitter picks \"Commercial\". Must be a leaf group.",
+   "fieldname": "fmr_customer_group_commercial",
+   "fieldtype": "Link",
+   "label": "Customer Group (Commercial)",
+   "options": "Customer Group"
+  },
+  {
+   "depends_on": "fountain_move_intake_enabled",
+   "description": "Extra addresses copied on every new submission and on every conversion failure, alongside the Opportunity owner. Leave empty to notify the owner only.",
+   "fieldname": "fountain_move_notify_emails",
+   "fieldtype": "Table",
+   "label": "Fountain Move Notification Emails",
+   "options": "Project Reminder Email"
+  },
+  {
+   "depends_on": "fountain_move_intake_enabled",
+   "description": "Partner store locations offered in the \"Purchased at which location\" dropdown. Seeded with the three Cactus & Tropicals stores. Editing these needs no deploy. If every row is deleted or disabled the form falls back to the three built-in stores rather than rendering an unsubmittable dropdown.",
+   "fieldname": "fountain_move_locations",
+   "fieldtype": "Table",
+   "label": "Partner Store Locations",
+   "options": "Fountain Move Location"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-07-10 13:00:00.000000",
+ "modified": "2026-07-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Enhancements Core",
  "name": "ERPNext Enhancements Settings",

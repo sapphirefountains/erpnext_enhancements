@@ -182,3 +182,23 @@ erpnext_enhancements.patches.clear_invalid_primary_address_links
 # delete the retired /app/project-dashboard desk Page + repoint its seeded desk
 # shortcut to the Projects workspace (the block's home)
 erpnext_enhancements.patches.retire_project_dashboard_desk_page
+# v1.160.0 Fountain Move intake: seed the "Cactus & Tropicals" Lead Source and the
+# "Existing Customer" UTM Source. The UTM Source is load-bearing, not cosmetic --
+# erpnext's Lead.before_insert only skips its automatic Contact creation when
+# utm_source == "Existing Customer" AND customer is set, and we create the Contact
+# ourselves (it must carry the Customer link BEFORE insert, because this site's
+# Contact autoname reads links[0]). Both need insert(set_name=): Lead Source is
+# istable with no autoname, so a plain insert() hash-names the record -- exactly
+# how the junk 5grjpdb97i / 5grlinu7mj rows got into Value Streams. Insert-only.
+erpnext_enhancements.patches.seed_cactus_tropicals_lead_source
+# v1.160.0 Fountain Move intake: seed the Settings defaults (lead source, value
+# stream, territory, customer groups, company, C&T store rows) -- Link `default`
+# on a Single only applies at creation, and Settings already exists everywhere, so
+# new fields come up blank. Fills blanks only; never clobbers operator edits.
+erpnext_enhancements.patches.seed_fountain_move_defaults
+# v1.160.0 delete three Property Setters targeting erpnext's removed Lead/Opportunity
+# `source` field (renamed utm_source in v15). They have enforced nothing since the
+# rename and already misled one design pass into believing source was mandatory.
+# Removing them from fixtures/property_setter.json alone would leave them in the DB
+# forever -- fixture sync is create/update-only.
+erpnext_enhancements.patches.drop_orphan_source_property_setters

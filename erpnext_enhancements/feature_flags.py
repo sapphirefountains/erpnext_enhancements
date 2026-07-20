@@ -225,3 +225,86 @@ def throw_if_product_configurator_disabled():
 			),
 			title=frappe._("Feature Disabled"),
 		)
+
+
+def fountain_move_intake_enabled():
+	"""True when the Cactus & Tropicals fountain-move intake feature is switched on.
+
+	Default OFF (the staged-rollout contract). Gates the DESK surface: the
+	"Send Intake Link" action, the invite emails and the workspace shortcut.
+	The doctypes and the conversion engine ship regardless so an operator can
+	still convert or triage a request that arrived before the switch was flipped.
+
+	Missing-field-safe: read inside ``boot_session`` on every desk page load, and
+	v16's ``db.get_single_value`` THROWS when the field is not yet in the Settings
+	meta (new code live before migrate has synced the doctype), which would 500
+	every desk page. Treated as OFF until the field exists.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("fountain_move_intake_enabled"):
+		return False
+	return bool(
+		cint(
+			frappe.db.get_single_value("ERPNext Enhancements Settings", "fountain_move_intake_enabled")
+		)
+	)
+
+
+def fountain_move_public_form_enabled():
+	"""True when the guest form at ``/fountain-move`` is published.
+
+	Deliberately narrower than :func:`fountain_move_intake_enabled` and ANDed with
+	it: this is the app's only unauthenticated write path, so it gets its own
+	switch that an operator must flip on purpose after working through the
+	pre-flight checklist (Turnstile keys, referrer-restricted Maps key, and the
+	X-Forwarded-For trust check). Turning it off 404s the page while leaving the
+	desk list, Retry Conversion and Mark as Spam fully functional — a stuck
+	backlog must never be held hostage by the public switch.
+
+	Missing-field-safe for the same reason as above.
+	"""
+	if not fountain_move_intake_enabled():
+		return False
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field(
+		"fountain_move_public_form_enabled"
+	):
+		return False
+	return bool(
+		cint(
+			frappe.db.get_single_value(
+				"ERPNext Enhancements Settings", "fountain_move_public_form_enabled"
+			)
+		)
+	)
+
+
+def fountain_move_auto_convert_enabled():
+	"""True when a clean submission converts to CRM records without a human press.
+
+	Defaults ON (field default ``1``) once the feature itself is enabled, so the
+	normal path is hands-off. Turning it off parks submissions at status ``New``
+	for manual "Retry Conversion" — useful while tuning anti-spam or field mapping.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("fountain_move_auto_convert"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "fountain_move_auto_convert"))
+	)
+
+
+def throw_if_fountain_move_disabled():
+	"""Guard for the DESK fountain-move endpoints (send invite, resend, revoke).
+
+	Not used by the guest endpoints — those check
+	:func:`fountain_move_public_form_enabled` and 404 rather than explaining
+	themselves to an anonymous caller. Also not used by Retry Conversion or
+	Mark as Spam, which are role-gated only so a backlog stays workable with the
+	public form switched off.
+	"""
+	if not fountain_move_intake_enabled():
+		frappe.throw(
+			frappe._(
+				"The fountain-move intake feature is currently switched off "
+				"(ERPNext Enhancements Settings → Fountain Move Intake)."
+			),
+			title=frappe._("Feature Disabled"),
+		)

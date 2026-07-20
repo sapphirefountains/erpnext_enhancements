@@ -31,7 +31,17 @@ def global_triton_sync(doc, method=None):
         "Integrations", "Telephony", "AI Governance",
     ]
 
+    # Module-level exclusion is too coarse for the fountain-move intake: it lives
+    # in CRM Enhancements alongside doctypes that SHOULD sync. These two carry
+    # unauthenticated, guest-submitted PII (name, phone, email, home address,
+    # place id, lat/long) and, before conversion, may be arbitrary bot input.
+    # Nothing is announced to Triton until it has become a real Customer /
+    # Lead / Opportunity, which sync on their own.
+    excluded_doctypes = ["Fountain Move Request", "Fountain Move Invite"]
+
     try:
+        if doc.doctype in excluded_doctypes:
+            return
         doctype_meta = frappe.get_meta(doc.doctype)
         # Only sync real, top-level business documents.
         if doctype_meta.istable or doctype_meta.issingle or doctype_meta.module in excluded_modules:

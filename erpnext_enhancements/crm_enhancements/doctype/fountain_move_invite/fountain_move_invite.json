@@ -1,0 +1,214 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "FMI-.YYYY.-.#####.",
+ "creation": "2026-07-21 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "recipient_section",
+  "recipient_name",
+  "recipient_email",
+  "recipient_phone",
+  "col_break_recipient",
+  "status",
+  "ct_location",
+  "expires_on",
+  "message_section",
+  "message",
+  "tracking_section",
+  "token",
+  "sent_by",
+  "sent_on",
+  "sms_sent",
+  "col_break_tracking",
+  "opened_on",
+  "submitted_on",
+  "fountain_move_request",
+  "resend_count"
+ ],
+ "fields": [
+  {
+   "fieldname": "recipient_section",
+   "fieldtype": "Section Break",
+   "label": "Recipient"
+  },
+  {
+   "fieldname": "recipient_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Recipient Name",
+   "length": 140
+  },
+  {
+   "fieldname": "recipient_email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Recipient Email",
+   "options": "Email",
+   "reqd": 1
+  },
+  {
+   "description": "Optional. Only used if the sender also chooses to text the link.",
+   "fieldname": "recipient_phone",
+   "fieldtype": "Data",
+   "label": "Recipient Phone",
+   "length": 30,
+   "options": "Phone"
+  },
+  {
+   "fieldname": "col_break_recipient",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Sent",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Sent\nOpened\nSubmitted\nExpired\nRevoked",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Pre-selects the store on the form. This is the ONLY thing a token pre-fills — a forwarded link must never disclose someone else's name, email or phone.",
+   "fieldname": "ct_location",
+   "fieldtype": "Data",
+   "label": "Purchased At"
+  },
+  {
+   "description": "After this, the link still opens the form; it just stops attributing the submission to this invite.",
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On"
+  },
+  {
+   "fieldname": "message_section",
+   "fieldtype": "Section Break",
+   "label": "Personal Note"
+  },
+  {
+   "description": "Optional note included in the email. Plain text only — HTML is rejected, and the value is escaped when rendered.",
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Message"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Tracking"
+  },
+  {
+   "description": "Random attribution token. Confers no privilege and gates nothing — the bare /fountain-move URL is always the canonical, permanent form.",
+   "fieldname": "token",
+   "fieldtype": "Data",
+   "label": "Token",
+   "read_only": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "sent_by",
+   "fieldtype": "Link",
+   "label": "Sent By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Sent On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "sms_sent",
+   "fieldtype": "Check",
+   "label": "Also Texted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_tracking",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "opened_on",
+   "fieldtype": "Datetime",
+   "label": "Opened On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "submitted_on",
+   "fieldtype": "Datetime",
+   "label": "Submitted On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fountain_move_request",
+   "fieldtype": "Link",
+   "label": "Resulting Request",
+   "options": "Fountain Move Request",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "resend_count",
+   "fieldtype": "Int",
+   "label": "Resend Count",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-21 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CRM Enhancements",
+ "name": "Fountain Move Invite",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "recipient_email,recipient_name",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "recipient_email",
+ "track_changes": 1
+}

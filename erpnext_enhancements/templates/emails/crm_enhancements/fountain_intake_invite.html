@@ -1,0 +1,50 @@
+{# Invitation to the public fountain-move intake form. Sent to a customer.
+   Context: invite (Fountain Move Invite), url, sender_name, note, recipient_name.
+   NOTE: frappe's Jinja env has NO autoescape — |e every interpolated value.
+   `note` and `recipient_name` are staff-authored free text. #}
+<p>{% if recipient_name %}Hi {{ recipient_name|e }},{% else %}Hello,{% endif %}</p>
+
+<p>
+	Thanks for choosing a fountain at Cactus &amp; Tropicals. We're Sapphire
+	Fountains, and we handle the move from the store to wherever it's going.
+</p>
+
+<p>
+	If you fill in a few details — where it's going, roughly what it weighs, and a
+	couple of photos — we can get you an accurate quote without needing to visit first.
+	It takes about three minutes.
+</p>
+
+<p style="margin:24px 0">
+	<a href="{{ url }}"
+	   style="background:#00a0dd;color:#ffffff;padding:12px 22px;border-radius:8px;
+	          text-decoration:none;display:inline-block;font-weight:600">
+		Tell us about your fountain move
+	</a>
+</p>
+
+{% if note %}
+<p style="border-left:3px solid #d8dee4;padding-left:12px;color:#4a5560">
+	{{ note|e }}
+</p>
+{% endif %}
+
+<p style="color:#6c7680;font-size:90%">
+	The photos are the part people skip, and they're the part that helps most —
+	one of the fountain, and one showing the route from the street to where it's
+	going. They tell us how many people and what equipment to send.
+</p>
+
+<p>
+	Any questions, just reply to this email or call us on (801) 292-3383.
+</p>
+
+<p>
+	{{ sender_name|e }}<br>
+	Sapphire Fountains
+</p>
+
+<p style="color:#9aa4ad;font-size:85%">
+	If the button doesn't work, copy this link into your browser:<br>
+	<span style="word-break:break-all">{{ url }}</span>
+</p>

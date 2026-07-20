@@ -1,0 +1,632 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "FMR-.YYYY.-.#####.",
+ "creation": "2026-07-21 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "status_section",
+  "status",
+  "submitted_on",
+  "source_channel",
+  "invite",
+  "col_break_status",
+  "purchase_location",
+  "purchase_location_address",
+  "referral_partner",
+  "customer_section",
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "phone_normalized",
+  "col_break_customer",
+  "property_type",
+  "contact_consent",
+  "terms_accepted",
+  "terms_accepted_on",
+  "terms_version",
+  "address_section",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "pincode",
+  "country",
+  "col_break_address",
+  "address_autocompleted",
+  "google_place_id",
+  "formatted_address",
+  "latitude",
+  "longitude",
+  "fountain_section",
+  "fountain_weight_lbs",
+  "water_access",
+  "electricity_access",
+  "col_break_fountain",
+  "fountain_photo",
+  "path_photo",
+  "conversion_section",
+  "created_customer",
+  "created_address",
+  "created_contact",
+  "created_lead",
+  "created_opportunity",
+  "col_break_conversion",
+  "reused_customer",
+  "reused_contact",
+  "reused_lead",
+  "match_basis",
+  "conversion_attempts",
+  "converted_on",
+  "photos_mirrored",
+  "error_section",
+  "error",
+  "match_candidates",
+  "security_section",
+  "turnstile_verdict",
+  "turnstile_hostname",
+  "turnstile_action",
+  "turnstile_challenge_ts",
+  "turnstile_errors",
+  "honeypot_tripped",
+  "spam_reason",
+  "col_break_security",
+  "submitter_ip_claimed",
+  "submitter_ip_peer",
+  "user_agent",
+  "submission_fingerprint",
+  "raw_payload",
+  "title"
+ ],
+ "fields": [
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status & Source"
+  },
+  {
+   "default": "New",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "New\nQueued\nConverting\nConverted\nDuplicate Review\nFailed\nSpam\nRejected",
+   "reqd": 1
+  },
+  {
+   "fieldname": "submitted_on",
+   "fieldtype": "Datetime",
+   "label": "Submitted On",
+   "read_only": 1
+  },
+  {
+   "default": "Public Form",
+   "description": "Public Form: the bare /fountain-move URL. Emailed Link: arrived through an invite (see Invite). Staff Entry: created by hand in the desk.",
+   "fieldname": "source_channel",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source Channel",
+   "options": "Public Form\nEmailed Link\nStaff Entry",
+   "read_only": 1
+  },
+  {
+   "description": "The invite this submission came through, when any. Attribution only — the token confers no privilege.",
+   "fieldname": "invite",
+   "fieldtype": "Link",
+   "label": "Invite",
+   "options": "Fountain Move Invite",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Which partner store the fountain was purchased at — the pickup origin for the move.",
+   "fieldname": "purchase_location",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Purchased At",
+   "reqd": 1
+  },
+  {
+   "description": "Street address of the store, resolved from Settings at submit time so it survives the location later being renamed or retired.",
+   "fieldname": "purchase_location_address",
+   "fieldtype": "Data",
+   "label": "Store Address",
+   "read_only": 1
+  },
+  {
+   "default": "Cactus & Tropicals",
+   "fieldname": "referral_partner",
+   "fieldtype": "Link",
+   "label": "Referral Partner",
+   "options": "Lead Source",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_section",
+   "fieldtype": "Section Break",
+   "label": "Customer"
+  },
+  {
+   "fieldname": "first_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "First Name",
+   "length": 60,
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Last Name",
+   "length": 60,
+   "reqd": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Email",
+   "options": "Email",
+   "reqd": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "length": 30,
+   "options": "Phone",
+   "reqd": 1
+  },
+  {
+   "description": "10-digit NANP form used for duplicate matching. Never displayed to the customer.",
+   "fieldname": "phone_normalized",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Phone (Normalized)",
+   "length": 20,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "col_break_customer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Drives the Customer name (\"Jane Doe Residence\" vs \"Jane Doe\") and the Customer Group.",
+   "fieldname": "property_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Property Type",
+   "options": "Residential\nCommercial",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Consent to contact by email and/or text about the account.",
+   "fieldname": "contact_consent",
+   "fieldtype": "Check",
+   "label": "May Contact by Email/Text"
+  },
+  {
+   "default": "0",
+   "description": "Agreement to the Terms of Use and Privacy Policy. Enforced in validate(), not by reqd — a Check field always has content as far as frappe's mandatory test is concerned, so reqd would pass on an unticked box.",
+   "fieldname": "terms_accepted",
+   "fieldtype": "Check",
+   "label": "Terms Accepted"
+  },
+  {
+   "fieldname": "terms_accepted_on",
+   "fieldtype": "Datetime",
+   "label": "Terms Accepted On",
+   "read_only": 1
+  },
+  {
+   "description": "Which revision of the terms was in force at submission, for evidentiary purposes.",
+   "fieldname": "terms_version",
+   "fieldtype": "Data",
+   "label": "Terms Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "address_section",
+   "fieldtype": "Section Break",
+   "label": "Destination Address"
+  },
+  {
+   "fieldname": "address_line1",
+   "fieldtype": "Data",
+   "label": "Address Line 1",
+   "length": 100,
+   "reqd": 1
+  },
+  {
+   "fieldname": "address_line2",
+   "fieldtype": "Data",
+   "label": "Address Line 2",
+   "length": 100
+  },
+  {
+   "fieldname": "city",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "City",
+   "length": 60,
+   "reqd": 1
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Data",
+   "label": "State",
+   "length": 40,
+   "reqd": 1
+  },
+  {
+   "fieldname": "pincode",
+   "fieldtype": "Data",
+   "label": "Postal Code",
+   "length": 12,
+   "reqd": 1
+  },
+  {
+   "default": "United States",
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_address",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Ticked when the address came from Google Places rather than being typed by hand. An unticked address is worth a second look before dispatching a crew.",
+   "fieldname": "address_autocompleted",
+   "fieldtype": "Check",
+   "label": "Address Autocompleted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_place_id",
+   "fieldtype": "Data",
+   "label": "Google Place ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "formatted_address",
+   "fieldtype": "Small Text",
+   "label": "Formatted Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "precision": "6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fountain_section",
+   "fieldtype": "Section Break",
+   "label": "Fountain & Site"
+  },
+  {
+   "description": "Enforced > 0 in validate() rather than by reqd — see the note on Terms Accepted.",
+   "fieldname": "fountain_weight_lbs",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Fountain Weight (lbs)"
+  },
+  {
+   "default": "0",
+   "fieldname": "water_access",
+   "fieldtype": "Check",
+   "label": "Water Accessible at Destination"
+  },
+  {
+   "default": "0",
+   "fieldname": "electricity_access",
+   "fieldtype": "Check",
+   "label": "Electricity Accessible at Destination"
+  },
+  {
+   "fieldname": "col_break_fountain",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Always private. Copied onto the Lead, Customer and Opportunity at conversion.",
+   "fieldname": "fountain_photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo of Purchased Fountain",
+   "read_only": 1
+  },
+  {
+   "description": "Always private. The route a crew must take from the street to the destination.",
+   "fieldname": "path_photo",
+   "fieldtype": "Attach Image",
+   "label": "Photo of Path to Destination",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conversion_section",
+   "fieldtype": "Section Break",
+   "label": "Conversion Outcome"
+  },
+  {
+   "fieldname": "created_customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_address",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_lead",
+   "fieldtype": "Link",
+   "label": "Lead",
+   "options": "Lead",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_opportunity",
+   "fieldtype": "Link",
+   "label": "Opportunity",
+   "options": "Opportunity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_conversion",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "An existing Customer was matched and reused rather than a new one created.",
+   "fieldname": "reused_customer",
+   "fieldtype": "Check",
+   "label": "Reused Customer",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "reused_contact",
+   "fieldtype": "Check",
+   "label": "Reused Contact",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "reused_lead",
+   "fieldtype": "Check",
+   "label": "Reused Lead",
+   "read_only": 1
+  },
+  {
+   "description": "Which signal resolved the party.",
+   "fieldname": "match_basis",
+   "fieldtype": "Select",
+   "label": "Match Basis",
+   "options": "\nEmail\nPhone\nLead Email\nNone",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "conversion_attempts",
+   "fieldtype": "Int",
+   "label": "Conversion Attempts",
+   "read_only": 1
+  },
+  {
+   "fieldname": "converted_on",
+   "fieldtype": "Datetime",
+   "label": "Converted On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Photos have been mirrored into the Google Drive folders of the created records.",
+   "fieldname": "photos_mirrored",
+   "fieldtype": "Check",
+   "label": "Photos Mirrored to Drive",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:doc.error || doc.match_candidates",
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Diagnostics"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Conversion Error",
+   "read_only": 1
+  },
+  {
+   "description": "Competing party matches, recorded when conversion stops for Duplicate Review.",
+   "fieldname": "match_candidates",
+   "fieldtype": "Code",
+   "label": "Match Candidates",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "security_section",
+   "fieldtype": "Section Break",
+   "label": "Submission Metadata"
+  },
+  {
+   "default": "Not Checked",
+   "fieldname": "turnstile_verdict",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Turnstile Verdict",
+   "options": "Not Checked\nPassed\nFailed\nUnavailable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_hostname",
+   "fieldtype": "Data",
+   "label": "Turnstile Hostname",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_action",
+   "fieldtype": "Data",
+   "label": "Turnstile Action",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_challenge_ts",
+   "fieldtype": "Data",
+   "label": "Turnstile Challenge Timestamp",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_errors",
+   "fieldtype": "Small Text",
+   "label": "Turnstile Errors",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "honeypot_tripped",
+   "fieldtype": "Check",
+   "label": "Honeypot Tripped",
+   "read_only": 1
+  },
+  {
+   "fieldname": "spam_reason",
+   "fieldtype": "Small Text",
+   "label": "Spam Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_security",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "X-Forwarded-For as presented by the client. UNTRUSTED — attacker-controlled unless the edge proxy overwrites rather than appends. Kept for correlation only; never used as a security decision on its own.",
+   "fieldname": "submitter_ip_claimed",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Submitter IP (Claimed)",
+   "read_only": 1
+  },
+  {
+   "description": "The actual TCP peer address frappe saw.",
+   "fieldname": "submitter_ip_peer",
+   "fieldtype": "Data",
+   "label": "Submitter IP (Peer)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user_agent",
+   "fieldtype": "Small Text",
+   "label": "User Agent",
+   "read_only": 1
+  },
+  {
+   "description": "Hash of the identifying fields, used to collapse double submissions.",
+   "fieldname": "submission_fingerprint",
+   "fieldtype": "Data",
+   "label": "Submission Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "The submitted payload as received, for audit. Image bytes are replaced with size stubs and the whole blob is capped.",
+   "fieldname": "raw_payload",
+   "fieldtype": "Code",
+   "label": "Raw Payload",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Title",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-21 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CRM Enhancements",
+ "name": "Fountain Move Request",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1
+  }
+ ],
+ "search_fields": "email,phone,city",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

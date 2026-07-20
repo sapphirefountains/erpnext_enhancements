@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.0] - 2026-07-21
+
+### Added
+
+- **Public fountain-move intake form for the Cactus & Tropicals partnership**
+  (`/fountain-move`, default OFF). A customer who buys a fountain at Cactus &
+  Tropicals is referred to us to move it; until now that arrived as a phone call
+  and a manual CRM entry. The form collects the customer's details, the
+  destination address (with Google Places autocomplete), the property type, the
+  fountain's weight, water/electricity access at the destination, and photos of
+  both the fountain and the route it has to travel — the two things that decide
+  how many people and what equipment to send.
+
+  Submissions land as a **Fountain Move Request** and convert, in a background
+  job, into a linked **Customer → Address → Contact → Lead → Opportunity** set.
+  The staging doctype is deliberate: spam never reaches CRM, a partial failure is
+  resumable rather than duplicating master data, and the original payload is
+  preserved for audit. Staff email the link from the desk ("Send Intake Link"),
+  and the same URL works bare so it can be printed as a QR code at the till.
+
+  Customer naming follows the operator's rule — Residential becomes
+  "<First> <Last> Residence", Commercial just "<First> <Last>". Everything the
+  form asks that has no native Lead field is written into `Lead.custom_lead_details`.
+
+- **This is the app's first unauthenticated write path**, so its controls are new
+  rather than inherited: Cloudflare Turnstile (verified server-side, fail-closed —
+  an outage parks the submission for a human instead of auto-converting it), a
+  honeypot keyed on the *presence* of the field in the raw body (frappe sanitises
+  a guest's `form_dict` before the endpoint sees it, which can blank the value),
+  a minimum time-on-form, per-endpoint rate limits plus session- and email-keyed
+  counters, magic-byte image sniffing with a total-pixel cap, and a strict
+  20-key field allowlist. `read_only` in a DocType JSON is a UI hint, not
+  authorisation — under `ignore_permissions` a splatted payload could otherwise
+  set `status` or the `created_*` links directly.
+
+- New `/terms-of-use` Web Page (DRAFT pending counsel review, matching the
+  existing payment-terms and refund-policy pages) — the form's consent checkbox
+  links to it and to the existing Privacy Policy.
+
+### Fixed
+
+- **`Lead.source` and `Opportunity.source` do not exist**, and three Property
+  Setters have been silently enforcing nothing since erpnext v15 renamed the
+  field to `utm_source`: `Lead-source-reqd`, `Opportunity-source-reqd` and
+  `Lead-source-label`. A Property Setter for a missing field is not an error —
+  frappe simply never finds a docfield to apply it to — so this failed open with
+  no symptom, and lead-source attribution on Lead and Opportunity has in practice
+  been unrecorded. The orphans are deleted by patch (removing them from the
+  fixture file alone is insufficient; fixture sync is create/update-only), and
+  replaced by real `custom_lead_source` Custom Fields on Lead and Opportunity
+  matching the already-populated `Customer.custom_lead_source`.
+
+- **`Lead.opportunity` does not exist either.** `script_migrations.opportunity.
+  update_lead_status` has been assigning `lead_doc.opportunity = doc.name`, and
+  frappe silently drops unknown attributes on save, so the Lead → Opportunity
+  back-link has never persisted. Added `Lead.custom_opportunity` and the
+  conversion engine now writes it.
+
+- `utils/triton_sync.py` filtered by *module* only, so the new guest-submitted
+  doctypes — which carry unauthenticated PII and, pre-conversion, may be
+  arbitrary bot input — would have been announced to Triton. Both are now
+  excluded by name.
+
+### Changed
+
+- New CI steps: the bench-free `test_fountain_move` pytest suite, and
+  `scripts/check_www_controllers.py`, which fails the build if a `www/` page
+  controller has a hyphenated (therefore never-imported) filename. Frappe maps a
+  template's basename `-` to `_` when locating its controller, so such a file is
+  silently never loaded and its `get_context` never runs — which is the current
+  state of `www/stripe-return.py`, tracked in the script's `KNOWN_BROKEN` list
+  and to be fixed on its own branch.
+
 ## [1.159.9] - 2026-07-20
 
 ### Changed
