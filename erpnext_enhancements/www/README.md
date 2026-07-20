@@ -5,27 +5,8 @@ Four standalone web pages live here, separate from the heavy desk app:
 - the **Time Kiosk** at **`/kiosk`** — installable PWA for technicians, chrome-free (most of this README);
 - the **Wall Display** at **`/wall`** — read-only project/TV dashboard, chrome-free (see below);
 - the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
-- the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose (but see the controller-naming rule below — a hyphenated *route* is fine, it is the *controller filename* that must use underscores).
-- the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`). See [its section below](#fountain-move--public-intake-form).
-
-## Controller filenames: hyphens are silently fatal
-
-Frappe finds a web page's controller by taking the **template's** basename and replacing
-hyphens with underscores (`frappe/website/page_renderers/template_page.py`):
-
-```
-www/fountain-move.html   ->  frappe imports  www/fountain_move.py
-```
-
-A controller literally named `fountain-move.py` is therefore **never imported**, and its
-`get_context()` never runs. Nothing raises — the template still renders, just with none of
-the context, cache headers or auth gates the controller was meant to supply. That is the
-worst shape a bug can take, and it has already happened here: **`www/stripe-return.py` has
-never executed.**
-
-The route itself is taken from the template, so a hyphenated URL is perfectly fine. Only
-the `.py` needs underscores. `scripts/check_www_controllers.py` enforces this in CI
-(`stripe-return.py` sits in its `KNOWN_BROKEN` list until it is fixed on its own branch).
+- the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
+- the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`; note the underscored controller — see [Controller filenames](#controller-filenames-hyphens-are-silently-fatal)). See [its section below](#fountain-move--public-intake-form).
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 

@@ -72,13 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- New CI steps: the bench-free `test_fountain_move` pytest suite, and
-  `scripts/check_www_controllers.py`, which fails the build if a `www/` page
-  controller has a hyphenated (therefore never-imported) filename. Frappe maps a
-  template's basename `-` to `_` when locating its controller, so such a file is
-  silently never loaded and its `get_context` never runs — which is the current
-  state of `www/stripe-return.py`, tracked in the script's `KNOWN_BROKEN` list
-  and to be fixed on its own branch.
+- New CI step: the bench-free `test_fountain_move` pytest suite.
+
+- The page's controller is `www/fountain_move.py` while its template is
+  `www/fountain-move.html` — **underscored on purpose.** Frappe maps a template's
+  basename `-` to `_` when locating its controller, so a hyphenated `.py` is
+  silently never imported and its `get_context` never runs. The route is
+  unaffected (it comes from the template). This same trap had already broken
+  `www/stripe-return.py`; the fix and the CI guard that prevents recurrence ship
+  separately in v1.159.10.
 
 ## [1.159.9] - 2026-07-20
 
