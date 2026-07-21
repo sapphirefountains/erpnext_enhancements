@@ -1,0 +1,48 @@
+{
+ "actions": [],
+ "creation": "2026-07-21 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "location_name",
+  "store_address",
+  "disabled"
+ ],
+ "fields": [
+  {
+   "description": "Shown in the dropdown on the public intake form and stored on the request.",
+   "fieldname": "location_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Location Name",
+   "reqd": 1
+  },
+  {
+   "description": "Street address of the store. Recorded on the Lead/Opportunity as the pickup origin for the move.",
+   "fieldname": "store_address",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Store Address"
+  },
+  {
+   "default": "0",
+   "description": "Hide this location from the public form without deleting it. Requests already referencing it are unaffected.",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Disabled"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-07-21 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "CRM Enhancements",
+ "name": "Fountain Move Location",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

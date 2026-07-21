@@ -4,12 +4,16 @@ Runs once per desk session load; keep it cheap — everything added here is
 serialized into every desk page's boot payload.
 """
 
+from frappe.utils import get_url
+
 from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
 from erpnext_enhancements.feature_flags import (
 	contacts_ux_enabled,
 	document_merge_enabled,
 	field_description_icons_enabled,
+	fountain_move_intake_enabled,
+	fountain_move_public_form_enabled,
 	package_dispatch_enabled,
 	process_automation_enabled,
 	product_configurator_enabled,
@@ -56,6 +60,14 @@ def boot_session(bootinfo):
 	triggers (catalog-item value + customer address); the form itself works with
 	it off (hand-typed), and the server-side guards in ``package_dispatch.api``
 	remain the authority.
+
+	``frappe.boot.ee_fountain_move`` gates the Fountain Move Request list's "Send
+	Intake Link" action and the invite buttons; ``ee_fountain_move_public`` tells
+	the same UI whether the public form is actually live, so "Copy Public Link"
+	can warn instead of handing out a URL that 404s. ``ee_fountain_move_url`` is
+	the public form URL, resolved server-side via ``get_url`` so the client never
+	hand-builds it. The server-side guards in ``feature_flags`` remain the
+	authority for both.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -65,3 +77,6 @@ def boot_session(bootinfo):
 	bootinfo.ee_contacts_ux = 1 if contacts_ux_enabled() else 0
 	bootinfo.ee_product_configurator = 1 if product_configurator_enabled() else 0
 	bootinfo.ee_package_dispatch = 1 if package_dispatch_enabled() else 0
+	bootinfo.ee_fountain_move = 1 if fountain_move_intake_enabled() else 0
+	bootinfo.ee_fountain_move_public = 1 if fountain_move_public_form_enabled() else 0
+	bootinfo.ee_fountain_move_url = get_url("/fountain-move")

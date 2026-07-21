@@ -1,6 +1,6 @@
 # `tests/` — Test suite
 
-Tests for the app's server-side behavior. Most extend Frappe's `FrappeTestCase` and therefore need a **real bench** to run; two suites are deliberately bench-free.
+Tests for the app's server-side behavior. Most extend Frappe's `FrappeTestCase` and therefore need a **real bench** to run; several suites are deliberately bench-free. Note that `bench run-tests` is BROKEN under Python 3.14 — bench-backed suites expose a module-level `run()` wrapper invoked with `bench execute` instead (see `test_contacts_ux.py` and `test_fountain_move_conversion.py`).
 
 ## Running
 
@@ -32,6 +32,8 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 | `test_project_enhancements.py` | Project-scoped comment endpoints | `unittest.mock` (no DB) |
 | `test_project_merge.py` | `project_merge.merge_projects` | `FrappeTestCase`; source/target Project + linked Task |
 | `test_quickbooks_online.py` | QBO sync (mapping, ordering, signature, datetime, preflight, result tracking) | **Bench-free**: `install_frappe_stub()` fakes `frappe`/`requests` in `sys.modules`; `monkeypatch` |
+| `test_fountain_move.py` | Fountain-move intake: phone normalisation, customer-name rule, the guest field allowlist, input sanitation (bidi/control rejected, `< 3 ft` prose preserved), Turnstile decision table, honeypot semantics, image magic-byte sniffing, invite URLs, role gates | **Bench-free**: `install_frappe_stub()` fakes `frappe`/`frappe.rate_limiter`/`requests`; plain pytest |
+| `test_fountain_move_conversion.py` | The Customer→Address→Contact→Lead→Opportunity engine against real erpnext hooks: link-before-insert naming, exactly-one-Contact, non-Guest ownership, reuse, duplicate review, failure + resume-on-retry | `unittest` + **`run()` bench-execute wrapper**; `frappe.enqueue` patched; fixtures carry unique email AND phone because the engine commits per step, so rollback does not undo them |
 | `test_sapphire_maintenance.py` | Maintenance Record + predictive generation | `FrappeTestCase`; Item/Serial No/Project fixtures |
 | `test_search.py` | `api.search` global-search permission filtering | `FrappeTestCase` + mocked SQL/`has_permission`/`get_all` |
 | `test_time_kiosk.py` | Clock-in/out `log_time` Start→Stop cycle | `FrappeTestCase`; Employee linked to Administrator session |

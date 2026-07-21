@@ -1,0 +1,243 @@
+{% extends "templates/web.html" %}
+{#
+  Public fountain-move intake form. Controller: www/fountain_move.py — note the
+  UNDERSCORE. Frappe maps this template's basename to a module name by replacing
+  hyphens with underscores, so a controller named fountain-move.py would never
+  load and get_context would silently never run.
+
+  Assets are raw /assets URLs carrying ?v={{ deploy_version }}. /assets is served
+  with a 1-year immutable Cache-Control, so an edited file would otherwise never
+  reach a browser that already cached it. The *.bundle.* rule applies to
+  app_include_* / web_include_* (static strings that cannot carry a query param),
+  not to templates like this one.
+#}
+
+{% block title %}{{ _("Request a Fountain Move") }}{% endblock %}
+
+{% block head_include %}
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/fountain_move/fountain_move.css?v={{ deploy_version }}">
+{% endblock %}
+
+{% block page_content %}
+<div class="fm-page">
+
+	<header class="fm-header">
+		<h1>{{ _("Request a fountain move") }}</h1>
+		<p class="fm-lede">
+			{{ _("Bought a fountain at Cactus &amp; Tropicals? Tell us about it and where it's going, and we'll get back to you with a quote.") }}
+		</p>
+	</header>
+
+	<noscript>
+		<div class="fm-notice fm-notice--error">
+			{{ _("This form needs JavaScript. Please enable it, or call us on") }} {{ boot.contact_phone }} {{ _("and we'll take your details over the phone.") }}
+		</div>
+	</noscript>
+
+	<form id="fm-form" class="fm-form" novalidate hidden>
+
+		<section class="fm-section">
+			<h2>{{ _("About you") }}</h2>
+			<div class="fm-row">
+				<div class="fm-field">
+					<label for="fm-first-name">{{ _("First name") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-first-name" name="first_name" type="text" autocomplete="given-name"
+					       maxlength="60" required>
+				</div>
+				<div class="fm-field">
+					<label for="fm-last-name">{{ _("Last name") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-last-name" name="last_name" type="text" autocomplete="family-name"
+					       maxlength="60" required>
+				</div>
+			</div>
+			<div class="fm-row">
+				<div class="fm-field">
+					<label for="fm-email">{{ _("Email") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-email" name="email" type="email" autocomplete="email"
+					       inputmode="email" maxlength="140" required>
+				</div>
+				<div class="fm-field">
+					<label for="fm-phone">{{ _("Phone number") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-phone" name="phone" type="tel" autocomplete="tel"
+					       inputmode="tel" maxlength="30" required>
+				</div>
+			</div>
+		</section>
+
+		<section class="fm-section">
+			<h2>{{ _("Where is it going?") }}</h2>
+
+			<div class="fm-field" id="fm-autocomplete-wrap" hidden>
+				<label for="fm-autocomplete">{{ _("Search for the address") }}</label>
+				<div id="fm-autocomplete"></div>
+				<p class="fm-hint">{{ _("Start typing and pick your address, or fill in the fields below.") }}</p>
+			</div>
+
+			<div class="fm-field">
+				<label for="fm-address1">{{ _("Address line 1") }} <span aria-hidden="true">*</span></label>
+				<input id="fm-address1" name="address_line1" type="text" autocomplete="address-line1"
+				       maxlength="100" required>
+			</div>
+			<div class="fm-field">
+				<label for="fm-address2">{{ _("Address line 2") }}</label>
+				<input id="fm-address2" name="address_line2" type="text" autocomplete="address-line2"
+				       maxlength="100">
+			</div>
+			<div class="fm-row">
+				<div class="fm-field">
+					<label for="fm-city">{{ _("City") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-city" name="city" type="text" autocomplete="address-level2"
+					       maxlength="60" required>
+				</div>
+				<div class="fm-field fm-field--narrow">
+					<label for="fm-state">{{ _("State") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-state" name="state" type="text" autocomplete="address-level1"
+					       maxlength="40" required>
+				</div>
+				<div class="fm-field fm-field--narrow">
+					<label for="fm-pincode">{{ _("Postal code") }} <span aria-hidden="true">*</span></label>
+					<input id="fm-pincode" name="pincode" type="text" autocomplete="postal-code"
+					       inputmode="numeric" maxlength="12" required>
+				</div>
+			</div>
+
+			<fieldset class="fm-fieldset">
+				<legend>{{ _("Is this a residential or commercial property?") }} <span aria-hidden="true">*</span></legend>
+				<label class="fm-radio">
+					<input type="radio" name="property_type" value="Residential" required>
+					<span>{{ _("Residential") }}</span>
+				</label>
+				<label class="fm-radio">
+					<input type="radio" name="property_type" value="Commercial">
+					<span>{{ _("Commercial") }}</span>
+				</label>
+			</fieldset>
+		</section>
+
+		<section class="fm-section">
+			<h2>{{ _("About the fountain") }}</h2>
+
+			<div class="fm-field">
+				<label for="fm-location">{{ _("Which Cactus &amp; Tropicals did you buy it from?") }} <span aria-hidden="true">*</span></label>
+				<select id="fm-location" name="purchase_location" required>
+					<option value="">{{ _("Choose a location…") }}</option>
+					{%- for location in boot.locations %}
+					<option value="{{ location.location_name }}">
+						{{ location.location_name }}{% if location.store_address %} — {{ location.store_address }}{% endif %}
+					</option>
+					{%- endfor %}
+				</select>
+			</div>
+
+			<div class="fm-field fm-field--narrow">
+				<label for="fm-weight">{{ _("Roughly how much does it weigh?") }} <span aria-hidden="true">*</span></label>
+				<div class="fm-suffixed">
+					<input id="fm-weight" name="fountain_weight_lbs" type="number" min="1" max="20000"
+					       step="1" inputmode="numeric" required>
+					<span class="fm-suffix">{{ _("lbs") }}</span>
+				</div>
+				<p class="fm-hint">{{ _("An estimate is fine — it tells us how many people and what equipment to bring.") }}</p>
+			</div>
+
+			<fieldset class="fm-fieldset">
+				<legend>{{ _("At the destination") }}</legend>
+				<label class="fm-check">
+					<input type="checkbox" name="water_access" value="1">
+					<span>{{ _("There is water access") }}</span>
+				</label>
+				<label class="fm-check">
+					<input type="checkbox" name="electricity_access" value="1">
+					<span>{{ _("There is electricity access") }}</span>
+				</label>
+			</fieldset>
+		</section>
+
+		<section class="fm-section">
+			<h2>{{ _("Photos") }}</h2>
+			<p class="fm-hint">
+				{{ _("These make a real difference to the quote — they tell us what we're lifting and how we'll get it there.") }}
+			</p>
+
+			<div class="fm-row">
+				<div class="fm-field">
+					<label for="fm-photo-fountain">{{ _("The fountain you bought") }}</label>
+					<input id="fm-photo-fountain" data-photo="fountain" type="file"
+					       accept="image/jpeg,image/png,image/webp,image/heic,image/heif">
+					<div class="fm-preview" data-preview="fountain" hidden>
+						<img alt="{{ _('Preview of the fountain photo') }}">
+						<button type="button" class="fm-preview-clear" data-clear="fountain">{{ _("Remove") }}</button>
+					</div>
+					<p class="fm-upload-status" data-status="fountain" role="status"></p>
+				</div>
+
+				<div class="fm-field">
+					<label for="fm-photo-path">{{ _("The route from the street to where it's going") }}</label>
+					<input id="fm-photo-path" data-photo="path" type="file"
+					       accept="image/jpeg,image/png,image/webp,image/heic,image/heif">
+					<div class="fm-preview" data-preview="path" hidden>
+						<img alt="{{ _('Preview of the access path photo') }}">
+						<button type="button" class="fm-preview-clear" data-clear="path">{{ _("Remove") }}</button>
+					</div>
+					<p class="fm-upload-status" data-status="path" role="status"></p>
+				</div>
+			</div>
+		</section>
+
+		<section class="fm-section">
+			<h2>{{ _("Nearly done") }}</h2>
+
+			<label class="fm-check">
+				<input type="checkbox" name="contact_consent" value="1" checked>
+				<span>{{ _("You may contact me by email and/or text about my request.") }}</span>
+			</label>
+
+			<label class="fm-check">
+				<input type="checkbox" name="terms_accepted" value="1" required>
+				<span>
+					{{ _("I agree to the Sapphire Fountains") }}
+					<a href="{{ boot.terms_url }}" target="_blank" rel="noopener">{{ _("Terms of Use") }}</a>
+					{{ _("and") }}
+					<a href="{{ boot.privacy_url }}" target="_blank" rel="noopener">{{ _("Privacy Policy") }}</a>.
+					<span aria-hidden="true">*</span>
+				</span>
+			</label>
+
+			{#
+			  Honeypot. Off-screen rather than display:none or hidden — a bot that
+			  skips invisible inputs is exactly the bot we want to catch, and the
+			  server trips on the KEY being present at all, not on its value.
+			  aria-hidden + tabindex keep it away from screen readers and keyboards.
+			#}
+			<div class="fm-hp" aria-hidden="true">
+				<label for="fm-hp">{{ _("Company website") }}</label>
+				<input id="fm-hp" name="{{ boot.honeypot_field }}" type="text"
+				       tabindex="-1" autocomplete="off">
+			</div>
+
+			<div id="fm-turnstile" class="fm-turnstile"></div>
+
+			<div id="fm-error" class="fm-notice fm-notice--error" role="alert" hidden></div>
+
+			<button id="fm-submit" type="submit" class="fm-submit">
+				{{ _("Send my request") }}
+			</button>
+			<p class="fm-hint">{{ _("We'll be in touch within one business day.") }}</p>
+		</section>
+	</form>
+
+	<div id="fm-success" class="fm-success" hidden role="status">
+		<h2>{{ _("Thanks — we've got it.") }}</h2>
+		<p>{{ _("Your request is with our team. We'll be in touch within one business day to talk through the move and get you a quote.") }}</p>
+		<p class="fm-reference">{{ _("Reference") }}: <b id="fm-reference"></b></p>
+		<p class="fm-hint">{{ _("Need us sooner? Call") }} {{ boot.contact_phone }}.</p>
+	</div>
+
+	<div id="fm-loading" class="fm-notice">{{ _("Loading the form…") }}</div>
+</div>
+
+<script>
+	window.FM_BOOT = {{ boot | tojson }};
+</script>
+<script src="/assets/erpnext_enhancements/js/fountain_move/fountain_move.js?v={{ deploy_version }}"></script>
+{% endblock %}

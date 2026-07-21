@@ -6,6 +6,7 @@ Four standalone web pages live here, separate from the heavy desk app:
 - the **Wall Display** at **`/wall`** — read-only project/TV dashboard, chrome-free (see below);
 - the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
 - the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails.
+- the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`; note the underscored controller — see [Controller filenames](#controller-filenames-hyphens-are-silently-fatal)). See [its section below](#fountain-move--public-intake-form).
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 

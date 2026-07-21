@@ -1,0 +1,39 @@
+{# A fountain-move request matched more than one existing party, so conversion
+   stopped without creating anything.
+   Context: req, reason (plain sentence), candidates (list of {type, name}), request_url.
+   NOTE: no autoescape in frappe's Jinja env — |e every interpolated value. #}
+<h3>A fountain move request needs a duplicate decision</h3>
+
+<p>
+	{{ req.first_name|e }} {{ req.last_name|e }} ({{ req.email|e }}) submitted a
+	request that matches more than one existing record. <b>Nothing was created</b> —
+	guessing wrong here would write a stranger's address onto someone else's account,
+	which is far harder to unpick than doing it by hand now.
+</p>
+
+{% if reason %}<p>{{ reason|e }}</p>{% endif %}
+
+{% if candidates %}
+<p><b>Candidates:</b></p>
+<ul>
+	{% for candidate in candidates %}
+	<li>{{ candidate.type|e }}: {{ candidate.name|e }}</li>
+	{% endfor %}
+</ul>
+{% endif %}
+
+<table>
+	<tr><td style="padding:2px 12px 2px 0"><b>Phone</b></td>
+		<td style="padding:2px 0">{{ req.phone|e }}</td></tr>
+	<tr><td style="padding:2px 12px 2px 0"><b>Destination</b></td>
+		<td style="padding:2px 0">
+			{{ req.address_line1|e }}, {{ req.city|e }} {{ req.state|e }} {{ req.pincode|e }}
+		</td></tr>
+	<tr><td style="padding:2px 12px 2px 0"><b>Purchased at</b></td>
+		<td style="padding:2px 0">{{ req.purchase_location|e }}</td></tr>
+</table>
+
+<p>
+	<a href="{{ request_url }}">Open the request</a>. Decide which account this
+	belongs to, set it on the request, then press <b>Retry Conversion</b>.
+</p>

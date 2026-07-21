@@ -161,6 +161,9 @@ doctype_js = {
 	"Stripe Payment": "public/js/stripe_payments/stripe_payment.js",
 	# plaid_banking — Plaid Link connect flow on the Settings form
 	"Plaid Settings": "plaid_banking/doctype/plaid_settings/plaid_settings.js",
+	# fountain_move — triage actions (retry / spam) and jump-to-created-record
+	"Fountain Move Request": "public/js/crm_enhancements/fountain_move_request.js",
+	"Fountain Move Invite": "public/js/crm_enhancements/fountain_move_invite.js",
 }
 
 doctype_list_js = {
@@ -175,6 +178,8 @@ doctype_list_js = {
 	"Item": "public/js/item_list.js",
 	"Call Log": "public/js/global_enhancements/call_log_list.js",
 	"Document Intake": "public/js/accounting_intake/document_intake_list.js",
+	# fountain_move — "Send Intake Link" / "Copy Public Link" + status indicators
+	"Fountain Move Request": "public/js/crm_enhancements/fountain_move_request_list.js",
 }
 doctype_calendar_js = {
 	"Asset Booking": "public/js/asset_booking_calendar.js",
@@ -377,6 +382,11 @@ scheduler_events = {
 		# fleet_maintenance: refresh vehicle maintenance status (Due Soon / Overdue
 		# as dates pass) + notify fleet managers on a new slip. Dormant unless enabled.
 		"erpnext_enhancements.fleet_maintenance.tasks.refresh_fleet_status",
+		# fountain_move: expire stale intake invites, chase requests stuck in a
+		# status nobody watches, and catch photos whose Drive folders arrived late
+		"erpnext_enhancements.crm_enhancements.fountain_move.invites.expire_stale_invites",
+		"erpnext_enhancements.crm_enhancements.fountain_move.notify.digest_stuck_requests",
+		"erpnext_enhancements.crm_enhancements.fountain_move.photos.sweep_unmirrored_photos",
 	],
 	"hourly": [
 		# QuickBooks Online sync jobs moved to staggered cron entries above to stop
@@ -384,6 +394,9 @@ scheduler_events = {
 		# "cron" section.
 		"erpnext_enhancements.tasks.nudge_unsubmitted_maintenance_forms",
 		"erpnext_enhancements.ai_governance.tasks.expire_stale_pending_actions",
+		# fountain_move: delete photos uploaded by someone who never submitted the
+		# form. Without this the guest upload endpoint doubles as free storage.
+		"erpnext_enhancements.crm_enhancements.fountain_move.intake.gc_orphan_intake_files",
 		# Drive -> ERPNext half of the attachment sync (link-only shadows)
 		"erpnext_enhancements.google_drive.drive_sync.sync_shadow_attachments",
 		# mdm_integration: pull Miradore/Action1 device inventory + keep the
@@ -625,8 +638,20 @@ fixtures = [
 	},
 	{"dt": "Dashboard", "filters": [["name", "in", ["Call Center", "Project Delivery", "Sales Pipeline", "Procurement", "Executive Summary", "QuickBooks Online", "Finance Health", "Product Catalog", "HR Overview"]]]},
 	# Public legal pages (guest-accessible Web Pages). stripe_payments adds the
-	# payment/surcharge + refund policies (counsel-review-pending).
-	{"dt": "Web Page", "filters": [["name", "in", ["eula", "privacy-policy", "payment-terms", "refund-policy"]]]},
+	# payment/surcharge + refund policies (counsel-review-pending); fountain_move
+	# adds the terms of use its consent checkbox links to.
+	# NOTE: a record added to fixtures/web_page.json but NOT named here is never
+	# exported and never synced — the page simply 404s with no error anywhere.
+	{
+		"dt": "Web Page",
+		"filters": [
+			[
+				"name",
+				"in",
+				["eula", "privacy-policy", "payment-terms", "refund-policy", "terms-of-use"],
+			]
+		],
+	},
 ]
 
 override_whitelisted_methods = {

@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.0] - 2026-07-21
+
+> **Builds on v1.159.11**, which is merged into this release. The conversion
+> engine stamps `Lead.custom_lead_source`, `Opportunity.custom_lead_source` and
+> `Lead.custom_opportunity`; those Custom Fields ship in v1.159.11 and are
+> present here. Frappe silently drops writes to fields that do not exist, so the
+> two must ship together — they now do.
+
+### Added
+
+- **Public fountain-move intake form for the Cactus & Tropicals partnership**
+  (`/fountain-move`, default OFF). A customer who buys a fountain at Cactus &
+  Tropicals is referred to us to move it; until now that arrived as a phone call
+  and a manual CRM entry. The form collects the customer's details, the
+  destination address (with Google Places autocomplete), the property type, the
+  fountain's weight, water/electricity access at the destination, and photos of
+  both the fountain and the route it has to travel — the two things that decide
+  how many people and what equipment to send.
+
+  Submissions land as a **Fountain Move Request** and convert, in a background
+  job, into a linked **Customer → Address → Contact → Lead → Opportunity** set.
+  The staging doctype is deliberate: spam never reaches CRM, a partial failure is
+  resumable rather than duplicating master data, and the original payload is
+  preserved for audit. Staff email the link from the desk ("Send Intake Link"),
+  and the same URL works bare so it can be printed as a QR code at the till.
+
+  Customer naming follows the operator's rule — Residential becomes
+  "<First> <Last> Residence", Commercial just "<First> <Last>". Everything the
+  form asks that has no native Lead field is written into `Lead.custom_lead_details`.
+
+- **This is the app's first unauthenticated write path**, so its controls are new
+  rather than inherited: Cloudflare Turnstile (verified server-side, fail-closed —
+  an outage parks the submission for a human instead of auto-converting it), a
+  honeypot keyed on the *presence* of the field in the raw body (frappe sanitises
+  a guest's `form_dict` before the endpoint sees it, which can blank the value),
+  a minimum time-on-form, per-endpoint rate limits plus session- and email-keyed
+  counters, magic-byte image sniffing with a total-pixel cap, and a strict
+  20-key field allowlist. `read_only` in a DocType JSON is a UI hint, not
+  authorisation — under `ignore_permissions` a splatted payload could otherwise
+  set `status` or the `created_*` links directly.
+
+- New `/terms-of-use` Web Page (DRAFT pending counsel review, matching the
+  existing payment-terms and refund-policy pages) — the form's consent checkbox
+  links to it and to the existing Privacy Policy.
+
+### Fixed
+
+- `utils/triton_sync.py` filtered by *module* only, so the new guest-submitted
+  doctypes — which carry unauthenticated PII and, pre-conversion, may be
+  arbitrary bot input — would have been announced to Triton. Both are now
+  excluded by name.
+
+### Changed
+
+- New CI step: the bench-free `test_fountain_move` pytest suite.
+
+- The page's controller is `www/fountain_move.py` while its template is
+  `www/fountain-move.html` — **underscored on purpose.** Frappe maps a template's
+  basename `-` to `_` when locating its controller, so a hyphenated `.py` is
+  silently never imported and its `get_context` never runs. The route is
+  unaffected (it comes from the template). This same trap had already broken
+  `www/stripe-return.py`; the fix and the CI guard that prevents recurrence ship
+  separately in v1.159.10.
 ## [1.159.11] - 2026-07-21
 
 ### Fixed

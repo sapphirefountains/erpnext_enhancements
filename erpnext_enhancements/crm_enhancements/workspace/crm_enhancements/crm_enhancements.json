@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"crm_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"crm_sc_pipeline\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Pipeline\",\"col\":4}},{\"id\":\"crm_sc_lead\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":4}},{\"id\":\"crm_sc_opp\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Opportunity\",\"col\":4}},{\"id\":\"crm_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"crm_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Pipeline &amp; Enhancements</b></span>\",\"col\":12}},{\"id\":\"crm_card_pipeline\",\"type\":\"card\",\"data\":{\"card_name\":\"Pipeline\",\"col\":4}},{\"id\":\"crm_card_enh\",\"type\":\"card\",\"data\":{\"card_name\":\"Enhancements\",\"col\":4}}]",
+ "content": "[{\"id\":\"crm_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"crm_sc_pipeline\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Pipeline\",\"col\":3}},{\"id\":\"crm_sc_lead\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":3}},{\"id\":\"crm_sc_opp\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Opportunity\",\"col\":3}},{\"id\":\"crm_sc_fountain_move\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Fountain Move Requests\",\"col\":3}},{\"id\":\"crm_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"crm_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Pipeline &amp; Enhancements</b></span>\",\"col\":12}},{\"id\":\"crm_card_pipeline\",\"type\":\"card\",\"data\":{\"card_name\":\"Pipeline\",\"col\":4}},{\"id\":\"crm_card_enh\",\"type\":\"card\",\"data\":{\"card_name\":\"Enhancements\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -15,7 +15,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Pipeline",
-   "link_count": 3,
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -53,6 +53,17 @@
    "link_to": "Customer"
   },
   {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Fountain Move Requests",
+   "link_count": 0,
+   "link_to": "Fountain Move Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
    "hidden": 0,
    "is_query_report": 0,
    "label": "Enhancements",
@@ -83,7 +94,7 @@
    "link_to": "Sales Activity Settings"
   }
  ],
- "modified": "2026-06-15 00:00:00.000000",
+ "modified": "2026-07-21 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "CRM Enhancements",
@@ -109,6 +120,14 @@
    "doc_view": "List",
    "label": "Opportunity",
    "link_to": "Opportunity",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "Fountain Move Requests",
+   "link_to": "Fountain Move Request",
+   "stats_filter": "{\"status\":[\"in\",[\"New\",\"Duplicate Review\",\"Failed\"]]}",
    "type": "DocType"
   }
  ],

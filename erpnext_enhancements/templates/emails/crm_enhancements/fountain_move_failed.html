@@ -1,0 +1,43 @@
+{# A fountain-move request could not be converted into CRM records.
+   Context: req, final (bool — we have stopped retrying), attempts, max_attempts,
+   error_summary (already truncated), request_url.
+   NOTE: no autoescape in frappe's Jinja env — |e every interpolated value.
+   The customer is NEVER copied on this; our plumbing is not their problem. #}
+<h3>A fountain move request could not be converted</h3>
+
+<p>
+	{{ req.first_name|e }} {{ req.last_name|e }} submitted a request
+	{% if req.city %}in {{ req.city|e }}{% endif %} that has not turned into a lead.
+	<b>Their details are safe</b> — nothing was lost — but no opportunity exists yet,
+	so nobody is working it.
+</p>
+
+<p>
+	Attempt {{ attempts }} of {{ max_attempts }}.
+	{% if final %}
+	<b>Automatic retries have stopped.</b> This needs a person.
+	{% else %}
+	It will be retried automatically.
+	{% endif %}
+</p>
+
+<table>
+	<tr><td style="padding:2px 12px 2px 0"><b>Contact</b></td>
+		<td style="padding:2px 0">{{ req.email|e }} &middot; {{ req.phone|e }}</td></tr>
+	<tr><td style="padding:2px 12px 2px 0"><b>Purchased at</b></td>
+		<td style="padding:2px 0">{{ req.purchase_location|e }}</td></tr>
+	<tr><td style="padding:2px 12px 2px 0"><b>What went wrong</b></td>
+		<td style="padding:2px 0"><code>{{ error_summary|e }}</code></td></tr>
+</table>
+
+<p>
+	<a href="{{ request_url }}">Open the request</a> — the full traceback is in the
+	Diagnostics section, and there is a <b>Retry Conversion</b> button once the
+	cause is fixed.
+</p>
+
+<p style="color:#6c7680;font-size:90%">
+	The most common cause is configuration rather than a bug: an unset Default
+	Opportunity Owner, or a Lead Source / Value Stream that no longer exists.
+	Check <b>ERPNext Enhancements Settings &rarr; Fountain Move Defaults</b> first.
+</p>

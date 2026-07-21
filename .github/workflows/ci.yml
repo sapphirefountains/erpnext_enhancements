@@ -96,6 +96,8 @@ jobs:
       # Field, and nothing may target the removed `source` field.
       - name: Lead/Opportunity attribution (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_lead_attribution.py -q
+      - name: Fountain move intake (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_fountain_move.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.
