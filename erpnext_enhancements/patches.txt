@@ -196,9 +196,3 @@ erpnext_enhancements.patches.seed_cactus_tropicals_lead_source
 # on a Single only applies at creation, and Settings already exists everywhere, so
 # new fields come up blank. Fills blanks only; never clobbers operator edits.
 erpnext_enhancements.patches.seed_fountain_move_defaults
-# v1.160.0 delete three Property Setters targeting erpnext's removed Lead/Opportunity
-# `source` field (renamed utm_source in v15). They have enforced nothing since the
-# rename and already misled one design pass into believing source was mandatory.
-# Removing them from fixtures/property_setter.json alone would leave them in the DB
-# forever -- fixture sync is create/update-only.
-erpnext_enhancements.patches.drop_orphan_source_property_setters

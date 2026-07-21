@@ -29,7 +29,6 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `seed_contract_templates` | post | Creates the five Contract Template records (MSA, SOW, Owner, Rental, Maintenance) from `templates/contracts/*.html` (insert-only by `template_key`; site-side legal edits survive). |
 | `seed_cactus_tropicals_lead_source` | post | Creates the "Cactus & Tropicals" Lead Source and the "Existing Customer" UTM Source the fountain-move conversion needs. Both use `insert(set_name=…)` — `Lead Source` is `istable` with no autoname, so a plain insert would hash-name the record (as happened to two `Value Streams` rows). Insert-only. |
 | `seed_fountain_move_defaults` | post | Seeds the Fountain Move Intake settings (lead source, value stream, territory, customer groups, company, the three C&T store rows). Only fills blanks, so operator edits survive. Deliberately does **not** guess `fmr_default_owner`. |
-| `drop_orphan_source_property_setters` | post | Deletes `Lead-source-reqd`, `Opportunity-source-reqd` and `Lead-source-label` — erpnext v15 renamed the `source` field to `utm_source`, so all three have been silently inert. Removing them from the fixture file alone is not enough (fixture sync is create/update-only). |
 
 ## Important note from `patches.txt`
 

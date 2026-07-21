@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.160.0] - 2026-07-21
 
+> **Depends on v1.159.11.** The conversion engine stamps
+> `Lead.custom_lead_source`, `Opportunity.custom_lead_source` and
+> `Lead.custom_opportunity`. Those three Custom Fields — and the deletion of the
+> orphan `source` Property Setters — ship in v1.159.11, which must land first.
+> Frappe silently drops writes to fields that do not exist, so merging this ahead
+> of it would leave attribution unrecorded with no error anywhere.
+
 ### Added
 
 - **Public fountain-move intake form for the Cactus & Tropicals partnership**
@@ -47,23 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   links to it and to the existing Privacy Policy.
 
 ### Fixed
-
-- **`Lead.source` and `Opportunity.source` do not exist**, and three Property
-  Setters have been silently enforcing nothing since erpnext v15 renamed the
-  field to `utm_source`: `Lead-source-reqd`, `Opportunity-source-reqd` and
-  `Lead-source-label`. A Property Setter for a missing field is not an error —
-  frappe simply never finds a docfield to apply it to — so this failed open with
-  no symptom, and lead-source attribution on Lead and Opportunity has in practice
-  been unrecorded. The orphans are deleted by patch (removing them from the
-  fixture file alone is insufficient; fixture sync is create/update-only), and
-  replaced by real `custom_lead_source` Custom Fields on Lead and Opportunity
-  matching the already-populated `Customer.custom_lead_source`.
-
-- **`Lead.opportunity` does not exist either.** `script_migrations.opportunity.
-  update_lead_status` has been assigning `lead_doc.opportunity = doc.name`, and
-  frappe silently drops unknown attributes on save, so the Lead → Opportunity
-  back-link has never persisted. Added `Lead.custom_opportunity` and the
-  conversion engine now writes it.
 
 - `utils/triton_sync.py` filtered by *module* only, so the new guest-submitted
   doctypes — which carry unauthenticated PII and, pre-conversion, may be
