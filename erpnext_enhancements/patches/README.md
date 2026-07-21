@@ -27,6 +27,8 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `backfill_project_opportunity_link` | post | Fills empty `Project.custom_opportunity` from the reverse `Opportunity.custom_created_project` stamp — the forward link was never persisted before v1.3.0 (the old mapping wrote to a non-existent `custom_sales_opportunity` field). |
 | `seed_task_dashboard_block` | post | Creates the "Task Dashboard" Custom HTML Block from the repo-root `Custom HTML Block/task_dashboard.*` sources (insert-only; UI edits survive). The block must then be added to a Workspace once by hand. |
 | `seed_contract_templates` | post | Creates the five Contract Template records (MSA, SOW, Owner, Rental, Maintenance) from `templates/contracts/*.html` (insert-only by `template_key`; site-side legal edits survive). |
+| `drop_orphan_source_property_setters` | post | Deletes `Lead-source-reqd`, `Opportunity-source-reqd` and `Lead-source-label` — erpnext v15 renamed the `source` field to `utm_source`, so all three have been silently inert. Removing them from the fixture file alone is not enough (fixture sync is create/update-only). |
+| `backfill_lead_opportunity_link` | post | Fills empty `Lead.custom_opportunity` from the forward `Opportunity.party_name` link (where `opportunity_from = "Lead"`). The back-link was written to a non-existent `opportunity` field and frappe silently dropped it, so it never persisted for any converted Lead. Insert-only; skips deleted Leads; does not touch Lead status. |
 
 ## Important note from `patches.txt`
 
