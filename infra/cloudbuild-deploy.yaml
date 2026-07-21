@@ -33,7 +33,7 @@ steps:
           --ssh-key-file=/root/.ssh/id_rsa \
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
-            git -C apps/erpnext_enhancements pull --ff-only upstream main && \
+            git -C apps/erpnext_enhancements fetch upstream main && git -C apps/erpnext_enhancements reset --hard FETCH_HEAD && \
             export PATH=\$$PATH:/home/frappe/.local/bin && \
             bench --site all migrate && \
             bench build && \
