@@ -99,15 +99,27 @@ def update_lead_status(doc, method=None):
 	``AttributeError`` on *every* Opportunity save; the guard now checks
 	``opportunity_from == "Lead" and party_name``.
 
+	NOTE (see CHANGELOG 1.159.11): the back-link was written to ``lead_doc.opportunity``
+	for years and never persisted — erpnext's Lead has no such field, and frappe
+	silently drops unknown attributes on save rather than raising. It now writes
+	``custom_opportunity`` (a Custom Field shipped in ``fixtures/custom_field.json``);
+	``patches.backfill_lead_opportunity_link`` reconstructs the historical links.
+
 	Side effects:
-		Saves the linked Lead (``status="Converted"``, ``opportunity=doc.name``)
-		with ``ignore_permissions``. A missing Lead is logged, not raised.
+		Saves the linked Lead (``status="Converted"``,
+		``custom_opportunity=doc.name``) with ``ignore_permissions``. A missing
+		Lead is logged, not raised.
 	"""
 	if doc.is_new() and doc.opportunity_from == "Lead" and doc.party_name:
 		try:
 			lead_doc = frappe.get_doc("Lead", doc.party_name)
 			lead_doc.status = "Converted"
-			lead_doc.opportunity = doc.name
+			# has_field guard: this hook fires during ERPNext's own test bootstrap,
+			# before this app's custom fields exist. Assigning anyway would be
+			# harmless but silent — exactly the failure being fixed here — so the
+			# absence is made explicit instead.
+			if lead_doc.meta.has_field("custom_opportunity"):
+				lead_doc.custom_opportunity = doc.name
 			lead_doc.save(ignore_permissions=True)
 		except frappe.DoesNotExistError:
 			frappe.log_error(

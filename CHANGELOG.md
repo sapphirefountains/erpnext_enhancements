@@ -9,12 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.160.0] - 2026-07-21
 
-> **Depends on v1.159.11.** The conversion engine stamps
-> `Lead.custom_lead_source`, `Opportunity.custom_lead_source` and
-> `Lead.custom_opportunity`. Those three Custom Fields — and the deletion of the
-> orphan `source` Property Setters — ship in v1.159.11, which must land first.
-> Frappe silently drops writes to fields that do not exist, so merging this ahead
-> of it would leave attribution unrecorded with no error anywhere.
+> **Builds on v1.159.11**, which is merged into this release. The conversion
+> engine stamps `Lead.custom_lead_source`, `Opportunity.custom_lead_source` and
+> `Lead.custom_opportunity`; those Custom Fields ship in v1.159.11 and are
+> present here. Frappe silently drops writes to fields that do not exist, so the
+> two must ship together — they now do.
 
 ### Added
 
@@ -71,6 +70,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unaffected (it comes from the template). This same trap had already broken
   `www/stripe-return.py`; the fix and the CI guard that prevents recurrence ship
   separately in v1.159.10.
+## [1.159.11] - 2026-07-21
+
+### Fixed
+
+- **Lead-source attribution was never recorded on Lead or Opportunity, and the
+  Lead → Opportunity back-link never persisted.** Two independent instances of
+  the same failure mode: a customization pointed at a field that does not exist,
+  and Frappe said nothing.
+
+  1. **Three orphan Property Setters.** ERPNext v15 renamed `Lead.source` and
+     `Opportunity.source` to `utm_source`; `Lead-source-reqd`,
+     `Opportunity-source-reqd` and `Lead-source-label` were never repointed. A
+     Property Setter for a missing field is not an error — Frappe simply never
+     finds a docfield to apply it to — so all three have been inert ever since,
+     and the "source is mandatory" rule they were meant to enforce has never
+     applied to a single record. Deleted by patch (removing them from
+     `fixtures/property_setter.json` alone is insufficient; fixture sync is
+     create/update-only).
+
+  2. **`update_lead_status` assigned to a non-existent attribute.** It set
+     `lead_doc.opportunity = doc.name`, but ERPNext's Lead has no `opportunity`
+     field, and Frappe silently discards unknown attributes on save. Every Lead
+     converted to an Opportunity was marked `Converted` and then pointed at
+     nothing.
+
+  Attribution now lives in real Custom Fields — `Lead.custom_lead_source` and
+  `Opportunity.custom_lead_source`, both Link → **Lead Source** — matching the
+  already-populated `Customer.custom_lead_source` (set on ~694 customers). The
+  parallel `UTM Source` taxonomy carries the same 22 members but is effectively
+  unused here (0 Leads, 1 Opportunity), so reviving that path would have meant
+  migrating live data onto the emptier of two identical lists.
+
+  Deliberately **not** re-applied as `reqd`. The old setters intended a mandatory
+  source but never took effect, so no existing record has one; making it
+  mandatory now would block every save of the ~200 existing Leads until someone
+  backfilled them by hand. That is a migration decision, not a side effect of
+  deleting dead configuration.
+
+### Added
+
+- `Lead.custom_opportunity` (Link → Opportunity, read-only) and
+  `patches.backfill_lead_opportunity_link`, which reconstructs the historical
+  back-links exactly from the forward `Opportunity.party_name` pointer rather
+  than guessing. Verified against live data first: every Lead that has an
+  Opportunity has exactly one, so collapsing the relationship into a single Link
+  field loses nothing. Insert-only (never overwrites a hand-set link), skips
+  Leads that no longer exist, and does not touch Lead status — some of these sit
+  at `Opportunity` or `Lost Quotation` rather than `Converted`, which is
+  deliberate pipeline state.
+## [1.159.10] - 2026-07-21
+
+### Fixed
+
+- **The Stripe Checkout return page told customers who cancelled that their
+  payment was going through.** `www/stripe-return.py` had never executed — not
+  once since it was written. Frappe locates a page controller from the
+  *template's* basename with hyphens replaced by underscores, so for
+  `stripe-return.html` it looks for `stripe_return.py`, which did not exist. The
+  hyphenated file was simply never imported.
+
+  Nothing errored. The template rendered as normal, with every context variable
+  undefined — so `outcome == "cancel"` was false and the page fell to the `else`
+  branch. Verified against the real renderer on a bench: before the fix,
+  `?status=cancel`, `?status=success` and a bare request all produced the
+  identical page, "Thank you! Your payment is being processed." Someone who
+  deliberately cancelled at Stripe was thanked and told it was processing.
+  A card payment that had already settled was also mislabelled as processing,
+  because `payment_status` (looked up from `?sp=`) was never set either.
+
+  Fixed by renaming the controller to `www/stripe_return.py`. **The public route
+  is unchanged** — it comes from the template, which keeps its hyphen — so
+  Stripe's configured `success_url` / `cancel_url` keep working and no
+  customer-facing URL moves. Confirmed on a bench that cancel now renders
+  "Payment cancelled", a `Paid` row renders "Your payment was received", a
+  `Processing` row renders "is being processed", and an unknown `?sp=` still
+  renders safely.
+
+### Added
+
+- `scripts/check_www_controllers.py` + a CI step failing the build if any
+  `www/*.py` basename contains a hyphen, so this class of silent breakage cannot
+  recur. There is no exemption list: the only offender is fixed above.
+
+### Changed
+
+- Corrected `erpnext_enhancements/www/README.md`, which claimed a hyphenated
+  route required a hyphenated controller filename. The opposite is true, and that
+  note is what let the bug survive review. Replaced with an explanation of the
+  actual mapping and the failure mode.
 
 ## [1.159.9] - 2026-07-20
 
