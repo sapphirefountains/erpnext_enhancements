@@ -56,6 +56,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Leads that no longer exist, and does not touch Lead status — some of these sit
   at `Opportunity` or `Lost Quotation` rather than `Converted`, which is
   deliberate pipeline state.
+## [1.159.10] - 2026-07-21
+
+### Fixed
+
+- **The Stripe Checkout return page told customers who cancelled that their
+  payment was going through.** `www/stripe-return.py` had never executed — not
+  once since it was written. Frappe locates a page controller from the
+  *template's* basename with hyphens replaced by underscores, so for
+  `stripe-return.html` it looks for `stripe_return.py`, which did not exist. The
+  hyphenated file was simply never imported.
+
+  Nothing errored. The template rendered as normal, with every context variable
+  undefined — so `outcome == "cancel"` was false and the page fell to the `else`
+  branch. Verified against the real renderer on a bench: before the fix,
+  `?status=cancel`, `?status=success` and a bare request all produced the
+  identical page, "Thank you! Your payment is being processed." Someone who
+  deliberately cancelled at Stripe was thanked and told it was processing.
+  A card payment that had already settled was also mislabelled as processing,
+  because `payment_status` (looked up from `?sp=`) was never set either.
+
+  Fixed by renaming the controller to `www/stripe_return.py`. **The public route
+  is unchanged** — it comes from the template, which keeps its hyphen — so
+  Stripe's configured `success_url` / `cancel_url` keep working and no
+  customer-facing URL moves. Confirmed on a bench that cancel now renders
+  "Payment cancelled", a `Paid` row renders "Your payment was received", a
+  `Processing` row renders "is being processed", and an unknown `?sp=` still
+  renders safely.
+
+### Added
+
+- `scripts/check_www_controllers.py` + a CI step failing the build if any
+  `www/*.py` basename contains a hyphen, so this class of silent breakage cannot
+  recur. There is no exemption list: the only offender is fixed above.
+
+### Changed
+
+- Corrected `erpnext_enhancements/www/README.md`, which claimed a hyphenated
+  route required a hyphenated controller filename. The opposite is true, and that
+  note is what let the bug survive review. Replaced with an explanation of the
+  actual mapping and the failure mode.
 
 ## [1.159.9] - 2026-07-20
 
