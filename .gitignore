@@ -19,3 +19,7 @@ infra/shared.tfvars
 infra/terraform.tfvars
 infra/*.tfvars.json
 infra/tfplan
+
+# Redis dump files, produced when a local redis-server is started for bench work
+dump.rdb
+*.rdb
