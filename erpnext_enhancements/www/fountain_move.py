@@ -49,11 +49,27 @@ def get_context(context):
 
 	invite = resolve_invite(frappe.form_dict.get("ref"))
 
-	# NOTE: no context.csrf_token. Guest sessions carry no saved token, so
-	# frappe's validate_csrf_token short-circuits (auth.py:81-94) — emitting one
-	# would validate against nothing. Abuse control is Turnstile + honeypot +
-	# rate limiting, in crm_enhancements/fountain_move/intake.py.
+	# CSRF: emit the session's EXISTING token, or "" when there isn't one.
+	#
+	# For an anonymous customer this is empty and frappe's validate_csrf_token
+	# short-circuits (auth.py:86 — `not (saved_token := session.data.csrf_token)`),
+	# so nothing is validated and nothing needs sending. Abuse control on that
+	# path is Turnstile + honeypot + rate limiting, in fountain_move/intake.py.
+	#
+	# But this page is equally reachable by LOGGED-IN staff previewing it, and
+	# their session DOES carry a token — so validate_csrf_token does not
+	# short-circuit, and a POST without the header throws CSRFTokenError, which
+	# is HTTP 400. That broke the form outright for anyone signed in. Same-origin
+	# does not save you: is_allowed_referrer only passes hosts explicitly listed
+	# in site config's `allowed_referrers`, which is empty by default.
+	#
+	# Deliberately NOT frappe.sessions.get_csrf_token(): that MINTS a token when
+	# one is absent, and Session.update() never persists it for Guest — so a
+	# guest would send a token the server has never heard of.
+	context.csrf_token = (getattr(frappe.session, "data", None) or {}).get("csrf_token") or ""
+
 	context.boot = {
+		"csrf_token": context.csrf_token,
 		"turnstile_sitekey": _setting("fountain_move_turnstile_site_key"),
 		"maps_api_key": _setting("fountain_move_maps_api_key"),
 		"max_photo_mb": _max_photo_mb(),

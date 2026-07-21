@@ -307,6 +307,8 @@
 			body.append("file", blob, "photo.jpg");
 			return fetch(API + "upload_intake_photo", {
 				method: "POST",
+				// No Content-Type: the browser must set the multipart boundary.
+				headers: withCsrf({}),
 				body: body,
 				credentials: "same-origin",
 			}).then(readResponse);
@@ -481,10 +483,25 @@
 	function post(method, payload) {
 		return fetch(API + method, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", Accept: "application/json" },
+			headers: withCsrf({ "Content-Type": "application/json", Accept: "application/json" }),
 			credentials: "same-origin",
 			body: JSON.stringify(payload),
 		}).then(readResponse);
+	}
+
+	/*
+	 * Add the CSRF header when — and only when — the session actually has a token.
+	 *
+	 * An anonymous customer has none, and frappe skips CSRF validation entirely
+	 * for that case. A LOGGED-IN staff member previewing this page does have one,
+	 * and frappe then enforces it: a POST without the header throws
+	 * CSRFTokenError, which is HTTP 400 and broke the form outright for anyone
+	 * signed in. Sending an empty header would be worse than sending none, so
+	 * the key is omitted when there is nothing to send.
+	 */
+	function withCsrf(headers) {
+		if (BOOT.csrf_token) headers["X-Frappe-CSRF-Token"] = BOOT.csrf_token;
+		return headers;
 	}
 
 	function readResponse(response) {

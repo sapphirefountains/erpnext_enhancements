@@ -596,6 +596,83 @@ def test_customer_facing_copy_does_not_hardcode_a_number():
 	assert not offenders, "phone number hardcoded in customer-facing copy:\n" + "\n".join(offenders)
 
 
+# --- 9c. CSRF ----------------------------------------------------------------
+
+
+def test_page_emits_the_existing_session_token_only():
+	"""Regression: the page shipped with NO csrf_token in its boot payload.
+
+	Guests have no saved token so frappe skips CSRF for them — but a LOGGED-IN
+	staff member previewing the page does have one, frappe then enforces it, and
+	every endpoint returned HTTP 400 (CSRFTokenError). The form was broken
+	outright for anyone signed in.
+	"""
+	import ast
+
+	source = _read("erpnext_enhancements/www/fountain_move.py")
+	tree = ast.parse(source)
+
+	# The token must be in the BOOT DICT specifically — a substring check on the
+	# file passes even when the boot entry is deleted, because the assignment
+	# above it still mentions csrf_token.
+	boot_keys = set()
+	for node in ast.walk(tree):
+		if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+			continue
+		targets = [
+			t.attr for t in node.targets if isinstance(t, ast.Attribute)
+		]
+		if "boot" not in targets:
+			continue
+		boot_keys = {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
+
+	assert boot_keys, "could not find the context.boot dict"
+	assert "csrf_token" in boot_keys, (
+		f"context.boot must carry csrf_token so the client can send the header; got {sorted(boot_keys)}"
+	)
+
+	# Must read the EXISTING token, never mint one: get_csrf_token() creates a
+	# token that Session.update never persists for Guest, so the guest would
+	# send one the server has never stored.
+	#
+	# Checked via AST, not substring: the comments in that file legitimately
+	# mention get_csrf_token() while explaining why it must not be used, and a
+	# substring check would trip on its own documentation.
+	called = {
+		node.func.attr
+		for node in ast.walk(tree)
+		if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+	}
+	assert "get_csrf_token" not in called, (
+		"must not call frappe.sessions.get_csrf_token() — it mints a token that "
+		"is never persisted for Guest"
+	)
+
+
+def test_client_sends_the_csrf_header_on_every_post():
+	"""Both fetch call sites — JSON and multipart upload — must send it."""
+	js = _read("erpnext_enhancements/public/js/fountain_move/fountain_move.js")
+
+	assert "X-Frappe-CSRF-Token" in js, "client never sends the CSRF header"
+	assert js.count("withCsrf(") >= 3, (
+		"expected withCsrf() to be defined and used at both fetch call sites"
+	)
+
+	# The header must be conditional. An empty header is worse than none.
+	assert "if (BOOT.csrf_token)" in js, "CSRF header must only be sent when non-empty"
+
+	# The multipart upload must NOT set Content-Type — the browser has to pick
+	# the boundary — but must still carry the token.
+	start = js.index("function upload(")
+	body = js[start : js.index("function preview(", start)]
+	assert "withCsrf(" in body, "the photo upload does not send the CSRF header"
+	# Match the object-key form, not the bare word — the comment above that line
+	# legitimately mentions Content-Type while explaining why it is absent.
+	assert '"Content-Type"' not in body, (
+		"the multipart upload must not set Content-Type; the browser sets the boundary"
+	)
+
+
 # --- 10. invite URLs --------------------------------------------------------
 
 

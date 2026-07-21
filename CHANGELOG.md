@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.1] - 2026-07-21
+
+### Fixed
+
+- **The fountain-move form was completely broken for anyone signed in.** Every
+  guest endpoint returned **HTTP 400** for a logged-in visitor, so `begin_intake`
+  never opened a session and nothing could be submitted.
+
+  The page shipped with no `csrf_token` in its boot payload, on the reasoning that
+  guests carry no saved token and frappe's `validate_csrf_token` short-circuits
+  for them (`auth.py:86`). That is true — and only half the picture. This page is
+  equally reachable by **staff previewing it**, whose session *does* carry a
+  token, so validation is enforced and a POST without the `X-Frappe-CSRF-Token`
+  header throws `CSRFTokenError` — which is a 400. Same-origin does not help:
+  `is_allowed_referrer` only passes hosts explicitly listed in site config's
+  `allowed_referrers`, which is empty by default.
+
+  The controller now emits the session's **existing** token (or `""`), and the
+  client sends the header only when it is non-empty. Deliberately not
+  `frappe.sessions.get_csrf_token()`, which *mints* a token that `Session.update`
+  never persists for Guest — a guest would then send one the server has never
+  stored. The anonymous path is unchanged: empty token, no header, no validation,
+  with Turnstile + honeypot + rate limiting still the actual protection.
+
+  Two regression tests guard it, both AST-based rather than substring — the code
+  comments legitimately mention `get_csrf_token()` and `Content-Type` while
+  explaining why neither is used, and substring checks tripped on the
+  documentation. Mutation-checked: dropping the header, dropping the boot entry,
+  minting a token, or setting `Content-Type` on the multipart upload each fail
+  the suite.
+
 ## [1.160.0] - 2026-07-21
 
 > **Builds on v1.159.11**, which is merged into this release. The conversion
