@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.2] - 2026-07-21
+
+### Fixed
+
+- **Address autocomplete never initialised, and the reason was invisible.** The
+  page loaded `maps/api/js?...&loading=async` as a plain `<script>` tag and then
+  called `google.maps.importLibrary("places")` in its `onload`. But that URL
+  returns a *loader* which injects `main.js`/`places.js` afterwards — verified by
+  fetching it: the returned bootstrap contains **zero** occurrences of
+  `importLibrary`. So `onload` fired while `importLibrary` was still `undefined`,
+  the call threw `TypeError`, and a deliberately silent `.catch()` swallowed it.
+
+  Diagnosed against production in a real browser: the key was correct, both APIs
+  enabled, referrer restriction fine, Maps fully loaded (`places.js` present),
+  `importLibrary` a function *after* load, and every step of the init worked when
+  replayed manually — yet nothing rendered and nothing was logged.
+
+  Now uses Google's official inline bootstrap loader, which defines
+  `importLibrary` synchronously and queues calls until the library is ready,
+  removing the race. **Failures now `console.warn` instead of vanishing** — the
+  silence was the real defect; it made a one-line bug look like a configuration
+  problem for days.
+
+- **The form was unreadable for anyone whose OS is in dark mode.** The stylesheet
+  carried a `prefers-color-scheme: dark` block, but frappe's *website* chrome does
+  not follow the OS — so the cards went dark while the surrounding page stayed
+  white, and because frappe sets an explicit colour on `h1`/`h2` the section
+  headings kept their dark value and became near-invisible against the dark cards.
+
+### Changed
+
+- **Redesigned the public intake form.** Light-only, with colour set explicitly on
+  every element it renders so no host stylesheet can half-apply to it. Numbered
+  step chips per section, Residential/Commercial as selectable tiles rather than
+  bare radio dots, dashed drop-zone styling for the photo inputs, a proper focus
+  ring, tabular reference numbers, a check-mark confirmation state, and styling
+  hooks for the Places widget host so it matches the surrounding inputs instead of
+  reading as a foreign object.
+
 ## [1.160.1] - 2026-07-21
 
 ### Fixed

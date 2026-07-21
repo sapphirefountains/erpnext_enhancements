@@ -112,11 +112,7 @@
 		var wrap = document.getElementById("fm-autocomplete");
 		if (!wrap) return;
 
-		loadScript(
-			"https://maps.googleapis.com/maps/api/js?key=" +
-				encodeURIComponent(BOOT.maps_api_key) +
-				"&loading=async&libraries=places&v=weekly"
-		)
+		bootstrapMaps(BOOT.maps_api_key)
 			.then(function () {
 				return google.maps.importLibrary("places");
 			})
@@ -132,17 +128,89 @@
 				document.getElementById("fm-autocomplete-wrap").hidden = false;
 
 				el.addEventListener("gmp-select", function (event) {
-					onPlaceSelected(event).catch(function () {
-						/* keep the manual fields usable */
+					onPlaceSelected(event).catch(function (err) {
+						warn("could not read the selected address", err);
 					});
 				});
 			})
-			.catch(function () {
-				// Bad key, billing off, offline, API renamed under us — all end
-				// the same way: the manual fields are already on screen and
-				// nothing is broken. Deliberately silent; a console error on a
-				// customer-facing page helps nobody.
+			.catch(function (err) {
+				// The manual address fields are already on screen, so the form
+				// still works — but this must NOT be silent. An earlier revision
+				// swallowed it, and a TypeError here (see bootstrapMaps) looked
+				// exactly like "no key configured" for days.
+				warn("address autocomplete unavailable", err);
 			});
+	}
+
+	/*
+	 * Load the Maps JS API using Google's own inline bootstrap loader.
+	 *
+	 * NOT a plain <script src="…maps/api/js?loading=async"> tag. That URL returns
+	 * a *loader* which injects main.js/places.js afterwards, and it does not
+	 * define google.maps.importLibrary itself — verified: the returned bootstrap
+	 * contains zero occurrences of the string. So the script's onload fires while
+	 * importLibrary is still undefined, and calling it throws
+	 * "google.maps.importLibrary is not a function".
+	 *
+	 * The official loader below defines importLibrary SYNCHRONOUSLY and queues
+	 * calls until the library is ready, which removes the race entirely. Resolves
+	 * once importLibrary exists; the caller awaits the library itself.
+	 */
+	function bootstrapMaps(key) {
+		return new Promise(function (resolve, reject) {
+			if (window.google && window.google.maps && window.google.maps.importLibrary) {
+				resolve();
+				return;
+			}
+			try {
+				((g) => {
+					var h,
+						a,
+						k,
+						p = "The Google Maps JavaScript API",
+						c = "google",
+						l = "importLibrary",
+						q = "__ib__",
+						m = document,
+						b = window;
+					b = b[c] || (b[c] = {});
+					var d = b.maps || (b.maps = {}),
+						r = new Set(),
+						e = new URLSearchParams(),
+						u = () =>
+							h ||
+							(h = new Promise((f, n) => {
+								a = m.createElement("script");
+								e.set("libraries", [...r] + "");
+								for (k in g)
+									e.set(
+										k.replace(/[A-Z]/g, (t) => "_" + t[0].toLowerCase()),
+										g[k]
+									);
+								e.set("callback", c + ".maps." + q);
+								a.src = "https://maps." + c + "apis.com/maps/api/js?" + e;
+								d[q] = f;
+								a.onerror = () => (h = n(Error(p + " could not load.")));
+								a.nonce = (m.querySelector("script[nonce]") || {}).nonce || "";
+								m.head.append(a);
+							}));
+					d[l]
+						? console.warn(p + " only loads once. Ignoring:", g)
+						: (d[l] = (f, ...n) => r.add(f) && u().then(() => d[l](f, ...n)));
+				})({ key: key, v: "weekly" });
+				resolve();
+			} catch (err) {
+				reject(err);
+			}
+		});
+	}
+
+	/* Console-only, and deliberately console.warn rather than console.error:
+	   invisible to a customer, findable by whoever is configuring the site. */
+	function warn(message, err) {
+		if (window.console && console.warn) {
+			console.warn("[fountain-move] " + message + ":", (err && err.message) || err || "");
+		}
 	}
 
 	function onPlaceSelected(event) {
