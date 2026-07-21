@@ -36,12 +36,25 @@ Threat model and the controls that answer it:
   a background job, never in the response, so the endpoint cannot be used as an
   oracle for "is this email a customer of yours?".
 
-**CSRF is deliberately absent, and that is not an oversight.**
-``auth.py:81-94`` short-circuits ``validate_csrf_token`` when the session carries
-no saved token, which is exactly the state of a fresh guest, and ``Session.update``
-never persists one for Guest. Emitting ``context.csrf_token`` on this page would
-be theatre — it would validate against nothing. The controls above are the real
-protection, and the page documents this so nobody "fixes" it later.
+**CSRF: not a control here, but the header must still be sent when one exists.**
+``auth.py:86`` short-circuits ``validate_csrf_token`` when the session carries no
+saved token — exactly the state of a fresh guest, since ``Session.update`` never
+persists one for Guest. So for the anonymous customer this page is built for,
+CSRF validates nothing and the controls above are the real protection.
+
+That is only half the picture, and getting it wrong shipped a bug. **This page is
+equally reachable by logged-in staff**, whose session *does* carry a token — so
+``validate_csrf_token`` does not short-circuit for them, and a POST without the
+``X-Frappe-CSRF-Token`` header throws ``CSRFTokenError``, which is **HTTP 400**.
+Every endpoint below returned 400 for anyone signed in, which broke the form
+outright rather than degrading. Same-origin does not help: ``is_allowed_referrer``
+only passes hosts explicitly listed in site config's ``allowed_referrers``, empty
+by default.
+
+``www/fountain_move.py`` therefore emits the session's **existing** token (or
+``""``), and the client sends the header only when it is non-empty. Note it must
+NOT use ``frappe.sessions.get_csrf_token()``, which mints a token when absent —
+a guest would then send one the server has never stored.
 """
 
 import hashlib
