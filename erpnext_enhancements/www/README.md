@@ -5,9 +5,36 @@ Four standalone web pages live here, separate from the heavy desk app:
 - the **Time Kiosk** at **`/kiosk`** — installable PWA for technicians, chrome-free (most of this README);
 - the **Wall Display** at **`/wall`** — read-only project/TV dashboard, chrome-free (see below);
 - the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
-- the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails. Underscore route on purpose: a hyphenated filename would not be a valid Python module name for the controller.
+- the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails.
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
+
+## Controller filenames: hyphens are silently fatal
+
+Frappe locates a page's controller from the **template's** basename, replacing
+hyphens with underscores (`frappe/website/page_renderers/template_page.py`):
+
+```
+www/stripe-return.html   ->  frappe imports  www/stripe_return.py
+```
+
+A controller named `stripe-return.py` is therefore **never imported**, and its
+`get_context()` never runs. Nothing raises. The template still renders — just with
+every context variable undefined, silently taking whichever branch that implies.
+
+**This is not hypothetical: `www/stripe-return.py` never executed until v1.159.10.**
+Every Stripe Checkout return, including cancellations, rendered "Thank you! Your
+payment is being processed", because `outcome` was undefined so `outcome == "cancel"`
+was false. A customer who deliberately cancelled was told their payment was going
+through.
+
+The **route** comes from the template, so a hyphenated URL is perfectly fine — the
+public path stayed `/stripe-return` through the fix. Only the `.py` needs
+underscores. An earlier revision of this README claimed the opposite (that a
+hyphenated route required a hyphenated filename); that was wrong, and it is what
+let the bug survive review.
+
+`scripts/check_www_controllers.py` enforces this in CI so it cannot regress.
 
 ## Wall Display (`/wall`)
 
