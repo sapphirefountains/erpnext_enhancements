@@ -27,7 +27,12 @@ a public file URL is unauthenticated and effectively permanent.
 import frappe
 from frappe.utils import cint
 
-from erpnext_enhancements.google_drive import drive_sync
+# NOTE: google_drive.drive_sync is imported LAZILY inside the two functions that
+# need it, never at module top. It does `from googleapiclient.errors import
+# HttpError` at ITS module top, so a top-level import here would make this whole
+# module — and therefore conversion.py, which imports it — unimportable anywhere
+# googleapiclient is absent. CI caught exactly that. Same convention the repo
+# already applies to api.telephony (which pulls in twilio at module top).
 
 #: Fields on the request holding the two photos.
 PHOTO_FIELDS = ("fountain_photo", "path_photo")
@@ -128,6 +133,9 @@ def mirror_to_drive(docname, attempt=1):
 	never mirrored — noted rather than fixed, since changing that set affects
 	every Lead attachment on the site, not just ours.
 	"""
+	# Lazy: drive_sync imports googleapiclient at module top (see the note above).
+	from erpnext_enhancements.google_drive import drive_sync
+
 	previous_user = frappe.session.user
 	frappe.set_user("Administrator")
 	try:
