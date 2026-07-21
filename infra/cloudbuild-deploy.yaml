@@ -34,6 +34,7 @@ steps:
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
             git -C apps/erpnext_enhancements pull --ff-only upstream main && \
+            export PATH=\$PATH:/home/frappe/.local/bin && \
             bench --site all migrate && \
             bench build' && \
             sudo systemctl restart frappe-bench"
