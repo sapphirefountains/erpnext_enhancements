@@ -34,9 +34,10 @@ steps:
           --tunnel-through-iap \
           --command="sudo -u frappe bash -c 'cd /home/frappe/frappe-bench && \
             git -C apps/erpnext_enhancements pull --ff-only upstream main && \
-            export PATH=\$PATH:/home/frappe/.local/bin && \
+            export PATH=\$$PATH:/home/frappe/.local/bin && \
             bench --site all migrate && \
-            bench build' && \
+            bench build && \
+            redis-cli -p 13000 FLUSHDB && redis-cli -p 11000 FLUSHDB' && \
             sudo systemctl restart frappe-bench"
         echo "✅  $$VM updated"
 
