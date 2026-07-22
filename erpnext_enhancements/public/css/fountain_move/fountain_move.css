@@ -1,13 +1,20 @@
 /*
  * Public fountain-move intake form (/fountain-move).
  *
- * Website pages carry no desk `data-theme` attribute, so theming follows the
- * kiosk/itinerary convention: a local --fm-* palette plus a
- * prefers-color-scheme dark block. Do NOT reach for [data-theme] here — a guest
- * has no user theme preference for frappe to have resolved.
+ * THEMING — the important bit, and the reason this was rewritten.
  *
- * Semantic status colours (error red) stay literal, per the house rule.
- * Brand accent is #00a0dd.
+ * An earlier revision used a `prefers-color-scheme: dark` block, on the
+ * assumption that following the visitor's OS is the polite thing to do. It is
+ * not, here: frappe's *website* chrome (the surrounding page, header, footer)
+ * does NOT follow the OS. So on any machine set to dark mode the result was
+ * dark cards marooned on a white page — and because frappe sets an explicit
+ * colour on h1/h2, the section headings kept their dark value and became
+ * near-invisible against the dark cards.
+ *
+ * This file is therefore LIGHT-ONLY and sets colour explicitly on every element
+ * it renders, so no host stylesheet can half-apply to it. Do not reintroduce a
+ * prefers-color-scheme block unless frappe's website chrome starts following it
+ * too — the two must agree or the page tears in half.
  *
  * Mobile-first: most people fill this in standing next to the fountain, on a
  * phone, outdoors. Single column, large tap targets, 16px inputs (anything
@@ -15,71 +22,102 @@
  */
 
 :root {
-	--fm-bg: #f6f7f9;
+	--fm-bg: #ffffff;
 	--fm-surface: #ffffff;
-	--fm-text: #1f272e;
-	--fm-muted: #6c7680;
-	--fm-border: #d8dee4;
-	--fm-border-strong: #b6c0c9;
+	--fm-surface-sunken: #f7f9fa;
+	--fm-text: #16202a;
+	--fm-text-soft: #55636f;
+	--fm-muted: #7a8792;
+	--fm-border: #e3e8ec;
+	--fm-border-input: #ccd5dc;
 	--fm-accent: #00a0dd;
-	--fm-accent-soft: #e6f6fd;
-	--fm-accent-text: #ffffff;
-	--fm-shadow: 0 1px 2px rgba(31, 39, 46, 0.06);
+	--fm-accent-dark: #0086ba;
+	--fm-accent-soft: #eaf7fd;
+	--fm-danger: #c0392b;
+	--fm-danger-soft: #fdeeec;
+	--fm-success: #1d8a4e;
+	--fm-ring: rgba(0, 160, 221, 0.18);
+	--fm-shadow: 0 1px 2px rgba(22, 32, 42, 0.04), 0 4px 12px rgba(22, 32, 42, 0.04);
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--fm-bg: #161a1f;
-		--fm-surface: #1f262e;
-		--fm-text: #e8ecef;
-		--fm-muted: #97a1ab;
-		--fm-border: #313a44;
-		--fm-border-strong: #45505c;
-		--fm-accent: #29b6f6;
-		--fm-accent-soft: #103244;
-		--fm-accent-text: #08222e;
-		--fm-shadow: none;
-	}
-}
+/* ---------- page ---------- */
 
 .fm-page {
-	max-width: 720px;
+	max-width: 680px;
 	margin: 0 auto;
-	padding: 0 0 4rem;
+	padding: 0 0 5rem;
+	color: var(--fm-text);
+	-webkit-font-smoothing: antialiased;
+}
+
+.fm-header {
+	padding: 0.5rem 0 2rem;
+}
+
+/* Explicit colour: frappe sets its own on headings, and inheritance alone
+   is what made these unreadable before. */
+.fm-page h1,
+.fm-page h2 {
 	color: var(--fm-text);
 }
 
-/* ---------- header ---------- */
-
 .fm-header h1 {
-	margin: 0 0 0.5rem;
-	font-size: 1.75rem;
-	line-height: 1.2;
+	margin: 0 0 0.625rem;
+	font-size: 2rem;
+	line-height: 1.15;
+	letter-spacing: -0.02em;
+	font-weight: 700;
 }
 
 .fm-lede {
-	margin: 0 0 2rem;
-	color: var(--fm-muted);
+	margin: 0;
+	color: var(--fm-text-soft);
 	font-size: 1.0625rem;
-	line-height: 1.5;
+	line-height: 1.55;
+	max-width: 34em;
 }
 
 /* ---------- sections ---------- */
 
 .fm-section {
+	position: relative;
 	background: var(--fm-surface);
 	border: 1px solid var(--fm-border);
-	border-radius: 10px;
+	border-radius: 14px;
 	box-shadow: var(--fm-shadow);
-	padding: 1.25rem;
-	margin-bottom: 1rem;
+	padding: 1.5rem 1.5rem 1.25rem;
+	margin-bottom: 1.125rem;
+	counter-increment: fm-step;
 }
 
-.fm-section h2 {
-	margin: 0 0 1rem;
+.fm-section > h2 {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	margin: 0 0 1.25rem;
 	font-size: 1.0625rem;
-	font-weight: 600;
-	letter-spacing: 0.01em;
+	font-weight: 650;
+	letter-spacing: -0.005em;
+}
+
+/* Numbered step chip — gives the form a sense of progress without a wizard. */
+.fm-section > h2::before {
+	content: counter(fm-step);
+	flex: 0 0 auto;
+	display: grid;
+	place-items: center;
+	width: 1.625rem;
+	height: 1.625rem;
+	border-radius: 50%;
+	background: var(--fm-accent-soft);
+	color: var(--fm-accent-dark);
+	font-size: 0.8125rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.fm-form {
+	counter-reset: fm-step;
 }
 
 /* ---------- fields ---------- */
@@ -92,7 +130,7 @@
 
 .fm-field {
 	flex: 1 1 100%;
-	margin-bottom: 1rem;
+	margin-bottom: 1.125rem;
 	min-width: 0;
 }
 
@@ -101,16 +139,25 @@
 		flex: 1 1 0;
 	}
 	.fm-field--narrow {
-		flex: 0 1 8.5rem;
+		flex: 0 1 9rem;
 	}
 }
 
 .fm-field label,
 .fm-fieldset legend {
 	display: block;
-	margin-bottom: 0.375rem;
+	margin-bottom: 0.4375rem;
+	color: var(--fm-text);
 	font-size: 0.9375rem;
 	font-weight: 600;
+	line-height: 1.35;
+}
+
+/* The required marker: present for anyone scanning, not shouting. */
+.fm-field label span[aria-hidden],
+.fm-fieldset legend span[aria-hidden] {
+	color: var(--fm-muted);
+	font-weight: 400;
 }
 
 .fm-field input,
@@ -118,33 +165,47 @@
 	width: 100%;
 	/* 16px minimum: iOS zooms the viewport on focus for anything smaller,
 	   which shoves the layout sideways mid-typing. */
+	font: inherit;
 	font-size: 1rem;
 	line-height: 1.4;
-	padding: 0.625rem 0.75rem;
+	padding: 0.6875rem 0.875rem;
 	color: var(--fm-text);
-	background: var(--fm-surface);
-	border: 1px solid var(--fm-border-strong);
-	border-radius: 7px;
+	background: var(--fm-surface-sunken);
+	border: 1px solid var(--fm-border-input);
+	border-radius: 9px;
 	appearance: none;
+	transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.fm-field input::placeholder {
+	color: var(--fm-muted);
+}
+
+.fm-field input:hover,
+.fm-field select:hover {
+	border-color: #b6c2cc;
 }
 
 .fm-field input:focus,
-.fm-field select:focus,
-.fm-submit:focus-visible,
-.fm-radio input:focus-visible,
-.fm-check input:focus-visible {
-	outline: 2px solid var(--fm-accent);
-	outline-offset: 1px;
+.fm-field select:focus {
+	outline: none;
+	background: var(--fm-surface);
 	border-color: var(--fm-accent);
+	box-shadow: 0 0 0 4px var(--fm-ring);
 }
 
 .fm-field input[aria-invalid="true"] {
-	border-color: #d9534f;
+	border-color: var(--fm-danger);
+	background: var(--fm-danger-soft);
 }
 
-.fm-field input[type="file"] {
-	padding: 0.5rem;
-	background: var(--fm-bg);
+/* Native select needs its own chevron once appearance is stripped. */
+.fm-field select {
+	padding-right: 2.25rem;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%237a8792' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 0.875rem center;
+	background-size: 12px 8px;
 }
 
 .fm-suffixed {
@@ -156,51 +217,113 @@
 .fm-suffix {
 	color: var(--fm-muted);
 	font-size: 0.9375rem;
+	white-space: nowrap;
 }
 
 .fm-hint {
-	margin: 0.375rem 0 0;
+	margin: 0.4375rem 0 0;
 	color: var(--fm-muted);
 	font-size: 0.875rem;
-	line-height: 1.45;
+	line-height: 1.5;
 }
 
-/* ---------- radios and checkboxes ---------- */
+/* ---------- radios as selectable tiles ---------- */
 
 .fm-fieldset {
 	border: 0;
 	padding: 0;
-	margin: 0 0 0.5rem;
+	margin: 0 0 0.25rem;
 }
 
-.fm-radio,
+.fm-fieldset legend {
+	padding: 0;
+}
+
+/* Residential / Commercial reads far better as two tiles than two dots. */
+.fm-fieldset:has(.fm-radio) {
+	display: block;
+}
+
+.fm-radio {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5625rem;
+	padding: 0.75rem 1rem;
+	margin: 0 0.5rem 0.5rem 0;
+	background: var(--fm-surface-sunken);
+	border: 1px solid var(--fm-border-input);
+	border-radius: 10px;
+	font-size: 1rem;
+	line-height: 1.3;
+	cursor: pointer;
+	transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.fm-radio:hover {
+	border-color: #b6c2cc;
+}
+
+.fm-radio:has(input:checked) {
+	background: var(--fm-accent-soft);
+	border-color: var(--fm-accent);
+	box-shadow: inset 0 0 0 1px var(--fm-accent);
+}
+
+.fm-radio:has(input:focus-visible) {
+	box-shadow: 0 0 0 4px var(--fm-ring);
+}
+
+/* Checkboxes stay as a plain stacked list — they are independent answers,
+   not a choice between alternatives. */
 .fm-check {
 	display: flex;
 	align-items: flex-start;
-	gap: 0.625rem;
-	/* Generous vertical padding: this is a phone form, often used one-handed
-	   and outdoors. A 44px target is the difference between working and not. */
-	padding: 0.625rem 0;
+	gap: 0.6875rem;
+	/* Generous vertical padding: phone form, often one-handed and outdoors.
+	   A 44px target is the difference between working and not. */
+	padding: 0.5625rem 0;
 	font-size: 1rem;
-	line-height: 1.45;
+	line-height: 1.5;
+	color: var(--fm-text);
 	cursor: pointer;
 }
 
 .fm-radio input,
 .fm-check input {
 	flex: 0 0 auto;
-	width: 1.15rem;
-	height: 1.15rem;
-	margin: 0.15rem 0 0;
+	width: 1.125rem;
+	height: 1.125rem;
+	margin: 0.1875rem 0 0;
 	accent-color: var(--fm-accent);
+	cursor: pointer;
+}
+
+.fm-radio input {
+	margin-top: 0;
 }
 
 .fm-check a {
-	color: var(--fm-accent);
+	color: var(--fm-accent-dark);
 	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 /* ---------- photos ---------- */
+
+.fm-field input[type="file"] {
+	padding: 1rem;
+	background: var(--fm-surface-sunken);
+	border: 1px dashed var(--fm-border-input);
+	border-radius: 10px;
+	font-size: 0.9375rem;
+	color: var(--fm-text-soft);
+	cursor: pointer;
+}
+
+.fm-field input[type="file"]:hover {
+	border-color: var(--fm-accent);
+	background: var(--fm-accent-soft);
+}
 
 .fm-preview {
 	margin-top: 0.75rem;
@@ -210,12 +333,12 @@
 }
 
 .fm-preview img {
-	width: 96px;
-	height: 96px;
+	width: 88px;
+	height: 88px;
 	object-fit: cover;
-	border-radius: 7px;
+	border-radius: 9px;
 	border: 1px solid var(--fm-border);
-	background: var(--fm-bg);
+	background: var(--fm-surface-sunken);
 }
 
 .fm-preview-clear {
@@ -223,24 +346,35 @@
 	border: 0;
 	padding: 0.25rem 0;
 	color: var(--fm-muted);
+	font: inherit;
 	font-size: 0.875rem;
 	text-decoration: underline;
+	text-underline-offset: 2px;
 	cursor: pointer;
 }
 
+.fm-preview-clear:hover {
+	color: var(--fm-danger);
+}
+
 .fm-upload-status {
-	margin: 0.375rem 0 0;
+	margin: 0.4375rem 0 0;
 	font-size: 0.875rem;
 	color: var(--fm-muted);
 	min-height: 1.2em;
 }
 
 .fm-upload-status[data-state="error"] {
-	color: #d9534f;
+	color: var(--fm-danger);
 }
 
 .fm-upload-status[data-state="done"] {
-	color: #1d8a4e;
+	color: var(--fm-success);
+}
+
+.fm-upload-status[data-state="done"]::before {
+	content: "✓ ";
+	font-weight: 700;
 }
 
 /* ---------- honeypot ----------
@@ -261,53 +395,68 @@
 /* ---------- turnstile, notices, submit ---------- */
 
 .fm-turnstile {
-	margin: 1rem 0;
+	margin: 1.25rem 0 0.5rem;
 	min-height: 65px;
 }
 
+.fm-turnstile:empty {
+	margin: 0;
+	min-height: 0;
+}
+
 .fm-notice {
-	padding: 0.75rem 1rem;
-	border-radius: 8px;
+	padding: 0.875rem 1rem;
+	border-radius: 10px;
 	background: var(--fm-accent-soft);
 	border: 1px solid var(--fm-border);
+	color: var(--fm-text);
 	font-size: 0.9375rem;
-	line-height: 1.45;
+	line-height: 1.5;
 	margin-bottom: 1rem;
 }
 
 .fm-notice--error {
-	background: #fdecea;
-	border-color: #f5c6c3;
-	color: #8a1f1a;
-}
-
-@media (prefers-color-scheme: dark) {
-	.fm-notice--error {
-		background: #3b1d1b;
-		border-color: #5e2b27;
-		color: #f6c9c5;
-	}
+	background: var(--fm-danger-soft);
+	border-color: #f2c9c4;
+	color: #8a221a;
 }
 
 .fm-submit {
 	width: 100%;
-	padding: 0.875rem 1.25rem;
+	margin-top: 0.75rem;
+	padding: 0.9375rem 1.25rem;
+	font: inherit;
 	font-size: 1.0625rem;
-	font-weight: 600;
-	color: var(--fm-accent-text);
+	font-weight: 650;
+	color: #ffffff;
 	background: var(--fm-accent);
 	border: 0;
-	border-radius: 8px;
+	border-radius: 10px;
 	cursor: pointer;
+	transition: background 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
 }
 
 .fm-submit:hover:not(:disabled) {
-	filter: brightness(0.95);
+	background: var(--fm-accent-dark);
+}
+
+.fm-submit:active:not(:disabled) {
+	transform: translateY(1px);
+}
+
+.fm-submit:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 4px var(--fm-ring);
 }
 
 .fm-submit:disabled {
-	opacity: 0.6;
+	opacity: 0.55;
 	cursor: progress;
+}
+
+.fm-section > .fm-hint:last-child {
+	text-align: center;
+	margin-top: 0.75rem;
 }
 
 /* ---------- success ---------- */
@@ -315,10 +464,24 @@
 .fm-success {
 	background: var(--fm-surface);
 	border: 1px solid var(--fm-border);
-	border-radius: 10px;
-	padding: 2rem 1.5rem;
+	border-radius: 14px;
+	padding: 2.5rem 1.75rem;
 	text-align: center;
 	box-shadow: var(--fm-shadow);
+}
+
+.fm-success::before {
+	content: "✓";
+	display: grid;
+	place-items: center;
+	width: 3rem;
+	height: 3rem;
+	margin: 0 auto 1rem;
+	border-radius: 50%;
+	background: var(--fm-accent-soft);
+	color: var(--fm-accent-dark);
+	font-size: 1.5rem;
+	font-weight: 700;
 }
 
 .fm-success h2 {
@@ -327,8 +490,10 @@
 }
 
 .fm-success p {
-	margin: 0 0 0.75rem;
-	line-height: 1.55;
+	margin: 0 auto 0.75rem;
+	max-width: 30em;
+	color: var(--fm-text-soft);
+	line-height: 1.6;
 }
 
 .fm-reference {
@@ -336,10 +501,30 @@
 	font-size: 0.9375rem;
 }
 
+.fm-reference b {
+	color: var(--fm-text);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ---------- google places widget ----------
+   The widget renders in a shadow root, so only its host is stylable. Match the
+   height and radius of our own inputs so it does not read as a foreign object. */
+
+#fm-autocomplete gmp-place-autocomplete,
+#fm-autocomplete-el {
+	width: 100%;
+	--gmp-mat-color-surface: var(--fm-surface-sunken);
+	--gmp-mat-color-on-surface: var(--fm-text);
+	--gmp-mat-color-outline: var(--fm-border-input);
+	--gmp-mat-color-primary: var(--fm-accent);
+}
+
 /* ---------- reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {
-	* {
+	.fm-page *,
+	.fm-page *::before,
+	.fm-page *::after {
 		animation-duration: 0.01ms !important;
 		transition-duration: 0.01ms !important;
 	}
