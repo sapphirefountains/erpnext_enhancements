@@ -72,9 +72,11 @@ doctype_js = {
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
-		# "Timeline" tab: read-only embed of the reusable Gantt widget
-		# (erpnext_enhancements.gantt.mount — see public/js/gantt_widget/)
-		"public/js/project_enhancements/project_timeline_gantt.js",
+		# Schedule tab Gantt (custom_gantt_chart_html): read-only embed of the
+		# reusable Gantt widget (erpnext_enhancements.gantt.mount — see
+		# public/js/gantt_widget/). Replaces the legacy frappe-gantt renderer
+		# that lived in project_enhancements/doctype/project/project.js.
+		"public/js/project_enhancements/project_gantt_widget.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
@@ -451,8 +453,6 @@ after_migrate = [
 	"erpnext_enhancements.setup.custom_html_blocks.sync_custom_html_blocks",
 	# device_management (MDM/EMM): Employee "Assigned Devices" panel field
 	"erpnext_enhancements.device_management.setup.create_device_employee_fields",
-	# project_enhancements: Project "Timeline" tab + Gantt-widget host field
-	"erpnext_enhancements.project_enhancements.setup.create_project_timeline_fields",
 	# accounting_intake: Supplier Drive folder id (document filing)
 	"erpnext_enhancements.accounting_intake.setup.create_supplier_drive_field",
 	# accounting_intake: QBO write-back fields on Purchase Invoice / Payment Entry

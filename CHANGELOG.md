@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.164.0] - 2026-07-23
+
+### Changed
+
+- **The Project Gantt widget moved into the Schedule tab's existing
+  `custom_gantt_chart_html` field** (per review of the v1.163.0 "Timeline"
+  tab). The embed script is renamed
+  `public/js/project_enhancements/project_timeline_gantt.js` →
+  `project_gantt_widget.js`; it shows the current project's Tasks (tree via
+  `parent_task`, dependency arrows from `depends_on`), refreshes in place on
+  the `project_dashboard_updated` realtime event with scroll preserved, and
+  keeps the placeholder-on-unsaved / destroy-on-refresh /
+  IntersectionObserver-lazy-mount behavior.
+  The legacy frappe-gantt renderer in
+  `project_enhancements/doctype/project/project.js` is removed with it —
+  including, for now, its drag-to-reschedule/progress editing, dependency
+  drag-linking, resource heatmap and PNG export (editing returns with the
+  widget's per-embed edit opt-in milestone; the health banner and reminder
+  button remain). The Projects Dashboard portfolio Gantt still uses
+  frappe-gantt and is unchanged — its swap to this widget is a planned
+  follow-up.
+- **The v1.163.0 "Timeline" tab is removed again**: `project_enhancements/
+  setup.py` and its `after_migrate` entry are deleted, and the
+  `remove_project_timeline_fields` patch drops the `custom_timeline_tab` /
+  `custom_timeline_gantt_html` Custom Fields that the v1.163.0 deploy
+  already created on the sites (idempotent — a bench that never ran
+  v1.163.0 is a no-op).
+
+### Added
+
+- **Gantt widget toolbar** (generic, opt-in per embed via
+  `config.toolbar`): checkbox-dropdown **value filters** applied as
+  server-validated `["in", ...]` filters with a debounced refetch, and a
+  **Today** button. With `toolbar.today` the chart opens scrolled to today
+  (the default view), highlights today's column via core cell-class
+  templates (the DHTMLX marker extension is not in the Standard single-file
+  bundle — its bundled extensions are only fullscreen/keyboard_navigation/
+  quick_info/tooltip/export_api), and pads its scale so today is always in
+  range; subsequent refreshes preserve the scroll position. The Project
+  embed uses both: a **task-status filter** (all 8 statuses shown by
+  default) and Today.
+
 ## [1.163.0] - 2026-07-23
 
 ### Added

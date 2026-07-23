@@ -206,3 +206,9 @@ erpnext_enhancements.patches.seed_cactus_tropicals_lead_source
 # on a Single only applies at creation, and Settings already exists everywhere, so
 # new fields come up blank. Fills blanks only; never clobbers operator edits.
 erpnext_enhancements.patches.seed_fountain_move_defaults
+# v1.164.0 Gantt widget: v1.163.0's after_migrate created a "Timeline" tab on
+# Project (custom_timeline_tab + custom_timeline_gantt_html) for the widget's
+# first embed; review moved the embed into the Schedule tab's existing
+# custom_gantt_chart_html field, so the tab fields are dropped again.
+# Idempotent; no-op on benches that never ran v1.163.0.
+erpnext_enhancements.patches.remove_project_timeline_fields
