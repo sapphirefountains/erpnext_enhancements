@@ -1,0 +1,65 @@
+/*
+ * Embeddable Gantt widget — container/adapter styles.
+ *
+ * Loaded lazily (frappe.require) together with the vendored DHTMLX skin
+ * (dhtmlxgantt.css) by public/js/gantt_widget/gantt_widget.js — NOT part of
+ * the global desk_addons bundle, because only pages that actually mount a
+ * Gantt need the 140K skin.
+ *
+ * Font: the vendored skin defaults --dhx-gantt-font-family to Inter fetched
+ * from fonts.gstatic.com. Pointing the variable at the desk font stack keeps
+ * the widget visually native AND stops the browser from downloading the
+ * remote font (an @font-face alone triggers no fetch; only usage does). The
+ * dhx-gantt-icons icon font must stay untouched.
+ *
+ * Theme: like the Mermaid process charts, the chart canvas deliberately stays
+ * on the light DHTMLX skin in both desk themes; only the container chrome
+ * follows the desk theme variables.
+ */
+
+.ee-gantt-widget {
+	position: relative;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 6px);
+	overflow: hidden;
+	background: #fff;
+	--dhx-gantt-font-family: var(--font-stack, -apple-system, "Segoe UI", Arial, sans-serif);
+}
+
+/* Host used by the Project "Timeline" tab embed (project_timeline_gantt.js).
+   DHTMLX reads the container's concrete height at init. */
+.ee-timeline-gantt {
+	height: min(65vh, 700px);
+	min-height: 320px;
+}
+
+.ee-gantt-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	padding: 16px;
+	color: var(--text-muted);
+	background: var(--card-bg, #fff);
+	z-index: 2;
+}
+
+.ee-gantt-overlay-error {
+	color: var(--red-500, #c0392b);
+}
+
+.ee-gantt-note {
+	position: absolute;
+	right: 8px;
+	bottom: 8px;
+	font-size: 11px;
+	color: var(--text-muted);
+	background: var(--card-bg, #fff);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	padding: 2px 8px;
+	z-index: 2;
+	pointer-events: none;
+}

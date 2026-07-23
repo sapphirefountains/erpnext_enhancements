@@ -19,6 +19,7 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
 | `doctype/project_dashboard_permitted_role/*.py` | Child table: one `role` per row | `ProjectDashboardPermittedRole` | child-table controller |
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
+| `setup.py` | Idempotent, insert-only provisioning of the Project **"Timeline" tab** (Tab Break + HTML host field) for the embeddable Gantt widget | `create_project_timeline_fields` | `after_migrate` |
 
 Related code outside this folder:
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
@@ -110,6 +111,7 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
+- `after_migrate` → `setup.create_project_timeline_fields` (Project "Timeline" tab for the embeddable Gantt widget); `doctype_js["Project"]` includes `public/js/project_enhancements/project_timeline_gantt.js`, the widget's first embed (read-only; the interactive Schedule-tab gantt in `doctype/project/project.js` is unchanged — see the [public README](../public/README.md)).
 
 ## Gotchas
 

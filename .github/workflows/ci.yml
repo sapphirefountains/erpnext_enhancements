@@ -98,6 +98,10 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_lead_attribution.py -q
       - name: Fountain move intake (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move.py -q
+      # Guards the Gantt widget read API's security contract: client-supplied
+      # configs must never reach the query layer with an unvalidated fieldname.
+      - name: Gantt widget read API (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_gantt_api.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

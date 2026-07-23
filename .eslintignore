@@ -1,2 +1,3 @@
 **/*.min.js
 erpnext_enhancements/public/js/vue.global.js
+erpnext_enhancements/public/js/gantt_widget/lib/*

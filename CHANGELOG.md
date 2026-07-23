@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.163.0] - 2026-07-23
+
+### Added
+
+- **Reusable embeddable Gantt widget** (milestones 1–2 of the embeddable-Gantt
+  plan). A globally available `erpnext_enhancements.gantt.mount(container,
+  config)` (`public/js/gantt_widget/gantt_widget.js`, shipped in the global
+  bundle) renders a **DHTMLX Gantt 10 Standard — MIT edition** chart into any
+  div. The 600K vendored library (`public/js/gantt_widget/lib/dhtmlxgantt.js`
+  + skin CSS) lazy-loads on first mount only — styles via `frappe.require`,
+  the library JS **fetched and evaluated synchronously inside an atomic
+  `window.Gantt`/`window.gantt` save-restore bracket**, so the vendored
+  frappe-gantt global (Schedule tab, Task list gantt) is never clobbered even
+  transiently, and a failed load genuinely retries on the next mount
+  (`frappe.require` would have marked the failed asset as executed forever).
+  Each mount gets its own instance via `Gantt.getGanttInstance()`, so
+  multiple embeds coexist; re-mounting a container destroys the previous
+  instance. Widgets are read-only (per-embed edit opt-in is a later
+  milestone).
+- **Whitelisted read endpoint `api/gantt.py::get_gantt_data`.** The embed
+  config is client-supplied, so the endpoint treats it as hostile:
+  `frappe.has_permission` gates the call, rows come from `frappe.get_list`
+  (role/user permissions + `permission_query_conditions` apply), every
+  fieldname in the field map / filters / order_by is validated against
+  `frappe.get_meta` (`start`/`end` additionally restricted to Date/Datetime
+  fieldtypes — a Time or free-text column would crash date coercion), limits
+  clamp at 1000 rows, and dependency links are returned only when both
+  endpoints are rows the permission-checked query produced. Rows with
+  missing or uncoercible dates are skipped and counted (never a 500), and
+  parent references are re-rooted against the tasks actually emitted so an
+  undated group task can never silently hide its whole subtree. Covered by a
+  bench-free pytest suite (`tests/test_gantt_api.py`, wired into CI).
+- **First real embed: a read-only "Timeline" tab on the Project form.**
+  `project_enhancements/setup.py` (after_migrate, insert-only) adds a Tab
+  Break + HTML host field; `public/js/project_enhancements/
+  project_timeline_gantt.js` mounts the widget filtered to the current
+  project's Tasks — task tree via `parent_task`, dependency arrows from
+  `depends_on` — handling unsaved docs (placeholder) and destroy-on-refresh.
+  The mount is gated on an **IntersectionObserver**: this Frappe build
+  renders every tab's fields eagerly into hidden panes, so the widget mounts
+  (and fetches data) only when the Timeline pane actually becomes visible —
+  no wasted 1000-row fetches on every Project open, and DHTMLX always
+  initializes with a real container size. The interactive frappe-gantt on
+  the Schedule tab is untouched.
+
 ## [1.162.1] - 2026-07-23
 
 ### Changed
