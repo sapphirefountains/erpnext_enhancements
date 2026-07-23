@@ -289,13 +289,27 @@ def _hostname_allowed(hostname):
 
 
 def _challenge_fresh(challenge_ts):
+	"""Was the widget solved within ``TURNSTILE_MAX_AGE`` seconds of now?
+
+	``challenge_ts`` is ISO-8601 **UTC** (trailing ``Z``), so it must be compared
+	against UTC. The first release stripped the ``Z`` and compared against
+	``now_datetime()`` — which is *site-local* time (America/Denver) — so every
+	legitimate solve measured ~6 hours out and failed the 300-second window,
+	turning every verdict into ``Failed``. Nobody saw it before v1.160.3 because
+	every request died earlier on the reserved-``sid`` bug; fixing that exposed
+	this one as "Please complete the verification check first." on every photo
+	upload. Verified against a live production session: Cloudflare returned
+	success with ``challenge_ts`` 45 seconds old, and this check rejected it.
+	"""
 	if not challenge_ts:
 		return True
 	try:
-		from frappe.utils import get_datetime
+		from datetime import datetime, timezone
 
-		solved = get_datetime(challenge_ts.replace("Z", "").replace("T", " ").split(".")[0])
-		age = (now_datetime() - solved).total_seconds()
+		solved = datetime.fromisoformat(str(challenge_ts).replace("Z", "+00:00"))
+		if solved.tzinfo is None:
+			solved = solved.replace(tzinfo=timezone.utc)
+		age = (datetime.now(timezone.utc) - solved).total_seconds()
 		return abs(age) <= TURNSTILE_MAX_AGE
 	except Exception:
 		return True  # unparseable timestamp is Cloudflare's format changing, not an attack
