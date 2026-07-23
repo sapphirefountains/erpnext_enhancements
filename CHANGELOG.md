@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.4] - 2026-07-23
+
+### Fixed
+
+- **Every Turnstile verdict came back Failed — "Please complete the
+  verification check first." on every photo upload — because the challenge
+  freshness check compared UTC against Mountain time.** Cloudflare's
+  `challenge_ts` is ISO-8601 UTC (trailing `Z`); `_challenge_fresh` stripped
+  the `Z` and compared against `now_datetime()`, which is site-local
+  (America/Denver), so a solve from 45 seconds ago measured ~6 hours out and
+  failed the 300-second replay window. Cloudflare itself said *success* on
+  every one of these — our own assertion then threw the verdict away.
+
+  Verified against a live production session before fixing: hostname and
+  action asserted fine, `challenge_ts 2026-07-23T16:07:50Z` vs server
+  `10:08:35` local. Nobody could see this before v1.160.3 because every
+  request died earlier on the reserved-`sid` bug; peeling that layer exposed
+  this one. The check now parses the stamp timezone-aware and compares
+  against UTC. The decision-table tests had stubbed `_challenge_fresh` out
+  entirely, so a new test pins the UTC behaviour with the real function —
+  including the exact "solved moments ago on a UTC-6 site" case production
+  rejected.
+
 ## [1.160.3] - 2026-07-23
 
 ### Fixed

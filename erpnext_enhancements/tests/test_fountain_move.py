@@ -524,6 +524,36 @@ def test_unconfigured_turnstile_is_not_checked():
 	assert verdict == "Not Checked"
 
 
+def test_challenge_freshness_compares_in_utc():
+	"""``challenge_ts`` is UTC (trailing Z); the first release compared it
+	against site-local ``now_datetime()``, so on a UTC-6 site every legitimate
+	solve measured six hours out and every verdict came back Failed. Surfaced
+	only after the reserved-``sid`` fix, as "Please complete the verification
+	check first." on every photo upload. Reloaded so the real function is
+	tested even after the decision-table harness stubbed it out.
+	"""
+	from datetime import datetime, timedelta, timezone
+
+	intake = importlib.reload(importlib.import_module(f"{FM}.intake"))
+
+	def stamp(delta):
+		return (datetime.now(timezone.utc) + delta).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+	# Solved moments ago — the exact case production rejected on a UTC-6 site.
+	assert intake._challenge_fresh(stamp(timedelta(seconds=-45)))
+	# Inside the window, both directions of clock skew.
+	assert intake._challenge_fresh(stamp(timedelta(seconds=-280)))
+	assert intake._challenge_fresh(stamp(timedelta(seconds=90)))
+	# Genuinely stale or future tokens still fail — replay stays closed.
+	assert not intake._challenge_fresh(stamp(timedelta(seconds=-330)))
+	assert not intake._challenge_fresh(stamp(timedelta(hours=-6)))
+	assert not intake._challenge_fresh(stamp(timedelta(hours=6)))
+	# Absent/unparseable stays permissive: CF format drift is not an attack.
+	assert intake._challenge_fresh(None)
+	assert intake._challenge_fresh("")
+	assert intake._challenge_fresh("not-a-timestamp")
+
+
 # --- 9. honeypot semantics --------------------------------------------------
 
 
