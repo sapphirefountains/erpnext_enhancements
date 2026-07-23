@@ -12,7 +12,7 @@
   not to templates like this one.
 #}
 
-{% block title %}{{ _("Request a Fountain Move") }}{% endblock %}
+{% block title %}{{ _("Request a Fountain Installation") }}{% endblock %}
 
 {% block head_include %}
 <meta name="robots" content="noindex, nofollow">
@@ -23,10 +23,24 @@
 <div class="fm-page">
 
 	<header class="fm-header">
-		<h1>{{ _("Request a fountain move") }}</h1>
+		{# Site-hosted brand asset (public File), not an app asset — the same
+		   wordmark the rest of the site uses, and it survives deploys.
+		   width/height are the PNG's real pixels so the browser reserves the
+		   space and nothing below jumps when it loads; onerror hides the
+		   broken-image glyph if the file is ever missing on a fresh site. #}
+		<img class="fm-logo" src="/files/22-02-Sapphire-Logo-Blue.png" alt="Sapphire Fountains"
+		     width="868" height="764" onerror="this.hidden=true">
+		<h1>{{ _("Request a fountain installation") }}</h1>
 		<p class="fm-lede">
-			{{ _("Bought a fountain at Cactus &amp; Tropicals? Tell us about it and where it's going, and we'll get back to you with a quote.") }}
+			{{ _("Tell us about your new fountain and where it's going, and we'll get back to you with a quote.") }}
 		</p>
+		<p class="fm-price">{{ _("Starting at $500 for installation") }}</p>
+		<ul class="fm-includes">
+			<li>{{ _("A minimum of two professional technicians") }}</li>
+			<li>{{ _("Pick-up from the fountain's location") }}</li>
+			<li>{{ _("Delivery to your property") }}</li>
+			<li>{{ _("Leveling, filling, and pump speed adjustment — handled by professionals") }}</li>
+		</ul>
 	</header>
 
 	<noscript>
@@ -68,16 +82,17 @@
 		<section class="fm-section">
 			<h2>{{ _("Where is it going?") }}</h2>
 
-			<div class="fm-field" id="fm-autocomplete-wrap" hidden>
-				<label for="fm-autocomplete">{{ _("Search for the address") }}</label>
-				<div id="fm-autocomplete"></div>
-				<p class="fm-hint">{{ _("Start typing and pick your address, or fill in the fields below.") }}</p>
-			</div>
-
 			<div class="fm-field">
 				<label for="fm-address1">{{ _("Address line 1") }} <span aria-hidden="true">*</span></label>
-				<input id="fm-address1" name="address_line1" type="text" autocomplete="address-line1"
-				       maxlength="100" required>
+				{# The suggestion dropdown anchors here. The JS upgrades this plain
+				   input into a Google-backed combobox when Maps loads; without a
+				   key (or with the script blocked) it stays an ordinary field. #}
+				<div class="fm-suggest-anchor">
+					<input id="fm-address1" name="address_line1" type="text" autocomplete="address-line1"
+					       maxlength="100" required>
+					<div id="fm-address-suggest" class="fm-suggest" hidden></div>
+				</div>
+				<p class="fm-hint" id="fm-address1-hint" hidden>{{ _("Start typing and pick your address from the suggestions, or just keep typing it in full.") }}</p>
 			</div>
 			<div class="fm-field">
 				<label for="fm-address2">{{ _("Address line 2") }}</label>
@@ -268,7 +283,7 @@
 
 	<div id="fm-success" class="fm-success" hidden role="status">
 		<h2>{{ _("Thanks — we've got it.") }}</h2>
-		<p>{{ _("Your request is with our team. We'll be in touch within one business day to talk through the move and get you a quote.") }}</p>
+		<p>{{ _("Your request is with our team. We'll be in touch within one business day to talk through the installation and get you a quote.") }}</p>
 		<p class="fm-reference">{{ _("Reference") }}: <b id="fm-reference"></b></p>
 		<p class="fm-hint">{{ _("Need us sooner? Call") }} {{ boot.contact_phone }}.</p>
 	</div>

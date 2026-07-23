@@ -255,7 +255,7 @@ def _email_invite(invite, url):
 	)
 	frappe.sendmail(
 		recipients=[invite.recipient_email],
-		subject="Your fountain move request — Sapphire Fountains",
+		subject="Your fountain installation — Sapphire Fountains",
 		message=message,
 		reference_doctype="Fountain Move Invite",
 		reference_name=invite.name,
@@ -290,7 +290,7 @@ def _text_invite(invite, url):
 
 		send_sms(
 			target_number=invite.recipient_phone,
-			message=f"Sapphire Fountains — tell us about your fountain move: {url}",
+			message=f"Sapphire Fountains — tell us about your fountain installation: {url}",
 			reference_doctype="Fountain Move Invite",
 			# NOTE: reference_docname, not reference_name — send_sms differs from
 			# frappe.sendmail here (api/telephony.py:1352).

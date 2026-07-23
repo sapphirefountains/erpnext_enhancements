@@ -152,31 +152,74 @@
 
 	// --------------------------------------------------------------- places
 
+	/*
+	 * Inline autocomplete ON the Address line 1 field itself — no separate
+	 * "search" box. The legacy places.Autocomplete widget (which attached to
+	 * an input) is closed to new customers, and PlaceAutocompleteElement is a
+	 * sealed custom element that cannot wrap an existing field — so this uses
+	 * the Autocomplete DATA API (AutocompleteSuggestion) and renders its own
+	 * listbox under the input, WAI-ARIA combobox pattern. Google's policy for
+	 * the data API requires "Powered by Google" attribution in the dropdown.
+	 *
+	 * Degrades exactly like before: no key, dead script, or an API tier
+	 * without AutocompleteSuggestion → the input stays a plain text field.
+	 */
+	var suggest = {
+		input: null,
+		box: null,
+		places: null,
+		token: null,
+		items: [],
+		active: -1,
+		timer: null,
+		lastQuery: "",
+		// Consecutive fetch failures. A key that loads Maps but is not enabled
+		// for Places API (New) passes every init check and then fails every
+		// request — after a few of those the combobox tears itself down and
+		// gives the field back to the browser.
+		failures: 0,
+	};
+
 	function startPlaces() {
 		if (!BOOT.maps_api_key) return; // manual fields only — already visible
 
-		var wrap = document.getElementById("fm-autocomplete");
-		if (!wrap) return;
+		var input = form.querySelector('[name="address_line1"]');
+		var box = document.getElementById("fm-address-suggest");
+		if (!input || !box) return;
 
 		bootstrapMaps(BOOT.maps_api_key)
 			.then(function () {
 				return google.maps.importLibrary("places");
 			})
 			.then(function (places) {
-				// PlaceAutocompleteElement, not the legacy Autocomplete widget:
-				// the old one is closed to new customers, so a freshly-minted
-				// key may simply never initialise it.
-				var el = new places.PlaceAutocompleteElement({
-					includedRegionCodes: ["us"],
-				});
-				el.id = "fm-autocomplete-el";
-				wrap.appendChild(el);
-				document.getElementById("fm-autocomplete-wrap").hidden = false;
+				if (!places.AutocompleteSuggestion || !places.AutocompleteSessionToken) {
+					throw new Error("AutocompleteSuggestion unavailable");
+				}
+				suggest.places = places;
+				suggest.input = input;
+				suggest.box = box;
+				suggest.token = new places.AutocompleteSessionToken();
 
-				el.addEventListener("gmp-select", function (event) {
-					onPlaceSelected(event).catch(function (err) {
-						warn("could not read the selected address", err);
-					});
+				// Our listbox replaces the browser's own autofill menu — both at
+				// once is two stacked dropdowns fighting over the same keystrokes.
+				// Only switched off once suggestions actually work, so the
+				// degraded page keeps native autofill.
+				input.setAttribute("autocomplete", "off");
+				input.setAttribute("role", "combobox");
+				input.setAttribute("aria-autocomplete", "list");
+				input.setAttribute("aria-expanded", "false");
+				input.setAttribute("aria-controls", "fm-address-suggest");
+
+				var hint = document.getElementById("fm-address1-hint");
+				if (hint) hint.hidden = false;
+
+				input.setAttribute("aria-describedby", "fm-address1-hint");
+
+				input.addEventListener("input", onAddressInput);
+				input.addEventListener("keydown", onSuggestKeydown);
+				input.addEventListener("blur", function () {
+					// Let a click on an option land before the box disappears.
+					window.setTimeout(closeSuggest, 150);
 				});
 			})
 			.catch(function (err) {
@@ -186,6 +229,207 @@
 				// exactly like "no key configured" for days.
 				warn("address autocomplete unavailable", err);
 			});
+	}
+
+	function onAddressInput() {
+		if (suggest.timer) window.clearTimeout(suggest.timer);
+		var query = suggest.input.value.trim();
+		if (query.length < 3) {
+			closeSuggest();
+			return;
+		}
+		// Debounced: every keystroke would bill a request and race its
+		// predecessors on slow mobile connections.
+		suggest.timer = window.setTimeout(function () {
+			fetchSuggestions(query);
+		}, 250);
+	}
+
+	function fetchSuggestions(query) {
+		suggest.lastQuery = query;
+		suggest.places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+			input: query,
+			sessionToken: suggest.token,
+			includedRegionCodes: ["us"],
+		})
+			.then(function (result) {
+				suggest.failures = 0;
+				// A slow response for an old query must not clobber newer typing,
+				// and a response for a CLOSED box must not resurrect it —
+				// closeSuggest() blanks lastQuery, which fails this same check.
+				if (suggest.lastQuery !== query) return;
+				renderSuggestions((result && result.suggestions) || []);
+			})
+			.catch(function (err) {
+				warn("address suggestions failed", err);
+				closeSuggest();
+				// A key without Places API (New) fails every call: after three
+				// in a row, give the field back to the browser for good.
+				suggest.failures += 1;
+				if (suggest.failures >= 3) teardownSuggest();
+			});
+	}
+
+	function teardownSuggest() {
+		if (!suggest.input) return;
+		warn("address suggestions disabled after repeated failures", "");
+		closeSuggest();
+		suggest.input.removeEventListener("input", onAddressInput);
+		suggest.input.removeEventListener("keydown", onSuggestKeydown);
+		// Give the browser its own address autofill back — our listbox is gone.
+		suggest.input.setAttribute("autocomplete", "address-line1");
+		suggest.input.removeAttribute("role");
+		suggest.input.removeAttribute("aria-autocomplete");
+		suggest.input.removeAttribute("aria-expanded");
+		suggest.input.removeAttribute("aria-controls");
+		var hint = document.getElementById("fm-address1-hint");
+		if (hint) hint.hidden = true;
+		suggest.input = null;
+	}
+
+	function renderSuggestions(list) {
+		// The box must never (re)open under a field the user has already left.
+		if (document.activeElement !== suggest.input) return;
+
+		suggest.items = list.filter(function (item) {
+			return item && item.placePrediction;
+		});
+		suggest.active = -1;
+		suggest.box.innerHTML = "";
+		suggest.input.removeAttribute("aria-activedescendant");
+
+		if (!suggest.items.length) {
+			closeSuggest();
+			return;
+		}
+
+		var listbox = document.createElement("div");
+		listbox.setAttribute("role", "listbox");
+		listbox.id = "fm-address-suggest-list";
+
+		suggest.items.forEach(function (item, index) {
+			var option = document.createElement("div");
+			option.className = "fm-suggest-option";
+			option.setAttribute("role", "option");
+			option.setAttribute("aria-selected", "false");
+			option.id = "fm-suggest-option-" + index;
+			// textContent, never innerHTML: this is Google-supplied text, but
+			// the rule on this page is that no external string becomes markup.
+			option.textContent = item.placePrediction.text ? item.placePrediction.text.text : String(item.placePrediction);
+			option.addEventListener("mousedown", function (event) {
+				// mousedown, not click: it fires before the input's blur, so
+				// the pick lands while the box is still alive.
+				event.preventDefault();
+				pickSuggestion(index);
+			});
+			option.addEventListener("mouseenter", function () {
+				setActiveSuggestion(index);
+			});
+			listbox.appendChild(option);
+		});
+		suggest.box.appendChild(listbox);
+
+		// Required attribution for the Autocomplete Data API off-map. The image
+		// is a Google-hosted hotlink; if it is blocked, plain text keeps the
+		// attribution (and the policy) intact.
+		var footer = document.createElement("div");
+		footer.className = "fm-suggest-footer";
+		var mark = document.createElement("img");
+		mark.src = "https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png";
+		mark.alt = "Powered by Google";
+		mark.onerror = function () {
+			footer.textContent = "Powered by Google";
+		};
+		footer.appendChild(mark);
+		suggest.box.appendChild(footer);
+
+		suggest.box.hidden = false;
+		suggest.input.setAttribute("aria-expanded", "true");
+	}
+
+	function setActiveSuggestion(index) {
+		var options = suggest.box.querySelectorAll(".fm-suggest-option");
+		for (var i = 0; i < options.length; i++) {
+			options[i].setAttribute("aria-selected", i === index ? "true" : "false");
+		}
+		suggest.active = index;
+		if (index >= 0 && options[index]) {
+			suggest.input.setAttribute("aria-activedescendant", options[index].id);
+			if (options[index].scrollIntoView) {
+				options[index].scrollIntoView({ block: "nearest" });
+			}
+		} else {
+			suggest.input.removeAttribute("aria-activedescendant");
+		}
+	}
+
+	function onSuggestKeydown(event) {
+		if (suggest.box.hidden) return;
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			setActiveSuggestion((suggest.active + 1) % suggest.items.length);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			// From "nothing highlighted", up means the LAST option — the plain
+			// modulo would land on the second-to-last.
+			setActiveSuggestion(
+				suggest.active < 0
+					? suggest.items.length - 1
+					: (suggest.active - 1 + suggest.items.length) % suggest.items.length
+			);
+		} else if (event.key === "Enter") {
+			// Only intercept when an option is highlighted — a bare Enter with
+			// the box open but nothing chosen must not be swallowed.
+			if (suggest.active >= 0) {
+				event.preventDefault();
+				pickSuggestion(suggest.active);
+			} else {
+				closeSuggest();
+			}
+		} else if (event.key === "Escape" || event.key === "Tab") {
+			closeSuggest();
+		}
+	}
+
+	function pickSuggestion(index) {
+		var item = suggest.items[index];
+		if (!item) return;
+		var place = item.placePrediction.toPlace();
+		closeSuggest();
+		place
+			.fetchFields({
+				fields: ["addressComponents", "formattedAddress", "location", "id"],
+			})
+			.then(function () {
+				applyAddress(place);
+				// A session ends at place details; the next keystroke starts a
+				// fresh one. Reusing the old token would bill per-keystroke.
+				suggest.token = new suggest.places.AutocompleteSessionToken();
+			})
+			.catch(function (err) {
+				warn("could not read the selected address", err);
+			});
+	}
+
+	function closeSuggest() {
+		if (!suggest.box) return;
+		// Closed means CLOSED: cancel the pending debounce and invalidate any
+		// in-flight response (the .then compares against lastQuery), or a
+		// stale fetch resurrects the box over the fields below it — after a
+		// pick, after blur, even after Escape.
+		if (suggest.timer) {
+			window.clearTimeout(suggest.timer);
+			suggest.timer = null;
+		}
+		suggest.lastQuery = "";
+		suggest.box.hidden = true;
+		suggest.box.innerHTML = "";
+		suggest.items = [];
+		suggest.active = -1;
+		if (suggest.input) {
+			suggest.input.setAttribute("aria-expanded", "false");
+			suggest.input.removeAttribute("aria-activedescendant");
+		}
 	}
 
 	/*
@@ -257,19 +501,6 @@
 		if (window.console && console.warn) {
 			console.warn("[fountain-move] " + message + ":", (err && err.message) || err || "");
 		}
-	}
-
-	function onPlaceSelected(event) {
-		var prediction = event.placePrediction;
-		if (!prediction) return Promise.resolve();
-		var place = prediction.toPlace();
-		return place
-			.fetchFields({
-				fields: ["addressComponents", "formattedAddress", "location", "id"],
-			})
-			.then(function () {
-				applyAddress(place);
-			});
 	}
 
 	function applyAddress(place) {
