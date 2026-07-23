@@ -77,13 +77,12 @@
 	max-width: 34em;
 }
 
-/* The wordmark is nearly square (868x764), so the width cap is modest — at
-   240px it would tower over the h1. width/height attrs on the img give the
+/* Wide wordmark (276x100 viewBox). width/height attrs on the img give the
    browser the aspect ratio, so height:auto reserves space before load. */
 .fm-logo {
 	display: block;
-	max-width: 160px;
-	width: 40%;
+	max-width: 250px;
+	width: 60%;
 	height: auto;
 	margin: 0 0 1.25rem;
 }

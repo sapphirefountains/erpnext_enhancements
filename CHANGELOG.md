@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.162.1] - 2026-07-23
+
+### Changed
+
+- **The intake form header now uses the marketing-site logo** (the SVG from
+  sapphirefountains.com), shipped as an app asset under
+  `public/images/fountain_move/logo.svg` rather than hotlinked or DB-hosted —
+  versioned with the deploy query param because `/assets` is served immutable
+  for a year. Vector, 276×100, dark-navy-on-white; sanity-checked for scripts
+  and external references before shipping. Replaces the near-square blue PNG
+  from the site's File store.
+
 ## [1.162.0] - 2026-07-23
 
 ### Changed

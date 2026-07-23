@@ -23,13 +23,13 @@
 <div class="fm-page">
 
 	<header class="fm-header">
-		{# Site-hosted brand asset (public File), not an app asset — the same
-		   wordmark the rest of the site uses, and it survives deploys.
-		   width/height are the PNG's real pixels so the browser reserves the
-		   space and nothing below jumps when it loads; onerror hides the
-		   broken-image glyph if the file is ever missing on a fresh site. #}
-		<img class="fm-logo" src="/files/22-02-Sapphire-Logo-Blue.png" alt="Sapphire Fountains"
-		     width="868" height="764" onerror="this.hidden=true">
+		{# The marketing-site logo, shipped as an app asset (versioned query
+		   param because /assets is served immutable for a year). width/height
+		   match the SVG's viewBox so the browser reserves the space and
+		   nothing below jumps while it loads; onerror hides the broken-image
+		   glyph if the asset ever fails to serve. #}
+		<img class="fm-logo" src="/assets/erpnext_enhancements/images/fountain_move/logo.svg?v={{ deploy_version }}"
+		     alt="Sapphire Fountains" width="276" height="100" onerror="this.hidden=true">
 		<h1>{{ _("Request a fountain installation") }}</h1>
 		<p class="fm-lede">
 			{{ _("Tell us about your new fountain and where it's going, and we'll get back to you with a quote.") }}
