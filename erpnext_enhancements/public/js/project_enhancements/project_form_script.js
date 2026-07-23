@@ -11,8 +11,9 @@
  *    (Service/Events/Build/Design).
  *  - Relocates the native Activity and Connections sections into the Details tab.
  *  - Renders the interactive task tree into the `custom_tasks_html` field on the
- *    Scope tab by lazily `frappe.require`-ing task_tree_manager.js, and renders the
- *    Gantt into `custom_gantt_chart_html` on the Schedule tab. Because Frappe can
+ *    Scope tab by lazily `frappe.require`-ing task_tree_manager.js. (The Gantt in
+ *    `custom_gantt_chart_html` on the Schedule tab is rendered by
+ *    project_gantt_widget.js — the embeddable Gantt widget.) Because Frappe can
  *    build a tab's fields only when that tab is first shown, this carefully (a)
  *    overrides the HTML field's `refresh` to (re)build the tree, (b) polls for the
  *    field wrapper and, if needed, briefly force-activates the Scope tab to make

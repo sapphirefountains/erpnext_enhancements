@@ -13,13 +13,12 @@ Most server entry points are `@frappe.whitelist()` methods called from the page/
 | `doctype/master_project/master_project.js` | Read-only Projects/Tasks rollup tables on the form | `render_projects_table`, `render_tasks_table` | Doctype form script |
 | `doctype/project_notes`, `project_stakeholder`, `{build,design,rent,service}_customer_requests`, `{build,design,rent,service}_deliverables` | Project child tables ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
 | `doctype/project/project.py` | List-view grouping + printable Project Brief data | `get_project_grouping_option`, `get_project_brief_data` | Whitelisted (client scripts) |
-| `doctype/project/project.js` | Interactive Gantt, health banner, resource heatmap, dependency linking, reminder button | two `frappe.ui.form.on("Project", {refresh})` handlers | `doctype_js["Project"]` |
+| `doctype/project/project.js` | Health banner + reminder button (the Schedule-tab Gantt it used to render in `custom_gantt_chart_html` is now the embeddable widget — `public/js/project_enhancements/project_gantt_widget.js`) | two `frappe.ui.form.on("Project", {refresh})` handlers | `doctype_js["Project"]` |
 | `doctype/project/project_list.js` | Project list-view tweaks | — | list view |
 | `doctype/address/address.js` | Live full-address build + Google Maps embed | Address form handlers | `doctype_js["Address"]` |
 | `doctype/project_dashboard_settings/*.py` | Single doctype: legacy permitted-roles list for the dashboard | `ProjectDashboardSettings` | controller |
 | `doctype/project_dashboard_permitted_role/*.py` | Child table: one `role` per row | `ProjectDashboardPermittedRole` | child-table controller |
 | `page/project_dashboard/project_dashboard.py` | Shared backend for the dashboard (data / permission / inline-edit endpoints) | `check_permission`, `get_project_data`, `get_gantt_tasks_for_project`, `get_master_project_projects`, `update_task_*`, `add_task_dependency`, `publish_realtime_update`, … | Whitelisted (called by the Custom HTML Block); `publish_realtime_update` via `doc_events`. NB the folder no longer defines a desk Page — only this module + `test_project_dashboard.py` remain. |
-| `setup.py` | Idempotent, insert-only provisioning of the Project **"Timeline" tab** (Tab Break + HTML host field) for the embeddable Gantt widget | `create_project_timeline_fields` | `after_migrate` |
 
 Related code outside this folder:
 - `project_merge.py` (repo root) — merge one Project into another by re-pointing all linked docs. Whitelisted; called from `public/js/project_merge.js`.
@@ -111,7 +110,7 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 - `scheduler_events.daily` → `send_project_start_reminders`.
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
-- `after_migrate` → `setup.create_project_timeline_fields` (Project "Timeline" tab for the embeddable Gantt widget); `doctype_js["Project"]` includes `public/js/project_enhancements/project_timeline_gantt.js`, the widget's first embed (read-only; the interactive Schedule-tab gantt in `doctype/project/project.js` is unchanged — see the [public README](../public/README.md)).
+- `doctype_js["Project"]` includes `public/js/project_enhancements/project_gantt_widget.js` — the embeddable Gantt widget's first embed, mounted into `custom_gantt_chart_html` on the Schedule tab (read-only, status filter + Today; replaced the legacy interactive frappe-gantt renderer that lived in `doctype/project/project.js` — see the [public README](../public/README.md)).
 
 ## Gotchas
 
@@ -119,4 +118,4 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 - `get_all_projects_for_gantt` deliberately drops the `check_permission()` gate (uses native Page roles) and filters the portfolio Gantt to client-facing `project_type in (Build, Design, Events, Service)`.
 - Several Task fields are queried conditionally via `frappe.get_meta(...).has_field(...)` (`custom_is_recurring`, `baseline_start_date/baseline_end_date`) because they are optional site-level custom fields.
 - `merge_projects` uses `frappe.db.set_value` for child tables/Singles (speed) but `doc.save()` for parents (to fire controller logic), and `log_error`s per-doc failures rather than aborting the whole merge. `get_linked_doctypes` discovers Project links dynamically from metadata, so any new Link-to-Project field automatically expands merge scope.
-- The Gantt/health logic in `project.js` monkey-patches the HTML field's `.refresh()` and depends on the global frappe-gantt UMD lib + `gantt_zoom.js` (both loaded via `app_include_js`); idempotency flags prevent rebinding across refreshes.
+- `project.js` no longer renders a Gantt: the drag-editable frappe-gantt (with heatmap, dependency linking and PNG export) was replaced by the read-only embeddable widget in `project_gantt_widget.js`; editing returns with the widget's per-embed edit opt-in milestone. `project.js` keeps the health banner (bound off the `custom_gantt_chart_html` field object, guarded by `__health_bound`) and the reminder button.

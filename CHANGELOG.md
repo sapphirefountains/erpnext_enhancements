@@ -24,8 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`frappe.require` would have marked the failed asset as executed forever).
   Each mount gets its own instance via `Gantt.getGanttInstance()`, so
   multiple embeds coexist; re-mounting a container destroys the previous
-  instance. Widgets are read-only (per-embed edit opt-in is a later
-  milestone).
+  instance. An optional toolbar provides checkbox-dropdown **value filters**
+  (applied as server-validated `["in", ...]` filters, re-fetching debounced)
+  and a **Today** button — with it enabled the chart opens scrolled to today
+  (the default view), highlights today's column (via core cell-class
+  templates — the DHTMLX marker extension is not in the Standard single-file
+  bundle), and pads its scale so today is always in range; subsequent
+  refreshes preserve the scroll position.
+  Widgets are read-only (per-embed edit opt-in is a later milestone).
 - **Whitelisted read endpoint `api/gantt.py::get_gantt_data`.** The embed
   config is client-supplied, so the endpoint treats it as hostile:
   `frappe.has_permission` gates the call, rows come from `frappe.get_list`
@@ -39,18 +45,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent references are re-rooted against the tasks actually emitted so an
   undated group task can never silently hide its whole subtree. Covered by a
   bench-free pytest suite (`tests/test_gantt_api.py`, wired into CI).
-- **First real embed: a read-only "Timeline" tab on the Project form.**
-  `project_enhancements/setup.py` (after_migrate, insert-only) adds a Tab
-  Break + HTML host field; `public/js/project_enhancements/
-  project_timeline_gantt.js` mounts the widget filtered to the current
-  project's Tasks — task tree via `parent_task`, dependency arrows from
-  `depends_on` — handling unsaved docs (placeholder) and destroy-on-refresh.
-  The mount is gated on an **IntersectionObserver**: this Frappe build
-  renders every tab's fields eagerly into hidden panes, so the widget mounts
-  (and fetches data) only when the Timeline pane actually becomes visible —
-  no wasted 1000-row fetches on every Project open, and DHTMLX always
-  initializes with a real container size. The interactive frappe-gantt on
-  the Schedule tab is untouched.
+### Changed
+
+- **The Project Schedule tab's Gantt (`custom_gantt_chart_html`) is now the
+  embeddable widget** — the widget's first real embed
+  (`public/js/project_enhancements/project_gantt_widget.js`), showing the
+  current project's Tasks: task tree via `parent_task`, dependency arrows
+  from `depends_on`, a **task-status filter** (all statuses shown by
+  default) and a **Today** button with today as the default view. It
+  refreshes in place on the `project_dashboard_updated` realtime event
+  (scroll preserved), shows a placeholder on unsaved docs, and tears itself
+  down on every form refresh. The mount is gated on an
+  **IntersectionObserver**: this Frappe build renders every tab's fields
+  eagerly into hidden panes, so the widget mounts (and fetches data) only
+  when the Schedule pane actually becomes visible — no wasted 1000-row
+  fetches on every Project open, and DHTMLX always initializes with a real
+  container size.
+  The legacy frappe-gantt renderer in
+  `project_enhancements/doctype/project/project.js` was removed with it —
+  including, for now, its drag-to-reschedule/progress editing, dependency
+  drag-linking, resource heatmap and PNG export (editing returns with the
+  widget's per-embed edit opt-in milestone; the health banner and reminder
+  button remain). The Projects Dashboard portfolio Gantt still uses
+  frappe-gantt and is unchanged — its swap to this widget is planned as a
+  follow-up.
 
 ## [1.162.1] - 2026-07-23
 
