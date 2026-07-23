@@ -1,9 +1,19 @@
 /*
  * Embeddable Gantt widget — container/adapter styles.
  *
- * Loaded lazily together with the vendored DHTMLX skin (dhtmlxgantt.css) by
- * public/js/gantt_widget/gantt_widget.js — NOT part of the global desk_addons
- * bundle, because only pages that actually mount a Gantt need the 140K skin.
+ * Shipped in desk_addons.bundle.scss (content-hashed), NOT lazy-loaded from a
+ * raw /assets path: this file is ours and changes between releases, and raw
+ * /assets is served with a 1-year immutable Cache-Control (it was also left
+ * stale on disk by a deploy in v1.165.0, which shipped the whole widget with
+ * v1.163.0's rules — collapsed charts and filter menus stuck open). Only the
+ * 140K VENDORED skin (dhtmlxgantt.css) is still lazy-required by
+ * public/js/gantt_widget/gantt_widget.js; it never changes, so it cannot rot.
+ *
+ * SASS PARSES THIS FILE (it is @imported by a .scss entry), so prefer syntax
+ * that does not depend on sass's own semantics. sass shadows min()/max();
+ * current dart-sass passes mixed units through untouched (verified on 1.77),
+ * but older sass/libsass errored on them, so the height cap below is written
+ * as height + max-height rather than min(65vh, 700px).
  *
  * Font: the vendored skin defaults --dhx-gantt-font-family to Inter fetched
  * from fonts.gstatic.com. Pointing the variable at the desk font stack keeps
@@ -30,7 +40,8 @@
 /* Host used by the Project Schedule-tab embed (project_gantt_widget.js).
    DHTMLX reads the container's concrete height at init. */
 .ee-project-gantt {
-	height: min(65vh, 700px);
+	height: 65vh;
+	max-height: 700px;
 	min-height: 320px;
 }
 

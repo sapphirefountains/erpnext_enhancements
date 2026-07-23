@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.165.1] - 2026-07-23
+
+### Fixed
+
+- **The Gantt widget rendered unstyled everywhere** (Project form Schedule
+  tab and the Projects Dashboard portfolio Gantt): collapsed to a thin
+  strip, status-filter menu stuck open, dashboard reduced to a plain list
+  of project names. The widget's own stylesheet was lazy-loaded from a raw
+  `/assets/erpnext_enhancements/css/gantt_widget/gantt_widget.css` path,
+  and browsers were being served the **v1.163.0** copy of it — verified on
+  production: `ETag` length `0x76c` (1,900 bytes) with `last-modified`
+  from the v1.163.0 deploy, while the widget JS beside it carried the
+  current build. So none of the rules added in v1.164/v1.165 existed
+  client-side: no `.ee-project-gantt` height (the stale file still defined
+  the pre-rename `.ee-timeline-gantt`), no `display: none` on the filter
+  menu, no flex/chart-wrap layout.
+  Two compounding causes, one rule violated: `/assets` is served with a
+  1-year **immutable** `Cache-Control`, *and* the deploy left the raw file
+  stale on disk — the exact hazard `desk_addons.bundle.scss` and
+  `kanban.bundle.js` were created for (v0.8.1). Our own CSS must ship
+  content-hashed, so `gantt_widget.css` now builds into
+  **`desk_addons.bundle.scss`** and every deploy gets a fresh URL. Only
+  the **vendored** 140K DHTMLX skin stays a lazy raw include — a file that
+  never changes cannot go stale. The height cap is written as
+  `height` + `max-height` rather than `min()` (sass shadows `min()`; the
+  plain form does not depend on how a given sass version treats mixed
+  units).
+
 ## [1.165.0] - 2026-07-23
 
 ### Changed
