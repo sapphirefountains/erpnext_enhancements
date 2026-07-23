@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.165.2] - 2026-07-23
+
+### Fixed
+
+- **The Projects Dashboard Gantt rendered completely unstyled** (the v1.165.1
+  fix corrected the Project form, but not the dashboard). Frappe renders a
+  **Custom HTML Block inside a shadow root**, and document-level stylesheets
+  do not cross a shadow boundary — so neither the widget's chrome nor the
+  vendored DHTMLX skin (both attached to `document.head`) ever applied inside
+  the block, no matter how they were delivered. Confirmed live: the block's
+  shadow root contained only Frappe's own `desk.bundle.css`, the chart div had
+  grown to 3,039px, and injecting the two stylesheets into that shadow root
+  immediately restored it (638px, timeline scale rendered, level colours
+  applied).
+  The widget now attaches its stylesheets **per root node**: it resolves
+  `this.el.getRootNode()` on mount and links the skin + chrome into the shadow
+  root when there is one, always keeping a document-level copy as well so the
+  skin's `@font-face` (grid expander icons) still registers. Styles are
+  awaited before `gantt.init()`, since DHTMLX measures its container there.
+  The widget chrome moved from `desk_addons.bundle.scss` to its own hashed
+  entry, **`public/css/gantt_widget.bundle.css`**, resolved at runtime through
+  `assets.json` (`frappe.assets.bundled_asset`, with a raw-path fallback) —
+  content-hashed as v1.165.1 required, linkable into any root, and lazy again
+  rather than global.
+
 ## [1.165.1] - 2026-07-23
 
 ### Fixed

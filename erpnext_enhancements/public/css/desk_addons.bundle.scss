@@ -27,11 +27,7 @@
 @import "./task_enhancements/task_enhancements";
 @import "./quickbooks_online/qbo_dashboard";
 @import "./collab";
-// Embeddable Gantt widget chrome (toolbar/filters/overlays/host sizing). Small
-// (~3.5K) and OURS, so it must ship hashed: shipped as a raw /assets path in
-// v1.163-1.165 it was served with a 1-year immutable Cache-Control AND was left
-// stale on disk by a deploy, so every rule added after v1.163 never reached the
-// browser (collapsed charts, filter menus stuck open). The 140K VENDORED DHTMLX
-// skin stays a lazy raw include on purpose — it never changes, so it cannot go
-// stale (same exception as the vendored UMD libs in app_include_js).
-@import "./gantt_widget/gantt_widget";
+// NOTE: the embeddable Gantt widget's chrome is deliberately NOT imported here.
+// It ships as its own hashed entry (gantt_widget.bundle.css) which the widget
+// links into whichever ROOT NODE it mounts in — a document-level stylesheet
+// cannot cross into the shadow DOM that Custom HTML Blocks render inside.
