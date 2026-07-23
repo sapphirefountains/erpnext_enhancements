@@ -219,9 +219,15 @@
 
 			<div id="fm-error" class="fm-notice fm-notice--error" role="alert" hidden></div>
 
-			<button id="fm-submit" type="submit" class="fm-submit">
+			{# Starts disabled: the JS enables it once every required field is
+			   filled and valid, and keeps it off while photos are uploading.
+			   The hint is the button's accessible description AND a polite live
+			   region — with the button disabled, it is the only channel that
+			   can say what still needs doing. #}
+			<button id="fm-submit" type="submit" class="fm-submit" disabled aria-describedby="fm-submit-hint">
 				{{ _("Send my request") }}
 			</button>
+			<p class="fm-hint" id="fm-submit-hint" aria-live="polite">{{ _("Fill in all the required fields to send your request.") }}</p>
 			<p class="fm-hint">{{ _("We'll be in touch within one business day.") }}</p>
 		</section>
 	</form>

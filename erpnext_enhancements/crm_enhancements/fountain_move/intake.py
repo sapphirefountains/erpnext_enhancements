@@ -55,6 +55,20 @@ by default.
 ``""``), and the client sends the header only when it is non-empty. Note it must
 NOT use ``frappe.sessions.get_csrf_token()``, which mints a token when absent —
 a guest would then send one the server has never stored.
+
+**The intake session id travels as ``intake_sid``, because ``sid`` is a name
+frappe owns.** It was originally posted as ``sid``, and every submission
+"expired" instantly. ``sid`` is frappe's reserved login-session parameter:
+``sessions.py`` (``Session.__init__``) runs ``frappe.form_dict.pop("sid",
+None)`` during auth — before the handler binds a whitelisted method's
+arguments — tries to resume a *user login session* with whatever value it
+finds, finds no session record for ours, sets ``response["session_expired"] =
+1``, and runs the request as Guest. The endpoint then sees ``sid=None``:
+``begin_intake`` minted a fresh session on every call (orphaning any uploads),
+and ``submit_intake`` / ``upload_intake_photo`` threw "Your session has
+expired" for every visitor, guest and staff alike. The pop applies to JSON
+bodies, form bodies and query strings equally, so the rename has to hold on
+every request — nothing may ever POST a key literally named ``sid`` here.
 """
 
 import hashlib
@@ -136,17 +150,17 @@ CONTROL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=30, seconds=3600, methods=["POST"])
-def begin_intake(turnstile_token=None, sid=None, ref=None):
+def begin_intake(turnstile_token=None, intake_sid=None, ref=None):
 	"""Verify the Turnstile token and open (or refresh) an intake session.
 
 	Returns ``{"sid", "verdict"}``. A ``Failed`` verdict is returned rather than
 	thrown so the page can show the captcha again instead of a dead end.
 
-	An existing ``sid`` is refreshed **in place**, preserving ``created`` and any
-	photos already uploaded. Turnstile tokens are single-use and short-lived, so a
-	customer who takes a while over the form will re-solve mid-way; minting a new
-	session there would silently orphan their uploads and reset the timing floor
-	into a false spam positive.
+	An existing ``intake_sid`` is refreshed **in place**, preserving ``created``
+	and any photos already uploaded. Turnstile tokens are single-use and
+	short-lived, so a customer who takes a while over the form will re-solve
+	mid-way; minting a new session there would silently orphan their uploads and
+	reset the timing floor into a false spam positive.
 
 	``ref`` is the invite token from the URL. It is resolved to an invite NAME and
 	stored server-side, so the eventual submission is attributed from session
@@ -154,6 +168,7 @@ def begin_intake(turnstile_token=None, sid=None, ref=None):
 	"""
 	_require_public_form()
 
+	sid = intake_sid
 	verdict, detail = _verify_turnstile(turnstile_token)
 	invite = _resolve_invite_name(ref)
 
@@ -301,7 +316,7 @@ def _turnstile_secret():
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=20, seconds=3600, methods=["POST"])
-def upload_intake_photo(sid=None, kind=None):
+def upload_intake_photo(intake_sid=None, kind=None):
 	"""Accept one photo and return an opaque handle.
 
 	Never returns a ``file_url``: the caller is anonymous and the file is private,
@@ -311,6 +326,7 @@ def upload_intake_photo(sid=None, kind=None):
 	"""
 	_require_public_form()
 
+	sid = intake_sid
 	session = _get_session(sid)
 	if not session:
 		frappe.throw(_("Your session has expired. Please reload the page."))
@@ -456,7 +472,7 @@ def submit_intake(**payload):
 	"""
 	_require_public_form()
 
-	sid = payload.get("sid")
+	sid = payload.get("intake_sid")
 	session = _get_session(sid)
 	if not session:
 		frappe.throw(_("Your session has expired. Please reload the page and try again."))
@@ -518,7 +534,7 @@ def submit_intake(**payload):
 	request.insert(ignore_permissions=True)
 
 	if not spam_reason:
-		_attach_session_photos(request, session)
+		_attach_session_photos(request, session, _photos_present(payload))
 
 	if session.get("invite"):
 		from erpnext_enhancements.crm_enhancements.fountain_move.invites import (
@@ -699,15 +715,40 @@ def _recent_duplicate(fingerprint):
 	)
 
 
-def _attach_session_photos(request, session):
+def _photos_present(payload):
+	"""The photo kinds the customer still saw as attached at submit time.
+
+	``None`` when the client did not send the key (attach everything, the old
+	behaviour); otherwise a set that can only SHRINK what gets attached. The
+	client cannot add or name files this way — the values are intersected with
+	the session's own record, never used as identifiers — it exists so the
+	Remove button is honoured server-side. Without it, a photo removed after
+	its upload finished was silently attached anyway, which for "an interior
+	photo of the wrong room" is a real privacy failure. The empty string is
+	meaningful: "attach none".
+	"""
+	raw = payload.get("photos_present")
+	if isinstance(raw, str):
+		kinds = raw.split(",")
+	elif isinstance(raw, (list, tuple)):
+		kinds = [str(kind) for kind in raw]
+	else:
+		return None
+	return {kind.strip() for kind in kinds if kind.strip()}
+
+
+def _attach_session_photos(request, session, present=None):
 	"""Claim the uploads recorded in the session onto the new request.
 
 	Read from the session, never from the payload — otherwise an anonymous caller
 	could name any File on the site and have it attached to (and then copied out
-	of) their own request.
+	of) their own request. ``present`` (see :func:`_photos_present`) only filters
+	that set down; a skipped file stays unattached and the hourly GC removes it.
 	"""
 	mapping = {"fountain": "fountain_photo", "path": "path_photo"}
 	for kind, file_name in (session.get("files") or {}).items():
+		if present is not None and kind not in present:
+			continue
 		fieldname = mapping.get(kind)
 		if not fieldname or not file_name or not frappe.db.exists("File", file_name):
 			continue

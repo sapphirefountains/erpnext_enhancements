@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.160.3] - 2026-07-23
+
+### Fixed
+
+- **Every fountain-move submission failed with "Your session has expired",
+  because the intake session id was posted as `sid` — a name frappe owns.**
+  Frappe treats a request parameter literally named `sid` as a *login* session
+  id: `sessions.py` (`Session.__init__`) runs `frappe.form_dict.pop("sid",
+  None)` during auth, before the handler binds a whitelisted method's
+  arguments. So our value was popped out of the body, tried (and failed) as a
+  user session — flagging `session_expired: 1` on every response and running
+  the request as Guest — and the endpoint received `sid=None`. `begin_intake`
+  therefore minted a fresh session on every call (orphaning uploads), and
+  `submit_intake` / `upload_intake_photo` threw the session-expired error for
+  every visitor, guest and staff alike, on every attempt.
+
+  Diagnosed against production: the Redis session written by `begin_intake`
+  was verifiably present and readable server-side while the very next web
+  request claimed it had expired — and `begin_intake` echoed a *new* sid when
+  sent an existing one, proving the parameter never arrived. The pop applies
+  to JSON bodies, form bodies and query strings equally.
+
+  The session id now travels as `intake_sid` on all three endpoints. Nothing
+  may ever POST a key named `sid` to a frappe site unless it means "log me in
+  as this session".
+
+- **A photo removed after its upload finished was silently attached anyway.**
+  The Remove button only cleared the browser UI; the server session kept the
+  file handle and `submit_intake` attached everything in it. For "I uploaded
+  an interior photo of the wrong room" that is a real privacy failure. The
+  client now sends `photos_present` (the kinds the customer can still see) and
+  the server intersects it with its own session record — the client can only
+  *shrink* the set, never name files, so the never-trust-the-payload rule for
+  Files holds. Remove now also aborts an in-flight upload (AbortController),
+  so a stalled request on flaky mobile data no longer locks the submit button
+  behind a "waiting for photos" hint about a photo that is no longer there.
+
+### Changed
+
+- **The "Send my request" button now stays disabled until the form is
+  actually sendable** — every required field filled and valid, no photo
+  upload in flight — with a hint under the button saying what unlocks it.
+  Validation on submit remains as the backstop, and both paths share one
+  completeness check so they cannot disagree. The completeness poll runs on
+  every input/change event (and after Google fills the address, which fires
+  no events) and deliberately never touches `aria-invalid` — a poll must not
+  mutate accessibility state while someone is mid-correction.
+
+  Details that came out of adversarial review of the first cut:
+  - *Filled-but-invalid* fields (weight `112.5` against `step=1`, email
+    `john@`) get their own hint naming the field and the problem — the
+    generic "fill in the required fields" line is a lie in that state, and
+    with the button disabled, onSubmit's focus-and-name diagnosis can never
+    run. The hint is the button's `aria-describedby` and a polite live region
+    (identical-text writes are skipped so it announces once, not per
+    keystroke).
+  - When a Turnstile widget is rendered but unsolved, submitting is
+    *guaranteed* to end in the spam queue, so onSubmit now asks for the solve
+    instead of accepting a submission we know we'll bin. Every degraded path
+    (no sitekey, dead script, unreachable Cloudflare) still submits, and
+    `ensureSession` now carries the widget's live token when one exists — a
+    solve whose `begin_intake` POST was lost to a network blip becomes a
+    Passed verdict at submit instead of a spam-parked row.
+  - `.fm-submit:disabled` now shows `not-allowed` instead of `progress`;
+    disabled mostly means "waiting on the customer" now, and a spinner cursor
+    there claimed the page was busy while it was idle. The genuinely busy
+    states (sending, photo uploading) keep `progress` via a busy class.
+
 ## [1.160.2] - 2026-07-21
 
 ### Fixed

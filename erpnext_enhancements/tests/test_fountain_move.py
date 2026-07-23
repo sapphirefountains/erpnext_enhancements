@@ -776,6 +776,58 @@ def test_guest_has_no_docperm_on_the_request():
 	assert "All" not in roles
 
 
+# --- reserved request parameter names ---------------------------------------
+
+
+def test_no_endpoint_parameter_is_named_sid():
+	"""``sid`` is frappe's reserved login-session parameter: sessions.py
+	(Session.__init__) pops it out of form_dict during auth, tries to resume a
+	USER session with it, flags session_expired, and the endpoint receives None.
+	Shipping the intake session id as ``sid`` made every submission "expire"
+	instantly, for guests and staff alike. The wire name is ``intake_sid``, and
+	nothing whitelisted here may ever take a parameter called ``sid`` again.
+	"""
+	import inspect
+
+	intake = importlib.import_module(f"{FM}.intake")
+	for endpoint in (intake.begin_intake, intake.upload_intake_photo, intake.submit_intake):
+		fn = inspect.unwrap(endpoint)
+		params = set(inspect.signature(fn).parameters)
+		assert "sid" not in params, f"{endpoint.__name__} exposes reserved parameter 'sid'"
+
+	assert "intake_sid" in inspect.signature(inspect.unwrap(intake.begin_intake)).parameters
+	assert "intake_sid" in inspect.signature(inspect.unwrap(intake.upload_intake_photo)).parameters
+
+
+def test_client_never_posts_a_key_named_sid():
+	"""The JS must send intake_sid on every request — a body key "sid" (JSON,
+	multipart or query) is intercepted by frappe's auth before arg binding."""
+	js = _read("erpnext_enhancements/public/js/fountain_move/fountain_move.js")
+	for banned in ('"sid":', "'sid':", 'append("sid"', "append('sid'", "sid=", "?sid"):
+		assert banned not in js, f"client posts reserved key: {banned}"
+	assert "intake_sid" in js
+
+
+# --- removed photos must stay removed ---------------------------------------
+
+
+def test_photos_present_parses_and_only_shrinks():
+	intake = importlib.import_module(f"{FM}.intake")
+
+	# Absent key: old-client behaviour, attach everything.
+	assert intake._photos_present({}) is None
+	assert intake._photos_present({"photos_present": None}) is None
+	# Empty string is meaningful: attach none.
+	assert intake._photos_present({"photos_present": ""}) == set()
+	assert intake._photos_present({"photos_present": "fountain"}) == {"fountain"}
+	assert intake._photos_present({"photos_present": "fountain,path"}) == {"fountain", "path"}
+	assert intake._photos_present({"photos_present": " fountain , "}) == {"fountain"}
+	assert intake._photos_present({"photos_present": ["path", "fountain"]}) == {"fountain", "path"}
+	# Garbage kinds pass through harmlessly: they are only ever intersected
+	# with the session's own record, never used to look anything up.
+	assert intake._photos_present({"photos_present": 42}) is None
+
+
 # --- helpers ----------------------------------------------------------------
 
 
