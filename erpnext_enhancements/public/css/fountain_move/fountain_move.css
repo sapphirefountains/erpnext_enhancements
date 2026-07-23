@@ -449,8 +449,16 @@
 	box-shadow: 0 0 0 4px var(--fm-ring);
 }
 
+/* Disabled now mostly means "waiting on the customer" (required fields not
+   done yet) — a progress cursor there would claim the page is busy when it is
+   idle. The busy class marks the actually-working states (sending, photo
+   upload in flight), where progress is the truth. */
 .fm-submit:disabled {
 	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.fm-submit--busy:disabled {
 	cursor: progress;
 }
 
