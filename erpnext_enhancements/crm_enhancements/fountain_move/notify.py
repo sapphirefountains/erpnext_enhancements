@@ -21,9 +21,21 @@ and got a confirmation; our plumbing is not their problem.
 import frappe
 from frappe.utils import add_to_date, cint, get_url_to_form
 
-from erpnext_enhancements.crm_enhancements.fountain_move import MAX_CONVERSION_ATTEMPTS
+from erpnext_enhancements.crm_enhancements.fountain_move import (
+	MAX_CONVERSION_ATTEMPTS,
+	preferred_slots_text,
+)
 
 TEMPLATE_DIR = "erpnext_enhancements/templates/emails/crm_enhancements"
+
+
+def _preferred_slots(req):
+	"""Pre-rendered for the template — frappe's Jinja env has no autoescape,
+	and building the line in Python keeps the template to a single |e."""
+	try:
+		return preferred_slots_text(req)
+	except Exception:
+		return None
 
 
 def notify_converted(req, owner):
@@ -39,6 +51,7 @@ def notify_converted(req, owner):
 			"req": req,
 			"opportunity_url": url,
 			"request_url": get_url_to_form("Fountain Move Request", req.name),
+			"preferred_slots": _preferred_slots(req),
 		},
 		req=req,
 	)

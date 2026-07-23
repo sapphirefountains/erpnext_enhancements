@@ -806,6 +806,169 @@ def test_guest_has_no_docperm_on_the_request():
 	assert "All" not in roles
 
 
+# --- scheduling preference slots ---------------------------------------------
+
+
+def test_min_preferred_date_counts_business_days():
+	"""Mon-Fri only for the LEAD-TIME floor; the chosen date itself may be a
+	Saturday — that's staff's call during the quote."""
+	from datetime import date
+
+	from erpnext_enhancements.crm_enhancements.fountain_move import min_preferred_date
+
+	# Wednesday + 3 business days = Monday (skips the weekend).
+	assert min_preferred_date(date(2026, 7, 22)) == date(2026, 7, 27)
+	# Friday + 3 business days = Wednesday.
+	assert min_preferred_date(date(2026, 7, 24)) == date(2026, 7, 29)
+	# Saturday start: Mon+Tue+Wed.
+	assert min_preferred_date(date(2026, 7, 25)) == date(2026, 7, 29)
+
+
+def _slot_fields(**overrides):
+	fields = {}
+	for i in (1, 2, 3):
+		fields[f"preferred_date_{i}"] = ""
+		fields[f"preferred_window_{i}"] = ""
+	fields.update(overrides)
+	return fields
+
+
+def test_preferred_slots_validate_dedupe_and_compact():
+	from datetime import date
+
+	from erpnext_enhancements.crm_enhancements.fountain_move import intake
+
+	today = date(2026, 7, 22)  # Wednesday; floor = Monday the 27th
+
+	# Only slot 3 filled → compacts into slot 1.
+	fields = _slot_fields(preferred_date_3="2026-07-28", preferred_window_3="Morning")
+	intake._normalize_preferred_slots(fields, today=today)
+	assert fields["preferred_date_1"] == "2026-07-28"
+	assert fields["preferred_window_1"] == "Morning"
+	assert fields["preferred_date_2"] is None and fields["preferred_date_3"] is None
+
+	# Duplicates collapse; same date with different windows both survive.
+	fields = _slot_fields(
+		preferred_date_1="2026-07-28", preferred_window_1="Morning",
+		preferred_date_2="2026-07-28", preferred_window_2="Morning",
+		preferred_date_3="2026-07-28", preferred_window_3="Afternoon",
+	)
+	intake._normalize_preferred_slots(fields, today=today)
+	assert fields["preferred_date_1"] == "2026-07-28" and fields["preferred_window_1"] == "Morning"
+	assert fields["preferred_date_2"] == "2026-07-28" and fields["preferred_window_2"] == "Afternoon"
+	assert fields["preferred_date_3"] is None
+
+	# A window without a date is dropped, not an error (the select always has
+	# a value even when its date was never touched).
+	fields = _slot_fields(preferred_window_2="Afternoon")
+	intake._normalize_preferred_slots(fields, today=today)
+	assert fields["preferred_date_1"] is None and fields["preferred_window_1"] is None
+
+	# All empty stays empty.
+	fields = _slot_fields()
+	intake._normalize_preferred_slots(fields, today=today)
+	assert all(fields[f"preferred_date_{i}"] is None for i in (1, 2, 3))
+
+
+def test_preferred_slots_reject_bad_input():
+	import pytest as _pytest
+	from datetime import date, timedelta
+
+	from erpnext_enhancements.crm_enhancements.fountain_move import intake
+
+	today = date(2026, 7, 22)
+
+	# Too soon (inside the business-day floor).
+	with _pytest.raises(Exception):
+		intake._normalize_preferred_slots(
+			_slot_fields(preferred_date_1="2026-07-24"), today=today
+		)
+	# Past.
+	with _pytest.raises(Exception):
+		intake._normalize_preferred_slots(
+			_slot_fields(preferred_date_1="2026-07-01"), today=today
+		)
+	# Beyond the horizon.
+	far = (today + timedelta(days=200)).isoformat()
+	with _pytest.raises(Exception):
+		intake._normalize_preferred_slots(_slot_fields(preferred_date_1=far), today=today)
+	# Not a date at all (hand-built POST).
+	with _pytest.raises(Exception):
+		intake._normalize_preferred_slots(
+			_slot_fields(preferred_date_1="next tuesday"), today=today
+		)
+	# A window value outside the select's options.
+	with _pytest.raises(Exception):
+		intake._normalize_preferred_slots(
+			_slot_fields(preferred_date_1="2026-07-28", preferred_window_1="Midnight"),
+			today=today,
+		)
+
+
+def test_spam_path_drops_invalid_slots_instead_of_throwing():
+	"""A spam-classified submission must still reach ``insert`` — the uniform
+	fake-ok response and the Spam row's telemetry depend on it. New optional
+	fields must never add throw paths to that route."""
+	from datetime import date
+
+	from erpnext_enhancements.crm_enhancements.fountain_move import intake
+
+	today = date(2026, 7, 22)
+	fields = _slot_fields(
+		preferred_date_1="not a date",
+		preferred_date_2="2026-07-23",  # inside the business-day floor
+		preferred_window_3="Midnight",
+		preferred_date_3="2026-07-28",
+	)
+	intake._normalize_preferred_slots(fields, today=today, drop_invalid=True)
+	# The one valid slot survives (its junk window blanked), the rest vanish.
+	assert fields["preferred_date_1"] == "2026-07-28"
+	assert fields["preferred_window_1"] == ""
+	assert fields["preferred_date_2"] is None
+
+
+def test_fingerprint_distinguishes_slot_changes():
+	"""Same contact details + different preferred dates is a customer ADDING
+	information, not a double-click — it must not collapse into the old row
+	(which silently discarded the dates)."""
+	from erpnext_enhancements.crm_enhancements.fountain_move import intake
+
+	base = {
+		"email": "jane@example.com", "phone": "8015551212",
+		"address_line1": "1 Main St", "pincode": "84010",
+		"fountain_weight_lbs": 350.0, "purchase_location": "Cactus & Tropicals Draper",
+	}
+	without = dict(base)
+	with_dates = dict(base, preferred_date_1="2026-08-12", preferred_window_1="Morning")
+	assert intake._fingerprint(without) != intake._fingerprint(with_dates)
+	assert intake._fingerprint(with_dates) == intake._fingerprint(dict(with_dates))
+
+
+def test_preferred_slot_fields_exist_on_the_doctype():
+	"""The allowlist maps payload keys to real fields; a typo here fails silently
+	in production (frappe ignores unknown fieldnames on set)."""
+	import json
+
+	doc = json.loads(_read("erpnext_enhancements/crm_enhancements/doctype/fountain_move_request/fountain_move_request.json"))
+	fieldnames = {f["fieldname"] for f in doc["fields"]}
+	from erpnext_enhancements.crm_enhancements.fountain_move import INTAKE_FIELD_MAP
+
+	for target in INTAKE_FIELD_MAP.values():
+		assert target in fieldnames, f"INTAKE_FIELD_MAP targets missing doctype field {target}"
+
+
+def test_preferred_slots_text_formats_for_staff():
+	from erpnext_enhancements.crm_enhancements.fountain_move import preferred_slots_text
+
+	class Req(dict):
+		def get(self, key, default=None):
+			return dict.get(self, key, default)
+
+	assert preferred_slots_text(Req()) is None
+	req = Req(preferred_date_1="2026-08-12", preferred_window_1="Morning", preferred_date_2="2026-08-14")
+	assert preferred_slots_text(req) == "2026-08-12 (morning); 2026-08-14"
+
+
 # --- reserved request parameter names ---------------------------------------
 
 

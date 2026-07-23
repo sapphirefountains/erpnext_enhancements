@@ -93,6 +93,12 @@ INTAKE_FIELD_MAP = {
 	"latitude": "latitude",
 	"longitude": "longitude",
 	"address_autocompleted": "address_autocompleted",
+	"preferred_date_1": "preferred_date_1",
+	"preferred_window_1": "preferred_window_1",
+	"preferred_date_2": "preferred_date_2",
+	"preferred_window_2": "preferred_window_2",
+	"preferred_date_3": "preferred_date_3",
+	"preferred_window_3": "preferred_window_3",
 }
 
 #: Per-field character ceilings applied at the guest boundary. Frappe's ``Data``
@@ -113,6 +119,12 @@ FIELD_MAX_LENGTHS = {
 	"purchase_location": 140,
 	"google_place_id": 255,
 	"formatted_address": 255,
+	"preferred_date_1": 20,
+	"preferred_window_1": 20,
+	"preferred_date_2": 20,
+	"preferred_window_2": 20,
+	"preferred_date_3": 20,
+	"preferred_window_3": 20,
 }
 
 #: Checkbox-ish payload keys, coerced to 0/1 rather than length-checked.
@@ -127,6 +139,61 @@ CHECKBOX_FIELDS = (
 #: Valid ``property_type`` values. These map onto ``Customer.customer_type``,
 #: whose options a Property Setter constrains to Commercial/Residential/Partnership.
 PROPERTY_TYPES = ("Residential", "Commercial")
+
+#: Scheduling preference: up to three ranked (date, window) slots. Preference
+#: only — nothing here checks or reserves real availability; staff confirms
+#: the actual date during the quote call.
+MAX_PREFERRED_SLOTS = 3
+PREFERRED_WINDOWS = ("Morning", "Afternoon")
+#: The earliest requestable date is this many BUSINESS days out (Mon-Fri; no
+#: holiday awareness — this is a courtesy floor, not a booking system). The
+#: chosen date itself may be any weekday incl. Saturday — that is staff's call.
+PREFERRED_MIN_LEAD_BUSINESS_DAYS = 3
+#: And no further out than this. A date next spring is a conversation, not a
+#: form field, and an unbounded horizon invites junk.
+PREFERRED_HORIZON_DAYS = 180
+
+
+def min_preferred_date(today=None):
+	"""The earliest date a customer may request, site-local.
+
+	Deliberately ``getdate()`` (site timezone), not UTC: "three business days
+	from today" is a Utah business rule, and at 5 pm Mountain the UTC date is
+	already tomorrow.
+	"""
+	from datetime import timedelta
+
+	current = today or frappe.utils.getdate()
+	remaining = PREFERRED_MIN_LEAD_BUSINESS_DAYS
+	while remaining > 0:
+		current += timedelta(days=1)
+		if current.weekday() < 5:
+			remaining -= 1
+	return current
+
+
+def max_preferred_date(today=None):
+	from datetime import timedelta
+
+	return (today or frappe.utils.getdate()) + timedelta(days=PREFERRED_HORIZON_DAYS)
+
+
+def preferred_slots_text(req):
+	"""One line for staff surfaces: ``2026-08-12 (morning); 2026-08-14``.
+
+	ISO dates on purpose — unambiguous in email, notes and list views alike.
+	Returns None when the customer expressed no preference, so callers can
+	drop the row entirely.
+	"""
+	parts = []
+	for i in range(1, MAX_PREFERRED_SLOTS + 1):
+		slot_date = req.get(f"preferred_date_{i}")
+		if not slot_date:
+			continue
+		window = req.get(f"preferred_window_{i}")
+		parts.append(f"{slot_date} ({window.lower()})" if window else str(slot_date))
+	return "; ".join(parts) or None
+
 
 #: Turnstile ``action`` asserted on siteverify. A token minted for a different
 #: widget/action on some other site must not be replayable here.

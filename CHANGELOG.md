@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.161.0] - 2026-07-23
+
+### Added
+
+- **Fountain-move intake: optional scheduling preference.** A new "When works
+  best?" section lets the customer rank up to three preferred days, each with
+  an optional Morning/Afternoon window. Preference only, by design — nothing
+  reads or reserves real availability, nothing about our schedule leaks to a
+  public page; staff confirms the actual date during the quote call, and the
+  desk fields say so.
+  - **Rules:** entirely optional; the earliest requestable day is 3 *business*
+    days out (the chosen day itself may be a Saturday — that's staff's call),
+    and nothing beyond 180 days. The floor/ceiling render into the date
+    inputs' `min`/`max` (so the picker itself steers right) and are re-checked
+    server-side against site-local "today" — deliberately `getdate()`, not
+    UTC: three business days out is a Utah business rule, and at 5 pm Mountain
+    the UTC date is already tomorrow.
+  - **Normalisation at the guest boundary:** slots dedupe, compact upward
+    ("only slot 3 filled" lands in slot 1, so staff can trust slot 1 = first
+    choice), a window without a date is dropped rather than an error, and
+    non-ISO dates, out-of-window dates or invented window values throw
+    friendly messages. Six new allowlisted fields on the request doctype;
+    a new test asserts every `INTAKE_FIELD_MAP` target exists on the doctype,
+    because frappe silently ignores `set()` on unknown fieldnames.
+  - **Staff surfaces:** the new-request email, the Lead/Opportunity details
+    block and the scheduling note all carry the preferences as one line
+    (`2026-08-12 (morning); 2026-08-14`), each explicitly marked unconfirmed.
+  - The submit-button gating now also flags *optional* fields that are filled
+    but invalid (an out-of-range preferred date) with the same named hint —
+    submitting would only bounce off the server. `badInput` is caught too: a
+    keyboard-typed impossible date (Feb 31) reports `value === ""` while still
+    showing in the control, and would otherwise vanish silently at submit.
+  - Hardened after adversarial review: the duplicate-collapse fingerprint now
+    includes the normalized slots ("same details, now with dates" is added
+    information, not a double-click — it previously collapsed into the old row
+    and silently discarded the dates); the spam path *drops* invalid slots
+    instead of throwing (a Spam row must still be inserted, and a new throw
+    path would hand bots a differentiated response); fallback browsers that
+    render `type=date` as plain text get a `placeholder`/`pattern` format cue
+    and a server message that names the `YYYY-MM-DD` format instead of
+    referencing a calendar that never rendered.
+
 ## [1.160.4] - 2026-07-23
 
 ### Fixed

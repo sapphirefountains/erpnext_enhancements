@@ -26,6 +26,10 @@
 		<td style="padding:2px 0">
 			{{ "yes" if req.water_access else "no" }} / {{ "yes" if req.electricity_access else "no" }}
 		</td></tr>
+	{% if preferred_slots %}
+	<tr><td style="padding:2px 12px 2px 0"><b>Preferred dates</b></td>
+		<td style="padding:2px 0">{{ preferred_slots|e }} <i>(preference only — confirm with the customer)</i></td></tr>
+	{% endif %}
 	{% if not req.address_autocompleted %}
 	<tr><td style="padding:2px 12px 2px 0"><b>Note</b></td>
 		<td style="padding:2px 0">Address was typed by hand, not picked from Google — worth confirming.</td></tr>

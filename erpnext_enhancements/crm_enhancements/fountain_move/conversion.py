@@ -47,6 +47,7 @@ from erpnext_enhancements.crm_enhancements.fountain_move import (
 	matching,
 	notify,
 	photos,
+	preferred_slots_text,
 )
 
 #: Statuses a conversion may legitimately start from.
@@ -693,6 +694,7 @@ def build_lead_details_html(req):
 		("Property type", req.property_type),
 		("Destination", destination),
 		("Address source", "Google Places" if cint(req.address_autocompleted) else "Typed by hand"),
+		("Preferred dates (unconfirmed)", preferred_slots_text(req)),
 		("Water at destination", yesno(req.water_access)),
 		("Electricity at destination", yesno(req.electricity_access)),
 		("May contact by email/text", yesno(req.contact_consent)),
@@ -737,6 +739,9 @@ def _scheduling_note(req):
 		bits.append(f"Store address: {store_address}.")
 	if req.fountain_weight_lbs:
 		bits.append(f"Fountain weight: {flt(req.fountain_weight_lbs):g} lbs.")
+	slots = preferred_slots_text(req)
+	if slots:
+		bits.append(f"Customer's preferred dates (unconfirmed): {slots}.")
 	bits.append(f"Water at destination: {'yes' if cint(req.water_access) else 'no'}.")
 	bits.append(f"Electricity at destination: {'yes' if cint(req.electricity_access) else 'no'}.")
 	if not cint(req.address_autocompleted):

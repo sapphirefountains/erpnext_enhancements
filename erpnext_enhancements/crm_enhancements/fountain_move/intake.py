@@ -88,10 +88,15 @@ from erpnext_enhancements.crm_enhancements.fountain_move import (
 	HONEYPOT_FIELD_NAME,
 	INTAKE_FIELD_MAP,
 	INTAKE_FILE_FOLDER,
+	MAX_PREFERRED_SLOTS,
+	PREFERRED_MIN_LEAD_BUSINESS_DAYS,
+	PREFERRED_WINDOWS,
 	PROPERTY_TYPES,
 	TURNSTILE_ACTION,
 	get_store_address,
 	is_valid_store_location,
+	max_preferred_date,
+	min_preferred_date,
 )
 from erpnext_enhancements.feature_flags import (
 	fountain_move_auto_convert_enabled,
@@ -507,7 +512,10 @@ def submit_intake(**payload):
 	if not spam_reason:
 		_enforce_submission_caps(sid, payload.get("email"))
 
-	fields = _validate_payload(payload)
+	# Spam still validates (the docstring's uniform-response promise depends on
+	# the Spam row being INSERTED), so the optional slot fields must not add new
+	# throw paths for a bot spraying junk — invalid slots are dropped instead.
+	fields = _validate_payload(payload, drop_invalid_slots=bool(spam_reason))
 
 	# Collapse an accidental double-submit (double click, retried request) rather
 	# than creating two identical leads.
@@ -579,7 +587,7 @@ def submit_intake(**payload):
 # ---------------------------------------------------------------------------
 
 
-def _validate_payload(payload):
+def _validate_payload(payload, drop_invalid_slots=False):
 	"""Coerce and bound every allowlisted field. Throws on anything unusable."""
 	fields = {}
 
@@ -631,12 +639,81 @@ def _validate_payload(payload):
 	if not fields.get("terms_accepted"):
 		frappe.throw(_("Please accept the Terms of Use and Privacy Policy to continue."))
 
+	_normalize_preferred_slots(fields, drop_invalid=drop_invalid_slots)
+
 	return fields
 
 
 def _require(fields, key, message):
 	if not fields.get(key):
 		frappe.throw(message)
+
+
+def _normalize_preferred_slots(fields, today=None, drop_invalid=False):
+	"""Validate, dedupe and compact the optional scheduling preference slots.
+
+	Every slot is optional. A window without a date is dropped silently — the
+	select always carries a value even when its date was never touched. A date
+	must be ISO (the form's ``type=date`` sends that; a fallback text input or
+	hand-built POST may not), at least ``PREFERRED_MIN_LEAD_BUSINESS_DAYS``
+	business days out and inside the horizon. Valid pairs are re-assigned to
+	slots ``1..N`` in order with duplicates collapsed, so "only slot 3 filled"
+	still lands in ``preferred_date_1`` and staff can rely on slot 1 being the
+	first choice. Preference only: nothing reads or reserves real availability.
+
+	``drop_invalid`` (the spam path) discards bad slots instead of throwing:
+	a spam-classified submission must still reach ``insert`` so the Spam row,
+	its telemetry and the uniform fake-ok response all survive — a new throw
+	path here would hand bots a differentiated response to iterate against.
+	"""
+	from datetime import date
+
+	floor = min_preferred_date(today)
+	ceiling = max_preferred_date(today)
+
+	slots = []
+	for i in range(1, MAX_PREFERRED_SLOTS + 1):
+		raw_date = (fields.get(f"preferred_date_{i}") or "").strip()
+		window = (fields.get(f"preferred_window_{i}") or "").strip()
+
+		if window and window not in PREFERRED_WINDOWS:
+			if drop_invalid:
+				window = ""
+			else:
+				frappe.throw(_("Please choose morning or afternoon for your preferred dates."))
+		if not raw_date:
+			continue
+
+		try:
+			chosen = date.fromisoformat(raw_date)
+		except ValueError:
+			if drop_invalid:
+				continue
+			# Mentions the format because a browser without a native date
+			# picker degrades this field to plain text — "pick from the
+			# calendar" would reference a calendar that never rendered.
+			frappe.throw(
+				_("Please enter your preferred dates as YYYY-MM-DD, or pick them from the calendar.")
+			)
+
+		if chosen < floor or chosen > ceiling:
+			if drop_invalid:
+				continue
+			if chosen < floor:
+				frappe.throw(
+					_("Preferred dates need to be at least {0} business days from today.").format(
+						PREFERRED_MIN_LEAD_BUSINESS_DAYS
+					)
+				)
+			frappe.throw(_("Please pick preferred dates within the next six months."))
+
+		if (chosen, window) not in slots:
+			slots.append((chosen, window))
+
+	for i in range(1, MAX_PREFERRED_SLOTS + 1):
+		chosen, window = slots[i - 1] if len(slots) >= i else (None, "")
+		fields[f"preferred_date_{i}"] = chosen.isoformat() if chosen else None
+		fields[f"preferred_window_{i}"] = window if chosen else None
 
 
 def _valid_email(value):
@@ -707,9 +784,27 @@ def _enforce_submission_caps(sid, email):
 
 
 def _fingerprint(fields):
+	# The preferred slots are part of the basis: "same details, but now with
+	# dates" is a customer adding information, not a double-click, and must not
+	# collapse into the earlier row (which would silently discard the dates).
+	# Runs on NORMALIZED fields, so compacted-equivalent slot layouts still
+	# collapse as duplicates.
 	basis = "|".join(
 		str(fields.get(key) or "").strip().lower()
-		for key in ("email", "phone", "address_line1", "pincode", "fountain_weight_lbs", "purchase_location")
+		for key in (
+			"email",
+			"phone",
+			"address_line1",
+			"pincode",
+			"fountain_weight_lbs",
+			"purchase_location",
+			"preferred_date_1",
+			"preferred_window_1",
+			"preferred_date_2",
+			"preferred_window_2",
+			"preferred_date_3",
+			"preferred_window_3",
+		)
 	)
 	return hashlib.sha256(basis.encode()).hexdigest()[:40]
 
