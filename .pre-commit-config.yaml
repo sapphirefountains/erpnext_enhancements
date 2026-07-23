@@ -42,7 +42,9 @@ repos:
                 .*node_modules.*|
                 .*boilerplate.*|
                 erpnext_enhancements/templates/includes/.*|
-                erpnext_enhancements/public/js/lib/.*
+                erpnext_enhancements/public/js/lib/.*|
+                erpnext_enhancements/public/js/gantt_widget/lib/.*|
+                erpnext_enhancements/public/css/gantt_widget/dhtmlxgantt.css
             )$
 
 
@@ -60,7 +62,8 @@ repos:
                 .*node_modules.*|
                 .*boilerplate.*|
                 erpnext_enhancements/templates/includes/.*|
-                erpnext_enhancements/public/js/lib/.*
+                erpnext_enhancements/public/js/lib/.*|
+                erpnext_enhancements/public/js/gantt_widget/lib/.*
             )$
 
 ci:

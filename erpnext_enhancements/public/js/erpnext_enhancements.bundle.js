@@ -74,5 +74,11 @@ import "./project_enhancements/task_tree_manager.js";
 import "./project_enhancements/dashboard_components/column_selector.js";
 import "./project_enhancements/dashboard_components/column_resizer.js";
 import "./project_enhancements/gantt_zoom.js";
+// Embeddable Gantt widget (erpnext_enhancements.gantt.mount) — the mount API is
+// global; the heavy vendored DHTMLX lib + skin lazy-load on first mount (css
+// via frappe.require, the lib JS via fetch + synchronous eval inside a
+// window.Gantt/window.gantt save-restore bracket so the frappe-gantt global
+// above is never clobbered, even transiently).
+import "./gantt_widget/gantt_widget.js";
 // Live collaborative form sync (COLLAB_DOCTYPES allowlist inside)
 import "./collab/live_form_sync.js";
