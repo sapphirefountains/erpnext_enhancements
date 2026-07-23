@@ -14,14 +14,19 @@
  *   - Active Internal Projects — active projects whose project_type is internal
  *                           (INTERNAL_PROJECT_TYPES), grouped by master project;
  *   - Completed Projects  — read-only list of inactive projects;
- *   - Portfolio Gantt     — frappe-gantt of projects (and optionally tasks), with
- *                           project/status filters, collapsible master/project/task
- *                           nodes, drag-to-reschedule, and scroll preservation;
+ *   - Portfolio Gantt     — the embeddable Gantt widget
+ *                           (erpnext_enhancements.gantt.mount) in composite mode:
+ *                           Master Project groups -> Project rows -> Task trees
+ *                           via the permission-checked get_gantt_data endpoint,
+ *                           with project/status filters, a Show Tasks toggle,
+ *                           view-mode zoom, tooltip popups and a Today button.
+ *                           Read-only for now (drag-editing returns with the
+ *                           widget's per-embed edit opt-in milestone);
  *   - Dashboard           — native module overview computed client-side from the
  *                           fetched project_data: headline number cards + CSS-bar
  *                           breakdowns (status / type / completion).
  * The toolbar also carries "New Project" / "New Master Project" quick-create buttons.
- * Table edits and Gantt date drags persist back via the same whitelisted methods.
+ * Table edits persist back via the same whitelisted methods.
  */
 (function() {
     // The ColumnSelector / ColumnResizer classes live in separate assets registered
@@ -45,10 +50,10 @@
     let priority_options = { project_priority: [], company_priority: [] };
     let status_options = [];
 
-    // Client-facing value streams shown on Priority Overview and used as the
-    // Portfolio Gantt fallback. Kept in one place so this Custom HTML Block stays
-    // in sync with the page dashboard (priority_overview.js / the backend's
-    // get_all_projects_for_gantt), which filter to exactly these project types.
+    // Client-facing value streams shown on Priority Overview and scoping the
+    // Portfolio Gantt (gantt_root_filters). Kept in one place so this Custom
+    // HTML Block stays in sync with the page dashboard (priority_overview.js),
+    // which filters to exactly these project types.
     const PRIORITY_PROJECT_TYPES = ["Build", "Design", "Events", "Service", "Delivery"];
 
     // Internal (non client-facing) project types shown on the Active Internal
@@ -71,22 +76,20 @@
         return String(a).localeCompare(String(b));
     };
 
-    // Gantt State tracking
+    // Gantt State tracking. The Portfolio Gantt renders through the embeddable
+    // Gantt widget (erpnext_enhancements.gantt.mount — public/js/gantt_widget/)
+    // in composite mode: Master Project groups -> Project rows -> Task trees,
+    // all fetched by the permission-checked get_gantt_data endpoint. This block
+    // only owns the toolbar state below and translates it into widget config;
+    // scroll preservation, today handling and expand/collapse are the widget's
+    // (and DHTMLX's) own. Read-only: drag-editing returns with the widget's
+    // per-embed edit opt-in milestone.
     let gantt_detailed_view = false;
-    let gantt_status_filters = ["Active", "Working", "Client Hold"]; 
+    let gantt_status_filters = ["Active", "Working", "Client Hold"];
     const all_gantt_statuses = ["Active", "Working", "Client Hold", "Parked", "Completed", "Invoiced", "Paid", "Canceled"];
-    
-    let portfolio_gantt_instance = null; 
-    let gantt_current_data = null; 
-    let gantt_selected_projects = new Set(); 
-    let gantt_collapsed_nodes = new Set(); 
 
-    let is_toggling_gantt_node = false;
-
-    // Scroll preservation: set by actions that re-render the Gantt but should keep
-    // the viewport (expand/collapse, date drag) rather than snapping back to today.
-    let gantt_preserve_next = false;
-    let gantt_pending_scroll = null;
+    let portfolio_gantt_widget = null;
+    let gantt_selected_projects = new Set();
 
     let sort_state = {
         'priority-overview': { col: 'company_priority', order: 'asc' },
@@ -296,29 +299,19 @@
 
         $root.find('#gantt-detailed-view').on('change', function() {
             gantt_detailed_view = $(this).is(':checked');
-            if (gantt_detailed_view && gantt_current_data) {
-                gantt_collapsed_nodes.clear();
-                gantt_current_data.projects.forEach(p => {
-                    gantt_collapsed_nodes.add('project_' + sanitizeId(p.name));
-                });
-            }
-            // Keep the current scroll position when expanding/collapsing task detail.
-            capture_gantt_scroll();
             fetch_and_render_portfolio_gantt();
         });
 
         $root.find('.view-mode-group button').on('click', function() {
             $root.find('.view-mode-group button').removeClass('active btn-secondary').addClass('btn-outline-secondary');
             $(this).addClass('active btn-secondary').removeClass('btn-outline-secondary');
-            let mode = $(this).data('view');
-            if (portfolio_gantt_instance) portfolio_gantt_instance.change_view_mode(mode);
+            if (portfolio_gantt_widget) {
+                portfolio_gantt_widget.set_zoom(GANTT_VIEW_MODE_MAP[$(this).data('view')] || "month");
+            }
         });
 
         $root.find('#gantt-today-btn').on('click', function() {
-            if (!portfolio_gantt_instance) return;
-            // Use the library's own routine (locates today via the date cells).
-            // The old code queried `.today-highlight`, which this build never emits.
-            portfolio_gantt_instance.set_scroll_position('today');
+            if (portfolio_gantt_widget) portfolio_gantt_widget.scroll_to_today();
         });
 
         $root.find('#gantt-select-all-projects').on('change', function() {
@@ -351,7 +344,7 @@
                 $root.find('#ganttProjectDropdown').text('All Projects');
             }
             $root.find('#gantt-project-menu').removeClass('show');
-            build_gantt_chart(false); 
+            fetch_and_render_portfolio_gantt();
         });
     }
 
@@ -379,393 +372,147 @@
         $root.find('#gantt-select-all-projects').prop('checked', total > 0 && checked === total);
     }
 
-    function get_fallback_gantt_data_from_dashboard_projects() {
-        const selected_statuses = new Set(gantt_status_filters || []);
-        const projects = (project_data || []).filter(p => {
-            if (p.is_active !== "Yes") return false;
-            if (p.status === "Canceled") return false;
-            // Keep the fallback in sync with the backend: client-facing work only.
-            if (!PRIORITY_PROJECT_TYPES.includes(p.project_type)) return false;
-            return selected_statuses.size === 0 || selected_statuses.has(p.status);
-        });
+    // ----- Portfolio Gantt via the embeddable widget -----
 
-        return {
-            projects,
-            tasks: []
+    const GANTT_VIEW_MODE_MAP = {
+        "Quarter Day": "quarter_day",
+        "Half Day": "half_day",
+        "Day": "day",
+        "Week": "week",
+        "Month": "month",
+    };
+
+    // Task subtree for the "Show Tasks" toggle. Mirrors the retired
+    // get_all_projects_for_gantt task query: open work only.
+    const GANTT_TASK_CHILDREN = {
+        doctype: "Task",
+        link_field: "project",
+        fields: { text: "subject", start: "exp_start_date", end: "exp_end_date", progress: "progress", parent: "parent_task" },
+        filters: { status: ["not in", ["Completed", "Canceled"]] },
+        dependencies: "depends_on",
+        order_by: "exp_start_date asc",
+    };
+
+    function gantt_root_filters() {
+        // Mirrors the retired get_all_projects_for_gantt scoping: active,
+        // client-facing project types, never Canceled. NOTE: unlike that
+        // endpoint (which read with get_all), the widget's get_gantt_data
+        // enforces the caller's Project/Task read permissions.
+        const filters = {
+            is_active: "Yes",
+            project_type: ["in", PRIORITY_PROJECT_TYPES],
+            status: gantt_status_filters.length ? ["in", gantt_status_filters] : ["!=", "Canceled"],
         };
+        if (gantt_selected_projects.size > 0) {
+            filters.name = ["in", [...gantt_selected_projects]];
+        }
+        return filters;
+    }
+
+    function gantt_widget_config() {
+        const mode = $root.find('.view-mode-group button.active').data('view') || "Month";
+        return {
+            doctype: "Project",
+            fields: { text: "project_name", start: "expected_start_date", end: "expected_end_date", progress: "percent_complete" },
+            filters: gantt_root_filters(),
+            group_by: "custom_master_project",
+            children: gantt_detailed_view ? GANTT_TASK_CHILDREN : null,
+            order_by: "expected_start_date asc",
+            limit: 1000,
+            today: true, // today column + open-at-today default view (block owns the Today button)
+            tooltip: true,
+            zoom: GANTT_VIEW_MODE_MAP[mode] || "month",
+            templates: {
+                task_class: portfolio_row_class,
+                grid_row_class: portfolio_row_class,
+            },
+            on_task_click: (id, task) => {
+                if (task && task.ref_doctype && task.ref_name) {
+                    frappe.set_route("Form", task.ref_doctype, task.ref_name);
+                }
+            },
+        };
+    }
+
+    // Level styling hooks: composite ids are prefixed G:: (Master group) /
+    // P:: (Project) / C:: (Task) by get_gantt_data. Styles live in
+    // projects_dashboard.css.
+    function portfolio_row_class(start, end, task) {
+        const id = String(task.id);
+        if (id.indexOf("G::") === 0) return "pg-master";
+        if (id.indexOf("P::") === 0) return "pg-project";
+        return "pg-task";
     }
 
     async function fetch_and_render_portfolio_gantt() {
-        let container = $root.find('#dashboard-content');
-        container.empty().html('<p class="text-muted text-center p-4"><i class="fa fa-spinner fa-spin mr-2"></i>Fetching Gantt Data...</p>');
-
-        try {
-            const res = await api_call('get_all_projects_for_gantt', { 
-                include_tasks: gantt_detailed_view ? 1 : 0, 
-                statuses: JSON.stringify(gantt_status_filters) 
-            });
-
-            if (!res.message || res.message.error || res.message.projects.length === 0) {
-                // Fall back to the project data the dashboard already loaded.
-                // This covers both an empty result and a backend error (e.g. a
-                // permission gate), so the Gantt still renders the active
-                // projects instead of showing nothing.
-                const fallback_data = get_fallback_gantt_data_from_dashboard_projects();
-
-                if (fallback_data.projects.length === 0) {
-                    container.html('<div class="alert alert-info">No projects match the current filters.</div>');
-                    portfolio_gantt_instance = null;
-                    return;
-                }
-
-                gantt_current_data = fallback_data;
-            } else {
-                gantt_current_data = res.message;
-            }
-
-            populate_projects_dropdown(gantt_current_data.projects);
-            build_gantt_chart(false);
-
-        } catch (err) {
-            console.error(err);
-            container.html('<div class="alert alert-danger">An error occurred while fetching the Gantt chart data.</div>');
-        }
-    }
-
-    function build_gantt_chart(preserve_scroll = false) {
-        if (!gantt_current_data || !gantt_current_data.projects) return;
-
-        let container = $root.find('#dashboard-content');
-        let data = gantt_current_data;
-
-        // Capture the current scroll position BEFORE the chart is torn down, so a
-        // preserve re-render restores it. Declaring these here also fixes a
-        // ReferenceError: they were used in the restore block but never declared.
-        const do_preserve = preserve_scroll || gantt_preserve_next;
-        let scroll_left = 0, scroll_top = 0;
-        if (do_preserve) {
-            if (gantt_pending_scroll) {
-                scroll_left = gantt_pending_scroll.left;
-                scroll_top = gantt_pending_scroll.top;
-            } else {
-                const existing_gc = $root.find(".gantt-container")[0];
-                if (existing_gc) { scroll_left = existing_gc.scrollLeft; scroll_top = existing_gc.scrollTop; }
-            }
-        }
-        gantt_preserve_next = false;
-        gantt_pending_scroll = null;
-
-        let filtered_projects = data.projects;
-        if (gantt_selected_projects.size > 0) {
-            filtered_projects = data.projects.filter(p => gantt_selected_projects.has(p.name));
-        }
-
-        if (filtered_projects.length === 0) {
-            container.html('<div class="alert alert-info">No projects match your selection.</div>');
-            portfolio_gantt_instance = null;
+        const container = $root.find('#dashboard-content');
+        if (!window.erpnext_enhancements || !erpnext_enhancements.gantt) {
+            container.html('<div class="alert alert-danger">The Gantt widget is not loaded. Please refresh the page.</div>');
             return;
         }
-
-        let taskMap = {};
-        let projectTaskRoots = {};
-        if (gantt_detailed_view && data.tasks) {
-            data.tasks.forEach(t => { t.children = []; taskMap[t.name] = t; });
-            data.tasks.forEach(t => {
-                if (t.parent_task && taskMap[t.parent_task]) {
-                    taskMap[t.parent_task].children.push(t);
-                } else {
-                    if (!projectTaskRoots[t.project]) projectTaskRoots[t.project] = [];
-                    projectTaskRoots[t.project].push(t);
-                }
-            });
+        let host = container.find('.pg-widget-host')[0];
+        if (!host) {
+            // Another tab replaced #dashboard-content. Destroy the orphaned
+            // widget BEFORE dropping the reference: the mount registry keys on
+            // the (now detached) host element, so a new mount on a new host
+            // would never clean it up — each leaked DHTMLX instance keeps live
+            // document listeners and a polling interval forever.
+            if (portfolio_gantt_widget) {
+                portfolio_gantt_widget.destroy();
+            }
+            portfolio_gantt_widget = null;
+            container.empty();
+            host = $('<div class="pg-widget-host"></div>').appendTo(container)[0];
         }
-
-        let mappedItems = [];
-        let masterGroups = {};
-
-        filtered_projects.forEach(p => {
-            let master = p.custom_master_project || "Independent Projects";
-            if (!masterGroups[master]) masterGroups[master] = [];
-            masterGroups[master].push(p);
-        });
-
-        const getSafeDates = (startStr, endStr, fallbackStartStr = null) => {
-            let start = startStr ? new Date(startStr) : (fallbackStartStr ? new Date(fallbackStartStr) : new Date());
-            let end = endStr ? new Date(endStr) : new Date(start.getTime() + (3*24*60*60*1000));
-            if (end < start) end = new Date(start.getTime() + (24*60*60*1000));
-            return { start, end };
-        };
-
-        const baseHues = [210, 145, 280, 35, 0, 175, 15]; 
-        let project_hue_counter = 0;
-        let dynamicStyles = "";
-
-        Object.keys(masterGroups).sort().forEach(master => {
-            let projects = masterGroups[master];
-            let is_independent = (master === "Independent Projects");
-            
-            let masterStart = null, masterEnd = null, totalProgress = 0;
-            projects.forEach(p => {
-                let d = getSafeDates(p.expected_start_date, p.expected_end_date);
-                if (!masterStart || d.start < masterStart) masterStart = d.start;
-                if (!masterEnd || d.end > masterEnd) masterEnd = d.end;
-                totalProgress += (p.percent_complete || 0);
-            });
-
-            if (!masterStart) masterStart = new Date();
-            if (!masterEnd || masterEnd < masterStart) masterEnd = new Date(masterStart.getTime() + (24*60*60*1000));
-            let avgProgress = projects.length > 0 ? (totalProgress / projects.length) : 0;
-
-            let master_id = 'master_' + sanitizeId(master);
-            let is_m_collapsed = gantt_collapsed_nodes.has(master_id);
-
-            if (!is_independent) {
-                let m_prefix = projects.length > 0 ? (is_m_collapsed ? '<tspan class="gantt-toggle-btn">▶</tspan> ' : '<tspan class="gantt-toggle-btn">▼</tspan> ') : '';
-                let m_hue = baseHues[project_hue_counter % baseHues.length]; 
-                let m_color = `hsl(${m_hue}, 75%, 35%)`;
-
-                mappedItems.push({
-                    id: master_id,
-                    name: m_prefix + master.toUpperCase(),
-                    start: moment(masterStart).format("YYYY-MM-DD"),
-                    end: moment(masterEnd).format("YYYY-MM-DD"),
-                    progress: avgProgress,
-                    custom_class: 'gantt-master-project', 
-                    isMaster: true,
-                    hasChildren: projects.length > 0
-                });
-
-                dynamicStyles += `
-                    svg.gantt [data-id="${master_id}"] .bar { fill: ${m_color} !important; }
-                    svg.gantt [data-id="${master_id}"] .bar-progress { fill: hsl(${m_hue}, 75%, 25%) !important; }
-                `;
+        try {
+            if (portfolio_gantt_widget && !portfolio_gantt_widget.destroyed) {
+                // toolbar state changed: rebuild the config in place and refetch
+                Object.assign(portfolio_gantt_widget.config, gantt_widget_config());
+                await portfolio_gantt_widget.refresh();
+            } else {
+                portfolio_gantt_widget = erpnext_enhancements.gantt.mount(host, gantt_widget_config());
+                await portfolio_gantt_widget.ready;
             }
-
-            if (!is_independent && is_m_collapsed) return; 
-
-            projects.forEach(p => {
-                let p_hue = baseHues[project_hue_counter % baseHues.length];
-                project_hue_counter++;
-
-                let pColor = `hsl(${p_hue}, 70%, 45%)`; 
-                let pDates = getSafeDates(p.expected_start_date, p.expected_end_date);
-                let p_id = 'project_' + sanitizeId(p.name);
-                let t_roots = projectTaskRoots[p.name] || [];
-                let has_tasks = gantt_detailed_view && t_roots.length > 0;
-                let is_p_collapsed = gantt_collapsed_nodes.has(p_id);
-                
-                let base_indent = is_independent ? '' : '  ';
-                let p_prefix = base_indent + (has_tasks ? (is_p_collapsed ? '<tspan class="gantt-toggle-btn">▶</tspan> ' : '<tspan class="gantt-toggle-btn">▼</tspan> ') : (is_independent ? '' : '↳ '));
-
-                mappedItems.push({
-                    id: p_id,
-                    name: p_prefix + (p.project_name || p.name),
-                    start: moment(pDates.start).format("YYYY-MM-DD"),
-                    end: moment(pDates.end).format("YYYY-MM-DD"),
-                    progress: p.percent_complete || 0,
-                    custom_class: 'gantt-project', 
-                    custom_start_date: p.expected_start_date,
-                    isProject: true,
-                    project_docname: p.name,
-                    hasChildren: has_tasks,
-                    task_color: pColor
-                });
-
-                dynamicStyles += `
-                    svg.gantt [data-id="${p_id}"] .bar { fill: ${pColor} !important; }
-                    svg.gantt [data-id="${p_id}"] .bar-progress { fill: hsl(${p_hue}, 70%, 35%) !important; }
-                    svg.gantt path[data-from="${p_id}"] { stroke: ${pColor} !important; stroke-width: 2px !important; opacity: 1 !important; }
-                `;
-
-                if (!has_tasks || is_p_collapsed) return; 
-
-                const pushTasks = (tasks, indentLevel, inheritedColorObj) => {
-                    tasks.forEach((t, t_idx) => {
-                        let tColor;
-                        if (indentLevel === 0) {
-                            const lightnesses = [55, 35, 65, 40, 50, 30];
-                            const saturations = [80, 60, 95, 70, 85, 65];
-                            let l = lightnesses[t_idx % lightnesses.length];
-                            let s = saturations[t_idx % saturations.length];
-                            tColor = {
-                                bar: `hsl(${p_hue}, ${s}%, ${l}%)`,
-                                prog: `hsl(${p_hue}, ${s}%, ${Math.max(10, l - 10)}%)`
-                            };
-                        } else {
-                            tColor = inheritedColorObj;
-                        }
-
-                        let tDates = getSafeDates(t.exp_start_date, t.exp_end_date, pDates.start);
-                        let t_id = 'task_' + sanitizeId(t.name);
-                        let has_sub = t.children && t.children.length > 0;
-                        let is_t_collapsed = gantt_collapsed_nodes.has(t_id);
-
-                        let baseIndent = is_independent ? '  ' : '    ';
-                        for(let i=0; i<indentLevel; i++) baseIndent += '  ';
-                        let t_prefix = has_sub ? (is_t_collapsed ? baseIndent + '<tspan class="gantt-toggle-btn">▶</tspan> ' : baseIndent + '<tspan class="gantt-toggle-btn">▼</tspan> ') : baseIndent + '• ';
-                        
-                        let dep_id = indentLevel === 0 ? p_id : 'task_' + sanitizeId(t.parent_task);
-
-                        mappedItems.push({
-                            id: t_id,
-                            name: t_prefix + (t.subject || t.name),
-                            start: moment(tDates.start).format("YYYY-MM-DD"),
-                            end: moment(tDates.end).format("YYYY-MM-DD"),
-                            progress: t.progress || 0,
-                            dependencies: dep_id,
-                            custom_class: 'gantt-task', 
-                            custom_start_date: t.exp_start_date || p.expected_start_date,
-                            isTask: true,
-                            task_docname: t.name,
-                            hasChildren: has_sub,
-                            task_color: tColor.bar
-                        });
-
-                        // FIX: Explicitly applying the same 3px translation to the .bar-label as the bar itself
-                        dynamicStyles += `
-                            svg.gantt [data-id="${t_id}"] .bar { fill: ${tColor.bar} !important; height: 14px !important; transform: translateY(3px) !important; opacity: 1 !important; }
-                            svg.gantt [data-id="${t_id}"] .bar-progress { fill: ${tColor.prog} !important; height: 14px !important; transform: translateY(3px) !important; }
-                            svg.gantt [data-id="${t_id}"] .bar-label { transform: translateY(3px) !important; }
-                            svg.gantt path[data-from="${t_id}"], svg.gantt path[data-to="${t_id}"] { stroke: ${tColor.bar} !important; stroke-width: 1.5px !important; opacity: 1 !important;}
-                        `;
-
-                        if (has_sub && !is_t_collapsed) {
-                            pushTasks(t.children, indentLevel + 1, tColor);
-                        }
-                    });
-                };
-
-                pushTasks(t_roots, 0, null);
-            });
-        });
-
-        $('#dynamic-gantt-colors').remove();
-        let $chartWrapper = $('<div id="gantt-chart-target" style="width: 100%; height: 600px;"></div>');
-        $chartWrapper.append(`<style id="dynamic-gantt-colors">${dynamicStyles}</style>`);
-        
-        container.empty().append($chartWrapper);
-
-        frappe.require(["/assets/erpnext_enhancements/js/project_enhancements/lib/frappe-gantt.umd.js"], () => {
-            let activeViewMode = $root.find('.view-mode-group button.active').data('view') || "Month";
-
-            portfolio_gantt_instance = new Gantt($chartWrapper[0], mappedItems, {
-                view_mode: activeViewMode,
-                auto_move_label: true,
-                // On a preserve render, suppress the library's scroll-to-today so
-                // only our manual restore (below) moves the viewport.
-                scroll_to: do_preserve ? null : "today",
-                on_click: (item) => {
-                    if (is_toggling_gantt_node) return;
-                    if (item.isProject) frappe.set_route("Form", "Project", item.project_docname);
-                    else if (item.isTask) frappe.set_route("Form", "Task", item.task_docname);
-                },
-                on_date_change: (item, start, end) => {
-                    if (!item || item.isMaster) { capture_gantt_scroll(); build_gantt_chart(true); return; }
-                    const s = moment(start).format("YYYY-MM-DD");
-                    const e2 = moment(end).format("YYYY-MM-DD");
-                    let method, args;
-                    if (item.isTask) { method = "update_task_dates_from_gantt"; args = { task_name: item.task_docname, start_date: s, end_date: e2 }; }
-                    else if (item.isProject) { method = "update_project_dates_from_gantt"; args = { project_name: item.project_docname, start_date: s, end_date: e2 }; }
-                    else return;
-                    api_call(method, args).then((r) => {
-                        if (r.message && r.message.status === "success") {
-                            frappe.show_alert({ message: __("Dates updated"), indicator: "green" });
-                        } else {
-                            frappe.show_alert({ message: __((r.message && r.message.message) || "Failed to update dates"), indicator: "red" });
-                        }
-                        // Re-fetch (to reflect cascaded successor shifts) but keep scroll.
-                        capture_gantt_scroll();
-                        fetch_and_render_portfolio_gantt();
-                    });
-                },
-                custom_popup_html: function (item) {
-                    const cleanName = item.name.replace(/<[^>]*>?/gm, '').replace(/[↳•▼▶]/g, '').trim();
-                    if (item.isMaster) {
-                        return `<div class="gantt-popup" style="padding: 10px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px;">
-                                    <h5 class="mb-1">${cleanName}</h5>
-                                    <p class="mb-0 text-muted"><strong>Overall Progress:</strong> ${Math.round(item.progress)}%</p>
-                                </div>`;
-                    }
-                    const startDate = frappe.datetime.str_to_user(item.custom_start_date);
-                    const endDate = frappe.datetime.str_to_user(item.end);
-                    const titlePrefix = item.isTask ? "Task" : "Project";
-
-                    return `
-                        <div class="gantt-popup" style="padding: 12px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 1000; position: absolute; min-width: 200px;">
-                            <h6 style="margin: 0 0 8px 0; color: var(--text-color);">${titlePrefix}: ${cleanName}</h6>
-                            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Start:</strong> ${startDate}</p>
-                            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>End:</strong> ${endDate}</p>
-                            <p style="margin: 0; font-size: 12px;"><strong>Progress:</strong> ${Math.round(item.progress)}%</p>
-                        </div>
-                    `;
-                }
-            });
-
-            $chartWrapper.on('mousedown', '.gantt-toggle-btn', function(e) {
-                is_toggling_gantt_node = true;
-            });
-
-            $chartWrapper.on('click', '.gantt-toggle-btn', function(e) {
-                e.stopPropagation(); 
-                is_toggling_gantt_node = true;
-                setTimeout(() => is_toggling_gantt_node = false, 300); 
-                
-                let wrapper = $(this).closest('.bar-wrapper');
-                let id = wrapper.attr('data-id');
-                let item = mappedItems.find(i => i.id === id);
-                
-                if (item && item.hasChildren) {
-                    if (gantt_collapsed_nodes.has(id)) gantt_collapsed_nodes.delete(id);
-                    else gantt_collapsed_nodes.add(id);
-                    build_gantt_chart(true); 
-                }
-            });
-
-            function applyColors() {
-                mappedItems.forEach(item => {
-                    if (item.task_color) {
-                        try {
-                            $chartWrapper.find(`[data-id="${item.id}"] .bar`).css('fill', item.task_color);
-                            $chartWrapper.find(`path[data-from="${item.id}"], path[data-to="${item.id}"]`).css({
-                                'stroke': item.task_color,
-                                'stroke-width': item.isTask ? '1.5px' : '2px',
-                                'opacity': '1'
-                            });
-                        } catch(e) {}
-                    }
-                });
-            }
-
-            setTimeout(applyColors, 100);
-            $chartWrapper.on('scroll mousewheel touchmove click', '.gantt-container', function() {
-                clearTimeout(window.colorRefreshTimer);
-                window.colorRefreshTimer = setTimeout(applyColors, 50);
-            });
-
-            const apply_scroll = () => {
-                const real_container = $chartWrapper.find(".gantt-container")[0];
-                if (!real_container) return;
-
-                if (do_preserve) {
-                    real_container.scrollTo({ left: scroll_left, top: scroll_top, behavior: "auto" });
-                } else {
-                    portfolio_gantt_instance.set_scroll_position('today');
-                }
-            };
-            // Run twice so a preserve-restore wins over any late library scroll.
-            setTimeout(apply_scroll, 50);
-            if (do_preserve) setTimeout(apply_scroll, 200);
-        });
+            refresh_gantt_project_options();
+        } catch (err) {
+            // the widget shows its own error overlay
+            console.error("Portfolio Gantt:", err);
+        }
     }
 
-    // Stash the current Gantt scroll position so the next build_gantt_chart()
-    // restores it (used before a refetch that empties the chart container).
-    function capture_gantt_scroll() {
-        const gc = $root.find(".gantt-container")[0];
-        if (gc) {
-            gantt_pending_scroll = { left: gc.scrollLeft, top: gc.scrollTop };
-            gantt_preserve_next = true;
+    // The project picker lists every project matching the CURRENT status
+    // scope but ignoring the project-name narrowing — a narrowed fetch (some
+    // projects unchecked) must not shrink the option list, or the unchecked
+    // ones could never be re-checked. With no selection active the chart's own
+    // response supplies the list; with one active, a light roots-only query
+    // (no name filter, no children, no grouping) keeps the options tracking
+    // status-filter changes instead of freezing at the last unnarrowed fetch.
+    function refresh_gantt_project_options() {
+        if (gantt_selected_projects.size > 0) {
+            const cfg = gantt_widget_config();
+            delete cfg.filters.name;
+            frappe.call({
+                method: "erpnext_enhancements.api.gantt.get_gantt_data",
+                args: { config: {
+                    doctype: cfg.doctype,
+                    fields: cfg.fields,
+                    filters: cfg.filters,
+                    order_by: cfg.order_by,
+                    limit: cfg.limit,
+                } },
+            }).then((r) => {
+                const tasks = (r.message && r.message.tasks) || [];
+                // single-source response: ids ARE the project names
+                populate_projects_dropdown(tasks.map(t => ({ name: t.id, project_name: t.text })));
+            }).catch(() => {});
+            return;
         }
+        const data = portfolio_gantt_widget && portfolio_gantt_widget.data;
+        if (!data) return;
+        const projects = data.tasks
+            .filter(t => String(t.id).indexOf("P::") === 0)
+            .map(t => ({ name: t.ref_name, project_name: t.text }));
+        populate_projects_dropdown(projects);
     }
 
     // ----- HELPERS & OTHER RENDERERS -----
@@ -1279,6 +1026,13 @@
             $root.find('#standard-controls').hide();
             fetch_and_render_portfolio_gantt();
         } else {
+            // Leaving the Gantt tab: the renderers below empty
+            // #dashboard-content, so tear the widget down properly first
+            // (destructor removes DHTMLX's document listeners + interval).
+            if (portfolio_gantt_widget) {
+                portfolio_gantt_widget.destroy();
+                portfolio_gantt_widget = null;
+            }
             $root.find('#gantt-controls').hide();
             $root.find('#standard-controls').show();
             

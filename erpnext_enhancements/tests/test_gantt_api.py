@@ -55,6 +55,7 @@ TASK_META = FakeMeta(
 	"Task",
 	[
 		_df("subject"),
+		_df("status", "Select"),
 		_df("project", "Link", "Project"),
 		_df("exp_start_date", "Datetime"),
 		_df("exp_end_date", "Datetime"),
@@ -70,6 +71,19 @@ DEPENDS_META = FakeMeta(
 	"Task Depends On",
 	[_df("task", "Link", "Task"), _df("subject")],
 	istable=True,
+)
+
+PROJECT_META = FakeMeta(
+	"Project",
+	[
+		_df("project_name"),
+		_df("expected_start_date", "Date"),
+		_df("expected_end_date", "Date"),
+		_df("percent_complete", "Percent"),
+		_df("status", "Select"),
+		_df("custom_master_project", "Link", "Master Project"),
+		_df("project_type", "Link", "Project Type"),
+	],
 )
 
 
@@ -101,7 +115,7 @@ def install_frappe_stub():
 
 	frappe.parse_json = parse_json
 
-	metas = {"Task": TASK_META, "Task Depends On": DEPENDS_META}
+	metas = {"Task": TASK_META, "Task Depends On": DEPENDS_META, "Project": PROJECT_META}
 
 	def get_meta(doctype):
 		if doctype in metas:
@@ -670,3 +684,275 @@ def test_config_accepts_json_string(env):
 
 	out = gantt.get_gantt_data(json.dumps(base_config()))
 	assert out["tasks"] == [] and out["links"] == []
+
+
+# ---------------------------------------------------------------------------
+# Composite mode (group_by roots + nested children)
+# ---------------------------------------------------------------------------
+
+COMPOSITE_CONFIG = {
+	"doctype": "Project",
+	"fields": {
+		"text": "project_name",
+		"start": "expected_start_date",
+		"end": "expected_end_date",
+		"progress": "percent_complete",
+	},
+	"group_by": "custom_master_project",
+	"children": {
+		"doctype": "Task",
+		"link_field": "project",
+		"fields": {
+			"text": "subject",
+			"start": "exp_start_date",
+			"end": "exp_end_date",
+			"progress": "progress",
+			"parent": "parent_task",
+		},
+		"filters": {"status": ["not in", ["Canceled"]]},
+		"dependencies": "depends_on",
+	},
+}
+
+
+def composite_config(**overrides):
+	import copy
+
+	cfg = copy.deepcopy(COMPOSITE_CONFIG)
+	cfg.update(overrides)
+	return cfg
+
+
+def _composite_get_list(calls):
+	"""Stub get_list serving Project roots, Task children and dependency rows."""
+
+	def get_list(doctype, **kwargs):
+		calls.append((doctype, kwargs))
+		if doctype == "Project":
+			return [
+				Row(
+					{
+						"name": "P1",
+						"project_name": "Fountain A",
+						"expected_start_date": "2026-01-01",
+						"expected_end_date": "2026-01-31",
+						"percent_complete": 50,
+						"custom_master_project": "MP-A",
+					}
+				),
+				Row(
+					{
+						"name": "P2",
+						"project_name": "Fountain B",
+						"expected_start_date": None,
+						"expected_end_date": None,
+						"percent_complete": 10,
+						"custom_master_project": None,
+					}
+				),
+				Row(
+					{
+						"name": "P3",
+						"project_name": "Fountain C",
+						"expected_start_date": None,
+						"expected_end_date": None,
+						"percent_complete": 0,
+						"custom_master_project": "MP-A",
+					}
+				),
+			]
+		if doctype == "Task":
+			return [
+				Row(
+					{
+						"name": "T1",
+						"subject": "Dig",
+						"exp_start_date": "2026-01-02 00:00:00",
+						"exp_end_date": "2026-01-05 00:00:00",
+						"progress": 100,
+						"parent_task": None,
+						"project": "P1",
+					}
+				),
+				Row(
+					{
+						"name": "T2",
+						"subject": "Pour",
+						"exp_start_date": "2026-01-06 00:00:00",
+						"exp_end_date": "2026-01-09 00:00:00",
+						"progress": 0,
+						"parent_task": "T1",
+						"project": "P1",
+					}
+				),
+				Row(
+					{
+						"name": "T3",
+						"subject": "Plumb",
+						"exp_start_date": "2026-01-03 00:00:00",
+						"exp_end_date": None,
+						"progress": 0,
+						"parent_task": None,
+						"project": "P2",
+					}
+				),
+				Row(
+					{
+						"name": "T4",
+						"subject": "Orphan",
+						"exp_start_date": "2026-01-03 00:00:00",
+						"exp_end_date": None,
+						"progress": 0,
+						"parent_task": None,
+						"project": "P-MISSING",
+					}
+				),
+				Row(
+					{
+						"name": "T5",
+						"subject": "Undated",
+						"exp_start_date": None,
+						"exp_end_date": None,
+						"progress": 0,
+						"parent_task": None,
+						"project": "P1",
+					}
+				),
+			]
+		# Task Depends On (child dependency links)
+		return [
+			Row({"name": "d1", "parent": "T2", "task": "T1"}),  # kept: both ends kept
+			Row({"name": "d2", "parent": "T2", "task": "T4"}),  # T4's root missing -> dropped
+		]
+
+	return get_list
+
+
+def test_composite_groups_roots_and_children(env):
+	frappe, gantt = env
+	calls = []
+	frappe.get_list = _composite_get_list(calls)
+	out = gantt.get_gantt_data(composite_config())
+	by_id = {t["id"]: t for t in out["tasks"]}
+
+	# synthetic group row from the group_by Link value
+	assert by_id["G::MP-A"]["type"] == "project"
+	assert by_id["G::MP-A"]["ref_doctype"] == "Master Project"
+	assert by_id["G::MP-A"]["parent"] == 0
+
+	# dated root parents onto its group; ungrouped root parents onto 0
+	assert by_id["P::P1"]["parent"] == "G::MP-A"
+	assert by_id["P::P1"]["ref_doctype"] == "Project" and by_id["P::P1"]["ref_name"] == "P1"
+	assert by_id["P::P2"]["parent"] == 0
+
+	# undated root WITH children -> dateless "project" container, not skipped
+	assert by_id["P::P2"]["type"] == "project"
+	assert "start_date" not in by_id["P::P2"]
+	# undated root WITHOUT children -> skipped and counted
+	assert "P::P3" not in by_id
+
+	# children: own emitted parent when present, else the root
+	assert by_id["C::T1"]["parent"] == "P::P1"
+	assert by_id["C::T2"]["parent"] == "C::T1"
+	assert by_id["C::T3"]["parent"] == "P::P2"
+	assert by_id["C::T1"]["ref_doctype"] == "Task" and by_id["C::T1"]["ref_name"] == "T1"
+
+	# T4's root was never returned -> dropped; T5 undated -> unscheduled (with P3)
+	assert "C::T4" not in by_id
+	assert out["meta"] == {"total_rows": 3, "unscheduled": 2, "dropped_children": 1}
+
+	# child dependency links are prefixed and constrained to kept children
+	assert out["links"] == [{"id": "d1", "source": "C::T1", "target": "C::T2", "type": "0"}]
+
+	# the child query was constrained to the returned roots and carried the
+	# caller's child filters
+	child_call = next(c for c in calls if c[0] == "Task")
+	assert child_call[1]["filters"]["project"] == ["in", ["P1", "P2", "P3"]]
+	assert child_call[1]["filters"]["status"] == ["not in", ["Canceled"]]
+	assert "project" in child_call[1]["fields"]
+
+
+def test_composite_rejects_root_parent_mapping(env):
+	_, gantt = env
+	cfg = composite_config()
+	cfg["fields"]["parent"] = "project_name"  # any value-bearing field
+	with pytest.raises(Exception, match="root 'parent' mapping"):
+		gantt.get_gantt_data(cfg)
+
+
+def test_children_link_field_must_point_at_root(env):
+	_, gantt = env
+	cfg = composite_config()
+	cfg["children"]["link_field"] = "parent_task"  # Link, but points at Task
+	with pytest.raises(Exception, match="link_field"):
+		gantt.get_gantt_data(cfg)
+
+
+def test_children_fieldnames_validated_against_child_meta(env):
+	frappe, gantt = env
+	frappe.get_list = _composite_get_list([])
+	cfg = composite_config()
+	cfg["children"]["fields"]["text"] = "evil_column"
+	with pytest.raises(Exception, match="Unknown field"):
+		gantt.get_gantt_data(cfg)
+
+
+def test_children_permission_denied(env):
+	frappe, gantt = env
+	frappe.has_permission = lambda doctype, *args, **kwargs: doctype != "Task"
+	frappe.get_list = _composite_get_list([])
+	with pytest.raises(frappe.PermissionError):
+		gantt.get_gantt_data(composite_config())
+
+
+def test_group_by_without_children_still_composite(env):
+	frappe, gantt = env
+	calls = []
+	frappe.get_list = _composite_get_list(calls)
+	cfg = composite_config()
+	del cfg["children"]
+	out = gantt.get_gantt_data(cfg)
+	by_id = {t["id"]: t for t in out["tasks"]}
+	assert "G::MP-A" in by_id and by_id["P::P1"]["parent"] == "G::MP-A"
+	# undated roots have no children to anchor -> both skipped
+	assert "P::P2" not in by_id and "P::P3" not in by_id
+	assert out["meta"]["unscheduled"] == 2
+	# only the Project query ran
+	assert [c[0] for c in calls] == ["Project"]
+
+
+def test_group_rows_sorted_alphabetically(env):
+	"""Group order must be stable A-Z (legacy portfolio behavior), not
+	first-appearance order, which would reshuffle with the root order_by."""
+	frappe, gantt = env
+
+	def get_list(doctype, **kwargs):
+		return [
+			Row(
+				{
+					"name": "P1",
+					"project_name": "One",
+					"expected_start_date": "2026-01-01",
+					"expected_end_date": "2026-01-05",
+					"percent_complete": 0,
+					"custom_master_project": "ZZ Program",
+				}
+			),
+			Row(
+				{
+					"name": "P2",
+					"project_name": "Two",
+					"expected_start_date": "2026-02-01",
+					"expected_end_date": "2026-02-05",
+					"percent_complete": 0,
+					"custom_master_project": "AA Program",
+				}
+			),
+		]
+
+	frappe.get_list = get_list
+	cfg = composite_config()
+	del cfg["children"]
+	out = gantt.get_gantt_data(cfg)
+	group_ids = [t["id"] for t in out["tasks"] if t["id"].startswith("G::")]
+	assert group_ids == ["G::AA Program", "G::ZZ Program"]

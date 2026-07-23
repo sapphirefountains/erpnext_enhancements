@@ -9,8 +9,8 @@ This folder is the **source of truth** for the Frappe **Custom HTML Blocks** —
 | File | Role |
 |---|---|
 | `projects_dashboard.html` | The block markup: a tabbed shell (Priority Overview · Active Internal Projects · Completed Projects · Portfolio Gantt) + search + Gantt filter controls + an empty `#dashboard-content`. |
-| `projects_dashboard.js` | Runs in the block sandbox (`root_element`). Loads the shared `ColumnSelector` + `ColumnResizer` assets, fetches via the [Project Dashboard page's](../erpnext_enhancements/project_enhancements/README.md#project-dashboard) whitelisted methods, and renders editable tables + a frappe-gantt portfolio chart (collapsible nodes, drag-to-reschedule, scroll preservation). The three list tabs support show/hide columns **and drag-to-resize column widths** (drag a header's right edge; **Reset widths** in the toolbar restores defaults) — widths persist per user in localStorage under `chb_*_widths`. Edits persist back through the same methods. |
-| `projects_dashboard.css` | Styles the block. Per-bar Gantt fill colours are injected dynamically by the JS, not defined here. |
+| `projects_dashboard.js` | Runs in the block sandbox (`root_element`). Loads the shared `ColumnSelector` + `ColumnResizer` assets, fetches via the [Project Dashboard page's](../erpnext_enhancements/project_enhancements/README.md#project-dashboard) whitelisted methods, and renders editable tables + the portfolio Gantt via the embeddable Gantt widget (`erpnext_enhancements.gantt.mount`, composite mode: Master Project groups -> Projects -> Task trees through the permission-checked `api/gantt.py::get_gantt_data`; read-only for now — drag-editing returns with the widget's edit opt-in milestone). The three list tabs support show/hide columns **and drag-to-resize column widths** (drag a header's right edge; **Reset widths** in the toolbar restores defaults) — widths persist per user in localStorage under `chb_*_widths`. Edits persist back through the same methods. |
+| `projects_dashboard.css` | Styles the block, including the Portfolio Gantt's per-level (`pg-master`/`pg-project`/`pg-task`) bar and row styling; the widget lazy-loads the DHTMLX skin itself. |
 
 ## Files — Task Dashboard (morning TV screen, v1.4.0)
 
@@ -63,4 +63,4 @@ Shortcut** row (no code change).
 
 ## Relationship to the desk Project Dashboard
 
-This Custom HTML Block is a lighter, embeddable cousin of the full **Project Dashboard** desk page. It reuses the same server endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the same shared front-end helpers (`ColumnSelector`, frappe-gantt). For the full-featured, tabbed, realtime experience, see the desk page documented in the [Project Enhancements README](../erpnext_enhancements/project_enhancements/README.md).
+This Custom HTML Block is a lighter, embeddable cousin of the full **Project Dashboard** desk page. It reuses the same server endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the same shared front-end helpers (`ColumnSelector`, the embeddable Gantt widget). For the full-featured, tabbed, realtime experience, see the desk page documented in the [Project Enhancements README](../erpnext_enhancements/project_enhancements/README.md).

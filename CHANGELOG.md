@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.165.0] - 2026-07-23
+
+### Changed
+
+- **The Projects Dashboard portfolio Gantt now renders through the
+  embeddable Gantt widget** instead of frappe-gantt. The "Projects
+  Dashboard" Custom HTML Block mounts `erpnext_enhancements.gantt.mount`
+  in the new **composite mode**: Master Project groups → Project rows →
+  Task trees, all through the permission-checked
+  `api/gantt.py::get_gantt_data`. Feature parity carried over: the
+  project-status filter, the project picker (options always come from the
+  unfiltered result set so unchecked projects stay re-checkable), the
+  "Show Tasks" toggle, view-mode zoom (Quarter Day … Month), hover
+  tooltips, per-level bar/row styling, opens-at-today with a today
+  column, and a Today button. **Deliberate changes:** read-only for now
+  (drag-to-reschedule returns with the widget's per-embed edit opt-in
+  milestone); rows come via `frappe.get_list`, so the caller's
+  Project/Task read permissions now apply (the retired
+  `get_all_projects_for_gantt` read with `get_all`); undated rows —
+  projects as well as tasks — are skipped and counted in the chart's
+  "unscheduled" note instead of drawn with fabricated fallback dates
+  (an undated project whose tasks are visible still appears, as a
+  container bar derived from them; note that on this site many projects
+  carry no expected dates, so the portfolio shows fewer bars than the
+  old chart's fabricated ones — by design).
+  The retired frappe-gantt code paths (fallback dataset, collapse-state
+  and scroll bookkeeping, dynamic color injection, dead `.gantt` CSS)
+  are removed; `get_all_projects_for_gantt` and the gantt drag-update
+  endpoints remain whitelisted but now have no JS consumers (flagged as
+  removal candidates in the module README).
+
+### Added
+
+- **Composite mode for `get_gantt_data`**: optional `group_by` (field
+  values become synthetic parent rows) and `children` (a second doctype
+  nested under each root via a validated Link `link_field`, with its own
+  field map / filters / dependencies / limit). The child doctype gets its
+  own `frappe.has_permission` gate and validated `frappe.get_list`;
+  child rows are constrained to roots the root query returned (children
+  of missing roots are dropped and counted); undated roots that still
+  anchor children are emitted as dateless `type: "project"` containers
+  (DHTMLX derives their bar) instead of silently hiding the subtree; all
+  ids are prefixed (`G::`/`P::`/`C::`) and every row carries
+  `ref_doctype`/`ref_name` for click routing. Covered by new bench-free
+  tests (33 total in `tests/test_gantt_api.py`).
+- **Widget capabilities for host-driven embeds**: `config.today`
+  (today column + default view without the widget toolbar),
+  `config.tooltip` (bundled DHTMLX tooltip extension with a safe default
+  template), `config.zoom` + `set_zoom()` (scale presets mirroring the
+  legacy view modes), `config.templates` passthrough, `set_filters()`,
+  `on_task_click(id, task)` now passing the task row, and `widget.data`
+  exposing the last response. Fixed in the same pass: the today-range
+  calculation now ignores dateless rows — a composite payload's group
+  rows previously collapsed the scale to today±7d, which made DHTMLX
+  drop every task outside it.
+
 ## [1.164.0] - 2026-07-23
 
 ### Changed

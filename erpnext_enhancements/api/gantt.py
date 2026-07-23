@@ -23,8 +23,16 @@ Security model — the config is client-supplied and therefore hostile input:
 	  permission checked) and links are kept only when BOTH ends are rows the
 	  permission-checked main query returned, so a link can never disclose the
 	  existence of a row the caller cannot read.
-	- ``limit`` is clamped to ``MAX_ROWS``; child-table filters and 4-element
-	  filter entries are rejected (out of scope for v1).
+	- composite mode (``group_by`` roots under synthetic parents and/or
+	  ``children`` nesting a second doctype under each root) applies the SAME
+	  rules per doctype: the child doctype gets its own ``has_permission``
+	  gate and ``get_list`` query, every child fieldname is validated against
+	  ITS meta, the ``link_field`` must be a Link back at the root, and child
+	  rows are constrained to roots the permission-checked root query
+	  returned (children of missing roots are dropped and counted).
+	- ``limit`` is clamped to ``MAX_ROWS`` (children to ``MAX_CHILD_ROWS``);
+	  child-table filters and 4-element filter entries are rejected (out of
+	  scope for v1).
 
 Date semantics: DHTMLX treats ``end_date`` as exclusive. ERPNext date values
 at midnight are human-inclusive ("ends on the 5th" means through the 5th), so
@@ -45,6 +53,14 @@ from frappe.utils import cint, cstr, flt, get_datetime
 
 MAX_ROWS = 1000
 DEFAULT_ROWS = 500
+MAX_CHILD_ROWS = 5000
+
+# Composite responses (``children`` / ``group_by``) prefix every id so the
+# root, child and group namespaces can never collide (e.g. a Project and a
+# Task that share a name). Single-source responses keep plain ``name`` ids.
+GROUP_ID_PREFIX = "G::"
+ROOT_ID_PREFIX = "P::"
+CHILD_ID_PREFIX = "C::"
 
 # Gantt attribute -> is it required in the field map?
 FIELD_MAP_ATTRS = {
@@ -176,59 +192,127 @@ def _resolve_dependency_source(meta, dep_fieldname):
 	return df, child_meta, link_fields[0]
 
 
+def _parse_children_config(meta, children):
+	"""Validate the composite ``children`` block (nested child rows per root).
+
+	The child doctype gets the same treatment as the root: its own
+	``frappe.has_permission`` read gate, and every fieldname (field map,
+	filters, order_by, the ``link_field``) validated against ITS meta.
+	``link_field`` must be a Link on the child doctype pointing back at the
+	root doctype — it anchors each child under its root row.
+	"""
+	if not isinstance(children, dict):
+		frappe.throw(_("Gantt 'children' must be a config object"))
+
+	child_doctype = children.get("doctype")
+	if not child_doctype or not isinstance(child_doctype, str):
+		frappe.throw(_("Gantt 'children' requires a doctype"))
+	try:
+		child_meta = frappe.get_meta(child_doctype)
+	except frappe.DoesNotExistError:
+		frappe.throw(_("Unknown child doctype in Gantt config"))
+	if child_meta.istable or child_meta.issingle:
+		frappe.throw(_("Gantt child source must be a regular doctype"))
+	if not frappe.has_permission(child_doctype, "read"):
+		frappe.throw(_("Not permitted to read {0}").format(child_doctype), frappe.PermissionError)
+
+	link_field = cstr(children.get("link_field"))
+	df = child_meta.get_field(link_field)
+	if not df or df.fieldtype != "Link" or df.options != meta.name:
+		frappe.throw(
+			_("Gantt children.link_field must be a Link field on {0} pointing at {1}").format(
+				child_doctype, meta.name
+			)
+		)
+
+	return {
+		"meta": child_meta,
+		"link_field": link_field,
+		"field_map": _parse_field_map(child_meta, children.get("fields")),
+		"filters": _sanitize_filters(child_meta, children.get("filters")),
+		"order_by": _sanitize_order_by(child_meta, children.get("order_by")),
+		"limit": min(max(cint(children.get("limit")) or MAX_CHILD_ROWS, 1), MAX_CHILD_ROWS),
+		"dependencies": children.get("dependencies") or None,
+	}
+
+
+def _with_in_filter(filters, fieldname, values):
+	"""Return ``filters`` plus an ``["in", values]`` constraint on ``fieldname``.
+
+	The constraint must win: a dict filter the caller supplied on the same
+	fieldname is replaced; list filters get one more AND entry.
+	"""
+	if isinstance(filters, list | tuple):
+		return [*filters, [fieldname, "in", values]]
+	merged = dict(filters or {})
+	merged[fieldname] = ["in", values]
+	return merged
+
+
 def _format_dt(value):
 	return value.strftime("%Y-%m-%d %H:%M")
 
 
-def _shape_tasks(rows, field_map):
-	"""Map permission-checked rows into DHTMLX task dicts.
+def _shape_progress(row, field_map):
+	return round(min(max(flt(row.get(field_map["progress"])) / 100.0, 0), 1), 4)
 
-	Returns ``(tasks, unscheduled_count)``. See the module docstring for the
-	date semantics (inclusive midnight ends, one-day fallbacks, undated rows
-	skipped but counted). Rows whose date values fail coercion (garbage in a
-	date column, driver types ``get_datetime`` cannot handle) are counted as
-	unscheduled rather than crashing the request.
+
+def _shape_row(row, field_map):
+	"""Shape ONE permission-checked row into a DHTMLX task dict, or ``None``.
+
+	``None`` means the row has no usable dates (missing, or values that fail
+	coercion — garbage in a date column, driver types ``get_datetime`` cannot
+	handle) and should be counted rather than crash the request. See the
+	module docstring for the date semantics. A mapped ``parent`` is carried
+	as the RAW field value — callers resolve/re-root it against what they
+	actually emit.
 	"""
+	try:
+		start = row.get(field_map["start"])
+		end = row.get(field_map["end"]) if field_map.get("end") else None
+		start = get_datetime(start) if start else None
+		end = get_datetime(end) if end else None
+
+		if end is not None and end.hour == end.minute == end.second == 0:
+			# midnight = date-only value = inclusive end day
+			end = end + timedelta(days=1)
+		if start and end:
+			if end <= start:
+				end = start + timedelta(days=1)
+		elif start:
+			end = start + timedelta(days=1)
+		elif end:
+			start = end - timedelta(days=1)
+		else:
+			return None
+		start_str, end_str = _format_dt(start), _format_dt(end)
+	except Exception:
+		return None
+
+	task = {
+		"id": row.name,
+		"text": cstr(row.get(field_map["text"])) or row.name,
+		"start_date": start_str,
+		"end_date": end_str,
+		"open": True,
+	}
+	if field_map.get("progress"):
+		task["progress"] = _shape_progress(row, field_map)
+	if field_map.get("parent"):
+		task["parent"] = row.get(field_map["parent"]) or 0
+	return task
+
+
+def _shape_tasks(rows, field_map):
+	"""Map rows into DHTMLX task dicts. Returns ``(tasks, unscheduled_count)``."""
 	tasks = []
 	unscheduled = 0
-
 	for row in rows:
-		try:
-			start = row.get(field_map["start"])
-			end = row.get(field_map["end"]) if field_map.get("end") else None
-			start = get_datetime(start) if start else None
-			end = get_datetime(end) if end else None
-
-			if end is not None and end.hour == end.minute == end.second == 0:
-				# midnight = date-only value = inclusive end day
-				end = end + timedelta(days=1)
-			if start and end:
-				if end <= start:
-					end = start + timedelta(days=1)
-			elif start:
-				end = start + timedelta(days=1)
-			elif end:
-				start = end - timedelta(days=1)
-			else:
-				unscheduled += 1
-				continue
-			start_str, end_str = _format_dt(start), _format_dt(end)
-		except Exception:
+		task = _shape_row(row, field_map)
+		if task is None:
 			unscheduled += 1
-			continue
-
-		task = {
-			"id": row.name,
-			"text": cstr(row.get(field_map["text"])) or row.name,
-			"start_date": start_str,
-			"end_date": end_str,
-			"open": True,
-		}
-		if field_map.get("progress"):
-			task["progress"] = round(min(max(flt(row.get(field_map["progress"])) / 100.0, 0), 1), 4)
-		if field_map.get("parent"):
-			task["parent"] = row.get(field_map["parent"]) or 0
-		tasks.append(task)
+		else:
+			tasks.append(task)
 
 	# Re-root parents against the tasks actually EMITTED — not the fetched
 	# rows. A parent that was filtered out, beyond the row cap, or skipped
@@ -269,6 +353,140 @@ def _fetch_links(meta, dep_fieldname, task_ids):
 	return links
 
 
+def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
+	"""Assemble the composite response: grouped roots + nested child rows.
+
+	Shape (all ids prefixed — see the prefix constants):
+		- ``group_by`` values become synthetic ``type: "project"`` rows (DHTMLX
+		  derives their bar from descendants); roots parent onto them.
+		- root rows keep their own dates; an UNDATED root that still anchors
+		  children is emitted as a dateless ``type: "project"`` container
+		  instead of being skipped (its subtree must stay visible).
+		- child rows parent onto their own emitted parent row (when the child
+		  field map has ``parent``) else onto their root. Children whose root
+		  row was not returned (filtered out / beyond the row cap) are dropped
+		  and counted in ``meta.dropped_children`` — an anchorless child would
+		  vanish inside DHTMLX anyway, silently.
+		- every row carries ``ref_doctype``/``ref_name`` so click handlers can
+		  route to the real document.
+	"""
+	children_cfg = None
+	child_rows = []
+	if cfg.get("children"):
+		children_cfg = _parse_children_config(meta, cfg["children"])
+		if rows:
+			link_field = children_cfg["link_field"]
+			wanted = {link_field} | set(children_cfg["field_map"].values())
+			child_rows = frappe.get_list(
+				children_cfg["meta"].name,
+				filters=_with_in_filter(children_cfg["filters"], link_field, [r.name for r in rows]),
+				fields=["name", *sorted(wanted - {"name"})],
+				order_by=children_cfg["order_by"],
+				limit_page_length=children_cfg["limit"],
+			)
+
+	unscheduled = 0
+
+	# Children first, so an undated root knows whether it still anchors a subtree.
+	shaped_children = []
+	roots_with_children = set()
+	if children_cfg:
+		for row in child_rows:
+			task = _shape_row(row, children_cfg["field_map"])
+			if task is None:
+				unscheduled += 1
+				continue
+			task["id"] = CHILD_ID_PREFIX + row.name
+			task["ref_doctype"] = children_cfg["meta"].name
+			task["ref_name"] = row.name
+			shaped_children.append((row, task))
+			roots_with_children.add(row.get(children_cfg["link_field"]))
+
+	group_link_target = None
+	if group_field:
+		gdf = meta.get_field(group_field)
+		group_link_target = gdf.options if gdf and gdf.fieldtype == "Link" else None
+
+	tasks = []
+	group_rows = {}
+	root_names = set()
+	for row in rows:
+		task = _shape_row(row, field_map)
+		if task is None:
+			if row.name not in roots_with_children:
+				unscheduled += 1
+				continue
+			task = {
+				"id": row.name,
+				"text": cstr(row.get(field_map["text"])) or row.name,
+				"type": "project",
+				"open": True,
+			}
+			if field_map.get("progress"):
+				task["progress"] = _shape_progress(row, field_map)
+		task["id"] = ROOT_ID_PREFIX + row.name
+		task["ref_doctype"] = doctype
+		task["ref_name"] = row.name
+		if group_field:
+			value = cstr(row.get(group_field))
+			if value:
+				gid = GROUP_ID_PREFIX + value
+				if gid not in group_rows:
+					group_rows[gid] = {
+						"id": gid,
+						"text": value,
+						"type": "project",
+						"open": True,
+						"parent": 0,
+					}
+					if group_link_target:
+						group_rows[gid]["ref_doctype"] = group_link_target
+						group_rows[gid]["ref_name"] = value
+				task["parent"] = gid
+			else:
+				task["parent"] = 0
+		root_names.add(row.name)
+		tasks.append(task)
+	# groups alphabetically (stable, matches the legacy portfolio chart) rather
+	# than in first-appearance order, which would reshuffle with root order_by
+	tasks = [*sorted(group_rows.values(), key=lambda group: group["text"]), *tasks]
+
+	kept_children = []
+	if children_cfg:
+		link_field = children_cfg["link_field"]
+		kept_children = [(row, task) for row, task in shaped_children if row.get(link_field) in root_names]
+		kept_ids = {task["id"] for _, task in kept_children}
+		child_has_parent = bool(children_cfg["field_map"].get("parent"))
+		for row, task in kept_children:
+			candidate = CHILD_ID_PREFIX + cstr(task.get("parent") or "") if child_has_parent else None
+			task["parent"] = candidate if candidate in kept_ids else ROOT_ID_PREFIX + row.get(link_field)
+			tasks.append(task)
+	dropped_children = len(shaped_children) - len(kept_children)
+
+	links = []
+	if cfg.get("dependencies") and root_names:
+		for link in _fetch_links(meta, cfg["dependencies"], sorted(root_names)):
+			link["source"] = ROOT_ID_PREFIX + link["source"]
+			link["target"] = ROOT_ID_PREFIX + link["target"]
+			links.append(link)
+	if children_cfg and children_cfg["dependencies"] and kept_children:
+		kept_names = [row.name for row, _ in kept_children]
+		for link in _fetch_links(children_cfg["meta"], children_cfg["dependencies"], kept_names):
+			link["source"] = CHILD_ID_PREFIX + link["source"]
+			link["target"] = CHILD_ID_PREFIX + link["target"]
+			links.append(link)
+
+	return {
+		"tasks": tasks,
+		"links": links,
+		"meta": {
+			"total_rows": len(rows),
+			"unscheduled": unscheduled,
+			"dropped_children": dropped_children,
+		},
+	}
+
+
 @frappe.whitelist()
 def get_gantt_data(config):
 	"""Return ``{tasks, links, meta}`` for one widget embed's ``config``.
@@ -284,6 +502,16 @@ def get_gantt_data(config):
 				dependency child rows.
 			``order_by`` (str, optional): "fieldname asc|desc".
 			``limit`` (int, optional): row cap, clamped to ``MAX_ROWS``.
+			``group_by`` (str, optional): fieldname whose values become
+				synthetic parent rows (composite mode; e.g. Master Project).
+			``children`` (dict, optional): nest another doctype's rows under
+				each root (composite mode) — ``doctype``, ``link_field`` (a
+				Link back at the root doctype), plus its own ``fields`` /
+				``filters`` / ``dependencies`` / ``order_by`` / ``limit``.
+
+		Composite mode (``group_by``/``children`` present) prefixes every id
+		(``G::``/``P::``/``C::``) and adds ``ref_doctype``/``ref_name`` per
+		row; a root ``parent`` mapping is not supported there.
 	"""
 	cfg = frappe.parse_json(config) or {}
 	if not isinstance(cfg, dict):
@@ -308,7 +536,17 @@ def get_gantt_data(config):
 	order_by = _sanitize_order_by(meta, cfg.get("order_by"))
 	limit = min(max(cint(cfg.get("limit")) or DEFAULT_ROWS, 1), MAX_ROWS)
 
-	query_fields = ["name", *sorted({f for f in field_map.values() if f != "name"})]
+	group_field = None
+	if cfg.get("group_by"):
+		group_field = _validate_fieldname(meta, cfg["group_by"], must_hold_value=True)
+	composite = bool(group_field or cfg.get("children"))
+	if composite and field_map.get("parent"):
+		frappe.throw(_("Gantt composite configs do not support a root 'parent' mapping"))
+
+	wanted = set(field_map.values())
+	if group_field:
+		wanted.add(group_field)
+	query_fields = ["name", *sorted(wanted - {"name"})]
 	rows = frappe.get_list(
 		doctype,
 		filters=filters,
@@ -316,6 +554,9 @@ def get_gantt_data(config):
 		order_by=order_by,
 		limit_page_length=limit,
 	)
+
+	if composite:
+		return _build_composite(doctype, meta, field_map, rows, cfg, group_field)
 
 	tasks, unscheduled = _shape_tasks(rows, field_map)
 
