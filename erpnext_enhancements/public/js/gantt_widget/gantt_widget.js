@@ -12,8 +12,8 @@
  * the entire config server-side (permissions, fieldnames, filters).
  *
  * GLOBALS SHIM: the desk already defines `window.Gantt` (the vendored
- * frappe-gantt UMD, a raw app_include_js — used by the Projects Dashboard
- * portfolio Gantt and the Task list gantt). The DHTMLX UMD assigns BOTH
+ * frappe-gantt UMD, a raw app_include_js — legacy; kept until it is formally
+ * retired). The DHTMLX UMD assigns BOTH
  * `window.Gantt` (factory) and `window.gantt` (a default singleton) while
  * evaluating. The loader therefore fetches the library source and evaluates it
  * SYNCHRONOUSLY between a snapshot and restore of those globals — an atomic
@@ -35,6 +35,8 @@
  *     limit: 500,                           // optional (server-clamped)
  *     columns: [...],                       // optional DHTMLX column defs
  *     gantt: { ... },                       // optional raw gantt.config overrides
+ *     templates: { ... },                   // optional raw gantt.templates overrides
+ *     tooltip: true,                        // optional hover tooltip (bundled ext)
  *     toolbar: {                            // optional header controls
  *       today: true,                        //   Today button + marker + default view
  *       filters: [{                         //   checkbox-dropdown value filters
@@ -42,9 +44,17 @@
  *         options: ["Open", "Working"],     //   selected: [...] to pre-narrow
  *       }],
  *     },
- *     on_task_click: (id) => {},            // optional
+ *     group_by: "custom_master_project",    // optional: composite grouping
+ *     children: { doctype, link_field, fields, ... },  // optional: nested rows
+ *     on_task_click: (id, task) => {},      // optional; composite ids are
+ *                                           //   prefixed — route via
+ *                                           //   task.ref_doctype/ref_name
  *   });
  *   w.ready.then(...); w.refresh(); w.destroy();
+ *   w.set_zoom("week");                     // quarter_day|half_day|day|week|month
+ *   w.set_filters({...});                   // replace config.filters + refetch
+ *   // other config keys (children, group_by, ...) may be mutated on
+ *   // w.config followed by w.refresh()
  *
  * Toolbar filters apply as server-side `["in", [...]]` filters (fieldnames are
  * re-validated server-side like everything else) and re-fetch on change,
@@ -145,6 +155,31 @@ frappe.provide("erpnext_enhancements.gantt");
 		return el;
 	}
 
+	// Scale presets for set_zoom(); names mirror the legacy frappe-gantt view
+	// modes so existing toolbar buttons map one-to-one.
+	const ZOOM_PRESETS = {
+		quarter_day: [
+			{ unit: "day", step: 1, format: "%d %M" },
+			{ unit: "hour", step: 6, format: "%H:%i" },
+		],
+		half_day: [
+			{ unit: "day", step: 1, format: "%d %M" },
+			{ unit: "hour", step: 12, format: "%H:%i" },
+		],
+		day: [
+			{ unit: "month", step: 1, format: "%F %Y" },
+			{ unit: "day", step: 1, format: "%d" },
+		],
+		week: [
+			{ unit: "month", step: 1, format: "%F %Y" },
+			{ unit: "week", step: 1, format: "%W" },
+		],
+		month: [
+			{ unit: "year", step: 1, format: "%Y" },
+			{ unit: "month", step: 1, format: "%M" },
+		],
+	};
+
 	// "%Y-%m-%d %H:%M" (the API's wire format). Manual parse — Safari rejects
 	// the bare "YYYY-MM-DD HH:MM" form in new Date().
 	function str_to_date(s) {
@@ -184,7 +219,10 @@ frappe.provide("erpnext_enhancements.gantt");
 		}
 
 		_today_enabled() {
-			return !!(this.config.toolbar && this.config.toolbar.today);
+			// config.today enables the marker/default view without the widget
+			// toolbar (for hosts that render their own Today button);
+			// toolbar.today additionally renders the button.
+			return !!(this.config.today || (this.config.toolbar && this.config.toolbar.today));
 		}
 
 		async _init() {
@@ -220,24 +258,40 @@ frappe.provide("erpnext_enhancements.gantt");
 				// extension is NOT in the Standard single-file bundle (its
 				// bundled extensions are only fullscreen / keyboard_navigation /
 				// quick_info / tooltip / export_api), so gantt.plugins({marker})
-				// silently no-ops there.
-				const is_today = (date) => {
+				// silently no-ops there. The check must be span-containment,
+				// not date equality: in week/month zooms a cell's date is the
+				// unit START (1st of month), which equals today one day a month.
+				const cell_holds_today = (date) => {
+					const scales = g.config.scales || [];
+					const unit = (scales.length && scales[scales.length - 1].unit) || "day";
 					const now = new Date();
-					return (
-						date.getFullYear() === now.getFullYear() &&
-						date.getMonth() === now.getMonth() &&
-						date.getDate() === now.getDate()
-					);
+					return date <= now && now < g.date.add(date, 1, unit);
 				};
 				g.templates.timeline_cell_class = (item, date) =>
-					is_today(date) ? "ee-gantt-today-col" : "";
-				g.templates.scale_cell_class = (date) => (is_today(date) ? "ee-gantt-today-col" : "");
+					cell_holds_today(date) ? "ee-gantt-today-col" : "";
+				g.templates.scale_cell_class = (date) =>
+					cell_holds_today(date) ? "ee-gantt-today-col" : "";
+			}
+			if (this.config.tooltip) {
+				// tooltip IS one of the extensions bundled in the Standard build
+				g.plugins({ tooltip: true });
+				const esc = (frappe.utils && frappe.utils.escape_html) || ((s) => String(s));
+				g.templates.tooltip_text = (start, end, task) => {
+					const dates = `${g.templates.tooltip_date_format(start)} – ${g.templates.tooltip_date_format(end)}`;
+					const progress =
+						task.progress != null ? `<br/>${Math.round(task.progress * 100)}%` : "";
+					return `<b>${esc(task.text || "")}</b><br/>${dates}${progress}`;
+				};
 			}
 			Object.assign(g.config, this.config.gantt || {});
+			Object.assign(g.templates, this.config.templates || {});
+			if (this.config.zoom && ZOOM_PRESETS[this.config.zoom]) {
+				g.config.scales = ZOOM_PRESETS[this.config.zoom];
+			}
 
 			if (this.config.on_task_click) {
 				g.attachEvent("onTaskClick", (id) => {
-					this.config.on_task_click(id);
+					this.config.on_task_click(id, g.isTaskExists(id) ? g.getTask(id) : null);
 					return true;
 				});
 			}
@@ -365,14 +419,28 @@ frappe.provide("erpnext_enhancements.gantt");
 		// ------------------------------------------------------------------
 
 		async refresh() {
+			if (this.destroyed) {
+				return;
+			}
+			if (!this.gantt) {
+				// Mount still initializing (or the library failed to load).
+				// The pending first render reads the live config, so deferring
+				// to `ready` both avoids a null deref and picks up any config
+				// mutation the caller just made.
+				return this.ready;
+			}
+			// Overlapping refreshes: only the latest requested may render, or a
+			// slow earlier response would overwrite a newer one on arrival.
+			const seq = (this._refresh_seq = (this._refresh_seq || 0) + 1);
 			const r = await frappe.call({
 				method: "erpnext_enhancements.api.gantt.get_gantt_data",
 				args: { config: this._server_config() },
 			});
-			if (this.destroyed) {
+			if (this.destroyed || seq !== this._refresh_seq) {
 				return;
 			}
 			const data = r.message || { tasks: [], links: [], meta: {} };
+			this.data = data; // last response, for hosts that build UI from it
 			// Re-renders (realtime updates, filter changes) keep the viewport;
 			// only the very first render auto-scrolls to today.
 			const scroll = this._rendered ? this.gantt.getScrollState() : null;
@@ -407,6 +475,28 @@ frappe.provide("erpnext_enhancements.gantt");
 			}
 		}
 
+		set_zoom(preset) {
+			const scales = ZOOM_PRESETS[preset];
+			if (!scales) {
+				return;
+			}
+			// Persist the preset so a call during the initial mount is not
+			// lost — _init applies config.zoom once the library is up.
+			this.config.zoom = preset;
+			if (!this.gantt) {
+				return;
+			}
+			this.gantt.config.scales = scales;
+			if (this._rendered) {
+				this.gantt.render();
+			}
+		}
+
+		set_filters(filters) {
+			this.config.filters = filters;
+			return this.refresh();
+		}
+
 		// With the today marker on, pad the scale a week past the data range
 		// and force it to include today — DHTMLX otherwise clamps the scale to
 		// the data, leaving today (marker, showDate target) out of range.
@@ -419,14 +509,17 @@ frappe.provide("erpnext_enhancements.gantt");
 				this.gantt.config.end_date = undefined;
 				return;
 			}
-			// wire-format strings sort lexicographically
-			let min = tasks[0].start_date;
-			let max = tasks[0].end_date;
+			// wire-format strings sort lexicographically. Skip dateless rows
+			// (composite group / container rows carry no dates): a range
+			// accidentally derived from `undefined` collapses to today±7d and
+			// DHTMLX then DROPS every task outside the timescale.
+			let min = null;
+			let max = null;
 			tasks.forEach((t) => {
-				if (t.start_date < min) {
+				if (t.start_date && (!min || t.start_date < min)) {
 					min = t.start_date;
 				}
-				if (t.end_date > max) {
+				if (t.end_date && (!max || t.end_date > max)) {
 					max = t.end_date;
 				}
 			});
@@ -453,6 +546,8 @@ frappe.provide("erpnext_enhancements.gantt");
 				dependencies: c.dependencies || null,
 				order_by: c.order_by || null,
 				limit: c.limit || null,
+				group_by: c.group_by || null,
+				children: c.children || null,
 			};
 		}
 
