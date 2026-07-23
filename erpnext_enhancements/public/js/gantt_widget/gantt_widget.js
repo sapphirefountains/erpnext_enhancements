@@ -76,9 +76,12 @@ frappe.provide("erpnext_enhancements.gantt");
 		return; // already initialized (double bundle evaluation)
 	}
 
+	// Only the VENDORED skin is lazy-loaded from a raw /assets path — it never
+	// changes, so the 1-year immutable cache on /assets cannot serve it stale.
+	// Our own widget CSS ships hashed in desk_addons.bundle.scss instead: as a
+	// raw path it was frozen at its v1.163.0 content (see that file's header).
 	const LIB_JS = "/assets/erpnext_enhancements/js/gantt_widget/lib/dhtmlxgantt.js";
 	const LIB_CSS = "/assets/erpnext_enhancements/css/gantt_widget/dhtmlxgantt.css";
-	const WIDGET_CSS = "/assets/erpnext_enhancements/css/gantt_widget/gantt_widget.css";
 
 	const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -89,10 +92,10 @@ frappe.provide("erpnext_enhancements.gantt");
 			return lib_promise;
 		}
 		lib_promise = (async () => {
-			// Styles go through frappe.require (it handles css; a css failure
-			// only degrades styling). The library JS deliberately does NOT —
-			// see the GLOBALS SHIM note in the file header.
-			await new Promise((resolve) => frappe.require([LIB_CSS, WIDGET_CSS], resolve));
+			// The vendored skin goes through frappe.require (it handles css; a
+			// css failure only degrades styling). The library JS deliberately
+			// does NOT — see the GLOBALS SHIM note in the file header.
+			await new Promise((resolve) => frappe.require([LIB_CSS], resolve));
 			const resp = await fetch(LIB_JS);
 			if (!resp.ok) {
 				throw new Error(`dhtmlx-gantt fetch failed (HTTP ${resp.status})`);
