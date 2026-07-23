@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.162.0] - 2026-07-23
+
+### Changed
+
+- **Fountain intake page rebranded to Sapphire Fountains, and "move" became
+  "installation" everywhere a customer reads.** The header now carries the
+  blue Sapphire wordmark (the site-hosted `/files/22-02-Sapphire-Logo-Blue.png`
+  — a public File, not an app asset, so it matches the rest of the site and
+  survives deploys), a **"Starting at $500 for installation"** badge, and the
+  inclusions list (minimum two professional technicians; pick-up from the
+  fountain's location; delivery; leveling, filling and pump speed adjustment).
+  Cactus &amp; Tropicals now appears only in the purchase-location dropdown.
+  The customer-facing invite email and SMS say "installation" too. Public
+  copy only: the URL stays `/fountain-move` so circulated invite links keep
+  working, and the doctype/desk/staff surfaces keep their internal names.
+  The logo carries its real pixel dimensions (no layout shift on slow
+  connections) and hides itself if the file is ever missing.
+
+- **Address autocomplete moved INTO the Address line 1 field** — the separate
+  "Search for the address" box is gone. The legacy `places.Autocomplete`
+  widget (which could attach to an input) is closed to new customers, and
+  `PlaceAutocompleteElement` is a sealed custom element that cannot wrap an
+  existing field — so this uses the Autocomplete **Data API**
+  (`AutocompleteSuggestion`) with a self-rendered WAI-ARIA combobox listbox
+  under the input: debounced fetches, stale-response guard, session tokens
+  renewed after each pick (billing correctness), keyboard navigation
+  (arrows/Enter/Escape), mousedown-before-blur selection, and the "Powered by
+  Google" attribution the data API's policy requires off-map. Browser autofill
+  is disabled on that one input only once suggestions actually initialise —
+  the degraded page (no key, blocked script) keeps a plain input with native
+  autofill, exactly as before.
+
 ## [1.161.0] - 2026-07-23
 
 ### Added

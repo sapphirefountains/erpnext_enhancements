@@ -47,7 +47,10 @@ def get_context(context):
 		raise frappe.DoesNotExistError
 
 	context.deploy_version = get_deploy_version()
-	context.title = "Request a Fountain Move"
+	# Public-facing name only: internally (doctype, desk, staff email) this
+	# remains the Fountain Move pipeline, and the URL stays /fountain-move so
+	# every invite link already in the wild keeps working.
+	context.title = "Request a Fountain Installation"
 
 	# Rendered straight into the date inputs' min/max attributes. The page is
 	# no_cache, so these are fresh per visit; a tab left open across midnight

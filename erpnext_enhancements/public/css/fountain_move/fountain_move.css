@@ -77,6 +77,83 @@
 	max-width: 34em;
 }
 
+/* The wordmark is nearly square (868x764), so the width cap is modest — at
+   240px it would tower over the h1. width/height attrs on the img give the
+   browser the aspect ratio, so height:auto reserves space before load. */
+.fm-logo {
+	display: block;
+	max-width: 160px;
+	width: 40%;
+	height: auto;
+	margin: 0 0 1.25rem;
+}
+
+.fm-price {
+	display: inline-block;
+	margin: 1rem 0 0.625rem;
+	padding: 0.375rem 0.875rem;
+	background: var(--fm-accent-soft);
+	color: var(--fm-accent-dark);
+	border: 1px solid var(--fm-accent);
+	border-radius: 999px;
+	font-weight: 650;
+	font-size: 1rem;
+}
+
+.fm-includes {
+	margin: 0;
+	padding: 0 0 0 1.25rem;
+	color: var(--fm-text-soft);
+	font-size: 0.9375rem;
+	line-height: 1.65;
+}
+
+/* ---------- address suggestions (inline combobox) ---------- */
+
+.fm-suggest-anchor {
+	position: relative;
+}
+
+.fm-suggest {
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 0;
+	right: 0;
+	z-index: 30;
+	background: var(--fm-surface);
+	border: 1px solid var(--fm-border-input);
+	border-radius: 10px;
+	box-shadow: var(--fm-shadow), 0 12px 28px rgba(22, 32, 42, 0.12);
+	overflow: hidden;
+}
+
+.fm-suggest-option {
+	padding: 0.625rem 0.875rem;
+	font-size: 0.9375rem;
+	color: var(--fm-text);
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.fm-suggest-option[aria-selected="true"] {
+	background: var(--fm-accent-soft);
+}
+
+.fm-suggest-footer {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0.25rem 0.625rem 0.375rem;
+	border-top: 1px solid var(--fm-border);
+	background: var(--fm-surface-sunken);
+}
+
+.fm-suggest-footer img {
+	height: 12px;
+	width: auto;
+}
+
 /* ---------- sections ---------- */
 
 .fm-section {
@@ -512,19 +589,6 @@
 .fm-reference b {
 	color: var(--fm-text);
 	font-variant-numeric: tabular-nums;
-}
-
-/* ---------- google places widget ----------
-   The widget renders in a shadow root, so only its host is stylable. Match the
-   height and radius of our own inputs so it does not read as a foreign object. */
-
-#fm-autocomplete gmp-place-autocomplete,
-#fm-autocomplete-el {
-	width: 100%;
-	--gmp-mat-color-surface: var(--fm-surface-sunken);
-	--gmp-mat-color-on-surface: var(--fm-text);
-	--gmp-mat-color-outline: var(--fm-border-input);
-	--gmp-mat-color-primary: var(--fm-accent);
 }
 
 /* ---------- reduced motion ---------- */
