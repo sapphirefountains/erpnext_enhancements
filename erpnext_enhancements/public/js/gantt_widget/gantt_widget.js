@@ -5,7 +5,15 @@
  * form script, desk page or Custom HTML Block can embed a Gantt with one call.
  * Rendering uses DHTMLX Gantt 10 Standard (MIT), vendored at
  * js/gantt_widget/lib/dhtmlxgantt.js — 600K, so it is lazy-loaded on the first
- * mount, never shipped in the global bundle. Each mount gets its own instance
+ * mount, never shipped in the global bundle.
+ *
+ * STYLES ARE PER ROOT NODE (ensure_styles): Custom HTML Blocks render inside a
+ * SHADOW ROOT, which document-level stylesheets cannot cross — the Projects
+ * Dashboard Gantt rendered completely unstyled until the skin and chrome were
+ * linked into the shadow root itself. The document always gets a copy too, so
+ * the skin's @font-face (grid expander icons) registers.
+ *
+ * Each mount gets its own instance
  * via `Gantt.getGanttInstance()`, so multiple embeds coexist on one page. Data
  * comes exclusively from the whitelisted
  * `erpnext_enhancements.api.gantt.get_gantt_data` endpoint, which re-validates
@@ -76,12 +84,63 @@ frappe.provide("erpnext_enhancements.gantt");
 		return; // already initialized (double bundle evaluation)
 	}
 
-	// Only the VENDORED skin is lazy-loaded from a raw /assets path — it never
+	// Only the VENDORED skin is loaded from a raw /assets path — it never
 	// changes, so the 1-year immutable cache on /assets cannot serve it stale.
-	// Our own widget CSS ships hashed in desk_addons.bundle.scss instead: as a
-	// raw path it was frozen at its v1.163.0 content (see that file's header).
+	// Our own chrome ships as a hashed bundle entry (as a raw path it was
+	// frozen at its v1.163.0 content); CHROME_CSS_BUNDLE is resolved through
+	// assets.json at runtime.
 	const LIB_JS = "/assets/erpnext_enhancements/js/gantt_widget/lib/dhtmlxgantt.js";
 	const LIB_CSS = "/assets/erpnext_enhancements/css/gantt_widget/dhtmlxgantt.css";
+	const CHROME_CSS_BUNDLE = "gantt_widget.bundle.css";
+	const CHROME_CSS_FALLBACK = "/assets/erpnext_enhancements/css/gantt_widget.bundle.css";
+
+	function chrome_css_href() {
+		try {
+			const resolved = frappe.assets.bundled_asset(CHROME_CSS_BUNDLE);
+			// bundled_asset returns the input unchanged when assets.json has no
+			// entry — that bare filename is not a usable URL, so fall back.
+			if (resolved && resolved.startsWith("/")) {
+				return resolved;
+			}
+		} catch (e) {
+			// fall through
+		}
+		return CHROME_CSS_FALLBACK;
+	}
+
+	// Root nodes (document or a ShadowRoot) that already carry our stylesheets.
+	// Custom HTML Blocks render inside a shadow root, and document-level styles
+	// do NOT cross that boundary — each root needs its own <link>.
+	const STYLED_ROOTS = new WeakSet();
+
+	function link_style(target, href) {
+		return new Promise((resolve) => {
+			const link = document.createElement("link");
+			link.rel = "stylesheet";
+			link.href = href;
+			// resolve either way: missing styling degrades, it must not block
+			link.onload = resolve;
+			link.onerror = resolve;
+			target.appendChild(link);
+		});
+	}
+
+	function ensure_styles(root) {
+		const jobs = [];
+		// Always style the document too, even for a shadow-DOM embed: @font-face
+		// (the skin's dhx-gantt-icons) only registers from a document-level
+		// stylesheet, so grid expander icons would otherwise be blank inside a
+		// shadow root.
+		if (!STYLED_ROOTS.has(document)) {
+			STYLED_ROOTS.add(document);
+			jobs.push(link_style(document.head, LIB_CSS), link_style(document.head, chrome_css_href()));
+		}
+		if (root && root !== document && root.nodeType === 11 && !STYLED_ROOTS.has(root)) {
+			STYLED_ROOTS.add(root);
+			jobs.push(link_style(root, LIB_CSS), link_style(root, chrome_css_href()));
+		}
+		return Promise.all(jobs);
+	}
 
 	const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -92,10 +151,10 @@ frappe.provide("erpnext_enhancements.gantt");
 			return lib_promise;
 		}
 		lib_promise = (async () => {
-			// The vendored skin goes through frappe.require (it handles css; a
-			// css failure only degrades styling). The library JS deliberately
-			// does NOT — see the GLOBALS SHIM note in the file header.
-			await new Promise((resolve) => frappe.require([LIB_CSS], resolve));
+			// Stylesheets are handled per root node by ensure_styles(), not
+			// here — a single document-level copy cannot serve a shadow-DOM
+			// embed. This only loads the library itself; it deliberately does
+			// not use frappe.require — see the GLOBALS SHIM note in the header.
 			const resp = await fetch(LIB_JS);
 			if (!resp.ok) {
 				throw new Error(`dhtmlx-gantt fetch failed (HTTP ${resp.status})`);
@@ -229,7 +288,10 @@ frappe.provide("erpnext_enhancements.gantt");
 		}
 
 		async _init() {
-			const factory = await ensure_lib();
+			// Styles first: DHTMLX measures its container at init(), so the
+			// host must already have its real height. getRootNode() puts the
+			// stylesheets inside the shadow root for Custom HTML Block embeds.
+			const [factory] = await Promise.all([ensure_lib(), ensure_styles(this.el.getRootNode())]);
 			if (this.destroyed) {
 				return;
 			}
