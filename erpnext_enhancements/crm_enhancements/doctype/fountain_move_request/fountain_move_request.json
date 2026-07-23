@@ -48,6 +48,14 @@
   "col_break_fountain",
   "fountain_photo",
   "path_photo",
+  "scheduling_section",
+  "preferred_date_1",
+  "preferred_window_1",
+  "preferred_date_2",
+  "preferred_window_2",
+  "col_break_scheduling",
+  "preferred_date_3",
+  "preferred_window_3",
   "conversion_section",
   "created_customer",
   "created_address",
@@ -365,6 +373,55 @@
    "read_only": 1
   },
   {
+   "description": "The customer's preferred move days, ranked. Preference only — nothing was checked against real availability; confirm during the quote call.",
+   "fieldname": "scheduling_section",
+   "fieldtype": "Section Break",
+   "label": "Scheduling Preference"
+  },
+  {
+   "fieldname": "preferred_date_1",
+   "fieldtype": "Date",
+   "label": "Preferred Date (First Choice)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferred_window_1",
+   "fieldtype": "Select",
+   "label": "Time Window (First Choice)",
+   "options": "\nMorning\nAfternoon",
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferred_date_2",
+   "fieldtype": "Date",
+   "label": "Preferred Date (Backup)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferred_window_2",
+   "fieldtype": "Select",
+   "label": "Time Window (Backup)",
+   "options": "\nMorning\nAfternoon",
+   "read_only": 1
+  },
+  {
+   "fieldname": "col_break_scheduling",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "preferred_date_3",
+   "fieldtype": "Date",
+   "label": "Preferred Date (Second Backup)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "preferred_window_3",
+   "fieldtype": "Select",
+   "label": "Time Window (Second Backup)",
+   "options": "\nMorning\nAfternoon",
+   "read_only": 1
+  },
+  {
    "fieldname": "conversion_section",
    "fieldtype": "Section Break",
    "label": "Conversion Outcome"
@@ -583,7 +640,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-07-21 09:00:00.000000",
+ "modified": "2026-07-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "CRM Enhancements",
  "name": "Fountain Move Request",

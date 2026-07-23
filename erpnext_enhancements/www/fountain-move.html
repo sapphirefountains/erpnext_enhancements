@@ -185,6 +185,40 @@
 		</section>
 
 		<section class="fm-section">
+			<h2>{{ _("When works best?") }}</h2>
+			<p class="fm-hint">
+				{{ _("Optional — give us up to three days that suit you, and we'll aim for them. We'll confirm the actual date and time with your quote.") }}
+			</p>
+
+			{%- for slot in [
+				{"n": 1, "label": _("First choice")},
+				{"n": 2, "label": _("Backup")},
+				{"n": 3, "label": _("Second backup")},
+			] %}
+			<div class="fm-row">
+				<div class="fm-field">
+					<label for="fm-preferred-date-{{ slot.n }}">{{ slot.label }}</label>
+					{# placeholder + pattern are inert on a real date input; they only
+					   surface in browsers that degrade type=date to plain text, where
+					   they become the only format cue and the only client-side check. #}
+					<input id="fm-preferred-date-{{ slot.n }}" name="preferred_date_{{ slot.n }}" type="date"
+					       min="{{ min_preferred_date }}" max="{{ max_preferred_date }}"
+					       placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}">
+				</div>
+				<div class="fm-field fm-field--narrow">
+					<label for="fm-preferred-window-{{ slot.n }}">{{ _("Time of day") }}</label>
+					<select id="fm-preferred-window-{{ slot.n }}" name="preferred_window_{{ slot.n }}">
+						<option value="">{{ _("Any time") }}</option>
+						<option value="Morning">{{ _("Morning") }}</option>
+						<option value="Afternoon">{{ _("Afternoon") }}</option>
+					</select>
+				</div>
+			</div>
+			{%- endfor %}
+			<p class="fm-hint">{{ _("The earliest we can aim for is a few business days out, so we have time to quote and plan the crew.") }}</p>
+		</section>
+
+		<section class="fm-section">
 			<h2>{{ _("Nearly done") }}</h2>
 
 			<label class="fm-check">

@@ -26,6 +26,8 @@ from erpnext_enhancements.crm_enhancements.fountain_move import (
 	HONEYPOT_FIELD_NAME,
 	get_contact_phone,
 	get_store_locations,
+	max_preferred_date,
+	min_preferred_date,
 )
 from erpnext_enhancements.crm_enhancements.fountain_move.invites import resolve_invite
 from erpnext_enhancements.feature_flags import fountain_move_public_form_enabled
@@ -46,6 +48,12 @@ def get_context(context):
 
 	context.deploy_version = get_deploy_version()
 	context.title = "Request a Fountain Move"
+
+	# Rendered straight into the date inputs' min/max attributes. The page is
+	# no_cache, so these are fresh per visit; a tab left open across midnight
+	# drifts a day, and the server re-validates at submit anyway.
+	context.min_preferred_date = min_preferred_date().isoformat()
+	context.max_preferred_date = max_preferred_date().isoformat()
 
 	invite = resolve_invite(frappe.form_dict.get("ref"))
 

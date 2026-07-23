@@ -575,6 +575,18 @@
 		return !field.value.trim() || !field.checkValidity();
 	}
 
+	/* An OPTIONAL field that has content but fails its constraints (an
+	   out-of-range preferred date, say). Empty optional fields are fine.
+	   badInput is checked FIRST: a keyboard-typed impossible date (Feb 31)
+	   shows in the control but reports value === "" — the value check alone
+	   would call it empty and let it vanish silently at submit. */
+	function optionalInvalid(field) {
+		if (field.required || field.type === "radio" || field.type === "checkbox") return false;
+		if (field.type === "file" || typeof field.value !== "string") return false;
+		if (field.validity && field.validity.badInput) return true;
+		return !!field.value.trim() && !field.checkValidity();
+	}
+
 	function firstInvalidField() {
 		var required = form.querySelectorAll("[required]");
 		for (var i = 0; i < required.length; i++) {
@@ -582,6 +594,10 @@
 		}
 		for (var j = 0; j < required.length; j++) {
 			if (fieldIncomplete(required[j])) return required[j];
+		}
+		var all = form.querySelectorAll("input, select");
+		for (var k = 0; k < all.length; k++) {
+			if (optionalInvalid(all[k])) return all[k];
 		}
 		return null;
 	}
@@ -609,6 +625,18 @@
 				result.invalid = field;
 			}
 		}
+		// Optional fields can still be filled-but-invalid (an out-of-range
+		// preferred date) — submitting would only bounce off the server, so
+		// they gate the button the same way, with the same named hint.
+		if (!result.invalid) {
+			var all = form.querySelectorAll("input, select");
+			for (var j = 0; j < all.length; j++) {
+				if (optionalInvalid(all[j])) {
+					result.invalid = all[j];
+					break;
+				}
+			}
+		}
 		return result;
 	}
 
@@ -634,6 +662,15 @@
 		if (field.type === "email") return "Please enter a valid email address.";
 		if (field.name === "fountain_weight_lbs") {
 			return "Please enter the weight as a whole number of pounds, from 1 to 20,000.";
+		}
+		if (field.name && field.name.indexOf("preferred_date_") === 0) {
+			if (field.validity && field.validity.badInput) {
+				return "One of your preferred dates isn't a complete, real date — please check it.";
+			}
+			return (
+				"Preferred dates need to be a few business days out (and within " +
+				"the next six months) — please pick a different day."
+			);
 		}
 		var label = form.querySelector('label[for="' + field.id + '"]');
 		var name = label ? label.textContent.replace("*", "").trim() : "one of your answers";
