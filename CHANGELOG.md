@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.167.0] - 2026-07-23
+
+### Fixed
+
+- **Projects had no expand caret at all.** DHTMLX's own dynamic branch
+  loading (`config.branch_loading` + `$has_child`) is **not implemented in
+  the Standard/MIT build** — the key sits in the config defaults and nothing
+  ever reads it — so a project whose tasks were not yet fetched rendered
+  with `gantt_blank` and could never be opened. Each unexpanded project now
+  gets a single hidden placeholder child, which is what makes DHTMLX draw
+  the caret; the real tasks replace it on expand. Verified against the
+  rendered DOM, not just the payload.
+- **Clicking a caret navigated away** instead of expanding — DHTMLX fires
+  `onTaskClick` for the expander too, so opening a project type jumped to
+  the Project Type document. Clicks landing on the tree icon no longer
+  reach the click handler, and group rows never navigate at all.
+- **The filter dropdowns were misaligned.** Bootstrap's `.custom-control`
+  absolutely positions its input, which stranded the tick as soon as a long
+  customer name wrapped to a second line. Every filter list now uses a plain
+  flex row (`.pg-check`).
+
+### Changed
+
+- **Project types no longer draw a bar on the calendar** — a type is a
+  heading, not scheduled work. The row keeps its grid entry and caret, so it
+  still expands and collapses.
+- **The toolbar was reorganised** into two aligned rows — *what* is shown
+  (search + filters) and *how* it is shown (zoom, Today, columns) with the
+  colour key — replacing the ad-hoc margin utilities that let it drift as it
+  wrapped.
+- **Week is now the default view** (was Month).
+- **PNG export removed** at request.
+
+### Added
+
+- **Find a project** — a search box filters the chart in place, without
+  leaving the dashboard.
+- **Optional grid columns** — Type / Start / End / % toggle individually
+  from a Columns dropdown and persist per user with the rest of the saved
+  view; the grid sizes itself to the columns actually shown.
+- **Mobile support** for both Gantts: toolbars stack full-width instead of
+  half-wrapping, dropdown menus stay inside the viewport, touch targets
+  grow, and the charts take 60vh. Verified at a real 375px viewport — no
+  horizontal page scroll, menus in bounds, chart rendering.
+
 ## [1.166.1] - 2026-07-23
 
 ### Fixed

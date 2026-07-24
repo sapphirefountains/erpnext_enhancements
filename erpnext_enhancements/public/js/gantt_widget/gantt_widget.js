@@ -67,7 +67,9 @@
  *   w.ready.then(...); w.refresh(); w.destroy();
  *   w.set_zoom("week");                     // quarter_day|half_day|day|week|month
  *   w.set_filters({...});                   // replace config.filters + refetch
- *   w.add_rows(tasks, links);               // merge rows (lazy branch load)
+ *   w.add_rows(tasks, links, parent_id);    // merge rows (lazy branch load;
+ *                                           //   pass parent_id to retire its
+ *                                           //   loading placeholder)
  *   w.open_task_ids();                      // currently expanded ids
  *   // other config keys (children, group_by, ...) may be mutated on
  *   // w.config followed by w.refresh()
@@ -151,6 +153,9 @@ frappe.provide("erpnext_enhancements.gantt");
 	}
 
 	const DAY_MS = 24 * 60 * 60 * 1000;
+	// Stand-in child that makes DHTMLX draw a caret on a branch whose children
+	// have not been fetched yet — see _add_placeholders().
+	const PLACEHOLDER_PREFIX = "LOADING::";
 
 	let lib_promise = null;
 
@@ -322,13 +327,15 @@ frappe.provide("erpnext_enhancements.gantt");
 			// Read-only until the edit milestone lands (per-embed opt-in then).
 			g.config.readonly = true;
 			g.config.date_format = "%Y-%m-%d %H:%i";
-			// Lazy branches: the server marks roots with `$has_child` +
-			// `open: false` (see get_gantt_data children.lazy) so DHTMLX draws a
-			// collapsed caret for children it has not loaded; opening one fires
-			// on_task_expand, whose handler feeds rows back via add_rows().
-			// open_tree_initially would force every branch open (and fire an
-			// expand for each), so it defaults off whenever lazy is in play.
-			g.config.branch_loading = !!this.config.lazy_children;
+			// Lazy branches. DHTMLX's own dynamic loading (config.branch_loading
+			// + `$has_child`) is NOT implemented in the Standard build — the key
+			// exists in the defaults and is never read — so a row with no
+			// children in the datastore renders with `gantt_blank` and the user
+			// gets no caret. Instead each unexpanded branch gets one placeholder
+			// child (see _add_placeholders), which is what makes DHTMLX draw the
+			// caret; opening it fires on_task_expand, and the real rows replace
+			// the placeholder. open_tree_initially would force every branch open
+			// (and fire an expand for each), so it defaults off when lazy.
 			g.config.open_tree_initially = !this.config.lazy_children;
 			g.config.columns = this.config.columns || [
 				{ name: "text", label: __("Task"), tree: true, width: "*" },
@@ -370,7 +377,13 @@ frappe.provide("erpnext_enhancements.gantt");
 			}
 
 			if (this.config.on_task_click) {
-				g.attachEvent("onTaskClick", (id) => {
+				g.attachEvent("onTaskClick", (id, e) => {
+					// A click on the tree expander must only expand/collapse —
+					// DHTMLX fires onTaskClick for it too, so without this the
+					// caret also navigates away to the row's document.
+					if (e && e.target && e.target.closest && e.target.closest(".gantt_tree_icon")) {
+						return true;
+					}
 					this.config.on_task_click(id, g.isTaskExists(id) ? g.getTask(id) : null);
 					return true;
 				});
@@ -543,6 +556,7 @@ frappe.provide("erpnext_enhancements.gantt");
 			this._apply_range(data.tasks);
 			this.gantt.clearAll();
 			this.gantt.parse({ data: data.tasks, links: data.links });
+			this._add_placeholders();
 			this._clear_overlays();
 			if (!data.tasks.length) {
 				this._show_overlay(
@@ -577,7 +591,7 @@ frappe.provide("erpnext_enhancements.gantt");
 		 * present are skipped, so a double expand cannot duplicate or throw.
 		 * Returns the number of tasks actually added.
 		 */
-		add_rows(tasks, links) {
+		add_rows(tasks, links, parent_id) {
 			if (!this.gantt || this.destroyed) {
 				return 0;
 			}
@@ -589,11 +603,57 @@ frappe.provide("erpnext_enhancements.gantt");
 					return true; // getLink throws when absent
 				}
 			});
-			if (!fresh.length && !fresh_links.length) {
-				return 0;
+			if (fresh.length || fresh_links.length) {
+				this.gantt.parse({ data: fresh, links: fresh_links });
 			}
-			this.gantt.parse({ data: fresh, links: fresh_links });
+			// Real children are in — retire the placeholder. Done AFTER the
+			// parse so the branch is never momentarily childless (which would
+			// make DHTMLX collapse it and drop the caret).
+			if (parent_id) {
+				this._remove_placeholder(parent_id);
+			}
 			return fresh.length;
+		}
+
+		/**
+		 * Give every not-yet-loaded branch a single placeholder child, so
+		 * DHTMLX draws a caret for it. Rows opt in by carrying a positive
+		 * `ee_child_count` (get_gantt_data sets it for `children.lazy`).
+		 * The placeholder inherits the parent's dates so a `type: "project"`
+		 * container does not derive a bogus bar from it, and is removed as
+		 * soon as the real children arrive.
+		 */
+		_add_placeholders() {
+			if (!this.config.lazy_children || !this.gantt) {
+				return;
+			}
+			const g = this.gantt;
+			const rows = [];
+			g.eachTask((task) => {
+				if (task.ee_child_count > 0 && !g.hasChild(task.id)) {
+					const start = task.start_date || new Date();
+					const end = task.end_date || new Date(start.getTime() + DAY_MS);
+					rows.push({
+						id: PLACEHOLDER_PREFIX + task.id,
+						text: __("Loading…"),
+						parent: task.id,
+						start_date: start,
+						end_date: end,
+						ee_placeholder: true,
+					});
+				}
+			});
+			if (rows.length) {
+				g.parse({ data: rows, links: [] });
+			}
+		}
+
+		/** Drop a branch's placeholder once its real children are in. */
+		_remove_placeholder(parent_id) {
+			const pid = PLACEHOLDER_PREFIX + parent_id;
+			if (this.gantt && this.gantt.isTaskExists(pid)) {
+				this.gantt.deleteTask(pid);
+			}
 		}
 
 		/** Ids currently expanded — lets a host persist/restore the open tree. */

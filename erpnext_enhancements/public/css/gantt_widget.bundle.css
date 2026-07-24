@@ -130,6 +130,39 @@
 	color: var(--red-500, #c0392b);
 }
 
+/* Small screens: the toolbar stacks rather than half-wrapping, and the host
+   gives the chart more of a short viewport. Embeds set their own height (see
+   .ee-project-gantt), so only the shared chrome is adjusted here. */
+@media (max-width: 767px) {
+	.ee-gantt-toolbar {
+		gap: 6px;
+	}
+
+	.ee-gantt-filter,
+	.ee-gantt-filter-btn {
+		width: 100%;
+	}
+
+	.ee-gantt-filter-menu {
+		width: 100%;
+		min-width: 0;
+	}
+
+	.ee-gantt-toolbar-spacer {
+		display: none;
+	}
+
+	.ee-project-gantt {
+		height: 60vh;
+		min-height: 300px;
+	}
+
+	/* comfortable touch targets in the filter menus */
+	.ee-gantt-filter-option {
+		padding: 6px 0;
+	}
+}
+
 .ee-gantt-note {
 	position: absolute;
 	right: 8px;

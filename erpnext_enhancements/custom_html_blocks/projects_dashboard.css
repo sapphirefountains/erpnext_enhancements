@@ -82,8 +82,12 @@
 .pg-widget-host .gantt_task_line.pg-task.pg-type-delivery { background: #74cdd5; border-color: #46b5bf; }
 .pg-widget-host .gantt_task_line.pg-task.pg-type-other { background: #b3b8bd; border-color: #9aa0a6; }
 
-/* --- group (Master Project / Project Type) rows --- */
-.pg-widget-host .gantt_task_line.pg-master { background: #37475a; border-color: #263241; }
+/* --- group (Project Type / Master Project) rows ---
+   Deliberately NO bar on the timeline: a type is a heading, not scheduled
+   work, and a bar spanning every project in it is just noise. The row keeps
+   its grid entry and caret, so it still expands and collapses. */
+.pg-widget-host .gantt_task_line.pg-master { display: none; }
+.pg-widget-host .gantt_row.pg-master { background: var(--control-bg, #f4f5f6); }
 
 .pg-widget-host .gantt_task_line .gantt_task_progress { background: rgba(0, 0, 0, 0.25); }
 
@@ -95,8 +99,30 @@
 .pg-widget-host .gantt_row.pg-master .gantt_tree_content { font-weight: 700; }
 .pg-widget-host .gantt_row.pg-project .gantt_tree_content { font-weight: 600; }
 
+/* ---- toolbar ------------------------------------------------------------
+   Two rows: WHAT is shown (search + filters), then HOW (zoom, today,
+   columns) with the colour key. One flex container per row with a single
+   gap, so everything stays aligned as it wraps instead of drifting on the
+   ad-hoc margin utilities it used before. */
+.pg-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+.pg-toolbar + .pg-toolbar { margin-top: 8px; }
+.pg-toolbar-view { padding-top: 8px; border-top: 1px solid var(--border-color); }
+.pg-toolbar-search { flex: 1 1 220px; max-width: 320px; min-width: 180px; }
+.pg-toolbar .custom-dropdown-toggle { font-weight: 600; text-align: left; min-width: 120px; }
+.pg-toolbar .pg-date-window { width: auto; min-width: 120px; }
+.pg-inline-check { align-items: center; white-space: nowrap; }
+.pg-toolbar .dropdown-menu { min-width: 220px; margin-top: 4px; }
+.pg-menu-scroll { max-height: 320px; overflow-y: auto; }
+#gantt-project-menu { max-height: 360px; overflow-y: auto; }
+
 /* --- colour key --- */
-.pg-legend { gap: 14px; font-size: 12px; color: var(--text-muted); }
+.pg-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-muted); margin-left: auto; }
 .pg-legend-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .pg-legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .pg-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
@@ -104,6 +130,56 @@
 .pg-swatch-overdue { background: transparent; box-shadow: 0 0 0 2px #d9534f; }
 
 .check-dropdown .dropdown-menu.show { display: block !important; }
+
+/* Filter checkbox rows. A flex <label> rather than Bootstrap's
+   .custom-control, whose absolutely-positioned input leaves the tick
+   stranded as soon as a long value (customer names) wraps to a second
+   line — which is exactly what the customer list does. */
+.pg-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 4px;
+    padding: 0;
+    font-weight: normal;
+    cursor: pointer;
+    line-height: 1.35;
+}
+.pg-check input[type="checkbox"] {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin: 2px 0 0;   /* nudge onto the first text line */
+}
+.pg-check span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;   /* long customer names wrap inside the menu */
+}
+.pg-check:hover { color: var(--text-color); }
+
+/* the loading stand-in that gives an unexpanded project its caret */
+.pg-widget-host .gantt_task_line.pg-placeholder { display: none; }
+.pg-widget-host .gantt_row.pg-placeholder .gantt_tree_content { font-style: italic; color: var(--text-muted); }
+
+/* ---- small screens -------------------------------------------------------
+   The toolbar controls go full-width so they stack cleanly instead of
+   half-wrapping, the legend drops below them, and the chart gets more of
+   the viewport (the grid narrows itself in JS via gantt_grid_width). */
+@media (max-width: 767px) {
+    .pg-toolbar-search { flex: 1 1 100%; max-width: none; }
+    .pg-toolbar > .dropdown,
+    .pg-toolbar > .dropdown > .custom-dropdown-toggle,
+    .pg-toolbar .pg-date-window { width: 100%; }
+    .pg-toolbar .dropdown-menu { width: 100%; }
+    .pg-toolbar .view-mode-group { width: 100%; display: flex; }
+    .pg-toolbar .view-mode-group .btn { flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
+    .pg-legend { margin-left: 0; width: 100%; gap: 10px; }
+    .pg-widget-host { height: 60vh; min-height: 320px; }
+    /* touch targets */
+    .pg-check { padding: 4px 0; }
+    .pg-check input[type="checkbox"] { width: 16px; height: 16px; }
+}
 
 /* Resizable dashboard tables — fixed layout makes the per-column widths the
    drag handles set authoritative (content no longer stretches a column); the
