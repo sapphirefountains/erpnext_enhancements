@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bar labels were clipped and unreadable.** Two causes: the dashboard forced
+  `height: 14px !important` on task bars, which left DHTMLX's inline
+  line-height sized for the original height so the text overflowed and was cut
+  off top and bottom; and a short bar (a one-day task in Week/Month view is a
+  few pixels wide) had its name chopped mid-word inside it. The height override
+  is gone — the lighter shade already distinguishes a task from its project —
+  and labels now render **inside the bar when they fit, beside it when they do
+  not**, using the skin's own side-label slot, with ellipsis and padding for
+  in-bar text. Side labels are recoloured for the light canvas (the skin styles
+  them for a dark one, i.e. invisible here).
 - **Extending a project's last task no longer fails validation.** ERPNext's
   `Task.validate_parent_project_dates` throws `InvalidDates` when a task ends
   after its project's `expected_end_date` — and on this site that field is

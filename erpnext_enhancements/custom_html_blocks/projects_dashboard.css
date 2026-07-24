@@ -73,8 +73,11 @@
 .pg-widget-host .gantt_task_line.pg-project.pg-type-delivery { background: #0f9aa8; border-color: #0b757f; }
 .pg-widget-host .gantt_task_line.pg-project.pg-type-other { background: #6c757d; border-color: #545b62; }
 
-/* --- task bars: lighter shade of the parent project's type colour --- */
-.pg-widget-host .gantt_task_line.pg-task { height: 14px !important; margin-top: 5px; }
+/* --- task bars: lighter shade of the parent project's type colour ---
+   NOTE: do NOT force a height here. Shrinking the bar leaves dhtmlx's inline
+   line-height sized for the original height, so the label overflows and is
+   clipped top and bottom; the lighter shade is enough to distinguish a task
+   from its project. */
 .pg-widget-host .gantt_task_line.pg-task.pg-type-build { background: #74aede; border-color: #4a90cd; }
 .pg-widget-host .gantt_task_line.pg-task.pg-type-design { background: #b394e0; border-color: #9670cf; }
 .pg-widget-host .gantt_task_line.pg-task.pg-type-service { background: #7fcf9f; border-color: #56b57f; }

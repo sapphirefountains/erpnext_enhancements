@@ -164,6 +164,11 @@ frappe.provide("erpnext_enhancements.gantt");
 	// "editable") so a source doctype that happens to have an `editable` field
 	// passed through extra_fields cannot accidentally unlock a row.
 	const EDITABLE_PROP = "ee_editable";
+	// Rough per-character advance for the skin's task font, used only to decide
+	// whether a label fits inside its bar (see the label templates in _init).
+	const LABEL_CHAR_PX = 7;
+	const LABEL_PADDING_PX = 14;
+	const cstr_len = (value) => (value == null ? 0 : String(value).length);
 
 	let lib_promise = null;
 
@@ -412,6 +417,30 @@ frappe.provide("erpnext_enhancements.gantt");
 					return `<b>${esc(task.text || "")}</b><br/>${dates}${progress}`;
 				};
 			}
+			// LABELS. A bar only a few pixels wide (a one-day task in Month
+			// view) cannot hold its own name — dhtmlx clips it mid-word inside
+			// the bar. Keep the label inside when it genuinely fits, otherwise
+			// render it beside the bar via rightside_text, which the skin
+			// positions just past the bar's right edge.
+			const label_fits = (start, end, task) => {
+				const text = cstr_len(task && task.text);
+				if (!text) {
+					return true;
+				}
+				try {
+					const width = g.posFromDate(end) - g.posFromDate(start);
+					return width >= text * LABEL_CHAR_PX + LABEL_PADDING_PX;
+				} catch (e) {
+					return true; // before the scale exists, don't second-guess
+				}
+			};
+			// Text is returned raw, exactly as dhtmlx's own default template
+			// does, so its HTML sanitising policy still applies.
+			g.templates.task_text = (start, end, task) =>
+				label_fits(start, end, task) ? task.text : "";
+			g.templates.rightside_text = (start, end, task) =>
+				label_fits(start, end, task) ? "" : task.text;
+
 			Object.assign(g.config, this.config.gantt || {});
 			Object.assign(g.templates, this.config.templates || {});
 			if (this.config.zoom && ZOOM_PRESETS[this.config.zoom]) {
