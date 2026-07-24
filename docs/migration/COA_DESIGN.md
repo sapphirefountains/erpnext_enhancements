@@ -32,7 +32,7 @@ Design ground rules (all resolved decisions binding):
 
 Conventions:
 
-- **Groups end in `00`/`000`; leaves fill within their group's range.** Every account — group and leaf — has a non-NULL number (an acceptance criterion; prod's chart was "Standard with Numbers" in name only).
+- **Group numbers are round — roots end in `000`, mid-level section groups in `00`, and the lowest sub-groups in a single trailing `0` (e.g. `1110` Cash In Hand, `2130` Sales Tax Payable, `5110` Stock Expenses, matching the `211x`/`212x`/`213x` tiers in the range table above); leaves fill within their group's range.** Every account — group and leaf — has a non-NULL number (an acceptance criterion; prod's chart was "Standard with Numbers" in name only).
 - **4-digit = balance sheet + ERPNext-system accounts; 5-digit = the business P&L** (QBO heritage). This is the TEST pilot's own convention (`4100 - Direct Income`, `50000 - Design COGS`, `5200 - Indirect Expenses`), kept deliberately.
 - **Stream-COGS leaf suffixes are uniform across all streams** (TEST's convention, extended): `x100` Materials, `x200` Subcontract Labor, `x300` Freight & Delivery, `x400` Tools & Equipment, `x500` Direct Labor, `x600` Travel, `x700` Job Insurance.
 - **Known cosmetic quirk:** ERPNext orders siblings lexicographically by number-string, so under `5000 - Expenses` the display order interleaves 4- and 5-digit children (`50000, 5110, 51000, 5200, 52000…`). The TEST pilot had the same behavior and the team accepted it; renumbering the four system accounts `5111/5112/5118/5119` was rejected because those numbers are already established on both sites.
