@@ -1,8 +1,8 @@
 [
  {
   "doctype": "Role Profile",
-  "name": "Accounts",
-  "role_profile": "Accounts",
+  "name": "Accounting",
+  "role_profile": "Accounting",
   "roles": [
    {
     "role": "Accounts Manager"
