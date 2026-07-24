@@ -93,16 +93,30 @@ def run_dunning_cycle(today=None):
 
 
 def _discover_new_failures() -> list[str]:
-    """Submitted, still-outstanding invoices flagged ``custom_stripe_payment_status
-    = "Failed"`` and not yet in a dunning cycle. That invoice-level flag is shared
-    (it is also set for one-off ACH link bounces), so ``_enroll`` re-verifies the
-    most-recent failure was an *auto-charge* before enrolling."""
+    """Submitted, still-outstanding invoices whose *auto-charge* failed and that
+    are not yet in a dunning cycle.
+
+    Scoped to invoices that actually have a failed Auto/Dunning Stripe Payment —
+    NOT the invoice-level ``custom_stripe_payment_status = "Failed"`` flag, which
+    is shared (``reconcile._on_session_async_failed`` sets it for one-off ACH
+    link bounces too, with no channel guard). Keying on that flag alone would
+    wrongly enrol — and immediately service-hold — a customer who was never on
+    autopay. Filtering on the charge channel also stops such invoices from
+    crowding out real failures within the batch cap."""
+    auto_failed = frappe.get_all(
+        "Stripe Payment",
+        filters={"status": "Failed", "channel": ["in", ["Auto", "Dunning"]], "sales_invoice": ["is", "set"]},
+        pluck="sales_invoice",
+        distinct=True,
+    )
+    if not auto_failed:
+        return []
     return frappe.get_all(
         "Sales Invoice",
         filters={
+            "name": ["in", list(set(auto_failed))],
             "docstatus": 1,
             "outstanding_amount": [">", 0],
-            "custom_stripe_payment_status": "Failed",
             "custom_dunning_state": ["is", "not set"],
         },
         pluck="name",
@@ -140,21 +154,14 @@ def _enroll(inv, today, schedule):
     if flt(invoice.outstanding_amount) <= 0:
         return  # paid between discovery and now
 
-    # The invoice-level "Failed" stamp is shared: reconcile._on_session_async_failed
-    # marks it for ANY ACH Checkout-link bounce (no channel guard), so a one-off
-    # link/ACH payment that later fails looks identical here. Dunning only owns a
-    # declined *auto-charge* — confirm the most-recent failure was on an
-    # Auto/Dunning channel, else this invoice is not ours (no enrol, no hold).
-    latest_failed = frappe.db.get_value(
+    # Discovery already scoped this to an auto-charge failure; carry the decline
+    # reason from the most-recent failed attempt onto the case for visibility.
+    original_error = frappe.db.get_value(
         "Stripe Payment",
-        {"sales_invoice": inv, "status": "Failed"},
-        ["channel", "error_message"],
+        {"sales_invoice": inv, "status": "Failed", "channel": ["in", ["Auto", "Dunning"]]},
+        "error_message",
         order_by="creation desc",
-        as_dict=True,
     )
-    if not latest_failed or latest_failed.channel not in ("Auto", "Dunning"):
-        return
-    original_error = latest_failed.error_message
     _stamp(inv, {
         "custom_dunning_state": "Active",
         "custom_dunning_attempts": 1,
