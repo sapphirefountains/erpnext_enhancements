@@ -198,7 +198,13 @@ def generate_predictive_maintenance_records():
 				"Sapphire Maintenance Record",
 				{"maintenance_contract": contract.name, "visit_label": ["is", "not set"], "docstatus": 0},
 			):
-				_draft_maintenance_record(contract)
+				_draft_maintenance_record(
+					contract,
+					scheduled_date=min(
+						(getdate(f.next_visit_date) for f in due_features if f.next_visit_date),
+						default=None,
+					),
+				)
 		else:
 			for row in due_features:
 				if frappe.db.exists(
@@ -206,7 +212,7 @@ def generate_predictive_maintenance_records():
 					{"project": contract.project, "serial_no": row.serial_no, "docstatus": 0},
 				):
 					continue
-				_draft_maintenance_record(contract, serial_no=row.serial_no)
+				_draft_maintenance_record(contract, serial_no=row.serial_no, scheduled_date=row.next_visit_date)
 
 		# Seasonal (annual) visits: the contract's flat startup/winterization
 		# fields plus its custom rows, via the single iter_seasonal_visits path.
@@ -217,7 +223,7 @@ def generate_predictive_maintenance_records():
 				"Sapphire Maintenance Record",
 				{"maintenance_contract": contract.name, "visit_label": visit["label"], "docstatus": 0},
 			):
-				_draft_maintenance_record(contract, visit_label=visit["label"])
+				_draft_maintenance_record(contract, visit_label=visit["label"], scheduled_date=today)
 			visit["stamp"](today.year)
 
 	# 2. Legacy fallback for projects without an Active contract: Sales Order
@@ -250,12 +256,22 @@ def generate_predictive_maintenance_records():
 				"serial_no": item.custom_serial_no,
 				"docstatus": 0
 			}):
-				# Create the Maintenance Record
+				# Create the Maintenance Record (dispatched: scheduled date + site technician)
+				from erpnext_enhancements.api.maintenance_dispatch import (
+					assign_to_technician,
+					default_technician_for,
+					resolve_scheduled_date,
+				)
+
 				maintenance_record = frappe.new_doc("Sapphire Maintenance Record")
 				maintenance_record.customer = so_customer
 				maintenance_record.project = so_project
 				maintenance_record.serial_no = item.custom_serial_no
+				maintenance_record.scheduled_visit_date = resolve_scheduled_date(item.custom_next_predictive_visit, None)
+				maintenance_record.technician = default_technician_for(so_project)
 				maintenance_record.insert(ignore_permissions=True)
+				if maintenance_record.technician:
+					assign_to_technician(maintenance_record.name, maintenance_record.technician)
 
 				frappe.logger().info(f"Generated predictive Maintenance Record for serial_no {item.custom_serial_no} in project {so_project}")
 
@@ -393,15 +409,29 @@ def suggest_truck_restocks():
 		)
 
 
-def _draft_maintenance_record(contract, serial_no=None, visit_label=None):
-	"""Insert a bare draft visit record for a contract (header fields only)."""
+def _draft_maintenance_record(contract, serial_no=None, visit_label=None, scheduled_date=None):
+	"""Insert a draft visit record for a contract, dispatched (date + technician).
+
+	Stamps the Scheduled Visit Date (feature due date shifted to a preferred
+	day) and the site's Default Technician, then creates a Frappe assignment.
+	"""
+	from erpnext_enhancements.api.maintenance_dispatch import (
+		assign_to_technician,
+		default_technician_for,
+		resolve_scheduled_date,
+	)
+
 	record = frappe.new_doc("Sapphire Maintenance Record")
 	record.customer = contract.customer
 	record.project = contract.project
 	record.maintenance_contract = contract.name
 	record.serial_no = serial_no
 	record.visit_label = visit_label
+	record.scheduled_visit_date = resolve_scheduled_date(scheduled_date, contract.get("project_contract"))
+	record.technician = default_technician_for(contract.project)
 	record.insert(ignore_permissions=True)
+	if record.technician:
+		assign_to_technician(record.name, record.technician)
 	frappe.logger().info(
 		f"Generated predictive Maintenance Record for contract {contract.name}"
 		f" ({serial_no or visit_label or 'site visit'})"

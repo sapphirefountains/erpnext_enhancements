@@ -7,6 +7,7 @@
  "field_order": [
   "project",
   "customer",
+  "default_technician",
   "safety_instructions",
   "access_codes",
   "wrapup_instructions",
@@ -32,6 +33,13 @@
    "label": "Customer",
    "options": "Customer",
    "read_only": 1
+  },
+  {
+   "description": "The technician who owns this site. Newly drafted visits for this project are assigned to them (record Technician + a Frappe assignment).",
+   "fieldname": "default_technician",
+   "fieldtype": "Link",
+   "label": "Default Technician",
+   "options": "User"
   },
   {
    "fieldname": "safety_instructions",

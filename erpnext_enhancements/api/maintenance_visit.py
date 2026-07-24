@@ -61,6 +61,90 @@ def _get_record(record):
     return doc
 
 
+def _clocked_into_project(user, project):
+    """True if ``user``'s Employee has an Open/Paused Job Interval on ``project``.
+
+    A technician has at most one active kiosk interval at a time, so this is a
+    reliable "is actually on-site for this job" signal. Used to let a substitute
+    who is covering a site take ownership of a visit pre-assigned (dispatched) to
+    the site's default technician, so clock autofill and attribution follow the
+    real performer rather than the planned one.
+    """
+    if not user or not project:
+        return False
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        return False
+    return bool(frappe.db.exists("Job Interval", {
+        "employee": employee,
+        "project": project,
+        "status": ["in", ["Open", "Paused"]],
+    }))
+
+
+def _claim_visit(doc):
+    """Stamp the opening technician onto a draft visit when appropriate.
+
+    ``technician`` drives clock autofill (``_job_interval``) and the kiosk
+    Today's Visits key, so the person actually performing the work should own the
+    record. A Maintenance User opener claims when the visit is unassigned, or —
+    for a visit pre-dispatched to a site's default technician — when the opener is
+    clocked into the project and that assigned technician is NOT (a substitute
+    on-site takes over from an absent tech). A supervisor merely peeking (not
+    clocked in) never claims, and an assigned tech actively clocked in is never
+    displaced. Evaluated on every open (not just first instantiation) because a
+    substitute usually reads the site briefing before clocking in, then reopens
+    after clock-in to take the visit.
+
+    Returns the previously-assigned technician (``str``, possibly ``""`` for an
+    unassigned draft) when it changed ``technician``, else ``None``. A truthy
+    return means a *named* technician was displaced, so the caller re-points that
+    technician's dispatch assignment (after saving). Consumable source warehouses
+    need no realignment here: only the tech-independent feature warehouse is baked
+    at instantiation, and the vehicle fallback is resolved from the final
+    ``technician`` at submit (see get_visit_payload / build_stock_entry_rows).
+    """
+    user = frappe.session.user
+    if doc.technician == user or "Maintenance User" not in frappe.get_roles():
+        return None
+    if not doc.technician:
+        doc.technician = user
+        return ""  # was unassigned — no prior owner / assignment to move
+    if _clocked_into_project(user, doc.project) and not _clocked_into_project(doc.technician, doc.project):
+        prior = doc.technician
+        doc.technician = user
+        return prior
+    return None
+
+
+def _reassign_todo(doc, prior):
+    """Move the dispatch assignment (ToDo + share) from a displaced technician to
+    the visit's new owner.
+
+    Dispatch stamps the planned technician and a Frappe assignment at draft time
+    (tasks._draft_maintenance_record); when a substitute takes over, the ToDo must
+    follow or "assigned to me" / workload views keep listing the visit under the
+    planned tech. Best-effort — a missing or duplicate assignment never blocks the
+    open. Call AFTER doc.save() so the save can't clobber the ``_assign`` field
+    these writes update.
+    """
+    from frappe.desk.form.assign_to import add as _assign_add, remove as _assign_remove
+
+    try:
+        _assign_remove(doc.doctype, doc.name, prior)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (remove) failed")
+    try:
+        _assign_add({
+            "assign_to": [doc.technician],
+            "doctype": doc.doctype,
+            "name": doc.name,
+            "description": _("Scheduled maintenance visit."),
+        })
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (add) failed")
+
+
 def _check_not_stale(doc, modified):
     """Optimistic lock: reject writes based on a version someone else replaced."""
     if modified and str(doc.modified) != str(modified):
@@ -103,13 +187,15 @@ def get_visit_bootstrap(record):
     """
     doc = _get_record(record)
 
-    tables_empty = not any(doc.get(table) for table in PAYLOAD_TABLE_MAP)
-    if (
+    dirty = False
+    can_write = (
         doc.docstatus == 0
-        and tables_empty
         and (doc.project or doc.maintenance_contract)
         and frappe.has_permission(doc.doctype, ptype="write", doc=doc)
-    ):
+    )
+
+    # First open of a bare scheduler draft: instantiate the template's rows.
+    if can_write and not any(doc.get(table) for table in PAYLOAD_TABLE_MAP):
         payload = get_visit_payload(
             project=doc.project,
             serial_no=doc.serial_no,
@@ -125,11 +211,23 @@ def get_visit_bootstrap(record):
         if appended:
             if payload.get("template"):
                 doc.template = payload["template"]
-            # A tech opening the visit claims it (clock autofill + Today's
-            # Visits key on technician); a supervisor peeking must not.
-            if not doc.technician and "Maintenance User" in frappe.get_roles():
-                doc.technician = frappe.session.user
-            doc.save()
+            dirty = True
+
+    # Ownership claim — see _claim_visit. Evaluated on every open of a writable
+    # draft (not only at first instantiation), so a substitute who reads the
+    # briefing before clocking in still claims when they reopen after clock-in.
+    prior_tech = _claim_visit(doc) if can_write else None
+    if prior_tech is not None:
+        dirty = True
+
+    if dirty:
+        doc.save()
+
+    # A substitute displacing a pre-assigned technician: move the dispatch ToDo
+    # too (after save, so it isn't clobbered). An unassigned draft (prior "")
+    # had no assignment, so there is nothing to move.
+    if prior_tech:
+        _reassign_todo(doc, prior_tech)
 
     return {
         "record": doc.as_dict(),

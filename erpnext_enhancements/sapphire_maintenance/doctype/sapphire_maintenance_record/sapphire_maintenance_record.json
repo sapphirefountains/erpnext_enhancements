@@ -15,6 +15,8 @@
   "template",
   "visit_label",
   "technician",
+  "scheduled_visit_date",
+  "dispatch_digest_sent_on",
   "clock_in_time",
   "clock_out_time",
   "paused_duration",
@@ -83,6 +85,21 @@
    "in_list_view": 1,
    "label": "Technician",
    "options": "User"
+  },
+  {
+   "description": "Dispatch date for this visit — stamped by the scheduler from the feature's due date, shifted to a preferred visit day. Feeds the Day Board and the morning technician digest.",
+   "fieldname": "scheduled_visit_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled Visit Date"
+  },
+  {
+   "description": "Date this visit was last included in a morning technician digest. Same-day re-runs skip it (at-most-once/day); if the visit is rescheduled to a later day it re-enters that day's digest.",
+   "fieldname": "dispatch_digest_sent_on",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Dispatch Digest Sent On",
+   "read_only": 1
   },
   {
    "fieldname": "clock_in_time",
