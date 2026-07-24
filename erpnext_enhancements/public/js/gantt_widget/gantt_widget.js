@@ -81,8 +81,12 @@
  * scale so today is always inside the range; later refreshes (realtime,
  * filter changes) preserve the scroll position instead.
  *
- * Widgets are read-only. `config.editable` is reserved for a later milestone
- * (per-embed opt-in) and currently logs a warning and stays read-only.
+ * EDITING is per-embed opt-in via `config.editable` ({ dates, progress }) and
+ * DEFAULT-DENY per row: dhtmlx's global `config.readonly` stays true and only
+ * rows the server reports as writable (`meta.can_write`) are marked editable,
+ * so group rows, loading placeholders and other doctypes can never be dragged.
+ * A drag is optimistic — dhtmlx moves the bar before `onAfterTaskDrag` — so the
+ * pre-drag state is snapshotted and restored if the write is refused.
  * Re-mounting onto a container that already hosts a widget destroys the old
  * instance first, so callers may simply mount again on every form refresh.
  */
@@ -156,6 +160,10 @@ frappe.provide("erpnext_enhancements.gantt");
 	// Stand-in child that makes DHTMLX draw a caret on a branch whose children
 	// have not been fetched yet — see _add_placeholders().
 	const PLACEHOLDER_PREFIX = "LOADING::";
+	// Per-row edit opt-in. A custom property name (not dhtmlx's default
+	// "editable") so a source doctype that happens to have an `editable` field
+	// passed through extra_fields cannot accidentally unlock a row.
+	const EDITABLE_PROP = "ee_editable";
 
 	let lib_promise = null;
 
@@ -232,6 +240,27 @@ frappe.provide("erpnext_enhancements.gantt");
 
 	// Scale presets for set_zoom(); names mirror the legacy frappe-gantt view
 	// modes so existing toolbar buttons map one-to-one.
+	// Compact, unambiguous scale label: "27 Jul". Deliberately day-then-short-
+	// month rather than a numeric format — a bare number under a month header
+	// reads as a day of that month, which is exactly how the old week scale
+	// (DHTMLX "%W", the ISO WEEK NUMBER) misled: weeks 32-35 sat under
+	// "August 2026" looking like impossible dates.
+	const MONTHS_SHORT = [
+		"Jan",
+		"Feb",
+		"Mar",
+		"Apr",
+		"May",
+		"Jun",
+		"Jul",
+		"Aug",
+		"Sep",
+		"Oct",
+		"Nov",
+		"Dec",
+	];
+	const short_date = (date) => `${date.getDate()} ${MONTHS_SHORT[date.getMonth()]}`;
+
 	const ZOOM_PRESETS = {
 		quarter_day: [
 			{ unit: "day", step: 1, format: "%d %M" },
@@ -272,15 +301,14 @@ frappe.provide("erpnext_enhancements.gantt");
 			this.gantt = null;
 			this.destroyed = false;
 			this._rendered = false;
+			this._edits_in_flight = 0;
+			this._refresh_pending = false;
+			this._drag_snapshot = null;
 			// fieldname -> Set of selected options (all selected by default)
 			this._filter_state = {};
 			this._toolbar_filters().forEach((f) => {
 				this._filter_state[f.fieldname] = new Set(f.selected || f.options || []);
 			});
-			if (this.config.editable) {
-				// eslint-disable-next-line no-console
-				console.warn("erpnext_enhancements.gantt: editable embeds are not implemented yet; staying read-only");
-			}
 			this.ready = this._init();
 			this.ready.catch((e) => {
 				// eslint-disable-next-line no-console
@@ -324,8 +352,22 @@ frappe.provide("erpnext_enhancements.gantt");
 			const g = factory.getGanttInstance();
 			this.gantt = g;
 
-			// Read-only until the edit milestone lands (per-embed opt-in then).
+			// DEFAULT-DENY EDITING. config.readonly stays true and individual
+			// rows opt in via EDITABLE_PROP: dhtmlx's isReadonly() is
+			//   task[editable_property] ? false : (task[readonly_property] || config.readonly)
+			// so a row marked editable wins over the global flag, and anything
+			// not marked stays locked. Leaving config.readonly true also keeps
+			// the grid's "+" add-task button hidden — that one checks the raw
+			// config rather than isReadonly(), so flipping the global would
+			// expose task creation we do not implement.
 			g.config.readonly = true;
+			g.config.editable_property = EDITABLE_PROP;
+			const edit = this.config.editable || {};
+			g.config.drag_move = !!edit.dates;
+			g.config.drag_resize = !!edit.dates;
+			g.config.drag_progress = !!edit.progress;
+			g.config.drag_links = !!edit.links;
+			g.config.details_on_dblclick = false; // no built-in lightbox
 			g.config.date_format = "%Y-%m-%d %H:%i";
 			// Lazy branches. DHTMLX's own dynamic loading (config.branch_loading
 			// + `$has_child`) is NOT implemented in the Standard build — the key
@@ -385,6 +427,30 @@ frappe.provide("erpnext_enhancements.gantt");
 						return true;
 					}
 					this.config.on_task_click(id, g.isTaskExists(id) ? g.getTask(id) : null);
+					return true;
+				});
+			}
+			if (edit.dates || edit.progress) {
+				// Snapshot before the drag so a rejected write can be rolled
+				// back: onAfterTaskDrag has already mutated the task in place,
+				// and the only hook with a built-in revert (onBeforeTaskChanged)
+				// cannot wait for an async round trip.
+				g.attachEvent("onBeforeTaskDrag", (id, mode) => {
+					if (!g.isTaskExists(id)) {
+						return false;
+					}
+					const task = g.getTask(id);
+					this._drag_snapshot = {
+						id,
+						mode,
+						start_date: task.start_date,
+						end_date: task.end_date,
+						progress: task.progress,
+					};
+					return true;
+				});
+				g.attachEvent("onAfterTaskDrag", (id, mode) => {
+					this._commit_drag(id, mode);
 					return true;
 				});
 			}
@@ -538,6 +604,13 @@ frappe.provide("erpnext_enhancements.gantt");
 				// mutation the caller just made.
 				return this.ready;
 			}
+			// A reload mid-edit would wipe the optimistic bar (and race the
+			// write). Defer it until the edit settles — realtime updates land
+			// here constantly on the dashboard.
+			if (this._edits_in_flight > 0) {
+				this._refresh_pending = true;
+				return;
+			}
 			// Overlapping refreshes: only the latest requested may render, or a
 			// slow earlier response would overwrite a newer one on arrival.
 			const seq = (this._refresh_seq = (this._refresh_seq || 0) + 1);
@@ -555,6 +628,7 @@ frappe.provide("erpnext_enhancements.gantt");
 			const scroll = this._rendered ? this.gantt.getScrollState() : null;
 			this._apply_range(data.tasks);
 			this.gantt.clearAll();
+			this._apply_editability(data);
 			this.gantt.parse({ data: data.tasks, links: data.links });
 			this._add_placeholders();
 			this._clear_overlays();
@@ -653,6 +727,104 @@ frappe.provide("erpnext_enhancements.gantt");
 			const pid = PLACEHOLDER_PREFIX + parent_id;
 			if (this.gantt && this.gantt.isTaskExists(pid)) {
 				this.gantt.deleteTask(pid);
+			}
+		}
+
+		/**
+		 * Mark which rows may be dragged, before the data is parsed.
+		 * Default-deny: a row is editable only when the embed asked for editing,
+		 * the server says this user can write that doctype (`meta.can_write` —
+		 * a per-DOCTYPE hint; the write endpoint still checks the specific
+		 * document), and the row is a real record. Group rows, lazy-loading
+		 * placeholders and anything without a ref are never editable.
+		 */
+		_apply_editability(data) {
+			const edit = this.config.editable || {};
+			if (!edit.dates && !edit.progress && !edit.links) {
+				return;
+			}
+			const can_write = (data.meta && data.meta.can_write) || {};
+			(data.tasks || []).forEach((task) => {
+				if (task.ee_placeholder || task.type === "project" || !task.ref_doctype || !task.ref_name) {
+					return;
+				}
+				if (can_write[task.ref_doctype]) {
+					task[EDITABLE_PROP] = true;
+				}
+			});
+		}
+
+		/**
+		 * Persist a finished drag. The bar has already moved on screen (dhtmlx
+		 * mutates the task in place before onAfterTaskDrag), so this is an
+		 * optimistic update: on refusal the pre-drag snapshot is restored.
+		 */
+		async _commit_drag(id, mode) {
+			const snapshot = this._drag_snapshot;
+			this._drag_snapshot = null;
+			if (!this.gantt || this.destroyed || !this.gantt.isTaskExists(id)) {
+				return;
+			}
+			const task = this.gantt.getTask(id);
+			if (!task.ref_doctype || !task.ref_name) {
+				return;
+			}
+
+			const to_wire = this.gantt.date.date_to_str("%Y-%m-%d %H:%i");
+			const changes = {};
+			if (mode === "progress") {
+				changes.progress = task.progress || 0;
+			} else {
+				changes.start = to_wire(task.start_date);
+				changes.end = to_wire(task.end_date);
+			}
+
+			const rollback = (message) => {
+				if (snapshot && this.gantt && !this.destroyed && this.gantt.isTaskExists(id)) {
+					const live = this.gantt.getTask(id);
+					live.start_date = snapshot.start_date;
+					live.end_date = snapshot.end_date;
+					live.progress = snapshot.progress;
+					this.gantt.updateTask(id);
+				}
+				if (message) {
+					frappe.show_alert({ message: message, indicator: "red" }, 7);
+				}
+			};
+
+			this._edits_in_flight += 1;
+			try {
+				const r = await frappe.call({
+					method: "erpnext_enhancements.api.gantt.update_gantt_row",
+					args: {
+						config: this._server_config(),
+						ref_doctype: task.ref_doctype,
+						ref_name: task.ref_name,
+						changes: changes,
+						modified: task.ee_modified || null,
+					},
+				});
+				const result = (r && r.message) || {};
+				if (result.status === "success") {
+					task.ee_modified = result.modified;
+					if (this.config.on_edited) {
+						this.config.on_edited(task, result);
+					}
+				} else if (result.status === "conflict") {
+					rollback(result.message || __("Changed by someone else"));
+					this.refresh();
+				} else {
+					rollback(result.message || __("Could not save the change"));
+				}
+			} catch (e) {
+				// a throw (permission, validation) surfaces its own message
+				rollback(null);
+			} finally {
+				this._edits_in_flight -= 1;
+				if (this._refresh_pending) {
+					this._refresh_pending = false;
+					this.refresh();
+				}
 			}
 		}
 

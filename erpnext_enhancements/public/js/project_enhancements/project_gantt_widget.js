@@ -105,6 +105,10 @@ frappe.ui.form.on("Project", {
 				},
 				filters: { project: docname },
 				dependencies: "depends_on",
+				// Drag to reschedule / resize / set progress. Per-row default-deny:
+				// only rows the server reports writable become draggable, and the
+				// write endpoint re-checks the specific Task.
+				editable: { dates: true, progress: true },
 				order_by: "exp_start_date asc",
 				limit: 1000,
 				toolbar: {

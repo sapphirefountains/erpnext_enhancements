@@ -671,6 +671,10 @@
             extra_fields: ["project_type", "status", "customer"],
             children: GANTT_TASK_CHILDREN,
             lazy_children: true,
+            // Task rows only: Project bars are derived (expected_start/end are
+            // read-only and recomputed from tasks by sync_project_dates_from_tasks),
+            // and the widget never marks group rows editable.
+            editable: { dates: true, progress: true },
             order_by: "expected_start_date asc",
             limit: 1000,
             today: true, // today column + open-at-today default (block owns the button)
