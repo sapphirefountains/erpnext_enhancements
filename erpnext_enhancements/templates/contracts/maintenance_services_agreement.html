@@ -13,7 +13,7 @@
 <p>{% set _o = service_options.get("package") %}  {{ cb(_o and _o.included) }}  Seasonal Startup + Winterization Package  –  {{ money(_o.price if _o else None) }} per year</p>
 <p>  [ ]  As-Needed / On-Call Service  –  {{ money(None) }} per hour (minimum 1 hour)</p>
 <p>  [ ]  Custom Plan  –  see Exhibit A for details</p>
-<p><b>Annual Service Fee Total (if applicable): {{ money(None) }}</b></p>
+<p><b>Annual Service Fee Total (if applicable): {{ money(doc.annual_maintenance_fee) }}</b></p>
 <h1>1. PARTIES</h1>
 <p>This Maintenance Services Agreement (&quot;Agreement&quot;) is entered into between Sapphire Fountains, LLC, a Utah limited liability company (&quot;Service Provider&quot;), and the Client identified above (&quot;Client&quot;). Service Provider agrees to provide the maintenance services selected above, and Client agrees to pay for such services in accordance with this Agreement.</p>
 <h1>2. SCOPE OF SERVICES</h1>
@@ -55,7 +55,7 @@
 <p>3.3  Client shall ensure unobstructed access to the water feature during scheduled service windows. If Service Provider is unable to access the site, the visit may be forfeited or rescheduled at Service Provider&#x27;s discretion; the service fee may still apply.</p>
 <h1>4. FEES AND PAYMENT</h1>
 <p>4.1  Client agrees to pay for services at the rates selected in the Service Plan Selection above.</p>
-<p>4.2  Invoices shall be issued: [ ] Per visit  [ ] Monthly  [ ] Quarterly  [ ] Annually (prepaid).</p>
+<p>4.2  Invoices shall be issued: {{ cb(doc.invoicing_frequency=="Per Visit") }} Per visit  {{ cb(doc.invoicing_frequency=="Monthly") }} Monthly  {{ cb(doc.invoicing_frequency=="Quarterly") }} Quarterly  {{ cb(doc.invoicing_frequency=="Annually") }} Annually (prepaid).</p>
 <p>4.3  Credit Card on File — Required and Automatic Charge. Client must keep a valid credit or debit card on file at all times and complete the Credit Card Authorization Form (Exhibit B) before services begin. Client authorizes Service Provider to charge the card on file for all amounts due under this Agreement. Upon completion of each visit or service, the card on file will be charged automatically and a &quot;Paid&quot; invoice will be emailed to Client — no separate billing notice is required. If the card is declined, a $35.00 declined-transaction fee applies and Client must provide updated payment information within five (5) business days to avoid service suspension. Client shall keep card information current throughout the term of this Agreement.</p>
 <p>4.4  Service Provider reserves the right to suspend services for accounts more than thirty (30) days past due or for which no valid card on file exists. Service Provider may require prepayment by certified funds if Client has two or more declined transactions.</p>
 <p>4.5  Rates are subject to annual adjustment with thirty (30) days&#x27; written notice to Client. Continued use of services after the effective date of a rate change constitutes acceptance.</p>
@@ -78,7 +78,7 @@
 <p>8.3  Service Provider shall not be responsible for pre-existing conditions, deferred maintenance, or damage caused by factors outside its control (e.g., freeze damage when winterization was declined, vandalism, or acts of nature).</p>
 <h1>9. TERM AND RENEWAL</h1>
 <p>9.1  This Agreement shall begin on the Agreement Start Date and continue for an initial term of:</p>
-<p>[ ] One (1) Year    [ ] Two (2) Years    [ ] Month-to-Month    [ ] Other: {{ blank(30) }}</p>
+<p>{{ cb(doc.initial_term=="One (1) Year") }} One (1) Year    {{ cb(doc.initial_term=="Two (2) Years") }} Two (2) Years    {{ cb(doc.initial_term=="Month-to-Month") }} Month-to-Month    {{ cb(doc.initial_term=="Other") }} Other: {{ blank(30) }}</p>
 <p>9.2  Unless either Party provides written notice of non-renewal at least thirty (30) days prior to the end of the then-current term, this Agreement shall automatically renew for successive one-year terms at the then-current service rates.</p>
 <p>9.3  Month-to-month agreements may be terminated by either Party with thirty (30) days&#x27; written notice.</p>
 <h1>10. TERMINATION</h1>

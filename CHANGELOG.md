@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.171.0] - 2026-07-24
+
+### Added
+
+- **Maintenance Services Agreement — term & fees are captured and printed.** An
+  Initial Term (§9.1) field drives the operational contract's End Date; the
+  printed agreement's invoicing frequency (§4.2), Annual Service Fee Total and
+  term checkboxes now render from the record instead of static blanks. The annual
+  fee auto-computes from the included, priced service options by visit frequency
+  (per-visit standard × visits/year, seasonal per-event, package per-year;
+  derive-unless-overridden, left blank when a per-visit plan has no concrete
+  cadence), and new maintenance contracts seed each option's unit and the
+  standard per-visit price from the maintenance-fee Item.
+- **Signed → operational handoff automation.** Signing a maintenance agreement
+  auto-drafts the operational Sapphire Maintenance Contract (draft only —
+  activation stays the human gate); the handoff also prefills covered features
+  from the project's Serial Nos when there is no Maintenance Sales Order and
+  resolves the default form template.
+- **Contract renewal reminder.** A 30-day "Days Before" Notification warns the
+  Projects Manager before a fixed-term contract's End Date, so a contract does
+  not silently lapse now that End Date drives the daily auto-expire.
+- **Maintenance Profile auto-stub on activation.** Activating a contract creates
+  the site's Maintenance Profile if missing (access codes prefilled from the
+  agreement's gate/key fields) and raises a ToDo to add the safety notes and the
+  coordinates that power the Time Kiosk geofence. Broadened Profile permissions
+  to Projects Manager / Maintenance Supervisor / Maintenance User.
+- **Customer service-report portal.** Enabled the `/maintenance-records` portal,
+  scoped per customer (a customer sees only their own submitted visits via a new
+  permissions module + `permission_query_conditions` / `has_permission` hooks).
+  Optionally emails the service report (Maintenance Record Print) to the
+  customer's primary contact on finalize — Settings-gated, **off by default**.
+- **Declined auto-charge alert (Stripe).** A failed automatic off-session charge
+  now notifies Accounts Managers and stamps the Sales Invoice `Failed` instead of
+  ageing silently in AR — covering both the synchronous card-decline path and
+  async (ACH) failures via the `payment_intent.payment_failed` webhook.
+
+### Fixed
+
+- **Notification fixtures imported disabled.** Every record in
+  `fixtures/notification.json` now sets `enabled: 1` explicitly; without it the
+  fixtures imported disabled (and were re-disabled on every migrate), so the
+  existing maintenance/call notifications — and the new renewal reminder — could
+  silently never fire.
+
 ## [1.170.1] - 2026-07-24
 
 ### Fixed

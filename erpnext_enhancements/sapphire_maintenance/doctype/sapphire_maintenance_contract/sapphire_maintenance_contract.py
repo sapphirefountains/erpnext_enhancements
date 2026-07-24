@@ -28,7 +28,7 @@ template and visit shape onto the contract in one pick (form JS).
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import nowdate
+from frappe.utils import add_days, add_years, getdate, nowdate
 
 # Project Contract uses a slightly different frequency vocabulary; "Custom"
 # has no fixed interval, so it maps to blank (per-feature manual choice).
@@ -49,11 +49,16 @@ MONTHS = [
 STARTUP_LABEL = "Seasonal Startup"
 WINTERIZATION_LABEL = "Winterization"
 
+# Fixed-term labels (§9.1) that derive an End Date; Month-to-Month / Other /
+# blank leave End Date manual, and a blank End Date never auto-expires.
+INITIAL_TERM_YEARS = {"One (1) Year": 1, "Two (2) Years": 2}
+
 
 class SapphireMaintenanceContract(Document):
 	def validate(self):
 		self._check_single_active_contract()
 		self._materialize_feature_defaults()
+		self._derive_end_date()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
 				_("No Sales Order is linked — per-visit invoicing will fall back to the project's Maintenance Sales Order."),
@@ -76,6 +81,36 @@ class SapphireMaintenanceContract(Document):
 			if not row.next_visit_date:
 				row.next_visit_date = self.start_date or nowdate()
 
+	def _derive_end_date(self):
+		"""Derive End Date from a fixed year term (§9.1).
+
+		A one/two-year term ends the day before the anniversary of Start Date,
+		so the next term begins on the anniversary (matching the paper
+		agreement's successive one-year renewals). Month-to-Month, Other, or a
+		blank term leave End Date untouched — the scheduler's auto-expire keys
+		on End Date, so a blank one simply never expires.
+
+		Re-derives when Start Date or the term changes, but never clobbers a
+		manual override (e.g. a forward renewal): End Date is only recomputed
+		while it still equals what the previous inputs would have derived.
+		"""
+		years = INITIAL_TERM_YEARS.get(self.get("initial_term"))
+		if not (years and self.start_date):
+			return
+		derived = add_days(add_years(getdate(self.start_date), years), -1)
+		if not self.end_date:
+			self.end_date = derived
+			return
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		prev_years = INITIAL_TERM_YEARS.get(before.get("initial_term"))
+		if not (prev_years and before.get("start_date")):
+			return
+		prev_derived = add_days(add_years(getdate(before.get("start_date")), prev_years), -1)
+		if getdate(self.end_date) == getdate(prev_derived):
+			self.end_date = derived
+
 	def _check_single_active_contract(self):
 		"""The scheduler and visit forms resolve "the" Active contract for a
 		project, so two Active contracts on one project would be ambiguous."""
@@ -91,6 +126,69 @@ class SapphireMaintenanceContract(Document):
 					self.project, other
 				)
 			)
+
+	def on_update(self):
+		self._ensure_maintenance_profile()
+
+	def _ensure_maintenance_profile(self):
+		"""On activation, stub the site's Maintenance Profile if it is missing.
+
+		The Profile (safety notes, access codes, and the site coordinates that
+		power the Time Kiosk's geofenced clock-in) is otherwise created by hand
+		and easily forgotten. Creates it once per project (the doctype is unique
+		on project), prefilling access codes from the signed agreement, and
+		raising a ToDo to fill the safety notes and coordinates. Never touches an
+		existing (possibly hand-edited) Profile.
+		"""
+		if self.status != "Active" or not self.project:
+			return
+		if frappe.db.exists("Sapphire Maintenance Profile", {"project": self.project}):
+			return
+
+		access_codes = None
+		if self.project_contract:
+			legal = frappe.db.get_value(
+				"Project Contract", self.project_contract, ["gate_code", "key_location"], as_dict=True
+			)
+			if legal:
+				parts = [
+					f"Gate/Entry: {legal.gate_code}" if legal.gate_code else None,
+					f"Key: {legal.key_location}" if legal.key_location else None,
+				]
+				access_codes = " | ".join(p for p in parts if p) or None
+				if access_codes:
+					access_codes = access_codes[:140]  # Profile.access_codes is Data(140)
+
+		try:
+			profile = frappe.new_doc("Sapphire Maintenance Profile")
+			profile.project = self.project
+			profile.access_codes = access_codes
+			profile.insert(ignore_permissions=True)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Auto-stub Maintenance Profile failed")
+			return
+
+		try:
+			frappe.get_doc(
+				{
+					"doctype": "ToDo",
+					"allocated_to": self.get("owner") or frappe.session.user,
+					"reference_type": "Sapphire Maintenance Profile",
+					"reference_name": profile.name,
+					"description": _(
+						"New maintenance site {0}: add safety instructions and site coordinates "
+						"(coordinates power the Time Kiosk's clock-in suggestion)."
+					).format(self.project),
+				}
+			).insert(ignore_permissions=True)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Maintenance Profile ToDo failed")
+
+		frappe.msgprint(
+			_("Stubbed a Maintenance Profile for {0} — add its safety notes and coordinates.").format(self.project),
+			indicator="blue",
+			alert=True,
+		)
 
 
 def get_active_contract(project):
@@ -259,6 +357,20 @@ def make_contract_from_project_contract(source_name):
 			doc.sales_order = so_name
 			_append_features_from_sales_order(doc, so_name)
 
+		# No Maintenance Sales Order? Fall back to the project's own water-feature
+		# Serial Nos so the covered-feature grid arrives filled (the same source
+		# the verbal-arrangement path uses) instead of forcing a manual "Add Water
+		# Features" run on every signed-agreement handoff.
+		if not doc.get("covered_features"):
+			_append_features_from_project_serials(doc, contract.project)
+
+	if not doc.default_template and (doc.project or doc.customer):
+		from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+			resolve_template,
+		)
+
+		doc.default_template = resolve_template(project=doc.project, customer=doc.customer)
+
 	return doc
 
 
@@ -329,6 +441,7 @@ def _apply_project_contract(doc, contract):
 	"""Copy the legal agreement's operational terms onto the contract doc."""
 	doc.project_contract = contract.name
 	doc.start_date = doc.start_date or contract.agreement_start_date or contract.contract_date
+	doc.initial_term = doc.initial_term or contract.get("initial_term")
 	doc.invoicing_frequency = contract.invoicing_frequency or "Per Visit"
 
 	default_frequency = PROJECT_CONTRACT_FREQUENCY_MAP.get(contract.visit_frequency)
@@ -347,3 +460,49 @@ def _apply_project_contract(doc, contract):
 	if "winterization" in included or "package" in included:
 		doc.winterization = 1
 		doc.winterization_month = _month_or_default(contract.winterization_month, "October")
+
+
+def autocreate_maintenance_contract_on_signed(doc, method=None):
+	"""Draft the operational Maintenance Contract when its agreement is Signed.
+
+	Project Contract ``on_submit`` + ``on_update_after_submit`` hook, covering
+	both signing paths: submitting an already-"Signed" draft, and the
+	post-submit "Mark as Signed" button. Fires only for a maintenance agreement
+	that has a project and no live (Draft/Active) Maintenance Contract, so
+	re-saves, amendments, cancelled/expired predecessors and non-maintenance
+	contracts never double-create. The draft is left for a human to review and
+	set Active; activation stays the gate.
+	"""
+	if doc.get("template_key") != "maintenance" or doc.get("status") != "Signed" or not doc.get("project"):
+		return
+	# Post-submit updates fire on every save — act only on the edge into Signed.
+	# The submit event (docstatus 0->1) is itself one-shot, so it needs no guard.
+	if method == "on_update_after_submit":
+		before = doc.get_doc_before_save()
+		if before and before.get("status") == "Signed":
+			return
+	if frappe.db.exists(
+		"Sapphire Maintenance Contract", {"project": doc.project, "status": ["in", ["Draft", "Active"]]}
+	):
+		return
+	try:
+		operational = make_contract_from_project_contract(doc.name)
+		operational.insert(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Auto-create Maintenance Contract on Signed failed")
+		frappe.msgprint(
+			_(
+				"Could not auto-draft the operational Maintenance Contract for this agreement — "
+				"create it manually via Create > Maintenance Contract. (Details logged.)"
+			),
+			indicator="red",
+			alert=True,
+		)
+		return
+	frappe.msgprint(
+		_("Drafted Maintenance Contract {0} from this signed agreement — review it and set it Active.").format(
+			frappe.get_link_to_form("Sapphire Maintenance Contract", operational.name)
+		),
+		indicator="green",
+		alert=True,
+	)

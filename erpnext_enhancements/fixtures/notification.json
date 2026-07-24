@@ -1,6 +1,7 @@
 [
   {
     "doctype": "Notification",
+    "enabled": 1,
     "name": "Maintenance Review Needed",
     "channel": "Email",
     "subject": "Review required for Maintenance Record {{ doc.name }}",
@@ -17,6 +18,7 @@
   },
   {
     "doctype": "Notification",
+    "enabled": 1,
     "name": "Maintenance Finalized",
     "channel": "Email",
     "subject": "Maintenance Completed: {{ doc.name }}",
@@ -36,6 +38,7 @@
   },
   {
     "doctype": "Notification",
+    "enabled": 1,
     "name": "Maintenance Reading Out of Range",
     "channel": "Email",
     "subject": "Water chemistry out of range: {{ doc.name }} ({{ doc.project }})",
@@ -52,6 +55,7 @@
   },
   {
     "doctype": "Notification",
+    "enabled": 1,
     "name": "High Escalation Risk Call",
     "channel": "Email",
     "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
@@ -69,6 +73,7 @@
   },
   {
     "doctype": "Notification",
+    "enabled": 1,
     "name": "Compliance Flag on Call",
     "channel": "Email",
     "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
@@ -81,6 +86,25 @@
     "recipients": [
       {
         "receiver_by_role": "Call Center Supervisor"
+      }
+    ]
+  },
+  {
+    "doctype": "Notification",
+    "enabled": 1,
+    "name": "Maintenance Contract Renewal Due",
+    "channel": "Email",
+    "subject": "Maintenance contract renewal due: {{ doc.name }} ({{ doc.customer }})",
+    "document_type": "Sapphire Maintenance Contract",
+    "event": "Days Before",
+    "date_changed": "end_date",
+    "days_in_advance": 30,
+    "condition": "doc.status == 'Active'",
+    "send_to_all_assignees": 0,
+    "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. Unless this contract is renewed (extend the term / adjust the rate), the daily scheduler will mark it Expired on {{ doc.end_date }} and stop generating visits.\n\nRenew it or send the client a non-renewal notice now.",
+    "recipients": [
+      {
+        "receiver_by_role": "Projects Manager"
       }
     ]
   }

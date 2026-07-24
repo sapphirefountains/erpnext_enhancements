@@ -133,6 +133,8 @@ def charge_saved_method(
 		sp.db_set("error_message", error_snippet(str(exc)))
 		frappe.db.commit()
 		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: off-session charge failed")
+		if channel == "Auto":
+			_alert_failed_autocharge(sp, str(exc))
 		frappe.throw(f"Off-session charge failed: {error_snippet(str(exc), 200)}")
 
 	sp.db_set("stripe_payment_intent", pi.get("id"))
@@ -147,9 +149,54 @@ def charge_saved_method(
 	else:
 		sp.db_set("status", "Failed")
 		sp.db_set("error_message", f"PaymentIntent status: {status}")
+		if channel == "Auto":
+			_alert_failed_autocharge(sp, f"PaymentIntent status: {status}")
 	frappe.db.commit()
 	sp.reload()
 	return {"stripe_payment": sp.name, "status": sp.status, "payment_intent": pi.get("id")}
+
+
+def _alert_failed_autocharge(sp, reason):
+	"""Alert Accounts and stamp the invoice when an automatic charge fails.
+
+	Mirrors the payout-failure alert (payouts._notify_review). Without this a
+	declined card on a maintenance auto-charge only left an Error Log line while
+	the Sales Invoice silently aged in AR. Best-effort — never raises into the
+	charge flow; commits so the alert survives the caller's frappe.throw.
+	"""
+	try:
+		from erpnext_enhancements.stripe_payments.core.checkout import _stamp_invoice
+		from erpnext_enhancements.stripe_payments.core.payouts import _accounts_managers
+
+		if sp.get("sales_invoice"):
+			_stamp_invoice(sp.sales_invoice, "Failed")
+
+		amount = f"{sp.amount} {(sp.currency or 'USD')}"
+		inv = f" for invoice {sp.sales_invoice}" if sp.get("sales_invoice") else ""
+		subject = f"Auto-charge FAILED: {sp.customer} ({amount})"
+		content = (
+			f"The saved card on file for {sp.customer} was declined on an automatic charge{inv} "
+			f"({amount}).<br><br>Reason: {error_snippet(reason or 'no reason given', 200)}<br><br>"
+			f"Stripe Payment {sp.name}. The invoice remains outstanding — follow up on the card on file."
+		)
+		recipients = _accounts_managers()
+		for user in recipients:
+			frappe.get_doc(
+				{
+					"doctype": "Notification Log",
+					"subject": subject,
+					"email_content": content,
+					"document_type": "Sales Invoice" if sp.get("sales_invoice") else "Stripe Payment",
+					"document_name": sp.sales_invoice or sp.name,
+					"for_user": user,
+					"type": "Alert",
+				}
+			).insert(ignore_permissions=True)
+		if not recipients:
+			frappe.log_error(f"{subject}: {content}", "Stripe: auto-charge failure (no Accounts Manager)")
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: auto-charge failure alert failed")
 
 
 def auto_charge_on_invoice_submit(doc, method=None):
