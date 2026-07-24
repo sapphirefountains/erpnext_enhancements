@@ -308,9 +308,10 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 			               section_title, serial_no},
 			"consumables": Chemical Dosing rows {item, item_name, uom, qty: 0,
 			               default_qty, qty_step, warehouse, section,
-			               section_title, serial_no} (warehouse = feature's
-			               chemical warehouse -> technician's vehicle ->
-			               settings default),
+			               section_title, serial_no} (warehouse = the feature's
+			               on-site chemical store only; the technician-vehicle ->
+			               settings-default fallback is deferred to submit in
+			               build_stock_entry_rows, keyed on the final technician),
 		}
 	"""
 	contract = None
