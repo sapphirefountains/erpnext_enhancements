@@ -10,11 +10,15 @@
  * the Portfolio Gantt tab (rendered by the embeddable Gantt widget — DHTMLX — via
  * erpnext_enhancements.gantt.mount; the widget lazy-loads its own skin CSS).
  *
- * THEME: all chrome colours use Frappe desk variables so the block tracks the
- * active theme automatically — Frappe Light (data-theme="light") and Timeless
- * Night (data-theme="dark"). Like the widget itself, the Gantt canvas stays on
- * the light DHTMLX skin in both themes; the pg-* level fills are saturated
- * literals that read on it.
+ * THEME: all chrome colours (tabs, tables, toolbar, dropdowns, legend) use
+ * Frappe desk variables so the block tracks the active theme automatically —
+ * Frappe Light (data-theme="light") and Timeless Night (data-theme="dark").
+ * Like the widget itself, the Gantt CANVAS stays on the light DHTMLX skin in
+ * both themes, so anything drawn on it — `.pg-widget-host .gantt_*` bar fills,
+ * grid rows and grid text — uses LITERAL light-safe colours, never desk
+ * variables that flip under Timeless Night (a var(--control-bg) grid row goes
+ * dark and clashes with the skin's dark grid text). Chrome = desk vars;
+ * canvas = literals.
  */
 .project-dashboard-container {
     background: var(--card-bg);
@@ -90,7 +94,10 @@
    work, and a bar spanning every project in it is just noise. The row keeps
    its grid entry and caret, so it still expands and collapses. */
 .pg-widget-host .gantt_task_line.pg-master { display: none; }
-.pg-widget-host .gantt_row.pg-master { background: var(--control-bg, #f4f5f6); }
+/* LITERAL light grey — a grid row on the always-light canvas. var(--control-bg)
+   would flip dark under Timeless Night, dark-on-dark against the skin's grid
+   text. See the canvas/chrome note in the file header. */
+.pg-widget-host .gantt_row.pg-master { background: #eef1f5; }
 
 .pg-widget-host .gantt_task_line .gantt_task_progress { background: rgba(0, 0, 0, 0.25); }
 
@@ -161,9 +168,11 @@
 }
 .pg-check:hover { color: var(--text-color); }
 
-/* the loading stand-in that gives an unexpanded project its caret */
+/* the loading stand-in that gives an unexpanded project its caret.
+   LITERAL muted grey — grid text on the always-light canvas; var(--text-muted)
+   would flip to a light grey under Timeless Night and vanish on the white row. */
 .pg-widget-host .gantt_task_line.pg-placeholder { display: none; }
-.pg-widget-host .gantt_row.pg-placeholder .gantt_tree_content { font-style: italic; color: var(--text-muted); }
+.pg-widget-host .gantt_row.pg-placeholder .gantt_tree_content { font-style: italic; color: #8d99a6; }
 
 /* ---- small screens -------------------------------------------------------
    The toolbar controls go full-width so they stack cleanly instead of

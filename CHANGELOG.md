@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dark-theme (Timeless Night) safety on the Gantt canvas.** The chart canvas
+  stays on the light DHTMLX skin in both desk themes (like the Mermaid
+  charts), so anything drawn on it must use light-safe *literal* colours;
+  several rules used desk variables that flip under Timeless Night. The side
+  label (added this release) used `var(--text-color)`, which goes near-white on
+  dark and vanished against the white chart; the portfolio group-row shade used
+  `var(--control-bg)` and the loading-placeholder text `var(--text-muted)`,
+  both flipping dark/light and clashing with the grid. All are now literals,
+  and the today marker's reds are pinned too. The container chrome (toolbar,
+  menus, overlays) still follows the desk theme, and stays internally readable
+  (dark background, light text) in dark mode. The invariant — *on-canvas =
+  literal, chrome = desk variables* — is documented in both stylesheets.
 - **Bar labels were clipped and unreadable.** Two causes: the dashboard forced
   `height: 14px !important` on task bars, which left DHTMLX's inline
   line-height sized for the original height so the text overflowed and was cut
