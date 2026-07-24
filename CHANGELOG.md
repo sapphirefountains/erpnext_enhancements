@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.169.3] - 2026-07-24
+
+### Added
+
+- **WI-011 apply runbook** (`docs/migration/wi011-apply-runbook.md`) — the exact,
+  ordered role-cleanup change set, split into **Group A** (safe now — strips
+  over-granted finance/admin roles by reassigning lean Role Profiles) and
+  **Group B** (CEO sign-off — the preparer≠approver split with approver = CEO,
+  plus service-account scoping). Records the `role_profile_name` replace-on-assign
+  mechanism and the profile-bloat caveat, and marks John (CPA) as
+  keep-access / never-`PO Approver` in the access matrix.
+
 ## [1.169.2] - 2026-07-24
 
 ### Changed

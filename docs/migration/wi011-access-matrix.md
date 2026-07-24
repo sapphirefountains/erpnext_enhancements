@@ -51,7 +51,7 @@ Role Profiles come from WI-010 (now fixtured). Assigning them is this item. Crea
 | billing@sapphirefountains.com | Shared billing mailbox (not a person) | Accounts Manager + Purchase Master Manager + Purchase Manager/User | **✅ DONE — disabled 2026-07-24.** | |
 | triton@sapphirefountains.com | Integration/AI service account | System Manager + Accounts Manager + full purchasing | **Scope to the minimal integration role** it actually needs; remove System Manager + Accounts Manager | |
 | poseidon@sapphirefountains.com | Legacy service account | `Poseidon` profile | Review/retire alongside the Poseidon profile (WI-010 flagged; needs sign-off) | |
-| john@skylinepathway.com | John Juntunen — external accountant/reviewer (WI-003) | **System Manager** profile | **Downgrade** to a scoped Accounts/Auditor profile — an external reviewer should not hold System Manager | |
+| john@skylinepathway.com | **John Juntunen — CPA** (external accountant/reviewer, WI-003) | **System Manager** profile (82 roles) | **Keep access** — the CPA needs broad visibility; **never `PO Approver`** (already true). *Optional:* scope out pure-admin roles (`Script Manager`, user mgmt) → Auditor + Accounts + Report Manager (runbook Group B #4). | |
 | kendalyn.harris@sapphirefountains.com | Kendalyn Harris — no roles, no employee | none | Confirm business need or disable | |
 | shellycekeyes@gmail.com | External personal Gmail — no roles, no employee | none | Confirm identity/need or disable (external email as System User) | |
 
