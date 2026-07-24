@@ -84,12 +84,20 @@
     // scroll preservation, today handling and expand/collapse are the widget's
     // (and DHTMLX's) own. Read-only: drag-editing returns with the widget's
     // per-embed edit opt-in milestone.
-    let gantt_detailed_view = false;
-    let gantt_status_filters = ["Active", "Working", "Client Hold"];
+    const DEFAULT_GANTT_STATUSES = ["Active", "Working", "Client Hold"];
     const all_gantt_statuses = ["Active", "Working", "Client Hold", "Parked", "Completed", "Invoiced", "Paid", "Canceled"];
+    let gantt_status_filters = DEFAULT_GANTT_STATUSES.slice();
 
     let portfolio_gantt_widget = null;
     let gantt_selected_projects = new Set();
+    let gantt_type_filters = new Set();      // empty = every PRIORITY_PROJECT_TYPE
+    let gantt_customer_filters = new Set();  // empty = all customers
+    let gantt_date_window = "";              // "" | "30" | "90" | "180" | "365"
+    let gantt_at_risk = false;
+    // projects the user has expanded, and those whose tasks are already loaded
+    // (a reload clears the latter but keeps the former, so the tree is restored)
+    let gantt_expanded_projects = new Set();
+    const gantt_loaded_projects = new Set();
 
     let sort_state = {
         'priority-overview': { col: 'company_priority', order: 'asc' },
@@ -254,15 +262,55 @@
         }
     }
 
-    // ----- GANTT CHART LOGIC -----
-    
+    // ----- GANTT TOOLBAR CONTROLS -----
+
+    const checkbox_row = (cls, value, checked, id_prefix) => {
+        const safe_id = id_prefix + sanitizeId(value);
+        const label = frappe.utils.escape_html(value);
+        return `
+            <div class="custom-control custom-checkbox mb-1" data-name="${label.toLowerCase()}">
+                <input type="checkbox" class="custom-control-input ${cls}" value="${label}" id="${safe_id}" ${checked ? 'checked' : ''}>
+                <label class="custom-control-label" for="${safe_id}" style="cursor: pointer; padding-top: 2px;">${label}</label>
+            </div>`;
+    };
+
+    // Paints every checkbox list + button label from the current filter state.
+    // Called on first render and after "Reset view".
+    function init_gantt_filter_controls() {
+        const $status = $root.find('#gantt-status-checkboxes').empty();
+        all_gantt_statuses.forEach((s) => {
+            $status.append(checkbox_row('gantt-status-cb', s, gantt_status_filters.includes(s), 'filter-gantt-'));
+        });
+        $root.find('#ganttStatusDropdown').text(
+            gantt_status_filters.length === all_gantt_statuses.length || !gantt_status_filters.length
+                ? 'All Statuses' : `Selected (${gantt_status_filters.length})`
+        );
+
+        const $types = $root.find('#gantt-type-checkboxes').empty();
+        PRIORITY_PROJECT_TYPES.forEach((t) => {
+            $types.append(checkbox_row('gantt-type-cb', t, !gantt_type_filters.size || gantt_type_filters.has(t), 'filter-gtype-'));
+        });
+        $root.find('#ganttTypeDropdown').text(
+            gantt_type_filters.size ? `Types (${gantt_type_filters.size})` : 'All Types'
+        );
+
+        $root.find('#ganttCustomerDropdown').text(
+            gantt_customer_filters.size ? `Customers (${gantt_customer_filters.size})` : 'All Customers'
+        );
+        $root.find('#ganttProjectDropdown').text(
+            gantt_selected_projects.size ? `Projects (${gantt_selected_projects.size})` : 'All Projects'
+        );
+        $root.find('#gantt-date-window').val(gantt_date_window || "");
+        $root.find('#gantt-at-risk').prop('checked', gantt_at_risk);
+    }
+
     function init_gantt_filters() {
         $root.find('.custom-dropdown-toggle').on('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
             let $menu = $(this).next('.dropdown-menu');
             let isShown = $menu.hasClass('show');
-            $root.find('.dropdown-menu').removeClass('show'); 
+            $root.find('.dropdown-menu').removeClass('show');
             if (!isShown) $menu.addClass('show');
         });
 
@@ -272,33 +320,55 @@
             }
         });
 
-        $root.find('.check-dropdown .dropdown-menu').on('click', function(e) { 
-            e.stopPropagation(); 
+        $root.find('.check-dropdown .dropdown-menu').on('click', function(e) {
+            e.stopPropagation();
         });
 
-        const statusContainer = $root.find('#gantt-status-checkboxes');
-        statusContainer.empty();
-        all_gantt_statuses.forEach(s => {
-            let safe_id = sanitizeId(s);
-            statusContainer.append(`
-                <div class="custom-control custom-checkbox mb-1">
-                    <input type="checkbox" class="custom-control-input gantt-status-cb" value="${s}" id="filter-gantt-${safe_id}" ${gantt_status_filters.includes(s) ? 'checked' : ''}>
-                    <label class="custom-control-label" for="filter-gantt-${safe_id}" style="cursor: pointer; padding-top: 2px;">${s}</label>
-                </div>
-            `);
-        });
+        // restore the saved view BEFORE painting the controls
+        load_gantt_view();
+        init_gantt_filter_controls();
 
         $root.find('#apply-gantt-status-filters').on('click', function() {
-            let selected = [];
-            $root.find('.gantt-status-cb:checked').each(function() { selected.push($(this).val()); });
-            gantt_status_filters = selected;
-            $root.find('#ganttStatusDropdown').text(`Selected (${selected.length})`);
+            gantt_status_filters = $root.find('.gantt-status-cb:checked').map(function() { return $(this).val(); }).get();
+            $root.find('#ganttStatusDropdown').text(`Selected (${gantt_status_filters.length})`);
             $root.find('#gantt-status-menu').removeClass('show');
-            fetch_and_render_portfolio_gantt(); 
+            save_gantt_view();
+            fetch_and_render_portfolio_gantt();
         });
 
-        $root.find('#gantt-detailed-view').on('change', function() {
-            gantt_detailed_view = $(this).is(':checked');
+        $root.find('#apply-gantt-type-filters').on('click', function() {
+            const checked = $root.find('.gantt-type-cb:checked').map(function() { return $(this).val(); }).get();
+            // all ticked == no narrowing, so the default scope still applies
+            gantt_type_filters = checked.length === PRIORITY_PROJECT_TYPES.length ? new Set() : new Set(checked);
+            $root.find('#ganttTypeDropdown').text(gantt_type_filters.size ? `Types (${gantt_type_filters.size})` : 'All Types');
+            $root.find('#gantt-type-menu').removeClass('show');
+            save_gantt_view();
+            fetch_and_render_portfolio_gantt();
+        });
+
+        $root.find('#apply-gantt-customer-filters').on('click', function() {
+            const total = $root.find('.gantt-customer-cb').length;
+            const checked = $root.find('.gantt-customer-cb:checked');
+            gantt_customer_filters = checked.length < total
+                ? new Set(checked.map(function() { return $(this).val(); }).get())
+                : new Set();
+            $root.find('#ganttCustomerDropdown').text(
+                gantt_customer_filters.size ? `Customers (${gantt_customer_filters.size})` : 'All Customers'
+            );
+            $root.find('#gantt-customer-menu').removeClass('show');
+            save_gantt_view();
+            fetch_and_render_portfolio_gantt();
+        });
+
+        $root.find('#gantt-date-window').on('change', function() {
+            gantt_date_window = $(this).val();
+            save_gantt_view();
+            fetch_and_render_portfolio_gantt();
+        });
+
+        $root.find('#gantt-at-risk').on('change', function() {
+            gantt_at_risk = $(this).is(':checked');
+            save_gantt_view();
             fetch_and_render_portfolio_gantt();
         });
 
@@ -308,35 +378,43 @@
             if (portfolio_gantt_widget) {
                 portfolio_gantt_widget.set_zoom(GANTT_VIEW_MODE_MAP[$(this).data('view')] || "month");
             }
+            save_gantt_view();
         });
 
         $root.find('#gantt-today-btn').on('click', function() {
             if (portfolio_gantt_widget) portfolio_gantt_widget.scroll_to_today();
         });
 
+        $root.find('#gantt-export-btn').on('click', export_gantt_png);
+        $root.find('#gantt-reset-view').on('click', reset_gantt_view);
+
         $root.find('#gantt-select-all-projects').on('change', function() {
-            let isChecked = $(this).is(':checked');
-            $root.find('.gantt-proj-cb').prop('checked', isChecked);
+            $root.find('.gantt-proj-cb').prop('checked', $(this).is(':checked'));
         });
 
-        $root.find('#gantt-project-search, #global-project-search').on('keydown keyup keypress input', function(e) {
+        $root.find('#gantt-project-search, #gantt-customer-search, #global-project-search').on('keydown keyup keypress input', function(e) {
             e.stopPropagation();
             if (e.key === 'Enter') e.preventDefault();
         });
 
         $root.find('#gantt-project-search').on('input', function() {
-            let val = $(this).val().toLowerCase();
+            const val = $(this).val().toLowerCase();
             $root.find('.gantt-proj-filter-item').each(function() {
-                if ($(this).data('name').includes(val)) $(this).show();
-                else $(this).hide();
+                $(this).toggle($(this).data('name').indexOf(val) !== -1);
+            });
+        });
+
+        $root.find('#gantt-customer-search').on('input', function() {
+            const val = $(this).val().toLowerCase();
+            $root.find('#gantt-customer-checkboxes .custom-checkbox').each(function() {
+                $(this).toggle(String($(this).data('name')).indexOf(val) !== -1);
             });
         });
 
         $root.find('#apply-gantt-project-filters').on('click', function() {
             gantt_selected_projects.clear();
-            let total = $root.find('.gantt-proj-cb').length;
-            let checked = $root.find('.gantt-proj-cb:checked');
-            
+            const total = $root.find('.gantt-proj-cb').length;
+            const checked = $root.find('.gantt-proj-cb:checked');
             if (checked.length < total) {
                 checked.each(function() { gantt_selected_projects.add($(this).val()); });
                 $root.find('#ganttProjectDropdown').text(`Projects (${checked.length})`);
@@ -344,6 +422,7 @@
                 $root.find('#ganttProjectDropdown').text('All Projects');
             }
             $root.find('#gantt-project-menu').removeClass('show');
+            save_gantt_view();
             fetch_and_render_portfolio_gantt();
         });
     }
@@ -351,28 +430,41 @@
     function populate_projects_dropdown(projects) {
         const container = $root.find('#gantt-project-checkboxes');
         container.empty();
-        
-        let sorted = [...projects].sort((a,b) => (a.project_name||a.name).localeCompare(b.project_name||b.name));
-        
-        sorted.forEach(p => {
-            let isChecked = gantt_selected_projects.size === 0 || gantt_selected_projects.has(p.name);
-            let safe_name = (p.project_name || p.name).toLowerCase().replace(/"/g, ''); 
-            let safe_id = sanitizeId(p.name);
 
+        const sorted = [...projects].sort((a, b) => (a.project_name || a.name).localeCompare(b.project_name || b.name));
+        sorted.forEach((p) => {
+            const isChecked = gantt_selected_projects.size === 0 || gantt_selected_projects.has(p.name);
+            const label = frappe.utils.escape_html(p.project_name || p.name);
+            const safe_id = sanitizeId(p.name);
             container.append(`
-                <div class="custom-control custom-checkbox mb-1 gantt-proj-filter-item" data-name="${safe_name}">
-                    <input type="checkbox" class="custom-control-input gantt-proj-cb" value="${p.name}" id="filter-proj-${safe_id}" ${isChecked ? 'checked' : ''}>
-                    <label class="custom-control-label" for="filter-proj-${safe_id}" style="cursor: pointer; padding-top: 2px;">${p.project_name || p.name}</label>
+                <div class="custom-control custom-checkbox mb-1 gantt-proj-filter-item" data-name="${label.toLowerCase()}">
+                    <input type="checkbox" class="custom-control-input gantt-proj-cb" value="${frappe.utils.escape_html(p.name)}" id="filter-proj-${safe_id}" ${isChecked ? 'checked' : ''}>
+                    <label class="custom-control-label" for="filter-proj-${safe_id}" style="cursor: pointer; padding-top: 2px;">${label}</label>
                 </div>
             `);
         });
 
-        let total = sorted.length;
-        let checked = $root.find('.gantt-proj-cb:checked').length;
-        $root.find('#gantt-select-all-projects').prop('checked', total > 0 && checked === total);
+        const checked = $root.find('.gantt-proj-cb:checked').length;
+        $root.find('#gantt-select-all-projects').prop('checked', sorted.length > 0 && checked === sorted.length);
     }
 
-    // ----- Portfolio Gantt via the embeddable widget -----
+    function populate_customers_dropdown(customers) {
+        const container = $root.find('#gantt-customer-checkboxes');
+        container.empty();
+        const unique = [...new Set((customers || []).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+        unique.forEach((c) => {
+            const checked = gantt_customer_filters.size === 0 || gantt_customer_filters.has(c);
+            container.append(checkbox_row('gantt-customer-cb', c, checked, 'filter-cust-'));
+        });
+    }
+
+
+    // ----- PORTFOLIO GANTT -----
+    //
+    // Rendered by the embeddable Gantt widget (erpnext_enhancements.gantt.mount)
+    // in composite mode: Project Type groups -> Project rows -> Task subtrees
+    // fetched lazily when a project's caret is opened. All data comes from the
+    // permission-checked get_gantt_data endpoint. Read-only for now.
 
     const GANTT_VIEW_MODE_MAP = {
         "Quarter Day": "quarter_day",
@@ -382,29 +474,119 @@
         "Month": "month",
     };
 
-    // Task subtree for the "Show Tasks" toggle. Mirrors the retired
+    // Colour key. Keep in sync with the pg-type-* rules in projects_dashboard.css:
+    // project bars use the solid colour, their tasks a lighter shade of it.
+    const GANTT_TYPE_COLORS = [
+        { type: "Build", cls: "pg-type-build", color: "#1f6fb2" },
+        { type: "Design", cls: "pg-type-design", color: "#7c4dbd" },
+        { type: "Service", cls: "pg-type-service", color: "#2e9e5b" },
+        { type: "Events", cls: "pg-type-events", color: "#d98324" },
+        { type: "Delivery", cls: "pg-type-delivery", color: "#0f9aa8" },
+    ];
+    const GANTT_TYPE_CLASS = {};
+    GANTT_TYPE_COLORS.forEach((t) => { GANTT_TYPE_CLASS[t.type] = t.cls; });
+
+    // Task subtree loaded per project when its caret opens. Mirrors the retired
     // get_all_projects_for_gantt task query: open work only.
     const GANTT_TASK_CHILDREN = {
         doctype: "Task",
         link_field: "project",
         fields: { text: "subject", start: "exp_start_date", end: "exp_end_date", progress: "progress", parent: "parent_task" },
         filters: { status: ["not in", ["Completed", "Canceled"]] },
+        extra_fields: ["status"],
         dependencies: "depends_on",
         order_by: "exp_start_date asc",
+        lazy: true,
     };
+
+    // ---- saved view (filters / zoom / expanded projects), per user ----------
+
+    const GANTT_VIEW_KEY = "chb_portfolio_gantt_view_v1";
+
+    function save_gantt_view() {
+        try {
+            localStorage.setItem(GANTT_VIEW_KEY, JSON.stringify({
+                statuses: gantt_status_filters,
+                types: [...gantt_type_filters],
+                customers: [...gantt_customer_filters],
+                projects: [...gantt_selected_projects],
+                window_days: gantt_date_window,
+                at_risk: gantt_at_risk,
+                zoom: $root.find('.view-mode-group button.active').data('view') || "Month",
+                expanded: [...gantt_expanded_projects],
+            }));
+        } catch (e) {
+            // storage disabled/full — the view just won't persist
+        }
+    }
+
+    function load_gantt_view() {
+        let saved = null;
+        try {
+            saved = JSON.parse(localStorage.getItem(GANTT_VIEW_KEY) || "null");
+        } catch (e) {
+            saved = null;
+        }
+        if (!saved) return;
+        if (Array.isArray(saved.statuses)) gantt_status_filters = saved.statuses;
+        if (Array.isArray(saved.types)) gantt_type_filters = new Set(saved.types);
+        if (Array.isArray(saved.customers)) gantt_customer_filters = new Set(saved.customers);
+        if (Array.isArray(saved.projects)) gantt_selected_projects = new Set(saved.projects);
+        if (Array.isArray(saved.expanded)) gantt_expanded_projects = new Set(saved.expanded);
+        gantt_date_window = saved.window_days || "";
+        gantt_at_risk = !!saved.at_risk;
+        if (saved.zoom) {
+            $root.find('.view-mode-group button').removeClass('active btn-secondary').addClass('btn-outline-secondary');
+            $root.find(`.view-mode-group button[data-view="${saved.zoom}"]`).addClass('active btn-secondary').removeClass('btn-outline-secondary');
+        }
+    }
+
+    function reset_gantt_view() {
+        try { localStorage.removeItem(GANTT_VIEW_KEY); } catch (e) { /* ignore */ }
+        gantt_status_filters = DEFAULT_GANTT_STATUSES.slice();
+        gantt_type_filters = new Set();
+        gantt_customer_filters = new Set();
+        gantt_selected_projects = new Set();
+        gantt_expanded_projects = new Set();
+        gantt_date_window = "";
+        gantt_at_risk = false;
+        init_gantt_filter_controls();
+        fetch_and_render_portfolio_gantt();
+    }
+
+    // ---- config ------------------------------------------------------------
 
     function gantt_root_filters() {
         // Mirrors the retired get_all_projects_for_gantt scoping: active,
         // client-facing project types, never Canceled. NOTE: unlike that
         // endpoint (which read with get_all), the widget's get_gantt_data
         // enforces the caller's Project/Task read permissions.
-        const filters = {
-            is_active: "Yes",
-            project_type: ["in", PRIORITY_PROJECT_TYPES],
-            status: gantt_status_filters.length ? ["in", gantt_status_filters] : ["!=", "Canceled"],
-        };
+        const filters = [
+            ["is_active", "=", "Yes"],
+            ["project_type", "in", gantt_type_filters.size ? [...gantt_type_filters] : PRIORITY_PROJECT_TYPES],
+        ];
+        if (gantt_status_filters.length) {
+            filters.push(["status", "in", gantt_status_filters]);
+        } else {
+            filters.push(["status", "!=", "Canceled"]);
+        }
         if (gantt_selected_projects.size > 0) {
-            filters.name = ["in", [...gantt_selected_projects]];
+            filters.push(["name", "in", [...gantt_selected_projects]]);
+        }
+        if (gantt_customer_filters.size > 0) {
+            filters.push(["customer", "in", [...gantt_customer_filters]]);
+        }
+        if (gantt_date_window) {
+            // overlap test: starts before the window ends AND ends after it
+            // begins. Undated projects drop out, which is the point of the filter.
+            const today = frappe.datetime.get_today();
+            const until = frappe.datetime.add_days(today, parseInt(gantt_date_window, 10));
+            filters.push(["expected_start_date", "<=", until]);
+            filters.push(["expected_end_date", ">=", today]);
+        }
+        if (gantt_at_risk) {
+            filters.push(["expected_end_date", "<", frappe.datetime.get_today()]);
+            filters.push(["percent_complete", "<", 100]);
         }
         return filters;
     }
@@ -415,16 +597,26 @@
             doctype: "Project",
             fields: { text: "project_name", start: "expected_start_date", end: "expected_end_date", progress: "percent_complete" },
             filters: gantt_root_filters(),
-            group_by: "custom_master_project",
-            children: gantt_detailed_view ? GANTT_TASK_CHILDREN : null,
+            // Master Project where one is set, otherwise the project type
+            group_by: ["custom_master_project", "project_type"],
+            extra_fields: ["project_type", "status", "customer"],
+            children: GANTT_TASK_CHILDREN,
+            lazy_children: true,
             order_by: "expected_start_date asc",
             limit: 1000,
-            today: true, // today column + open-at-today default view (block owns the Today button)
+            today: true, // today column + open-at-today default (block owns the button)
             tooltip: true,
             zoom: GANTT_VIEW_MODE_MAP[mode] || "month",
+            columns: gantt_columns(),
+            gantt: { grid_width: 420 },
             templates: {
                 task_class: portfolio_row_class,
                 grid_row_class: portfolio_row_class,
+            },
+            on_task_expand: (id, task) => load_project_tasks(id, task),
+            on_task_collapse: (id) => {
+                gantt_expanded_projects.delete(id);
+                save_gantt_view();
             },
             on_task_click: (id, task) => {
                 if (task && task.ref_doctype && task.ref_name) {
@@ -434,15 +626,113 @@
         };
     }
 
-    // Level styling hooks: composite ids are prefixed G:: (Master group) /
-    // P:: (Project) / C:: (Task) by get_gantt_data. Styles live in
-    // projects_dashboard.css.
+    // ---- grid columns ------------------------------------------------------
+
+    const fmt_date = (value) => (value ? frappe.datetime.str_to_user(String(value).split(" ")[0]) : "");
+
+    // The API's end_date is EXCLUSIVE (a date-only end is pushed to midnight of
+    // the next day), so show the inclusive day the user actually entered.
+    function inclusive_end(task) {
+        if (!task.end_date) return "";
+        const d = new Date(task.end_date.getTime ? task.end_date.getTime() : task.end_date);
+        if (isNaN(d)) return "";
+        if (d.getHours() === 0 && d.getMinutes() === 0) d.setDate(d.getDate() - 1);
+        return frappe.datetime.str_to_user(moment(d).format("YYYY-MM-DD"));
+    }
+
+    function gantt_columns() {
+        return [
+            { name: "text", label: "Project / Task", tree: true, width: 200, resize: true },
+            { name: "project_type", label: "Type", width: 70, align: "center", template: (t) => t.project_type || "" },
+            { name: "start_date", label: "Start", width: 78, align: "center", template: (t) => (t.start_date ? fmt_date(moment(t.start_date).format("YYYY-MM-DD")) : "") },
+            { name: "end_date", label: "End", width: 78, align: "center", template: inclusive_end },
+            { name: "progress", label: "%", width: 44, align: "center", template: (t) => (typeof t.progress === "number" ? Math.round(t.progress * 100) + "%" : "") },
+        ];
+    }
+
+    // ---- row styling -------------------------------------------------------
+
+    // Composite ids are prefixed G:: (group) / P:: (project) / C:: (task) by
+    // get_gantt_data. Projects take their project_type colour; their tasks take
+    // a lighter shade of the same colour (stamped in load_project_tasks).
+    // Styles live in projects_dashboard.css.
     function portfolio_row_class(start, end, task) {
         const id = String(task.id);
-        if (id.indexOf("G::") === 0) return "pg-master";
-        if (id.indexOf("P::") === 0) return "pg-project";
-        return "pg-task";
+        const classes = [];
+        if (id.indexOf("G::") === 0) {
+            classes.push("pg-master");
+        } else if (id.indexOf("P::") === 0) {
+            classes.push("pg-project", GANTT_TYPE_CLASS[task.project_type] || "pg-type-other");
+        } else {
+            classes.push("pg-task", GANTT_TYPE_CLASS[task.ee_project_type] || "pg-type-other");
+        }
+        if (is_overdue(task)) classes.push("pg-overdue");
+        return classes.join(" ");
     }
+
+    function is_overdue(task) {
+        if (!task.end_date || String(task.id).indexOf("G::") === 0) return false;
+        if (task.status === "Completed" || task.progress >= 1) return false;
+        return task.end_date < new Date();
+    }
+
+    function render_gantt_legend() {
+        const $legend = $root.find('#gantt-legend');
+        if (!$legend.length) return;
+        let html = '<span class="pg-legend-label">Project type:</span>';
+        GANTT_TYPE_COLORS.forEach((t) => {
+            html += `<span class="pg-legend-item"><i class="pg-swatch" style="background:${t.color}"></i>${frappe.utils.escape_html(t.type)}</span>`;
+        });
+        html += '<span class="pg-legend-item"><i class="pg-swatch pg-swatch-task"></i>Tasks (lighter shade of their project)</span>';
+        html += '<span class="pg-legend-item"><i class="pg-swatch pg-swatch-overdue"></i>Past its end date</span>';
+        $legend.html(html);
+    }
+
+    // ---- lazy task loading -------------------------------------------------
+
+    // Fetch ONE project's tasks when its caret is opened. Reuses the same
+    // composite config narrowed to that project, then keeps only the C:: rows —
+    // the group/project rows are already on the chart.
+    async function load_project_tasks(row_id, task) {
+        gantt_expanded_projects.add(row_id);
+        save_gantt_view();
+        if (!task || !task.ref_name || gantt_loaded_projects.has(row_id)) return;
+        gantt_loaded_projects.add(row_id);
+
+        const cfg = gantt_widget_config();
+        cfg.filters = [["name", "=", task.ref_name]];
+        cfg.children = Object.assign({}, GANTT_TASK_CHILDREN, { lazy: false });
+        try {
+            const r = await frappe.call({
+                method: "erpnext_enhancements.api.gantt.get_gantt_data",
+                args: { config: {
+                    doctype: cfg.doctype,
+                    fields: cfg.fields,
+                    filters: cfg.filters,
+                    group_by: cfg.group_by,
+                    extra_fields: cfg.extra_fields,
+                    children: cfg.children,
+                    order_by: cfg.order_by,
+                    limit: 1,
+                } },
+            });
+            const data = (r && r.message) || { tasks: [], links: [] };
+            const child_rows = data.tasks.filter((t) => String(t.id).indexOf("C::") === 0);
+            // stamp the parent project's type so tasks can be shaded to match
+            child_rows.forEach((t) => { t.ee_project_type = task.project_type; });
+            if (portfolio_gantt_widget && !portfolio_gantt_widget.destroyed) {
+                const added = portfolio_gantt_widget.add_rows(child_rows, data.links);
+                if (!added && !child_rows.length) {
+                    frappe.show_alert({ message: __("No scheduled tasks for {0}", [task.text]), indicator: "blue" });
+                }
+            }
+        } catch (err) {
+            gantt_loaded_projects.delete(row_id); // let the user try again
+            console.error("Portfolio Gantt: loading tasks failed", err);
+        }
+    }
+
+    // ---- render ------------------------------------------------------------
 
     async function fetch_and_render_portfolio_gantt() {
         const container = $root.find('#dashboard-content');
@@ -464,6 +754,8 @@
             container.empty();
             host = $('<div class="pg-widget-host"></div>').appendTo(container)[0];
         }
+        // a reload discards loaded subtrees; they are re-fetched on re-expand
+        gantt_loaded_projects.clear();
         try {
             if (portfolio_gantt_widget && !portfolio_gantt_widget.destroyed) {
                 // toolbar state changed: rebuild the config in place and refetch
@@ -473,46 +765,93 @@
                 portfolio_gantt_widget = erpnext_enhancements.gantt.mount(host, gantt_widget_config());
                 await portfolio_gantt_widget.ready;
             }
-            refresh_gantt_project_options();
+            render_gantt_legend();
+            refresh_gantt_filter_options();
+            restore_expanded_projects();
         } catch (err) {
             // the widget shows its own error overlay
             console.error("Portfolio Gantt:", err);
         }
     }
 
-    // The project picker lists every project matching the CURRENT status
-    // scope but ignoring the project-name narrowing — a narrowed fetch (some
-    // projects unchecked) must not shrink the option list, or the unchecked
-    // ones could never be re-checked. With no selection active the chart's own
-    // response supplies the list; with one active, a light roots-only query
-    // (no name filter, no children, no grouping) keeps the options tracking
-    // status-filter changes instead of freezing at the last unnarrowed fetch.
-    function refresh_gantt_project_options() {
-        if (gantt_selected_projects.size > 0) {
-            const cfg = gantt_widget_config();
-            delete cfg.filters.name;
-            frappe.call({
-                method: "erpnext_enhancements.api.gantt.get_gantt_data",
-                args: { config: {
-                    doctype: cfg.doctype,
-                    fields: cfg.fields,
-                    filters: cfg.filters,
-                    order_by: cfg.order_by,
-                    limit: cfg.limit,
-                } },
-            }).then((r) => {
-                const tasks = (r.message && r.message.tasks) || [];
-                // single-source response: ids ARE the project names
-                populate_projects_dropdown(tasks.map(t => ({ name: t.id, project_name: t.text })));
-            }).catch(() => {});
+    // Re-open the projects the user had expanded before the reload.
+    function restore_expanded_projects() {
+        if (!portfolio_gantt_widget || !portfolio_gantt_widget.gantt) return;
+        const g = portfolio_gantt_widget.gantt;
+        [...gantt_expanded_projects].forEach((id) => {
+            if (g.isTaskExists(id)) {
+                g.open(id); // fires onTaskOpened -> load_project_tasks
+            }
+        });
+    }
+
+    // The pickers list every project/customer the UNFILTERED portfolio query
+    // returns; a narrowed fetch must not shrink the option lists, or an
+    // unchecked entry could never be re-checked.
+    function refresh_gantt_filter_options() {
+        const narrowed = gantt_selected_projects.size > 0 || gantt_customer_filters.size > 0;
+        if (!narrowed) {
+            const data = portfolio_gantt_widget && portfolio_gantt_widget.data;
+            if (!data) return;
+            const roots = data.tasks.filter((t) => String(t.id).indexOf("P::") === 0);
+            populate_projects_dropdown(roots.map((t) => ({ name: t.ref_name, project_name: t.text })));
+            populate_customers_dropdown(roots.map((t) => t.customer));
             return;
         }
-        const data = portfolio_gantt_widget && portfolio_gantt_widget.data;
-        if (!data) return;
-        const projects = data.tasks
-            .filter(t => String(t.id).indexOf("P::") === 0)
-            .map(t => ({ name: t.ref_name, project_name: t.text }));
-        populate_projects_dropdown(projects);
+        // a light roots-only query, without the project/customer narrowing, so
+        // the option lists keep tracking the other filters
+        const cfg = gantt_widget_config();
+        const filters = cfg.filters.filter((f) => f[0] !== "name" && f[0] !== "customer");
+        frappe.call({
+            method: "erpnext_enhancements.api.gantt.get_gantt_data",
+            args: { config: {
+                doctype: cfg.doctype,
+                fields: cfg.fields,
+                filters: filters,
+                extra_fields: cfg.extra_fields,
+                order_by: cfg.order_by,
+                limit: cfg.limit,
+            } },
+        }).then((r) => {
+            const tasks = (r.message && r.message.tasks) || [];
+            // single-source response: ids ARE the project names
+            populate_projects_dropdown(tasks.map((t) => ({ name: t.id, project_name: t.text })));
+            populate_customers_dropdown(tasks.map((t) => t.customer));
+        }).catch(() => {});
+    }
+
+    // ---- PNG export --------------------------------------------------------
+
+    // Rendered client-side with dom-to-image. Deliberately NOT DHTMLX's
+    // exportToPNG(), which POSTs the chart data to export.dhtmlx.com — project
+    // schedules must not leave the browser.
+    function export_gantt_png() {
+        const node = portfolio_gantt_widget && portfolio_gantt_widget.chart_el;
+        if (!node) return;
+        const $btn = $root.find('#gantt-export-btn');
+        const original = $btn.html();
+        $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin mr-1"></i>Exporting...');
+        const done = () => $btn.prop('disabled', false).html(original);
+        frappe.require('https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js', () => {
+            if (typeof domtoimage === "undefined") {
+                frappe.show_alert({ message: __("Could not load the image exporter"), indicator: "red" });
+                done();
+                return;
+            }
+            domtoimage.toPng(node, { bgcolor: "#ffffff", width: node.scrollWidth, height: node.scrollHeight })
+                .then((url) => {
+                    const link = document.createElement('a');
+                    link.download = 'Portfolio-Gantt-' + moment().format('YYYYMMDD') + '.png';
+                    link.href = url;
+                    link.click();
+                    done();
+                })
+                .catch((err) => {
+                    console.error("Gantt export failed", err);
+                    frappe.show_alert({ message: __("Gantt export failed"), indicator: "red" });
+                    done();
+                });
+        });
     }
 
     // ----- HELPERS & OTHER RENDERERS -----

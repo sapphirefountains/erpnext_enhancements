@@ -87,9 +87,40 @@
                             </div>
                         </div>
 
-                        <div class="d-flex align-items-center border-left pl-3">
-                            <input type="checkbox" id="gantt-detailed-view" style="margin-right: 8px; width: 16px; height: 16px;">
-                            <label for="gantt-detailed-view" class="mb-0 font-weight-bold" style="cursor: pointer; font-size: 13px;">Show Tasks</label>
+                        <div class="dropdown check-dropdown mr-3">
+                            <button class="btn btn-sm btn-default border custom-dropdown-toggle font-weight-bold" type="button" id="ganttTypeDropdown" style="min-width: 130px; text-align: left;">
+                                All Types
+                            </button>
+                            <div class="dropdown-menu p-2 shadow-sm" id="gantt-type-menu" style="min-width: 200px; margin-top: 5px;">
+                                <div id="gantt-type-checkboxes"></div>
+                                <div class="dropdown-divider"></div>
+                                <button class="btn btn-sm btn-primary w-100" id="apply-gantt-type-filters">Apply Filters</button>
+                            </div>
+                        </div>
+
+                        <div class="dropdown check-dropdown mr-3">
+                            <button class="btn btn-sm btn-default border custom-dropdown-toggle font-weight-bold" type="button" id="ganttCustomerDropdown" style="min-width: 150px; text-align: left;">
+                                All Customers
+                            </button>
+                            <div class="dropdown-menu p-2 shadow-sm" id="gantt-customer-menu" style="min-width: 260px; max-height: 400px; overflow-y: auto; margin-top: 5px;">
+                                <input type="text" class="form-control form-control-sm mb-2" id="gantt-customer-search" placeholder="Search customers...">
+                                <div id="gantt-customer-checkboxes"></div>
+                                <div class="dropdown-divider"></div>
+                                <button class="btn btn-sm btn-primary w-100" id="apply-gantt-customer-filters">Apply Filter</button>
+                            </div>
+                        </div>
+
+                        <select id="gantt-date-window" class="form-control form-control-sm mr-3" style="width: auto; min-width: 130px;" title="Show only projects overlapping this window">
+                            <option value="">Any dates</option>
+                            <option value="30">Next 30 days</option>
+                            <option value="90">Next 90 days</option>
+                            <option value="180">Next 6 months</option>
+                            <option value="365">Next 12 months</option>
+                        </select>
+
+                        <div class="d-flex align-items-center border-left pl-3 mr-3">
+                            <input type="checkbox" id="gantt-at-risk" style="margin-right: 8px; width: 16px; height: 16px;">
+                            <label for="gantt-at-risk" class="mb-0 font-weight-bold" style="cursor: pointer; font-size: 13px;" title="Past its expected end date and not yet complete">At risk only</label>
                         </div>
                     </div>
 
@@ -102,9 +133,16 @@
                             <button type="button" class="btn btn-secondary active" data-view="Month">Month</button>
                         </div>
                         <button type="button" class="btn btn-sm btn-outline-primary font-weight-bold ml-2" id="gantt-today-btn">Today</button>
+                        <button type="button" class="btn btn-sm btn-default border ml-2" id="gantt-export-btn" title="Download the chart as a PNG image">
+                            <i class="fa fa-camera mr-1"></i>PNG
+                        </button>
+                        <button type="button" class="btn btn-sm btn-default border ml-2" id="gantt-reset-view" title="Clear the saved filters, zoom and expanded projects">Reset view</button>
                     </div>
 
                 </div>
+
+                <!-- colour key; populated by render_gantt_legend() -->
+                <div class="pg-legend d-flex align-items-center flex-wrap mt-2" id="gantt-legend"></div>
             </div>
 
         </div>

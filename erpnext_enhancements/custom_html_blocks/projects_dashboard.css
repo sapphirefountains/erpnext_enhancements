@@ -54,24 +54,54 @@
 
 /* ========================================================================= */
 /* PORTFOLIO GANTT (embeddable Gantt widget — DHTMLX)                        */
-/* Level classes come from portfolio_row_class in projects_dashboard.js:     */
-/* pg-master (Master Project group) / pg-project / pg-task.                  */
+/* Classes come from portfolio_row_class in projects_dashboard.js:           */
+/*   level:  pg-master (group row) / pg-project / pg-task                    */
+/*   colour: pg-type-<project_type>  — a PROJECT takes its type's solid      */
+/*           colour, its TASKS a lighter shade of the same colour            */
+/*   state:  pg-overdue (past its end date, not complete)                    */
+/* Keep the palette in sync with GANTT_TYPE_COLORS in the block JS, which    */
+/* drives the on-screen legend.                                              */
 /* ========================================================================= */
 
 .pg-widget-host { height: 70vh; min-height: 420px; }
 
-/* bars: one saturated hue per level (master blue / project green / task
-   violet), echoing the old per-project hue families */
-.pg-widget-host .gantt_task_line.pg-master { background: #1f6fb2; border-color: #17557f; }
-.pg-widget-host .gantt_task_line.pg-project { background: #2e9e5b; border-color: #23784a; }
-.pg-widget-host .gantt_task_line.pg-task { background: #7c66c4; border-color: #61479e; }
-.pg-widget-host .gantt_task_line.pg-master .gantt_task_progress,
-.pg-widget-host .gantt_task_line.pg-project .gantt_task_progress,
-.pg-widget-host .gantt_task_line.pg-task .gantt_task_progress { background: rgba(0, 0, 0, 0.25); }
+/* --- project bars: solid colour per project type --- */
+.pg-widget-host .gantt_task_line.pg-project.pg-type-build { background: #1f6fb2; border-color: #17557f; }
+.pg-widget-host .gantt_task_line.pg-project.pg-type-design { background: #7c4dbd; border-color: #603a93; }
+.pg-widget-host .gantt_task_line.pg-project.pg-type-service { background: #2e9e5b; border-color: #23784a; }
+.pg-widget-host .gantt_task_line.pg-project.pg-type-events { background: #d98324; border-color: #a9651b; }
+.pg-widget-host .gantt_task_line.pg-project.pg-type-delivery { background: #0f9aa8; border-color: #0b757f; }
+.pg-widget-host .gantt_task_line.pg-project.pg-type-other { background: #6c757d; border-color: #545b62; }
+
+/* --- task bars: lighter shade of the parent project's type colour --- */
+.pg-widget-host .gantt_task_line.pg-task { height: 14px !important; margin-top: 5px; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-build { background: #74aede; border-color: #4a90cd; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-design { background: #b394e0; border-color: #9670cf; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-service { background: #7fcf9f; border-color: #56b57f; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-events { background: #f0b978; border-color: #e09a4a; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-delivery { background: #74cdd5; border-color: #46b5bf; }
+.pg-widget-host .gantt_task_line.pg-task.pg-type-other { background: #b3b8bd; border-color: #9aa0a6; }
+
+/* --- group (Master Project / Project Type) rows --- */
+.pg-widget-host .gantt_task_line.pg-master { background: #37475a; border-color: #263241; }
+
+.pg-widget-host .gantt_task_line .gantt_task_progress { background: rgba(0, 0, 0, 0.25); }
+
+/* --- overdue: past the end date and not complete --- */
+.pg-widget-host .gantt_task_line.pg-overdue { box-shadow: 0 0 0 2px #d9534f; }
+.pg-widget-host .gantt_row.pg-overdue .gantt_tree_content { color: #c9302c; }
 
 /* grid rows: weight the grouping levels */
 .pg-widget-host .gantt_row.pg-master .gantt_tree_content { font-weight: 700; }
 .pg-widget-host .gantt_row.pg-project .gantt_tree_content { font-weight: 600; }
+
+/* --- colour key --- */
+.pg-legend { gap: 14px; font-size: 12px; color: var(--text-muted); }
+.pg-legend-label { font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.pg-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.pg-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.pg-swatch-task { background: #7fcf9f; }
+.pg-swatch-overdue { background: transparent; box-shadow: 0 0 0 2px #d9534f; }
 
 .check-dropdown .dropdown-menu.show { display: block !important; }
 

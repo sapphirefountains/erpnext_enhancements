@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.166.0] - 2026-07-23
+
+### Added
+
+- **Portfolio Gantt: expand a project to see its tasks.** Each project row
+  now carries a caret; opening it loads *that project's* tasks onto the
+  chart (nested sub-tasks and dependency arrows included) and collapsing
+  hides them again. Loading is lazy by design — the portfolio holds 1,433
+  tasks and one project alone has 360, so the initial chart fetches only a
+  grouped count per project (`children.lazy` on `get_gantt_data`, surfaced
+  as DHTMLX's `branch_loading` + `$has_child`) and pulls a subtree only when
+  asked. The global "Show Tasks" checkbox is gone, replaced by this.
+- **Colour coding by project type, with an on-screen key.** Project bars take
+  their `project_type` colour (Build blue · Design purple · Service green ·
+  Events orange · Delivery teal · anything else grey) and their tasks a
+  lighter shade of the same colour, so a subtree reads as one family. A
+  legend under the toolbar explains the palette plus the overdue marker.
+- **More ways to filter the portfolio**, alongside the existing status and
+  project pickers: **project type**, **customer**, a **date window** (only
+  projects overlapping the next 30/90/180/365 days), and **at-risk only**
+  (past its expected end date and under 100% complete). All are applied
+  server-side through the validated filter path.
+- **Overdue highlighting** — projects and tasks past their end date and not
+  complete get a red outline and red grid label.
+- **Grid columns** beside the name: Type, Start, End and % complete. End
+  dates display the inclusive day the user entered (the API's `end_date` is
+  exclusive).
+- **PNG export** is back (the frappe-gantt swap had dropped it), rendered
+  **client-side with dom-to-image** — deliberately *not* DHTMLX's
+  `exportToPNG()`, which uploads the chart to `export.dhtmlx.com`; project
+  schedules must not leave the browser.
+- **The view is remembered per user** — filters, zoom level and which
+  projects are expanded persist in localStorage, with a **Reset view**
+  button to clear them.
+- Grouping now coalesces: a project is filed under its **Master Project**
+  when it has one, otherwise under its **project type** (no project
+  currently sets a Master Project, so the old grouping row never appeared).
+- Supporting `get_gantt_data` capabilities: `extra_fields` (validated raw
+  column values passed through per row, capped and blocked from shadowing
+  the keys the shaper owns), `group_by` accepting a list to coalesce, and
+  `children.lazy`. Widget: `lazy_children`, `on_task_expand` /
+  `on_task_collapse`, `add_rows()` and `open_task_ids()`.
+
 ## [1.165.2] - 2026-07-23
 
 ### Fixed
