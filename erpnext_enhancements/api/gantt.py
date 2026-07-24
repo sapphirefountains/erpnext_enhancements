@@ -1,4 +1,4 @@
-"""Read-only data endpoint for the embeddable Gantt widget.
+"""Data endpoints for the embeddable Gantt widget (read + drag-to-edit).
 
 Serves ``erpnext_enhancements.gantt.mount(...)`` (``public/js/gantt_widget/``).
 The client sends a JSON ``config`` describing what to plot — source doctype, a
@@ -33,6 +33,21 @@ Security model — the config is client-supplied and therefore hostile input:
 	- ``limit`` is clamped to ``MAX_ROWS`` (children to ``MAX_CHILD_ROWS``);
 	  child-table filters and 4-element filter entries are rejected (out of
 	  scope for v1).
+
+Writes (``update_gantt_row``) reuse every one of those validators, so the edit
+surface is exactly as narrow as the read surface:
+	- the target doctype must be one the SAME config already addresses (its
+	  ``doctype`` or its ``children.doctype``) — a client cannot name another;
+	- only ``start`` / ``end`` / ``progress`` may change, and only through the
+	  validated field map, so a write can never reach a field the config does
+	  not already plot;
+	- ``frappe.has_permission(doctype, "write", doc=name)`` is checked per
+	  document (the superseded ``*_from_gantt`` endpoints in
+	  project_dashboard.py authorised a Task write with a *Project* permission);
+	- the row is saved with ``doc.save()``, never ``db.set_value``, so
+	  controller validation, ``doc_events`` and the realtime broadcast all fire;
+	- ``modified`` is passed through so a stale drag loses to Frappe's own
+	  optimistic-locking check instead of silently overwriting a colleague.
 
 Date semantics: DHTMLX treats ``end_date`` as exclusive. ERPNext date values
 at midnight are human-inclusive ("ends on the 5th" means through the 5th), so
@@ -321,6 +336,21 @@ def _read_count(count_row, link_field):
 	return 0
 
 
+def _writable_doctypes(doctype, child_doctype):
+	"""Doctype-level write permission per source, for the client's affordances.
+
+	A coarse hint only — one check per DOCTYPE, not per row, because a
+	per-document check across a 1000-row chart would be brutal. It decides
+	whether bars are draggable at all; ``update_gantt_row`` still enforces
+	``has_permission(..., doc=name)`` on the specific document, so a user who
+	can write the doctype but not one particular record is refused there.
+	"""
+	out = {doctype: bool(frappe.has_permission(doctype, "write"))}
+	if child_doctype:
+		out[child_doctype] = bool(frappe.has_permission(child_doctype, "write"))
+	return out
+
+
 def _add_extra_fields(task, row, extra_fields):
 	"""Copy validated raw column values onto a shaped task dict."""
 	for fieldname in extra_fields or ():
@@ -373,6 +403,9 @@ def _shape_row(row, field_map):
 		"start_date": start_str,
 		"end_date": end_str,
 		"open": True,
+		# the client hands this back on a drag so Frappe's check_if_latest can
+		# reject an edit made against a stale view
+		"ee_modified": cstr(row.get("modified")) or None,
 	}
 	if field_map.get("progress"):
 		task["progress"] = _shape_progress(row, field_map)
@@ -475,7 +508,9 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field, extra_fie
 						child_counts[root_name] = _read_count(count_row, link_field)
 			else:
 				wanted = (
-					{link_field} | set(children_cfg["field_map"].values()) | set(children_cfg["extra_fields"])
+					{link_field, "modified"}
+					| set(children_cfg["field_map"].values())
+					| set(children_cfg["extra_fields"])
 				)
 				child_rows = frappe.get_list(
 					children_cfg["meta"].name,
@@ -604,6 +639,7 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field, extra_fie
 			"total_rows": len(rows),
 			"unscheduled": unscheduled,
 			"dropped_children": dropped_children,
+			"can_write": _writable_doctypes(doctype, children_cfg["meta"].name if children_cfg else None),
 		},
 	}
 
@@ -676,7 +712,7 @@ def get_gantt_data(config):
 	if composite and field_map.get("parent"):
 		frappe.throw(_("Gantt composite configs do not support a root 'parent' mapping"))
 
-	wanted = set(field_map.values()) | set(extra_fields)
+	wanted = set(field_map.values()) | set(extra_fields) | {"modified"}
 	if group_field:
 		wanted |= set(group_field)
 	query_fields = ["name", *sorted(wanted - {"name"})]
@@ -704,5 +740,161 @@ def get_gantt_data(config):
 	return {
 		"tasks": tasks,
 		"links": links,
-		"meta": {"total_rows": len(rows), "unscheduled": unscheduled},
+		"meta": {
+			"total_rows": len(rows),
+			"unscheduled": unscheduled,
+			"can_write": _writable_doctypes(doctype, None),
+		},
 	}
+
+
+# ---------------------------------------------------------------------------
+# Writes — drag-to-edit
+# ---------------------------------------------------------------------------
+
+# Only these gantt attributes may be changed by a drag, and only via the
+# config's validated field map. Everything else on the document is untouchable
+# through this endpoint.
+WRITABLE_ATTRS = ("start", "end", "progress")
+
+
+def _resolve_write_target(cfg, ref_doctype):
+	"""Return ``(meta, field_map)`` for a doctype the config already addresses.
+
+	A write may only touch the config's own ``doctype`` or its
+	``children.doctype`` — otherwise a client could name any doctype it liked
+	and write through the field map of a different one.
+	"""
+	ref_doctype = cstr(ref_doctype)
+	root_doctype = cfg.get("doctype")
+	if ref_doctype and ref_doctype == root_doctype:
+		meta = frappe.get_meta(root_doctype)
+		return meta, _parse_field_map(meta, cfg.get("fields"))
+
+	children = cfg.get("children")
+	if children and ref_doctype and ref_doctype == children.get("doctype"):
+		root_meta = frappe.get_meta(root_doctype)
+		child_cfg = _parse_children_config(root_meta, children)
+		return child_cfg["meta"], child_cfg["field_map"]
+
+	frappe.throw(_("{0} is not editable from this Gantt").format(ref_doctype or "?"))
+
+
+def _to_stored_datetime(value, fieldtype, is_end):
+	"""Invert :func:`_shape_row`'s date transform for a write.
+
+	The read side pushes a midnight (date-only) end forward one day so DHTMLX's
+	exclusive ``end_date`` lines up with ERPNext's inclusive one; writing back
+	without undoing that would walk every edited date forward a day at a time.
+	Starts are stored as-is.
+	"""
+	stamp = get_datetime(value)
+	if is_end and stamp.hour == stamp.minute == stamp.second == 0:
+		stamp = stamp - timedelta(days=1)
+	return stamp.date() if fieldtype == "Date" else stamp
+
+
+def _widen_parent_project_window(doc):
+	"""Let a Task be dragged past its project's end date.
+
+	ERPNext's ``Task.validate_parent_project_dates`` throws ``InvalidDates``
+	("Task's Expected End Date cannot be after Project's Expected End Date")
+	— and on this site ``Project.expected_end_date`` is a DERIVED field:
+	``script_migrations.task.sync_project_dates_from_tasks`` recomputes it as
+	MAX(task end) on every Task ``on_update``, and the form shows it read-only.
+	The latest task of a project therefore always sits exactly on the project
+	end, so "extend the last task" — the commonest edit there is — would fail
+	validation against a value that is about to be recomputed anyway.
+
+	Widening the window first clears that hurdle; the sync hook then sets the
+	authoritative value straight after the save. No-op for any other doctype,
+	and never shrinks the window.
+	"""
+	if doc.doctype != "Task" or not doc.get("project") or not doc.get("exp_end_date"):
+		return
+	project_end = frappe.db.get_value("Project", doc.project, "expected_end_date")
+	if not project_end:
+		return
+	if get_datetime(doc.exp_end_date).date() > get_datetime(project_end).date():
+		frappe.db.set_value(
+			"Project",
+			doc.project,
+			"expected_end_date",
+			get_datetime(doc.exp_end_date).date(),
+			update_modified=False,
+		)
+
+
+@frappe.whitelist()
+def update_gantt_row(config, ref_doctype, ref_name, changes, modified=None):
+	"""Apply a drag (dates and/or progress) to one row's document.
+
+	Args:
+		config: the same JSON config the chart was rendered from — revalidated
+			here, never trusted.
+		ref_doctype, ref_name: the row's source document (rows carry these as
+			``ref_doctype``/``ref_name``; composite ids are prefixed and are
+			NOT document names).
+		changes: dict of gantt attributes to apply — any of ``start``, ``end``
+			(wire format "%Y-%m-%d %H:%M", exclusive) and ``progress`` (0..1).
+		modified: the row's last-known ``modified`` stamp. When supplied, a
+			concurrent edit makes this call fail rather than clobber.
+
+	Returns ``{"status": "success", "row": {...}}`` with the re-shaped row so
+	the client can reconcile against what was actually stored, or
+	``{"status": "conflict"|"error", "message": ...}``.
+	"""
+	cfg = frappe.parse_json(config) or {}
+	if not isinstance(cfg, dict):
+		frappe.throw(_("Invalid Gantt config"))
+	changes = frappe.parse_json(changes) or {}
+	if not isinstance(changes, dict) or not changes:
+		frappe.throw(_("No Gantt changes supplied"))
+
+	unknown = set(changes) - set(WRITABLE_ATTRS)
+	if unknown:
+		frappe.throw(_("Gantt cannot edit: {0}").format(", ".join(sorted(unknown))))
+
+	meta, field_map = _resolve_write_target(cfg, ref_doctype)
+	doctype = meta.name
+
+	if not frappe.db.exists(doctype, ref_name):
+		frappe.throw(_("{0} {1} not found").format(doctype, ref_name), frappe.DoesNotExistError)
+	if not frappe.has_permission(doctype, "write", doc=ref_name):
+		frappe.throw(_("Not permitted to edit {0}").format(doctype), frappe.PermissionError)
+
+	doc = frappe.get_doc(doctype, ref_name)
+	if meta.is_submittable and cint(doc.docstatus) != 0:
+		frappe.throw(_("{0} {1} is not a draft and cannot be rescheduled").format(doctype, ref_name))
+
+	for attr, value in changes.items():
+		fieldname = field_map.get(attr)
+		if not fieldname:
+			# the chart cannot show it, so it may not write it either
+			frappe.throw(_("This Gantt does not map {0}, so it cannot be edited").format(attr))
+		if attr == "progress":
+			doc.set(fieldname, min(max(flt(value) * 100.0, 0), 100))
+		else:
+			df = meta.get_field(fieldname)
+			doc.set(fieldname, _to_stored_datetime(value, df.fieldtype if df else "Datetime", attr == "end"))
+
+	if modified:
+		# hand Frappe the stamp the client last saw so check_if_latest() can
+		# reject a drag made against stale data
+		doc.modified = modified
+
+	try:
+		_widen_parent_project_window(doc)
+		doc.save()
+	except frappe.TimestampMismatchError:
+		frappe.db.rollback()
+		return {
+			"status": "conflict",
+			"message": _("{0} was changed by someone else — reloading.").format(ref_name),
+		}
+	except frappe.ValidationError as e:
+		frappe.db.rollback()
+		return {"status": "error", "message": cstr(e)}
+
+	row = _shape_row(doc.as_dict(), field_map)
+	return {"status": "success", "row": row, "modified": cstr(doc.modified)}

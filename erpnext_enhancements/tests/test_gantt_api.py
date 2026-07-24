@@ -30,9 +30,44 @@ class Row(dict):
 			raise AttributeError(key) from e
 
 
+class FakeDoc(dict):
+	"""Minimal frappe Document stand-in for the write tests."""
+
+	def __init__(self, doctype, name, **values):
+		super().__init__(doctype=doctype, name=name, docstatus=0, modified="2026-07-01 10:00:00", **values)
+		self.saved = False
+
+	def __getattr__(self, key):
+		try:
+			return self[key]
+		except KeyError as e:
+			raise AttributeError(key) from e
+
+	def __setattr__(self, key, value):
+		# "save" must land as a real attribute so a test can replace it —
+		# storing it in the dict would leave the class method winning lookup
+		if key in ("saved", "save"):
+			object.__setattr__(self, key, value)
+		else:
+			self[key] = value
+
+	def set(self, key, value):
+		self[key] = value
+
+	def get(self, key, default=None):
+		return dict.get(self, key, default)
+
+	def as_dict(self):
+		return Row(self)
+
+	def save(self):
+		self.saved = True
+
+
 class FakeMeta:
-	def __init__(self, name, fields, istable=False, issingle=False):
+	def __init__(self, name, fields, istable=False, issingle=False, is_submittable=0):
 		self.name = name
+		self.is_submittable = is_submittable
 		self.fields = [types.SimpleNamespace(**f) for f in fields]
 		self.istable = istable
 		self.issingle = issingle
@@ -125,6 +160,24 @@ def install_frappe_stub():
 	frappe.get_meta = get_meta
 	frappe.has_permission = lambda *args, **kwargs: True
 	frappe.get_list = lambda *args, **kwargs: []
+
+	# --- write-path stubs -------------------------------------------------
+	class TimestampMismatchError(Exception):
+		pass
+
+	frappe.TimestampMismatchError = TimestampMismatchError
+
+	class ValidationError(Exception):
+		pass
+
+	frappe.ValidationError = ValidationError
+	frappe.db = types.SimpleNamespace(
+		exists=lambda doctype, name: True,
+		get_value=lambda *args, **kwargs: None,
+		set_value=lambda *args, **kwargs: None,
+		rollback=lambda: None,
+	)
+	frappe.get_doc = lambda doctype, name: FakeDoc(doctype, name)
 
 	frappe_model = sys.modules.get("frappe.model") or types.ModuleType("frappe.model")
 	frappe_model.default_fields = (
@@ -672,7 +725,9 @@ def test_happy_path_shapes_tasks_and_links(env):
 	out = gantt.get_gantt_data(base_config(filters={"project": "PRJ-1"}, dependencies="depends_on", limit=10))
 	assert [t["id"] for t in out["tasks"]] == ["T1", "T2"]
 	assert out["links"] == [{"id": "d1", "source": "T1", "target": "T2", "type": "0"}]
-	assert out["meta"] == {"total_rows": 2, "unscheduled": 0}
+	assert out["meta"]["total_rows"] == 2 and out["meta"]["unscheduled"] == 0
+	# the client uses this to decide whether bars are draggable at all
+	assert out["meta"]["can_write"] == {"Task": True}
 	assert calls[0][1]["filters"] == {"project": "PRJ-1"}
 	assert calls[0][1]["limit_page_length"] == 10
 
@@ -859,7 +914,9 @@ def test_composite_groups_roots_and_children(env):
 
 	# T4's root was never returned -> dropped; T5 undated -> unscheduled (with P3)
 	assert "C::T4" not in by_id
-	assert out["meta"] == {"total_rows": 3, "unscheduled": 2, "dropped_children": 1}
+	assert out["meta"]["total_rows"] == 3
+	assert out["meta"]["unscheduled"] == 2 and out["meta"]["dropped_children"] == 1
+	assert out["meta"]["can_write"] == {"Project": True, "Task": True}
 
 	# child dependency links are prefixed and constrained to kept children
 	assert out["links"] == [{"id": "d1", "source": "C::T1", "target": "C::T2", "type": "0"}]
@@ -1182,3 +1239,223 @@ def test_non_lazy_children_have_no_caret_markers(env):
 	frappe.get_list = _composite_get_list([])
 	out = gantt.get_gantt_data(composite_config())
 	assert not [t for t in out["tasks"] if t.get("$has_child")]
+
+
+# ---------------------------------------------------------------------------
+# Writes — update_gantt_row
+# ---------------------------------------------------------------------------
+
+
+def test_write_rejects_a_doctype_the_config_does_not_address(env):
+	"""A client must not be able to name any doctype it likes: the target has
+	to be the config's own doctype or its children.doctype."""
+	_, gantt = env
+	with pytest.raises(Exception, match="not editable from this Gantt"):
+		gantt.update_gantt_row(base_config(), "Project", "PRJ-1", {"progress": 0.5})
+
+
+def test_write_accepts_the_child_doctype_of_a_composite_config(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	out = gantt.update_gantt_row(composite_config(), "Task", "T1", {"progress": 0.5})
+	assert out["status"] == "success" and doc.saved
+
+
+def test_write_rejects_attributes_outside_start_end_progress(env):
+	_, gantt = env
+	with pytest.raises(Exception, match="cannot edit"):
+		gantt.update_gantt_row(base_config(), "Task", "T1", {"text": "hacked"})
+	with pytest.raises(Exception, match="cannot edit"):
+		gantt.update_gantt_row(base_config(), "Task", "T1", {"parent": "T2"})
+
+
+def test_write_rejects_an_attribute_the_config_does_not_map(env):
+	"""If the chart cannot show it, the chart cannot write it."""
+	_, gantt = env
+	cfg = {"doctype": "Task", "fields": {"text": "subject", "start": "exp_start_date"}}
+	with pytest.raises(Exception, match="does not map progress"):
+		gantt.update_gantt_row(cfg, "Task", "T1", {"progress": 0.5})
+
+
+def test_write_requires_write_permission_on_that_document(env):
+	frappe, gantt = env
+	frappe.has_permission = lambda *args, **kwargs: False
+	with pytest.raises(frappe.PermissionError):
+		gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5})
+
+
+def test_write_rejects_a_missing_document(env):
+	frappe, gantt = env
+	frappe.db.exists = lambda doctype, name: False
+	with pytest.raises(frappe.DoesNotExistError):
+		gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5})
+
+
+def test_write_rejects_a_submitted_document(env):
+	frappe, gantt = env
+	TASK_META.is_submittable = 1
+	try:
+		doc = FakeDoc("Task", "T1")
+		doc.docstatus = 1
+		frappe.get_doc = lambda dt, n: doc
+		with pytest.raises(Exception, match="not a draft"):
+			gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5})
+	finally:
+		TASK_META.is_submittable = 0
+
+
+def test_write_inverts_the_exclusive_end_so_dates_do_not_creep(env):
+	"""The read side pushes a midnight end forward a day; the write must undo
+	that or every drag walks the date forward one day at a time."""
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	gantt.update_gantt_row(
+		base_config(), "Task", "T1", {"start": "2026-01-01 00:00", "end": "2026-01-06 00:00"}
+	)
+	assert str(doc.exp_start_date) == "2026-01-01 00:00:00"
+	# exclusive 6 Jan midnight == inclusive 5 Jan
+	assert str(doc.exp_end_date) == "2026-01-05 00:00:00"
+
+
+def test_write_round_trips_through_the_reader(env):
+	"""shape -> drag -> write -> shape must land on the same value."""
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	original_end = "2026-01-05 00:00:00"
+	shaped, _skipped = gantt._shape_tasks(
+		[
+			Row(
+				{
+					"name": "T1",
+					"subject": "A",
+					"exp_start_date": "2026-01-01 00:00:00",
+					"exp_end_date": original_end,
+					"progress": 0,
+					"parent_task": None,
+				}
+			)
+		],
+		dict(VALID_FIELDS),
+	)
+	# write the value the chart would send back untouched
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": shaped[0]["end_date"]})
+	assert str(doc.exp_end_date) == original_end
+
+
+def test_write_keeps_an_explicit_time_end_untouched(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-05 17:30"})
+	assert str(doc.exp_end_date) == "2026-01-05 17:30:00"
+
+
+def test_write_stores_dates_as_date_objects_for_date_fields(env):
+	frappe, gantt = env
+	doc = FakeDoc("Project", "P1")
+	frappe.get_doc = lambda dt, n: doc
+	cfg = {
+		"doctype": "Project",
+		"fields": {"text": "project_name", "start": "expected_start_date", "end": "expected_end_date"},
+	}
+	gantt.update_gantt_row(cfg, "Project", "P1", {"end": "2026-01-06 00:00"})
+	assert str(doc.expected_end_date) == "2026-01-05"
+
+
+def test_write_scales_progress_back_to_percent_and_clamps(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.42})
+	assert doc.progress == 42
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 5})
+	assert doc.progress == 100
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": -2})
+	assert doc.progress == 0
+
+
+def test_write_uses_doc_save_not_db_set_value(env):
+	"""db.set_value would skip controller validation, doc_events and the
+	realtime broadcast — the flaw in the superseded *_from_gantt endpoints."""
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	touched = []
+	frappe.db.set_value = lambda *a, **k: touched.append(a)
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5})
+	assert doc.saved is True
+	assert not touched  # nothing written behind the controller's back
+
+
+def test_write_passes_modified_through_for_optimistic_locking(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	frappe.get_doc = lambda dt, n: doc
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5}, modified="2026-06-01 09:00:00")
+	assert doc.modified == "2026-06-01 09:00:00"
+
+
+def test_write_reports_a_concurrent_edit_as_a_conflict(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+
+	def boom():
+		raise frappe.TimestampMismatchError("stale")
+
+	doc.save = boom
+	frappe.get_doc = lambda dt, n: doc
+	out = gantt.update_gantt_row(base_config(), "Task", "T1", {"progress": 0.5})
+	assert out["status"] == "conflict"
+
+
+def test_write_returns_validation_errors_instead_of_500ing(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+
+	def boom():
+		raise frappe.ValidationError("Task's Expected End Date cannot be after Project's")
+
+	doc.save = boom
+	frappe.get_doc = lambda dt, n: doc
+	out = gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-06 00:00"})
+	assert out["status"] == "error" and "Expected End Date" in out["message"]
+
+
+def test_write_widens_the_derived_project_window_for_a_task(env):
+	"""Project.expected_end_date is DERIVED (MAX of task ends) and read-only,
+	so the latest task always sits on it — extending that task would fail
+	ERPNext's validate_parent_project_dates without this."""
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	doc.project = "PRJ-1"
+	frappe.get_doc = lambda dt, n: doc
+	frappe.db.get_value = lambda dt, name, field, **k: "2026-01-05"
+	widened = []
+	frappe.db.set_value = lambda dt, name, field, value, **k: widened.append((dt, field, str(value)))
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-11 00:00"})
+	assert widened == [("Project", "expected_end_date", "2026-01-10")]
+
+
+def test_write_never_shrinks_the_project_window(env):
+	frappe, gantt = env
+	doc = FakeDoc("Task", "T1")
+	doc.project = "PRJ-1"
+	frappe.get_doc = lambda dt, n: doc
+	frappe.db.get_value = lambda dt, name, field, **k: "2026-12-31"
+	widened = []
+	frappe.db.set_value = lambda *a, **k: widened.append(a)
+	gantt.update_gantt_row(base_config(), "Task", "T1", {"end": "2026-01-06 00:00"})
+	assert not widened
+
+
+def test_can_write_reflects_doctype_permission_per_source(env):
+	"""The hint is per doctype (one check, not one per row); per-document
+	enforcement happens in update_gantt_row."""
+	frappe, gantt = env
+	frappe.get_list = _composite_get_list([])
+	frappe.has_permission = lambda doctype, ptype=None, *a, **k: not (ptype == "write" and doctype == "Task")
+	out = gantt.get_gantt_data(composite_config())
+	assert out["meta"]["can_write"] == {"Project": True, "Task": False}

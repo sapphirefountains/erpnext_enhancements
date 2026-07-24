@@ -163,6 +163,20 @@
 	}
 }
 
+/* Bar labels. The skin colours side labels for a dark canvas, which is
+   invisible against ours; and an in-bar label should ellipsize rather than be
+   chopped mid-letter. */
+.ee-gantt-widget .gantt_task_content {
+	padding: 0 6px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ee-gantt-widget .gantt_side_content.gantt_right {
+	color: var(--text-color, #1f272e);
+	font-weight: 500;
+}
+
 .ee-gantt-note {
 	position: absolute;
 	right: 8px;

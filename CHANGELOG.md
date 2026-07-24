@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.168.0] - 2026-07-24
+
+### Added
+
+- **Drag-to-edit on the Gantt** (phases 1–2 of the editable-Gantt plan): drag a
+  task bar to reschedule it, drag an edge to extend or shrink the due date, or
+  drag the progress handle. Enabled on both the Project form Schedule tab and
+  the Projects Dashboard portfolio Gantt.
+- **`api/gantt.py::update_gantt_row`** — the write half of the widget's
+  contract, as narrow as the read half. The target doctype must be one the
+  same config already addresses; only `start`/`end`/`progress` may change, and
+  only through the validated field map, so a write can never reach a field the
+  chart does not plot; `frappe.has_permission(..., doc=name)` is checked on
+  the specific document; submitted documents are refused; and the row is saved
+  with `doc.save()` — never `db.set_value` — so controller validation, doc
+  events and the realtime broadcast all fire.
+- **Editing is default-deny per row.** DHTMLX's global `config.readonly` stays
+  true and only rows the server reports writable (`meta.can_write`, one check
+  per doctype) are marked editable, so group rows, project rows and lazy-load
+  placeholders can never be dragged. Keeping the global flag also keeps the
+  grid's "+" add-task button hidden — it checks the raw config rather than
+  `isReadonly()`.
+- **Optimistic edits with rollback.** DHTMLX moves the bar before
+  `onAfterTaskDrag` fires, so the pre-drag state is snapshotted and restored if
+  the write is refused, with the reason surfaced. A concurrent edit is detected
+  through the row's `modified` stamp (now returned with every row) and reported
+  as a conflict that reloads rather than clobbers, and a refresh arriving
+  mid-edit is deferred instead of wiping the optimistic bar.
+
+### Fixed
+
+- **Bar labels were clipped and unreadable.** Two causes: the dashboard forced
+  `height: 14px !important` on task bars, which left DHTMLX's inline
+  line-height sized for the original height so the text overflowed and was cut
+  off top and bottom; and a short bar (a one-day task in Week/Month view is a
+  few pixels wide) had its name chopped mid-word inside it. The height override
+  is gone — the lighter shade already distinguishes a task from its project —
+  and labels now render **inside the bar when they fit, beside it when they do
+  not**, using the skin's own side-label slot, with ellipsis and padding for
+  in-bar text. Side labels are recoloured for the light canvas (the skin styles
+  them for a dark one, i.e. invisible here).
+- **Extending a project's last task no longer fails validation.** ERPNext's
+  `Task.validate_parent_project_dates` throws `InvalidDates` when a task ends
+  after its project's `expected_end_date` — and on this site that field is
+  *derived* (`sync_project_dates_from_tasks` recomputes it as MAX(task end) and
+  the form shows it read-only), so the latest task always sits exactly on the
+  project end. Every project sampled was in that state, meaning the commonest
+  edit of all would have been rejected. The write path now widens the derived
+  window first; the sync hook sets the authoritative value straight after.
+
+### Notes
+
+- Project bars stay read-only by design: their dates are derived from tasks, so
+  a drag would be silently reverted by the next task save.
+- The four superseded `*_from_gantt` endpoints in `project_dashboard.py` remain
+  in place for now (they have no callers); they are removed in a later phase
+  along with dependency editing and the quick-edit dialog.
+
 ## [1.167.0] - 2026-07-23
 
 ### Fixed
