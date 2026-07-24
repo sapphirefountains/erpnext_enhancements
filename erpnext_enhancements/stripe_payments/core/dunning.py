@@ -93,9 +93,10 @@ def run_dunning_cycle(today=None):
 
 
 def _discover_new_failures() -> list[str]:
-    """Submitted, still-outstanding invoices whose auto-charge failed and that are
-    not yet in a dunning cycle (``custom_stripe_payment_status`` is stamped
-    ``Failed`` by ``_alert_failed_autocharge`` on every Auto card decline)."""
+    """Submitted, still-outstanding invoices flagged ``custom_stripe_payment_status
+    = "Failed"`` and not yet in a dunning cycle. That invoice-level flag is shared
+    (it is also set for one-off ACH link bounces), so ``_enroll`` re-verifies the
+    most-recent failure was an *auto-charge* before enrolling."""
     return frappe.get_all(
         "Sales Invoice",
         filters={
@@ -139,12 +140,21 @@ def _enroll(inv, today, schedule):
     if flt(invoice.outstanding_amount) <= 0:
         return  # paid between discovery and now
 
-    original_error = frappe.db.get_value(
+    # The invoice-level "Failed" stamp is shared: reconcile._on_session_async_failed
+    # marks it for ANY ACH Checkout-link bounce (no channel guard), so a one-off
+    # link/ACH payment that later fails looks identical here. Dunning only owns a
+    # declined *auto-charge* — confirm the most-recent failure was on an
+    # Auto/Dunning channel, else this invoice is not ours (no enrol, no hold).
+    latest_failed = frappe.db.get_value(
         "Stripe Payment",
         {"sales_invoice": inv, "status": "Failed"},
-        "error_message",
+        ["channel", "error_message"],
         order_by="creation desc",
+        as_dict=True,
     )
+    if not latest_failed or latest_failed.channel not in ("Auto", "Dunning"):
+        return
+    original_error = latest_failed.error_message
     _stamp(inv, {
         "custom_dunning_state": "Active",
         "custom_dunning_attempts": 1,
@@ -181,6 +191,18 @@ def _process_case(inv, today, schedule):
         frappe.db.commit()
         return
 
+    # Idempotency for the declined path (whose only other guard is the
+    # post-charge stamp): if a Dunning charge was already attempted for this
+    # invoice today — a same-day scheduler catch-up, or a re-run after a crash
+    # dropped the bookkeeping stamp — do not charge again; just push the retry to
+    # a future day so the schedule keeps advancing without a duplicate charge.
+    if frappe.db.exists(
+        "Stripe Payment", {"sales_invoice": inv, "channel": "Dunning", "creation": [">=", today]}
+    ):
+        _stamp(inv, {"custom_dunning_next_retry": add_days(today, 1)})
+        frappe.db.commit()
+        return
+
     if not _can_autocharge(invoice.customer):
         _exhaust(inv, invoice, "No saved card on file (autopay was removed).")
         return
@@ -214,8 +236,12 @@ def _process_case(inv, today, schedule):
     if retries_done >= len(schedule):
         _exhaust(inv, invoice, err or "Card declined.")
         return
+    # Anchor the schedule to opened_on, but never stamp a past date: after a
+    # scheduler gap opened_on + offset can be <= today, which would re-select the
+    # case every run and collapse the spacing — clamp to at least tomorrow.
     opened_on = getdate(invoice.custom_dunning_opened_on or today)
-    _stamp(inv, {"custom_dunning_next_retry": add_days(opened_on, schedule[retries_done])})
+    next_retry = max(getdate(add_days(opened_on, schedule[retries_done])), add_days(today, 1))
+    _stamp(inv, {"custom_dunning_next_retry": next_retry})
     _email_customer(inv, invoice, attempt=attempts, final=False)
     frappe.db.commit()
 
@@ -326,7 +352,9 @@ def _alert_accounts_exhausted(inv, invoice, reason):
     """Notification Log to Accounts Managers when a dunning cycle is exhausted."""
     from erpnext_enhancements.stripe_payments.core.payouts import _accounts_managers
 
-    attempts = cint(invoice.custom_dunning_attempts)
+    # Read the counter fresh — the in-memory invoice doc predates the stamp that
+    # _enroll/_process_case commit before calling _exhaust.
+    attempts = cint(frappe.db.get_value("Sales Invoice", inv, "custom_dunning_attempts"))
     amount = frappe.utils.fmt_money(flt(invoice.outstanding_amount), currency=invoice.currency)
     subject = f"Dunning exhausted: {invoice.customer} — autopay off + service hold"
     content = (
