@@ -657,6 +657,14 @@ fixtures = [
 			]
 		],
 	},
+	# WI-012: version-control the Material Request / Purchase Order permission split
+	# (team lead raises the MR, PM converts to the PO). Custom DocPerm fully overrides
+	# a doctype's standard perms, so these rows ARE the complete effective perm set for
+	# both doctypes — the parent-in filter captures exactly those two doctypes' rows.
+	{
+		"dt": "Custom DocPerm",
+		"filters": [["parent", "in", ["Material Request", "Purchase Order"]]],
+	},
 	# WI-010: version-control the security architecture — the 17 hand-built Role
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
 	# so re-export never sweeps user-created records. The Role entry MUST precede the

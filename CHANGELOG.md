@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.170.0] - 2026-07-24
+
+### Added
+
+- **WI-012: version-controlled the Material Request → Purchase Order permission
+  split.** Field team leads (`Stock User`) raise Material Requests but cannot
+  create Purchase Orders; PMs (`Purchase User` / `Purchase Manager`) convert MRs
+  to POs. The applied Custom DocPerm rows for both doctypes are now a
+  `bench migrate`-managed fixture (`fixtures/custom_docperm.json` + a `hooks.py`
+  allowlist), so the split is code-reviewed and reproducible on fresh sites
+  instead of hand-clicked. Buying Settings `po_required` / `pr_required` are
+  deliberately left `No` (subcontract-labour bills arrive without POs day one).
+  SOP: `docs/migration/wi012-purchasing-flow.md`.
+
 ## [1.169.3] - 2026-07-24
 
 ### Added
