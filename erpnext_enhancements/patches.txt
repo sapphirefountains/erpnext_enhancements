@@ -215,3 +215,7 @@ erpnext_enhancements.patches.remove_project_timeline_fields
 # v1.169.0 WI-010: seed the "PO Approver" role (insert-only) for the WI-013 PO
 # dollar-threshold Authorization Rule; assign to the CEO post-deploy (WI-011)
 erpnext_enhancements.patches.seed_po_approver_role
+# v1.169.2 WI-011 follow-up: rename the "Accounts" Role Profile to "Accounting"
+# (this site relabels the Customer doctype "Accounts", making the profile name
+# ambiguous). Runs before fixture sync so role_profile.json updates the renamed doc.
+erpnext_enhancements.patches.rename_accounts_role_profile

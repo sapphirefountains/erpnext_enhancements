@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.169.2] - 2026-07-24
+
+### Changed
+
+- **Renamed the `Accounts` Role Profile to `Accounting`** (WI-011 follow-up). This
+  site UI-relabels the Customer DocType to "Accounts", so a profile named
+  "Accounts" read as customer management when it actually bundles the accounting
+  roles (Accounts Manager + Accounts User — GL / AP / AR authority). Done via an
+  idempotent rename patch (`rename_accounts_role_profile`, post_model_sync so it
+  runs before fixture sync) that also repoints any `User.role_profile_name` links,
+  plus the fixture + `hooks.py` allowlist. No user was assigned the profile, so no
+  access changed.
+
 ## [1.169.1] - 2026-07-24
 
 ### Added

@@ -675,7 +675,7 @@ fixtures = [
 				"name",
 				"in",
 				[
-					"Accounts",
+					"Accounting",
 					"Design Team",
 					"Executive",
 					"Finance",
