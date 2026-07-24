@@ -100,12 +100,47 @@ def _claim_visit(doc):
     if doc.technician == user or "Maintenance User" not in frappe.get_roles():
         return False
     if not doc.technician:
+        # Unassigned draft: rows were instantiated with `user`'s warehouse
+        # (technician or session.user), so owner and warehouse already agree.
         doc.technician = user
         return True
     if _clocked_into_project(user, doc.project) and not _clocked_into_project(doc.technician, doc.project):
+        prior = doc.technician
         doc.technician = user
+        _reresolve_consumable_warehouses(doc, prior)
         return True
     return False
+
+
+def _reresolve_consumable_warehouses(doc, prior_technician):
+    """Realign auto-resolved consumable source warehouses after a substitute
+    claims a visit from a previously-assigned technician.
+
+    Consumable rows bake in a source warehouse at first-open instantiation using
+    the then-assigned technician. When a substitute later takes over, a row whose
+    warehouse still equals what the PRIOR technician's fallback produced (feature
+    store -> prior tech's vehicle -> settings default) was auto-resolved, so it is
+    re-resolved for the NEW owner — keeping the submit-time Material Issue sourced
+    from the van of whoever actually performs the visit. A feature/on-site
+    warehouse is tech-independent and stays put; a manually chosen warehouse
+    (differs from the prior auto value) is preserved.
+    """
+    from erpnext_enhancements.api.maintenance_workflow import (
+        _contract_feature_warehouses,
+        resolve_consumable_warehouse,
+    )
+
+    feature_warehouses = _contract_feature_warehouses(doc)
+    for row in doc.get("consumables", []):
+        feature_warehouse = feature_warehouses.get(row.serial_no or doc.serial_no)
+        prior_auto = resolve_consumable_warehouse(
+            feature_warehouse=feature_warehouse, technician=prior_technician
+        )
+        if row.warehouse and row.warehouse != prior_auto:
+            continue  # manual override — leave it
+        row.warehouse = resolve_consumable_warehouse(
+            feature_warehouse=feature_warehouse, technician=doc.technician
+        )
 
 
 def _check_not_stale(doc, modified):
