@@ -196,10 +196,19 @@ def _on_payment_intent_failed(pi):
 	if not sp:
 		return None
 	if sp.status != "Paid":
+		was_failed = sp.status == "Failed"
 		err = (pi.get("last_payment_error") or {}).get("message") or "Payment failed."
 		sp.db_set("status", "Failed")
 		sp.db_set("error_message", error_snippet(err, 200))
 		frappe.db.commit()
+		# Async (e.g. ACH) failure of an automatic charge -> parity with the
+		# synchronous card-decline path (alert Accounts + stamp the invoice).
+		# Guard on the prior status so a redelivered webhook, or the sync path
+		# having already alerted, never re-fires.
+		if not was_failed and sp.get("channel") == "Auto":
+			from erpnext_enhancements.stripe_payments.core.saved_methods import _alert_failed_autocharge
+
+			_alert_failed_autocharge(sp, err)
 	return sp
 
 
