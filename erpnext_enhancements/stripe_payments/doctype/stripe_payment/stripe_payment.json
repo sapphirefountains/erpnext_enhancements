@@ -107,7 +107,7 @@
    "fieldname": "channel",
    "fieldtype": "Select",
    "label": "Channel",
-   "options": "Desk\nPortal\nAuto",
+   "options": "Desk\nPortal\nAuto\nDunning",
    "read_only": 1
   },
   {
