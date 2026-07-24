@@ -18,6 +18,7 @@
   "maintenance_sms_nudges",
   "out_of_range_followup_days",
   "email_service_report_to_customer",
+  "auto_renew_maintenance_contracts",
   "restock_suggestions_enabled",
   "restock_source_warehouse",
   "collab_section",
@@ -195,6 +196,13 @@
    "fieldname": "email_service_report_to_customer",
    "fieldtype": "Check",
    "label": "Email Service Report to Customer on Finalize"
+  },
+  {
+   "default": "0",
+   "description": "At a fixed-term contract's End Date, auto-renew it for another one-year term (§9.2) instead of expiring — unless a non-renewal notice is set on the contract. Off by default.",
+   "fieldname": "auto_renew_maintenance_contracts",
+   "fieldtype": "Check",
+   "label": "Auto-Renew Maintenance Contracts"
   },
   {
    "default": "0",

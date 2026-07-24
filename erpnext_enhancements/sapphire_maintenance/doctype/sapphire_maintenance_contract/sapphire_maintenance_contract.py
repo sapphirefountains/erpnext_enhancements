@@ -28,7 +28,7 @@ template and visit shape onto the contract in one pick (form JS).
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, add_years, getdate, nowdate
+from frappe.utils import add_days, add_years, flt, getdate, nowdate
 
 # Project Contract uses a slightly different frequency vocabulary; "Custom"
 # has no fixed interval, so it maps to blank (per-feature manual choice).
@@ -59,12 +59,35 @@ class SapphireMaintenanceContract(Document):
 		self._check_single_active_contract()
 		self._materialize_feature_defaults()
 		self._derive_end_date()
+		self._renewal_rate_housekeeping()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
 				_("No Sales Order is linked — per-visit invoicing will fall back to the project's Maintenance Sales Order."),
 				indicator="orange",
 				alert=True,
 			)
+
+	def _renewal_rate_housekeeping(self):
+		"""Keep the renewal/rate fields consistent (§4.5 / §9.2).
+
+		Clears the rate-notice stamp when the scheduled rate or effective date
+		changes (so a re-scheduled change re-notifies Accounts); stamps the
+		non-renewal notice date when that flag is set and clears it when unset,
+		so a later re-check records the date it was actually re-given.
+		"""
+		before = self.get_doc_before_save()
+		if before:
+			prev_eff = before.get("rate_effective_date")
+			cur_eff = self.get("rate_effective_date")
+			if flt(before.get("scheduled_rate")) != flt(self.get("scheduled_rate")) or (
+				(getdate(prev_eff) if prev_eff else None) != (getdate(cur_eff) if cur_eff else None)
+			):
+				self.rate_notice_sent = None
+		if self.get("non_renewal_notice"):
+			if not self.get("non_renewal_notice_date"):
+				self.non_renewal_notice_date = nowdate()
+		else:
+			self.non_renewal_notice_date = None
 
 	def _materialize_feature_defaults(self):
 		"""Fill blanks on feature rows so the scheduler always sees real values.

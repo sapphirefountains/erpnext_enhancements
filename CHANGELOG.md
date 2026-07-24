@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.172.0] - 2026-07-24
+
+### Added
+
+- **Maintenance contract renewal & rate-adjustment engine.** At a fixed-term
+  contract's End Date, the daily scheduler now **auto-renews** it for another
+  one-year term (§9.2) — rolling End Date forward and keeping it Active — unless
+  a **Non-Renewal Notice** is set, in which case it expires as before. Gated by a
+  new **"Auto-Renew Maintenance Contracts"** Settings flag (**off by default**,
+  so behaviour is unchanged until enabled); each renewal notifies the Projects
+  Manager and rolls the T-30 renewal reminder to the new term.
+- **Scheduled rate changes (§4.5).** New `scheduled_rate` / `rate_effective_date`
+  fields let staff schedule an annual per-visit rate change; Accounts is alerted
+  30 days before the effective date to send the client written notice and update
+  the Sales Order rate. Advisory only — nothing auto-changes billing, and it
+  re-notifies if the schedule is edited.
+
 ## [1.171.1] - 2026-07-24
 
 ### Fixed
