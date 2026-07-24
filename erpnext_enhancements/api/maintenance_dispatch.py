@@ -121,9 +121,12 @@ def send_morning_digests():
 
     Gated by "Morning Technician Dispatch Digest" in ERPNext Enhancements
     Settings. Each technician is handled in isolation so one failure does not
-    abort the rest. ``dispatch_digest_sent`` is stamped before sending so a
-    second run the same day (scheduler catch-up, manual test) no-ops — the SMS
-    is billed, so at-most-once matters (same convention as maintenance_nudge_sent).
+    abort the rest. ``dispatch_digest_sent_on`` is stamped with today's date
+    before sending, so a second run the same day (scheduler catch-up, manual
+    test) no-ops — the SMS is billed, so at-most-once/day matters. A *date* (not
+    a boolean) is used deliberately: the draft persists and its
+    ``scheduled_visit_date`` is mutable, so a visit rescheduled to a later day
+    correctly re-enters that day's digest (its stamp is < that day).
     """
     if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_dispatch_digests")):
         return
@@ -136,16 +139,21 @@ def send_morning_digests():
             "scheduled_visit_date": today,
             "docstatus": 0,
             "technician": ["is", "set"],
-            "dispatch_digest_sent": 0,
         },
+        # Not already digested today: never stamped, or last stamped on a prior
+        # day (a rescheduled visit). ("<" alone would drop the never-set rows.)
+        or_filters=[
+            ["dispatch_digest_sent_on", "is", "not set"],
+            ["dispatch_digest_sent_on", "<", today],
+        ],
         fields=["name", "technician", "project", "customer", "serial_no", "visit_label"],
     ):
         by_tech.setdefault(visit.technician, []).append(visit)
 
     for technician, visits in by_tech.items():
-        # Stamp before sending: at-most-once even if this window runs twice.
+        # Stamp before sending: at-most-once/day even if this window runs twice.
         for visit in visits:
-            frappe.db.set_value("Sapphire Maintenance Record", visit.name, "dispatch_digest_sent", 1)
+            frappe.db.set_value("Sapphire Maintenance Record", visit.name, "dispatch_digest_sent_on", today)
         try:
             _send_tech_digest(technician, _order_by_route(visits), today)
         except Exception:

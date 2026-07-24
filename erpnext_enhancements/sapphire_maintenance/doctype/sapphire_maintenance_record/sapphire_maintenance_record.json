@@ -16,7 +16,7 @@
   "visit_label",
   "technician",
   "scheduled_visit_date",
-  "dispatch_digest_sent",
+  "dispatch_digest_sent_on",
   "clock_in_time",
   "clock_out_time",
   "paused_duration",
@@ -94,12 +94,11 @@
    "label": "Scheduled Visit Date"
   },
   {
-   "default": "0",
-   "description": "Set by the morning technician digest once this visit has been included, so a same-day re-run does not re-send the (billed) SMS/email.",
-   "fieldname": "dispatch_digest_sent",
-   "fieldtype": "Check",
+   "description": "Date this visit was last included in a morning technician digest. Same-day re-runs skip it (at-most-once/day); if the visit is rescheduled to a later day it re-enters that day's digest.",
+   "fieldname": "dispatch_digest_sent_on",
+   "fieldtype": "Date",
    "hidden": 1,
-   "label": "Dispatch Digest Sent",
+   "label": "Dispatch Digest Sent On",
    "read_only": 1
   },
   {

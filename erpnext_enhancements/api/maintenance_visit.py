@@ -82,6 +82,32 @@ def _clocked_into_project(user, project):
     }))
 
 
+def _claim_visit(doc):
+    """Stamp the opening technician onto a draft visit when appropriate.
+
+    ``technician`` drives clock autofill (``_job_interval``) and the kiosk
+    Today's Visits key, so the person actually performing the work should own the
+    record. A Maintenance User opener claims when the visit is unassigned, or —
+    for a visit pre-dispatched to a site's default technician — when the opener is
+    clocked into the project and that assigned technician is NOT (a substitute
+    on-site takes over from an absent tech). A supervisor merely peeking (not
+    clocked in) never claims, and an assigned tech actively clocked in is never
+    displaced. Returns True iff it changed ``technician``. Evaluated on every open
+    (not just first instantiation) because a substitute usually reads the site
+    briefing before clocking in, then reopens after clock-in to take the visit.
+    """
+    user = frappe.session.user
+    if doc.technician == user or "Maintenance User" not in frappe.get_roles():
+        return False
+    if not doc.technician:
+        doc.technician = user
+        return True
+    if _clocked_into_project(user, doc.project) and not _clocked_into_project(doc.technician, doc.project):
+        doc.technician = user
+        return True
+    return False
+
+
 def _check_not_stale(doc, modified):
     """Optimistic lock: reject writes based on a version someone else replaced."""
     if modified and str(doc.modified) != str(modified):
@@ -124,13 +150,15 @@ def get_visit_bootstrap(record):
     """
     doc = _get_record(record)
 
-    tables_empty = not any(doc.get(table) for table in PAYLOAD_TABLE_MAP)
-    if (
+    dirty = False
+    can_write = (
         doc.docstatus == 0
-        and tables_empty
         and (doc.project or doc.maintenance_contract)
         and frappe.has_permission(doc.doctype, ptype="write", doc=doc)
-    ):
+    )
+
+    # First open of a bare scheduler draft: instantiate the template's rows.
+    if can_write and not any(doc.get(table) for table in PAYLOAD_TABLE_MAP):
         payload = get_visit_payload(
             project=doc.project,
             serial_no=doc.serial_no,
@@ -146,22 +174,16 @@ def get_visit_bootstrap(record):
         if appended:
             if payload.get("template"):
                 doc.template = payload["template"]
-            # A tech opening the visit claims it so clock autofill and Today's
-            # Visits key on `technician`. Claim when it is unassigned, OR when
-            # the opener is a Maintenance User actively clocked into this
-            # project — a substitute covering for the pre-assigned (default)
-            # technician takes real ownership, so the clock times and
-            # attribution track who actually did the work, not who was planned.
-            # A supervisor merely peeking (not clocked in) never claims or
-            # steals a stamped visit.
-            user = frappe.session.user
-            if (
-                doc.technician != user
-                and "Maintenance User" in frappe.get_roles()
-                and (not doc.technician or _clocked_into_project(user, doc.project))
-            ):
-                doc.technician = user
-            doc.save()
+            dirty = True
+
+    # Ownership claim — see _claim_visit. Evaluated on every open of a writable
+    # draft (not only at first instantiation), so a substitute who reads the
+    # briefing before clocking in still claims when they reopen after clock-in.
+    if can_write and _claim_visit(doc):
+        dirty = True
+
+    if dirty:
+        doc.save()
 
     return {
         "record": doc.as_dict(),
