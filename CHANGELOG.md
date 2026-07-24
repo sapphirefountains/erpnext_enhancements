@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.174.1] - 2026-07-24
+
+### Fixed
+
+- **Site-wide portal/website outage: `SapphireMaintenanceRecord has no attribute
+  'website'`.** The `Sapphire Maintenance Record` doctype has `has_web_view` set
+  (for its `/maintenance-records` customer-portal view) but its controller
+  subclasses plain `Document` instead of `WebsiteGenerator`, so it never defined
+  the `website` attribute. On Frappe v16, `DocumentPage.get_condition_field`
+  dereferences `controller.website.condition_field` for **every** web-view
+  doctype while resolving any unmatched path, so the missing attribute raised
+  `AttributeError` and brought down all website/portal rendering — even the desk
+  failed to load. The lookup is Redis-cached, which is why a deploy's cache flush
+  suddenly exposed a latent defect. Fix: give the controller an explicit
+  `website = frappe._dict(condition_field="docstatus")`, mirroring
+  `WebsiteGenerator`'s default and gating web routing to submitted visits.
+
 ## [1.174.0] - 2026-07-24
 
 ### Added
