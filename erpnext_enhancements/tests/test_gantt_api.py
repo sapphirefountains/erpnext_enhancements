@@ -956,3 +956,196 @@ def test_group_rows_sorted_alphabetically(env):
 	out = gantt.get_gantt_data(cfg)
 	group_ids = [t["id"] for t in out["tasks"] if t["id"].startswith("G::")]
 	assert group_ids == ["G::AA Program", "G::ZZ Program"]
+
+
+# ---------------------------------------------------------------------------
+# extra_fields / group_by coalescing / lazy children
+# ---------------------------------------------------------------------------
+
+
+def test_extra_fields_validated_and_passed_through(env):
+	frappe, gantt = env
+	captured = {}
+
+	def get_list(doctype, **kwargs):
+		captured.update(kwargs)
+		return [
+			Row(
+				{
+					"name": "P1",
+					"project_name": "A",
+					"expected_start_date": "2026-01-01",
+					"expected_end_date": "2026-01-05",
+					"percent_complete": 0,
+					"custom_master_project": None,
+					"project_type": "Build",
+					"status": "Active",
+				}
+			)
+		]
+
+	frappe.get_list = get_list
+	cfg = composite_config(extra_fields=["project_type", "status"])
+	del cfg["children"]
+	cfg["group_by"] = "project_type"
+	out = gantt.get_gantt_data(cfg)
+	root = next(t for t in out["tasks"] if t["id"].startswith("P::"))
+	assert root["project_type"] == "Build" and root["status"] == "Active"
+	# the extra columns are actually queried
+	assert "project_type" in captured["fields"] and "status" in captured["fields"]
+
+
+def test_extra_fields_rejects_unknown_reserved_and_overlong(env):
+	_, gantt = env
+	with pytest.raises(Exception, match="Unknown field"):
+		gantt._parse_extra_fields(PROJECT_META, ["nope_not_a_field"])
+	# "parent" is a real standard column AND a DHTMLX output key — passing it
+	# through would silently re-root every row
+	with pytest.raises(Exception, match="reserved name"):
+		gantt._parse_extra_fields(PROJECT_META, ["parent"])
+	with pytest.raises(Exception, match="Too many"):
+		gantt._parse_extra_fields(PROJECT_META, ["status"] * (gantt.MAX_EXTRA_FIELDS + 1))
+	# display-only fields are still refused
+	with pytest.raises(Exception, match="does not hold a value"):
+		gantt._parse_extra_fields(TASK_META, ["section_x"])
+
+
+def test_extra_fields_work_on_single_source_responses(env):
+	frappe, gantt = env
+	frappe.get_list = lambda doctype, **kw: [
+		Row(
+			{
+				"name": "T1",
+				"subject": "A",
+				"status": "Working",
+				"exp_start_date": "2026-01-01 00:00:00",
+				"exp_end_date": None,
+				"progress": 0,
+				"parent_task": None,
+			}
+		)
+	]
+	out = gantt.get_gantt_data(base_config(extra_fields=["status"]))
+	assert out["tasks"][0]["status"] == "Working"
+
+
+def test_group_by_list_coalesces_first_non_empty(env):
+	frappe, gantt = env
+	frappe.get_list = lambda doctype, **kw: [
+		# has a master project -> grouped by it
+		Row(
+			{
+				"name": "P1",
+				"project_name": "A",
+				"expected_start_date": "2026-01-01",
+				"expected_end_date": "2026-01-05",
+				"percent_complete": 0,
+				"custom_master_project": "MP-A",
+				"project_type": "Build",
+			}
+		),
+		# no master project -> falls back to project_type
+		Row(
+			{
+				"name": "P2",
+				"project_name": "B",
+				"expected_start_date": "2026-02-01",
+				"expected_end_date": "2026-02-05",
+				"percent_complete": 0,
+				"custom_master_project": None,
+				"project_type": "Design",
+			}
+		),
+		# neither -> stays at root
+		Row(
+			{
+				"name": "P3",
+				"project_name": "C",
+				"expected_start_date": "2026-03-01",
+				"expected_end_date": "2026-03-05",
+				"percent_complete": 0,
+				"custom_master_project": None,
+				"project_type": None,
+			}
+		),
+	]
+	cfg = composite_config(group_by=["custom_master_project", "project_type"])
+	del cfg["children"]
+	out = gantt.get_gantt_data(cfg)
+	by_id = {t["id"]: t for t in out["tasks"]}
+	assert by_id["P::P1"]["parent"] == "G::MP-A"
+	assert by_id["P::P2"]["parent"] == "G::Design"
+	assert by_id["P::P3"]["parent"] == 0
+	# each group row references the doctype of the field that produced it
+	assert by_id["G::MP-A"]["ref_doctype"] == "Master Project"
+	assert by_id["G::Design"]["ref_doctype"] == "Project Type"
+
+
+def test_lazy_children_return_counts_not_rows(env):
+	frappe, gantt = env
+	calls = []
+
+	def get_list(doctype, **kwargs):
+		calls.append((doctype, kwargs))
+		if doctype == "Project":
+			return [
+				Row(
+					{
+						"name": "P1",
+						"project_name": "A",
+						"expected_start_date": "2026-01-01",
+						"expected_end_date": "2026-01-05",
+						"percent_complete": 0,
+						"custom_master_project": None,
+					}
+				),
+				# undated, but has children -> must survive as a container
+				Row(
+					{
+						"name": "P2",
+						"project_name": "B",
+						"expected_start_date": None,
+						"expected_end_date": None,
+						"percent_complete": 0,
+						"custom_master_project": None,
+					}
+				),
+				# undated with no children -> skipped
+				Row(
+					{
+						"name": "P3",
+						"project_name": "C",
+						"expected_start_date": None,
+						"expected_end_date": None,
+						"percent_complete": 0,
+						"custom_master_project": None,
+					}
+				),
+			]
+		return [Row({"project": "P1", "ee_child_count": 7}), Row({"project": "P2", "ee_child_count": 2})]
+
+	frappe.get_list = get_list
+	cfg = composite_config()
+	cfg["children"]["lazy"] = True
+	out = gantt.get_gantt_data(cfg)
+	by_id = {t["id"]: t for t in out["tasks"]}
+
+	# no child rows at all, just the caret markers
+	assert not [t for t in out["tasks"] if t["id"].startswith("C::")]
+	assert by_id["P::P1"]["$has_child"] is True
+	assert by_id["P::P1"]["ee_child_count"] == 7
+	assert by_id["P::P1"]["open"] is False
+	assert by_id["P::P2"]["$has_child"] is True  # undated container kept
+	assert "P::P3" not in by_id
+
+	# the child query was a grouped COUNT, not a row fetch
+	child_call = next(c for c in calls if c[0] == "Task")
+	assert child_call[1]["group_by"] == "project"
+	assert any("count(" in f for f in child_call[1]["fields"])
+
+
+def test_non_lazy_children_have_no_caret_markers(env):
+	frappe, gantt = env
+	frappe.get_list = _composite_get_list([])
+	out = gantt.get_gantt_data(composite_config())
+	assert not [t for t in out["tasks"] if t.get("$has_child")]

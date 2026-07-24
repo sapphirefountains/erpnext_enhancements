@@ -53,7 +53,13 @@
  *       }],
  *     },
  *     group_by: "custom_master_project",    // optional: composite grouping
- *     children: { doctype, link_field, fields, ... },  // optional: nested rows
+ *                                           //   (or a list: first non-empty wins)
+ *     extra_fields: ["project_type"],       // optional: raw values per row
+ *     children: { doctype, link_field, fields, ..., lazy: true },
+ *     lazy_children: true,                  // pair with children.lazy: draws a
+ *                                           //   caret per branch and defers load
+ *     on_task_expand: (id, task) => {},     // optional; fetch + add_rows(...)
+ *     on_task_collapse: (id, task) => {},   // optional
  *     on_task_click: (id, task) => {},      // optional; composite ids are
  *                                           //   prefixed — route via
  *                                           //   task.ref_doctype/ref_name
@@ -61,6 +67,8 @@
  *   w.ready.then(...); w.refresh(); w.destroy();
  *   w.set_zoom("week");                     // quarter_day|half_day|day|week|month
  *   w.set_filters({...});                   // replace config.filters + refetch
+ *   w.add_rows(tasks, links);               // merge rows (lazy branch load)
+ *   w.open_task_ids();                      // currently expanded ids
  *   // other config keys (children, group_by, ...) may be mutated on
  *   // w.config followed by w.refresh()
  *
@@ -314,7 +322,14 @@ frappe.provide("erpnext_enhancements.gantt");
 			// Read-only until the edit milestone lands (per-embed opt-in then).
 			g.config.readonly = true;
 			g.config.date_format = "%Y-%m-%d %H:%i";
-			g.config.open_tree_initially = true;
+			// Lazy branches: the server marks roots with `$has_child` +
+			// `open: false` (see get_gantt_data children.lazy) so DHTMLX draws a
+			// collapsed caret for children it has not loaded; opening one fires
+			// on_task_expand, whose handler feeds rows back via add_rows().
+			// open_tree_initially would force every branch open (and fire an
+			// expand for each), so it defaults off whenever lazy is in play.
+			g.config.branch_loading = !!this.config.lazy_children;
+			g.config.open_tree_initially = !this.config.lazy_children;
 			g.config.columns = this.config.columns || [
 				{ name: "text", label: __("Task"), tree: true, width: "*" },
 			];
@@ -357,6 +372,22 @@ frappe.provide("erpnext_enhancements.gantt");
 			if (this.config.on_task_click) {
 				g.attachEvent("onTaskClick", (id) => {
 					this.config.on_task_click(id, g.isTaskExists(id) ? g.getTask(id) : null);
+					return true;
+				});
+			}
+			if (this.config.on_task_expand) {
+				g.attachEvent("onTaskOpened", (id) => {
+					if (g.isTaskExists(id)) {
+						this.config.on_task_expand(id, g.getTask(id));
+					}
+					return true;
+				});
+			}
+			if (this.config.on_task_collapse) {
+				g.attachEvent("onTaskClosed", (id) => {
+					if (g.isTaskExists(id)) {
+						this.config.on_task_collapse(id, g.getTask(id));
+					}
 					return true;
 				});
 			}
@@ -540,6 +571,45 @@ frappe.provide("erpnext_enhancements.gantt");
 			}
 		}
 
+		/**
+		 * Merge extra rows into the live chart without a full reload — the
+		 * lazy-branch path (children fetched when a caret opens). Rows already
+		 * present are skipped, so a double expand cannot duplicate or throw.
+		 * Returns the number of tasks actually added.
+		 */
+		add_rows(tasks, links) {
+			if (!this.gantt || this.destroyed) {
+				return 0;
+			}
+			const fresh = (tasks || []).filter((t) => t && !this.gantt.isTaskExists(t.id));
+			const fresh_links = (links || []).filter((l) => {
+				try {
+					return l && !this.gantt.getLink(l.id);
+				} catch (e) {
+					return true; // getLink throws when absent
+				}
+			});
+			if (!fresh.length && !fresh_links.length) {
+				return 0;
+			}
+			this.gantt.parse({ data: fresh, links: fresh_links });
+			return fresh.length;
+		}
+
+		/** Ids currently expanded — lets a host persist/restore the open tree. */
+		open_task_ids() {
+			if (!this.gantt || this.destroyed) {
+				return [];
+			}
+			const open = [];
+			this.gantt.eachTask((task) => {
+				if (task.$open && task.id) {
+					open.push(task.id);
+				}
+			});
+			return open;
+		}
+
 		set_zoom(preset) {
 			const scales = ZOOM_PRESETS[preset];
 			if (!scales) {
@@ -613,6 +683,7 @@ frappe.provide("erpnext_enhancements.gantt");
 				limit: c.limit || null,
 				group_by: c.group_by || null,
 				children: c.children || null,
+				extra_fields: c.extra_fields || null,
 			};
 		}
 

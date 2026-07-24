@@ -62,6 +62,26 @@ GROUP_ID_PREFIX = "G::"
 ROOT_ID_PREFIX = "P::"
 CHILD_ID_PREFIX = "C::"
 
+# Raw column values may be passed through per row via ``extra_fields`` (for
+# client-side colouring/labels). Cap them, and never let one shadow a key the
+# shaper owns — "$has_child" is DHTMLX's branch_loading_property.
+MAX_EXTRA_FIELDS = 12
+RESERVED_TASK_KEYS = frozenset(
+	{
+		"id",
+		"text",
+		"start_date",
+		"end_date",
+		"progress",
+		"parent",
+		"open",
+		"type",
+		"ref_doctype",
+		"ref_name",
+		"$has_child",
+	}
+)
+
 # Gantt attribute -> is it required in the field map?
 FIELD_MAP_ATTRS = {
 	"text": True,
@@ -233,7 +253,36 @@ def _parse_children_config(meta, children):
 		"order_by": _sanitize_order_by(child_meta, children.get("order_by")),
 		"limit": min(max(cint(children.get("limit")) or MAX_CHILD_ROWS, 1), MAX_CHILD_ROWS),
 		"dependencies": children.get("dependencies") or None,
+		"extra_fields": _parse_extra_fields(child_meta, children.get("extra_fields")),
+		# lazy: emit no child rows, only a per-root "has children" marker, so
+		# the client can render a collapsed caret and fetch that one root's
+		# children when the user expands it
+		"lazy": bool(children.get("lazy")),
 	}
+
+
+def _parse_extra_fields(meta, extra_fields):
+	"""Validate ``extra_fields`` — raw column values passed through per row.
+
+	They let a client colour/label/sort rows by source data (project type,
+	status, …) without a second round trip. Same validation as everything
+	else, plus a cap and a guard against overwriting the DHTMLX keys the
+	shaper owns.
+	"""
+	if not extra_fields:
+		return []
+	if not isinstance(extra_fields, list | tuple):
+		frappe.throw(_("Gantt extra_fields must be a list of fieldnames"))
+	if len(extra_fields) > MAX_EXTRA_FIELDS:
+		frappe.throw(_("Too many Gantt extra_fields (max {0})").format(MAX_EXTRA_FIELDS))
+	out = []
+	for fieldname in extra_fields:
+		validated = _validate_fieldname(meta, fieldname, must_hold_value=True)
+		if validated in RESERVED_TASK_KEYS:
+			frappe.throw(_("Gantt extra_fields may not use the reserved name {0}").format(validated))
+		if validated not in out:
+			out.append(validated)
+	return out
 
 
 def _with_in_filter(filters, fieldname, values):
@@ -247,6 +296,12 @@ def _with_in_filter(filters, fieldname, values):
 	merged = dict(filters or {})
 	merged[fieldname] = ["in", values]
 	return merged
+
+
+def _add_extra_fields(task, row, extra_fields):
+	"""Copy validated raw column values onto a shaped task dict."""
+	for fieldname in extra_fields or ():
+		task[fieldname] = row.get(fieldname)
 
 
 def _format_dt(value):
@@ -353,7 +408,7 @@ def _fetch_links(meta, dep_fieldname, task_ids):
 	return links
 
 
-def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
+def _build_composite(doctype, meta, field_map, rows, cfg, group_field, extra_fields=None):
 	"""Assemble the composite response: grouped roots + nested child rows.
 
 	Shape (all ids prefixed — see the prefix constants):
@@ -372,18 +427,35 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
 	"""
 	children_cfg = None
 	child_rows = []
+	child_counts = {}
 	if cfg.get("children"):
 		children_cfg = _parse_children_config(meta, cfg["children"])
 		if rows:
 			link_field = children_cfg["link_field"]
-			wanted = {link_field} | set(children_cfg["field_map"].values())
-			child_rows = frappe.get_list(
-				children_cfg["meta"].name,
-				filters=_with_in_filter(children_cfg["filters"], link_field, [r.name for r in rows]),
-				fields=["name", *sorted(wanted - {"name"})],
-				order_by=children_cfg["order_by"],
-				limit_page_length=children_cfg["limit"],
-			)
+			child_filters = _with_in_filter(children_cfg["filters"], link_field, [r.name for r in rows])
+			if children_cfg["lazy"]:
+				# Only "does this root have children?" — one grouped, still
+				# permission-checked count query instead of every child row.
+				for count_row in frappe.get_list(
+					children_cfg["meta"].name,
+					filters=child_filters,
+					fields=[link_field, "count(name) as ee_child_count"],
+					group_by=link_field,
+					limit_page_length=0,
+				):
+					if count_row.get(link_field):
+						child_counts[count_row.get(link_field)] = cint(count_row.get("ee_child_count"))
+			else:
+				wanted = (
+					{link_field} | set(children_cfg["field_map"].values()) | set(children_cfg["extra_fields"])
+				)
+				child_rows = frappe.get_list(
+					children_cfg["meta"].name,
+					filters=child_filters,
+					fields=["name", *sorted(wanted - {"name"})],
+					order_by=children_cfg["order_by"],
+					limit_page_length=children_cfg["limit"],
+				)
 
 	unscheduled = 0
 
@@ -399,13 +471,20 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
 			task["id"] = CHILD_ID_PREFIX + row.name
 			task["ref_doctype"] = children_cfg["meta"].name
 			task["ref_name"] = row.name
+			_add_extra_fields(task, row, children_cfg["extra_fields"])
 			shaped_children.append((row, task))
 			roots_with_children.add(row.get(children_cfg["link_field"]))
+		# a lazily-loaded root still anchors a subtree, so it must not be
+		# dropped for being undated
+		roots_with_children |= set(child_counts)
 
-	group_link_target = None
-	if group_field:
-		gdf = meta.get_field(group_field)
-		group_link_target = gdf.options if gdf and gdf.fieldtype == "Link" else None
+	# group_field may be several fieldnames: the first non-empty one wins, so a
+	# caller can group by e.g. Master Project where set and fall back to a type
+	group_fields = group_field if isinstance(group_field, list) else ([group_field] if group_field else [])
+	group_link_targets = {}
+	for fieldname in group_fields:
+		gdf = meta.get_field(fieldname)
+		group_link_targets[fieldname] = gdf.options if gdf and gdf.fieldtype == "Link" else None
 
 	tasks = []
 	group_rows = {}
@@ -427,8 +506,22 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
 		task["id"] = ROOT_ID_PREFIX + row.name
 		task["ref_doctype"] = doctype
 		task["ref_name"] = row.name
-		if group_field:
-			value = cstr(row.get(group_field))
+		_add_extra_fields(task, row, extra_fields)
+		if children_cfg and children_cfg["lazy"]:
+			count = child_counts.get(row.name) or 0
+			if count:
+				# DHTMLX branch_loading_property: draws a collapsed caret for a
+				# branch whose children are not in the datastore yet
+				task["$has_child"] = True
+				task["ee_child_count"] = count
+				task["open"] = False
+		if group_fields:
+			value, source_field = "", None
+			for fieldname in group_fields:
+				value = cstr(row.get(fieldname))
+				if value:
+					source_field = fieldname
+					break
 			if value:
 				gid = GROUP_ID_PREFIX + value
 				if gid not in group_rows:
@@ -439,8 +532,8 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field):
 						"open": True,
 						"parent": 0,
 					}
-					if group_link_target:
-						group_rows[gid]["ref_doctype"] = group_link_target
+					if group_link_targets.get(source_field):
+						group_rows[gid]["ref_doctype"] = group_link_targets[source_field]
 						group_rows[gid]["ref_name"] = value
 				task["parent"] = gid
 			else:
@@ -502,12 +595,21 @@ def get_gantt_data(config):
 				dependency child rows.
 			``order_by`` (str, optional): "fieldname asc|desc".
 			``limit`` (int, optional): row cap, clamped to ``MAX_ROWS``.
-			``group_by`` (str, optional): fieldname whose values become
-				synthetic parent rows (composite mode; e.g. Master Project).
+			``group_by`` (str | list, optional): fieldname(s) whose values
+				become synthetic parent rows (composite mode). A list
+				coalesces — the first non-empty value wins, e.g.
+				``["custom_master_project", "project_type"]``.
+			``extra_fields`` (list, optional): validated fieldnames copied
+				verbatim onto each row, for client-side colouring/labels.
 			``children`` (dict, optional): nest another doctype's rows under
 				each root (composite mode) — ``doctype``, ``link_field`` (a
 				Link back at the root doctype), plus its own ``fields`` /
-				``filters`` / ``dependencies`` / ``order_by`` / ``limit``.
+				``filters`` / ``dependencies`` / ``order_by`` / ``limit`` /
+				``extra_fields``, and ``lazy``: with ``lazy`` no child rows
+				are returned at all — each root instead carries ``$has_child``
+				and ``ee_child_count`` from one grouped count query, so the
+				client renders a collapsed caret and fetches that root's
+				children only when the user expands it.
 
 		Composite mode (``group_by``/``children`` present) prefixes every id
 		(``G::``/``P::``/``C::``) and adds ``ref_doctype``/``ref_name`` per
@@ -538,14 +640,17 @@ def get_gantt_data(config):
 
 	group_field = None
 	if cfg.get("group_by"):
-		group_field = _validate_fieldname(meta, cfg["group_by"], must_hold_value=True)
+		requested = cfg["group_by"]
+		requested = requested if isinstance(requested, list | tuple) else [requested]
+		group_field = [_validate_fieldname(meta, f, must_hold_value=True) for f in requested]
+	extra_fields = _parse_extra_fields(meta, cfg.get("extra_fields"))
 	composite = bool(group_field or cfg.get("children"))
 	if composite and field_map.get("parent"):
 		frappe.throw(_("Gantt composite configs do not support a root 'parent' mapping"))
 
-	wanted = set(field_map.values())
+	wanted = set(field_map.values()) | set(extra_fields)
 	if group_field:
-		wanted.add(group_field)
+		wanted |= set(group_field)
 	query_fields = ["name", *sorted(wanted - {"name"})]
 	rows = frappe.get_list(
 		doctype,
@@ -556,9 +661,13 @@ def get_gantt_data(config):
 	)
 
 	if composite:
-		return _build_composite(doctype, meta, field_map, rows, cfg, group_field)
+		return _build_composite(doctype, meta, field_map, rows, cfg, group_field, extra_fields)
 
 	tasks, unscheduled = _shape_tasks(rows, field_map)
+	if extra_fields:
+		by_name = {row.name: row for row in rows}
+		for task in tasks:
+			_add_extra_fields(task, by_name[task["id"]], extra_fields)
 
 	links = []
 	if cfg.get("dependencies"):
