@@ -41,6 +41,12 @@ from erpnext_enhancements.stripe_payments.core.utils import error_snippet, is_en
 
 DEFAULT_RETRY_DAYS = "2,4,7"
 DUNNING_BATCH = 50
+# How far back enrollment looks for a fresh auto-charge failure. A new, still-
+# unenrolled outstanding failure is recent by definition (the sweep runs daily);
+# this also bounds the discovery query so it never scans the full, never-pruned
+# history of Failed Stripe Payment rows. Once enrolled, a case is driven by the
+# Active-state query, so its original failure ageing past this window is fine.
+ENROLL_LOOKBACK_DAYS = 30
 
 
 def _dunning_enabled() -> bool:
@@ -72,7 +78,7 @@ def run_dunning_cycle(today=None):
     # uncommitted stamps — a full rollback (not a savepoint) because the retry
     # path calls charge_saved_method, which commits internally (releasing any
     # savepoint); the committed Stripe Payment attempt row survives, as intended.
-    for inv in _discover_new_failures():
+    for inv in _discover_new_failures(today):
         try:
             _enroll(inv, today, schedule)
         except Exception:
@@ -92,20 +98,25 @@ def run_dunning_cycle(today=None):
 # ---------------------------------------------------------------------------
 
 
-def _discover_new_failures() -> list[str]:
-    """Submitted, still-outstanding invoices whose *auto-charge* failed and that
-    are not yet in a dunning cycle.
+def _discover_new_failures(today) -> list[str]:
+    """Submitted, still-outstanding invoices whose *auto-charge* failed recently
+    and that are not yet in a dunning cycle.
 
     Scoped to invoices that actually have a failed Auto/Dunning Stripe Payment —
     NOT the invoice-level ``custom_stripe_payment_status = "Failed"`` flag, which
     is shared (``reconcile._on_session_async_failed`` sets it for one-off ACH
     link bounces too, with no channel guard). Keying on that flag alone would
     wrongly enrol — and immediately service-hold — a customer who was never on
-    autopay. Filtering on the charge channel also stops such invoices from
-    crowding out real failures within the batch cap."""
+    autopay. The ``ENROLL_LOOKBACK_DAYS`` recency bound keeps this query off the
+    full never-pruned Failed-payment history."""
     auto_failed = frappe.get_all(
         "Stripe Payment",
-        filters={"status": "Failed", "channel": ["in", ["Auto", "Dunning"]], "sales_invoice": ["is", "set"]},
+        filters={
+            "status": "Failed",
+            "channel": ["in", ["Auto", "Dunning"]],
+            "sales_invoice": ["is", "set"],
+            "creation": [">=", add_days(today, -ENROLL_LOOKBACK_DAYS)],
+        },
         pluck="sales_invoice",
         distinct=True,
     )
