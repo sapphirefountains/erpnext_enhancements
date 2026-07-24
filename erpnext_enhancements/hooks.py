@@ -380,6 +380,9 @@ scheduler_events = {
 		# maintenance renewal/rate engine: T-30 rate-change notices (§4.5). The
 		# auto-renew/expire step runs inside predictive_maintenance_scheduling.
 		"erpnext_enhancements.api.maintenance_renewal.send_rate_change_notices",
+		# recurring billing (§4.2): draft period invoices for Monthly/Quarterly/
+		# Annually contracts (base + rolled-up consumables), gated in Settings.
+		"erpnext_enhancements.api.maintenance_billing.generate_recurring_invoices",
 		"erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",

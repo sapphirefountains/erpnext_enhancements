@@ -28,7 +28,7 @@ template and visit shape onto the contract in one pick (form JS).
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, add_years, flt, getdate, nowdate
+from frappe.utils import add_days, add_months, add_years, flt, getdate, nowdate
 
 # Project Contract uses a slightly different frequency vocabulary; "Custom"
 # has no fixed interval, so it maps to blank (per-feature manual choice).
@@ -60,6 +60,7 @@ class SapphireMaintenanceContract(Document):
 		self._materialize_feature_defaults()
 		self._derive_end_date()
 		self._renewal_rate_housekeeping()
+		self._recurring_billing_setup()
 		if self.status == "Active" and not self.sales_order:
 			frappe.msgprint(
 				_("No Sales Order is linked — per-visit invoicing will fall back to the project's Maintenance Sales Order."),
@@ -88,6 +89,62 @@ class SapphireMaintenanceContract(Document):
 				self.non_renewal_notice_date = nowdate()
 		else:
 			self.non_renewal_notice_date = None
+
+	def _recurring_billing_setup(self):
+		"""Initialise recurring-billing fields for a non-Per-Visit contract (§4.2).
+
+		Auto-fills Recurring Amount from the linked agreement's Annual Fee ÷
+		cadence (derive-unless-overridden: re-derives on a cadence change while
+		the stored value still matches the previous cadence's figure), and
+		anchors Next Billing Date to the first period boundary AFTER today — never
+		in the past, so switching an old contract onto recurring billing does not
+		generate a backlog of catch-up drafts. Only Monthly/Quarterly/Annually.
+		"""
+		from erpnext_enhancements.api.maintenance_billing import PERIODS_PER_YEAR, add_period
+
+		freq = self.get("invoicing_frequency")
+		periods = PERIODS_PER_YEAR.get(freq)
+		if not periods:
+			return
+
+		before = self.get_doc_before_save()
+		cadence_changed = bool(before and before.get("invoicing_frequency") != freq)
+		annual = (
+			flt(frappe.db.get_value("Project Contract", self.project_contract, "annual_maintenance_fee"))
+			if self.get("project_contract")
+			else 0
+		)
+		computed = flt(annual / periods, 2) if annual else 0
+
+		# Recurring Amount: fill when blank, or re-derive on a cadence change while
+		# the stored value still equals what the previous cadence would derive.
+		current = flt(self.get("recurring_amount"))
+		derivable = not current
+		if not derivable and cadence_changed:
+			prev_periods = PERIODS_PER_YEAR.get(before.get("invoicing_frequency"))
+			prev_computed = flt(annual / prev_periods, 2) if (prev_periods and annual) else None
+			derivable = prev_computed is not None and current == prev_computed
+		if derivable and computed:
+			self.recurring_amount = computed
+
+		# Next Billing Date: seed/re-anchor to the first period boundary after
+		# today (bounded roll-forward from the last billed date or start date).
+		if (not self.get("next_billing_date") or cadence_changed) and self.get("start_date"):
+			today = getdate(nowdate())
+			nb = add_period(getdate(self.get("last_billed_on") or self.start_date), freq)
+			guard = 0
+			while nb <= today and guard < 600:
+				nb = add_period(nb, freq)
+				guard += 1
+			self.next_billing_date = nb
+
+		# Nudge when a recurring contract has no amount to bill.
+		if not flt(self.get("recurring_amount")):
+			frappe.msgprint(
+				_("Set a Recurring Amount — this contract bills {0} but has no per-period amount, so it will not be invoiced.").format(freq),
+				indicator="orange",
+				alert=True,
+			)
 
 	def _materialize_feature_defaults(self):
 		"""Fill blanks on feature rows so the scheduler always sees real values.

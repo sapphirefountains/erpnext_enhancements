@@ -25,6 +25,9 @@
   "billing_section",
   "sales_order",
   "invoicing_frequency",
+  "recurring_amount",
+  "next_billing_date",
+  "last_billed_on",
   "column_break_billing",
   "project_contract",
   "renewal_section",
@@ -183,11 +186,32 @@
   },
   {
    "default": "Per Visit",
-   "description": "Pulled from the Project Contract. Only \"Per Visit\" auto-drafts a Sales Invoice when a Maintenance Record is submitted.",
+   "description": "Per Visit auto-drafts a Sales Invoice on each submitted visit. Monthly/Quarterly/Annually are billed in arrears by the recurring-billing job (base Recurring Amount + rolled-up consumables) when \"Recurring Maintenance Billing\" is enabled in Settings.",
    "fieldname": "invoicing_frequency",
    "fieldtype": "Select",
    "label": "Invoicing Frequency",
    "options": "Per Visit\nMonthly\nQuarterly\nAnnually"
+  },
+  {
+   "depends_on": "eval:doc.invoicing_frequency && doc.invoicing_frequency != 'Per Visit'",
+   "description": "Flat base billed each period (§4.2). Auto-filled from the linked agreement's Annual Fee ÷ cadence when blank; overridable. Rolled-up consumables from the period's visits are added on top.",
+   "fieldname": "recurring_amount",
+   "fieldtype": "Currency",
+   "label": "Recurring Amount (per period)"
+  },
+  {
+   "depends_on": "eval:doc.invoicing_frequency && doc.invoicing_frequency != 'Per Visit'",
+   "description": "When the next recurring invoice is due (end of the current period). Blank = not yet on recurring billing. Advances when a period is drafted; if you discard a recurring draft, reset this manually so the period re-bills.",
+   "fieldname": "next_billing_date",
+   "fieldtype": "Date",
+   "label": "Next Billing Date"
+  },
+  {
+   "depends_on": "eval:doc.invoicing_frequency && doc.invoicing_frequency != 'Per Visit'",
+   "fieldname": "last_billed_on",
+   "fieldtype": "Date",
+   "label": "Last Billed On",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_billing",

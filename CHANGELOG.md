@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.174.0] - 2026-07-24
+
+### Added
+
+- **Recurring maintenance billing (§4.2).** Monthly/Quarterly/Annually contracts
+  are now billed in arrears by a new daily job: at each period close it drafts one
+  Sales Invoice = a flat **Recurring Amount** (auto-filled from the linked
+  agreement's Annual Fee ÷ cadence, overridable) **plus rolled-up consumables**
+  from every submitted-but-unbilled visit since the last invoice. The invoice is a
+  **draft** for review — submitting it fires the existing Stripe auto-charge — and
+  each covered visit is stamped so nothing bills twice. Gated by a new
+  **"Recurring Maintenance Billing"** Settings flag (**off by default**). Closes
+  the gap where non-per-visit plans never auto-invoiced at all.
+
 ## [1.173.1] - 2026-07-24
 
 ### Changed
