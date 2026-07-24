@@ -19,6 +19,7 @@
   "out_of_range_followup_days",
   "email_service_report_to_customer",
   "auto_renew_maintenance_contracts",
+  "recurring_maintenance_billing",
   "restock_suggestions_enabled",
   "restock_source_warehouse",
   "collab_section",
@@ -205,6 +206,13 @@
    "fieldname": "auto_renew_maintenance_contracts",
    "fieldtype": "Check",
    "label": "Auto-Renew Maintenance Contracts"
+  },
+  {
+   "default": "0",
+   "description": "Bill Monthly/Quarterly/Annually maintenance contracts in arrears: a daily job drafts one Sales Invoice per period (base Recurring Amount + rolled-up consumables) against the linked Sales Order. Draft only — a human submits it, which triggers the Stripe auto-charge. Off by default.",
+   "fieldname": "recurring_maintenance_billing",
+   "fieldtype": "Check",
+   "label": "Recurring Maintenance Billing"
   },
   {
    "default": "0",
