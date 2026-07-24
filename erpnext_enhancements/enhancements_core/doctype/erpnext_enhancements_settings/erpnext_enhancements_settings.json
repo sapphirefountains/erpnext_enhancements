@@ -20,6 +20,7 @@
   "email_service_report_to_customer",
   "auto_renew_maintenance_contracts",
   "recurring_maintenance_billing",
+  "maintenance_dispatch_digests",
   "restock_suggestions_enabled",
   "restock_source_warehouse",
   "collab_section",
@@ -213,6 +214,13 @@
    "fieldname": "recurring_maintenance_billing",
    "fieldtype": "Check",
    "label": "Recurring Maintenance Billing"
+  },
+  {
+   "default": "0",
+   "description": "Each morning, text (Triton) and email every technician their scheduled maintenance visits for the day, ordered by nearest-neighbour route from the site coordinates. Off by default.",
+   "fieldname": "maintenance_dispatch_digests",
+   "fieldtype": "Check",
+   "label": "Morning Technician Dispatch Digest"
   },
   {
    "default": "0",

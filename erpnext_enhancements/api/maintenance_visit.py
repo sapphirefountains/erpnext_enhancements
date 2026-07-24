@@ -61,6 +61,27 @@ def _get_record(record):
     return doc
 
 
+def _clocked_into_project(user, project):
+    """True if ``user``'s Employee has an Open/Paused Job Interval on ``project``.
+
+    A technician has at most one active kiosk interval at a time, so this is a
+    reliable "is actually on-site for this job" signal. Used to let a substitute
+    who is covering a site take ownership of a visit pre-assigned (dispatched) to
+    the site's default technician, so clock autofill and attribution follow the
+    real performer rather than the planned one.
+    """
+    if not user or not project:
+        return False
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        return False
+    return bool(frappe.db.exists("Job Interval", {
+        "employee": employee,
+        "project": project,
+        "status": ["in", ["Open", "Paused"]],
+    }))
+
+
 def _check_not_stale(doc, modified):
     """Optimistic lock: reject writes based on a version someone else replaced."""
     if modified and str(doc.modified) != str(modified):
@@ -125,10 +146,21 @@ def get_visit_bootstrap(record):
         if appended:
             if payload.get("template"):
                 doc.template = payload["template"]
-            # A tech opening the visit claims it (clock autofill + Today's
-            # Visits key on technician); a supervisor peeking must not.
-            if not doc.technician and "Maintenance User" in frappe.get_roles():
-                doc.technician = frappe.session.user
+            # A tech opening the visit claims it so clock autofill and Today's
+            # Visits key on `technician`. Claim when it is unassigned, OR when
+            # the opener is a Maintenance User actively clocked into this
+            # project — a substitute covering for the pre-assigned (default)
+            # technician takes real ownership, so the clock times and
+            # attribution track who actually did the work, not who was planned.
+            # A supervisor merely peeking (not clocked in) never claims or
+            # steals a stamped visit.
+            user = frappe.session.user
+            if (
+                doc.technician != user
+                and "Maintenance User" in frappe.get_roles()
+                and (not doc.technician or _clocked_into_project(user, doc.project))
+            ):
+                doc.technician = user
             doc.save()
 
     return {

@@ -361,6 +361,8 @@ scheduler_events = {
 		# KPI dashboard snapshots — nightly 05:00 (site TZ), one precomputed
 		# KPI Snapshot per department. Handler enqueues the batch onto long.
 		"0 5 * * *": ["erpnext_enhancements.kpi_dashboards.snapshots.scheduled_kpi_run"],
+		# Morning technician dispatch digest — 06:00 site TZ (gated in Settings).
+		"0 6 * * *": ["erpnext_enhancements.api.maintenance_dispatch.send_morning_digests"],
 		# QuickBooks Online sync — STAGGERED across the hour, not all fired together.
 		# The three jobs each write the single QuickBooks Online Settings doc (token
 		# refresh must save() through the doc for Password-field encryption, so it

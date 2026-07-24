@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.175.0] - 2026-07-24
+
+### Added
+
+- **Maintenance dispatch & technician assignment.** Drafted visits are no longer
+  dateless, tech-less headers: the daily scheduler now stamps each with a
+  **Scheduled Visit Date** (the feature's due date shifted to the nearest
+  **Preferred Visit Day** on the agreement) and the site's **Default Technician**
+  (a new field on the Maintenance Profile), and creates a silent Frappe
+  assignment (ToDo + share). A new early-morning job **texts (Triton) and emails
+  each technician their day's visits, ordered by a nearest-neighbour route** from
+  the site coordinates — this digest is the active notification channel and is
+  gated by a new **"Morning Technician Dispatch Digest"** Settings flag (**off by
+  default**). A technician actually clocked into a site can still take ownership
+  of a visit pre-assigned to the site's default tech, so clock autofill and
+  attribution follow the real performer. Turns the self-claim pull model into a
+  real dispatched schedule.
+
 ## [1.174.1] - 2026-07-24
 
 ### Fixed
