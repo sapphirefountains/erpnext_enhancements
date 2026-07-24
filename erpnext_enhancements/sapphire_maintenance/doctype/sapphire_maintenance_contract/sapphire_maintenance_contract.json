@@ -8,6 +8,7 @@
   "customer",
   "project",
   "start_date",
+  "initial_term",
   "end_date",
   "column_break_head",
   "service_plan",
@@ -69,6 +70,14 @@
    "label": "Start Date"
   },
   {
+   "description": "Initial term (§9.1). A fixed year term auto-derives End Date from Start Date in validate(); Month-to-Month/Other leave it manual.",
+   "fieldname": "initial_term",
+   "fieldtype": "Select",
+   "label": "Initial Term",
+   "options": "\nOne (1) Year\nTwo (2) Years\nMonth-to-Month\nOther"
+  },
+  {
+   "description": "For a fixed year term this is derived from Start Date; the daily scheduler marks the contract Expired once it passes. Blank never expires.",
    "fieldname": "end_date",
    "fieldtype": "Date",
    "label": "End Date"

@@ -17,6 +17,7 @@
   "geofence_radius_m",
   "maintenance_sms_nudges",
   "out_of_range_followup_days",
+  "email_service_report_to_customer",
   "restock_suggestions_enabled",
   "restock_source_warehouse",
   "collab_section",
@@ -187,6 +188,13 @@
    "fieldname": "out_of_range_followup_days",
    "fieldtype": "Int",
    "label": "Out-of-Range Follow-Up Visit (Days)"
+  },
+  {
+   "default": "0",
+   "description": "On finalize, email the customer their service report (the Maintenance Record Print PDF), sent to the Customer's primary contact. Off by default.",
+   "fieldname": "email_service_report_to_customer",
+   "fieldtype": "Check",
+   "label": "Email Service Report to Customer on Finalize"
   },
   {
    "default": "0",

@@ -166,6 +166,17 @@ class SapphireMaintenanceRecord(Document):
 		context.parents = [{"name": _("Maintenance Records"), "route": "maintenance-records"}]
 
 
+def get_list_context(context):
+	"""Portal list config for ``/maintenance-records``.
+
+	Row scoping is enforced by ``permission_query_conditions`` (a customer sees
+	only their own submitted records); this just sets the listing chrome.
+	"""
+	context.title = _("Maintenance Records")
+	context.no_breadcrumbs = True
+	context.order_by = "creation desc"
+
+
 def compute_completion_percent(doc):
 	"""How much of the visit form has been filled in, as 0–100.
 

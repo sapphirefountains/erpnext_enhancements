@@ -46,6 +46,7 @@ def process_maintenance_submission(record_name):
             ("Sales Invoice Generation", create_sales_invoice),
             ("Out-of-Range Reading Log", log_out_of_range_readings),
             ("Out-of-Range Follow-Up Visit", create_followup_visit),
+            ("Customer Service Report Email", email_customer_service_report),
         ]
 
         failures = []
@@ -457,3 +458,53 @@ def create_sales_invoice(doc):
     doc.add_comment("Comment", _("Draft Sales Invoice {0} created.").format(
         frappe.get_link_to_form("Sales Invoice", invoice.name)
     ))
+
+
+def _customer_email(doc):
+    """Best email for the customer: primary contact, else the project's stored email."""
+    contact = frappe.db.get_value("Customer", doc.customer, "customer_primary_contact") if doc.customer else None
+    if contact:
+        email = frappe.db.get_value("Contact", contact, "email_id")
+        if email:
+            return email
+    if doc.get("project"):
+        email = frappe.db.get_value("Project", doc.project, "custom_customer_email")
+        if email:
+            return email
+    return None
+
+
+def email_customer_service_report(doc):
+    """Email the §7.1 service report (the Maintenance Record Print) to the customer.
+
+    Gated by "Email Service Report to Customer on Finalize" in ERPNext
+    Enhancements Settings (off by default, so a migrate never starts emailing
+    customers until it is switched on). Sends the print as a PDF to the
+    Customer's primary contact (falling back to the project's stored customer
+    email). Best-effort — a missing address is a Comment, not an error.
+    """
+    from frappe.utils import cint
+
+    if not cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "email_service_report_to_customer")):
+        return
+
+    email = _customer_email(doc)
+    if not email:
+        doc.add_comment("Comment", _("Service report not emailed: no customer contact email on file."))
+        return
+
+    frappe.sendmail(
+        recipients=[email],
+        subject=_("Your Sapphire Fountains service report — {0}").format(doc.name),
+        message=_(
+            "Hello,<br><br>Attached is the service report for your recent water-feature "
+            "maintenance visit. Please keep it for your records.<br><br>"
+            "Thank you for choosing Sapphire Fountains."
+        ),
+        attachments=[
+            frappe.attach_print(
+                "Sapphire Maintenance Record", doc.name, print_format="Maintenance Record Print"
+            )
+        ],
+    )
+    doc.add_comment("Comment", _("Service report emailed to {0}.").format(email))

@@ -247,6 +247,14 @@ doc_events = {
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
 	},
+	"Project Contract": {
+		# When a Maintenance Services Agreement is Signed, draft the operational
+		# Maintenance Contract (left as a draft; activation stays the human gate).
+		# Both signing paths: submitting an already-Signed draft (on_submit) and
+		# the post-submit "Mark as Signed" button (on_update_after_submit).
+		"on_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+		"on_update_after_submit": "erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract.autocreate_maintenance_contract_on_signed",
+	},
 	# travel_management: trip emails + mirroring claim/advance status onto
 	# traveler rows and clearing claim stamps on cancel/trash (dedupe guard)
 	"Travel Trip": {
@@ -579,6 +587,7 @@ fixtures = [
 					"Maintenance Review Needed",
 					"Maintenance Finalized",
 					"Maintenance Reading Out of Range",
+					"Maintenance Contract Renewal Due",
 					"High Escalation Risk Call",
 					"Compliance Flag on Call",
 				],
@@ -725,11 +734,14 @@ permission_query_conditions = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.get_permission_query_conditions",
 	# Managed Device: employees see only the device assigned to them (BYOD privacy)
 	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
+	# Sapphire Maintenance Record: portal customers see only their own submitted visits
+	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.get_permission_query_conditions",
 }
 
 has_permission = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
+	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]
