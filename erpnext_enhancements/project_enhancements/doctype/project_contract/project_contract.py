@@ -67,6 +67,18 @@ MAINTENANCE_OPTIONS = [
 	("package", "Seasonal Startup + Winterization Package"),
 ]
 
+# Per-option unit printed on the plan; standard's price seeds from the
+# maintenance fee Item Price, the rest are entered per contract.
+MAINTENANCE_OPTION_UNITS = {
+	"standard": "visit",
+	"startup": "event",
+	"winterization": "event",
+	"package": "year",
+}
+
+# Visits per year by Project Contract visit_frequency (Custom/blank -> unknown).
+VISITS_PER_YEAR = {"Weekly": 52, "Bi-Weekly": 26, "Monthly": 12, "Quarterly": 4}
+
 # Value Stream name -> owner-contract phase key (preselects the checkboxes).
 VALUE_STREAM_PHASE = {"Design": "design", "Build": "construction", "Service": "maintenance"}
 
@@ -207,6 +219,28 @@ class ProjectContract(Document):
 			self.total_due_at_signing = self.total_rental_amount + flt(self.get("security_deposit"))
 		elif self.get("template_key") == "maintenance":
 			self.total_due_at_signing = flt(self.get("maintenance_deposit"))
+			self._compute_maintenance_annual_fee()
+
+	def _compute_maintenance_annual_fee(self):
+		"""Auto-fill Annual Maintenance Fee from the included, priced options.
+
+		Fills the field while it is blank or still holds the value the previous
+		inputs auto-derived (compared at currency precision) — a manual override
+		is never clobbered. When the total is not computable (a per-visit
+		Standard plan on a Custom/blank frequency) it clears the field to a
+		fillable blank rather than printing an understated or stale number.
+		"""
+		current = flt(self.get("annual_maintenance_fee"))
+		derivable = not current
+		if not derivable:
+			before = self.get_doc_before_save()
+			if before is not None:
+				prev = _annualize_options(before.get("service_options"), before.get("visit_frequency"))
+				derivable = prev is not None and flt(current, 2) == flt(prev, 2)
+		if not derivable:
+			return
+		computed = _annualize_options(self.get("service_options"), self.get("visit_frequency"))
+		self.annual_maintenance_fee = computed if computed is not None else 0
 
 	def on_submit(self):
 		if self.get("status") == "Draft":
@@ -340,13 +374,66 @@ def compose_scope_of_work(source_doctype, source_name):
 # ---------------------------------------------------------------------------
 
 
+def _maintenance_fee_rate():
+	"""Standard per-visit rate from the maintenance fee Item's Standard Selling price."""
+	item = frappe.db.get_single_value("ERPNext Enhancements Settings", "maintenance_fee_item")
+	if not item:
+		return None
+	return frappe.db.get_value(
+		"Item Price",
+		{"item_code": item, "price_list": "Standard Selling", "selling": 1},
+		"price_list_rate",
+		order_by="valid_from desc",
+	)
+
+
+def _annualize_options(service_options, visit_frequency):
+	"""Annual total of the included, priced service options, or None if not computable.
+
+	standard is per visit (x visits/year); startup/winterization are per event
+	(once/year); package is per year and, being the Startup+Winterization
+	bundle, supersedes those two individual options when all are selected.
+	Returns None when the Standard plan is included and priced but the visit
+	frequency is Custom/blank (visits/year unknown) — the caller then leaves the
+	fee blank rather than deriving an understated figure.
+	"""
+	rows = {
+		row.get("option_key"): row
+		for row in (service_options or [])
+		if row.get("included") and flt(row.get("price"))
+	}
+	visits = VISITS_PER_YEAR.get(visit_frequency)
+	total = 0.0
+	if "standard" in rows:
+		if not visits:
+			return None
+		total += flt(rows["standard"].get("price")) * visits
+	if "package" in rows:  # the bundle supersedes the individual seasonal options
+		total += flt(rows["package"].get("price"))
+	else:
+		for key in ("startup", "winterization"):
+			if key in rows:
+				total += flt(rows[key].get("price"))
+	return flt(total, 2)
+
+
 def _seed_fixed_rows(doc):
 	if doc.template_key == "owner" and not doc.get("phases"):
 		for key, label in OWNER_PHASES:
 			doc.append("phases", {"phase_key": key, "phase_label": label, "included": 0})
 	if doc.template_key == "maintenance" and not doc.get("service_options"):
+		standard_rate = _maintenance_fee_rate()
 		for key, label in MAINTENANCE_OPTIONS:
-			doc.append("service_options", {"option_key": key, "option_label": label, "included": 0})
+			doc.append(
+				"service_options",
+				{
+					"option_key": key,
+					"option_label": label,
+					"included": 0,
+					"unit": MAINTENANCE_OPTION_UNITS.get(key),
+					"price": standard_rate if key == "standard" else None,
+				},
+			)
 
 
 def _prefill_from_opportunity(doc, opportunity):
@@ -437,6 +524,10 @@ def create_contract(template, source_doctype=None, source_name=None, party=None)
 	if template_doc.party_type != FLEXIBLE_PARTY:
 		doc.party_type = template_doc.party_type
 	doc.contract_date = today()
+	if template_doc.template_key == "maintenance":
+		# Default the agreement start to today so the term/End Date and the
+		# printed §9.1 clause populate without a manual entry (editable after).
+		doc.agreement_start_date = today()
 	if party:
 		doc.party = party
 
