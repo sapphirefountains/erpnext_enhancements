@@ -219,3 +219,7 @@ erpnext_enhancements.patches.seed_po_approver_role
 # (this site relabels the Customer doctype "Accounts", making the profile name
 # ambiguous). Runs before fixture sync so role_profile.json updates the renamed doc.
 erpnext_enhancements.patches.rename_accounts_role_profile
+# v1.172.0 WI-013: default the PO approval threshold ($500) on existing installs
+# (new Settings field; a field default only applies at creation, and the Single
+# already exists on live sites, so it comes up blank without this)
+erpnext_enhancements.patches.default_po_approval_threshold

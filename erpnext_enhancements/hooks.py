@@ -275,6 +275,13 @@ doc_events = {
 	"Vehicle Log": {
 		"on_trash": "erpnext_enhancements.travel_management.integrations.sync_vehicle_log_unlink",
 	},
+	# WI-013: block submitting a Purchase Order above the configurable approval
+	# threshold (ERPNext Enhancements Settings.po_approval_threshold, default 500;
+	# 0 disables) unless the user holds the "PO Approver" role — the CEO sign-off
+	# escalation. Threshold resolution is per-project-ready (see po_approval.py).
+	"Purchase Order": {
+		"before_submit": "erpnext_enhancements.po_approval.enforce_threshold",
+	},
 	"Opportunity": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
 		"before_save": [

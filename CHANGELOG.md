@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project (e.g. `Internal - Shop Overhead`) so non-job POs have a target — the 13
   existing `Internal` projects are specific R&D projects. SOP:
   `docs/migration/wi014-project-on-purchase-lines.md`.
+## [1.173.0] - 2026-07-24
+
+### Added
+
+- **WI-013: configurable Purchase Order approval threshold (CEO escalation).** A
+  Purchase Order whose grand total exceeds a configurable threshold can only be
+  *submitted* by a user holding the `PO Approver` role (the CEO) — everyone else
+  saves the draft and hands it to the approver (a `before_submit` gate, no custom
+  approval doctype). The threshold lives in **ERPNext Enhancements Settings →
+  Purchasing Controls → PO Approval Threshold** (Currency, default $500; set 0 to
+  disable) and is defaulted on existing installs by a patch. The resolution point
+  (`po_approval.get_effective_threshold`) is structured so a future per-project
+  override — a fixed amount or a percentage of the project budget — can slot in
+  without touching the enforcement (WI-058). Bench-free unit tests cover the gate.
+  SOP: `docs/migration/wi013-po-approval-threshold.md`.
 
 ## [1.172.0] - 2026-07-24
 
