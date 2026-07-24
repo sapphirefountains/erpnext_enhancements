@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.173.1] - 2026-07-24
+
+### Changed
+
+- **WI-014 (Branch A): require `Project` on Purchase Order lines.** Adds a
+  `reqd=1` Property Setter on `Purchase Order Item.project` so material and
+  subcontract cost must be booked to a job — alongside the existing `in_list_view`
+  setters that surface the Project column on PO and PI line grids. Purchase
+  Invoice lines stay optional (rapid bill entry; the WI-008 "Invoices without
+  Project" filter drives adoption). **Note:** needs a generic overhead `Internal`
+  project (e.g. `Internal - Shop Overhead`) so non-job POs have a target — the 13
+  existing `Internal` projects are specific R&D projects. SOP:
+  `docs/migration/wi014-project-on-purchase-lines.md`.
 ## [1.173.0] - 2026-07-24
 
 ### Added
