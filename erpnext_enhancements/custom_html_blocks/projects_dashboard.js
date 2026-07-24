@@ -16,10 +16,15 @@
  *   - Completed Projects  — read-only list of inactive projects;
  *   - Portfolio Gantt     — the embeddable Gantt widget
  *                           (erpnext_enhancements.gantt.mount) in composite mode:
- *                           Master Project groups -> Project rows -> Task trees
- *                           via the permission-checked get_gantt_data endpoint,
- *                           with project/status filters, a Show Tasks toggle,
- *                           view-mode zoom, tooltip popups and a Today button.
+ *                           Project Type (or Master Project) groups -> Project
+ *                           rows -> Task subtrees, loaded lazily when a
+ *                           project's caret is opened, via the
+ *                           permission-checked get_gantt_data endpoint.
+ *                           Toolbar: find-a-project search, project / status /
+ *                           type / customer / date-window / at-risk filters,
+ *                           view-mode zoom (Week default), Today, and
+ *                           individually toggleable grid columns. The whole
+ *                           view persists per user in localStorage.
  *                           Read-only for now (drag-editing returns with the
  *                           widget's per-embed edit opt-in milestone);
  *   - Dashboard           — native module overview computed client-side from the
@@ -94,6 +99,16 @@
     let gantt_customer_filters = new Set();  // empty = all customers
     let gantt_date_window = "";              // "" | "30" | "90" | "180" | "365"
     let gantt_at_risk = false;
+    let gantt_search = "";                   // free-text project-name filter
+    // Optional grid columns — the name column is always shown. Toggled from the
+    // Columns dropdown and persisted per user with the rest of the saved view.
+    const GANTT_OPTIONAL_COLUMNS = [
+        { key: "project_type", label: "Type" },
+        { key: "start_date", label: "Start" },
+        { key: "end_date", label: "End" },
+        { key: "progress", label: "%" },
+    ];
+    let gantt_visible_columns = new Set(GANTT_OPTIONAL_COLUMNS.map((c) => c.key));
     // projects the user has expanded, and those whose tasks are already loaded
     // (a reload clears the latter but keeps the former, so the tree is restored)
     let gantt_expanded_projects = new Set();
@@ -264,14 +279,16 @@
 
     // ----- GANTT TOOLBAR CONTROLS -----
 
-    const checkbox_row = (cls, value, checked, id_prefix) => {
-        const safe_id = id_prefix + sanitizeId(value);
+    // A plain flex <label> rather than Bootstrap's .custom-control, whose
+    // absolutely-positioned input strands the tick as soon as a long value
+    // (customer names) wraps to a second line. Styles: .pg-check in the CSS.
+    const checkbox_row = (cls, value, checked) => {
         const label = frappe.utils.escape_html(value);
         return `
-            <div class="custom-control custom-checkbox mb-1" data-name="${label.toLowerCase()}">
-                <input type="checkbox" class="custom-control-input ${cls}" value="${label}" id="${safe_id}" ${checked ? 'checked' : ''}>
-                <label class="custom-control-label" for="${safe_id}" style="cursor: pointer; padding-top: 2px;">${label}</label>
-            </div>`;
+            <label class="pg-check" data-name="${label.toLowerCase()}">
+                <input type="checkbox" class="${cls}" value="${label}" ${checked ? 'checked' : ''}>
+                <span>${label}</span>
+            </label>`;
     };
 
     // Paints every checkbox list + button label from the current filter state.
@@ -279,7 +296,7 @@
     function init_gantt_filter_controls() {
         const $status = $root.find('#gantt-status-checkboxes').empty();
         all_gantt_statuses.forEach((s) => {
-            $status.append(checkbox_row('gantt-status-cb', s, gantt_status_filters.includes(s), 'filter-gantt-'));
+            $status.append(checkbox_row('gantt-status-cb', s, gantt_status_filters.includes(s)));
         });
         $root.find('#ganttStatusDropdown').text(
             gantt_status_filters.length === all_gantt_statuses.length || !gantt_status_filters.length
@@ -288,7 +305,7 @@
 
         const $types = $root.find('#gantt-type-checkboxes').empty();
         PRIORITY_PROJECT_TYPES.forEach((t) => {
-            $types.append(checkbox_row('gantt-type-cb', t, !gantt_type_filters.size || gantt_type_filters.has(t), 'filter-gtype-'));
+            $types.append(checkbox_row('gantt-type-cb', t, !gantt_type_filters.size || gantt_type_filters.has(t)));
         });
         $root.find('#ganttTypeDropdown').text(
             gantt_type_filters.size ? `Types (${gantt_type_filters.size})` : 'All Types'
@@ -302,6 +319,16 @@
         );
         $root.find('#gantt-date-window').val(gantt_date_window || "");
         $root.find('#gantt-at-risk').prop('checked', gantt_at_risk);
+        $root.find('#gantt-search').val(gantt_search || "");
+
+        const $cols = $root.find('#gantt-column-checkboxes').empty();
+        GANTT_OPTIONAL_COLUMNS.forEach((c) => {
+            $cols.append(`
+                <label class="pg-check" data-col="${c.key}">
+                    <input type="checkbox" class="gantt-col-cb" value="${c.key}" ${gantt_visible_columns.has(c.key) ? 'checked' : ''}>
+                    <span>${c.label}</span>
+                </label>`);
+        });
     }
 
     function init_gantt_filters() {
@@ -385,8 +412,37 @@
             if (portfolio_gantt_widget) portfolio_gantt_widget.scroll_to_today();
         });
 
-        $root.find('#gantt-export-btn').on('click', export_gantt_png);
         $root.find('#gantt-reset-view').on('click', reset_gantt_view);
+
+        // Find-a-project: filters the chart in place (server-side, debounced)
+        // so the user never leaves the dashboard.
+        let search_timer = null;
+        $root.find('#gantt-search').on('input', function() {
+            const value = $(this).val().trim();
+            clearTimeout(search_timer);
+            search_timer = setTimeout(() => {
+                if (value === gantt_search) return;
+                gantt_search = value;
+                save_gantt_view();
+                fetch_and_render_portfolio_gantt();
+            }, 400);
+        });
+        $root.find('#gantt-search-clear').on('click', function() {
+            if (!gantt_search && !$root.find('#gantt-search').val()) return;
+            $root.find('#gantt-search').val("");
+            gantt_search = "";
+            save_gantt_view();
+            fetch_and_render_portfolio_gantt();
+        });
+
+        // Column toggles apply straight to the live chart — no refetch needed.
+        $root.find('#gantt-column-checkboxes').on('change', '.gantt-col-cb', function() {
+            gantt_visible_columns = new Set(
+                $root.find('.gantt-col-cb:checked').map(function() { return $(this).val(); }).get()
+            );
+            save_gantt_view();
+            apply_gantt_columns();
+        });
 
         $root.find('#gantt-select-all-projects').on('change', function() {
             $root.find('.gantt-proj-cb').prop('checked', $(this).is(':checked'));
@@ -406,7 +462,7 @@
 
         $root.find('#gantt-customer-search').on('input', function() {
             const val = $(this).val().toLowerCase();
-            $root.find('#gantt-customer-checkboxes .custom-checkbox').each(function() {
+            $root.find('#gantt-customer-checkboxes .pg-check').each(function() {
                 $(this).toggle(String($(this).data('name')).indexOf(val) !== -1);
             });
         });
@@ -435,12 +491,11 @@
         sorted.forEach((p) => {
             const isChecked = gantt_selected_projects.size === 0 || gantt_selected_projects.has(p.name);
             const label = frappe.utils.escape_html(p.project_name || p.name);
-            const safe_id = sanitizeId(p.name);
             container.append(`
-                <div class="custom-control custom-checkbox mb-1 gantt-proj-filter-item" data-name="${label.toLowerCase()}">
-                    <input type="checkbox" class="custom-control-input gantt-proj-cb" value="${frappe.utils.escape_html(p.name)}" id="filter-proj-${safe_id}" ${isChecked ? 'checked' : ''}>
-                    <label class="custom-control-label" for="filter-proj-${safe_id}" style="cursor: pointer; padding-top: 2px;">${label}</label>
-                </div>
+                <label class="pg-check gantt-proj-filter-item" data-name="${label.toLowerCase()}">
+                    <input type="checkbox" class="gantt-proj-cb" value="${frappe.utils.escape_html(p.name)}" ${isChecked ? 'checked' : ''}>
+                    <span>${label}</span>
+                </label>
             `);
         });
 
@@ -454,7 +509,7 @@
         const unique = [...new Set((customers || []).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
         unique.forEach((c) => {
             const checked = gantt_customer_filters.size === 0 || gantt_customer_filters.has(c);
-            container.append(checkbox_row('gantt-customer-cb', c, checked, 'filter-cust-'));
+            container.append(checkbox_row('gantt-customer-cb', c, checked));
         });
     }
 
@@ -465,6 +520,13 @@
     // in composite mode: Project Type groups -> Project rows -> Task subtrees
     // fetched lazily when a project's caret is opened. All data comes from the
     // permission-checked get_gantt_data endpoint. Read-only for now.
+
+    const DEFAULT_GANTT_VIEW = "Week";
+
+    const set_view_mode_button = (mode) => {
+        $root.find('.view-mode-group button').removeClass('active btn-secondary').addClass('btn-outline-secondary');
+        $root.find(`.view-mode-group button[data-view="${mode}"]`).addClass('active btn-secondary').removeClass('btn-outline-secondary');
+    };
 
     const GANTT_VIEW_MODE_MAP = {
         "Quarter Day": "quarter_day",
@@ -512,7 +574,9 @@
                 projects: [...gantt_selected_projects],
                 window_days: gantt_date_window,
                 at_risk: gantt_at_risk,
-                zoom: $root.find('.view-mode-group button.active').data('view') || "Month",
+                search: gantt_search,
+                columns: [...gantt_visible_columns],
+                zoom: $root.find('.view-mode-group button.active').data('view') || DEFAULT_GANTT_VIEW,
                 expanded: [...gantt_expanded_projects],
             }));
         } catch (e) {
@@ -535,10 +599,9 @@
         if (Array.isArray(saved.expanded)) gantt_expanded_projects = new Set(saved.expanded);
         gantt_date_window = saved.window_days || "";
         gantt_at_risk = !!saved.at_risk;
-        if (saved.zoom) {
-            $root.find('.view-mode-group button').removeClass('active btn-secondary').addClass('btn-outline-secondary');
-            $root.find(`.view-mode-group button[data-view="${saved.zoom}"]`).addClass('active btn-secondary').removeClass('btn-outline-secondary');
-        }
+        gantt_search = saved.search || "";
+        if (Array.isArray(saved.columns)) gantt_visible_columns = new Set(saved.columns);
+        if (saved.zoom) set_view_mode_button(saved.zoom);
     }
 
     function reset_gantt_view() {
@@ -550,6 +613,9 @@
         gantt_expanded_projects = new Set();
         gantt_date_window = "";
         gantt_at_risk = false;
+        gantt_search = "";
+        gantt_visible_columns = new Set(GANTT_OPTIONAL_COLUMNS.map((c) => c.key));
+        set_view_mode_button(DEFAULT_GANTT_VIEW);
         init_gantt_filter_controls();
         fetch_and_render_portfolio_gantt();
     }
@@ -584,6 +650,9 @@
             filters.push(["expected_start_date", "<=", until]);
             filters.push(["expected_end_date", ">=", today]);
         }
+        if (gantt_search) {
+            filters.push(["project_name", "like", "%" + gantt_search + "%"]);
+        }
         if (gantt_at_risk) {
             filters.push(["expected_end_date", "<", frappe.datetime.get_today()]);
             filters.push(["percent_complete", "<", 100]);
@@ -592,7 +661,7 @@
     }
 
     function gantt_widget_config() {
-        const mode = $root.find('.view-mode-group button.active').data('view') || "Month";
+        const mode = $root.find('.view-mode-group button.active').data('view') || DEFAULT_GANTT_VIEW;
         return {
             doctype: "Project",
             fields: { text: "project_name", start: "expected_start_date", end: "expected_end_date", progress: "percent_complete" },
@@ -608,7 +677,7 @@
             tooltip: true,
             zoom: GANTT_VIEW_MODE_MAP[mode] || "month",
             columns: gantt_columns(),
-            gantt: { grid_width: 420 },
+            gantt: { grid_width: gantt_grid_width() },
             templates: {
                 task_class: portfolio_row_class,
                 grid_row_class: portfolio_row_class,
@@ -619,6 +688,9 @@
                 save_gantt_view();
             },
             on_task_click: (id, task) => {
+                // Group rows (G::) are synthetic buckets — clicking one should
+                // only expand/collapse, never open the Project Type document.
+                if (String(id).indexOf("G::") === 0) return;
                 if (task && task.ref_doctype && task.ref_name) {
                     frappe.set_route("Form", task.ref_doctype, task.ref_name);
                 }
@@ -640,14 +712,34 @@
         return frappe.datetime.str_to_user(moment(d).format("YYYY-MM-DD"));
     }
 
+    const is_narrow = () => window.innerWidth < 992;
+
     function gantt_columns() {
-        return [
-            { name: "text", label: "Project / Task", tree: true, width: 200, resize: true },
+        const optional = [
             { name: "project_type", label: "Type", width: 70, align: "center", template: (t) => t.project_type || "" },
             { name: "start_date", label: "Start", width: 78, align: "center", template: (t) => (t.start_date ? fmt_date(moment(t.start_date).format("YYYY-MM-DD")) : "") },
             { name: "end_date", label: "End", width: 78, align: "center", template: inclusive_end },
             { name: "progress", label: "%", width: 44, align: "center", template: (t) => (typeof t.progress === "number" ? Math.round(t.progress * 100) + "%" : "") },
+        ].filter((c) => gantt_visible_columns.has(c.name));
+        return [
+            { name: "text", label: "Project / Task", tree: true, width: is_narrow() ? 150 : 220, resize: true },
+            ...optional,
         ];
+    }
+
+    // Sized from the columns actually shown, so a phone is not left with a
+    // grid wider than its screen and no room for the chart.
+    function gantt_grid_width() {
+        return gantt_columns().reduce((sum, c) => sum + (c.width || 80), 0) + 16;
+    }
+
+    // Columns can change without refetching — rebuild them on the live chart.
+    function apply_gantt_columns() {
+        if (!portfolio_gantt_widget || !portfolio_gantt_widget.gantt) return;
+        const g = portfolio_gantt_widget.gantt;
+        g.config.columns = gantt_columns();
+        g.config.grid_width = gantt_grid_width();
+        g.render();
     }
 
     // ---- row styling -------------------------------------------------------
@@ -659,6 +751,7 @@
     function portfolio_row_class(start, end, task) {
         const id = String(task.id);
         const classes = [];
+        if (task.ee_placeholder) return "pg-placeholder";
         if (id.indexOf("G::") === 0) {
             classes.push("pg-master");
         } else if (id.indexOf("P::") === 0) {
@@ -721,7 +814,8 @@
             // stamp the parent project's type so tasks can be shaded to match
             child_rows.forEach((t) => { t.ee_project_type = task.project_type; });
             if (portfolio_gantt_widget && !portfolio_gantt_widget.destroyed) {
-                const added = portfolio_gantt_widget.add_rows(child_rows, data.links);
+                // pass the row id so its "Loading…" placeholder is retired
+                const added = portfolio_gantt_widget.add_rows(child_rows, data.links, row_id);
                 if (!added && !child_rows.length) {
                     frappe.show_alert({ message: __("No scheduled tasks for {0}", [task.text]), indicator: "blue" });
                 }
@@ -820,39 +914,6 @@
         }).catch(() => {});
     }
 
-    // ---- PNG export --------------------------------------------------------
-
-    // Rendered client-side with dom-to-image. Deliberately NOT DHTMLX's
-    // exportToPNG(), which POSTs the chart data to export.dhtmlx.com — project
-    // schedules must not leave the browser.
-    function export_gantt_png() {
-        const node = portfolio_gantt_widget && portfolio_gantt_widget.chart_el;
-        if (!node) return;
-        const $btn = $root.find('#gantt-export-btn');
-        const original = $btn.html();
-        $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin mr-1"></i>Exporting...');
-        const done = () => $btn.prop('disabled', false).html(original);
-        frappe.require('https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js', () => {
-            if (typeof domtoimage === "undefined") {
-                frappe.show_alert({ message: __("Could not load the image exporter"), indicator: "red" });
-                done();
-                return;
-            }
-            domtoimage.toPng(node, { bgcolor: "#ffffff", width: node.scrollWidth, height: node.scrollHeight })
-                .then((url) => {
-                    const link = document.createElement('a');
-                    link.download = 'Portfolio-Gantt-' + moment().format('YYYYMMDD') + '.png';
-                    link.href = url;
-                    link.click();
-                    done();
-                })
-                .catch((err) => {
-                    console.error("Gantt export failed", err);
-                    frappe.show_alert({ message: __("Gantt export failed"), indicator: "red" });
-                    done();
-                });
-        });
-    }
 
     // ----- HELPERS & OTHER RENDERERS -----
 
