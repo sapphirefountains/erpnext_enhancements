@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.170.1] - 2026-07-24
+
+### Fixed
+
+- **`custom_docperm.json` fixture was missing `doctype`, blocking every deploy.**
+  The Custom DocPerm records added in WI-012 (v1.170.0) carried no `doctype` key,
+  so `sync_fixtures` aborted on every `bench migrate` with `KeyError: 'doctype'`
+  (`import_file_by_path` → `doc["doctype"]`) — the prod deploy has failed since
+  #622 merged. Added `"doctype": "Custom DocPerm"` to each of the 10 records
+  (matching every other fixture file). All five referenced roles already exist in
+  prod, so this is the only change needed to make migrate complete.
+
 ## [1.170.0] - 2026-07-24
 
 ### Added
