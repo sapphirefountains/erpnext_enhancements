@@ -145,13 +145,21 @@ def recompute_vehicle_status(vehicle_name, notify=False):
 		if last_date:
 			vehicle.set(last_f, last_date)
 
-	# Odometer only ever moves forward.
+	# Odometer only ever moves forward. The aggregate MUST use dict syntax:
+	# Frappe v16 rejects SQL functions written as strings in `fields` ("SQL
+	# functions are not allowed as strings in SELECT ... Use dict syntax like
+	# {'COUNT': '*'}"), which made the old "max(odometer) as max_odo" form
+	# throw on every call. Frappe aliases the column itself (MAX(`odometer`)),
+	# so read the row's single value rather than depending on that spelling.
 	row = frappe.db.get_all(
 		"Vehicle Maintenance Log",
 		filters={"vehicle": vehicle_name, "docstatus": 1},
-		fields=["max(odometer) as max_odo"],
+		fields=[{"MAX": "odometer"}],
 	)
-	max_odo = cint(row[0].max_odo) if row and row[0].get("max_odo") else 0
+	max_odo = 0
+	if row:
+		values = [value for value in row[0].values() if value is not None]
+		max_odo = cint(values[0]) if values else 0
 	if max_odo > cint(vehicle.current_odometer):
 		vehicle.current_odometer = max_odo
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.166.1] - 2026-07-23
+
+### Fixed
+
+- **The Portfolio Gantt threw on every load in v1.166.0** — no project got
+  its expand caret. **Frappe v16 rejects SQL aggregates passed as strings**
+  in a `fields` list ("SQL functions are not allowed as strings in SELECT
+  ... Use dict syntax like `{'COUNT': '*'}`"), for `get_list` **and**
+  `get_all`. Two call sites used the string form: the Gantt widget's lazy
+  child-count query (v1.166.0), and `fleet_maintenance/status.py`'s
+  `max(odometer) as max_odo` odometer roll-up — the latter broken for every
+  caller of `refresh_vehicle_status` since the v16 upgrade (fleet
+  maintenance is dormant on this site, so it never surfaced).
+  Both now pass the aggregate as a dict. Frappe aliases the result column
+  itself (`COUNT(*)`, ``MAX(`odometer`)``), so both read the value
+  defensively rather than depending on that spelling — a missed alias would
+  silently yield 0, which in the Gantt's case would drop every expand caret
+  with no error at all. Regression-guarded: the lazy-count test asserts the
+  dict form is used and that no string field contains `(`.
+
 ## [1.166.0] - 2026-07-23
 
 ### Added

@@ -1122,7 +1122,8 @@ def test_lazy_children_return_counts_not_rows(env):
 					}
 				),
 			]
-		return [Row({"project": "P1", "ee_child_count": 7}), Row({"project": "P2", "ee_child_count": 2})]
+		# shape Frappe v16 actually returns for fields=[link, {"COUNT": "*"}]
+		return [Row({"project": "P1", "COUNT(*)": 7}), Row({"project": "P2", "COUNT(*)": 2})]
 
 	frappe.get_list = get_list
 	cfg = composite_config()
@@ -1138,10 +1139,42 @@ def test_lazy_children_return_counts_not_rows(env):
 	assert by_id["P::P2"]["$has_child"] is True  # undated container kept
 	assert "P::P3" not in by_id
 
-	# the child query was a grouped COUNT, not a row fetch
+	# the child query was a grouped COUNT, not a row fetch — and the aggregate
+	# MUST be dict syntax: Frappe v16 throws "SQL functions are not allowed as
+	# strings in SELECT" for the "count(name) as x" form
 	child_call = next(c for c in calls if c[0] == "Task")
 	assert child_call[1]["group_by"] == "project"
-	assert any("count(" in f for f in child_call[1]["fields"])
+	assert {"COUNT": "*"} in child_call[1]["fields"]
+	assert not [f for f in child_call[1]["fields"] if isinstance(f, str) and "(" in f]
+
+
+def test_lazy_child_count_survives_a_renamed_aggregate_alias(env):
+	"""The COUNT alias is Frappe's, not ours. If a future version renames it,
+	counts must still be read (a zero would drop every caret silently)."""
+	frappe, gantt = env
+
+	def get_list(doctype, **kwargs):
+		if doctype == "Project":
+			return [
+				Row(
+					{
+						"name": "P1",
+						"project_name": "A",
+						"expected_start_date": "2026-01-01",
+						"expected_end_date": "2026-01-05",
+						"percent_complete": 0,
+						"custom_master_project": None,
+					}
+				)
+			]
+		return [Row({"project": "P1", "count_of_rows": 4})]
+
+	frappe.get_list = get_list
+	cfg = composite_config()
+	cfg["children"]["lazy"] = True
+	out = gantt.get_gantt_data(cfg)
+	root = next(t for t in out["tasks"] if t["id"] == "P::P1")
+	assert root["$has_child"] is True and root["ee_child_count"] == 4
 
 
 def test_non_lazy_children_have_no_caret_markers(env):
