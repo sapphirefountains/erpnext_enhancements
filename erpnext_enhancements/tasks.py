@@ -170,13 +170,11 @@ def generate_predictive_maintenance_records():
 	horizon = add_days(today, 7)
 	month_name = today.strftime("%B")
 
-	# 0. Expire contracts that ran out
-	for name in frappe.get_all(
-		"Sapphire Maintenance Contract",
-		filters={"status": "Active", "end_date": ["<", today]},
-		pluck="name",
-	):
-		frappe.db.set_value("Sapphire Maintenance Contract", name, "status", "Expired")
+	# 0. Expire or (§9.2) auto-renew contracts whose term ran out. Runs before
+	# generation so a renewed contract keeps generating and an expired one stops.
+	from erpnext_enhancements.api.maintenance_renewal import expire_or_renew_contracts
+
+	expire_or_renew_contracts(today)
 
 	# 1. Contract-driven generation
 	contract_projects = set()

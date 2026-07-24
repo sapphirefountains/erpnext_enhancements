@@ -27,6 +27,15 @@
   "invoicing_frequency",
   "column_break_billing",
   "project_contract",
+  "renewal_section",
+  "auto_renew",
+  "non_renewal_notice",
+  "non_renewal_notice_date",
+  "last_renewed_on",
+  "column_break_renewal",
+  "scheduled_rate",
+  "rate_effective_date",
+  "rate_notice_sent",
   "advanced_section",
   "visit_shape",
   "default_template",
@@ -190,6 +199,62 @@
    "fieldtype": "Link",
    "label": "Project Contract",
    "options": "Project Contract"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "renewal_section",
+   "fieldtype": "Section Break",
+   "label": "Renewal & Rate Adjustment"
+  },
+  {
+   "default": "1",
+   "description": "§9.2 — auto-renew for successive one-year terms at term end. Requires \"Auto-Renew Maintenance Contracts\" in Settings; otherwise the contract expires at End Date.",
+   "fieldname": "auto_renew",
+   "fieldtype": "Check",
+   "label": "Auto-Renew at Term End"
+  },
+  {
+   "default": "0",
+   "description": "Either party gave 30-day non-renewal notice (§9.2). When set, the contract expires at End Date instead of auto-renewing.",
+   "fieldname": "non_renewal_notice",
+   "fieldtype": "Check",
+   "label": "Non-Renewal Notice Given"
+  },
+  {
+   "depends_on": "non_renewal_notice",
+   "fieldname": "non_renewal_notice_date",
+   "fieldtype": "Date",
+   "label": "Non-Renewal Notice Date"
+  },
+  {
+   "fieldname": "last_renewed_on",
+   "fieldtype": "Date",
+   "label": "Last Auto-Renewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_renewal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "§4.5 — a scheduled new per-visit rate. Accounts is reminded 30 days before the effective date; staff send the client written notice and update the Sales Order rate. Advisory only — nothing auto-changes billing.",
+   "fieldname": "scheduled_rate",
+   "fieldtype": "Currency",
+   "label": "Scheduled New Rate (per visit)"
+  },
+  {
+   "depends_on": "scheduled_rate",
+   "fieldname": "rate_effective_date",
+   "fieldtype": "Date",
+   "label": "Rate Effective Date"
+  },
+  {
+   "fieldname": "rate_notice_sent",
+   "fieldtype": "Date",
+   "hidden": 1,
+   "label": "Rate Notice Sent On",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "collapsible": 1,

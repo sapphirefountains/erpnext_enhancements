@@ -370,6 +370,9 @@ scheduler_events = {
 	"daily": [
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
 		"erpnext_enhancements.tasks.predictive_maintenance_scheduling",
+		# maintenance renewal/rate engine: T-30 rate-change notices (§4.5). The
+		# auto-renew/expire step runs inside predictive_maintenance_scheduling.
+		"erpnext_enhancements.api.maintenance_renewal.send_rate_change_notices",
 		"erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",

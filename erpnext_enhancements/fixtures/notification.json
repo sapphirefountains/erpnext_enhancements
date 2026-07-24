@@ -101,7 +101,7 @@
     "days_in_advance": 30,
     "condition": "doc.status == 'Active'",
     "send_to_all_assignees": 0,
-    "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. Unless this contract is renewed (extend the term / adjust the rate), the daily scheduler will mark it Expired on {{ doc.end_date }} and stop generating visits.\n\nRenew it or send the client a non-renewal notice now.",
+    "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. With auto-renewal enabled this contract will renew for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after {{ doc.end_date }} and stops generating visits.\n\nDecide now: let it renew, adjust the rate, or set the non-renewal notice.",
     "recipients": [
       {
         "receiver_by_role": "Projects Manager"
