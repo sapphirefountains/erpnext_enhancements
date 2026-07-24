@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.168.2] - 2026-07-24
+
+### Fixed
+
+- **WI-004 CoA design doc: corrected the numbering-convention wording.** §2 read
+  "Groups end in `00`/`000`", but 15 of the 46 group rows are third-level
+  sub-groups ending in a single trailing `0` (e.g. `1110` Cash In Hand, `2130`
+  Sales Tax Payable, `5110` Stock Expenses). Reworded to the actual three-tier
+  scheme (roots `000`, section groups `00`, sub-groups `x0`) to match the §2
+  range table. Documentation only — the `chart_of_accounts.csv` /
+  `coa_mapping.csv` artifacts are unchanged and were independently verified
+  against live production (359/359 accounts reconcile, importer preview clean).
+
 ## [1.168.1] - 2026-07-24
 
 ### Fixed
