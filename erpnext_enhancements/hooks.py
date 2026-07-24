@@ -657,6 +657,45 @@ fixtures = [
 			]
 		],
 	},
+	# WI-010: version-control the security architecture — the 17 hand-built Role
+	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
+	# so re-export never sweeps user-created records. The Role entry MUST precede the
+	# Role Profile entry: profiles reference "Employee Self Service", and fixtures sync
+	# in list order. "PO Approver" is deliberately absent here — it is owned by
+	# patches/seed_po_approver_role.py (post_model_sync, i.e. before fixture sync).
+	# Retire/rename of the legacy "Poseidon" profile is out of scope (needs sign-off).
+	{
+		"dt": "Role",
+		"filters": [["name", "in", ["Employee Self Service"]]],
+	},
+	{
+		"dt": "Role Profile",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Accounts",
+					"Design Team",
+					"Executive",
+					"Finance",
+					"Finance Team",
+					"HR",
+					"Inventory",
+					"Manufacturing",
+					"Poseidon",
+					"Production Team",
+					"Projects & Operations",
+					"Purchase",
+					"Sales",
+					"Sales & Marketing",
+					"Sales Team",
+					"System Manager",
+					"Technician",
+				],
+			]
+		],
+	},
 ]
 
 override_whitelisted_methods = {

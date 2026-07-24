@@ -1,0 +1,13 @@
+[
+ {
+  "desk_access": 1,
+  "disabled": 0,
+  "doctype": "Role",
+  "home_page": null,
+  "is_custom": 1,
+  "name": "Employee Self Service",
+  "restrict_to_domain": null,
+  "role_name": "Employee Self Service",
+  "two_factor_auth": 0
+ }
+]
