@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.169.1] - 2026-07-24
+
+### Added
+
+- **Phase-0 execution plan** (`docs/migration/phase0-execution-plan.md`) — the
+  dependency-ordered, topology-validated schedule for the 20 Phase-0 work items:
+  waves with date windows, the `WI-010 → WI-011 → …` critical path, gates
+  (monthly-close, the WI-017/WI-021 cross-phase trap), and the Nov-30 exit
+  criteria feeding the December parallel run.
+- **WI-011 access matrix & SoD design** (`docs/migration/wi011-access-matrix.md`)
+  — the per-user Role Profile / Employee target matrix built from a live prod
+  audit, plus segregation-of-duties findings (finance-authority
+  over-provisioning, the shared `billing@` account holding approver rights,
+  preparer=approver on AP/AR) and the preparer≠approver remediation, for HR
+  confirmation + CEO sign-off. Documentation only; no config applied to prod.
+
 ## [1.169.0] - 2026-07-24
 
 ### Added
