@@ -313,8 +313,6 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 			               settings default),
 		}
 	"""
-	from erpnext_enhancements.api.maintenance_workflow import resolve_consumable_warehouse
-
 	contract = None
 	if maintenance_contract:
 		contract = frappe.get_doc("Sapphire Maintenance Contract", maintenance_contract)
@@ -370,10 +368,13 @@ def get_visit_payload(project=None, serial_no=None, maintenance_contract=None, t
 
 		feature_serial = feature["serial_no"]
 		overrides = _reading_overrides(feature_serial)
-		warehouse = resolve_consumable_warehouse(
-			feature_warehouse=feature.get("default_warehouse"),
-			technician=technician,
-		)
+		# Bake only the feature's on-site store (tech-independent). The
+		# technician-vehicle / settings-default fallback is deferred to submit
+		# (build_stock_entry_rows resolves blank warehouses from the final
+		# doc.technician), so a substitute who takes the visit later sources
+		# consumables from THEIR van, not the technician assigned when the form
+		# was first opened.
+		warehouse = feature.get("default_warehouse")
 
 		for section in sections:
 			if section.disabled:

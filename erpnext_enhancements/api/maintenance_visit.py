@@ -92,55 +92,57 @@ def _claim_visit(doc):
     clocked into the project and that assigned technician is NOT (a substitute
     on-site takes over from an absent tech). A supervisor merely peeking (not
     clocked in) never claims, and an assigned tech actively clocked in is never
-    displaced. Returns True iff it changed ``technician``. Evaluated on every open
-    (not just first instantiation) because a substitute usually reads the site
-    briefing before clocking in, then reopens after clock-in to take the visit.
+    displaced. Evaluated on every open (not just first instantiation) because a
+    substitute usually reads the site briefing before clocking in, then reopens
+    after clock-in to take the visit.
+
+    Returns the previously-assigned technician (``str``, possibly ``""`` for an
+    unassigned draft) when it changed ``technician``, else ``None``. A truthy
+    return means a *named* technician was displaced, so the caller re-points that
+    technician's dispatch assignment (after saving). Consumable source warehouses
+    need no realignment here: only the tech-independent feature warehouse is baked
+    at instantiation, and the vehicle fallback is resolved from the final
+    ``technician`` at submit (see get_visit_payload / build_stock_entry_rows).
     """
     user = frappe.session.user
     if doc.technician == user or "Maintenance User" not in frappe.get_roles():
-        return False
+        return None
     if not doc.technician:
-        # Unassigned draft: rows were instantiated with `user`'s warehouse
-        # (technician or session.user), so owner and warehouse already agree.
         doc.technician = user
-        return True
+        return ""  # was unassigned — no prior owner / assignment to move
     if _clocked_into_project(user, doc.project) and not _clocked_into_project(doc.technician, doc.project):
         prior = doc.technician
         doc.technician = user
-        _reresolve_consumable_warehouses(doc, prior)
-        return True
-    return False
+        return prior
+    return None
 
 
-def _reresolve_consumable_warehouses(doc, prior_technician):
-    """Realign auto-resolved consumable source warehouses after a substitute
-    claims a visit from a previously-assigned technician.
+def _reassign_todo(doc, prior):
+    """Move the dispatch assignment (ToDo + share) from a displaced technician to
+    the visit's new owner.
 
-    Consumable rows bake in a source warehouse at first-open instantiation using
-    the then-assigned technician. When a substitute later takes over, a row whose
-    warehouse still equals what the PRIOR technician's fallback produced (feature
-    store -> prior tech's vehicle -> settings default) was auto-resolved, so it is
-    re-resolved for the NEW owner — keeping the submit-time Material Issue sourced
-    from the van of whoever actually performs the visit. A feature/on-site
-    warehouse is tech-independent and stays put; a manually chosen warehouse
-    (differs from the prior auto value) is preserved.
+    Dispatch stamps the planned technician and a Frappe assignment at draft time
+    (tasks._draft_maintenance_record); when a substitute takes over, the ToDo must
+    follow or "assigned to me" / workload views keep listing the visit under the
+    planned tech. Best-effort — a missing or duplicate assignment never blocks the
+    open. Call AFTER doc.save() so the save can't clobber the ``_assign`` field
+    these writes update.
     """
-    from erpnext_enhancements.api.maintenance_workflow import (
-        _contract_feature_warehouses,
-        resolve_consumable_warehouse,
-    )
+    from frappe.desk.form.assign_to import add as _assign_add, remove as _assign_remove
 
-    feature_warehouses = _contract_feature_warehouses(doc)
-    for row in doc.get("consumables", []):
-        feature_warehouse = feature_warehouses.get(row.serial_no or doc.serial_no)
-        prior_auto = resolve_consumable_warehouse(
-            feature_warehouse=feature_warehouse, technician=prior_technician
-        )
-        if row.warehouse and row.warehouse != prior_auto:
-            continue  # manual override — leave it
-        row.warehouse = resolve_consumable_warehouse(
-            feature_warehouse=feature_warehouse, technician=doc.technician
-        )
+    try:
+        _assign_remove(doc.doctype, doc.name, prior)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (remove) failed")
+    try:
+        _assign_add({
+            "assign_to": [doc.technician],
+            "doctype": doc.doctype,
+            "name": doc.name,
+            "description": _("Scheduled maintenance visit."),
+        })
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Maintenance dispatch reassign (add) failed")
 
 
 def _check_not_stale(doc, modified):
@@ -214,11 +216,18 @@ def get_visit_bootstrap(record):
     # Ownership claim — see _claim_visit. Evaluated on every open of a writable
     # draft (not only at first instantiation), so a substitute who reads the
     # briefing before clocking in still claims when they reopen after clock-in.
-    if can_write and _claim_visit(doc):
+    prior_tech = _claim_visit(doc) if can_write else None
+    if prior_tech is not None:
         dirty = True
 
     if dirty:
         doc.save()
+
+    # A substitute displacing a pre-assigned technician: move the dispatch ToDo
+    # too (after save, so it isn't clobbered). An unassigned draft (prior "")
+    # had no assignment, so there is nothing to move.
+    if prior_tech:
+        _reassign_todo(doc, prior_tech)
 
     return {
         "record": doc.as_dict(),
