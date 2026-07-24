@@ -40,6 +40,19 @@ from frappe.model.document import Document
 from frappe.utils import flt
 
 class SapphireMaintenanceRecord(Document):
+	# This doctype has ``has_web_view`` set (its ``/maintenance-records`` portal
+	# view, rendered by ``get_context`` below) but subclasses plain ``Document``
+	# rather than ``WebsiteGenerator``. Frappe's website router
+	# (``DocumentPage.get_condition_field``) dereferences
+	# ``controller.website.condition_field`` for *every* web-view doctype while
+	# resolving any unmatched path, so without an explicit ``website`` attribute
+	# it raises ``AttributeError`` and takes down all website/portal rendering
+	# (the lookup is Redis-cached, so a deploy's cache flush re-exposes it).
+	# Mirror ``WebsiteGenerator``'s default ``frappe._dict()`` and gate web
+	# routing to submitted visits (docstatus == 1) — drafts/cancelled records
+	# are never public pages.
+	website = frappe._dict(condition_field="docstatus")
+
 	def validate(self):
 		self.has_out_of_range_readings = 1 if evaluate_reading_ranges(self.chemistry_readings) else 0
 		self.completion_percent = compute_completion_percent(self)
