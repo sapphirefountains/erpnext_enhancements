@@ -448,6 +448,16 @@ jinja = {
 	],
 }
 
+# Run BEFORE each `bench migrate` (in pre_schema_updates, before fixture sync).
+before_migrate = [
+	# Drop stale Role Profile document locks so fixture sync can't crash with
+	# DocumentLockedError. Frappe core's RoleProfile.on_update queue_action locks
+	# the doc and defers "resave all users" to the long queue; the deploy's Redis
+	# FLUSHDB destroys that job before it can unlock, orphaning the lock for up to
+	# 3h. A second migrate inside that window then aborts here. See document_locks.py.
+	"erpnext_enhancements.setup.document_locks.clear_stale_role_profile_locks",
+]
+
 # Run after each `bench migrate` (from global_enhancements)
 after_migrate = [
 	"erpnext_enhancements.setup.custom_fields.create_primary_contact_fields",

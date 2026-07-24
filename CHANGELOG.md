@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.171.1] - 2026-07-24
+
+### Fixed
+
+- **`bench migrate` no longer aborts with `DocumentLockedError` on Role Profile
+  fixture sync.** Frappe core's `RoleProfile.on_update` locks the document and
+  defers "re-save all users on this profile" to the long queue; the deploy's
+  Redis `FLUSHDB` destroys that job before it can release the lock, orphaning it
+  for up to 3h (Frappe's `DOCUMENT_LOCK_EXPIRY`). A second migrate inside that
+  window then crashed on the first re-imported Role Profile, leaving the site
+  down ("no healthy upstream" at the load balancer). A new `before_migrate` hook
+  (`setup/document_locks.py`) sweeps stale Role Profile locks before fixture
+  sync, so migrate is self-healing regardless of the FLUSHDB race or the expiry
+  window.
+
 ## [1.171.0] - 2026-07-24
 
 ### Added
