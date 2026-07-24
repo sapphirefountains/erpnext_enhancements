@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.169.0] - 2026-07-24
+
+### Added
+
+- **WI-010: version-control the security architecture (Role Profiles + Roles).**
+  The 17 hand-built Role Profiles (Accounts, Design Team, Executive, Finance,
+  Finance Team, HR, Inventory, Manufacturing, Poseidon, Production Team,
+  Projects & Operations, Purchase, Sales, Sales & Marketing, Sales Team, System
+  Manager, Technician) and the one `is_custom` role (`Employee Self Service`) are
+  now `bench migrate`-managed fixtures (`fixtures/role_profile.json`,
+  `fixtures/role.json`) via name-in allowlists — so the app's most
+  security-sensitive config is code-reviewed and no longer drifts between test
+  and prod. Adds the `PO Approver` role via an insert-only patch
+  (`seed_po_approver_role`) for the upcoming WI-013 PO-threshold Authorization
+  Rule. Fixtures were generated from production (the source of truth); role sets
+  are unchanged. Retire/rename of the legacy `Poseidon` profile is deferred
+  (needs sign-off). Assigning profiles to users is WI-011.
+
 ## [1.168.2] - 2026-07-24
 
 ### Fixed

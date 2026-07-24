@@ -1,0 +1,910 @@
+[
+ {
+  "doctype": "Role Profile",
+  "name": "Accounts",
+  "role_profile": "Accounts",
+  "roles": [
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Accounts User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Design Team",
+  "role_profile": "Design Team",
+  "roles": [
+   {
+    "role": "Assistant User"
+   },
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Delivery User"
+   },
+   {
+    "role": "Design Team"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "Employee Self Service"
+   },
+   {
+    "role": "Fleet Manager"
+   },
+   {
+    "role": "Fulfillment User"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Inbox User"
+   },
+   {
+    "role": "Insights User"
+   },
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Knowledge Base Contributor"
+   },
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Prepared Report User"
+   },
+   {
+    "role": "Project Manager"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Purchase Manager"
+   },
+   {
+    "role": "Purchase Master Manager"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Report Manager"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   },
+   {
+    "role": "Support Team"
+   },
+   {
+    "role": "System User"
+   },
+   {
+    "role": "Water Engineer"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Executive",
+  "role_profile": "Executive",
+  "roles": [
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Sales Manager"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Finance",
+  "role_profile": "Finance",
+  "roles": [
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Accounts User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Finance Team",
+  "role_profile": "Finance Team",
+  "roles": [
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Accounts Receivable"
+   },
+   {
+    "role": "Accounts User"
+   },
+   {
+    "role": "Assistant User"
+   },
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Delivery User"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "Employee Self Service"
+   },
+   {
+    "role": "Expense Approver"
+   },
+   {
+    "role": "Finance Team"
+   },
+   {
+    "role": "Fulfillment User"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Insights Admin"
+   },
+   {
+    "role": "Insights User"
+   },
+   {
+    "role": "Leave Approver"
+   },
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Prepared Report User"
+   },
+   {
+    "role": "Project Manager"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Purchase Manager"
+   },
+   {
+    "role": "Purchase Master Manager"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Report Manager"
+   },
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales Master Manager"
+   },
+   {
+    "role": "Sales Team"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   },
+   {
+    "role": "System User"
+   },
+   {
+    "role": "Workspace Manager"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "HR",
+  "role_profile": "HR",
+  "roles": [
+   {
+    "role": "Expense Approver"
+   },
+   {
+    "role": "HR Manager"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Leave Approver"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Inventory",
+  "role_profile": "Inventory",
+  "roles": [
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Manufacturing",
+  "role_profile": "Manufacturing",
+  "roles": [
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Stock User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Poseidon",
+  "role_profile": "Poseidon",
+  "roles": [
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Inbox User"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales Master Manager"
+   },
+   {
+    "role": "Sales Team"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Support Team"
+   },
+   {
+    "role": "System User"
+   },
+   {
+    "role": "TP Agent"
+   },
+   {
+    "role": "TP Manager"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Production Team",
+  "role_profile": "Production Team",
+  "roles": [
+   {
+    "role": "Assistant User"
+   },
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Delivery Manager"
+   },
+   {
+    "role": "Delivery User"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "Employee Self Service"
+   },
+   {
+    "role": "Fleet Manager"
+   },
+   {
+    "role": "Fulfillment User"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Inbox User"
+   },
+   {
+    "role": "Insights User"
+   },
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Knowledge Base Contributor"
+   },
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Production Team"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Quality Manager"
+   },
+   {
+    "role": "Report Manager"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   },
+   {
+    "role": "Support Team"
+   },
+   {
+    "role": "System User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Projects & Operations",
+  "role_profile": "Projects & Operations",
+  "roles": [
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Purchase",
+  "role_profile": "Purchase",
+  "roles": [
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Purchase Manager"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Stock User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Sales",
+  "role_profile": "Sales",
+  "roles": [
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Sales & Marketing",
+  "role_profile": "Sales & Marketing",
+  "roles": [
+   {
+    "role": "Marketing Manager"
+   },
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Sales Team",
+  "role_profile": "Sales Team",
+  "roles": [
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Accounts User"
+   },
+   {
+    "role": "Assistant User"
+   },
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Delivery Manager"
+   },
+   {
+    "role": "Delivery User"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "Employee Self Service"
+   },
+   {
+    "role": "Fleet Manager"
+   },
+   {
+    "role": "Fulfillment User"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Inbox User"
+   },
+   {
+    "role": "Insights User"
+   },
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Knowledge Base Contributor"
+   },
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Prepared Report User"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Report Manager"
+   },
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales Master Manager"
+   },
+   {
+    "role": "Sales Team"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   },
+   {
+    "role": "System User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "System Manager",
+  "role_profile": "System Manager",
+  "roles": [
+   {
+    "role": "AI Auditor"
+   },
+   {
+    "role": "Academics User"
+   },
+   {
+    "role": "Accounts Manager"
+   },
+   {
+    "role": "Accounts Receivable"
+   },
+   {
+    "role": "Accounts User"
+   },
+   {
+    "role": "Agent"
+   },
+   {
+    "role": "Agent Manager"
+   },
+   {
+    "role": "Analytics"
+   },
+   {
+    "role": "Assistant Admin"
+   },
+   {
+    "role": "Assistant User"
+   },
+   {
+    "role": "Auditor"
+   },
+   {
+    "role": "Blogger"
+   },
+   {
+    "role": "Call Center Supervisor"
+   },
+   {
+    "role": "Customer"
+   },
+   {
+    "role": "Dashboard Manager"
+   },
+   {
+    "role": "Delivery Manager"
+   },
+   {
+    "role": "Delivery User"
+   },
+   {
+    "role": "Design Team"
+   },
+   {
+    "role": "Device Manager"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "Employee Self Service"
+   },
+   {
+    "role": "Executive Team"
+   },
+   {
+    "role": "Expense Approver"
+   },
+   {
+    "role": "External Contractor"
+   },
+   {
+    "role": "Finance Team"
+   },
+   {
+    "role": "Fleet Manager"
+   },
+   {
+    "role": "Fulfillment User"
+   },
+   {
+    "role": "HR Manager"
+   },
+   {
+    "role": "HR Team"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Helpdesk Contact"
+   },
+   {
+    "role": "Inbox User"
+   },
+   {
+    "role": "Insights Admin"
+   },
+   {
+    "role": "Insights User"
+   },
+   {
+    "role": "Interviewer"
+   },
+   {
+    "role": "Inventory Clerk"
+   },
+   {
+    "role": "Item Manager"
+   },
+   {
+    "role": "Knowledge Base Contributor"
+   },
+   {
+    "role": "Knowledge Base Editor"
+   },
+   {
+    "role": "Leave Approver"
+   },
+   {
+    "role": "Maintenance Manager"
+   },
+   {
+    "role": "Maintenance Supervisor"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Manufacturing Manager"
+   },
+   {
+    "role": "Manufacturing User"
+   },
+   {
+    "role": "Marketing Manager"
+   },
+   {
+    "role": "Marketing Team"
+   },
+   {
+    "role": "Newsletter Manager"
+   },
+   {
+    "role": "Operations Team"
+   },
+   {
+    "role": "Prepared Report User"
+   },
+   {
+    "role": "Production Team"
+   },
+   {
+    "role": "Project Manager"
+   },
+   {
+    "role": "Project User"
+   },
+   {
+    "role": "Projects Manager"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Purchase Manager"
+   },
+   {
+    "role": "Purchase Master Manager"
+   },
+   {
+    "role": "Purchase User"
+   },
+   {
+    "role": "Quality Manager"
+   },
+   {
+    "role": "Raven Admin"
+   },
+   {
+    "role": "Raven User"
+   },
+   {
+    "role": "Report Manager"
+   },
+   {
+    "role": "Sales Manager"
+   },
+   {
+    "role": "Sales Master Manager"
+   },
+   {
+    "role": "Sales Team"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Script Manager"
+   },
+   {
+    "role": "Stock Manager"
+   },
+   {
+    "role": "Stock User"
+   },
+   {
+    "role": "Supplier"
+   },
+   {
+    "role": "Support Team"
+   },
+   {
+    "role": "System Manager"
+   },
+   {
+    "role": "System User"
+   },
+   {
+    "role": "TP Agent"
+   },
+   {
+    "role": "TP Manager"
+   },
+   {
+    "role": "Translator"
+   },
+   {
+    "role": "Travel Coordinator"
+   },
+   {
+    "role": "Wall Display"
+   },
+   {
+    "role": "Water Engineer"
+   },
+   {
+    "role": "Website Manager"
+   },
+   {
+    "role": "Wiki Approver"
+   },
+   {
+    "role": "Workspace Manager"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "Technician",
+  "role_profile": "Technician",
+  "roles": [
+   {
+    "role": "Accounts User"
+   },
+   {
+    "role": "Employee"
+   },
+   {
+    "role": "HR User"
+   },
+   {
+    "role": "Maintenance User"
+   },
+   {
+    "role": "Prepared Report User"
+   },
+   {
+    "role": "Projects User"
+   },
+   {
+    "role": "Raven User"
+   },
+   {
+    "role": "Sales User"
+   },
+   {
+    "role": "Stock User"
+   }
+  ]
+ }
+]
