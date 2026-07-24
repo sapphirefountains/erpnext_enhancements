@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.168.1] - 2026-07-24
+
+### Fixed
+
+- **Dark-theme (Timeless Night) safety on the Gantt canvas.** The chart canvas
+  stays on the light DHTMLX skin in both desk themes (like the Mermaid
+  charts), so anything drawn on it must use light-safe *literal* colours;
+  several rules used desk variables that flip under Timeless Night. The side
+  label (added in v1.168.0) used `var(--text-color)`, which goes near-white on
+  dark and vanished against the white chart; the portfolio group-row shade used
+  `var(--control-bg)` and the loading-placeholder text `var(--text-muted)`,
+  both flipping dark/light and clashing with the grid. All are now literals,
+  and the today marker's reds are pinned too. The container chrome (toolbar,
+  menus, overlays) still follows the desk theme, and stays internally readable
+  (dark background, light text) in dark mode. The invariant — *on-canvas =
+  literal, chrome = desk variables* — is documented in both stylesheets.
+
 ## [1.168.0] - 2026-07-24
 
 ### Added

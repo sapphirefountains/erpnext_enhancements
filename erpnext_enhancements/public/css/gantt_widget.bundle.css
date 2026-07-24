@@ -27,7 +27,15 @@
  *
  * Theme: like the Mermaid process charts, the chart canvas deliberately stays
  * on the light DHTMLX skin in both desk themes; only the container chrome
- * follows the desk theme variables.
+ * (toolbar, menus, overlays, notes) follows the desk theme variables — those
+ * are internally consistent in dark mode (dark bg + light text).
+ *
+ * DARK-THEME INVARIANT: anything drawn ON the canvas — bar labels, the today
+ * marker, grid rows — must use light-canvas-safe LITERAL colours, never desk
+ * variables such as var(--text-color) / var(--control-bg). Under Timeless
+ * Night those flip (text goes near-white, "control" backgrounds go dark) and
+ * would vanish or clash against the always-light chart. Keep on-canvas rules
+ * literal; keep chrome rules on desk variables.
  */
 
 .ee-gantt-widget {
@@ -173,7 +181,10 @@
 }
 
 .ee-gantt-widget .gantt_side_content.gantt_right {
-	color: var(--text-color, #1f272e);
+	/* LITERAL slate, on the always-light canvas. var(--text-color) would flip
+	   near-white under Timeless Night and the side label would disappear on
+	   the white chart. See the dark-theme invariant in the file header. */
+	color: #42526e;
 	font-weight: 500;
 }
 
@@ -193,14 +204,16 @@
 
 /* Today indicator — a tinted column with a red left edge, applied through
    core cell-class templates (the marker extension is not in the Standard
-   single-file bundle). */
+   single-file bundle). LITERAL reds: this sits on the always-light canvas, so
+   var(--red-500) — which brightens under Timeless Night — must not decide the
+   contrast of the date number in the light header. */
 .ee-gantt-widget .gantt_task_cell.ee-gantt-today-col {
 	background: rgba(226, 76, 76, 0.06);
-	box-shadow: inset 2px 0 0 var(--red-400, #e24c4c);
+	box-shadow: inset 2px 0 0 #e24c4c;
 }
 
 .ee-gantt-widget .gantt_scale_cell.ee-gantt-today-col {
-	color: var(--red-500, #c0392b);
+	color: #c0392b;
 	font-weight: 600;
-	box-shadow: inset 2px 0 0 var(--red-400, #e24c4c);
+	box-shadow: inset 2px 0 0 #e24c4c;
 }
