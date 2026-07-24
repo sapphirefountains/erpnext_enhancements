@@ -66,6 +66,13 @@ CHILD_ID_PREFIX = "C::"
 # client-side colouring/labels). Cap them, and never let one shadow a key the
 # shaper owns — "$has_child" is DHTMLX's branch_loading_property.
 MAX_EXTRA_FIELDS = 12
+
+# Aggregate for the lazy child-count query. Frappe v16 refuses SQL functions
+# passed as strings in `fields` ("SQL functions are not allowed as strings in
+# SELECT ... Use dict syntax like {'COUNT': '*'}"), and returns the column
+# under the literal alias below (verified against Frappe 16.25).
+COUNT_FIELD = {"COUNT": "*"}
+COUNT_ALIAS = "COUNT(*)"
 RESERVED_TASK_KEYS = frozenset(
 	{
 		"id",
@@ -298,6 +305,22 @@ def _with_in_filter(filters, fieldname, values):
 	return merged
 
 
+def _read_count(count_row, link_field):
+	"""Pull the aggregate out of a grouped count row.
+
+	Reads ``COUNT_ALIAS`` when present, else falls back to the only other
+	column in the row — the alias is Frappe's, not ours, so a future version
+	renaming it must not silently zero every count (which would drop every
+	caret from the chart).
+	"""
+	if COUNT_ALIAS in count_row:
+		return cint(count_row.get(COUNT_ALIAS))
+	for key, value in count_row.items():
+		if key != link_field:
+			return cint(value)
+	return 0
+
+
 def _add_extra_fields(task, row, extra_fields):
 	"""Copy validated raw column values onto a shaped task dict."""
 	for fieldname in extra_fields or ():
@@ -436,15 +459,20 @@ def _build_composite(doctype, meta, field_map, rows, cfg, group_field, extra_fie
 			if children_cfg["lazy"]:
 				# Only "does this root have children?" — one grouped, still
 				# permission-checked count query instead of every child row.
+				# The aggregate MUST use dict syntax: Frappe v16 rejects SQL
+				# functions written as strings in `fields` ("SQL functions are
+				# not allowed as strings in SELECT ... Use dict syntax like
+				# {'COUNT': '*'}"). It comes back keyed by COUNT_ALIAS.
 				for count_row in frappe.get_list(
 					children_cfg["meta"].name,
 					filters=child_filters,
-					fields=[link_field, "count(name) as ee_child_count"],
+					fields=[link_field, COUNT_FIELD],
 					group_by=link_field,
 					limit_page_length=0,
 				):
-					if count_row.get(link_field):
-						child_counts[count_row.get(link_field)] = cint(count_row.get("ee_child_count"))
+					root_name = count_row.get(link_field)
+					if root_name:
+						child_counts[root_name] = _read_count(count_row, link_field)
 			else:
 				wanted = (
 					{link_field} | set(children_cfg["field_map"].values()) | set(children_cfg["extra_fields"])
