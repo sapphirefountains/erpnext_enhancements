@@ -185,6 +185,11 @@ def generate_predictive_maintenance_records():
 		contract = frappe.get_doc("Sapphire Maintenance Contract", contract_name)
 		if contract.project:
 			contract_projects.add(contract.project)
+		# Service hold (e.g. declined-card dunning exhausted): pause visit
+		# generation for this customer until staff clear the hold. The project is
+		# still tracked above so the legacy Sales Order fallback also skips it.
+		if contract.customer and frappe.db.get_value("Customer", contract.customer, "custom_service_hold"):
+			continue
 		if contract.start_date and getdate(contract.start_date) > today:
 			continue
 
@@ -247,6 +252,10 @@ def generate_predictive_maintenance_records():
 		)
 
 		if so_project in contract_projects:
+			continue
+
+		# Service hold (e.g. dunning exhausted): pause visit generation.
+		if so_customer and frappe.db.get_value("Customer", so_customer, "custom_service_hold"):
 			continue
 
 		if so_status not in ["Closed", "Completed"] and so_project:

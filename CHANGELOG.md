@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.176.0] - 2026-07-24
+
+### Added
+
+- **Declined-card dunning.** Closes the collection loop for Stripe auto-charges:
+  previously a declined card only stamped the invoice `Failed` and alerted
+  Accounts once — nothing ever retried it. A new daily job
+  (`stripe_payments.core.dunning.run_dunning_cycle`) now **enrolls** any
+  outstanding invoice whose auto-charge failed and **retries the saved card** on
+  a configurable schedule (**Dunning Retry Schedule**, default `2,4,7` days →
+  four attempts over ~a week), re-charging under a distinct **`Dunning`** channel
+  so the built-in per-failure Accounts alert stays suppressed and the engine owns
+  the customer emails. The **customer is emailed on every failed attempt**. On
+  **recovery** (the card clears or the invoice is paid) the invoice is marked
+  `Recovered`; on **exhaustion** (all retries fail, or the card was removed) it
+  alerts Accounts Managers, **turns off the customer's autopay**, and applies a
+  **Service Hold** on the Customer that **pauses maintenance visit generation**
+  until staff clear it. State lives on the Sales Invoice (`custom_dunning_*`),
+  the hold on the Customer (`custom_service_hold`). Gated by a new
+  **"Declined-Card Dunning"** Settings flag (**off by default**).
+
 ## [1.175.0] - 2026-07-24
 
 ### Added

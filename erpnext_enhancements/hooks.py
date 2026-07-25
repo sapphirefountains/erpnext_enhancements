@@ -385,6 +385,9 @@ scheduler_events = {
 		# recurring billing (§4.2): draft period invoices for Monthly/Quarterly/
 		# Annually contracts (base + rolled-up consumables), gated in Settings.
 		"erpnext_enhancements.api.maintenance_billing.generate_recurring_invoices",
+		# declined-card dunning: retry failed Stripe auto-charges on a schedule,
+		# email the customer, and on exhaustion disable autopay + service hold.
+		"erpnext_enhancements.stripe_payments.core.dunning.run_dunning_cycle",
 		"erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",

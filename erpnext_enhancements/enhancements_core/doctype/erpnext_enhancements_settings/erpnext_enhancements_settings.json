@@ -21,6 +21,8 @@
   "auto_renew_maintenance_contracts",
   "recurring_maintenance_billing",
   "maintenance_dispatch_digests",
+  "dunning_enabled",
+  "dunning_retry_days",
   "restock_suggestions_enabled",
   "restock_source_warehouse",
   "collab_section",
@@ -221,6 +223,21 @@
    "fieldname": "maintenance_dispatch_digests",
    "fieldtype": "Check",
    "label": "Morning Technician Dispatch Digest"
+  },
+  {
+   "default": "0",
+   "description": "When a Stripe auto-charge on an invoice is declined, retry the saved card on the schedule below, email the customer each attempt, and — if every retry fails — alert Accounts, turn off the customer's autopay, and apply a Service Hold (pausing maintenance visit generation). Off by default.",
+   "fieldname": "dunning_enabled",
+   "fieldtype": "Check",
+   "label": "Declined-Card Dunning"
+  },
+  {
+   "default": "2,4,7",
+   "depends_on": "dunning_enabled",
+   "description": "Days after the first decline to retry the card, comma-separated. Default \"2,4,7\" = up to 4 attempts over about a week (the initial charge plus three retries). Blank/invalid falls back to the default.",
+   "fieldname": "dunning_retry_days",
+   "fieldtype": "Data",
+   "label": "Dunning Retry Schedule (days)"
   },
   {
    "default": "0",
