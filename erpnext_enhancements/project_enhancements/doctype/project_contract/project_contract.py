@@ -248,6 +248,37 @@ class ProjectContract(Document):
 
 	def on_cancel(self):
 		self.status = "Void"
+		self._void_live_signature_requests()
+
+	def _void_live_signature_requests(self):
+		"""Kill any signing link still in flight when the contract is cancelled.
+
+		A customer must never be able to execute an agreement that has been voided
+		or superseded by an amendment. The token is cleared as well as the status,
+		so the link stops resolving immediately rather than waiting for the daily
+		expiry sweep. Best-effort: a cancel must not fail over this.
+		"""
+		try:
+			live = frappe.get_all(
+				"Contract Signature Request",
+				filters={"project_contract": self.get("name"), "status": ["in", ["Sent", "Viewed"]]},
+				pluck="name",
+			)
+			for name in live:
+				frappe.db.set_value(
+					"Contract Signature Request",
+					name,
+					{
+						"status": "Void",
+						"token_hash": None,
+						"voided_on": frappe.utils.now_datetime(),
+						"voided_by": frappe.session.user,
+						"void_reason": _("Contract cancelled or amended."),
+					},
+					update_modified=False,
+				)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), "Project Contract: voiding signature requests failed")
 
 	def executed_body(self):
 		"""The document to print: the executed instrument if signed, else a live render.

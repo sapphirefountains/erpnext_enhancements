@@ -1,0 +1,26 @@
+{#
+  The customer's executed copy. NOTE: frappe's Jinja env has NO autoescape —
+  `|e` every interpolated value. The signed PDF rides along as an attachment.
+#}
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#111;max-width:560px">
+
+	<p>{% if signer_name %}Hi {{ signer_name|e }},{% else %}Hello,{% endif %}</p>
+
+	<p>Thank you for signing. Your fully executed agreement is attached to this email for your records.</p>
+
+	<table style="margin:16px 0;border-collapse:collapse;font-size:14px">
+		<tr>
+			<td style="padding:4px 12px 4px 0;color:#6b7280">Agreement</td>
+			<td style="padding:4px 0"><b>{{ contract|e }}</b></td>
+		</tr>
+		<tr>
+			<td style="padding:4px 12px 4px 0;color:#6b7280">Signed</td>
+			<td style="padding:4px 0">{{ signed_on|e }}</td>
+		</tr>
+	</table>
+
+	<p style="color:#6b7280;font-size:13px">
+		Please keep the attached PDF. If you'd like a paper copy, or you have any
+		questions about the agreement, just reply to this email.
+	</p>
+</div>

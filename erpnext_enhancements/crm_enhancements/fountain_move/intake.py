@@ -208,7 +208,7 @@ def _resolve_invite_name(ref):
 	return invite["name"] if invite else None
 
 
-def _verify_turnstile(token):
+def _verify_turnstile(token, action=None, secret_field=None):
 	"""Call siteverify. Returns ``(verdict, detail dict)``.
 
 	Verdicts:
@@ -219,8 +219,20 @@ def _verify_turnstile(token):
 	                    auto-converted, so an outage costs a delay, not a flood.
 	  ``Not Checked`` — no keys configured (the public form cannot be enabled in
 	                    that state; this only arises for desk-created rows).
+
+	``action`` and ``secret_field`` default to this form's, and exist so other
+	public surfaces (contract e-signature) can reuse this verifier rather than
+	re-implement it. Re-implementing is specifically how the site-local-vs-UTC
+	freshness bug documented in :func:`_challenge_fresh` comes back. What each
+	caller *does* with a verdict is its own decision — see
+	``project_enhancements.esign.turnstile`` for why signing treats
+	``Unavailable`` differently from intake.
 	"""
-	secret = _turnstile_secret()
+	action = action or TURNSTILE_ACTION
+	# Called with no argument on the default path so anything that stubs
+	# _turnstile_secret (the tests do) keeps working against its original
+	# zero-argument signature.
+	secret = _turnstile_secret(secret_field) if secret_field else _turnstile_secret()
 	if not secret:
 		return "Not Checked", {"errors": "Turnstile is not configured."}
 
@@ -271,7 +283,7 @@ def _verify_turnstile(token):
 	# A valid token proves a human solved *a* widget. These assertions prove they
 	# solved OUR widget, on OUR site, just now — without them a token minted
 	# elsewhere could be replayed here.
-	if detail["action"] and detail["action"] != TURNSTILE_ACTION:
+	if detail["action"] and detail["action"] != action:
 		detail["errors"] = f"Unexpected action {detail['action']!r}."
 		return "Failed", detail
 	if not _hostname_allowed(detail["hostname"]):
@@ -320,10 +332,10 @@ def _challenge_fresh(challenge_ts):
 		return True  # unparseable timestamp is Cloudflare's format changing, not an attack
 
 
-def _turnstile_secret():
+def _turnstile_secret(field=None):
 	try:
 		settings = frappe.get_cached_doc("ERPNext Enhancements Settings")
-		return settings.get_password("fountain_move_turnstile_secret_key", raise_exception=False)
+		return settings.get_password(field or "fountain_move_turnstile_secret_key", raise_exception=False)
 	except Exception:
 		return None
 
