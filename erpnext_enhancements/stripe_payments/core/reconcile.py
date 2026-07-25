@@ -556,8 +556,31 @@ def _handle_setup_completed(session):
 			consent,
 			{"status": "Active", "payment_method": pm_id, "activated_on": now_datetime()},
 		)
+	_close_esign_autopay(session.get("id"))
 	frappe.db.commit()
 	return None
+
+
+def _close_esign_autopay(setup_session):
+	"""Mark a contract-signing autopay enrolment complete.
+
+	Enrolment offered at signing is recorded on the Contract Signature Request as
+	"Started"; only Stripe can tell us it finished. Best-effort — this is a
+	reporting stamp, and the authoritative record of the saved card is the
+	Customer's own fields plus the consent row above.
+	"""
+	if not setup_session:
+		return
+	try:
+		name = frappe.db.get_value(
+			"Contract Signature Request", {"autopay_setup_session": setup_session}, "name"
+		)
+		if name:
+			frappe.db.set_value(
+				"Contract Signature Request", name, "autopay_outcome", "Enrolled", update_modified=False
+			)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay completion stamp failed")
 
 
 def _pm_label(pm):

@@ -469,6 +469,96 @@ class TestPortalGuards(unittest.TestCase):
             self.assertIn("_require_public_page()", body, f"{name} does not 404 when switched off")
 
 
+class TestAutopayOffer(unittest.TestCase):
+    """The offer must be structurally incapable of affecting the signature."""
+
+    def setUp(self):
+        self.src = (APP_DIR / "project_enhancements" / "esign" / "portal.py").read_text(
+            encoding="utf-8"
+        )
+
+    def test_autopay_requires_an_already_signed_session(self):
+        """It is only reachable once the contract is executed and committed, so
+        declining it cannot influence the signature."""
+        for fn in ("start_autopay", "decline_autopay"):
+            body = self.src[self.src.index(f"def {fn}") :]
+            body = body[: body.index("\n@") if "\n@" in body else len(body)]
+            self.assertIn("_signed_session(", body, f"{fn} does not require a signed session")
+
+    def test_signed_marker_is_bound_to_the_request_it_signed(self):
+        """The session id is caller-supplied and begin_signing will repoint an
+        existing session at any resolvable request. A bare "signed" marker would
+        therefore let someone who signed their own agreement open a card-enrolment
+        session against ANOTHER customer's already-signed contract."""
+        gate = self.src[self.src.index("def _signed_session") :]
+        gate = gate[: gate.index("def _session_token_current")]
+        self.assertIn('session.get("signed_request")', gate)
+        self.assertIn('session.get("request")', gate)
+        # And the marker must actually be written with that binding.
+        self.assertIn('"signed_request": request.name', self.src)
+
+    def test_repointing_a_session_drops_stale_signature_markers(self):
+        begin = self.src[self.src.index("def begin_signing") :]
+        begin = begin[: begin.index("def sign_contract")]
+        self.assertIn('session.get("request") != request.name', begin)
+        for marker in ("signed", "signed_request", "contract"):
+            self.assertIn(f'"{marker}"', begin, f"{marker} is not cleared when repointing")
+
+    def test_start_autopay_rederives_the_offer_preconditions(self):
+        """The endpoint is reachable by direct POST, so it must not trust that the
+        client only shows the button when the offer said yes."""
+        body = self.src[self.src.index("def start_autopay") :]
+        body = body[: body.index("def decline_autopay")]
+        self.assertIn("request.autopay_offered", body)
+        self.assertIn("custom_stripe_default_payment_method", body)
+
+    def test_decline_does_not_overwrite_a_terminal_outcome(self):
+        body = self.src[self.src.index("def decline_autopay") :]
+        self.assertIn('("Started", "Enrolled")', body)
+
+    def test_autopay_target_is_resolved_server_side(self):
+        """Nothing about which customer gets a card on file comes from the caller."""
+        body = self.src[self.src.index("def start_autopay") :]
+        self.assertIn('"Project Contract", request.project_contract', body)
+        self.assertIn("customer=party", body)
+
+    def test_start_autopay_is_idempotent(self):
+        body = self.src[self.src.index("def start_autopay") :]
+        self.assertIn('("Started", "Enrolled")', body)
+
+    def test_autopay_failure_is_soft(self):
+        """A payment convenience must never surface as an error on a page that
+        has just told someone their contract is executed."""
+        body = self.src[self.src.index("def start_autopay") :]
+        body = body[: body.index("def decline_autopay")]
+        self.assertIn("except Exception:", body)
+        self.assertIn('return {"ok": False}', body)
+        self.assertNotIn("frappe.throw", body)
+
+    def test_offer_check_never_raises(self):
+        body = self.src[self.src.index("def _autopay_offer") :]
+        body = body[: body.index("@frappe.whitelist")]
+        self.assertIn("except Exception:", body)
+        self.assertIn('return {"offer": False}', body)
+
+    def test_consent_records_a_distinct_signing_channel(self):
+        """So the authorization record says where it came from, rather than being
+        indistinguishable from a logged-in portal enrolment."""
+        import json
+
+        path = (
+            APP_DIR
+            / "stripe_payments"
+            / "doctype"
+            / "stripe_autopay_consent"
+            / "stripe_autopay_consent.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        channel = next(f for f in doc["fields"] if f.get("fieldname") == "channel")
+        self.assertIn("Contract Signing", channel["options"])
+        self.assertIn('channel="Contract Signing"', self.src)
+
+
 class TestSettingsFlags(unittest.TestCase):
     def setUp(self):
         import json

@@ -103,6 +103,20 @@
 		<p>{{ _("We've emailed you a copy of the fully executed agreement for your records.") }}</p>
 	</div>
 
+	{# Shown only after the contract is already executed and committed, so
+	   declining it is structurally incapable of affecting the signature. The
+	   agreement's Exhibit B already promises this step. #}
+	<div id="cs-autopay" class="cs-autopay" hidden>
+		<h3>{{ _("Set up automatic payments?") }}</h3>
+		<p>{{ _("Save a card on file so your service invoices are paid automatically — this is the secure payment link described in Exhibit B of your agreement.") }}</p>
+		<p class="cs-hint">{{ _("Your card details go straight to our payment provider. We never see or store them, and you can cancel at any time.") }}</p>
+		<div class="cs-actions">
+			<button type="button" class="cs-submit" id="cs-autopay-start">{{ _("Save a card") }}</button>
+			<button type="button" class="cs-decline" id="cs-autopay-skip">{{ _("No thanks") }}</button>
+		</div>
+		<p class="cs-hint" id="cs-autopay-note" hidden>{{ _("We'll follow up about payment setup separately.") }}</p>
+	</div>
+
 	{% elif state == "signed" %}
 	<div class="cs-notice">
 		<h1>{{ _("Already signed") }}</h1>

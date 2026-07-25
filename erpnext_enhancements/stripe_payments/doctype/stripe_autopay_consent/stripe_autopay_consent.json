@@ -45,10 +45,11 @@
    "read_only": 1
   },
   {
+   "description": "Where the authorization was given. \"Contract Signing\" means it was taken during online execution of an agreement — the signer's identity evidence lives on the linked Contract Signature Request, since the web session itself is anonymous.",
    "fieldname": "channel",
    "fieldtype": "Select",
    "label": "Channel",
-   "options": "Desk\nPortal",
+   "options": "Desk\nPortal\nContract Signing",
    "read_only": 1
   },
   {
