@@ -124,6 +124,16 @@ def begin_signing(ref=None, turnstile_token=None, esign_sid=None, widget_unavail
 
 	sid = esign_sid if (esign_sid and SID_RE.match(str(esign_sid))) else frappe.generate_hash(length=32)
 	session = _get_session(sid) or {"opened_at": frappe.utils.now_datetime().isoformat()}
+
+	# The session id is caller-supplied, so a caller can point an EXISTING session
+	# at a different request. Post-signature markers describe the request that was
+	# signed, not whatever this session now points at — carrying them across would
+	# let someone who legitimately signed one agreement act on another (see
+	# _signed_session).
+	if session.get("request") != request.name:
+		for stale in ("signed", "signed_request", "contract"):
+			session.pop(stale, None)
+
 	session.update(
 		{
 			"request": request.name,
@@ -246,9 +256,16 @@ def sign_contract(
 
 	# Leave a marker instead of clearing: a retried POST must land on the
 	# idempotent branch above, not on "your session expired".
+	# `signed_request` binds the marker to the request it describes, so it cannot
+	# be reused against a different one if the session is later repointed.
 	_put_session(
 		esign_sid,
-		{"request": request.name, "signed": 1, "contract": request.project_contract},
+		{
+			"request": request.name,
+			"signed_request": request.name,
+			"signed": 1,
+			"contract": request.project_contract,
+		},
 	)
 
 	return {
@@ -402,13 +419,18 @@ def start_autopay(esign_sid=None):
 	"""
 	_require_public_page()
 
-	session = _get_session(esign_sid)
-	if not session or not session.get("signed"):
+	session = _signed_session(esign_sid)
+	if not session:
 		return {"ok": False}
 
 	try:
 		request = frappe.get_doc("Contract Signature Request", session["request"])
 		if request.status != "Signed":
+			return {"ok": False}
+		# Re-derive the offer's own preconditions rather than trusting that the
+		# client only shows the button when _autopay_offer said yes: this endpoint
+		# is reachable by a direct POST.
+		if not request.autopay_offered:
 			return {"ok": False}
 		if request.autopay_outcome in ("Started", "Enrolled"):
 			# Idempotent: a double-click must not open a second Stripe session.
@@ -418,6 +440,18 @@ def start_autopay(esign_sid=None):
 			"Project Contract", request.project_contract, ["party_type", "party"]
 		)
 		if party_type != "Customer" or not party:
+			return {"ok": False}
+
+		# Never silently replace a card already on file — that would orphan the
+		# previous payment method in Stripe and change how an existing customer
+		# gets billed.
+		enrolled = frappe.db.get_value(
+			"Customer",
+			party,
+			["custom_stripe_autopay_enabled", "custom_stripe_default_payment_method"],
+			as_dict=True,
+		)
+		if enrolled and enrolled.custom_stripe_autopay_enabled and enrolled.custom_stripe_default_payment_method:
 			return {"ok": False}
 
 		from erpnext_enhancements.stripe_payments.core.saved_methods import create_setup_session
@@ -442,13 +476,18 @@ def decline_autopay(esign_sid=None):
 	"""Record that the customer chose not to save a card. Purely informational."""
 	_require_public_page()
 
-	session = _get_session(esign_sid)
-	if not session or not session.get("signed"):
+	session = _signed_session(esign_sid)
+	if not session:
 		return {"ok": False}
 	try:
+		request = frappe.get_doc("Contract Signature Request", session["request"])
+		# Never overwrite a terminal outcome — "Declined" must not erase the record
+		# that a card was actually enrolled.
+		if request.status != "Signed" or request.autopay_outcome in ("Started", "Enrolled"):
+			return {"ok": False}
 		frappe.db.set_value(
 			"Contract Signature Request",
-			session["request"],
+			request.name,
 			"autopay_outcome",
 			"Declined",
 			update_modified=False,
@@ -515,6 +554,26 @@ def _require_public_page():
 	"""404 rather than explain ourselves to an anonymous caller."""
 	if not contract_esign_public_page_enabled():
 		raise frappe.DoesNotExistError
+
+
+def _signed_session(esign_sid):
+	"""The session, only if it signed the very request it currently points at.
+
+	The session id is caller-supplied and ``begin_signing`` will repoint an
+	existing session at any request whose token resolves. Gating the post-signature
+	actions on a bare "signed" marker would therefore let someone who legitimately
+	signed one agreement — and who also holds a link to a second, already-signed
+	one — act on that second request: in practice, open a Stripe card-enrolment
+	session against **another customer**. Binding the marker to its own request
+	closes that, and ``begin_signing`` additionally drops stale markers when it
+	repoints.
+	"""
+	session = _get_session(esign_sid)
+	if not session or not session.get("signed"):
+		return None
+	if not session.get("signed_request") or session.get("signed_request") != session.get("request"):
+		return None
+	return session
 
 
 def _session_token_current(session, request):

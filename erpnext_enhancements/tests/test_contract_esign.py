@@ -483,7 +483,38 @@ class TestAutopayOffer(unittest.TestCase):
         for fn in ("start_autopay", "decline_autopay"):
             body = self.src[self.src.index(f"def {fn}") :]
             body = body[: body.index("\n@") if "\n@" in body else len(body)]
-            self.assertIn('session.get("signed")', body, f"{fn} does not require a signed session")
+            self.assertIn("_signed_session(", body, f"{fn} does not require a signed session")
+
+    def test_signed_marker_is_bound_to_the_request_it_signed(self):
+        """The session id is caller-supplied and begin_signing will repoint an
+        existing session at any resolvable request. A bare "signed" marker would
+        therefore let someone who signed their own agreement open a card-enrolment
+        session against ANOTHER customer's already-signed contract."""
+        gate = self.src[self.src.index("def _signed_session") :]
+        gate = gate[: gate.index("def _session_token_current")]
+        self.assertIn('session.get("signed_request")', gate)
+        self.assertIn('session.get("request")', gate)
+        # And the marker must actually be written with that binding.
+        self.assertIn('"signed_request": request.name', self.src)
+
+    def test_repointing_a_session_drops_stale_signature_markers(self):
+        begin = self.src[self.src.index("def begin_signing") :]
+        begin = begin[: begin.index("def sign_contract")]
+        self.assertIn('session.get("request") != request.name', begin)
+        for marker in ("signed", "signed_request", "contract"):
+            self.assertIn(f'"{marker}"', begin, f"{marker} is not cleared when repointing")
+
+    def test_start_autopay_rederives_the_offer_preconditions(self):
+        """The endpoint is reachable by direct POST, so it must not trust that the
+        client only shows the button when the offer said yes."""
+        body = self.src[self.src.index("def start_autopay") :]
+        body = body[: body.index("def decline_autopay")]
+        self.assertIn("request.autopay_offered", body)
+        self.assertIn("custom_stripe_default_payment_method", body)
+
+    def test_decline_does_not_overwrite_a_terminal_outcome(self):
+        body = self.src[self.src.index("def decline_autopay") :]
+        self.assertIn('("Started", "Enrolled")', body)
 
     def test_autopay_target_is_resolved_server_side(self):
         """Nothing about which customer gets a card on file comes from the caller."""
