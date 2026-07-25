@@ -28,7 +28,9 @@ OLD_BLOCK = """<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
 <p>(Authorized Representative of Sapphire Fountains, LLC)</p>
 <h3><b>CLIENT</b></h3>
 <p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
-<p>Print Name: {{ blank(30) }}</p>"""
+<p>Print Name: {{ blank(30) }}</p>
+<p>Title: {{ blank(30) }}</p>
+<p>(Client)</p>"""
 
 NEW_BLOCK = """<p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.countersigned_on, 30) }}</p>
 <p>Print Name: {{ fill(signature.countersigned_by) }}</p>
@@ -36,7 +38,9 @@ NEW_BLOCK = """<p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.coun
 <p>(Authorized Representative of Sapphire Fountains, LLC)</p>
 <h3><b>CLIENT</b></h3>
 <p>Signature: {{ sig('client') }}    Date: {{ dt(doc.signed_on, 30) }}</p>
-<p>Print Name: {{ fill(doc.signed_by) }}</p>"""
+<p>Print Name: {{ fill(doc.signed_by) }}</p>
+<p>Title: {{ fill(signature.signed_title) }}</p>
+<p>(Client)</p>"""
 
 
 def rewrite_signature_block(body):

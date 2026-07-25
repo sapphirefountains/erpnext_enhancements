@@ -330,8 +330,17 @@ def deliver_signed_contract(request_name):
 
 	if _email_signed_copy(request, pdf_url):
 		request.db_set("delivered_on", now_datetime(), update_modified=False)
-	_alert_staff_signed(request)
-	_comment_evidence(request)
+
+	# Staff notification and the timeline note get their OWN one-shot marker.
+	# Without it the daily retry sweep — which only exits when the customer email
+	# finally succeeds — would re-alert the team and append another
+	# "Signed electronically by…" comment to a legal document every single day
+	# for as long as the mail problem lasted.
+	if not request.get("staff_notified_on"):
+		_alert_staff_signed(request)
+		_comment_evidence(request)
+		request.db_set("staff_notified_on", now_datetime(), update_modified=False)
+
 	frappe.db.commit()
 
 

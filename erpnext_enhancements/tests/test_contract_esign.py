@@ -336,6 +336,49 @@ class TestExecutionOrdering(unittest.TestCase):
     def test_delivery_is_idempotent_on_delivered_on(self):
         self.assertIn('request.get("delivered_on")', self.src)
 
+    def test_staff_alert_and_timeline_note_have_their_own_one_shot_marker(self):
+        """The daily retry sweep only exits when the customer email succeeds, so
+        an unguarded staff alert would re-fire — and append another
+        'Signed electronically by...' comment to a legal document — every day."""
+        self.assertIn('request.get("staff_notified_on")', self.src)
+        block = self.src[self.src.index('if not request.get("staff_notified_on")') :]
+        stamp = block.index('db_set("staff_notified_on"')
+        for call in ("_alert_staff_signed(request)", "_comment_evidence(request)"):
+            self.assertLess(
+                block.index(call), stamp, f"{call} is not inside the one-shot guard"
+            )
+        # And the guard must precede them in the function at all.
+        self.assertLess(
+            self.src.index('if not request.get("staff_notified_on")'),
+            self.src.index("_alert_staff_signed(request)"),
+        )
+
+
+class TestLockoutRecovery(unittest.TestCase):
+    """A lockout the customer can never recover from is a lost contract."""
+
+    def setUp(self):
+        base = APP_DIR / "project_enhancements" / "esign"
+        self.api = (base / "api.py").read_text(encoding="utf-8")
+        self.portal = (base / "portal.py").read_text(encoding="utf-8")
+
+    def test_staff_resend_clears_the_persisted_attempt_counter(self):
+        """Otherwise the lockout notice's own instruction — 're-send it if the
+        customer needs another try' — is false, and the field is read_only so
+        nobody could clear it from the desk either."""
+        self.assertIn("reset_attempts", self.api)
+        self.assertIn("request.email_attempts = 0", self.api)
+
+    def test_self_service_resend_does_not_clear_the_counter(self):
+        """Otherwise someone guessing at the address could refresh their own
+        budget by asking for a new link."""
+        block = self.portal[self.portal.index("def send_fresh_link") :]
+        self.assertIn("reset_attempts=False", block)
+
+    def test_self_service_resend_refuses_a_locked_request(self):
+        block = self.portal[self.portal.index("def request_fresh_link") :]
+        self.assertIn('"Locked"', block)
+
 
 class TestPortalGuards(unittest.TestCase):
     def setUp(self):

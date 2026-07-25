@@ -77,6 +77,7 @@
   "output_section",
   "signed_document",
   "delivered_on",
+  "staff_notified_on",
   "email_attempts",
   "autopay_offered",
   "autopay_outcome",
@@ -541,8 +542,15 @@
    "read_only": 1
   },
   {
+   "description": "When the team was told about this signature. Separate from the delivery stamp so the daily retry sweep cannot re-alert them each time the customer's copy fails to send.",
+   "fieldname": "staff_notified_on",
+   "fieldtype": "Datetime",
+   "label": "Staff Notified On",
+   "read_only": 1
+  },
+  {
    "default": "0",
-   "description": "How many times someone has entered an email address on the signing page for this request. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire.",
+   "description": "How many times someone has entered an email address on the signing page for this request. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
    "fieldname": "email_attempts",
    "fieldtype": "Int",
    "label": "Email Confirmation Attempts",

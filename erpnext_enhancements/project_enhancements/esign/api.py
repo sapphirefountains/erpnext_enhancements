@@ -115,7 +115,7 @@ def send_for_signature(project_contract, recipient_email=None, message=None):
 
 @frappe.whitelist()
 @rate_limit(limit=60, seconds=3600, methods=["POST"])
-def resend_for_signature(request_name, recipient_email=None, message=None):
+def resend_for_signature(request_name, recipient_email=None, message=None, reset_attempts=True):
 	"""Issue a fresh link, retiring the previous one.
 
 	A resend **supersedes**: the stored hash is replaced, so the link in the older
@@ -124,6 +124,14 @@ def resend_for_signature(request_name, recipient_email=None, message=None):
 	a better posture than several accumulating over a 30-day window. Someone who
 	opens the older email gets an explanation and a self-service "send me a new
 	one", not a dead end.
+
+	``reset_attempts`` clears the persisted email-confirmation counter, which is
+	what actually makes the lockout notice's "re-send it if the customer needs
+	another try" true — without it a capped request stays capped forever, and the
+	field is read-only so nobody could clear it from the desk either. It defaults
+	to True because a resend is a deliberate staff act; the **self-service** path
+	passes False, so a link-holder cannot farm fresh guesses by asking for a new
+	link.
 	"""
 	throw_if_contract_esign_disabled()
 	frappe.only_for(SEND_ROLES)
@@ -132,6 +140,11 @@ def resend_for_signature(request_name, recipient_email=None, message=None):
 	if request.status in ("Signed", "Declined", "Void"):
 		frappe.throw(
 			_("This request is already {0} — start a new one instead.").format(request.status),
+			title=_("Cannot Resend"),
+		)
+	if request.status == "Locked" and not frappe.utils.cint(reset_attempts):
+		frappe.throw(
+			_("This link was paused after too many failed confirmations. A staff resend is needed."),
 			title=_("Cannot Resend"),
 		)
 
@@ -154,6 +167,8 @@ def resend_for_signature(request_name, recipient_email=None, message=None):
 	request.status = "Sent"
 	request.sent_on = now_datetime()
 	request.resend_count = (request.resend_count or 0) + 1
+	if frappe.utils.cint(reset_attempts):
+		request.email_attempts = 0
 	request.save(ignore_permissions=True)
 
 	_email_invite(request, contract, result["signing_url"], message)

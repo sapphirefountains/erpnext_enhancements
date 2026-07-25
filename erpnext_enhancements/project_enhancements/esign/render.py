@@ -46,6 +46,7 @@ def signed_signature_for(doc):
 				"name",
 				"signature_mode",
 				"signed_name",
+				"signed_title",
 				"signature_image",
 				"countersigned_by",
 				"countersigned_title",

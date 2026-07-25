@@ -355,7 +355,10 @@ def request_fresh_link(ref=None):
 	_require_public_page()
 
 	request = lifecycle.resolve_request(ref)
-	if not request or request.status in ("Signed", "Void", "Declined"):
+	# "Locked" is in the list deliberately: a link paused for too many failed
+	# confirmations must not be revivable by the person who exhausted it. Staff
+	# re-send it, which also clears the counter.
+	if not request or request.status in ("Signed", "Void", "Declined", "Locked"):
 		# Uniform response: never confirm whether a token exists.
 		return {"ok": True}
 
@@ -374,7 +377,9 @@ def send_fresh_link(request_name):
 		from erpnext_enhancements.project_enhancements.esign.api import resend_for_signature
 
 		frappe.set_user("Administrator")
-		resend_for_signature(request_name)
+		# reset_attempts=False: a caller who is guessing at the address must not be
+		# able to refresh their own guess budget by asking for a new link.
+		resend_for_signature(request_name, reset_attempts=False)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Contract e-sign: self-service resend failed")
 
