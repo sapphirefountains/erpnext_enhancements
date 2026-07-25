@@ -1,0 +1,161 @@
+{% extends "templates/web.html" %}
+{#
+  Public contract signing page. Controller: www/contract_sign.py — note the
+  UNDERSCORE. Frappe maps this template's basename to a module name by replacing
+  hyphens with underscores, so a controller named contract-sign.py would never
+  load and get_context would silently never run.
+
+  referrer=no-referrer matters here specifically: the URL carries a bearer token
+  that executes a contract, and it must not travel in a Referer header to the
+  Turnstile script or anywhere else.
+#}
+
+{% block title %}{{ _("Review and sign") }}{% endblock %}
+
+{% block head_include %}
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/contract_sign/contract_sign.css?v={{ deploy_version }}">
+{% endblock %}
+
+{% block page_content %}
+<div class="cs-page">
+
+	{% if state == "signable" %}
+	<header class="cs-header">
+		<h1>{{ _("Review and sign") }}</h1>
+		<p class="cs-lede">{{ boot.contract_label | e }}</p>
+		<p class="cs-hint">{{ _("Please read the agreement below, then sign at the bottom of the page.") }}</p>
+	</header>
+
+	{# The stored snapshot: exactly the text that was emailed, never a live
+	   re-render. Everything a user supplied inside it was escaped when the
+	   contract body was composed. #}
+	<article class="cs-agreement" id="cs-agreement" tabindex="0" aria-label="{{ _('Agreement') }}">
+		{{ agreement_html | safe }}
+	</article>
+
+	<form class="cs-form" id="cs-form" novalidate>
+		<section class="cs-section">
+			<h2>{{ _("Electronic records") }}</h2>
+			<details class="cs-disclosure">
+				<summary>{{ _("How electronic signing works, and your right to a paper copy") }}</summary>
+				<div class="cs-disclosure-body">{{ boot.disclosure_text | e }}</div>
+			</details>
+		</section>
+
+		<section class="cs-section">
+			<h2>{{ _("Your signature") }}</h2>
+
+			<div class="cs-modes" role="tablist" aria-label="{{ _('Signature type') }}">
+				<button type="button" class="cs-mode is-active" id="cs-mode-typed" role="tab" aria-selected="true">{{ _("Type it") }}</button>
+				<button type="button" class="cs-mode" id="cs-mode-drawn" role="tab" aria-selected="false">{{ _("Draw it") }}</button>
+			</div>
+
+			<div id="cs-typed-pane">
+				<label class="cs-label" for="cs-signed-name">{{ _("Full name") }}</label>
+				<input class="cs-input" id="cs-signed-name" type="text" maxlength="140" autocomplete="name"
+				       placeholder="{{ _('e.g. Jane Q. Customer') }}">
+				<p class="cs-preview" id="cs-preview" aria-hidden="true"></p>
+			</div>
+
+			<div id="cs-drawn-pane" hidden>
+				<label class="cs-label" for="cs-signed-name-drawn">{{ _("Full name") }}</label>
+				<input class="cs-input" id="cs-signed-name-drawn" type="text" maxlength="140" autocomplete="name">
+				<div class="cs-pad-wrap">
+					<canvas class="cs-pad" id="cs-pad" aria-label="{{ _('Signature pad') }}"></canvas>
+					<button type="button" class="cs-clear" id="cs-clear">{{ _("Clear") }}</button>
+				</div>
+			</div>
+
+			<label class="cs-label" for="cs-title">{{ _("Title (optional)") }}</label>
+			<input class="cs-input" id="cs-title" type="text" maxlength="140" autocomplete="organization-title">
+		</section>
+
+		<section class="cs-section">
+			<h2>{{ _("Confirm it's you") }}</h2>
+			<label class="cs-label" for="cs-email">
+				{{ _("Type the email address we sent this agreement to") }}
+			</label>
+			<input class="cs-input" id="cs-email" type="email" inputmode="email" autocomplete="email"
+			       placeholder="{{ boot.signer_email_hint | e }}">
+			<p class="cs-hint">{{ _("It's in the message you opened this link from.") }}</p>
+
+			<label class="cs-check">
+				<input type="checkbox" id="cs-agree">
+				<span>{{ boot.consent_text | e }}</span>
+			</label>
+
+			<div id="cs-turnstile" class="cs-turnstile"></div>
+		</section>
+
+		<p class="cs-error" id="cs-error" role="alert" hidden></p>
+
+		<div class="cs-actions">
+			<button type="submit" class="cs-submit" id="cs-submit">{{ _("Sign & execute") }}</button>
+			<button type="button" class="cs-decline" id="cs-decline">{{ _("I don't want to sign") }}</button>
+		</div>
+		<p class="cs-hint">{{ _("This link expires") }} {{ boot.expires_on | e }}.</p>
+	</form>
+
+	<div id="cs-done" class="cs-done" hidden role="status">
+		<h2>{{ _("Signed — thank you.") }}</h2>
+		<p>{{ _("We've emailed you a copy of the fully executed agreement for your records.") }}</p>
+	</div>
+
+	{% elif state == "signed" %}
+	<div class="cs-notice">
+		<h1>{{ _("Already signed") }}</h1>
+		<p>{{ _("You signed this agreement on") }} {{ boot.signed_on | e }}. {{ _("We emailed you a copy at the time.") }}</p>
+		<p class="cs-hint">{{ _("Need another copy? Call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "declined" %}
+	<div class="cs-notice">
+		<h1>{{ _("This agreement was declined") }}</h1>
+		<p>{{ _("Our team has been notified. If that was a mistake, please call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "replaced" %}
+	<div class="cs-notice">
+		<h1>{{ _("This link has been replaced") }}</h1>
+		<p>{{ _("We sent a newer version of this agreement — please check for our most recent email.") }}</p>
+		<button type="button" class="cs-submit" id="cs-fresh">{{ _("Send it again") }}</button>
+		<p class="cs-hint" id="cs-fresh-done" hidden>{{ _("On its way — check the inbox this link was sent to.") }}</p>
+		<p class="cs-hint">{{ _("Can't find it? Call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
+	{% elif state == "expired" %}
+	<div class="cs-notice">
+		<h1>{{ _("This signing link has expired") }}</h1>
+		<p>{{ _("Signing links are only valid for a limited time. We can send you a fresh one.") }}</p>
+		<button type="button" class="cs-submit" id="cs-fresh">{{ _("Email me a new link") }}</button>
+		<p class="cs-hint" id="cs-fresh-done" hidden>{{ _("On its way — check the inbox this link was sent to.") }}</p>
+		<p class="cs-hint">{{ _("Prefer to talk to someone? Call us on") }} {{ boot.contact_phone | e }}.</p>
+	</div>
+
+	{% else %}
+	{# Unknown, malformed, voided, declined or locked — all rendered identically
+	   so the page never confirms whether a token exists. No "send me a new link"
+	   button here: for these states there is nothing left to re-send, and a
+	   button that always claims success would be a lie. #}
+	<div class="cs-notice">
+		<h1>{{ _("This link isn't available") }}</h1>
+		<p>{{ _("It may have expired, been replaced, or already been used.") }}</p>
+		<p class="cs-hint">{{ _("Please call us on") }} {{ boot.contact_phone | e }} {{ _("and we'll sort it out.") }}</p>
+	</div>
+	{% endif %}
+
+	<noscript>
+		<p class="cs-notice">{{ _("Signing needs JavaScript. Please call us on") }} {{ boot.contact_phone | e }} {{ _("and we'll take you through it.") }}</p>
+	</noscript>
+</div>
+
+<script>
+	window.CS_BOOT = {{ boot | tojson }};
+</script>
+{% if boot.turnstile_sitekey %}
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+{% endif %}
+<script src="/assets/erpnext_enhancements/js/contract_sign/contract_sign.js?v={{ deploy_version }}"></script>
+{% endblock %}

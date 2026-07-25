@@ -1,0 +1,245 @@
+/* Public contract signing page (/contract-sign). Mobile-first: most customers
+   sign on a phone, often standing next to the fountain. */
+
+.cs-page {
+	max-width: 720px;
+	margin: 0 auto;
+	padding: 16px 16px 64px;
+}
+
+.cs-header h1 {
+	font-size: 1.5rem;
+	margin: 0 0 4px;
+}
+.cs-lede {
+	font-weight: 600;
+	margin: 0 0 4px;
+}
+.cs-hint {
+	color: #6b7280;
+	font-size: 0.875rem;
+	margin: 4px 0;
+}
+
+/* The agreement itself: scrollable on desktop, full flow on a phone so the
+   browser's own scrolling does the work rather than a nested scroller. */
+.cs-agreement {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 16px;
+	margin: 16px 0;
+	background: #fff;
+	font-family: "Times New Roman", Times, serif;
+	line-height: 1.5;
+	overflow-x: auto;
+}
+@media (min-width: 768px) {
+	.cs-agreement {
+		max-height: 60vh;
+		overflow-y: auto;
+	}
+}
+.cs-agreement h1 {
+	font-size: 1.05rem;
+	text-align: center;
+	margin: 14px 0 8px;
+}
+.cs-agreement h2,
+.cs-agreement h3 {
+	font-size: 0.95rem;
+	margin: 12px 0 6px;
+}
+.cs-agreement p {
+	margin: 5px 0;
+}
+.cs-agreement table.ct-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 8px 0;
+}
+.cs-agreement table.ct-table td {
+	border: 1px solid #9ca3af;
+	padding: 4px 7px;
+	vertical-align: top;
+}
+.cs-agreement .ct-blank {
+	display: inline-block;
+	border-bottom: 1px solid #111;
+	min-height: 1em;
+	min-width: 8em;
+}
+
+.cs-section {
+	margin: 24px 0;
+}
+.cs-section h2 {
+	font-size: 1rem;
+	margin: 0 0 8px;
+}
+
+.cs-modes {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+.cs-mode {
+	flex: 1;
+	padding: 10px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	background: #fff;
+	font: inherit;
+	cursor: pointer;
+}
+.cs-mode.is-active {
+	border-color: #2563eb;
+	background: #eff6ff;
+	font-weight: 600;
+}
+
+.cs-label {
+	display: block;
+	font-size: 0.875rem;
+	font-weight: 600;
+	margin: 12px 0 4px;
+}
+.cs-input {
+	width: 100%;
+	padding: 12px;
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	font: inherit;
+	/* 16px minimum stops iOS zooming the page on focus. */
+	font-size: 16px;
+}
+
+/* Matches the print CSS exactly. Deliberately not a script webfont: it would
+   render in the browser and not in wkhtmltopdf, so the preview would promise
+   something the PDF does not deliver. */
+.cs-preview {
+	min-height: 2.2rem;
+	margin: 8px 0 0;
+	font-family: "Times New Roman", Times, serif;
+	font-style: italic;
+	font-size: 1.6rem;
+	color: #111;
+	border-bottom: 1px solid #d1d5db;
+}
+
+.cs-pad-wrap {
+	position: relative;
+	margin-top: 8px;
+}
+.cs-pad {
+	width: 100%;
+	height: 180px;
+	border: 1px dashed #9ca3af;
+	border-radius: 8px;
+	background: #fff;
+	display: block;
+	/* Without this the browser's scroll gesture fights every stroke on a phone. */
+	touch-action: none;
+}
+.cs-clear {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	padding: 4px 10px;
+	border: 1px solid #d1d5db;
+	border-radius: 6px;
+	background: #fff;
+	font-size: 0.8rem;
+	cursor: pointer;
+}
+
+.cs-disclosure {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 8px 12px;
+	background: #f9fafb;
+}
+.cs-disclosure summary {
+	cursor: pointer;
+	font-size: 0.875rem;
+}
+.cs-disclosure-body {
+	white-space: pre-wrap;
+	font-size: 0.8125rem;
+	color: #374151;
+	margin-top: 8px;
+}
+
+.cs-check {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	margin: 16px 0;
+	font-size: 0.9375rem;
+}
+.cs-check input {
+	margin-top: 3px;
+	width: 20px;
+	height: 20px;
+	flex: none;
+}
+
+.cs-turnstile {
+	margin: 12px 0;
+}
+
+.cs-error {
+	color: #b91c1c;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 8px;
+	padding: 10px 12px;
+	margin: 12px 0;
+}
+
+.cs-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 16px;
+}
+.cs-submit {
+	padding: 14px;
+	border: 0;
+	border-radius: 8px;
+	background: #2563eb;
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+.cs-submit.is-ready {
+	box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+}
+.cs-submit:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+.cs-decline {
+	padding: 10px;
+	border: 0;
+	background: none;
+	color: #6b7280;
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.cs-done,
+.cs-notice {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 24px;
+	margin: 24px 0;
+	background: #fff;
+	text-align: center;
+}
+.cs-done h2,
+.cs-notice h1 {
+	margin-top: 0;
+	font-size: 1.25rem;
+}

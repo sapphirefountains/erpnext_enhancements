@@ -8,11 +8,11 @@
   "standard": "Yes"
  },
  {
-  "css": ".contract-doc { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.45; color: #000; }\n.contract-doc h1 { font-size: 13pt; text-align: center; margin: 14px 0 8px; page-break-after: avoid; }\n.contract-doc h2, .contract-doc h3 { font-size: 11pt; margin: 12px 0 6px; page-break-after: avoid; }\n.contract-doc p { margin: 5px 0; text-align: justify; }\n.contract-doc table.ct-table { width: 100%; border-collapse: collapse; margin: 8px 0; page-break-inside: avoid; }\n.contract-doc table.ct-table td { border: 1px solid #444; padding: 4px 7px; vertical-align: top; font-size: 10pt; }\n.contract-doc .ct-blank { display: inline-block; border-bottom: 1px solid #000; min-height: 1em; white-space: nowrap; overflow: hidden; }\n.contract-doc .ct-cb { font-size: 12pt; }",
+  "css": ".contract-doc { font-family: Georgia, 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.45; color: #000; }\n.contract-doc h1 { font-size: 13pt; text-align: center; margin: 14px 0 8px; page-break-after: avoid; }\n.contract-doc h2, .contract-doc h3 { font-size: 11pt; margin: 12px 0 6px; page-break-after: avoid; }\n.contract-doc p { margin: 5px 0; text-align: justify; }\n.contract-doc table.ct-table { width: 100%; border-collapse: collapse; margin: 8px 0; page-break-inside: avoid; }\n.contract-doc table.ct-table td { border: 1px solid #444; padding: 4px 7px; vertical-align: top; font-size: 10pt; }\n.contract-doc .ct-blank { display: inline-block; border-bottom: 1px solid #000; min-height: 1em; white-space: nowrap; overflow: hidden; }\n.contract-doc .ct-cb { font-size: 12pt; }\n.contract-doc .ct-sig { max-height: 60px; vertical-align: bottom; }\n.contract-doc .ct-sig-typed { font-family: 'Times New Roman', serif; font-style: italic; font-size: 15pt; }\n.contract-doc .ct-certificate { margin-top: 24px; padding-top: 10px; border-top: 2px solid #333; page-break-inside: avoid; }\n.contract-doc .ct-certificate h1 { font-size: 11pt; }",
   "custom_format": 1,
   "doc_type": "Project Contract",
   "doctype": "Print Format",
-  "html": "<div class=\"contract-doc contract-{{ doc.template_key }}\">\n{{ doc.render_body() }}\n{% if doc.revision %}<p style=\"text-align:right; font-size:9pt;\"><i>Revision {{ doc.revision }} (supersedes {{ doc.amended_from }})</i></p>{% endif %}\n</div>",
+  "html": "<div class=\"contract-doc contract-{{ doc.template_key }}\">\n{{ doc.executed_body() }}\n{% if doc.revision %}<p style=\"text-align:right; font-size:9pt;\"><i>Revision {{ doc.revision }} (supersedes {{ doc.amended_from }})</i></p>{% endif %}\n</div>",
   "name": "Project Contract Print",
   "print_format_type": "Jinja",
   "standard": "Yes"

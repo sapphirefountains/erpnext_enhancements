@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.177.0] - 2026-07-25
+
+### Added
+
+- **Online contract signing (e-signature).** Closes the last manual step in the
+  maintenance-contract lifecycle. Everything downstream — the operational
+  maintenance contract, scheduling, dispatch, billing, dunning — already fires
+  off a Project Contract reaching **Signed**; until now a person had to chase a
+  paper signature and flip that status by hand.
+
+  Staff click **Send for Signature** on a submitted contract. The customer gets a
+  tokenised link, reads the full agreement on a mobile-friendly page at
+  `/contract-sign`, **types or draws** their signature, confirms the email address
+  it was sent to, and signs. The contract flips to Signed, the automation chain
+  fires, and they are emailed a fully executed PDF which is also attached to the
+  contract. The paper route (**Mark as Signed**) stays, now recording *how* it was
+  signed so every executed contract carries an evidence trail.
+
+  Gated by two Settings switches, both **off by default** — a master one and a
+  separate one to publish the public page, because this is the app's second
+  unauthenticated write path and the first that mutates a legally operative
+  document.
+
+  Notable design points, each documented at its call site:
+  - The signing token is **256-bit and stored only as a SHA-256**. It is
+    *authorisation*, not attribution (the inverse of the intake invite's token),
+    so a database copy must not carry it. Resending supersedes rather than
+    extends, leaving exactly one live credential.
+  - **Identity** = possession of the link + re-typing the recipient address
+    (compared constant-time against a copy frozen at send) + a bot check. Wrong
+    email and failed bot check return the same message, and the expected address
+    is never echoed — not even masked-in-error.
+  - The **agreement is snapshotted** when sent and the signed PDF is built from
+    that snapshot, so a later edit to the (site-editable) contract template can
+    never change what a signed contract says. The desk print serves the same
+    stored instrument.
+  - Signing flips the contract with a real `doc.save()`; a `db.set_value` would
+    silently skip the entire downstream chain.
+  - The Turnstile verifier is **reused, not re-implemented** — re-implementing is
+    how the site-local-vs-UTC freshness bug comes back. Its policy is inverted
+    here: an *unreachable* Cloudflare accepts the signature and flags it, because
+    the token has already eliminated automated abuse and the resulting maintenance
+    contract is a draft a human still activates.
+  - Ships the **E-SIGN consumer disclosure** (right to a paper copy, how to
+    withdraw consent, hardware needed), which the app did not previously have
+    anywhere; §16.6 of the agreement asserts electronic execution is binding,
+    which is not the same thing.
+
+### Fixed
+
+- **`autocreate_maintenance_contract_on_signed` leaked internal instructions.** It
+  `msgprint`ed "create it manually via Create > Maintenance Contract" on failure,
+  which would render to a customer once a Guest could trigger the hook. Staff
+  still get the toast; a Guest-path failure now notifies the contract owner.
+
 ## [1.176.0] - 2026-07-24
 
 ### Added

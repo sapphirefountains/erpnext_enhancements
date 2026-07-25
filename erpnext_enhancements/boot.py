@@ -10,6 +10,8 @@ from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
 from erpnext_enhancements.feature_flags import (
 	contacts_ux_enabled,
+	contract_esign_enabled,
+	contract_esign_public_page_enabled,
 	document_merge_enabled,
 	field_description_icons_enabled,
 	fountain_move_intake_enabled,
@@ -80,3 +82,5 @@ def boot_session(bootinfo):
 	bootinfo.ee_fountain_move = 1 if fountain_move_intake_enabled() else 0
 	bootinfo.ee_fountain_move_public = 1 if fountain_move_public_form_enabled() else 0
 	bootinfo.ee_fountain_move_url = get_url("/fountain-move")
+	bootinfo.ee_contract_esign = 1 if contract_esign_enabled() else 0
+	bootinfo.ee_contract_esign_public = 1 if contract_esign_public_page_enabled() else 0

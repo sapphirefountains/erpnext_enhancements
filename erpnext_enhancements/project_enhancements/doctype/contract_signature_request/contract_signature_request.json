@@ -1,0 +1,620 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "CSR-.YYYY.-.#####",
+ "creation": "2026-07-25 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "project_contract",
+  "status",
+  "signer_email",
+  "signer_name",
+  "contract_revision",
+  "column_break_head",
+  "template_key",
+  "provider",
+  "expires_on",
+  "sent_on",
+  "sent_by",
+  "resend_count",
+  "view_section",
+  "first_viewed_on",
+  "last_viewed_on",
+  "view_count",
+  "column_break_view",
+  "superseded_by",
+  "declined_on",
+  "decline_reason",
+  "voided_on",
+  "voided_by",
+  "void_reason",
+  "link_section",
+  "token_hash",
+  "previous_token_hash",
+  "provider_reference",
+  "provider_status",
+  "provider_payload",
+  "signature_section",
+  "signature_mode",
+  "signed_name",
+  "signed_title",
+  "signed_on",
+  "column_break_sig",
+  "signed_at_utc",
+  "signed_tz",
+  "signature_image",
+  "countersign_section",
+  "countersigned_by",
+  "countersigned_title",
+  "countersigned_on",
+  "evidence_section",
+  "email_confirmed",
+  "signer_ip_claimed",
+  "signer_ip_peer",
+  "user_agent",
+  "column_break_evidence",
+  "turnstile_verdict",
+  "turnstile_hostname",
+  "turnstile_action",
+  "turnstile_challenge_ts",
+  "turnstile_errors",
+  "review_seconds",
+  "scrolled_to_end",
+  "consent_section",
+  "consent_version",
+  "consent_text",
+  "esign_disclosure_version",
+  "esign_disclosure_text",
+  "document_section",
+  "document_hash",
+  "template_body_hash",
+  "document_drifted",
+  "document_snapshot",
+  "agreement_hash",
+  "agreement_html",
+  "output_section",
+  "signed_document",
+  "delivered_on",
+  "staff_notified_on",
+  "email_attempts",
+  "autopay_offered",
+  "autopay_outcome",
+  "autopay_setup_session"
+ ],
+ "fields": [
+  {
+   "fieldname": "project_contract",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Project Contract",
+   "options": "Project Contract",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nSent\nViewed\nSigned\nDeclined\nExpired\nSuperseded\nVoid\nLocked",
+   "read_only": 1
+  },
+  {
+   "description": "The address this request was sent to, frozen at send. The signer must re-type this to sign — a later edit to the contract's Contact Email must not change who can execute a link already in flight.",
+   "fieldname": "signer_email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sent To",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signer_name",
+   "fieldtype": "Data",
+   "label": "Recipient Name",
+   "read_only": 1
+  },
+  {
+   "description": "The contract revision this request was raised against.",
+   "fieldname": "contract_revision",
+   "fieldtype": "Int",
+   "label": "Contract Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "project_contract.template_key",
+   "fieldname": "template_key",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Template Key",
+   "read_only": 1
+  },
+  {
+   "default": "In-House",
+   "description": "Frozen at send. Every later operation reads this, never the current Settings value — changing the provider must not orphan links already in flight.",
+   "fieldname": "provider",
+   "fieldtype": "Select",
+   "label": "Provider",
+   "options": "In-House",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Sent On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_by",
+   "fieldtype": "Link",
+   "label": "Sent By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "resend_count",
+   "fieldtype": "Int",
+   "label": "Resend Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "view_section",
+   "fieldtype": "Section Break",
+   "label": "Activity"
+  },
+  {
+   "fieldname": "first_viewed_on",
+   "fieldtype": "Datetime",
+   "label": "First Viewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_viewed_on",
+   "fieldtype": "Datetime",
+   "label": "Last Viewed On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "view_count",
+   "fieldtype": "Int",
+   "label": "View Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_view",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Set when a resend issued a fresh link; this row's link no longer works.",
+   "fieldname": "superseded_by",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "Contract Signature Request",
+   "read_only": 1
+  },
+  {
+   "fieldname": "declined_on",
+   "fieldtype": "Datetime",
+   "label": "Declined On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decline_reason",
+   "fieldtype": "Small Text",
+   "label": "Decline Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voided_on",
+   "fieldtype": "Datetime",
+   "label": "Voided On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "voided_by",
+   "fieldtype": "Link",
+   "label": "Voided By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "void_reason",
+   "fieldtype": "Small Text",
+   "label": "Void Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "link_section",
+   "fieldtype": "Section Break",
+   "label": "Link"
+  },
+  {
+   "description": "SHA-256 of the signing token. The token itself is never stored — it exists only in the email we sent. Possession of it plus the address above executes the contract, so a database copy must not carry it.",
+   "fieldname": "token_hash",
+   "fieldtype": "Data",
+   "label": "Token Hash",
+   "read_only": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "description": "SHA-256 of the link this one replaced. Kept so a customer who opens an older email is told their link was superseded, rather than being shown a dead end.",
+   "fieldname": "previous_token_hash",
+   "fieldtype": "Data",
+   "label": "Previous Token Hash",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "External identifier when a third-party signature provider is used (e.g. a DocuSign envelope id). Blank for In-House.",
+   "fieldname": "provider_reference",
+   "fieldtype": "Data",
+   "label": "Provider Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_status",
+   "fieldtype": "Data",
+   "label": "Provider Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_payload",
+   "fieldtype": "Long Text",
+   "label": "Provider Payload",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signature_section",
+   "fieldtype": "Section Break",
+   "label": "Signature"
+  },
+  {
+   "fieldname": "signature_mode",
+   "fieldtype": "Select",
+   "label": "Signature Mode",
+   "options": "\nDrawn\nTyped",
+   "read_only": 1
+  },
+  {
+   "description": "The name the signer adopted as their signature. In Typed mode this IS the signature.",
+   "fieldname": "signed_name",
+   "fieldtype": "Data",
+   "label": "Signed Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signed_title",
+   "fieldtype": "Data",
+   "label": "Signer Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signed_on",
+   "fieldtype": "Datetime",
+   "label": "Signed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sig",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The signing moment in UTC. Recorded alongside the site-local stamp because a site-local time with no recorded zone is ambiguous the moment System Settings changes.",
+   "fieldname": "signed_at_utc",
+   "fieldtype": "Data",
+   "label": "Signed At (UTC)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signed_tz",
+   "fieldtype": "Data",
+   "label": "Site Timezone At Signing",
+   "read_only": 1
+  },
+  {
+   "description": "The drawn signature, when the signer drew one.",
+   "fieldname": "signature_image",
+   "fieldtype": "Signature",
+   "label": "Signature Image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "countersign_section",
+   "fieldtype": "Section Break",
+   "label": "Countersignature (recorded, never gates execution)"
+  },
+  {
+   "fieldname": "countersigned_by",
+   "fieldtype": "Data",
+   "label": "Countersigned By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "countersigned_title",
+   "fieldtype": "Data",
+   "label": "Countersigner Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "countersigned_on",
+   "fieldtype": "Date",
+   "label": "Countersigned On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "default": "0",
+   "description": "The signer re-typed the address this was sent to.",
+   "fieldname": "email_confirmed",
+   "fieldtype": "Check",
+   "label": "Email Confirmed",
+   "read_only": 1
+  },
+  {
+   "description": "UNTRUSTED — taken from the X-Forwarded-For header, which the caller controls. Recorded for correlation only and never used as a security decision on its own. Compare against the peer address beside it.",
+   "fieldname": "signer_ip_claimed",
+   "fieldtype": "Data",
+   "label": "Signer IP (claimed)",
+   "read_only": 1
+  },
+  {
+   "description": "The TCP peer address the request actually arrived from.",
+   "fieldname": "signer_ip_peer",
+   "fieldtype": "Data",
+   "label": "Signer IP (peer)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user_agent",
+   "fieldtype": "Small Text",
+   "label": "User Agent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_evidence",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "\"Unavailable\" means Cloudflare could not be reached. The signature is still accepted — the signer already held a single-use link sent to a known address — but it is flagged here and in the staff alert.",
+   "fieldname": "turnstile_verdict",
+   "fieldtype": "Select",
+   "label": "Turnstile Verdict",
+   "options": "\nPassed\nFailed\nUnavailable\nNot Checked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_hostname",
+   "fieldtype": "Data",
+   "label": "Turnstile Hostname",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_action",
+   "fieldtype": "Data",
+   "label": "Turnstile Action",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_challenge_ts",
+   "fieldtype": "Data",
+   "label": "Turnstile Challenge Timestamp",
+   "read_only": 1
+  },
+  {
+   "fieldname": "turnstile_errors",
+   "fieldtype": "Small Text",
+   "label": "Turnstile Errors",
+   "read_only": 1
+  },
+  {
+   "description": "Seconds between opening the agreement and signing it.",
+   "fieldname": "review_seconds",
+   "fieldtype": "Int",
+   "label": "Review Seconds",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "UNTRUSTED — asserted by the signer's browser. Indicative only.",
+   "fieldname": "scrolled_to_end",
+   "fieldtype": "Check",
+   "label": "Scrolled To End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consent_section",
+   "fieldtype": "Section Break",
+   "label": "Consent (proof of intent to sign)"
+  },
+  {
+   "description": "Fingerprint of the exact consent text the signer agreed to.",
+   "fieldname": "consent_version",
+   "fieldtype": "Data",
+   "label": "Consent Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consent_text",
+   "fieldtype": "Long Text",
+   "label": "Consent Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "esign_disclosure_version",
+   "fieldtype": "Data",
+   "label": "Disclosure Version",
+   "read_only": 1
+  },
+  {
+   "description": "The E-SIGN consumer disclosure in force when this was signed.",
+   "fieldname": "esign_disclosure_text",
+   "fieldtype": "Long Text",
+   "label": "Electronic Records Disclosure",
+   "read_only": 1
+  },
+  {
+   "fieldname": "document_section",
+   "fieldtype": "Section Break",
+   "label": "Agreement Snapshot (proof of what was signed)"
+  },
+  {
+   "description": "Full SHA-256 of the agreement HTML that was displayed to the signer.",
+   "fieldname": "document_hash",
+   "fieldtype": "Data",
+   "label": "Document Hash",
+   "read_only": 1
+  },
+  {
+   "description": "SHA-256 of the Contract Template body in force when this was sent.",
+   "fieldname": "template_body_hash",
+   "fieldtype": "Data",
+   "label": "Template Body Hash",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The agreement re-rendered differently at signing than when it was sent — the template or a contract field changed while the link was out. The signature still stands (the snapshot below is what the customer saw and agreed to); this flags it for a human to look at.",
+   "fieldname": "document_drifted",
+   "fieldtype": "Check",
+   "label": "Document Drifted",
+   "read_only": 1
+  },
+  {
+   "description": "The exact agreement HTML the signer was shown, captured when the request was sent (signature lines still blank, as displayed).",
+   "fieldname": "document_snapshot",
+   "fieldtype": "Long Text",
+   "label": "Document Snapshot",
+   "read_only": 1
+  },
+  {
+   "description": "Full SHA-256 of the executed agreement below.",
+   "fieldname": "agreement_hash",
+   "fieldtype": "Data",
+   "label": "Agreement Hash",
+   "read_only": 1
+  },
+  {
+   "description": "The executed instrument: the agreement re-rendered with the signature in place, plus the completion certificate. This — not a live re-render — is what the customer receives, what is attached to the contract, and what the desk print shows.",
+   "fieldname": "agreement_html",
+   "fieldtype": "Long Text",
+   "label": "Executed Agreement",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_section",
+   "fieldtype": "Section Break",
+   "label": "Output"
+  },
+  {
+   "fieldname": "signed_document",
+   "fieldtype": "Attach",
+   "label": "Signed Document",
+   "read_only": 1
+  },
+  {
+   "description": "When the customer's executed copy was emailed. Blank on a signed request means delivery has not landed yet; the daily sweep retries it.",
+   "fieldname": "delivered_on",
+   "fieldtype": "Datetime",
+   "label": "Copy Delivered On",
+   "read_only": 1
+  },
+  {
+   "description": "When the team was told about this signature. Separate from the delivery stamp so the daily retry sweep cannot re-alert them each time the customer's copy fails to send.",
+   "fieldname": "staff_notified_on",
+   "fieldtype": "Datetime",
+   "label": "Staff Notified On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many times someone has entered an email address on the signing page for this request. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire. Reset to zero when staff re-send the link, which is what gives a locked-out customer another try.",
+   "fieldname": "email_attempts",
+   "fieldtype": "Int",
+   "label": "Email Confirmation Attempts",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "autopay_offered",
+   "fieldtype": "Check",
+   "label": "Autopay Offered",
+   "read_only": 1
+  },
+  {
+   "default": "Not Offered",
+   "fieldname": "autopay_outcome",
+   "fieldtype": "Select",
+   "label": "Autopay Outcome",
+   "options": "Not Offered\nDeclined\nStarted\nEnrolled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "autopay_setup_session",
+   "fieldtype": "Data",
+   "label": "Autopay Setup Session",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-07-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Contract Signature Request",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Projects Manager"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
