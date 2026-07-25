@@ -270,6 +270,10 @@
 					$("cs-form").hidden = true;
 					$("cs-agreement").hidden = true;
 					$("cs-done").hidden = false;
+					// Offered only now, after the contract is executed and committed.
+					if (result.autopay && result.autopay.offer) {
+						$("cs-autopay").hidden = false;
+					}
 					window.scrollTo(0, 0);
 					return;
 				}
@@ -318,6 +322,33 @@
 			});
 	}
 
+	function startAutopay() {
+		var button = $("cs-autopay-start");
+		button.disabled = true;
+		post("erpnext_enhancements.project_enhancements.esign.portal.start_autopay", {
+			esign_sid: sid,
+		})
+			.then(function (result) {
+				if (result && result.ok && result.checkout_url) {
+					window.location.href = result.checkout_url;
+					return;
+				}
+				// Never an error on a page that has just executed a contract.
+				$("cs-autopay-note").hidden = false;
+				button.disabled = true;
+			})
+			.catch(function () {
+				$("cs-autopay-note").hidden = false;
+			});
+	}
+
+	function skipAutopay() {
+		$("cs-autopay").hidden = true;
+		post("erpnext_enhancements.project_enhancements.esign.portal.decline_autopay", {
+			esign_sid: sid,
+		});
+	}
+
 	function freshLink() {
 		var button = $("cs-fresh");
 		if (button) button.disabled = true;
@@ -334,6 +365,11 @@
 	document.addEventListener("DOMContentLoaded", function () {
 		var fresh = $("cs-fresh");
 		if (fresh) fresh.addEventListener("click", freshLink);
+
+		var autopayStart = $("cs-autopay-start");
+		if (autopayStart) autopayStart.addEventListener("click", startAutopay);
+		var autopaySkip = $("cs-autopay-skip");
+		if (autopaySkip) autopaySkip.addEventListener("click", skipAutopay);
 
 		var form = $("cs-form");
 		if (!form) return; // a notice state — nothing else to wire up

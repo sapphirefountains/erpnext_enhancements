@@ -255,7 +255,7 @@ def sign_contract(
 		"ok": True,
 		"contract": request.project_contract,
 		"request": request.name,
-		"autopay": {"offer": False},  # PR 2
+		"autopay": _autopay_offer(request),
 	}
 
 
@@ -338,7 +338,129 @@ def notify_declined(request_name):
 
 
 # ---------------------------------------------------------------------------
-# 4. self-service fresh link — the escape hatch that stops a dead end
+# 4. autopay — offered AFTER execution, never a condition of it
+# ---------------------------------------------------------------------------
+
+
+def _autopay_offer(request):
+	"""Whether to offer the just-signed customer a card-on-file, and the copy.
+
+	Exhibit B of the maintenance agreement already promises exactly this ("Client
+	will receive a secure payment link … to store a card on file"), so the offer
+	is the agreement keeping its own word rather than an upsell bolted on.
+
+	Never raises: this is computed on the response to a request that has already
+	executed a contract, and nothing about a payment convenience may turn that
+	into a failure.
+	"""
+	try:
+		if not frappe.utils.cint(
+			frappe.db.get_single_value("ERPNext Enhancements Settings", "contract_esign_offer_autopay")
+		):
+			return {"offer": False}
+
+		from erpnext_enhancements.stripe_payments.core.utils import is_enabled
+
+		if not is_enabled():
+			return {"offer": False}
+
+		party_type, party = frappe.db.get_value(
+			"Project Contract", request.project_contract, ["party_type", "party"]
+		)
+		if party_type != "Customer" or not party:
+			return {"offer": False}
+
+		enrolled = frappe.db.get_value(
+			"Customer", party, ["custom_stripe_autopay_enabled", "custom_stripe_default_payment_method"], as_dict=True
+		)
+		if enrolled and enrolled.custom_stripe_autopay_enabled and enrolled.custom_stripe_default_payment_method:
+			return {"offer": False}  # already on file — do not ask twice
+
+		frappe.db.set_value(
+			"Contract Signature Request", request.name, "autopay_offered", 1, update_modified=False
+		)
+		return {"offer": True}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay offer check failed")
+		return {"offer": False}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(limit=10, seconds=3600, methods=["POST"])
+def start_autopay(esign_sid=None):
+	"""Begin card enrolment for the customer who just signed.
+
+	Only reachable from a session that has already executed its contract, so this
+	is structurally incapable of affecting the signature: by the time it exists,
+	the contract is Signed and committed. A Stripe failure returns a soft outcome
+	the page shows as "we'll follow up" — never an error on a page that has just
+	told someone their agreement is executed.
+
+	The enrolment is attributed to the **contract's** customer, resolved
+	server-side from the session's request; nothing about the target comes from
+	the caller.
+	"""
+	_require_public_page()
+
+	session = _get_session(esign_sid)
+	if not session or not session.get("signed"):
+		return {"ok": False}
+
+	try:
+		request = frappe.get_doc("Contract Signature Request", session["request"])
+		if request.status != "Signed":
+			return {"ok": False}
+		if request.autopay_outcome in ("Started", "Enrolled"):
+			# Idempotent: a double-click must not open a second Stripe session.
+			return {"ok": True, "checkout_url": None, "already": True}
+
+		party_type, party = frappe.db.get_value(
+			"Project Contract", request.project_contract, ["party_type", "party"]
+		)
+		if party_type != "Customer" or not party:
+			return {"ok": False}
+
+		from erpnext_enhancements.stripe_payments.core.saved_methods import create_setup_session
+
+		result = create_setup_session(customer=party, channel="Contract Signing")
+		frappe.db.set_value(
+			"Contract Signature Request",
+			request.name,
+			{"autopay_outcome": "Started", "autopay_setup_session": result.get("session_id")},
+			update_modified=False,
+		)
+		frappe.db.commit()
+		return {"ok": True, "checkout_url": result.get("checkout_url")}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay setup failed")
+		return {"ok": False}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(limit=10, seconds=3600, methods=["POST"])
+def decline_autopay(esign_sid=None):
+	"""Record that the customer chose not to save a card. Purely informational."""
+	_require_public_page()
+
+	session = _get_session(esign_sid)
+	if not session or not session.get("signed"):
+		return {"ok": False}
+	try:
+		frappe.db.set_value(
+			"Contract Signature Request",
+			session["request"],
+			"autopay_outcome",
+			"Declined",
+			update_modified=False,
+		)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Contract e-sign: autopay decline failed")
+	return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 5. self-service fresh link — the escape hatch that stops a dead end
 # ---------------------------------------------------------------------------
 
 

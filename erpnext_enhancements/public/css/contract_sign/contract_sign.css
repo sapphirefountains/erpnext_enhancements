@@ -243,3 +243,17 @@
 	margin-top: 0;
 	font-size: 1.25rem;
 }
+
+/* Autopay offer — rendered only after the contract is executed, and styled as
+   clearly secondary so it never competes with the confirmation above it. */
+.cs-autopay {
+	border: 1px solid #d1d5db;
+	border-radius: 8px;
+	padding: 20px;
+	margin: 16px 0 0;
+	background: #f9fafb;
+}
+.cs-autopay h3 {
+	margin-top: 0;
+	font-size: 1.05rem;
+}

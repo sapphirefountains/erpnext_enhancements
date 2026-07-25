@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.178.0] - 2026-07-25
+
+### Added
+
+- **Autopay enrolment offered right after signing.** Once a customer has signed
+  online, the page offers to save a card for automatic payments — the secure
+  payment link that Exhibit B of the maintenance agreement already promises them.
+  This closes the loop through the rest of the automation: a card on file means
+  the recurring-billing engine's invoices auto-charge, and the dunning engine can
+  recover a declined one.
+
+  It is **offered, never required**, and that is enforced structurally rather
+  than by convention: the card is only offered on a response whose contract is
+  already Signed and committed, and both endpoints refuse a session that has not
+  signed. Declining therefore cannot affect the signature, and neither can a
+  Stripe outage — any failure returns a soft "we'll follow up about payment setup
+  separately" rather than an error on a page that has just told someone their
+  agreement is executed.
+
+  The offer is skipped for a customer who already has a card on file, for
+  non-Customer parties, and when either the feature flag or Stripe itself is off.
+  Outcome is tracked on the signature request (`Not Offered` / `Declined` /
+  `Started` / `Enrolled`), with `Enrolled` stamped when Stripe confirms the setup.
+
+  The authorization record gains a distinct **"Contract Signing"** channel, so a
+  card saved this way is distinguishable from a logged-in portal enrolment — the
+  web session is anonymous, so the signer's identity evidence lives on the linked
+  Contract Signature Request rather than in `accepted_by`.
+
 ## [1.177.0] - 2026-07-25
 
 ### Added
