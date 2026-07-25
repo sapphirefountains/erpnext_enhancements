@@ -66,6 +66,11 @@ CONTROL_CHARS_RE = re.compile(
 	"[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _CONTROL_RANGES) + "]"
 )
 
+# Quote characters a pasted address can arrive wrapped in (straight and
+# typographic). Built from codepoints for the same reason as _CONTROL_RANGES:
+# smart quotes are visually ambiguous in source.
+_QUOTE_CHARS = "\"'" + "".join(chr(c) for c in (0x2018, 0x2019, 0x201C, 0x201D))
+
 NAME_MAX = 140
 SIGNATURE_DATA_URI_RE = re.compile(r"^data:image/png;base64,[A-Za-z0-9+/=\s]{32,}$")
 SIGNATURE_MAX_BYTES = 200 * 1024
@@ -89,7 +94,7 @@ GENERIC_FAILURE = (
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=30, seconds=3600, methods=["POST"])
-def begin_signing(ref=None, turnstile_token=None, esign_sid=None):
+def begin_signing(ref=None, turnstile_token=None, esign_sid=None, widget_unavailable=None):
 	"""Verify the bot check and open (or refresh) a signing session.
 
 	The request is resolved from ``ref`` **once, here**, and its name is kept in
@@ -102,14 +107,31 @@ def begin_signing(ref=None, turnstile_token=None, esign_sid=None):
 	request = lifecycle.resolve_request(ref)
 	if not request:
 		return {"ok": False, "state": "invalid"}
+	# Resolved only via previous_token_hash: the caller is holding a link a resend
+	# has replaced. It may not open a signing session.
+	if request.flags.get("opened_with_superseded_link"):
+		return {"ok": False, "state": "replaced"}
 
-	verdict, detail = turnstile.verify(turnstile_token)
+	if frappe.utils.cint(widget_unavailable):
+		# The widget never loaded or errored in the browser. Recorded verbatim on
+		# the evidence row and in the staff alert — never laundered into a pass —
+		# but it does not block: the signer already holds a single-use link sent to
+		# a known address, and the resulting maintenance contract is a draft a
+		# human activates.
+		verdict, detail = "Unavailable", {"errors": "Challenge widget unavailable in the browser."}
+	else:
+		verdict, detail = turnstile.verify(turnstile_token)
 
 	sid = esign_sid if (esign_sid and SID_RE.match(str(esign_sid))) else frappe.generate_hash(length=32)
 	session = _get_session(sid) or {"opened_at": frappe.utils.now_datetime().isoformat()}
 	session.update(
 		{
 			"request": request.name,
+			# Pinned so a resend (which mints a new token on the SAME row) cannot be
+			# executed by a tab still holding the superseded link. Without this the
+			# old session would sign against text the customer never saw, and the
+			# evidence would certify no drift because the resend refreshed the hash.
+			"token_hash": request.token_hash,
 			"verdict": verdict,
 			"turnstile": detail,
 		}
@@ -141,18 +163,37 @@ def sign_contract(
 	if not session:
 		return {"ok": False, "error": _("Your session expired. Please reload the page and try again.")}
 
-	request = frappe.get_doc("Contract Signature Request", session["request"])
-
 	# Already signed: idempotent success. A double-click, a retried POST or a
-	# refresh must never tell someone their executed contract failed.
+	# refresh must never tell someone their executed contract failed. The session
+	# is left holding a marker rather than deleted so this branch stays reachable.
+	if session.get("signed"):
+		return {"ok": True, "already": True, "contract": session.get("contract"), "request": session["request"]}
+
+	request = frappe.get_doc("Contract Signature Request", session["request"])
 	if request.status == "Signed":
 		return {"ok": True, "already": True, "contract": request.project_contract, "request": request.name}
+
+	if not _session_token_current(session, request):
+		return {
+			"ok": False,
+			"error": _(
+				"This agreement was updated after you opened it. Please open the most recent "
+				"email we sent you and sign from there."
+			),
+		}
 
 	if not lifecycle.is_signable(request):
 		return {"ok": False, "error": _("This agreement is no longer available to sign.")}
 
 	if not turnstile.accepts(session.get("verdict")):
-		return {"ok": False, "error": _(GENERIC_FAILURE), "retry_captcha": True}
+		return {
+			"ok": False,
+			"error": _("We couldn't complete the security check. Please reload the page and try again."),
+			"retry_captcha": True,
+		}
+
+	if not str(confirm_email or "").strip():
+		return {"ok": False, "error": _("Type the email address this agreement was sent to.")}
 
 	if not _email_matches(request, confirm_email):
 		return {"ok": False, "error": _(GENERIC_FAILURE)}
@@ -202,7 +243,13 @@ def sign_contract(
 		return {"ok": False, "error": _("This agreement is no longer available to sign.")}
 
 	lifecycle.execute_contract(request, evidence)
-	_clear_session(esign_sid)
+
+	# Leave a marker instead of clearing: a retried POST must land on the
+	# idempotent branch above, not on "your session expired".
+	_put_session(
+		esign_sid,
+		{"request": request.name, "signed": 1, "contract": request.project_contract},
+	)
 
 	return {
 		"ok": True,
@@ -235,10 +282,14 @@ def decline_contract(esign_sid=None, confirm_email=None, reason=None):
 	request = frappe.get_doc("Contract Signature Request", session["request"])
 	if request.status == "Declined":
 		return {"ok": True, "already": True}
+	if not _session_token_current(session, request):
+		return {"ok": False, "error": _("Please open the most recent email we sent you.")}
 	if not lifecycle.is_signable(request):
 		return {"ok": False, "error": _("This agreement is no longer available.")}
 	# Declining is identity-bearing too — otherwise anyone holding a forwarded
 	# link could kill a live agreement.
+	if not str(confirm_email or "").strip():
+		return {"ok": False, "error": _("Type the email address this agreement was sent to.")}
 	if not _email_matches(request, confirm_email):
 		return {"ok": False, "error": _(GENERIC_FAILURE)}
 
@@ -339,14 +390,30 @@ def _require_public_page():
 		raise frappe.DoesNotExistError
 
 
+def _session_token_current(session, request):
+	"""True when the session was opened against the link that is still live.
+
+	A session opened before a resend holds the superseded token; letting it sign
+	would execute the contract against text the customer never saw. Sessions
+	predating this check have no pinned hash and are allowed through — they
+	expire within the hour.
+	"""
+	pinned = session.get("token_hash")
+	if not pinned:
+		return True
+	return pinned == request.token_hash
+
+
 def _normalise_email(value):
 	"""Fold the differences that are typing noise, and nothing more.
 
-	Angle brackets are stripped because people paste ``Jane <jane@x.com>`` out of
-	a mail client constantly. Gmail dot/plus tricks are deliberately NOT folded:
-	that would quietly widen who can execute a contract for marginal convenience.
+	Angle brackets and smart quotes are stripped because people paste
+	``Jane <jane@x.com>`` — or a curly-quoted address out of a document —
+	constantly. Gmail dot/plus tricks are deliberately NOT folded: that would
+	quietly widen who can execute a contract for marginal convenience.
 	"""
 	email = unicodedata.normalize("NFKC", str(value or "")).strip()
+	email = email.strip(_QUOTE_CHARS)
 	if email.startswith("<") and email.endswith(">"):
 		email = email[1:-1]
 	if "<" in email and email.endswith(">"):
@@ -360,13 +427,37 @@ def _email_matches(request, typed):
 	Attempts are capped per request, not per IP: the threat is a link-holder
 	fishing for the address, and a forged X-Forwarded-For would sail past an
 	IP-keyed counter.
+
+	A blank entry costs nothing. It is not a guess, and charging for it let the
+	decline flow — whose dialog never asks for an address — silently spend the
+	signer's whole hourly budget and lock them out of signing.
+
+	The lifetime counter is persisted on the request, not just cached: the deploy
+	pipeline flushes Redis on every release, which would quietly reset the only
+	durable limit on address guessing and mean the lockout never fires.
 	"""
+	if not str(typed or "").strip():
+		return False
+
 	if _bump_counter(f"csign:email:{request.name}:h", 3600) > EMAIL_ATTEMPTS_PER_HOUR:
 		return False
-	if _bump_counter(f"csign:email:{request.name}:life", 60 * 60 * 24 * 45) > EMAIL_ATTEMPTS_LIFETIME:
+
+	attempts = (frappe.db.get_value("Contract Signature Request", request.name, "email_attempts") or 0) + 1
+	frappe.db.set_value(
+		"Contract Signature Request", request.name, "email_attempts", attempts, update_modified=False
+	)
+	frappe.db.commit()
+	if attempts > EMAIL_ATTEMPTS_LIFETIME:
 		_lock_request(request)
 		return False
-	return hmac.compare_digest(_normalise_email(typed), _normalise_email(request.signer_email))
+
+	# Compare bytes: compare_digest only accepts str operands that are pure
+	# ASCII, and a pasted address with a curly quote or an accent would raise
+	# rather than return the uniform failure message.
+	return hmac.compare_digest(
+		_normalise_email(typed).encode("utf-8"),
+		_normalise_email(request.signer_email).encode("utf-8"),
+	)
 
 
 def _lock_request(request):

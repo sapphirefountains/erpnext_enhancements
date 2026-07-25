@@ -24,7 +24,7 @@
 	{% if state == "signable" %}
 	<header class="cs-header">
 		<h1>{{ _("Review and sign") }}</h1>
-		<p class="cs-lede">{{ boot.contract_label }}</p>
+		<p class="cs-lede">{{ boot.contract_label | e }}</p>
 		<p class="cs-hint">{{ _("Please read the agreement below, then sign at the bottom of the page.") }}</p>
 	</header>
 
@@ -40,7 +40,7 @@
 			<h2>{{ _("Electronic records") }}</h2>
 			<details class="cs-disclosure">
 				<summary>{{ _("How electronic signing works, and your right to a paper copy") }}</summary>
-				<div class="cs-disclosure-body">{{ boot.disclosure_text }}</div>
+				<div class="cs-disclosure-body">{{ boot.disclosure_text | e }}</div>
 			</details>
 		</section>
 
@@ -78,12 +78,12 @@
 				{{ _("Type the email address we sent this agreement to") }}
 			</label>
 			<input class="cs-input" id="cs-email" type="email" inputmode="email" autocomplete="email"
-			       placeholder="{{ boot.signer_email_hint }}">
+			       placeholder="{{ boot.signer_email_hint | e }}">
 			<p class="cs-hint">{{ _("It's in the message you opened this link from.") }}</p>
 
 			<label class="cs-check">
 				<input type="checkbox" id="cs-agree">
-				<span>{{ boot.consent_text }}</span>
+				<span>{{ boot.consent_text | e }}</span>
 			</label>
 
 			<div id="cs-turnstile" class="cs-turnstile"></div>
@@ -95,7 +95,7 @@
 			<button type="submit" class="cs-submit" id="cs-submit">{{ _("Sign & execute") }}</button>
 			<button type="button" class="cs-decline" id="cs-decline">{{ _("I don't want to sign") }}</button>
 		</div>
-		<p class="cs-hint">{{ _("This link expires") }} {{ boot.expires_on }}.</p>
+		<p class="cs-hint">{{ _("This link expires") }} {{ boot.expires_on | e }}.</p>
 	</form>
 
 	<div id="cs-done" class="cs-done" hidden role="status">
@@ -106,21 +106,23 @@
 	{% elif state == "signed" %}
 	<div class="cs-notice">
 		<h1>{{ _("Already signed") }}</h1>
-		<p>{{ _("You signed this agreement on") }} {{ boot.signed_on }}. {{ _("We emailed you a copy at the time.") }}</p>
-		<p class="cs-hint">{{ _("Need another copy? Call us on") }} {{ boot.contact_phone }}.</p>
+		<p>{{ _("You signed this agreement on") }} {{ boot.signed_on | e }}. {{ _("We emailed you a copy at the time.") }}</p>
+		<p class="cs-hint">{{ _("Need another copy? Call us on") }} {{ boot.contact_phone | e }}.</p>
 	</div>
 
 	{% elif state == "declined" %}
 	<div class="cs-notice">
 		<h1>{{ _("This agreement was declined") }}</h1>
-		<p>{{ _("Our team has been notified. If that was a mistake, please call us on") }} {{ boot.contact_phone }}.</p>
+		<p>{{ _("Our team has been notified. If that was a mistake, please call us on") }} {{ boot.contact_phone | e }}.</p>
 	</div>
 
 	{% elif state == "replaced" %}
 	<div class="cs-notice">
 		<h1>{{ _("This link has been replaced") }}</h1>
 		<p>{{ _("We sent a newer version of this agreement — please check for our most recent email.") }}</p>
-		<p class="cs-hint">{{ _("Can't find it? Call us on") }} {{ boot.contact_phone }}.</p>
+		<button type="button" class="cs-submit" id="cs-fresh">{{ _("Send it again") }}</button>
+		<p class="cs-hint" id="cs-fresh-done" hidden>{{ _("On its way — check the inbox this link was sent to.") }}</p>
+		<p class="cs-hint">{{ _("Can't find it? Call us on") }} {{ boot.contact_phone | e }}.</p>
 	</div>
 
 	{% elif state == "expired" %}
@@ -129,21 +131,23 @@
 		<p>{{ _("Signing links are only valid for a limited time. We can send you a fresh one.") }}</p>
 		<button type="button" class="cs-submit" id="cs-fresh">{{ _("Email me a new link") }}</button>
 		<p class="cs-hint" id="cs-fresh-done" hidden>{{ _("On its way — check the inbox this link was sent to.") }}</p>
-		<p class="cs-hint">{{ _("Prefer to talk to someone? Call us on") }} {{ boot.contact_phone }}.</p>
+		<p class="cs-hint">{{ _("Prefer to talk to someone? Call us on") }} {{ boot.contact_phone | e }}.</p>
 	</div>
 
 	{% else %}
+	{# Unknown, malformed, voided, declined or locked — all rendered identically
+	   so the page never confirms whether a token exists. No "send me a new link"
+	   button here: for these states there is nothing left to re-send, and a
+	   button that always claims success would be a lie. #}
 	<div class="cs-notice">
 		<h1>{{ _("This link isn't available") }}</h1>
-		<p>{{ _("It may have expired or been replaced. We can send a fresh one to the address the agreement went to.") }}</p>
-		<button type="button" class="cs-submit" id="cs-fresh">{{ _("Email me a new link") }}</button>
-		<p class="cs-hint" id="cs-fresh-done" hidden>{{ _("On its way — check the inbox this link was sent to.") }}</p>
-		<p class="cs-hint">{{ _("Still stuck? Call us on") }} {{ boot.contact_phone }}.</p>
+		<p>{{ _("It may have expired, been replaced, or already been used.") }}</p>
+		<p class="cs-hint">{{ _("Please call us on") }} {{ boot.contact_phone | e }} {{ _("and we'll sort it out.") }}</p>
 	</div>
 	{% endif %}
 
 	<noscript>
-		<p class="cs-notice">{{ _("Signing needs JavaScript. Please call us on") }} {{ boot.contact_phone }} {{ _("and we'll take you through it.") }}</p>
+		<p class="cs-notice">{{ _("Signing needs JavaScript. Please call us on") }} {{ boot.contact_phone | e }} {{ _("and we'll take you through it.") }}</p>
 	</noscript>
 </div>
 

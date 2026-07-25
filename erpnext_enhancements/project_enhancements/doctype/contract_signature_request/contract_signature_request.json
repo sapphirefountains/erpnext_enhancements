@@ -32,6 +32,7 @@
   "void_reason",
   "link_section",
   "token_hash",
+  "previous_token_hash",
   "provider_reference",
   "provider_status",
   "provider_payload",
@@ -75,6 +76,8 @@
   "agreement_html",
   "output_section",
   "signed_document",
+  "delivered_on",
+  "email_attempts",
   "autopay_offered",
   "autopay_outcome",
   "autopay_setup_session"
@@ -250,6 +253,14 @@
    "read_only": 1,
    "search_index": 1,
    "unique": 1
+  },
+  {
+   "description": "SHA-256 of the link this one replaced. Kept so a customer who opens an older email is told their link was superseded, rather than being shown a dead end.",
+   "fieldname": "previous_token_hash",
+   "fieldtype": "Data",
+   "label": "Previous Token Hash",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "description": "External identifier when a third-party signature provider is used (e.g. a DocuSign envelope id). Blank for In-House.",
@@ -520,6 +531,21 @@
    "fieldname": "signed_document",
    "fieldtype": "Attach",
    "label": "Signed Document",
+   "read_only": 1
+  },
+  {
+   "description": "When the customer's executed copy was emailed. Blank on a signed request means delivery has not landed yet; the daily sweep retries it.",
+   "fieldname": "delivered_on",
+   "fieldtype": "Datetime",
+   "label": "Copy Delivered On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many times someone has entered an email address on the signing page for this request. Persisted rather than kept only in the cache, because a cache flush (every deploy) would otherwise reset the lifetime guess limit and the lockout would never fire.",
+   "fieldname": "email_attempts",
+   "fieldtype": "Int",
+   "label": "Email Confirmation Attempts",
    "read_only": 1
   },
   {

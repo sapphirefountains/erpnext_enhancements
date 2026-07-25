@@ -571,10 +571,22 @@ def autocreate_maintenance_contract_on_signed(doc, method=None):
 	# it still reaches a human.
 	is_desk_user = frappe.session.user not in ("Guest", None)
 
+	# A savepoint so a failed mapping rolls back cleanly instead of poisoning the
+	# caller's transaction — the online-signing path commits straight afterwards.
+	frappe.db.savepoint("esign_autocreate")
+	muted = frappe.flags.mute_messages
 	try:
+		# The mapped contract's own validate() can msgprint (e.g. the recurring
+		# -amount nudge), which would land in an anonymous signer's response just
+		# as the messages below would. Mute for the guest path only, and restore
+		# the previous value afterwards so this never leaks into the rest of the
+		# request.
+		if not is_desk_user:
+			frappe.flags.mute_messages = True
 		operational = make_contract_from_project_contract(doc.name)
 		operational.insert(ignore_permissions=True)
 	except Exception:
+		frappe.db.rollback(save_point="esign_autocreate")
 		frappe.log_error(frappe.get_traceback(), "Auto-create Maintenance Contract on Signed failed")
 		if is_desk_user:
 			frappe.msgprint(
@@ -588,6 +600,9 @@ def autocreate_maintenance_contract_on_signed(doc, method=None):
 		else:
 			_notify_owner_autocreate_failed(doc)
 		return
+	finally:
+		frappe.flags.mute_messages = muted
+
 	if is_desk_user:
 		frappe.msgprint(
 			_("Drafted Maintenance Contract {0} from this signed agreement — review it and set it Active.").format(

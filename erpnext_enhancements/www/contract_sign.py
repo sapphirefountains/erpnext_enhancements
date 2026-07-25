@@ -61,6 +61,9 @@ def _state_for(request):
 	"""
 	if not request:
 		return "invalid", ""
+	# Opened from an email whose link a resend has since replaced.
+	if request.flags.get("opened_with_superseded_link"):
+		return "replaced", ""
 	if request.status == "Signed":
 		return "signed", ""
 	if request.status == "Declined":

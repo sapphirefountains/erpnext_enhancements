@@ -351,13 +351,27 @@ def contract_esign_public_page_enabled():
 		"contract_esign_public_page_enabled"
 	):
 		return False
-	return bool(
-		cint(
-			frappe.db.get_single_value(
-				"ERPNext Enhancements Settings", "contract_esign_public_page_enabled"
-			)
-		)
+	if not cint(
+		frappe.db.get_single_value("ERPNext Enhancements Settings", "contract_esign_public_page_enabled")
+	):
+		return False
+	# A half-configured key pair is worse than none: a site key with no secret
+	# would show a widget whose verdict can never be verified, and a secret with
+	# no site key would refuse every signature because no widget ever renders.
+	# Either configure both or neither (no keys = the bot check is skipped and
+	# recorded as "Not Checked").
+	site_key = frappe.db.get_single_value(
+		"ERPNext Enhancements Settings", "contract_esign_turnstile_site_key"
 	)
+	try:
+		secret = frappe.get_cached_doc("ERPNext Enhancements Settings").get_password(
+			"contract_esign_turnstile_secret_key", raise_exception=False
+		)
+	except Exception:
+		secret = None
+	if bool(site_key) != bool(secret):
+		return False
+	return True
 
 
 def throw_if_contract_esign_disabled():

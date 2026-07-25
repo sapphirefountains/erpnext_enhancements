@@ -30,12 +30,12 @@ OLD_BLOCK = """<p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
 <p>Signature: {{ blank(30) }}    Date: {{ blank(30) }}</p>
 <p>Print Name: {{ blank(30) }}</p>"""
 
-NEW_BLOCK = """<p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.countersigned_on) }}</p>
+NEW_BLOCK = """<p>Signature: {{ sig('provider') }}    Date: {{ dt(signature.countersigned_on, 30) }}</p>
 <p>Print Name: {{ fill(signature.countersigned_by) }}</p>
 <p>Title: {{ fill(signature.countersigned_title) }}</p>
 <p>(Authorized Representative of Sapphire Fountains, LLC)</p>
 <h3><b>CLIENT</b></h3>
-<p>Signature: {{ sig('client') }}    Date: {{ dt(doc.signed_on) }}</p>
+<p>Signature: {{ sig('client') }}    Date: {{ dt(doc.signed_on, 30) }}</p>
 <p>Print Name: {{ fill(doc.signed_by) }}</p>"""
 
 

@@ -74,14 +74,36 @@
 		var ratio = window.devicePixelRatio || 1;
 		var rect = pad.getBoundingClientRect();
 		if (!rect.width) return;
-		pad.width = Math.round(rect.width * ratio);
-		pad.height = Math.round(rect.height * ratio);
+		var w = Math.round(rect.width * ratio);
+		var h = Math.round(rect.height * ratio);
+
+		// Assigning width/height resets the bitmap even when the value is
+		// unchanged. Without this guard every resize event — an Android URL bar
+		// collapsing on scroll, a rotation, a desktop zoom — and every
+		// Draw/Type/Draw toggle silently erased a signature the customer had
+		// already drawn, and they were told to draw one they could still see.
+		if (ctx && pad.width === w && pad.height === h) return;
+
+		var previous = null;
+		if (ctx && strokes && pad.width && pad.height) {
+			previous = document.createElement("canvas");
+			previous.width = pad.width;
+			previous.height = pad.height;
+			previous.getContext("2d").drawImage(pad, 0, 0);
+		}
+
+		pad.width = w;
+		pad.height = h;
 		ctx = pad.getContext("2d");
 		ctx.scale(ratio, ratio);
 		ctx.lineWidth = 2;
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 		ctx.strokeStyle = "#111";
+		if (previous) {
+			// Redraw in CSS pixels — the context is already scaled by ratio.
+			ctx.drawImage(previous, 0, 0, rect.width, rect.height);
+		}
 	}
 
 	function setupPad() {
@@ -157,9 +179,14 @@
 
 	/* ------------------------------------------------------------ turnstile */
 
+	var turnstileRendered = false;
+
 	function startTurnstile() {
 		var host = $("cs-turnstile");
-		if (!host || !BOOT.turnstile_sitekey || !window.turnstile) return;
+		// Guarded: the immediate call and the poll below are not mutually
+		// exclusive on a warm cache, and Cloudflare refuses a second render.
+		if (turnstileRendered || !host || !BOOT.turnstile_sitekey || !window.turnstile) return;
+		turnstileRendered = true;
 		window.turnstile.render(host, {
 			sitekey: BOOT.turnstile_sitekey,
 			action: BOOT.turnstile_action || "contract-sign",
@@ -171,13 +198,26 @@
 				turnstileToken = null;
 				window.turnstile.reset();
 			},
+			"error-callback": function () {
+				// The widget itself failed. Open the session flagged, so the server
+				// records "we could not check" on the evidence rather than either
+				// blocking a real customer or silently laundering it as a pass.
+				widgetUnavailable();
+			},
 		});
 	}
 
-	function begin() {
+	function widgetUnavailable() {
+		if (sid) return;
+		turnstileToken = null;
+		begin(true);
+	}
+
+	function begin(unavailable) {
 		return post("erpnext_enhancements.project_enhancements.esign.portal.begin_signing", {
 			ref: BOOT.ref,
 			turnstile_token: turnstileToken,
+			widget_unavailable: unavailable ? 1 : 0,
 			esign_sid: sid,
 		}).then(function (result) {
 			if (result.esign_sid) sid = result.esign_sid;
@@ -196,6 +236,12 @@
 		var name = signedName();
 		if (!name) {
 			showError("Enter your full name as your signature.");
+			button.disabled = false;
+			return;
+		}
+		// Checked here as well as server-side: a blank address would otherwise
+		// spend one of the customer's limited confirmation attempts.
+		if (!requireEmail()) {
 			button.disabled = false;
 			return;
 		}
@@ -240,7 +286,18 @@
 			});
 	}
 
+	function requireEmail() {
+		var field = $("cs-email");
+		if (field && (field.value || "").trim()) return true;
+		showError("Type the email address this agreement was sent to.");
+		if (field) field.focus();
+		return false;
+	}
+
 	function decline() {
+		// The decline dialog never asked for the address, so without this a
+		// decline silently failed AND burned a confirmation attempt.
+		if (!requireEmail()) return;
 		if (!window.confirm("Let us know you don't want to sign this agreement?")) return;
 		var reason = window.prompt("Anything you'd like us to know? (optional)") || "";
 		var ready = sid ? Promise.resolve({}) : begin();
@@ -307,7 +364,6 @@
 
 		if (BOOT.turnstile_sitekey) {
 			if (window.turnstile) startTurnstile();
-			else window.onloadTurnstileCallback = startTurnstile;
 			var poll = setInterval(function () {
 				if (window.turnstile) {
 					clearInterval(poll);
@@ -316,6 +372,10 @@
 			}, 250);
 			setTimeout(function () {
 				clearInterval(poll);
+				// challenges.cloudflare.com never loaded (blocked, offline, outage).
+				// Open the session flagged rather than leaving the customer to hit
+				// a misleading "check your email address" when they press Sign.
+				if (!window.turnstile) widgetUnavailable();
 			}, 10000);
 		} else {
 			// No keys configured: open the session anyway so signing still works.

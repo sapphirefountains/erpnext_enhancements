@@ -302,6 +302,130 @@ class TestDoctypeContract(unittest.TestCase):
             self.assertIn(required, names)
 
 
+class TestExecutionOrdering(unittest.TestCase):
+    """Source-level guards for ordering bugs that are invisible at runtime until
+    a customer opens their PDF."""
+
+    def setUp(self):
+        self.src = (
+            APP_DIR / "project_enhancements" / "esign" / "lifecycle.py"
+        ).read_text(encoding="utf-8")
+
+    def test_contract_signature_fields_are_stamped_before_the_executed_render(self):
+        """The SIGNATURES block reads fill(doc.signed_by) / dt(doc.signed_on) off
+        the contract. Rendering before stamping froze a blank Print Name and Date
+        into the document the customer receives — permanently, because everything
+        downstream prefers the stored copy."""
+        stamp = self.src.index("contract.signed_by = evidence.signed_name")
+        render = self.src.index("body = contract.render_body()", stamp - 4000)
+        self.assertLess(stamp, render, "contract must be stamped before the executed render")
+
+    def test_delivery_is_enqueued_before_the_commit_it_rides_on(self):
+        """enqueue_after_commit attaches the job to the NEXT commit; committing
+        first hands delivery to whatever commit happens to come later."""
+        enqueue = self.src.index("enqueue_after_commit=True")
+        commit = self.src.index("frappe.db.commit()", enqueue)
+        self.assertLess(enqueue, commit)
+
+    def test_customer_email_is_not_gated_on_the_pdf(self):
+        """A wkhtmltopdf failure must not mean the customer gets nothing — the
+        page has already told them a copy is on its way."""
+        self.assertNotIn("if pdf_url:\n\t\t_email_signed_copy", self.src)
+        self.assertIn("_email_signed_copy(request, pdf_url)", self.src)
+
+    def test_delivery_is_idempotent_on_delivered_on(self):
+        self.assertIn('request.get("delivered_on")', self.src)
+
+
+class TestPortalGuards(unittest.TestCase):
+    def setUp(self):
+        self.src = (APP_DIR / "project_enhancements" / "esign" / "portal.py").read_text(
+            encoding="utf-8"
+        )
+
+    def _whitelisted(self):
+        """Every @frappe.whitelist function in the module, as AST nodes."""
+        import ast
+
+        tree = ast.parse(self.src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for deco in node.decorator_list:
+                target = deco.func if isinstance(deco, ast.Call) else deco
+                if isinstance(target, ast.Attribute) and target.attr == "whitelist":
+                    yield node
+                    break
+
+    def test_no_endpoint_parameter_is_named_sid(self):
+        """frappe pops `sid` during auth — from the query string, the form body
+        and JSON alike. That cost a full outage on the intake form."""
+        for node in self._whitelisted():
+            names = [a.arg for a in node.args.args] + [a.arg for a in node.args.kwonlyargs]
+            self.assertNotIn("sid", names, f"{node.name} takes a parameter named sid")
+
+    def test_never_splats_a_payload_onto_a_document(self):
+        """read_only is a UI hint; under ignore_permissions a splatted payload
+        could set status directly. Checked over the AST so the module docstring's
+        own description of the rule doesn't trip it."""
+        import ast
+
+        for node in ast.walk(ast.parse(self.src)):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in ("doc", "request", "contract")
+            ):
+                self.fail(f"mass assignment via {node.func.value.id}.update() at line {node.lineno}")
+
+    def test_email_comparison_is_constant_time_over_bytes(self):
+        """compare_digest only accepts str operands that are pure ASCII, so a
+        pasted address with an accent or a curly quote would raise instead of
+        returning the uniform failure."""
+        self.assertIn("hmac.compare_digest", self.src)
+        self.assertIn('.encode("utf-8")', self.src)
+
+    def test_blank_email_never_costs_an_attempt(self):
+        """The decline dialog never asks for the address; charging for a blank
+        let it silently spend the signer's whole hourly budget."""
+        body = self.src[self.src.index("def _email_matches") :]
+        guard = body.index('if not str(typed or "").strip():')
+        counter = body.index("_bump_counter")
+        self.assertLess(guard, counter)
+
+    def test_lifetime_attempt_counter_is_persisted_not_only_cached(self):
+        """The deploy pipeline flushes Redis on every release; a cache-only
+        lifetime limit would reset and the lockout would never fire."""
+        self.assertIn('"email_attempts"', self.src)
+        self.assertIn("frappe.db.set_value(", self.src)
+
+    def test_session_pins_the_token_so_a_resend_invalidates_an_open_tab(self):
+        self.assertIn('"token_hash": request.token_hash', self.src)
+        self.assertIn("_session_token_current", self.src)
+
+    def test_every_guest_endpoint_is_post_only_and_rate_limited(self):
+        import re
+
+        endpoints = re.findall(
+            r"@frappe\.whitelist\(allow_guest=True[^)]*\)\s*\n@rate_limit\([^)]*\)\s*\ndef (\w+)", self.src
+        )
+        declared = re.findall(r"@frappe\.whitelist\(allow_guest=True", self.src)
+        self.assertEqual(
+            len(endpoints), len(declared), "a guest endpoint is missing its rate limiter"
+        )
+        for name in endpoints:
+            self.assertIn(f"def {name}", self.src)
+
+    def test_guest_endpoints_all_gate_on_the_public_flag(self):
+        import re
+
+        for match in re.finditer(r"@frappe\.whitelist\(allow_guest=True.*?\ndef (\w+)\(.*?\n(.*?)(?=\n@|\Z)", self.src, re.S):
+            name, body = match.group(1), match.group(2)
+            self.assertIn("_require_public_page()", body, f"{name} does not 404 when switched off")
+
+
 class TestSettingsFlags(unittest.TestCase):
     def setUp(self):
         import json

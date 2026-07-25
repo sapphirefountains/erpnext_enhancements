@@ -388,6 +388,10 @@ scheduler_events = {
 		# declined-card dunning: retry failed Stripe auto-charges on a schedule,
 		# email the customer, and on exhaustion disable autopay + service hold.
 		"erpnext_enhancements.stripe_payments.core.dunning.run_dunning_cycle",
+		# contract e-signature housekeeping: retire timed-out signing links so the
+		# list view is truthful, and re-send a signed copy that never landed.
+		"erpnext_enhancements.project_enhancements.esign.tasks.expire_stale_requests",
+		"erpnext_enhancements.project_enhancements.esign.tasks.retry_undelivered",
 		"erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",

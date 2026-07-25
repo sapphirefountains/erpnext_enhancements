@@ -58,8 +58,13 @@ class InHouseProvider(SignatureProvider):
 		}
 
 	def refresh_request(self, request, contract=None):
-		"""Resend: a brand-new token, and the old hash is replaced (superseding
-		the previous link on this row) — see the module docstring."""
+		"""Resend: a brand-new token, superseding the previous link on this row.
+
+		The old hash is kept in ``previous_token_hash`` so someone who opens the
+		earlier email is told their link was replaced and to check for the newer
+		one — the alternative is a dead end on the most common stale-link case.
+		"""
+		request.previous_token_hash = request.token_hash
 		return self.create_request(request, contract)
 
 	def void_request(self, request, reason=None):

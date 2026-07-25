@@ -91,9 +91,19 @@ def resolve_request(token):
 		if not token_hash:
 			return None
 		name = frappe.db.get_value("Contract Signature Request", {"token_hash": token_hash}, "name")
+		if name:
+			return frappe.get_doc("Contract Signature Request", name)
+		# A link that was superseded by a resend: resolve it anyway so the page can
+		# say "we sent you a newer one" instead of a dead end. The caller checks
+		# status, and a superseded row is never signable.
+		name = frappe.db.get_value(
+			"Contract Signature Request", {"previous_token_hash": token_hash}, "name"
+		)
 		if not name:
 			return None
-		return frappe.get_doc("Contract Signature Request", name)
+		doc = frappe.get_doc("Contract Signature Request", name)
+		doc.flags.opened_with_superseded_link = True
+		return doc
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Contract e-sign: resolve failed")
 		return None
@@ -190,34 +200,52 @@ def execute_contract(request, evidence):
 	_apply_countersignature(request)
 	request.save(ignore_permissions=True)
 
-	# 3. The executed instrument: the agreement re-rendered now that sig()
-	#    resolves, plus a completion certificate. Stored so the customer's copy,
-	#    the attached copy and the desk print are one identical document that can
-	#    never drift with a later template edit.
+	# 3. Stamp the contract's own signature fields BEFORE rendering the executed
+	#    instrument. The SIGNATURES block reads `fill(doc.signed_by)` and
+	#    `dt(doc.signed_on)` straight off the contract, so rendering first would
+	#    freeze a blank Print Name and Date into the very document the customer
+	#    receives — permanently, because everything downstream prefers the stored
+	#    copy. The save() itself stays below, so the automation chain is unaffected.
+	contract.status = "Signed"
+	contract.signed_by = evidence.signed_name
+	contract.signed_on = getdate(signed_at)
+
+	# 4. The executed instrument: the agreement re-rendered now that sig() resolves
+	#    and the contract carries its signature fields, plus a completion
+	#    certificate. Stored so the customer's copy, the attached copy and the desk
+	#    print are one identical document that a later template edit cannot change.
 	try:
 		body = contract.render_body()
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Contract e-sign: executed render failed")
+		# A caught frappe.throw leaves its message queued; it must not surface in
+		# an anonymous signer's response.
+		frappe.clear_messages()
 		body = request.document_snapshot or ""
+		# The stored instrument is now the UNSIGNED text. The signature still
+		# stands, but a human needs to look — reuse the drift flag, which the
+		# staff alert already reports on.
+		drifted = 1
 	agreement_html = body + completion_certificate(request, contract)
 	request.db_set("agreement_html", agreement_html, update_modified=False)
 	request.db_set("agreement_hash", text_fingerprint(agreement_html), update_modified=False)
+	request.db_set("document_drifted", drifted, update_modified=False)
 
-	# 4. Flip the contract. A REAL save — see the module docstring. This fires
+	# 5. Flip the contract. A REAL save — see the module docstring. This fires
 	#    on_update_after_submit -> autocreate_maintenance_contract_on_signed.
-	contract.status = "Signed"
-	contract.signed_by = evidence.signed_name
-	contract.signed_on = getdate(signed_at)
 	contract.save()
 
-	frappe.db.commit()
-
+	# Registered BEFORE the commit it rides on: enqueue_after_commit attaches the
+	# job to the next commit, so committing first would hand delivery to whatever
+	# commit happened to come later — and lose it entirely to an intervening
+	# rollback.
 	frappe.enqueue(
 		"erpnext_enhancements.project_enhancements.esign.lifecycle.deliver_signed_contract",
 		queue="short",
 		enqueue_after_commit=True,
 		request_name=request.name,
 	)
+	frappe.db.commit()
 	return request
 
 
@@ -283,22 +311,28 @@ def _site_timezone():
 def deliver_signed_contract(request_name):
 	"""Build the signed PDF, attach it, email the customer, alert staff.
 
-	Idempotent: re-running after a partial failure skips whatever already landed,
-	so ``tasks.retry_undelivered`` can call it freely. Every sub-step is
-	individually guarded — none of them can undo the execution.
+	Idempotent: ``delivered_on`` is stamped once the customer has their copy, so
+	``tasks.retry_undelivered`` can call this freely without double-sending.
+	Every sub-step is individually guarded — none can undo the execution.
+
+	The customer email is deliberately **not** conditional on the PDF. The page
+	has already told them a copy is on its way, and wkhtmltopdf is the most
+	failure-prone thing in the stack; when it fails they get the executed
+	agreement inline instead of silence.
 	"""
 	request = frappe.get_doc("Contract Signature Request", request_name)
 	if request.status != "Signed":
 		return
+	if request.get("delivered_on"):
+		return
 
-	pdf_url = request.signed_document
-	if not pdf_url:
-		pdf_url = _build_signed_pdf(request)
+	pdf_url = request.signed_document or _build_signed_pdf(request)
 
-	if pdf_url:
-		_email_signed_copy(request, pdf_url)
+	if _email_signed_copy(request, pdf_url):
+		request.db_set("delivered_on", now_datetime(), update_modified=False)
 	_alert_staff_signed(request)
 	_comment_evidence(request)
+	frappe.db.commit()
 
 
 def _build_signed_pdf(request):
@@ -356,30 +390,59 @@ def _print_wrapper(html):
 
 
 def _email_signed_copy(request, pdf_url):
-	"""Send the customer their executed copy. Best-effort."""
+	"""Send the customer their executed copy. Returns True when it went out.
+
+	Attaches the PDF when there is one; when the PDF failed, the executed
+	agreement rides inline instead. The signer has already been told a copy is
+	coming — sending nothing is the one outcome to avoid.
+	"""
 	try:
 		if not request.signer_email:
-			return
-		from frappe.utils.file_manager import get_file
+			return False
 
-		_, content = get_file(pdf_url)
+		attachments = []
+		if pdf_url:
+			try:
+				from frappe.utils.file_manager import get_file
+
+				_, content = get_file(pdf_url)
+				attachments = [{"fname": f"{request.project_contract}-signed.pdf", "fcontent": content}]
+			except Exception:
+				frappe.log_error(
+					frappe.get_traceback(), f"Contract e-sign: signed PDF unreadable ({request.name})"
+				)
+
+		message = frappe.render_template(
+			"erpnext_enhancements/templates/emails/project_enhancements/contract_signed_customer.html",
+			{
+				"signer_name": request.signed_name,
+				"contract": request.project_contract,
+				"signed_on": request.signed_on,
+				"attached": bool(attachments),
+			},
+		)
+		if not attachments:
+			message += (
+				"<hr><p><i>"
+				+ frappe.utils.escape_html(
+					frappe._("A copy of your executed agreement follows. Reply to this email for a PDF.")
+				)
+				+ "</i></p>"
+				+ (request.agreement_html or "")
+			)
+
 		frappe.sendmail(
 			recipients=[request.signer_email],
 			subject=frappe._("Your signed agreement — {0}").format(request.project_contract),
-			message=frappe.render_template(
-				"erpnext_enhancements/templates/emails/project_enhancements/contract_signed_customer.html",
-				{
-					"signer_name": request.signed_name,
-					"contract": request.project_contract,
-					"signed_on": request.signed_on,
-				},
-			),
-			attachments=[{"fname": f"{request.project_contract}-signed.pdf", "fcontent": content}],
+			message=message,
+			attachments=attachments,
 			reference_doctype="Contract Signature Request",
 			reference_name=request.name,
 		)
+		return True
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Contract e-sign: customer email failed ({request.name})")
+		return False
 
 
 def _alert_staff_signed(request):

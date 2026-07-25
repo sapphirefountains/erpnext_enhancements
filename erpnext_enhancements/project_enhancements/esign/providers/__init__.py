@@ -48,4 +48,4 @@ def get_provider(key=None):
 	return provider()
 
 
-__all__ = ["SignatureProvider", "get_provider", "configured_provider_key", "DEFAULT_PROVIDER"]
+__all__ = ["DEFAULT_PROVIDER", "SignatureProvider", "configured_provider_key", "get_provider"]
