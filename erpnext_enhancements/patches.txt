@@ -223,3 +223,12 @@ erpnext_enhancements.patches.rename_accounts_role_profile
 # (new Settings field; a field default only applies at creation, and the Single
 # already exists on live sites, so it comes up blank without this)
 erpnext_enhancements.patches.default_po_approval_threshold
+# v1.177.0 e-signature: teach the live Maintenance Services Agreement template to
+# print a captured signature. seed_contract_templates is insert-only, so the repo
+# edit does not reach an existing site; this replaces the exact SIGNATURES block
+# and refuses (logging) if the site's wording diverged.
+erpnext_enhancements.patches.add_esign_signature_block
+# v1.177.0 e-signature: seed the signing consent text and the E-SIGN consumer
+# disclosure (field defaults only apply at Single creation; the Single already
+# exists on live sites). Fill-blanks-only — never overwrites edited legal wording.
+erpnext_enhancements.patches.seed_contract_esign_defaults

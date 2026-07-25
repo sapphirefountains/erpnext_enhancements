@@ -73,6 +73,8 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
+      - name: Contract e-signature (tokens, sig() fallthrough, template patch)
+        run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest

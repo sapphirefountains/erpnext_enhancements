@@ -308,3 +308,71 @@ def throw_if_fountain_move_disabled():
 			),
 			title=frappe._("Feature Disabled"),
 		)
+
+
+def contract_esign_enabled():
+	"""True when online contract signing is switched on.
+
+	Default OFF (the staged-rollout contract). Gates the DESK surface: the "Send
+	for Signature" / Resend / Void actions on Project Contract. The doctype, the
+	``sig()`` render helper and the signed-document machinery ship regardless, so
+	a contract signed before the switch was flipped still prints its signature
+	and a stuck request stays workable.
+
+	Missing-field-safe: read inside ``boot_session`` on every desk page load, and
+	v16's ``db.get_single_value`` THROWS when the field is not yet in the Settings
+	meta (new code live before migrate has synced the doctype), which would 500
+	every desk page. Treated as OFF until the field exists.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("contract_esign_enabled"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "contract_esign_enabled"))
+	)
+
+
+def contract_esign_public_page_enabled():
+	"""True when the guest signing page at ``/contract-sign`` is published.
+
+	Deliberately narrower than :func:`contract_esign_enabled` and ANDed with it,
+	mirroring ``fountain_move_public_form_enabled``: this is the app's SECOND
+	unauthenticated write path and the first that mutates a submitted, legally
+	operative document, so it gets its own switch an operator must flip on
+	purpose after the pre-flight (Turnstile keys, consent + ESIGN disclosure text,
+	the signature block present in the live Contract Template). Turning it off
+	404s the page while leaving the desk actions and any in-flight request
+	inspectable.
+
+	Missing-field-safe for the same reason as above.
+	"""
+	if not contract_esign_enabled():
+		return False
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field(
+		"contract_esign_public_page_enabled"
+	):
+		return False
+	return bool(
+		cint(
+			frappe.db.get_single_value(
+				"ERPNext Enhancements Settings", "contract_esign_public_page_enabled"
+			)
+		)
+	)
+
+
+def throw_if_contract_esign_disabled():
+	"""Guard for the DESK e-signature endpoints (send, resend, void).
+
+	Not used by the guest endpoints — those check
+	:func:`contract_esign_public_page_enabled` and raise ``DoesNotExistError``
+	rather than explaining a switched-off feature to an anonymous caller.
+	"""
+	if not contract_esign_enabled():
+		frappe.throw(
+			frappe._(
+				"Online contract signing is currently switched off "
+				"(ERPNext Enhancements Settings → Contract E-Signature). You can still "
+				"print the agreement and use Mark as Signed for a paper signature."
+			),
+			title=frappe._("Feature Disabled"),
+		)

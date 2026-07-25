@@ -249,6 +249,35 @@ class ProjectContract(Document):
 	def on_cancel(self):
 		self.status = "Void"
 
+	def executed_body(self):
+		"""The document to print: the executed instrument if signed, else a live render.
+
+		Once a contract has been signed electronically the stored
+		``agreement_html`` on its Contract Signature Request is the executed
+		instrument — the agreement as the customer saw it, with their signature in
+		place and the completion certificate appended. Printing that rather than
+		re-rendering means the desk print, the customer's emailed copy and the PDF
+		attached to the contract are one identical document, and a later edit to
+		the (site-editable) Contract Template can never change what a signed
+		contract says.
+
+		Falls back to :meth:`render_body` for unsigned contracts and for anything
+		signed on paper.
+		"""
+		try:
+			executed = frappe.db.get_value(
+				"Contract Signature Request",
+				{"project_contract": self.get("name"), "status": "Signed"},
+				"agreement_html",
+				order_by="signed_on desc",
+			)
+			if executed:
+				return executed
+		except Exception:
+			# Never let an evidence lookup break a print.
+			frappe.log_error(frappe.get_traceback(), "Project Contract: executed body lookup failed")
+		return self.render_body()
+
 	def render_body(self):
 		"""Rendered agreement HTML — called by the 'Project Contract' print format."""
 		body = frappe.db.get_value("Contract Template", self.get("contract_template"), "body")
@@ -297,8 +326,23 @@ def _multiline(value, width=80, lines=3):
 
 
 def _render_context(doc):
+	from erpnext_enhancements.project_enhancements.esign.render import (
+		signature_markup,
+		signed_signature_for,
+	)
+
 	phases = {row.phase_key: row for row in (doc.get("phases") or [])}
 	options = {row.option_key: row for row in (doc.get("service_options") or [])}
+
+	# Resolved once — the SIGNATURES block calls sig() several times per render.
+	# When the contract has no signature (the paper flow, and every unsigned
+	# contract) sig() returns exactly what blank() does, so existing output is
+	# unchanged.
+	signature = signed_signature_for(doc)
+
+	def _sig(party="client", width=30):
+		return signature_markup(signature, party=party, width=width, blank=_blank)
+
 	return {
 		"doc": doc,
 		"fill": _fill,
@@ -307,6 +351,11 @@ def _render_context(doc):
 		"money": _money,
 		"dt": _dt,
 		"multiline": _multiline,
+		"sig": _sig,
+		# The countersignature (recorded, never required) lives on the signature
+		# record, not the contract — templates read it from here. Always a dict,
+		# so an unsigned render resolves to empty values and prints blanks.
+		"signature": signature or frappe._dict(),
 		"phases": phases,
 		"service_options": options,
 		"frappe": frappe._dict(utils=frappe.utils),

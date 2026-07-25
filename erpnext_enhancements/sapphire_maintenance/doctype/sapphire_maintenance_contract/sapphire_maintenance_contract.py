@@ -565,24 +565,64 @@ def autocreate_maintenance_contract_on_signed(doc, method=None):
 		"Sapphire Maintenance Contract", {"project": doc.project, "status": ["in", ["Draft", "Active"]]}
 	):
 		return
+	# The signing path may be a Guest (online signature), where a msgprint would
+	# render internal desk instructions into a customer's response. Staff get the
+	# toast; a Guest-path failure is escalated to the contract owner instead, so
+	# it still reaches a human.
+	is_desk_user = frappe.session.user not in ("Guest", None)
+
 	try:
 		operational = make_contract_from_project_contract(doc.name)
 		operational.insert(ignore_permissions=True)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Auto-create Maintenance Contract on Signed failed")
+		if is_desk_user:
+			frappe.msgprint(
+				_(
+					"Could not auto-draft the operational Maintenance Contract for this agreement — "
+					"create it manually via Create > Maintenance Contract. (Details logged.)"
+				),
+				indicator="red",
+				alert=True,
+			)
+		else:
+			_notify_owner_autocreate_failed(doc)
+		return
+	if is_desk_user:
 		frappe.msgprint(
-			_(
-				"Could not auto-draft the operational Maintenance Contract for this agreement — "
-				"create it manually via Create > Maintenance Contract. (Details logged.)"
+			_("Drafted Maintenance Contract {0} from this signed agreement — review it and set it Active.").format(
+				frappe.get_link_to_form("Sapphire Maintenance Contract", operational.name)
 			),
-			indicator="red",
+			indicator="green",
 			alert=True,
 		)
-		return
-	frappe.msgprint(
-		_("Drafted Maintenance Contract {0} from this signed agreement — review it and set it Active.").format(
-			frappe.get_link_to_form("Sapphire Maintenance Contract", operational.name)
-		),
-		indicator="green",
-		alert=True,
-	)
+
+
+def _notify_owner_autocreate_failed(doc):
+	"""Tell the contract owner that the operational contract needs creating by hand.
+
+	Used when the agreement was signed online: there is no desk session to show a
+	message to, and a silently missing Maintenance Contract would stall every
+	downstream step (scheduling, dispatch, billing).
+	"""
+	try:
+		owner = doc.get("owner")
+		if not owner:
+			return
+		frappe.get_doc(
+			{
+				"doctype": "Notification Log",
+				"subject": _("Action needed: draft the Maintenance Contract for {0}").format(doc.name),
+				"email_content": _(
+					"{0} was signed online, but the operational Maintenance Contract could not be "
+					"drafted automatically. Open the agreement and use Create &gt; Maintenance Contract. "
+					"(Details are in the Error Log.)"
+				).format(doc.name),
+				"document_type": "Project Contract",
+				"document_name": doc.name,
+				"for_user": owner,
+				"type": "Alert",
+			}
+		).insert(ignore_permissions=True)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Auto-create failure notification failed")

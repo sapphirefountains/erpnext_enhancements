@@ -111,7 +111,22 @@
   "fmr_customer_group_residential",
   "fmr_customer_group_commercial",
   "fountain_move_notify_emails",
-  "fountain_move_locations"
+  "fountain_move_locations",
+  "contract_esign_section",
+  "contract_esign_enabled",
+  "contract_esign_public_page_enabled",
+  "contract_esign_provider",
+  "contract_esign_link_expiry_days",
+  "contract_esign_offer_autopay",
+  "contract_esign_column_break_1",
+  "contract_esign_turnstile_site_key",
+  "contract_esign_turnstile_secret_key",
+  "contract_esign_countersigner_name",
+  "contract_esign_countersigner_title",
+  "contract_esign_text_section",
+  "contract_esign_consent_text",
+  "contract_esign_disclosure_text",
+  "contract_esign_notify_emails"
  ],
  "fields": [
   {
@@ -820,6 +835,109 @@
    "fieldtype": "Table",
    "label": "Partner Store Locations",
    "options": "Fountain Move Location"
+  },
+  {
+   "fieldname": "contract_esign_section",
+   "fieldtype": "Section Break",
+   "label": "Contract E-Signature"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for online contract signing: the \"Send for Signature\" action on Project Contract and the signed-document delivery. Off by default. The paper flow (Mark as Signed) works either way.",
+   "fieldname": "contract_esign_enabled",
+   "fieldtype": "Check",
+   "label": "Contract E-Signature"
+  },
+  {
+   "default": "0",
+   "depends_on": "contract_esign_enabled",
+   "description": "Publish the customer signing page at /contract-sign. This is an unauthenticated page that executes a legally operative document, so it has its own switch: flip it only after the Turnstile keys, the consent and disclosure text below, and the signature block in the live Contract Template are all in place. Off 404s the page and leaves the desk actions working.",
+   "fieldname": "contract_esign_public_page_enabled",
+   "fieldtype": "Check",
+   "label": "Publish Public Signing Page"
+  },
+  {
+   "default": "In-House",
+   "depends_on": "contract_esign_enabled",
+   "description": "Who collects the signature. \"In-House\" uses the signing page on this site. Each request records the provider in force when it was sent, so changing this never affects links already out.",
+   "fieldname": "contract_esign_provider",
+   "fieldtype": "Select",
+   "label": "Signature Provider",
+   "options": "In-House"
+  },
+  {
+   "default": "30",
+   "depends_on": "contract_esign_enabled",
+   "description": "Days a signing link stays valid. An expired link shows the customer a friendly message and offers to send a fresh one; staff can also resend, which issues a new link and retires the old one.",
+   "fieldname": "contract_esign_link_expiry_days",
+   "fieldtype": "Int",
+   "label": "Signing Link Expiry (Days)"
+  },
+  {
+   "default": "1",
+   "depends_on": "contract_esign_enabled",
+   "description": "After signing, offer the customer a secure link to save a card for automatic payments (Exhibit B of the maintenance agreement promises exactly this). Entirely optional for the customer — declining never affects the signature.",
+   "fieldname": "contract_esign_offer_autopay",
+   "fieldtype": "Check",
+   "label": "Offer Autopay After Signing"
+  },
+  {
+   "fieldname": "contract_esign_column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "description": "Cloudflare Turnstile site key for the signing page (public — it is emitted into the page source by design). May be the same widget as the intake form if its hostname matches.",
+   "fieldname": "contract_esign_turnstile_site_key",
+   "fieldtype": "Data",
+   "label": "Turnstile Site Key"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "description": "Cloudflare Turnstile secret key, used server-side for siteverify. Never leaves the server. If Cloudflare cannot be reached the signature is still accepted and flagged for review — a signer already holds a single-use link sent to a known address, so blocking execution would cost a contract without closing a real gap.",
+   "fieldname": "contract_esign_turnstile_secret_key",
+   "fieldtype": "Password",
+   "label": "Turnstile Secret Key"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "description": "Name printed on the Service Provider signature line of an executed agreement. Recorded for completeness — a countersignature never gates execution.",
+   "fieldname": "contract_esign_countersigner_name",
+   "fieldtype": "Data",
+   "label": "Countersigner Name"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "description": "Title printed under the Service Provider signature (e.g. \"Managing Member\").",
+   "fieldname": "contract_esign_countersigner_title",
+   "fieldtype": "Data",
+   "label": "Countersigner Title"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "fieldname": "contract_esign_text_section",
+   "fieldtype": "Section Break",
+   "label": "Signing Consent Text"
+  },
+  {
+   "description": "Shown next to the signature checkbox and recorded verbatim (with a hash) on every signature as proof of intent to sign. Edit here when legal wording changes; already-executed signatures keep the text that was shown at the time.",
+   "fieldname": "contract_esign_consent_text",
+   "fieldtype": "Long Text",
+   "label": "Signature Consent Text"
+  },
+  {
+   "description": "The E-SIGN Act consumer disclosure shown before signing and recorded verbatim on every signature: the right to receive a paper copy, how to withdraw consent, and the hardware/software needed to read and keep the agreement. Required for an electronic signature to be enforceable against a consumer.",
+   "fieldname": "contract_esign_disclosure_text",
+   "fieldtype": "Long Text",
+   "label": "Electronic Records Disclosure"
+  },
+  {
+   "depends_on": "contract_esign_enabled",
+   "description": "Extra addresses alerted when a contract is signed or declined, alongside the contract owner. Leave empty to notify the owner only.",
+   "fieldname": "contract_esign_notify_emails",
+   "fieldtype": "Table",
+   "label": "Signature Notification Emails",
+   "options": "Project Reminder Email"
   }
  ],
  "issingle": 1,
