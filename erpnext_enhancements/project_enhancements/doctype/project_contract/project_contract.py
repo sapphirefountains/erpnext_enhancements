@@ -250,13 +250,33 @@ class ProjectContract(Document):
 		self.status = "Void"
 		self._void_live_signature_requests()
 
+	def on_update_after_submit(self):
+		"""Retire any live signing link once the contract is Signed.
+
+		Signing online already leaves its own request at ``Signed``, so this exists
+		for the paper route: "Mark as Signed" flips the status and would otherwise
+		leave a request sitting at ``Sent``, which the reminder sweep would keep
+		chasing and eventually report as "we sent every reminder and it is still
+		unsigned" about an agreement that was signed a fortnight ago.
+
+		``_void_live_signature_requests`` only touches Sent/Viewed rows, so the
+		e-signature path is unaffected.
+		"""
+		if self.get("status") == "Signed":
+			self._void_live_signature_requests()
+
 	def _void_live_signature_requests(self):
-		"""Kill any signing link still in flight when the contract is cancelled.
+		"""Kill any signing link still in flight.
 
 		A customer must never be able to execute an agreement that has been voided
-		or superseded by an amendment. The token is cleared as well as the status,
-		so the link stops resolving immediately rather than waiting for the daily
-		expiry sweep. Best-effort: a cancel must not fail over this.
+		or superseded by an amendment, and a link left live after a paper signature
+		is a request the reminder sweep would keep chasing. The token is cleared as
+		well as the status, so the link stops resolving immediately rather than
+		waiting for the daily expiry sweep.
+
+		Only Sent/Viewed rows are touched, so a request that executed the contract
+		itself keeps its own record. Best-effort: neither a cancel nor a status
+		change must fail over this.
 		"""
 		try:
 			live = frappe.get_all(

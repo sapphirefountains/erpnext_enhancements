@@ -86,6 +86,9 @@ def send_for_signature(project_contract, recipient_email=None, message=None):
 	result = get_provider(request.provider).create_request(request, contract)
 	request.status = "Sent"
 	request.sent_on = now_datetime()
+	# Stable anchor for "how long has this been outstanding" — sent_on moves with
+	# every resend and every reminder, so it cannot answer that question.
+	request.first_sent_on = request.sent_on
 	request.provider_reference = result.get("provider_reference")
 	request.provider_status = result.get("provider_status")
 	request.save(ignore_permissions=True)

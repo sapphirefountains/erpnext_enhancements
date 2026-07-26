@@ -16,6 +16,7 @@
   "template_key",
   "provider",
   "expires_on",
+  "first_sent_on",
   "sent_on",
   "sent_by",
   "resend_count",
@@ -155,6 +156,13 @@
    "fieldname": "expires_on",
    "fieldtype": "Datetime",
    "label": "Expires On",
+   "read_only": 1
+  },
+  {
+   "description": "When this agreement first went out. `Sent On` moves with every resend and reminder, so it cannot answer \"how long has this been outstanding\" — this can.",
+   "fieldname": "first_sent_on",
+   "fieldtype": "Datetime",
+   "label": "First Sent On",
    "read_only": 1
   },
   {

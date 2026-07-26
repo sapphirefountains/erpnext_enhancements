@@ -232,3 +232,8 @@ erpnext_enhancements.patches.add_esign_signature_block
 # disclosure (field defaults only apply at Single creation; the Single already
 # exists on live sites). Fill-blanks-only — never overwrites edited legal wording.
 erpnext_enhancements.patches.seed_contract_esign_defaults
+# v1.179.0 e-signature: seed the reminder cadence on existing sites. Same trap as
+# seed_contract_esign_defaults — a field default only applies when the Settings
+# Single is first created, and it already exists everywhere, so without this the
+# whole reminder feature reads a blank cadence and never chases anyone.
+erpnext_enhancements.patches.seed_contract_esign_reminder_days

@@ -589,27 +589,88 @@ class TestReminders(unittest.TestCase):
         body = body[: body.index("def digest_awaiting_signature")]
         self.assertIn('"stale_alerted"', body)
 
-    def test_blank_cadence_means_never_chase(self):
-        """An operator who empties the field has made a choice; it must not fall
-        back to the default."""
-        body = self.src[self.src.index("def reminder_offsets") :]
-        body = body[: body.index("def send_signature_reminders")]
-        self.assertIn("if raw is None:", body)
-        self.assertNotIn('or DEFAULT_REMINDER_DAYS', body.split("if raw is None:")[0])
+    def test_shipped_cadence_reaches_an_existing_site(self):
+        """A Single's field default only applies at creation and the Settings
+        Single already exists everywhere, so without a seeding patch the cadence
+        reads blank and the whole feature ships inert. get_single_value returns ""
+        for an unset Data field — never None — so there is no runtime fallback."""
+        patch = APP_DIR / "patches" / "seed_contract_esign_reminder_days.py"
+        self.assertTrue(patch.exists(), "no patch seeds the reminder cadence")
+        src = patch.read_text(encoding="utf-8")
+        self.assertIn("contract_esign_reminder_days", src)
+        self.assertIn("set_single_value", src)
+        registered = (APP_DIR / "patches.txt").read_text(encoding="utf-8")
+        self.assertIn("seed_contract_esign_reminder_days", registered)
 
-    def test_offsets_tolerate_garbage(self):
+    def test_seed_patch_never_overwrites_a_deliberate_choice(self):
+        src = (APP_DIR / "patches" / "seed_contract_esign_reminder_days.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".strip():", src)
+        self.assertIn("return", src.split(".strip():")[1][:60])
+
+    def test_blank_cadence_means_never_chase(self):
+        """An operator who empties the field has made a choice."""
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        self.assertIn("if not offsets:", body)
+
+    def test_offsets_preserve_order_and_repeats(self):
+        """These are GAPS, so "7,7,7" means chase weekly three times and "10,3"
+        means a long wait then a quick follow-up. Sorting or de-duplicating would
+        silently rewrite the operator's schedule."""
         import re
 
         # Mirror the parse so a change to it fails here rather than in production.
-        parse = lambda raw: sorted(  # noqa: E731
-            {int(t) for t in str(raw).split(",") if t.strip().isdigit() and int(t) > 0}
-        )
+        parse = lambda raw: [  # noqa: E731
+            int(t) for t in str(raw or "").split(",") if t.strip().isdigit() and int(t) > 0
+        ]
         self.assertEqual(parse("3,7"), [3, 7])
-        self.assertEqual(parse("7, 3, 3"), [3, 7])
+        self.assertEqual(parse("7,7,7"), [7, 7, 7])
+        self.assertEqual(parse("10, 3"), [10, 3])
         self.assertEqual(parse(""), [])
+        self.assertEqual(parse(None), [])
         self.assertEqual(parse("nonsense; drop table"), [])
         self.assertEqual(parse("0,-1,2"), [2])
-        self.assertTrue(re.search(r"isdigit\(\)", self.src))
+        # And the implementation must not re-introduce sorting/de-duplication.
+        body = self.src[self.src.index("def reminder_offsets") :]
+        body = body[body.index('raw = frappe.db.get_single_value') :]
+        body = body[: body.index("def send_signature_reminders")]
+        self.assertNotIn("sorted(", body)
+        self.assertTrue(re.search(r"isdigit\(\)", body))
+
+    def test_a_nudge_that_cannot_be_sent_does_not_burn_a_reminder(self):
+        """Otherwise the 'we sent every reminder' alert claims reminders that were
+        never sent — for a contract that may already be signed on paper."""
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        body = body[: body.index("def _still_chaseable")]
+        check = body.index("_still_chaseable(row)")
+        stamp = body.index('"reminders_sent": sent + 1')
+        self.assertLess(check, stamp, "sendability is checked after the counter is stamped")
+
+    def test_a_failed_reminder_rolls_back_the_token_rotation(self):
+        """The resend persists a superseding token before it emails, so a send
+        failure must not leave the customer's working link rotated out."""
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        body = body[: body.index("def _still_chaseable")]
+        self.assertIn("frappe.db.rollback()", body)
+
+    def test_reminder_sweep_takes_the_longest_quiet_first(self):
+        """Default `modified desc` plus a batch cap would starve exactly the rows
+        the feature exists to chase."""
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        self.assertIn('order_by="sent_on asc"', body)
+
+    def test_stale_alert_waits_out_the_final_gap(self):
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        self.assertIn("quiet_days >= offsets[-1]", body)
+
+    def test_digest_days_out_uses_a_stable_anchor(self):
+        """Every nudge re-sends and moves sent_on, so a "Days out" column driven
+        by it would reset to 0 on each chase and report the most-chased row as the
+        freshest."""
+        body = self.src[self.src.index("def digest_awaiting_signature") :]
+        self.assertIn("first_sent_on", body)
+        self.assertIn("row.first_sent_on or row.sent_on", body)
 
     def test_reminders_do_not_unlock_a_locked_signer(self):
         """An automated chase is not a staff decision to clear the lockout."""
