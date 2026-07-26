@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.179.0] - 2026-07-25
+
+### Added
+
+- **Chasing an unsigned agreement, and seeing the ones that stalled.** A signing
+  link that goes unanswered is a stalled job, and nobody watches a list. Three
+  additions close that:
+
+  - **Automatic reminders** on a configurable cadence (**Signature Reminder Gaps**,
+    default `3,7` — nudge after 3 quiet days, then 7 more, then stop). Each nudge
+    issues a **fresh link**, because the original token is stored only as a hash
+    and cannot be recovered; anyone opening the older email is told their link was
+    replaced and offered a working one. Counters are stamped *before* each send,
+    so a scheduler window evaluated twice cannot double-chase a customer. Blank
+    means never chase.
+  - **A one-time "still unsigned" alert** to the contract owner once the last
+    reminder goes unanswered — the point at which it needs a phone call rather
+    than another email.
+  - **A weekly "awaiting signature" digest** to the notification list, showing how
+    many days each has been out, whether the customer ever opened it, and how many
+    times they have been chased. Silent when nothing is outstanding.
+
+  Reminders deliberately do **not** clear the email-confirmation lockout: an
+  automated chase is not a staff decision to unlock someone. A **staff** resend
+  is, and now restarts everything — lockout, reminder schedule and stale alert —
+  so a contract chased to exhaustion can be chased again after a phone call.
+
+- **Signature request list view.** Rows are coloured by what they need from a
+  human rather than by raw status: a link nobody has opened reads differently
+  from one opened and abandoned, and both differ from one already chased. A
+  signed contract whose text drifted between sending and signing is flagged
+  amber rather than green.
+
 ## [1.178.0] - 2026-07-25
 
 ### Added

@@ -392,6 +392,9 @@ scheduler_events = {
 		# list view is truthful, and re-send a signed copy that never landed.
 		"erpnext_enhancements.project_enhancements.esign.tasks.expire_stale_requests",
 		"erpnext_enhancements.project_enhancements.esign.tasks.retry_undelivered",
+		# chase an unsigned agreement on the configured cadence, then tell the
+		# contract owner once the last nudge goes unanswered.
+		"erpnext_enhancements.project_enhancements.esign.tasks.send_signature_reminders",
 		"erpnext_enhancements.script_migrations.customer.customer_inactivity_reminder",
 		"erpnext_enhancements.script_migrations.project.update_elapsed_time_daily",
 		"erpnext_enhancements.api.user_drafts.cleanup_stale_drafts",
@@ -451,6 +454,9 @@ scheduler_events = {
 	],
 	"weekly": [
 		"erpnext_enhancements.tasks.suggest_truck_restocks",
+		# one summary of every agreement still out for signature, so a link that
+		# quietly went nowhere is visible without anyone remembering to look.
+		"erpnext_enhancements.project_enhancements.esign.tasks.digest_awaiting_signature",
 	],
 }
 

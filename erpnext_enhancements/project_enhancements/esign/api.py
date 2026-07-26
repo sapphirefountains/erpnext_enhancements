@@ -86,6 +86,9 @@ def send_for_signature(project_contract, recipient_email=None, message=None):
 	result = get_provider(request.provider).create_request(request, contract)
 	request.status = "Sent"
 	request.sent_on = now_datetime()
+	# Stable anchor for "how long has this been outstanding" — sent_on moves with
+	# every resend and every reminder, so it cannot answer that question.
+	request.first_sent_on = request.sent_on
 	request.provider_reference = result.get("provider_reference")
 	request.provider_status = result.get("provider_status")
 	request.save(ignore_permissions=True)
@@ -168,7 +171,13 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	request.sent_on = now_datetime()
 	request.resend_count = (request.resend_count or 0) + 1
 	if frappe.utils.cint(reset_attempts):
+		# A deliberate staff resend is a fresh start: it clears the confirmation
+		# lockout AND restarts the reminder schedule, so a contract someone chased
+		# to exhaustion can be chased again after a phone call. The automated
+		# reminder path passes False and therefore does neither.
 		request.email_attempts = 0
+		request.reminders_sent = 0
+		request.stale_alerted = 0
 	request.save(ignore_permissions=True)
 
 	_email_invite(request, contract, result["signing_url"], message)
