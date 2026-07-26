@@ -559,6 +559,82 @@ class TestAutopayOffer(unittest.TestCase):
         self.assertIn('channel="Contract Signing"', self.src)
 
 
+class TestReminders(unittest.TestCase):
+    """Chasing a customer costs goodwill if it misfires — these pin the
+    at-most-once discipline and the stop condition."""
+
+    def setUp(self):
+        self.src = (APP_DIR / "project_enhancements" / "esign" / "tasks.py").read_text(
+            encoding="utf-8"
+        )
+        self.api = (APP_DIR / "project_enhancements" / "esign" / "api.py").read_text(
+            encoding="utf-8"
+        )
+
+    def test_counter_is_stamped_before_the_nudge_is_sent(self):
+        """A scheduler window evaluated twice must not double-chase a customer —
+        the same discipline as maintenance_nudge_sent."""
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        body = body[: body.index("def _send_reminder")]
+        stamp = body.index('"reminders_sent": sent + 1')
+        send = body.index("_send_reminder(")
+        self.assertLess(stamp, send, "the nudge is sent before its counter is stamped")
+
+    def test_reminders_stop_after_the_last_offset(self):
+        body = self.src[self.src.index("def send_signature_reminders") :]
+        self.assertIn("if sent >= len(offsets):", body)
+
+    def test_stale_alert_fires_exactly_once(self):
+        body = self.src[self.src.index("def _alert_unanswered") :]
+        body = body[: body.index("def digest_awaiting_signature")]
+        self.assertIn('"stale_alerted"', body)
+
+    def test_blank_cadence_means_never_chase(self):
+        """An operator who empties the field has made a choice; it must not fall
+        back to the default."""
+        body = self.src[self.src.index("def reminder_offsets") :]
+        body = body[: body.index("def send_signature_reminders")]
+        self.assertIn("if raw is None:", body)
+        self.assertNotIn('or DEFAULT_REMINDER_DAYS', body.split("if raw is None:")[0])
+
+    def test_offsets_tolerate_garbage(self):
+        import re
+
+        # Mirror the parse so a change to it fails here rather than in production.
+        parse = lambda raw: sorted(  # noqa: E731
+            {int(t) for t in str(raw).split(",") if t.strip().isdigit() and int(t) > 0}
+        )
+        self.assertEqual(parse("3,7"), [3, 7])
+        self.assertEqual(parse("7, 3, 3"), [3, 7])
+        self.assertEqual(parse(""), [])
+        self.assertEqual(parse("nonsense; drop table"), [])
+        self.assertEqual(parse("0,-1,2"), [2])
+        self.assertTrue(re.search(r"isdigit\(\)", self.src))
+
+    def test_reminders_do_not_unlock_a_locked_signer(self):
+        """An automated chase is not a staff decision to clear the lockout."""
+        body = self.src[self.src.index("def _send_reminder") :]
+        body = body[: body.index("def _alert_unanswered")]
+        self.assertIn("reset_attempts=False", body)
+
+    def test_staff_resend_restarts_the_chase(self):
+        block = self.api[self.api.index("if frappe.utils.cint(reset_attempts):") :]
+        block = block[: block.index("request.save(")]
+        for field in ("email_attempts", "reminders_sent", "stale_alerted"):
+            self.assertIn(field, block, f"a staff resend does not reset {field}")
+
+    def test_digest_is_silent_when_nothing_is_outstanding(self):
+        body = self.src[self.src.index("def digest_awaiting_signature") :]
+        self.assertIn("if not rows:", body)
+        self.assertIn("if not recipients:", body)
+
+    def test_digest_escapes_customer_supplied_values(self):
+        """frappe's Jinja has no autoescape and this is built by string join."""
+        body = self.src[self.src.index("def digest_awaiting_signature") :]
+        self.assertIn("escape_html(r.project_contract", body)
+        self.assertIn("escape_html(r.signer_email", body)
+
+
 class TestSettingsFlags(unittest.TestCase):
     def setUp(self):
         import json

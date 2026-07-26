@@ -117,6 +117,7 @@
   "contract_esign_public_page_enabled",
   "contract_esign_provider",
   "contract_esign_link_expiry_days",
+  "contract_esign_reminder_days",
   "contract_esign_offer_autopay",
   "contract_esign_column_break_1",
   "contract_esign_turnstile_site_key",
@@ -872,6 +873,14 @@
    "fieldname": "contract_esign_link_expiry_days",
    "fieldtype": "Int",
    "label": "Signing Link Expiry (Days)"
+  },
+  {
+   "default": "3,7",
+   "depends_on": "contract_esign_enabled",
+   "description": "Days of silence before each nudge, comma-separated. \"3,7\" means: nudge 3 days after the link is sent, then 7 days after that nudge if it is still unsigned, then stop. Each nudge issues a fresh link (the previous one stops working, and anyone opening it is told to check their latest email), so the clock restarts from the most recent send. After the last nudge the contract owner is alerted once. Leave blank to never chase.",
+   "fieldname": "contract_esign_reminder_days",
+   "fieldtype": "Data",
+   "label": "Signature Reminder Gaps (Days)"
   },
   {
    "default": "1",

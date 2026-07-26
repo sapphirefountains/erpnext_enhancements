@@ -168,7 +168,13 @@ def resend_for_signature(request_name, recipient_email=None, message=None, reset
 	request.sent_on = now_datetime()
 	request.resend_count = (request.resend_count or 0) + 1
 	if frappe.utils.cint(reset_attempts):
+		# A deliberate staff resend is a fresh start: it clears the confirmation
+		# lockout AND restarts the reminder schedule, so a contract someone chased
+		# to exhaustion can be chased again after a phone call. The automated
+		# reminder path passes False and therefore does neither.
 		request.email_attempts = 0
+		request.reminders_sent = 0
+		request.stale_alerted = 0
 	request.save(ignore_permissions=True)
 
 	_email_invite(request, contract, result["signing_url"], message)

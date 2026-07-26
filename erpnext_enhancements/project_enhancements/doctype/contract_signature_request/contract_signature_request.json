@@ -19,6 +19,9 @@
   "sent_on",
   "sent_by",
   "resend_count",
+  "reminders_sent",
+  "last_reminder_on",
+  "stale_alerted",
   "view_section",
   "first_viewed_on",
   "last_viewed_on",
@@ -172,6 +175,29 @@
    "fieldname": "resend_count",
    "fieldtype": "Int",
    "label": "Resend Count",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many reminder nudges have been emailed for this request. Stamped before each send, so a retried scheduler window cannot double-nudge a customer.",
+   "fieldname": "reminders_sent",
+   "fieldtype": "Int",
+   "label": "Reminders Sent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reminder_on",
+   "fieldtype": "Datetime",
+   "label": "Last Reminder On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set once the team has been told this request went unanswered through every reminder, so the alert fires exactly once.",
+   "fieldname": "stale_alerted",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Stale Alert Sent",
    "read_only": 1
   },
   {
