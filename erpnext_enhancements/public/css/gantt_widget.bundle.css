@@ -57,7 +57,7 @@
 	min-height: 320px;
 }
 
-/* ---- toolbar (filter dropdowns + Today) -------------------------------- */
+/* ---- toolbar (sort + filter dropdowns + Today) ------------------------- */
 
 .ee-gantt-toolbar {
 	display: flex;
@@ -71,6 +71,37 @@
 
 .ee-gantt-toolbar-spacer {
 	flex: 1;
+}
+
+/* Sort picker. A <label> wrapping its select, so the whole thing is one hit
+   target and needs no generated id (shadow-root embeds share no id space). */
+.ee-gantt-sort {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	font-weight: normal;
+	white-space: nowrap;
+	color: var(--text-muted, inherit);
+}
+
+.ee-gantt-sort-select {
+	height: 28px;
+	max-width: 200px;
+	padding: 0 24px 0 8px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md, 6px);
+	background-color: var(--control-bg, #fff);
+	color: var(--text-color, inherit);
+	font-size: var(--text-sm, 12px);
+	cursor: pointer;
+	/* the native arrow is unstyleable and renders on a white chip in dark
+	   mode, so draw our own caret and suppress the UA one */
+	appearance: none;
+	-webkit-appearance: none;
+	background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%238d99a6' stroke-width='1.5' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 8px center;
 }
 
 .ee-gantt-filter {
@@ -146,9 +177,16 @@
 		gap: 6px;
 	}
 
+	.ee-gantt-sort,
 	.ee-gantt-filter,
 	.ee-gantt-filter-btn {
 		width: 100%;
+	}
+
+	.ee-gantt-sort-select {
+		flex: 1;
+		max-width: none;
+		height: 32px;
 	}
 
 	.ee-gantt-filter-menu {

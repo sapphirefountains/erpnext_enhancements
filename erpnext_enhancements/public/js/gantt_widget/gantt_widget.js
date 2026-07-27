@@ -39,7 +39,8 @@
  *               progress: "progress", parent: "parent_task" },
  *     filters: { project: "PRJ-0001" },     // optional
  *     dependencies: "depends_on",           // optional: Table field with links
- *     order_by: "exp_start_date asc",       // optional
+ *     order_by: "exp_start_date asc",       // optional; comma-separated keys
+ *                                           //   allowed ("rank asc, start asc")
  *     limit: 500,                           // optional (server-clamped)
  *     columns: [...],                       // optional DHTMLX column defs
  *     gantt: { ... },                       // optional raw gantt.config overrides
@@ -51,6 +52,13 @@
  *         fieldname: "status", label: "Status",
  *         options: ["Open", "Working"],     //   selected: [...] to pre-narrow
  *       }],
+ *       sort: {                             //   row-order picker (select)
+ *         label: "Sort",
+ *         options: [{ value: "start", label: "Start Date",
+ *                     order_by: "exp_start_date asc" }, ...],
+ *         selected: "start",                //   defaults to the first option
+ *         on_change: (value, option) => {}, //   e.g. persist the choice
+ *       },
  *     },
  *     group_by: "custom_master_project",    // optional: composite grouping
  *                                           //   (or a list: first non-empty wins)
@@ -67,6 +75,7 @@
  *   w.ready.then(...); w.refresh(); w.destroy();
  *   w.set_zoom("week");                     // quarter_day|half_day|day|week|month
  *   w.set_filters({...});                   // replace config.filters + refetch
+ *   w.set_sort("scope"); w.get_sort();      // toolbar.sort option value
  *   w.add_rows(tasks, links, parent_id);    // merge rows (lazy branch load;
  *                                           //   pass parent_id to retire its
  *                                           //   loading placeholder)
@@ -79,7 +88,11 @@
  * debounced. With `toolbar.today` the chart opens scrolled to today, tints
  * today's column (red-edged, via core cell-class templates), and pads the
  * scale so today is always inside the range; later refreshes (realtime,
- * filter changes) preserve the scroll position instead.
+ * filter changes) preserve the scroll position instead. `toolbar.sort` picks
+ * the row order the same way — the chosen option's `order_by` replaces
+ * `config.order_by` on the next fetch; the server re-validates it, and row
+ * order is what the grid renders (there is no client-side sort), so within
+ * each branch of the tree siblings appear in the order the query returned.
  *
  * EDITING is per-embed opt-in via `config.editable` ({ dates, progress }) and
  * DEFAULT-DENY per row: dhtmlx's global `config.readonly` stays true and only
@@ -314,6 +327,9 @@ frappe.provide("erpnext_enhancements.gantt");
 			this._toolbar_filters().forEach((f) => {
 				this._filter_state[f.fieldname] = new Set(f.selected || f.options || []);
 			});
+			// active sort option value (toolbar.sort); null when no sort control
+			this._sort_value = this._resolve_sort_value(this._toolbar_sort_config().selected);
+			this._sort_select = null; // set once the toolbar is built
 			this.ready = this._init();
 			this.ready.catch((e) => {
 				// eslint-disable-next-line no-console
@@ -324,6 +340,28 @@ frappe.provide("erpnext_enhancements.gantt");
 
 		_toolbar_filters() {
 			return (this.config.toolbar && this.config.toolbar.filters) || [];
+		}
+
+		_toolbar_sort_config() {
+			return (this.config.toolbar && this.config.toolbar.sort) || {};
+		}
+
+		_sort_options() {
+			const options = this._toolbar_sort_config().options;
+			return Array.isArray(options) ? options.filter((o) => o && o.value) : [];
+		}
+
+		/** A known option value, else the first option's, else null. */
+		_resolve_sort_value(value) {
+			const options = this._sort_options();
+			if (!options.length) {
+				return null;
+			}
+			return options.some((o) => o.value === value) ? value : options[0].value;
+		}
+
+		_active_sort_option() {
+			return this._sort_options().find((o) => o.value === this._sort_value) || null;
 		}
 
 		_today_enabled() {
@@ -505,12 +543,15 @@ frappe.provide("erpnext_enhancements.gantt");
 		}
 
 		// ------------------------------------------------------------------
-		// Toolbar (filter dropdowns + Today)
+		// Toolbar (sort + filter dropdowns + Today)
 		// ------------------------------------------------------------------
 
 		_build_toolbar() {
 			const bar = document.createElement("div");
 			bar.className = "ee-gantt-toolbar";
+			if (this._sort_options().length) {
+				bar.appendChild(this._build_sort());
+			}
 			this._toolbar_filters().forEach((f) => bar.appendChild(this._build_filter(f)));
 			const spacer = document.createElement("div");
 			spacer.className = "ee-gantt-toolbar-spacer";
@@ -532,6 +573,39 @@ frappe.provide("erpnext_enhancements.gantt");
 				}
 			};
 			document.addEventListener("mousedown", this._doc_click);
+		}
+
+		/** Sort picker: a native select (one discrete choice, unlike the
+		 *  multi-select filter dropdowns) whose options each carry an
+		 *  `order_by` sent to the server on the next fetch. */
+		_build_sort() {
+			const cfg = this._toolbar_sort_config();
+			// <label> wrapping the control associates the two implicitly — no
+			// generated id needed, which matters inside shadow-root embeds.
+			const wrap = document.createElement("label");
+			wrap.className = "ee-gantt-sort";
+			const text = document.createElement("span");
+			text.className = "ee-gantt-sort-label";
+			text.textContent = cfg.label || __("Sort");
+			const select = document.createElement("select");
+			select.className = "ee-gantt-sort-select";
+			this._sort_options().forEach((o) => {
+				const opt = document.createElement("option");
+				opt.value = o.value;
+				opt.textContent = o.label || o.value;
+				if (o.description) {
+					opt.title = o.description;
+				}
+				select.appendChild(opt);
+			});
+			select.value = this._sort_value;
+			select.addEventListener("change", () => {
+				this.set_sort(select.value);
+			});
+			wrap.appendChild(text);
+			wrap.appendChild(select);
+			this._sort_select = select;
+			return wrap;
 		}
 
 		_build_filter(f) {
@@ -893,6 +967,32 @@ frappe.provide("erpnext_enhancements.gantt");
 			return this.refresh();
 		}
 
+		/** Active toolbar.sort option value (null when there is no sort control). */
+		get_sort() {
+			return this._sort_value;
+		}
+
+		/**
+		 * Switch sort option and refetch. Unknown values fall back to the first
+		 * option, so a host restoring a stale persisted choice cannot wedge the
+		 * chart on an order_by no longer offered.
+		 */
+		set_sort(value) {
+			const resolved = this._resolve_sort_value(value);
+			if (resolved === null || resolved === this._sort_value) {
+				return;
+			}
+			this._sort_value = resolved;
+			if (this._sort_select && this._sort_select.value !== resolved) {
+				this._sort_select.value = resolved;
+			}
+			const on_change = this._toolbar_sort_config().on_change;
+			if (on_change) {
+				on_change(resolved, this._active_sort_option());
+			}
+			return this.refresh();
+		}
+
 		// With the today marker on, pad the scale a week past the data range
 		// and force it to include today — DHTMLX otherwise clamps the scale to
 		// the data, leaving today (marker, showDate target) out of range.
@@ -940,7 +1040,8 @@ frappe.provide("erpnext_enhancements.gantt");
 				fields: c.fields,
 				filters: this._effective_filters(),
 				dependencies: c.dependencies || null,
-				order_by: c.order_by || null,
+				// the sort control wins over the static config.order_by
+				order_by: (this._active_sort_option() || {}).order_by || c.order_by || null,
 				limit: c.limit || null,
 				group_by: c.group_by || null,
 				children: c.children || null,
@@ -1000,6 +1101,7 @@ frappe.provide("erpnext_enhancements.gantt");
 			this.wrap = null;
 			this.chart_el = null;
 			this.toolbar = null;
+			this._sort_select = null;
 			if (REGISTRY.get(this.el) === this) {
 				REGISTRY.delete(this.el);
 			}
