@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.180.0] - 2026-07-27
+
+### Fixed
+
+- **QuickBooks Bills that mix item lines with expense-account lines no longer
+  import short.** A QBO Bill was treated as having one of two shapes — item-based
+  (a Purchase Invoice) or expense-account-based (a Journal Entry). A bill carrying
+  *both* took the Purchase Invoice branch, and every `AccountBasedExpenseLineDetail`
+  line was silently discarded. Bill 19019 (SCE Saginaw, `2132402.01`) imported at
+  345.47 against a QuickBooks total of 413.01, its 67.54 freight line gone, and
+  nothing flagged it: Purchase Invoices had no balance guard, so it validated,
+  saved and looked like a clean import.
+
+  Mixed bills now stay Purchase Invoices and fold their account lines into
+  **Purchase Taxes and Charges** as `Actual` charges booked to each line's own
+  account, carrying the QuickBooks line description. That is the same posting the
+  Journal Entry branch makes, and the same correction an accountant applies by
+  hand. The charges table is rewritten wholesale on every sync, so re-syncing a
+  hand-corrected invoice reconciles with it rather than double-counting.
+
+- **A Purchase Invoice that does not reconcile to QuickBooks is now parked, not
+  imported.** Mapped item amounts plus charges must equal the QBO `TotalAmt`;
+  anything short goes to manual review naming what could not be carried across —
+  an item or expense account that is not imported yet, or a residual no line
+  explains. This is the guard whose absence let the bug above go undetected, and
+  it catches the next variant nobody anticipated. No fallback account is ever
+  invented to close a gap: a wrong-but-plausible document that posts to the ledger
+  is worse than a parked one, because nobody looks at it again.
+
+- **`conflict_status = "Ignored"` is now durable.** Records a human closed out —
+  voided or $0.00 QuickBooks transactions that can never produce an ERPNext
+  document — had no branch in `upsert_entity`. Their preflight failed again on
+  every run and reset *both* `conflict_status` and `match_status` to
+  `Pending Review`, so one full **Import All** silently reverted all 184 of them.
+  An Ignored mapping is now returned untouched before preflight runs. The one way
+  back in is QuickBooks itself moving: a `SyncToken` (or `LastUpdatedTime`) past
+  the stored one is re-evaluated normally, so un-voiding a transaction does not
+  leave it permanently invisible. Runs report an **Ignored Count** so those
+  records read as a category rather than as an absence.
+
+- **The unbalanced-Journal-Entry message now names the actual cause.** It always
+  said lines "may reference QuickBooks accounts not yet imported" — wrong for all
+  18 Purchase records parked today, where every account is correctly mapped and
+  the debit is missing because the mapper reads only account-based lines. It now
+  distinguishes a line skipped during mapping from an `AccountRef` that could not
+  be resolved, and names the accounts in the latter case. The two need opposite
+  fixes.
+
 ## [1.179.0] - 2026-07-25
 
 ### Added

@@ -32,6 +32,7 @@ _LOG_FIELDS = [
 	"deleted_count",
 	"conflict_count",
 	"manual_review_count",
+	"ignored_count",
 	"failed_count",
 	"started_at",
 	"finished_at",
@@ -49,7 +50,7 @@ class QuickbooksSyncStatus(BaseTool):
 			"enabled, and the last full-import / CDC-poll / webhook timestamps), the "
 			"number of sync runs currently in Failed, and the most recent QuickBooks "
 			"Sync Log entries with their per-entity counters (created/updated/linked/"
-			"failed/conflict/manual-review). Use it to answer 'is QuickBooks "
+			"failed/conflict/manual-review/ignored). Use it to answer 'is QuickBooks "
 			"connected', 'did the last sync work', or 'what's failing'. Pass "
 			"'sync_log' to get one run's summary including its error message. "
 			"Read-only."
