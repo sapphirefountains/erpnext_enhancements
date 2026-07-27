@@ -858,7 +858,7 @@ def _journal_imbalance(erpnext_doctype: str, values: dict, payload: dict | None 
 	credit = sum(_to_amount(row.get("credit_in_account_currency")) for row in rows)
 	if round(debit - credit, 2) == 0:
 		return None
-	causes = _journal_imbalance_causes(payload)
+	causes = _journal_imbalance_causes(payload, values)
 	if not causes:
 		causes = [
 			"No QuickBooks account on this transaction is unresolved and no line was skipped, "
@@ -867,24 +867,73 @@ def _journal_imbalance(erpnext_doctype: str, values: dict, payload: dict | None 
 	return f"Journal Entry is unbalanced (debit {debit:.2f} vs credit {credit:.2f}). " + " ".join(causes)
 
 
-def _journal_imbalance_causes(payload: dict | None) -> list[str]:
-	"""Explain what a Journal Entry mapping could not carry across from its QBO payload."""
+def _journal_imbalance_causes(payload: dict | None, values: dict | None = None) -> list[str]:
+	"""Explain what a Journal Entry mapping could not carry across from its QBO payload.
+
+	``values`` is the mapped entry. It is needed, not merely convenient: the company
+	(for resolving Item Defaults) and the rows already built both live there, and
+	without them this can only guess why an item line is missing.
+	"""
 	if not payload:
 		return []
-	causes = []
-	skipped = [line for line in payload.get("Line") or [] if line.get("ItemBasedExpenseLineDetail")]
-	if skipped:
-		total = sum(_to_amount(line.get("Amount")) for line in skipped)
-		causes.append(
-			f"{len(skipped)} item-based line(s) totalling {total:.2f} were skipped during mapping: "
-			"an item line's expense account lives on the ERPNext Item, not the QuickBooks line, "
-			"so no journal line can be built from it."
-		)
+	causes = _item_line_causes(payload, values or {})
 	unresolved = _unresolved_account_refs(payload)
 	if unresolved:
 		causes.append(
 			f"{len(unresolved)} QuickBooks account(s) referenced by this transaction are not "
 			f"imported into ERPNext: {_format_refs(unresolved)}."
+		)
+	return causes
+
+
+def _item_line_causes(payload: dict, values: dict) -> list[str]:
+	"""Explain item-based lines that produced no journal row, and say which failed.
+
+	Since ``_map_purchase`` resolves item lines through Item Defaults, "item lines
+	are always skipped" stopped being true and this no longer claims it. The three
+	remaining outcomes need different fixes, so they read differently:
+
+	  * the QBO item was never imported     -> import the Item
+	  * the Item has no expense account     -> set one on the Item (or the Company)
+	  * both resolve but no row was built   -> this entity's mapper reads only
+	    account-based lines (VendorCredit), which importing nothing will fix
+
+	A line that DID produce a row is not reported at all -- silence here is the
+	correct answer for a Purchase whose items now map, and the caller still has a
+	catch-all for an imbalance nothing on this list explains.
+	"""
+	item_lines = [line for line in payload.get("Line") or [] if line.get("ItemBasedExpenseLineDetail")]
+	if not item_lines:
+		return []
+	company = values.get("company")
+	mapped_accounts = {row.get("account") for row in values.get("accounts") or []}
+	unimported, no_account, not_carried = [], [], []
+	for line in item_lines:
+		detail = line["ItemBasedExpenseLineDetail"]
+		item_ref = detail.get("ItemRef") or {}
+		item_code = _linked_name("Item", "Item", item_ref.get("value"))
+		if not item_code:
+			unimported.append(item_ref)
+			continue
+		account = _item_expense_account(item_code, company)
+		if not account:
+			no_account.append(item_code)
+		elif account not in mapped_accounts:
+			not_carried.append(line)
+	causes = []
+	if unimported:
+		causes.append(
+			f"{len(unimported)} item-based line(s) reference QuickBooks items not imported "
+			f"into ERPNext: {_format_refs(unimported)}."
+		)
+	for item_code in no_account:
+		causes.append(f'Item "{item_code}" has no default expense account for company {company}.')
+	if not_carried:
+		total = sum(_to_amount(line.get("Amount")) for line in not_carried)
+		causes.append(
+			f"{len(not_carried)} item-based line(s) totalling {total:.2f} resolve to an expense "
+			"account but were not carried into this entry: this entity's mapper reads only "
+			"account-based lines."
 		)
 	return causes
 
@@ -1680,9 +1729,21 @@ def _map_purchase(payload, settings):
 	"""Map a QBO Purchase (Expense / Check / Credit Card charge) to a Journal Entry.
 
 	A normal purchase credits the funding account (bank or credit card,
-	``AccountRef``) and debits each expense line's account; a ``Credit`` (refund /
-	credit-card credit) reverses both sides. Item-based lines are skipped -- their
-	GL account lives on the Item, not the line -- which the balance guard catches.
+	``AccountRef``) and debits every expense line; a ``Credit`` (refund /
+	credit-card credit) reverses both sides.
+
+	QBO writes an expense line one of two ways and this maps both. An
+	``AccountBasedExpenseLineDetail`` names its GL account on the line. An
+	``ItemBasedExpenseLineDetail`` names only an Item, so the account comes from
+	that Item's ERPNext Item Default (see ``_item_expense_account``) -- the same
+	account ERPNext itself would fill in on a Purchase Invoice line, resolved
+	explicitly here because a Journal Entry has no item rows to resolve it from.
+
+	Item lines used to be dropped, which credited the funding account for the full
+	total against a short debit and left the balance guard to park the whole
+	transaction. An item line whose account still cannot be resolved is left out
+	rather than booked somewhere plausible; the entry then fails the balance guard
+	and parks, naming the item.
 	"""
 	is_credit = bool(payload.get("Credit"))
 	total = _to_amount(payload.get("TotalAmt"))
@@ -1704,6 +1765,7 @@ def _map_purchase(payload, settings):
 		)
 		if row:
 			accounts.append(row)
+	accounts.extend(_purchase_item_ledger_lines(payload, settings.company, is_credit=is_credit))
 	label = payload.get("PaymentType") or "Purchase"
 	return _journal_entry_doc(
 		settings,
@@ -2709,10 +2771,81 @@ def _sales_items(payload):
 	return items
 
 
+def _item_expense_account(item_code, company):
+	"""Resolve the expense account an ERPNext Item posts to for ``company``.
+
+	The Purchase Invoice path never needs this: ERPNext's own controller fills each
+	line's ``expense_account`` from Item Defaults when the invoice saves. A Journal
+	Entry has no item rows and no such controller, so a mapper building journal
+	lines from QBO item lines has to look the account up itself -- this is that
+	lookup, deliberately resolving to the SAME account ERPNext would have chosen.
+
+	Falls back to the Company's own ``default_expense_account``, then gives up.
+	Returning None is a real answer: the caller must park the transaction rather
+	than book the amount somewhere plausible. A wrong-but-balanced journal entry
+	posts to the ledger and nobody looks at it again; a parked one gets fixed.
+	"""
+	if not item_code or not company:
+		return None
+	account = frappe.db.get_value(
+		"Item Default",
+		{"parent": item_code, "parenttype": "Item", "company": company},
+		"expense_account",
+	)
+	return account or frappe.db.get_value("Company", company, "default_expense_account")
+
+
+def _item_line_expense_account(detail, company):
+	"""Resolve a QBO item line's ``ItemRef`` to the ERPNext expense account it posts to.
+
+	Two hops, either of which can fail: the QBO item must be imported (the mapping
+	ledger, not a fuzzy name match), and that ERPNext Item must carry a default
+	expense account for this company.
+	"""
+	item_code = _linked_name("Item", "Item", (detail.get("ItemRef") or {}).get("value"))
+	return _item_expense_account(item_code, company)
+
+
+def _purchase_item_ledger_lines(payload, company, *, is_credit=False):
+	"""Build Journal Entry rows from a QBO transaction's item-based expense lines.
+
+	Mirrors the account-based loop in ``_map_purchase``: a normal purchase debits
+	each line, a ``Credit`` reverses it. Lines whose account can't be resolved are
+	omitted (never given a stand-in account), which leaves the entry short and lets
+	the balance guard park it with ``_item_line_causes`` naming the item.
+
+	Cost centre is applied per row from the line's own ``ClassRef``, matching
+	``_purchase_items``. The account-based rows deliberately keep their existing
+	behaviour of not setting one -- adding it there would rewrite rows on every one
+	of the thousands of already-imported cash transactions for no stated need.
+	"""
+	rows = []
+	for line in payload.get("Line") or []:
+		detail = line.get("ItemBasedExpenseLineDetail")
+		if not detail:
+			continue
+		amount = _to_amount(line.get("Amount"))
+		row = _ledger_line(
+			_item_line_expense_account(detail, company),
+			debit=0 if is_credit else amount,
+			credit=amount if is_credit else 0,
+		)
+		if not row:
+			continue
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		rows.append(row)
+	return rows
+
+
 def _purchase_items(payload):
 	"""Build ERPNext purchase line items from QBO ItemBasedExpenseLineDetail lines.
 
-	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet.
+	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet. The expense
+	account is left to ERPNext, which fills it from the Item's defaults on save --
+	the Journal Entry path has no such step and resolves it via
+	``_item_expense_account``.
 	"""
 	items = []
 	for line in payload.get("Line", []) or []:
