@@ -97,6 +97,7 @@ TASK_META = FakeMeta(
 		_df("progress", "Percent"),
 		_df("parent_task", "Link", "Task"),
 		_df("depends_on", "Table", "Task Depends On"),
+		_df("custom_subtask_order", "Float"),
 		_df("section_x", "Section Break"),
 		_df("daily_time", "Time"),
 	],
@@ -354,6 +355,50 @@ def test_order_by_validation(env):
 	# an injection payload has >2 whitespace-separated parts -> rejected outright
 	with pytest.raises(Exception, match="Invalid Gantt order_by"):
 		gantt._sanitize_order_by(TASK_META, "subject asc; drop table tabTask")
+
+
+def test_order_by_multiple_keys(env):
+	"""Tie-breakers: every key validated, direction defaults to asc, cap enforced."""
+	_, gantt = env
+	# the Project Schedule tab's "Scope Order" view
+	assert (
+		gantt._sanitize_order_by(TASK_META, "custom_subtask_order asc, exp_start_date asc")
+		== "custom_subtask_order asc, exp_start_date asc"
+	)
+	# whitespace tolerated, bare fieldnames default to asc, blanks dropped
+	assert gantt._sanitize_order_by(TASK_META, " subject ,  status desc , ") == "subject asc, status desc"
+	# ...and each key still faces the full single-key validation
+	with pytest.raises(Exception, match="Unknown field"):
+		gantt._sanitize_order_by(TASK_META, "exp_start_date asc, evil_column asc")
+	with pytest.raises(Exception, match="direction"):
+		gantt._sanitize_order_by(TASK_META, "exp_start_date asc, subject sideways")
+	with pytest.raises(Exception, match="Invalid Gantt order_by"):
+		gantt._sanitize_order_by(TASK_META, "subject asc, status asc; drop table tabTask")
+	# only commas separate keys — a semicolon does not smuggle a second one in,
+	# it stays part of the key and fails as too many parts / an unknown field
+	with pytest.raises(Exception, match="Invalid Gantt order_by"):
+		gantt._sanitize_order_by(TASK_META, "subject; select 1")
+	with pytest.raises(Exception, match="Unknown field"):
+		gantt._sanitize_order_by(TASK_META, "subject;select")
+	over_cap = ", ".join(["subject asc"] * (gantt.MAX_ORDER_BY_KEYS + 1))
+	with pytest.raises(Exception, match="Too many Gantt order_by keys"):
+		gantt._sanitize_order_by(TASK_META, over_cap)
+	# commas alone are not an order_by
+	assert gantt._sanitize_order_by(TASK_META, " , , ") == "modified desc"
+
+
+def test_order_by_multi_key_reaches_get_list(env):
+	"""The multi-key form survives get_gantt_data end to end."""
+	frappe, gantt = env
+	captured = {}
+
+	def get_list(doctype, **kwargs):
+		captured.update(kwargs, doctype=doctype)
+		return []
+
+	frappe.get_list = get_list
+	gantt.get_gantt_data(base_config(order_by="custom_subtask_order asc, exp_start_date asc"))
+	assert captured["order_by"] == "custom_subtask_order asc, exp_start_date asc"
 
 
 # ---------------------------------------------------------------------------

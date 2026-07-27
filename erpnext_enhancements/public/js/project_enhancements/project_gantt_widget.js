@@ -12,8 +12,9 @@
  *
  * Config: the project's Tasks (host binding = filter on the current record),
  * task tree via parent_task, dependency arrows from the depends_on child
- * table, a task-status filter (all statuses shown by default), and a Today
- * button — the chart opens scrolled to today with a today marker.
+ * table, a task-status filter (all statuses shown by default), a row-order
+ * picker (see ee_gantt_sorts), and a Today button — the chart opens scrolled
+ * to today with a today marker.
  *
  * Lifecycle handled here:
  *  - unsaved docs: a placeholder instead of a mount (no record to filter on);
@@ -45,6 +46,61 @@ const EE_TASK_STATUSES = [
 	"Canceled",
 	"Template",
 ];
+
+// Default row order — also the fallback whenever a persisted sort choice no
+// longer matches an offered option.
+const EE_GANTT_DEFAULT_ORDER_BY = "exp_start_date asc";
+
+// Row-order views for the toolbar picker. A function, not a const: the labels
+// go through __() and must resolve when the form renders, not when this file
+// is parsed.
+//
+// "scope" mirrors the drag-and-drop Tasks Tree on the SCOPE tab: dropping a
+// task there writes Task.custom_subtask_order (1-based within each parent, see
+// task_tree_manager.js saveTaskOrder) — so ordering by that field, with the
+// chart's own parent_task nesting supplying the levels, reproduces the tree's
+// row order here. Tasks never dragged keep order 0 and would otherwise tie in
+// arbitrary DB order, so start date is the tie-breaker: they group above the
+// ranked rows, oldest first, exactly like the default view.
+//
+// This is a view-only choice — nothing here writes task order. Reordering the
+// Scope tree saves Tasks, which publishes project_dashboard_updated, which the
+// realtime handler below turns into a refresh, so the chart re-sorts live.
+const ee_gantt_sorts = () => [
+	{
+		value: "start",
+		label: __("Start Date"),
+		order_by: EE_GANTT_DEFAULT_ORDER_BY,
+	},
+	{
+		value: "scope",
+		label: __("Scope Order"),
+		description: __("Match the task order set on the Scope tab"),
+		order_by: "custom_subtask_order asc, exp_start_date asc",
+	},
+];
+
+// Per user (localStorage is per browser profile) and per project: switching to
+// Scope order on one project says nothing about the next one.
+const ee_gantt_sort_key = (docname) => `ee_project_gantt_sort::${docname}`;
+
+function ee_read_gantt_sort(docname) {
+	// Safari private mode throws on localStorage access — the picker still
+	// works, it just opens on the default view.
+	try {
+		return localStorage.getItem(ee_gantt_sort_key(docname));
+	} catch (e) {
+		return null;
+	}
+}
+
+function ee_write_gantt_sort(docname, value) {
+	try {
+		localStorage.setItem(ee_gantt_sort_key(docname), value);
+	} catch (e) {
+		// quota/disabled storage: the choice simply does not outlive the mount
+	}
+}
 
 frappe.ui.form.on("Project", {
 	refresh(frm) {
@@ -109,10 +165,22 @@ frappe.ui.form.on("Project", {
 				// only rows the server reports writable become draggable, and the
 				// write endpoint re-checks the specific Task.
 				editable: { dates: true, progress: true },
-				order_by: "exp_start_date asc",
+				// The sort control below supplies the live order_by; this is
+				// only the fallback if that config is ever dropped — without
+				// it the server would fall back to "modified desc".
+				order_by: EE_GANTT_DEFAULT_ORDER_BY,
 				limit: 1000,
 				toolbar: {
 					today: true,
+					// Row order: oldest start date (default) or the Scope tab's
+					// task order. The last choice per project is restored.
+					sort: {
+						label: __("Sort"),
+						options: ee_gantt_sorts(),
+						// unknown/absent falls back to the first option
+						selected: ee_read_gantt_sort(docname),
+						on_change: (value) => ee_write_gantt_sort(docname, value),
+					},
 					filters: [
 						{
 							fieldname: "status",

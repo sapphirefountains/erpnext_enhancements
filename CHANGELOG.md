@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.188.0] - 2026-07-27
+
+### Added
+
+- **The Project Schedule tab's Gantt can now follow the task order set on the Scope tab.**
+  The chart was hardwired to oldest start date first, so the sequence a project manager
+  had already worked out by dragging the Scope tab's Tasks Tree into the order the job
+  actually runs in was visible only on that tab — the Gantt re-sorted it back to dates.
+
+  A **Sort** picker in the Gantt toolbar now offers two views:
+  - **Start Date** — the existing behaviour, and still the default.
+  - **Scope Order** — `Task.custom_subtask_order`, the field the Scope tab's tree already
+    writes when a task is dropped. The chart's own `parent_task` nesting supplies the
+    levels, so the bars come out in the tree's row order. Tasks never dragged share
+    order 0, so start date is the tie-breaker: they group above the ranked rows, oldest
+    first.
+
+  The choice is view-only — nothing about it writes task order, and the sort is not
+  persisted on the Project. It is remembered per user and per project in `localStorage`,
+  so reopening that project's Schedule tab restores the last view used there while other
+  projects and other users are unaffected. Reordering the Scope tree already publishes
+  `project_dashboard_updated`, which the Gantt listens to, so the chart re-sorts live
+  without a reload.
+
+  Scoped to the Project form. The Projects Dashboard Gantt is untouched.
+
+### Changed
+
+- `api/gantt.py` `_sanitize_order_by` accepts comma-separated sort keys (capped at
+  `MAX_ORDER_BY_KEYS = 3`) instead of exactly one. Each key still faces the same
+  validation as before — the fieldname must exist on the doctype's meta and the
+  direction must be `asc`/`desc` — so nothing is interpolated unvalidated; the cap keeps
+  a client-supplied config from asking the database for an unbounded sort. Needed
+  because a manual-rank column ties on every unranked row, and without a tie-breaker the
+  same chart comes back in a different order on each refresh.
+
+- The Gantt widget gained a reusable `toolbar.sort` control (`options[].order_by`,
+  `selected`, `on_change`) plus `set_sort()` / `get_sort()`. The active option's
+  `order_by` overrides `config.order_by` on the next fetch. Any embed can use it; only
+  the Project form does today.
+
 ## [1.187.0] - 2026-07-27
 
 ### Added

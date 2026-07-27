@@ -82,6 +82,11 @@ CHILD_ID_PREFIX = "C::"
 # shaper owns — "$has_child" is DHTMLX's branch_loading_property.
 MAX_EXTRA_FIELDS = 12
 
+# ``order_by`` may carry a primary key plus tie-breakers (see
+# _sanitize_order_by). Capped: each key is a validated column, but an unbounded
+# list is still an unbounded sort for the database to do.
+MAX_ORDER_BY_KEYS = 3
+
 # Aggregate for the lazy child-count query. Frappe v16 refuses SQL functions
 # passed as strings in `fields` ("SQL functions are not allowed as strings in
 # SELECT ... Use dict syntax like {'COUNT': '*'}"), and returns the column
@@ -200,17 +205,33 @@ def _sanitize_filters(meta, filters):
 
 
 def _sanitize_order_by(meta, order_by):
-	"""Reduce ``order_by`` to one validated fieldname plus asc/desc."""
+	"""Reduce ``order_by`` to validated ``fieldname asc|desc`` keys.
+
+	Comma-separated keys are accepted (capped at ``MAX_ORDER_BY_KEYS``) so a
+	caller can express a primary sort plus tie-breakers. That matters for
+	manual-rank columns: every row never dragged shares rank 0, and without a
+	secondary key MySQL orders those ties arbitrarily — the same chart would
+	come back in a different order on every refresh. Each key is validated
+	exactly as the single-key form was; nothing is interpolated unvalidated.
+	"""
 	if not order_by:
 		return "modified desc"
-	parts = cstr(order_by).strip().split()
-	if len(parts) > 2:
-		frappe.throw(_("Invalid Gantt order_by"))
-	fieldname = _validate_fieldname(meta, parts[0])
-	direction = parts[1].lower() if len(parts) == 2 else "asc"
-	if direction not in ("asc", "desc"):
-		frappe.throw(_("Invalid Gantt order_by direction"))
-	return f"{fieldname} {direction}"
+	keys = [key.strip() for key in cstr(order_by).split(",") if key.strip()]
+	if not keys:
+		return "modified desc"
+	if len(keys) > MAX_ORDER_BY_KEYS:
+		frappe.throw(_("Too many Gantt order_by keys (max {0})").format(MAX_ORDER_BY_KEYS))
+	sanitized = []
+	for key in keys:
+		parts = key.split()
+		if len(parts) > 2:
+			frappe.throw(_("Invalid Gantt order_by"))
+		fieldname = _validate_fieldname(meta, parts[0])
+		direction = parts[1].lower() if len(parts) == 2 else "asc"
+		if direction not in ("asc", "desc"):
+			frappe.throw(_("Invalid Gantt order_by direction"))
+		sanitized.append(f"{fieldname} {direction}")
+	return ", ".join(sanitized)
 
 
 def _resolve_dependency_source(meta, dep_fieldname):
