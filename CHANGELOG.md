@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leave it permanently invisible. Runs report an **Ignored Count** so those
   records read as a category rather than as an absence.
 
+- **A QuickBooks payload with no `Id` is now skipped instead of being written
+  under the id `"None"`.** `str(payload.get("Id"))` produced the *truthy* string
+  `"None"` for a missing id, so the `if not qbo_id` guard on the next line was
+  dead code. Such a payload sailed past it and keyed every downstream write on
+  that literal — one `QBO-MAP-<entity>-None` mapping per entity type, each
+  silently overwriting the last. The same hole let a CDC delete with no id report
+  a clean "deleted" for a mapping it never found. Nothing in production was
+  affected: no `None`-keyed mapping or raw payload exists, so this closes a
+  latent hole rather than repairing damage.
+
 - **The unbalanced-Journal-Entry message now names the actual cause.** It always
   said lines "may reference QuickBooks accounts not yet imported" — wrong for all
   18 Purchase records parked today, where every account is correctly mapped and

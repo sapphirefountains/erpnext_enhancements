@@ -3142,3 +3142,44 @@ def test_ignored_results_are_counted_in_the_sync_log():
 	_track_result(log, {"action": "ignored", "qbo_id": "9785"})
 
 	assert log.ignored_count == 2
+
+
+def test_payload_without_an_id_is_skipped(monkeypatch):
+	"""An Id-less QBO payload is skipped -- it must never key a write on "None".
+
+	str(None) is the truthy string "None", so the ``if not qbo_id`` guard was dead
+	code: such a payload sailed past it and every downstream write keyed on the
+	literal id "None", giving one QBO-MAP-<entity>-None mapping per entity type,
+	each silently overwriting the last.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	touched = []
+	monkeypatch.setattr(mapping, "map_qbo_to_erpnext", lambda *args: ("Customer", {"customer_name": "Acme"}))
+	monkeypatch.setattr(mapping, "get_mapping", lambda *a: touched.append("lookup"))
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *a, **k: touched.append("parked"))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *a, **k: touched.append("saved"))
+
+	for payload in ({"DisplayName": "Acme"}, {"Id": None, "DisplayName": "Acme"}, {"Id": ""}):
+		assert mapping.upsert_entity("Customer", payload, types.SimpleNamespace(company="SF")) == {
+			"action": "skipped",
+			"reason": "QBO payload has no Id",
+		}
+	assert touched == []  # nothing was looked up, parked or written
+
+
+def test_mark_deleted_without_an_id_is_skipped(monkeypatch):
+	"""A CDC delete with no Id is skipped, not reported as a clean delete."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	looked_up = []
+	monkeypatch.setattr(mapping, "get_mapping", lambda *a: looked_up.append(a))
+
+	assert mapping.mark_deleted("Customer", None) == {
+		"action": "skipped",
+		"reason": "QBO payload has no Id",
+	}
+	assert mapping.mark_deleted("Customer", "")["action"] == "skipped"
+	assert looked_up == []  # no lookup that would match nothing and read as success

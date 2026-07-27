@@ -101,7 +101,12 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	if not erpnext_doctype:
 		return {"action": "skipped", "reason": "No native ERPNext mapping"}
 
-	qbo_id = str(payload.get("Id"))
+	# ``or ""`` before the str(), not after: str(None) is the truthy string "None",
+	# which made the guard below dead code. An Id-less payload would have sailed
+	# past it and keyed every downstream write on the literal id "None" -- one
+	# mapping named QBO-MAP-<entity>-None per entity type, each silently
+	# overwriting the last.
+	qbo_id = str(payload.get("Id") or "")
 	if not qbo_id:
 		return {"action": "skipped", "reason": "QBO payload has no Id"}
 
@@ -497,7 +502,13 @@ def mark_deleted(entity_type: str, qbo_id: str, *, preview=False):
 
 	Soft delete: sets the mapping's ``deleted`` flag rather than touching the
 	linked ERPNext document. Called from ``sync.run_cdc`` for "Deleted" payloads.
+
+	An Id-less payload is skipped rather than looked up: ``get_mapping`` would
+	stringify the missing id, match nothing, and this would report a clean
+	"deleted" for a delete that never happened.
 	"""
+	if not qbo_id:
+		return {"action": "skipped", "reason": "QBO payload has no Id"}
 	mapping = get_mapping(entity_type, qbo_id)
 	if preview:
 		return {"action": "delete", "mapping": mapping.name if mapping else None}
