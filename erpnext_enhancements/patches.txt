@@ -251,3 +251,7 @@ erpnext_enhancements.patches.rename_maintenance_contract_canceled_status
 # as add_esign_signature_block — seed_contract_templates is insert-only, so the
 # repo template's bindings never reached the existing Contract Template record.
 erpnext_enhancements.patches.bind_maintenance_template_fields
+# v1.182.0 contracts: the same Contracts tab on Customer, scoped to the
+# agreements that customer is a party to. Separate from add_project_contracts_tab
+# because that one has already run on live sites and a patch never runs twice.
+erpnext_enhancements.patches.add_customer_contracts_tab

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.182.0] - 2026-07-27
+
+### Fixed
+
+- **The Contracts tab was empty on every project.** It listed only Project
+  Contracts — the signed agreements — so a site whose maintenance work lives on
+  **Sapphire Maintenance Contract** saw "No contracts on this project yet" on a
+  project that plainly had one. The tab now lists both kinds side by side,
+  because "what are we committed to here" is one question even though the data
+  model has two answers.
+
+  An operational maintenance contract mapped from a signed agreement opens that
+  agreement's full text. One created directly has no legal language behind it,
+  and the row now says so — *"Schedule only — no signed agreement linked"* —
+  rather than leaving a reader to wonder why nothing opens. It deliberately does
+  **not** render the agreement template over operational data: a document nobody
+  signed must never be displayed as though it were a contract.
+
+### Added
+
+- **The same Contracts tab on Customer**, after Accounting: every agreement that
+  customer is a party to, plus their maintenance contracts, each openable in
+  place to its full text. Scoped to contracts they are actually a party to — a
+  subcontractor SOW issued on their job is our commitment to a supplier, not
+  theirs, and stays off their form.
+
 ## [1.181.0] - 2026-07-27
 
 ### Added

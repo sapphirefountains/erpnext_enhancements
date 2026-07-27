@@ -10,8 +10,10 @@ Reading it: :func:`get_contract_html` returns that same rendered agreement —
 the full legal language with this contract's data filled in — for the
 **Preview** button on the form (which renders the values on screen, unsaved
 edits included, so the finished document can be read while it is being written)
-and for the **Contracts tab** on the Project form, which lists every agreement
-issued on a job (:func:`get_project_contracts`) and opens any of them in place.
+and for the **Contracts tab** on the Project and Customer forms, which lists
+every contract belonging to that record (:func:`get_contracts` — agreements
+*and* the operational maintenance contracts beside them) and opens any of them
+in place.
 
 Revision model (the meeting's estimate-revision convention, natively):
 the doctype is **submittable** — Draft = editable working copy; Submit =
@@ -607,27 +609,63 @@ def get_contract_html(name=None, doc=None):
 	}
 
 
+# How each host form finds the contracts that belong to it. A Project owns the
+# agreements issued on the job; a Customer owns the ones they are a party to.
+CONTRACT_SOURCES = {
+	"Project": {
+		"Project Contract": lambda name: {"project": name},
+		"Sapphire Maintenance Contract": lambda name: {"project": name},
+	},
+	"Customer": {
+		# Only agreements this customer is actually a party to — a subcontractor
+		# SOW issued on their job is our commitment to a supplier, not theirs.
+		"Project Contract": lambda name: {"party_type": "Customer", "party": name},
+		"Sapphire Maintenance Contract": lambda name: {"customer": name},
+	},
+}
+
+
 @frappe.whitelist()
-def get_project_contracts(project):
-	"""Every agreement issued on a project, newest first — the Contracts tab.
+def get_contracts(source_doctype, source_name):
+	"""Every contract belonging to a Project or a Customer — the Contracts tab.
 
-	Customer agreements (owner / rental / maintenance) and subcontractor
-	agreements (MSA / SOW) alike, in one place: what has been committed on this
-	job, and to whom. Metadata only — each contract's body is fetched by
-	:func:`get_contract_html` when the reader opens it, so a project carrying a
-	dozen agreements costs one small query to list.
+	Two kinds of document, deliberately in one list, because "my contracts" is
+	one question:
 
-	Permission-filtered via ``get_list``, and a user with no read access to
-	Project Contract at all gets an empty tab rather than an error — the tab is
-	an aside on someone else's form, not a page they asked for.
+	* **Project Contract** — the signed agreement, carrying the legal language.
+	  Opens in place to its full text.
+	* **Sapphire Maintenance Contract** — the operational schedule (visits,
+	  features, billing). It carries no legal language of its own; when it was
+	  mapped from a signed Maintenance Services Agreement it points at one, and
+	  the row opens *that* agreement. When it was created directly, the row says
+	  so rather than pretending an agreement exists.
+
+	Metadata only — each body is fetched by :func:`get_contract_html` when the
+	reader opens a row, so a busy customer still lists in two small queries.
+
+	Permission-filtered via ``get_list``; a doctype the user cannot read is
+	skipped rather than raising, because this tab is an aside on someone else's
+	form, not a page they asked for.
 	"""
-	frappe.get_doc("Project", project).check_permission("read")
+	sources = CONTRACT_SOURCES.get(source_doctype)
+	if not sources:
+		frappe.throw(_("Contracts cannot be listed for {0}.").format(_(source_doctype)))
+	frappe.get_doc(source_doctype, source_name).check_permission("read")
+
+	rows = _project_contract_rows(sources["Project Contract"](source_name))
+	rows += _maintenance_contract_rows(sources["Sapphire Maintenance Contract"](source_name))
+	# Newest first across both kinds; undated drafts sort last rather than first.
+	rows.sort(key=lambda row: (row.get("sort_date") or "", row.get("name") or ""), reverse=True)
+	return rows
+
+
+def _project_contract_rows(filters):
 	if not frappe.has_permission("Project Contract", "read"):
 		return []
 
 	rows = frappe.get_list(
 		"Project Contract",
-		filters={"project": project},
+		filters=filters,
 		fields=[
 			"name",
 			"template_key",
@@ -681,6 +719,55 @@ def get_project_contracts(project):
 		# agreements but grouped apart — they are commitments in opposite
 		# directions and reading them as one list invites a costly mix-up.
 		row.is_subcontract = 1 if row.party_type == "Supplier" else 0
+		row.doctype_name = "Project Contract"
+		row.readable = 1  # has legal language of its own
+		row.sort_date = str(row.get("contract_date") or "")
+	return rows
+
+
+def _maintenance_contract_rows(filters):
+	"""The operational maintenance contracts — schedule, not legal language.
+
+	Listed beside the agreements because "what maintenance are we committed to
+	on this job" is answered by this document, not by the signed agreement. Its
+	``project_contract`` link (when it has one) is what the row opens.
+	"""
+	if not frappe.db.exists("DocType", "Sapphire Maintenance Contract"):
+		return []
+	if not frappe.has_permission("Sapphire Maintenance Contract", "read"):
+		return []
+
+	rows = frappe.get_list(
+		"Sapphire Maintenance Contract",
+		filters=filters,
+		fields=[
+			"name",
+			"status",
+			"docstatus",
+			"customer",
+			"project",
+			"project_contract",
+			"start_date",
+			"end_date",
+			"default_frequency",
+			"invoicing_frequency",
+			"recurring_amount",
+		],
+		order_by="start_date desc, creation desc",
+	)
+	for row in rows:
+		row.doctype_name = "Sapphire Maintenance Contract"
+		row.type_label = _("Maintenance Contract (operational)")
+		row.party_display = row.customer
+		row.value = flt(row.get("recurring_amount"))
+		row.value_label = _("Recurring") if row.value else None
+		row.is_subcontract = 0
+		# The agreement it was mapped from, if any: that is what the row opens.
+		# Without one there is nothing to read, and the row says so rather than
+		# rendering legal text nobody signed.
+		row.agreement = row.project_contract
+		row.readable = 1 if row.project_contract else 0
+		row.sort_date = str(row.get("start_date") or "")
 	return rows
 
 

@@ -71,11 +71,12 @@ doctype_js = {
 		"public/js/project_migrated_scripts.js",
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
-		# Contracts tab (custom_contracts_html): every agreement issued on the
-		# job, each openable in place to its full legal text. The viewer is the
+		# Contracts tab (custom_contracts_html): every contract on the job —
+		# agreements and the operational maintenance contracts beside them —
+		# each openable in place to its full legal text. The viewer is the
 		# shared renderer and must load first.
 		"public/js/project_enhancements/contract_viewer.js",
-		"public/js/project_enhancements/project_contracts.js",
+		"public/js/project_enhancements/contracts_tab.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		# Schedule tab Gantt (custom_gantt_chart_html): read-only embed of the
 		# reusable Gantt widget (erpnext_enhancements.gantt.mount — see
@@ -118,6 +119,10 @@ doctype_js = {
 		"public/js/global_enhancements/unified_tab_controller.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		"public/js/stripe_payments/customer_autopay.js",
+		# Contracts tab — the same list the Project form carries, scoped to the
+		# agreements this customer is a party to. Viewer first (shared renderer).
+		"public/js/project_enhancements/contract_viewer.js",
+		"public/js/project_enhancements/contracts_tab.js",
 	],
 	"Timesheet": ["public/js/vue.global.js", "public/js/comments.js", "public/js/timesheet.js"],
 	"Sales Order": [
