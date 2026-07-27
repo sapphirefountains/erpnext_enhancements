@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.189.0] - 2026-07-27
+
+### Added
+
+- **The Triton widget can now pick — and author — AI personas.** Triton gained named,
+  switchable system-prompt profiles (sapphirefountains/triton#267); this is the ERPNext
+  half, so someone who lives in Desk all day never has to open the Triton site to use or
+  create one.
+
+  Personas are stored **in Triton, not here** — no new DocType, no `hooks.py` change, no
+  fixtures. The identity bridge already exchanges the gateway secret for a per-user Triton
+  JWT, so an ERPNext user resolves to the *same* Triton `User` the web app uses; a persona
+  created in either place shows up in the other with no sync to build.
+
+  `triton_chat.py` gains whitelisted pass-throughs — `list_personas`, `create_persona`,
+  `update_persona`, `delete_persona`, `duplicate_persona`, `set_default_persona` — and
+  `start_session` / `stream_query` now forward `persona_key`. `stream_query` previously
+  forwarded only `prompt`, `hidden` and `model_name`, so a persona was literally
+  unreachable from ERPNext until this change.
+
+  The widget gets a persona `<select>` beside the model picker (`optgroup`-grouped Built
+  in / Yours / Shared, plus a `⚙ Manage…` sentinel), a slide-over manage panel reusing the
+  history panel's classes, and a `frappe.ui.Dialog` create/edit form. The pick persists in
+  `localStorage` under `triton_persona_key`, mirroring `triton_model`, and survives
+  `newChat()` — it is a preference, not session state.
+
+### Security
+
+- **`list_personas` caches under a per-user key** (`triton_personas::{user}`, 60s TTL,
+  invalidated on every mutation). This deliberately departs from `list_models`, which uses
+  a single site-wide `triton_models_list` key — that is safe only because the model list is
+  identical for everyone. A persona list is not: it contains the caller's own **private**
+  personas, so reusing the site-wide pattern would have served one user's personas to the
+  whole site. `tests/test_triton_personas.py` asserts a second user misses the first user's
+  cache.
+
 ## [1.188.0] - 2026-07-27
 
 ### Added

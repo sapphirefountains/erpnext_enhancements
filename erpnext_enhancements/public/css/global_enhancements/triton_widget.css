@@ -118,11 +118,14 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* Compact model picker living on the gradient header. Keeps the native
-   control (and its native dropdown) for the best mobile experience. */
-.triton-header .triton-model-select {
+/* Compact model + persona pickers living on the gradient header. Keeps the
+   native controls (and their native dropdowns) for the best mobile experience.
+   max-width is 92px, not 104px, so the two sit side by side without pushing
+   the icon buttons off the 410px header. */
+.triton-header .triton-model-select,
+.triton-header .triton-persona-select {
 	flex: 0 0 auto;
-	max-width: 104px;
+	max-width: 92px;
 	background: rgba(255, 255, 255, 0.16);
 	color: #fff;
 	border: 1px solid rgba(255, 255, 255, 0.25);
@@ -133,15 +136,62 @@
 	cursor: pointer;
 	transition: background 0.15s ease;
 }
-.triton-header .triton-model-select:hover {
+.triton-header .triton-model-select:hover,
+.triton-header .triton-persona-select:hover {
 	background: rgba(255, 255, 255, 0.28);
 }
-.triton-header .triton-model-select:focus {
+.triton-header .triton-model-select:focus,
+.triton-header .triton-persona-select:focus {
 	outline: none;
 	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
 }
 /* The dropdown list renders on the OS surface — keep its text readable. */
-.triton-header .triton-model-select option {
+.triton-header .triton-model-select option,
+.triton-header .triton-persona-select option,
+.triton-header .triton-persona-select optgroup {
+	color: #1f272e;
+}
+
+/* Persona rows reuse .triton-history-item (which is a column) but need the
+   label and the edit/delete actions side by side. */
+.triton-persona-item {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.triton-persona-item .triton-persona-label {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1 1 auto;
+	cursor: pointer;
+}
+.triton-persona-item .triton-persona-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: 0 0 auto;
+}
+/* .triton-icon-btn is styled white-on-gradient for the header; these sit on
+   the light card surface, so they need their own colours. */
+.triton-persona-item .triton-icon-btn {
+	background: transparent;
+	border: none;
+	color: #6b7a89;
+	width: 24px;
+	height: 24px;
+	border-radius: 5px;
+	cursor: pointer;
+	font-size: 12px;
+	line-height: 24px;
+	text-align: center;
+	padding: 0;
+	transition: background 0.15s ease, color 0.15s ease;
+}
+.triton-persona-item .triton-icon-btn:hover {
+	background: rgba(0, 0, 0, 0.06);
 	color: #1f272e;
 }
 .triton-header .triton-icon-btn {
