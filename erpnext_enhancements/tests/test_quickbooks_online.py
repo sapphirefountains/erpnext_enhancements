@@ -2941,7 +2941,8 @@ def test_bill_with_no_mappable_items_falls_through_to_a_journal_entry(monkeypatc
 	"""When no ItemRef resolves, a mixed Bill takes the expense-only JE branch.
 
 	The freight line alone cannot carry the 413.01 payable, so the balance guard
-	catches it -- and says the item lines were skipped rather than blaming accounts.
+	catches it -- and names the un-imported Item rather than blaming the accounts,
+	which all resolve.
 	"""
 	_bill_stub(monkeypatch, item_312=None)
 	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
@@ -2952,7 +2953,7 @@ def test_bill_with_no_mappable_items_falls_through_to_a_journal_entry(monkeypatc
 
 	assert doctype == "Journal Entry"
 	issues = validate_mapped_values("Bill", doctype, values, include_doc_required=False, payload=BILL_19019)
-	assert any("2 item-based line(s) totalling 345.47 were skipped" in issue for issue in issues)
+	assert any("2 item-based line(s) reference QuickBooks items not imported" in issue for issue in issues)
 
 
 def test_purchase_invoice_guard_reports_an_unexplained_difference(monkeypatch):
@@ -2986,20 +2987,19 @@ def test_purchase_invoice_guard_is_skipped_without_a_quickbooks_total(monkeypatc
 	assert validate_mapped_values("Bill", "Purchase Invoice", values, payload=payload) == []
 
 
-def test_journal_imbalance_blames_skipped_item_lines_not_missing_accounts(monkeypatch):
-	"""The unbalanced-JE message distinguishes a skipped line from a missing account.
+def test_journal_imbalance_names_the_unimported_item_not_the_accounts(monkeypatch):
+	"""An item line that can't resolve names the ITEM, not the accounts.
 
-	The two need opposite fixes, and the old wording asserted "accounts not yet
-	imported" for every case -- wrong for all 18 Purchase records parked today,
-	where every account is correctly mapped and the debit is missing because
-	_map_purchase reads only account-based lines.
+	The two need opposite fixes. The original wording asserted "accounts not yet
+	imported" for every imbalance, which sent triage after accounts that were all
+	correctly mapped.
 	"""
 	frappe = install_frappe_stub()
 
 	def gv(doctype, filters=None, fieldname=None, **kwargs):
 		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("qbo_entity_type") == "Account":
 			return "Chase Checking - SF"  # every account on this payload IS imported
-		return None
+		return None  # ...but the Item is not
 
 	monkeypatch.setattr(frappe.db, "get_value", gv)
 	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
@@ -3013,7 +3013,7 @@ def test_journal_imbalance_blames_skipped_item_lines_not_missing_accounts(monkey
 			{
 				"Amount": 2352.35,
 				"DetailType": "ItemBasedExpenseLineDetail",
-				"ItemBasedExpenseLineDetail": {"ItemRef": {"value": "312"}},
+				"ItemBasedExpenseLineDetail": {"ItemRef": {"value": "312", "name": "PUMP"}},
 			}
 		],
 	}
@@ -3022,8 +3022,48 @@ def test_journal_imbalance_blames_skipped_item_lines_not_missing_accounts(monkey
 
 	assert len(issues) == 1
 	assert "unbalanced (debit 0.00 vs credit 2352.35)" in issues[0]
-	assert "1 item-based line(s) totalling 2352.35 were skipped during mapping" in issues[0]
-	assert "not imported into ERPNext" not in issues[0]  # the misleading old clause
+	assert "1 item-based line(s) reference QuickBooks items not imported" in issues[0]
+	assert "312 (PUMP)" in issues[0]
+
+
+def test_journal_imbalance_names_an_item_with_no_expense_account(monkeypatch):
+	"""An imported Item lacking a default expense account is named specifically.
+
+	This is the second failure mode and needs a different fix from the first: the
+	Item exists, so importing nothing helps -- somebody has to set the account.
+	"""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		f = filters or {}
+		if doctype == "QuickBooks Sync Mapping" and f.get("qbo_entity_type") == "Account":
+			return "Chase Checking - SF"
+		if doctype == "QuickBooks Sync Mapping" and f.get("qbo_entity_type") == "Item":
+			return "PUMP-100"
+		return None  # no Item Default row, and no Company default_expense_account
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = {
+		"Id": "9003",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 75.0,
+		"AccountRef": {"value": "40", "name": "Chase Checking"},
+		"Line": [
+			{
+				"Amount": 75.0,
+				"DetailType": "ItemBasedExpenseLineDetail",
+				"ItemBasedExpenseLineDetail": {"ItemRef": {"value": "312", "name": "PUMP"}},
+			}
+		],
+	}
+	_, values = map_qbo_to_erpnext("Purchase", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+	issues = validate_mapped_values("Purchase", "Journal Entry", values, include_doc_required=False, payload=payload)
+
+	assert len(issues) == 1
+	assert 'Item "PUMP-100" has no default expense account for company Sapphire Fountains' in issues[0]
+	assert "not imported into ERPNext" not in issues[0]  # the Item exists; that's not the problem
 
 
 def test_journal_imbalance_names_the_accounts_that_are_missing():
@@ -3183,3 +3223,322 @@ def test_mark_deleted_without_an_id_is_skipped(monkeypatch):
 	}
 	assert mapping.mark_deleted("Customer", "")["action"] == "skipped"
 	assert looked_up == []  # no lookup that would match nothing and read as success
+
+
+# Verbatim QuickBooks Purchase payloads from the production raw-payload store, for
+# three of the 18 records the item-line gap kept parked. QBO's PurchaseEx/RemitToAddr
+# noise is dropped; every field the mapper reads is untouched.
+#
+# 3815 -- one item line, no account line. Produced a credit and no debit at all.
+PURCHASE_3815 = {
+	"AccountRef": {"name": "US Bank Checking", "value": "130"},
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"Id": "3815",
+	"Line": [
+		{
+			"Amount": 75.0,
+			"DetailType": "ItemBasedExpenseLineDetail",
+			"Id": "1",
+			"ItemBasedExpenseLineDetail": {
+				"BillableStatus": "NotBillable",
+				"ClassRef": {"name": "S - Sales Group Admin", "value": "100000000001199157"},
+				"CustomerRef": {"name": "RTL-000040 - Emily Mattson Wedding", "value": "1491"},
+				"ItemRef": {"name": "RENT - FOUNTAIN PILLAR", "value": "166"},
+				"Qty": 1,
+				"TaxCodeRef": {"value": "NON"},
+				"UnitPrice": 75,
+			},
+		}
+	],
+	"MetaData": {"LastUpdatedTime": "2014-03-18T00:00:00-07:00"},
+	"PaymentType": "Check",
+	"SyncToken": "0",
+	"TotalAmt": 75.0,
+	"TxnDate": "2014-03-18",
+}
+
+# 4058 -- mixed: item 186.64 + account 52.96 = 239.60. Debited only the 52.96.
+PURCHASE_4058 = {
+	"AccountRef": {"name": "US Bank Checking", "value": "130"},
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"Id": "4058",
+	"Line": [
+		{
+			"Amount": 186.64,
+			"DetailType": "ItemBasedExpenseLineDetail",
+			"Id": "1",
+			"ItemBasedExpenseLineDetail": {
+				"BillableStatus": "NotBillable",
+				"ItemRef": {"name": "Sales Tax (deleted)", "value": "162"},
+				"TaxCodeRef": {"value": "NON"},
+			},
+		},
+		{
+			"AccountBasedExpenseLineDetail": {
+				"AccountRef": {"name": "Utah State Tax Commission Payable", "value": "190"},
+				"BillableStatus": "NotBillable",
+				"TaxCodeRef": {"value": "NON"},
+			},
+			"Amount": 52.96,
+			"DetailType": "AccountBasedExpenseLineDetail",
+			"Id": "2",
+		},
+	],
+	"MetaData": {"LastUpdatedTime": "2016-10-21T00:00:00-07:00"},
+	"PaymentType": "Check",
+	"SyncToken": "0",
+	"TotalAmt": 239.6,
+	"TxnDate": "2016-10-21",
+}
+
+# 3545 -- item 481.02 against a NEGATIVE account line -215.42, totalling 265.60.
+# The negative debit is QBO's own sign convention, not a Credit-type purchase
+# (Credit is absent here, as it is on all 18).
+PURCHASE_3545 = {
+	"AccountRef": {"name": "US Bank Checking", "value": "130"},
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"DocNumber": "online",
+	"Id": "3545",
+	"Line": [
+		{
+			"Amount": 481.02,
+			"DetailType": "ItemBasedExpenseLineDetail",
+			"Id": "1",
+			"ItemBasedExpenseLineDetail": {
+				"BillableStatus": "NotBillable",
+				"ItemRef": {"name": "Sales Tax (deleted)", "value": "162"},
+				"TaxCodeRef": {"value": "NON"},
+			},
+		},
+		{
+			"AccountBasedExpenseLineDetail": {
+				"AccountRef": {"name": "Utah State Tax Commission Payable", "value": "190"},
+				"BillableStatus": "NotBillable",
+				"TaxCodeRef": {"value": "NON"},
+			},
+			"Amount": -215.42,
+			"DetailType": "AccountBasedExpenseLineDetail",
+			"Id": "2",
+		},
+	],
+	"MetaData": {"LastUpdatedTime": "2011-05-02T00:00:00-07:00"},
+	"PaymentType": "Check",
+	"SyncToken": "0",
+	"TotalAmt": 265.6,
+	"TxnDate": "2011-05-02",
+}
+
+# The production chart these payloads resolve against.
+_PURCHASE_ACCOUNTS = {"130": "US Bank Checking - SF", "190": "Utah State Tax Commission Payable - SF"}
+_PURCHASE_ITEMS = {"162": "Sales Tax (deleted)", "166": "SRV-414", "182": "SR201 - Fountain Sales Design (deleted)"}
+_ITEM_EXPENSE_ACCOUNTS = {
+	"Sales Tax (deleted)": "Out of State Sales Tax Payable - SF",
+	"SRV-414": "Rent Inventory - SF",
+	"SR201 - Fountain Sales Design (deleted)": "Design Professional Services & Subcontractors - SF",
+}
+
+
+def _purchase_stub(monkeypatch, *, item_expense_accounts=None, company_default_expense=None, classes=None):
+	"""Frappe stub resolving the accounts, Items and Item Defaults production has.
+
+	``item_expense_accounts`` overrides the Item -> expense account map (pass ``{}``
+	to simulate Items that carry no default), and ``company_default_expense`` sets
+	the Company-level fallback.
+	"""
+	frappe = install_frappe_stub()
+	expense = _ITEM_EXPENSE_ACCOUNTS if item_expense_accounts is None else item_expense_accounts
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		f = filters or {}
+		if doctype == "Company":
+			return company_default_expense if fieldname == "default_expense_account" else None
+		if doctype == "Item Default":
+			return expense.get(f.get("parent"))
+		if doctype == "QuickBooks Sync Mapping":
+			if f.get("qbo_entity_type") == "Account":
+				return _PURCHASE_ACCOUNTS.get(f.get("qbo_id"))
+			if f.get("qbo_entity_type") == "Item":
+				return _PURCHASE_ITEMS.get(f.get("qbo_id"))
+			if f.get("qbo_entity_type") == "Class":
+				return (classes or {}).get(f.get("qbo_id"))
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	return frappe
+
+
+def _totals(values):
+	"""(total debit, total credit) of a mapped Journal Entry, rounded like the guard."""
+	rows = values.get("accounts") or []
+	return (
+		round(sum(row.get("debit_in_account_currency") or 0 for row in rows), 2),
+		round(sum(row.get("credit_in_account_currency") or 0 for row in rows), 2),
+	)
+
+
+def _first_debit(values):
+	"""The first journal row carrying a debit."""
+	return next(row for row in values["accounts"] if row["debit_in_account_currency"])
+
+
+def _first_credit(values):
+	"""The first journal row carrying a credit."""
+	return next(row for row in values["accounts"] if row["credit_in_account_currency"])
+
+
+def test_purchase_item_line_debits_the_items_expense_account(monkeypatch):
+	"""Purchase 3815: a lone item line now produces the debit it always lacked.
+
+	Before, this credited the bank 75.00 against no debit at all and the balance
+	guard parked the whole transaction.
+	"""
+	_purchase_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase", PURCHASE_3815, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert doctype == "Journal Entry"
+	assert _totals(values) == (75.0, 75.0)
+	debit = _first_debit(values)
+	assert debit["account"] == "Rent Inventory - SF"  # from the Item's Item Default
+	assert validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=PURCHASE_3815) == []
+
+
+def test_purchase_mixes_item_and_account_lines(monkeypatch):
+	"""Purchase 4058: item 186.64 + account 52.96 both debit, totalling 239.60.
+
+	Before, only the 52.96 account line was debited.
+	"""
+	_purchase_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase", PURCHASE_4058, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert _totals(values) == (239.6, 239.6)
+	debits = {row["account"]: row["debit_in_account_currency"] for row in values["accounts"] if row["debit_in_account_currency"]}
+	assert debits == {"Utah State Tax Commission Payable - SF": 52.96, "Out of State Sales Tax Payable - SF": 186.64}
+	assert validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=PURCHASE_4058) == []
+
+
+def test_purchase_keeps_a_negative_account_line_negative(monkeypatch):
+	"""Purchase 3545: 481.02 item debit against a -215.42 account line = 265.60.
+
+	The negative debit is QuickBooks' own sign convention for a reducing line, NOT a
+	Credit-type purchase -- `Credit` is absent here and on all 18 records. Flipping
+	the sign would balance the entry at the wrong number, so the line is carried
+	through as-is and the total lands on TotalAmt.
+	"""
+	_purchase_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase", PURCHASE_3545, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	debits = {row["account"]: row["debit_in_account_currency"] for row in values["accounts"] if row["debit_in_account_currency"]}
+	assert debits["Out of State Sales Tax Payable - SF"] == 481.02
+	assert debits["Utah State Tax Commission Payable - SF"] == -215.42
+	assert _totals(values) == (265.6, 265.6)
+	assert validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=PURCHASE_3545) == []
+
+
+def test_credit_purchase_reverses_the_item_line_too(monkeypatch):
+	"""A `Credit` purchase credits its item lines, matching the account-line side.
+
+	None of the 18 blocked records is a Credit, so this is the untested direction --
+	an item line must reverse with everything else or the entry balances backwards.
+	"""
+	_purchase_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = json.loads(json.dumps(PURCHASE_3815))
+	payload["Credit"] = True
+
+	doctype, values = map_qbo_to_erpnext("Purchase", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	rows = {row["account"]: row for row in values["accounts"]}
+	assert rows["US Bank Checking - SF"]["debit_in_account_currency"] == 75.0  # funding debited
+	assert rows["Rent Inventory - SF"]["credit_in_account_currency"] == 75.0  # expense credited
+	assert _totals(values) == (75.0, 75.0)
+	assert validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=payload) == []
+
+
+def test_purchase_item_line_carries_its_class_as_cost_center(monkeypatch):
+	"""A line's ClassRef becomes the row's Cost Center, as it does on invoice lines."""
+	_purchase_stub(monkeypatch, classes={"100000000001199157": "S - Sales Group Admin - SF"})
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_, values = map_qbo_to_erpnext("Purchase", PURCHASE_3815, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	debit = _first_debit(values)
+	assert debit["cost_center"] == "S - Sales Group Admin - SF"
+	# The funding row carries none -- account-based rows keep their existing shape.
+	funding = _first_credit(values)
+	assert "cost_center" not in funding
+
+
+def test_purchase_falls_back_to_the_company_expense_account(monkeypatch):
+	"""An Item with no default of its own uses the Company's default expense account."""
+	_purchase_stub(monkeypatch, item_expense_accounts={}, company_default_expense="Miscellaneous Expenses - SF")
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase", PURCHASE_3815, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	debit = _first_debit(values)
+	assert debit["account"] == "Miscellaneous Expenses - SF"
+	assert validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=PURCHASE_3815) == []
+
+
+def test_purchase_parks_when_no_expense_account_resolves(monkeypatch):
+	"""No Item default and no Company default -> park, naming the item. Never a guess.
+
+	A wrong-but-balanced journal entry posts to the ledger and nobody looks at it
+	again; a parked one gets fixed. So the debit is simply not emitted, the entry
+	fails the balance guard, and the issue says which Item to fix.
+	"""
+	_purchase_stub(monkeypatch, item_expense_accounts={}, company_default_expense=None)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Purchase", PURCHASE_3815, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	# Only the funding credit survives -- no stand-in account was invented.
+	assert _totals(values) == (0.0, 75.0)
+	issues = validate_mapped_values("Purchase", doctype, values, include_doc_required=False, payload=PURCHASE_3815)
+	assert len(issues) == 1
+	assert 'Item "SRV-414" has no default expense account for company Sapphire Fountains' in issues[0]
+
+
+def test_purchase_zero_amount_item_line_adds_no_row(monkeypatch):
+	"""A $0.00 item line is dropped -- ERPNext rejects a 0/0 journal row."""
+	_purchase_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = json.loads(json.dumps(PURCHASE_4058))
+	payload["Line"][0]["Amount"] = 0
+	payload["TotalAmt"] = 52.96
+
+	_, values = map_qbo_to_erpnext("Purchase", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert all(
+		row["debit_in_account_currency"] or row["credit_in_account_currency"] for row in values["accounts"]
+	)
+	assert _totals(values) == (52.96, 52.96)
+
+
+def test_item_expense_account_prefers_the_item_default(monkeypatch):
+	"""The resolution order is Item Default, then Company, then nothing."""
+	_purchase_stub(monkeypatch, company_default_expense="Miscellaneous Expenses - SF")
+	from erpnext_enhancements.quickbooks_online.core.mapping import _item_expense_account
+
+	assert _item_expense_account("SRV-414", "Sapphire Fountains") == "Rent Inventory - SF"
+	assert _item_expense_account("NOT-AN-ITEM", "Sapphire Fountains") == "Miscellaneous Expenses - SF"
+	assert _item_expense_account(None, "Sapphire Fountains") is None
+	assert _item_expense_account("SRV-414", None) is None

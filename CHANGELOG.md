@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.184.0] - 2026-07-27
+
+### Fixed
+
+- **QuickBooks Purchases with item lines now post their expense debit.**
+  `_map_purchase` credited the funding account for the whole transaction total but
+  only debited `AccountBasedExpenseLineDetail` lines, so any Expense / Check /
+  Credit Card charge carrying an `ItemBasedExpenseLineDetail` was self-inconsistent
+  and the balance guard parked it. Purchase 3815 credited the bank $75.00 against
+  no debit at all.
+
+  This was deliberate, and its premise expired: an item line names only an Item, and
+  no ERPNext Item carried a default expense account, so there was nothing to resolve.
+  Now that the referenced Items have them, each item line resolves
+  `ItemRef` → ERPNext Item → that Item's `Item Default.expense_account` for the
+  company, and emits the debit — the same account ERPNext itself fills in on a
+  Purchase Invoice line, looked up explicitly because a Journal Entry has no item
+  rows to resolve it from. Falls back to the Company's `default_expense_account`.
+
+  Resolves the 18 records parked on `Journal Entry is unbalanced`; each now balances
+  with `total_debit` equal to the QuickBooks `TotalAmt`.
+
+  An item whose account still cannot be resolved is **not** given a stand-in: the
+  line is left out, the entry fails the balance guard, and the record parks naming
+  the item — `Item "X" has no default expense account for company Y`. A
+  wrong-but-balanced journal entry posts to the ledger and nobody looks at it again;
+  a parked one gets fixed.
+
+- **The unbalanced-Journal-Entry message no longer claims item lines are always
+  skipped.** That was true when every item line was dropped; now the three outcomes
+  need different fixes and read differently: the QBO item was never imported (import
+  it), the Item has no expense account (set one), or both resolve but this entity's
+  mapper reads only account-based lines. A line that produced a row is not reported
+  at all, so the message goes quiet for the Purchases that now map — while staying
+  specific for the ones that genuinely cannot.
+
 ## [1.183.0] - 2026-07-27
 
 ### Changed
