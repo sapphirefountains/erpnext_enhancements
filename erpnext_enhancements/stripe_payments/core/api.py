@@ -169,19 +169,18 @@ def get_dashboard_status():
 
 @frappe.whitelist()
 def payment_config():
-	"""RPC: lightweight config for the payment UI (surcharge prompts). Login required.
+	"""RPC: lightweight config for the payment UI. Login required.
 
 	Safe for any signed-in user (desk staff or portal customer) — exposes no secrets.
+	Deliberately returns no surcharge rates: a fee depends on the card's funding type,
+	which is not knowable until the payer's card is in hand, so no UI can quote one up
+	front. Quoting a rate here is what let a debit customer be shown a fee they must
+	never pay.
 	"""
 	if frappe.session.user == "Guest":
 		frappe.throw(frappe._("Please log in."), frappe.PermissionError)
 	settings = get_settings()
 	return {
-		"surcharge_enabled": bool(settings.surcharge_enabled),
-		"card_surcharge_percent": settings.card_surcharge_percent,
-		"card_surcharge_flat": settings.card_surcharge_flat,
-		"ach_fee_percent": settings.ach_fee_percent,
-		"ach_fee_flat": settings.ach_fee_flat,
 		"enable_card": bool(settings.enable_card),
 		"enable_ach": bool(settings.enable_ach),
 		"currency": frappe.db.get_value("Company", settings.company, "default_currency") or "USD",
@@ -203,6 +202,54 @@ def portal_create_payment(sales_invoice, method=None):
 		frappe.throw(frappe._("You can only pay your own invoices."), frappe.PermissionError)
 
 	return create_payment(sales_invoice=sales_invoice, channel="Portal", method=method)
+
+
+def _own_invoice_or_throw(sales_invoice):
+	"""Portal guard: the logged-in user's Customer must own this invoice."""
+	if frappe.session.user == "Guest":
+		frappe.throw(frappe._("Please log in to pay."), frappe.PermissionError)
+	customer = frappe.db.get_value("Sales Invoice", sales_invoice, "customer")
+	if not customer or customer not in get_portal_customers():
+		frappe.throw(frappe._("You can only pay your own invoices."), frappe.PermissionError)
+	return customer
+
+
+@frappe.whitelist()
+def portal_price_card_payment(sales_invoice, confirmation_token):
+	"""RPC (portal): quote the true total for the card the payer just entered.
+
+	Step one of the two-step card flow. Reads the card's funding type from the
+	ConfirmationToken and prices the surcharge — credit only. **No money moves**; the
+	payer sees the breakdown and confirms (or goes back and uses a different card)
+	before anything is charged.
+	"""
+	from erpnext_enhancements.stripe_payments.core.card_element import price_card_payment
+
+	_own_invoice_or_throw(sales_invoice)
+	return price_card_payment(
+		confirmation_token=confirmation_token, sales_invoice=sales_invoice, channel="Portal"
+	)
+
+
+@frappe.whitelist()
+def portal_confirm_card_payment(stripe_payment, confirmation_token):
+	"""RPC (portal): charge the total quoted by ``portal_price_card_payment``.
+
+	Re-checks ownership against the ledger row itself rather than trusting the row id
+	from the client, and ``card_element.confirm_card_payment`` additionally requires
+	the same ConfirmationToken the quote was made against.
+	"""
+	from erpnext_enhancements.stripe_payments.core.card_element import confirm_card_payment
+
+	if frappe.session.user == "Guest":
+		frappe.throw(frappe._("Please log in to pay."), frappe.PermissionError)
+	customer = frappe.db.get_value("Stripe Payment", stripe_payment, "customer")
+	if not customer or customer not in get_portal_customers():
+		frappe.throw(frappe._("You can only pay your own invoices."), frappe.PermissionError)
+
+	return confirm_card_payment(
+		stripe_payment=stripe_payment, confirmation_token=confirmation_token
+	)
 
 
 @frappe.whitelist()

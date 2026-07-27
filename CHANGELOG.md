@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.186.0] - 2026-07-27
+
+### Added
+
+- **Credit cards can now be surcharged on one-off portal payments, compliantly.**
+  v1.185.0 made hosted Checkout fee-free because it fixes line items when the Session
+  is created — before the payer's card, and so its funding type, exists. New
+  `stripe_payments/core/card_element.py` and the `/pay-card` page close that gap using
+  Stripe's **ConfirmationToken** two-step confirmation, which is entirely GA API: no
+  preview version header, and no third-party surcharge app (Yeeld/InterPayments).
+
+  A Payment Element mounts in deferred-intent mode, so nothing is priced until the
+  payer submits. Stripe.js then returns a ConfirmationToken whose
+  `payment_method_preview.card.funding` the server reads **before any amount is
+  committed**, prices the surcharge through the same `_compute_surcharge` gate every
+  other path uses, and shows the payer the true total. The fee line appears only when
+  a fee genuinely applies; a debit or prepaid payer is told plainly that none does,
+  and can go back and use another method — the disclosure and opt-out the card
+  networks require.
+
+  The quote is **bound to the ConfirmationToken it was priced against**, and
+  confirming accepts only that token. Without this a client could take a quote on one
+  card and pay with another, which is exactly the debit-surcharge case being
+  prevented. Replay of an already-Paid or Processing row is rejected, and the
+  PaymentIntent is created under an idempotency key derived from the ledger row, so a
+  double-click cannot produce two charges.
+
+  Reconciliation is untouched: the PaymentIntent carries the usual metadata and
+  `payment_intent.succeeded` posts the Payment Entry and companion surcharge Journal
+  Entry exactly as before.
+
+### Changed
+
+- **The portal offers Card and Bank as separate routes**, because they now run on
+  genuinely different implementations rather than at different prices. Cards go to the
+  Element page; bank payments stay on hosted Checkout. Neither button quotes a fee —
+  for cards it isn't knowable at that point, and ACH never has one.
+- **ACH deliberately stays on hosted Checkout.** A bank debit has no funding type to
+  detect and never carries a fee, so the Payment Element would buy it nothing while
+  adding Financial Connections (with its own per-account pricing), the microdeposit
+  fallback and its 10-day verification window, and Nacha mandate collection at
+  confirmation — all of which hosted Checkout already handles correctly.
+- `Stripe Payment.confirmation_token` records which card a quote was priced against.
+
+### Known gap
+
+- **Emailed payment links and the desk "Pay" button remain fee-free.** Both create a
+  hosted Checkout Session, which cannot price a surcharge, and the Element page
+  requires a logged-in portal session. Surcharging those would need a tokenized guest
+  route to `/pay-card` — an unauthenticated payment page, which deserves its own
+  review rather than being folded in here.
+
+## [1.185.0] - 2026-07-27
+
+### Fixed
+
+- **Debit, prepaid and ACH payments can no longer be surcharged.** Card-network rules
+  ban surcharging debit and prepaid cards outright — there is no cost-of-acceptance
+  exception, unlike credit surcharges, which are merely capped. `_compute_surcharge`
+  keyed off the *chosen method* (`"card"`), but Stripe's `"card"` covers credit, debit
+  and prepaid alike, and the real funding type only arrives afterwards as
+  `charge.payment_method_details.card.funding`. A debit customer was therefore shown a
+  "Card processing fee" line on the Checkout page and charged it. Production was Live
+  with `surcharge_enabled=1` at 2.9% when this was found; no payment had gone through
+  it yet (0 `Stripe Payment` rows), and it was switched off the same day.
+
+  The gate now returns a fee for exactly one input combination — `pm_type == "card"`
+  **and** `funding == "credit"`. `debit`, `prepaid`, `unknown` and not-yet-known all
+  return zero, as does every non-card method. This is structural: no settings value
+  can override it.
+
+- **`ach_fee_percent` / `ach_fee_flat` removed** rather than set to zero. Fields the
+  code refuses to honour invite someone to set one, see no fee, and file a bug. ACH
+  convenience fees are lawful (ACH is outside card-network rules); we simply don't
+  charge one, and re-adding the capability should be a deliberate change.
+
+- **Hosted Checkout can no longer price a surcharge at all.** It fixes line items when
+  the Session is created, which is before the payer's card — and therefore its funding
+  type — exists, so any fee there is a guess. It now passes `funding=None` through the
+  same gate and always gets zero. The method-first "Choose payment method" dialog and
+  the `(+2.9% fee)` button labels are gone with it: they existed only to disclose a fee
+  that can no longer be quoted up front.
+
+- **The surcharge cap is now cost-aware.** `_validate_surcharge` enforced only the 3%
+  network ceiling, but against a cost of acceptance of 2.9% + $0.30 a 3% surcharge
+  exceeds cost on any invoice over ~$300 — a violation everywhere. New
+  `cost_of_acceptance_percent` / `_flat` settings (2.9 / 0.30) are enforced
+  componentwise: percent ≤ cost percent **and** flat ≤ cost flat, which is provably
+  within cost at every invoice total.
+
+### Added
+
+- **Off-session charges are now surcharged correctly.** `charge_saved_method` (autopay
+  and dunning) previously applied no surcharge at all. It now reads the saved
+  PaymentMethod before charging — the one path with no timing problem — and prices a
+  credit-card fee up front. Debit, prepaid and bank accounts get none.
+- **`Stripe Payment.card_funding`** records what the card actually turned out to be, so
+  the surcharge decision is auditable after the fact. It rides on the charge the
+  reconciler already fetches, so it costs no extra API round-trip.
+- **Surcharge void backstop.** If a booked fee meets positively-known non-credit
+  funding at reconcile time, the fee is refunded, the income Journal Entry is skipped,
+  and Accounts is alerted (`surcharge_voided` / `surcharge_refund_id`). Idempotent on
+  the persisted refund id — Stripe's own Idempotency-Keys expire after 24 hours, so a
+  webhook redelivered a day later would otherwise refund twice. Funding that we simply
+  *could not determine* (a failed lookup) alerts instead of refunding, so a Stripe blip
+  never claws back a legitimate credit surcharge.
+- **Conditional disclosure.** The surcharge text no longer claims "a processing fee
+  applies to card payments" to a debit customer. `autopay_consent_text` appends a
+  surcharge sentence only while surcharging is on, derives the rate from settings, and
+  is the same text shown on the Stripe page, rendered in the portal, and stored as
+  proof of authorization — autopay enrolment being where an off-session card fee has to
+  be disclosed, since the customer isn't present when it's charged.
+
 ## [1.184.0] - 2026-07-27
 
 ### Fixed

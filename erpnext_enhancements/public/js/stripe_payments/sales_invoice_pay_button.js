@@ -17,51 +17,12 @@ function stripe_pay_button(frm) {
 	frm.add_custom_button(__("Pay with Stripe"), () => start_payment(frm), __("Stripe")).addClass("btn-primary");
 }
 
-// When surcharging is on, let the payer/staff pick a method first so the fee is
-// method-correct and disclosed; otherwise create a single all-methods session.
+// Always a single all-methods session. The method-first dialog that used to live
+// here existed only to price a per-method fee before payment; hosted Checkout can't
+// tell a debit card from a credit one until after the session is priced, so it never
+// surcharges and there is no longer a fee to disclose or a choice to force.
 function start_payment(frm) {
-	frappe.call({
-		method: "erpnext_enhancements.stripe_payments.core.api.payment_config",
-		callback(r) {
-			const cfg = (r && r.message) || {};
-			if (cfg.surcharge_enabled) choose_method(frm, cfg);
-			else create_stripe_payment(frm, null);
-		},
-	});
-}
-
-function fee_text(cfg, method) {
-	const pct = method === "card" ? cfg.card_surcharge_percent : cfg.ach_fee_percent;
-	const flat = method === "card" ? cfg.card_surcharge_flat : cfg.ach_fee_flat;
-	const parts = [];
-	if (pct) parts.push(`${pct}%`);
-	if (flat) parts.push(format_currency(flat, cfg.currency));
-	return parts.length ? ` (+${parts.join(" + ")} fee)` : "";
-}
-
-function choose_method(frm, cfg) {
-	const d = new frappe.ui.Dialog({
-		title: __("Choose payment method"),
-		fields: [{ fieldtype: "HTML", fieldname: "buttons" }],
-	});
-	const $w = d.fields_dict.buttons.$wrapper;
-	if (cfg.enable_card) {
-		$(`<button class="btn btn-primary btn-block" style="margin-bottom:8px;">${__("Card")}${fee_text(cfg, "card")}</button>`)
-			.appendTo($w)
-			.on("click", () => {
-				d.hide();
-				create_stripe_payment(frm, "card");
-			});
-	}
-	if (cfg.enable_ach) {
-		$(`<button class="btn btn-default btn-block">${__("Bank (ACH)")}${fee_text(cfg, "ach")}</button>`)
-			.appendTo($w)
-			.on("click", () => {
-				d.hide();
-				create_stripe_payment(frm, "ach");
-			});
-	}
-	d.show();
+	create_stripe_payment(frm, null);
 }
 
 function create_stripe_payment(frm, method) {

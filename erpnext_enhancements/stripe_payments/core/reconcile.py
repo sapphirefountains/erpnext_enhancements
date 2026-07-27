@@ -22,13 +22,17 @@ import contextlib
 import json
 
 import frappe
-from frappe.utils import flt, now_datetime, today
+from frappe.utils import cint, flt, now_datetime, today
 
-from erpnext_enhancements.stripe_payments.core.checkout import _stamp_invoice
+from erpnext_enhancements.stripe_payments.core.checkout import (
+	NON_SURCHARGEABLE_FUNDING,
+	_stamp_invoice,
+)
 from erpnext_enhancements.stripe_payments.core.utils import (
 	error_snippet,
 	from_minor_units,
 	get_settings,
+	to_minor_units,
 )
 
 # Events we act on; anything else is recorded and marked Ignored.
@@ -247,8 +251,16 @@ def _on_charge_refunded(charge):
 	if not sp:
 		return None
 	refunded = from_minor_units(charge.get("amount_refunded"))
+	# A voided surcharge is our own compliance correction, not a customer refund —
+	# netting it out keeps amount_refunded meaning "money given back on the sale",
+	# and stops a fully-collected payment from reading as partially refunded.
+	if cint(sp.get("surcharge_voided")):
+		refunded = max(refunded - flt(sp.get("surcharge_amount")), 0)
 	sp.db_set("amount_refunded", refunded)
-	if charge.get("refunded") or refunded >= flt(sp.amount):
+	# Stripe's own "fully refunded" flag still decides, except when the only thing
+	# refunded was the voided surcharge — that leaves the sale fully collected.
+	fully_refunded = bool(charge.get("refunded")) and not cint(sp.get("surcharge_voided"))
+	if fully_refunded or refunded >= flt(sp.amount) > 0:
 		sp.db_set("status", "Refunded")
 	frappe.db.commit()
 	return sp
@@ -268,7 +280,7 @@ def finalize_payment(sp, source_obj):
 		return sp.payment_entry
 
 	pi_id = sp.stripe_payment_intent or _extract_payment_intent(source_obj)
-	charge_id, method_type = _enrich(source_obj, pi_id)
+	charge_id, method_type, funding = _enrich(source_obj, pi_id)
 
 	if pi_id:
 		existing = frappe.db.get_value(
@@ -277,15 +289,15 @@ def finalize_payment(sp, source_obj):
 			"name",
 		)
 		if existing:
-			_mark_paid(sp, existing, pi_id, charge_id, method_type)
+			_mark_paid(sp, existing, pi_id, charge_id, method_type, funding)
 			return existing
 
-	pe_name = _create_payment_entry(sp, pi_id, charge_id, method_type)
-	_mark_paid(sp, pe_name, pi_id, charge_id, method_type)
+	pe_name = _create_payment_entry(sp, pi_id, charge_id, method_type, funding)
+	_mark_paid(sp, pe_name, pi_id, charge_id, method_type, funding)
 	return pe_name
 
 
-def _create_payment_entry(sp, pi_id, charge_id, method_type) -> str:
+def _create_payment_entry(sp, pi_id, charge_id, method_type, funding=None) -> str:
 	"""Build + submit a Receive Payment Entry; allocate to the invoice if linked."""
 	settings = get_settings()
 	if not settings.deposit_account:
@@ -335,6 +347,7 @@ def _create_payment_entry(sp, pi_id, charge_id, method_type) -> str:
 	# A collected surcharge is booked as income by a companion Journal Entry, not on
 	# this Payment Entry: erpnext forces received == paid on a same-currency Receive,
 	# so a surcharge cannot ride on the invoice PE as a deduction (see _book_surcharge).
+	_void_surcharge_if_not_credit(sp, funding)
 	_book_surcharge(sp, pe, charge_id, pi_id)
 	return pe.name
 
@@ -362,6 +375,114 @@ def _surcharge_je_legs(deposit_account, income_account, surcharge, cost_center):
 	]
 
 
+def _void_surcharge_if_not_credit(sp, funding):
+	"""Backstop: never keep a surcharge collected from a card that isn't credit.
+
+	Surcharges are priced only where the funding type is known *before* charging
+	(``saved_methods.charge_saved_method`` reads the saved PaymentMethod first;
+	hosted Checkout never surcharges at all), so this should not fire. It exists for
+	the case where the instrument that actually charged differs from the one we
+	priced — the fee has already been collected by then, and the only remedy is to
+	give it back.
+
+	Fires only on a **positively known** non-surchargeable funding type. ``None``
+	means we could not determine funding — usually a failed API lookup — and is
+	deliberately *not* treated as a violation: refunding on missing data would claw
+	back legitimate credit surcharges on every Stripe blip. That case alerts instead
+	and leaves the booking alone.
+
+	Sets the flag inside the reconciliation transaction (so it commits or rolls back
+	with the Payment Entry) and enqueues the refund separately after commit, keeping
+	the Payment Entry atomic and making the refund independently retryable.
+	``_book_surcharge`` no-ops once the flag is set, so the fee is never booked to
+	income as well as refunded.
+	"""
+	surcharge = flt(getattr(sp, "surcharge_amount", 0))
+	if surcharge <= 0 or cint(getattr(sp, "surcharge_voided", 0)):
+		return
+	if funding is None:
+		frappe.log_error(
+			f"Stripe Payment {sp.name} collected a {surcharge} surcharge but the card's funding "
+			"type could not be determined. Verify in the Stripe dashboard that it was a credit "
+			"card; if it was debit or prepaid, refund the surcharge manually.",
+			"Stripe: surcharge booked with unknown funding type",
+		)
+		return
+	if funding not in NON_SURCHARGEABLE_FUNDING:
+		return
+
+	sp.db_set("surcharge_voided", 1)
+	frappe.enqueue(
+		"erpnext_enhancements.stripe_payments.core.reconcile.refund_voided_surcharge",
+		queue="short",
+		enqueue_after_commit=True,
+		stripe_payment=sp.name,
+	)
+
+
+def refund_voided_surcharge(stripe_payment: str):
+	"""Refund a surcharge collected from a non-credit card (background job).
+
+	Idempotent three ways, in order of authority: it no-ops unless ``surcharge_voided``
+	is set, it no-ops once ``surcharge_refund_id`` is recorded, and ``create_refund``
+	sends a deterministic Idempotency-Key. The local flags are what actually protect
+	a redelivered webhook — Stripe's idempotency keys expire after 24 hours, so a
+	late redelivery would otherwise issue a *second* refund.
+	"""
+	sp = frappe.get_doc("Stripe Payment", stripe_payment)
+	if not cint(sp.get("surcharge_voided")) or sp.get("surcharge_refund_id"):
+		return
+	surcharge = flt(sp.get("surcharge_amount"))
+	if surcharge <= 0 or not sp.stripe_payment_intent:
+		return
+
+	from erpnext_enhancements.stripe_payments.core.client import create_refund
+
+	refund = create_refund(
+		sp.stripe_payment_intent, amount_minor=to_minor_units(surcharge, sp.currency)
+	)
+	sp.db_set("surcharge_refund_id", refund.get("id"))
+	frappe.db.commit()
+	_alert_surcharge_voided(sp, surcharge)
+
+
+def _alert_surcharge_voided(sp, surcharge):
+	"""Tell Accounts a surcharge was refunded because the card wasn't credit.
+
+	Best-effort — the refund has already happened and is recorded on the row; this
+	is the human-visible trail. Reaching this state means a payment was priced as
+	credit and charged as something else, which is worth investigating.
+	"""
+	try:
+		from erpnext_enhancements.stripe_payments.core.payouts import _accounts_managers
+
+		amount = f"{surcharge} {(sp.currency or 'USD')}"
+		subject = f"Stripe surcharge refunded: {sp.customer} ({amount})"
+		content = (
+			f"Stripe Payment {sp.name} collected a {amount} surcharge, but the card that actually "
+			f"charged was <b>{frappe.utils.escape_html(sp.get('card_funding') or 'not credit')}</b>. "
+			"Card-network rules prohibit surcharging debit and prepaid cards, so the fee was "
+			"automatically refunded and was <b>not</b> booked to surcharge income.<br><br>"
+			"The invoice payment itself was unaffected. Investigate why the payment was priced as "
+			"credit — the saved payment method may have been replaced since it was stored."
+		)
+		for user in _accounts_managers():
+			frappe.get_doc(
+				{
+					"doctype": "Notification Log",
+					"subject": subject,
+					"email_content": content,
+					"document_type": "Stripe Payment",
+					"document_name": sp.name,
+					"for_user": user,
+					"type": "Alert",
+				}
+			).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(error_snippet(frappe.get_traceback()), "Stripe: surcharge-void alert failed")
+
+
 def _book_surcharge(sp, pe, charge_id, pi_id):
 	"""Book a collected surcharge as income via a companion Journal Entry.
 
@@ -378,10 +499,11 @@ def _book_surcharge(sp, pe, charge_id, pi_id):
 	that the payout sweep (WI-040) later moves to the bank. Idempotent on the Stripe
 	charge/PaymentIntent id (JE ``cheque_no``) so a redelivered event never double-books.
 	Posted inside the same transaction as the Payment Entry, so any failure rolls the
-	whole reconciliation back together.
+	whole reconciliation back together. Skipped entirely when the fee was voided by
+	:func:`_void_surcharge_if_not_credit` — a refunded surcharge is not income.
 	"""
 	surcharge = flt(getattr(sp, "surcharge_amount", 0))
-	if surcharge <= 0:
+	if surcharge <= 0 or cint(getattr(sp, "surcharge_voided", 0)):
 		return None
 	settings = get_settings()
 	if not settings.surcharge_income_account:
@@ -413,8 +535,14 @@ def _book_surcharge(sp, pe, charge_id, pi_id):
 	return je.name
 
 
-def _mark_paid(sp, pe_name, pi_id, charge_id, method_type):
-	"""Stamp the Stripe Payment + Sales Invoice as Paid and link the Payment Entry."""
+def _mark_paid(sp, pe_name, pi_id, charge_id, method_type, funding=None):
+	"""Stamp the Stripe Payment + Sales Invoice as Paid and link the Payment Entry.
+
+	Records ``card_funding`` so the surcharge decision stays auditable after the
+	fact: whether a fee was charged is only defensible against the funding type the
+	card actually turned out to be. Never overwrites a known value with ``None``
+	(the off-session path already stamped it before charging).
+	"""
 	sp.db_set(
 		{
 			"status": "Paid",
@@ -422,6 +550,7 @@ def _mark_paid(sp, pe_name, pi_id, charge_id, method_type):
 			"stripe_payment_intent": pi_id,
 			"stripe_charge_id": charge_id,
 			"payment_method_type": method_type,
+			"card_funding": funding or sp.get("card_funding"),
 			"error_message": None,
 		}
 	)
@@ -481,39 +610,60 @@ def _extract_payment_intent(obj) -> str | None:
 
 
 def _enrich(obj, pi_id):
-	"""Best-effort (charge_id, method_type) from the object, enriched via API.
+	"""Best-effort ``(charge_id, method_type, card_funding)``, enriched via API.
+
+	``card_funding`` ("credit"/"debit"/"prepaid"/"unknown") is what makes a surcharge
+	defensible or not, so it is worth one lookup when a card charge arrives without
+	it — and it costs no extra round-trip, since it rides on the same expanded
+	``latest_charge`` we already fetch for the charge id.
 
 	Never required: if the API call fails (offline / test), we return whatever the
-	event object already carried so a Payment Entry can still post.
+	event object already carried so a Payment Entry can still post. Funding then
+	stays ``None``, which every downstream consumer treats as "not known to be
+	credit" rather than as a violation.
 	"""
 	charge_id = None
 	method_type = None
+	funding = None
+
+	def _from_charge(charge):
+		details = charge.get("payment_method_details") or {}
+		return details.get("type"), (details.get("card") or {}).get("funding")
 
 	if obj.get("object") == "charge":
 		charge_id = obj.get("id")
-		method_type = (obj.get("payment_method_details") or {}).get("type")
+		method_type, funding = _from_charge(obj)
 	elif obj.get("object") == "payment_intent":
 		latest = obj.get("latest_charge")
-		charge_id = latest.get("id") if isinstance(latest, dict) else latest
+		if isinstance(latest, dict):
+			charge_id = latest.get("id")
+			method_type, funding = _from_charge(latest)
+		else:
+			charge_id = latest
 	elif obj.get("object") == "checkout.session":
 		types = obj.get("payment_method_types") or []
 		method_type = types[0] if types else None
 
-	if pi_id and (not charge_id or not method_type):
+	# Fetch when anything is still missing. A card charge with no funding yet counts
+	# as missing; a bank debit has no funding to find, so it doesn't.
+	needs_funding = funding is None and method_type in (None, "card")
+	if pi_id and (not charge_id or not method_type or needs_funding):
 		try:
 			from erpnext_enhancements.stripe_payments.core.client import retrieve_payment_intent
 
 			pi = retrieve_payment_intent(pi_id)
 			latest = pi.get("latest_charge")
 			if isinstance(latest, dict):
+				charge_type, charge_funding = _from_charge(latest)
 				charge_id = charge_id or latest.get("id")
-				method_type = method_type or (latest.get("payment_method_details") or {}).get("type")
+				method_type = method_type or charge_type
+				funding = funding or charge_funding
 			else:
 				charge_id = charge_id or latest
 		except Exception:
 			pass
 
-	return charge_id, method_type
+	return charge_id, method_type, funding
 
 
 def _handle_setup_completed(session):

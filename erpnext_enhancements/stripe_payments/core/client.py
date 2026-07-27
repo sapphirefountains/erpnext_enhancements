@@ -185,8 +185,20 @@ def retrieve_setup_intent(setup_intent_id: str):
 
 
 def retrieve_payment_method(payment_method_id: str):
-	"""Retrieve a PaymentMethod (for its display label)."""
+	"""Retrieve a PaymentMethod (for its display label, and its card funding type)."""
 	return _request("GET", f"/payment_methods/{payment_method_id}")
+
+
+def retrieve_confirmation_token(confirmation_token_id: str):
+	"""Retrieve a ConfirmationToken created by Stripe.js on the payment page.
+
+	Its ``payment_method_preview`` carries the method ``type`` and, for cards,
+	``card.funding`` — **before** any amount is committed. That is what makes a
+	funding-aware surcharge possible at all: we read the real card, price the fee,
+	show the payer the true total, and only then confirm. Hosted Checkout cannot do
+	this because its line items are fixed when the Session is created.
+	"""
+	return _request("GET", f"/confirmation_tokens/{confirmation_token_id}")
 
 
 def detach_payment_method(payment_method_id: str):

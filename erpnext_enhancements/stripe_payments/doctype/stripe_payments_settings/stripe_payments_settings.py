@@ -13,7 +13,9 @@ the build is sandbox-only), plus surfacing the webhook URL to paste into Stripe.
 
 import frappe
 from frappe.model.document import Document
-from frappe.utils import cint, flt
+from frappe.utils import cint
+
+from erpnext_enhancements.stripe_payments.core.checkout import surcharge_cap_error
 
 
 class StripePaymentsSettings(Document):
@@ -32,18 +34,25 @@ class StripePaymentsSettings(Document):
 		self._validate_surcharge()
 
 	def _validate_surcharge(self):
-		"""Enforce the hard card-surcharge cap and nudge for the income account.
+		"""Enforce both surcharge caps (network ceiling AND cost of acceptance).
 
-		The US card-network cap is 3% (and must be ≤ cost of acceptance / the lowest
-		applicable state cap). See docs/stripe_surcharging_compliance.md.
+		The policy itself lives in :func:`..core.checkout.surcharge_cap_error`, which
+		is pure so it can be unit-tested without a bench. Nothing here validates the
+		debit/prepaid/ACH exemptions: those are structural — there is no ACH fee field
+		to set, and ``_compute_surcharge`` will not price a non-credit card whatever
+		these settings say. See docs/stripe_surcharging_compliance.md.
 		"""
 		if not cint(self.surcharge_enabled):
 			return
-		if flt(self.card_surcharge_percent) > 3:
-			frappe.throw(
-				"Card Surcharge % cannot exceed the US network cap of 3%. "
-				"Some states require less — see docs/stripe_surcharging_compliance.md."
-			)
+
+		error = surcharge_cap_error(
+			self.card_surcharge_percent,
+			self.card_surcharge_flat,
+			self.cost_of_acceptance_percent,
+			self.cost_of_acceptance_flat,
+		)
+		if error:
+			frappe.throw(error)
 		if not self.surcharge_income_account:
 			frappe.msgprint(
 				"Set a Surcharge Income Account — collected fees can't post without it.",

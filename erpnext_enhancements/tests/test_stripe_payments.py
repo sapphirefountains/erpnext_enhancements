@@ -38,6 +38,7 @@ def install_frappe_stub():
 	frappe_utils.get_datetime = lambda value=None, *args, **kwargs: value
 	frappe_utils.add_to_date = lambda value=None, **kwargs: value
 	frappe_utils.get_url = lambda path=None, *args, **kwargs: f"https://erp.example.com{path or ''}"
+	frappe_utils.fmt_money = lambda value=0, currency=None, *a, **k: f"{currency or 'USD'} {_flt(value):,.2f}"
 	frappe.utils = frappe_utils
 
 	frappe.throw = _stub_throw
@@ -167,17 +168,43 @@ def test_extract_payment_intent_handles_session_pi_and_charge():
 	assert _extract_payment_intent({}) is None
 
 
-def test_enrich_reads_charge_and_session_without_api():
-	"""_enrich derives (charge_id, method_type) from the event object, no API call needed."""
+def test_enrich_reads_charge_session_and_card_funding_without_api():
+	"""_enrich derives (charge_id, method_type, card_funding) from the event object.
+
+	Every case here is fully satisfied by the event payload, so no API round-trip is
+	attempted — which is the point: the funding type rides along on the charge we
+	already have.
+	"""
 	install_frappe_stub()
 	from erpnext_enhancements.stripe_payments.core.reconcile import _enrich
 
-	charge = {"object": "charge", "id": "ch_1", "payment_method_details": {"type": "card"}}
-	assert _enrich(charge, "pi_1") == ("ch_1", "card")
+	def card_charge(charge_id, funding):
+		return {
+			"object": "charge",
+			"id": charge_id,
+			"payment_method_details": {"type": "card", "card": {"funding": funding}},
+		}
+
+	assert _enrich(card_charge("ch_1", "credit"), "pi_1") == ("ch_1", "card", "credit")
+	# Non-credit funding is carried through verbatim; the reconciler decides on it.
+	assert _enrich(card_charge("ch_2", "debit"), "pi_2") == ("ch_2", "card", "debit")
+	assert _enrich(card_charge("ch_3", "unknown"), "pi_3") == ("ch_3", "card", "unknown")
+
+	# A bank debit has no funding type to find, so no lookup is triggered for one.
+	ach = {"object": "charge", "id": "ch_4", "payment_method_details": {"type": "us_bank_account"}}
+	assert _enrich(ach, "pi_4") == ("ch_4", "us_bank_account", None)
 
 	# Session with pi_id=None so the optional API enrichment branch is skipped.
 	session = {"object": "checkout.session", "payment_method_types": ["us_bank_account"]}
-	assert _enrich(session, None) == (None, "us_bank_account")
+	assert _enrich(session, None) == (None, "us_bank_account", None)
+
+	# An expanded PaymentIntent yields all three in one hop.
+	pi = {
+		"object": "payment_intent",
+		"id": "pi_5",
+		"latest_charge": card_charge("ch_5", "prepaid"),
+	}
+	assert _enrich(pi, "pi_5") == ("ch_5", "card", "prepaid")
 
 
 def test_reconcile_elevates_guest_to_administrator_and_restores():
@@ -291,8 +318,14 @@ def test_verify_and_parse_event_accepts_valid_and_rejects_tampered():
 # --- surcharge / fee computation -------------------------------------------
 
 
-def test_compute_surcharge_by_method():
-	"""_compute_surcharge applies the per-method %/flat only when enabled + method chosen."""
+def test_compute_surcharge_only_ever_charges_credit_cards():
+	"""The full gate matrix: funding x payment method x master switch.
+
+	Only a credit card ever produces a fee. Surcharging debit or prepaid is a flat
+	card-network violation with no cost-of-acceptance exception; "unknown" means
+	Stripe could not classify the card, so it fails toward not charging; and ACH has
+	no fee path at all (there is no ACH fee setting left to misconfigure).
+	"""
 	install_frappe_stub()
 	from erpnext_enhancements.stripe_payments.core.checkout import (
 		_compute_surcharge,
@@ -302,32 +335,93 @@ def test_compute_surcharge_by_method():
 
 	on = types.SimpleNamespace(
 		surcharge_enabled=1,
-		card_surcharge_percent=3,
+		card_surcharge_percent=2.9,
 		card_surcharge_flat=0,
-		ach_fee_percent=0,
-		ach_fee_flat=5,
 		enable_card=1,
 		enable_ach=1,
 	)
-	assert _compute_surcharge(on, "card", 100) == 3.0  # 3% of 100
-	assert _compute_surcharge(on, "ach", 100) == 5.0  # flat $5
-	assert _compute_surcharge(on, None, 100) == 0.0  # no method -> never surcharge
 
-	off = types.SimpleNamespace(
-		surcharge_enabled=0,
-		card_surcharge_percent=3,
-		card_surcharge_flat=0,
-		ach_fee_percent=0,
-		ach_fee_flat=0,
-	)
-	assert _compute_surcharge(off, "card", 100) == 0.0  # disabled -> zero
+	# The one and only combination that produces a fee.
+	assert _compute_surcharge(on, pm_type="card", funding="credit", base=100) == 2.9
 
-	# Choosing a method locks the Checkout Session to it.
+	# Every other funding type on a card: zero.
+	for funding in ("debit", "prepaid", "unknown", None):
+		assert _compute_surcharge(on, pm_type="card", funding=funding, base=100) == 0.0, funding
+
+	# ACH is zero regardless of what funding value is passed alongside it.
+	for funding in ("credit", "debit", "prepaid", "unknown", None):
+		assert (
+			_compute_surcharge(on, pm_type="us_bank_account", funding=funding, base=100) == 0.0
+		), funding
+
+	# An absent/unrecognised method type is not a card, so it is not surchargeable.
+	assert _compute_surcharge(on, pm_type=None, funding="credit", base=100) == 0.0
+	assert _compute_surcharge(on, pm_type="link", funding="credit", base=100) == 0.0
+
+	# Master switch off: even a credit card pays nothing.
+	off = types.SimpleNamespace(surcharge_enabled=0, card_surcharge_percent=2.9, card_surcharge_flat=0)
+	for funding in ("credit", "debit", "prepaid", "unknown", None):
+		assert _compute_surcharge(off, pm_type="card", funding=funding, base=100) == 0.0, funding
+
+	# Percent and flat compose, rounded to cents.
+	both = types.SimpleNamespace(surcharge_enabled=1, card_surcharge_percent=2.9, card_surcharge_flat=0.30)
+	assert _compute_surcharge(both, pm_type="card", funding="credit", base=100) == 3.20
+
+	# Choosing a method still locks the Checkout Session to it.
 	assert _methods_for(on, "card") == ["card"]
 	assert _methods_for(on, "ach") == ["us_bank_account"]
 	assert _method_hint("card") == "card"
 	assert _method_hint("ach") == "us_bank_account"
 	assert _method_hint(None) is None
+
+
+def test_hosted_checkout_can_never_price_a_surcharge():
+	"""Pinning the exact call create_payment makes: funding=None, therefore always 0.
+
+	Hosted Checkout fixes its line items when the Session is created — before the
+	payer's card, and so its funding type, exists. A fee here would be a guess, and a
+	wrong guess against a debit card is a network violation, so the gate refuses.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.checkout import _compute_surcharge, _method_hint
+
+	settings = types.SimpleNamespace(
+		surcharge_enabled=1, card_surcharge_percent=3, card_surcharge_flat=1
+	)
+	for method in ("card", "ach", None):
+		assert (
+			_compute_surcharge(settings, pm_type=_method_hint(method), funding=None, base=500) == 0.0
+		), method
+
+
+def test_surcharge_cap_is_cost_aware_not_just_three_percent():
+	"""surcharge_cap_error enforces cost of acceptance as well as the 3% ceiling.
+
+	A 3% surcharge against a 2.9% + $0.30 cost exceeds cost on any invoice over ~$300,
+	so the network cap alone let a non-compliant configuration save.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.stripe_payments.core.checkout import surcharge_cap_error
+
+	# Sapphire's real cost of acceptance.
+	cost_pct, cost_flat = 2.9, 0.30
+
+	# At or under cost on both components: allowed.
+	assert surcharge_cap_error(2.9, 0, cost_pct, cost_flat) is None
+	assert surcharge_cap_error(2.9, 0.30, cost_pct, cost_flat) is None
+	assert surcharge_cap_error(2.0, 0.10, cost_pct, cost_flat) is None
+
+	# The case the old validator waved through: within 3%, over cost.
+	assert "cost of acceptance" in (surcharge_cap_error(3, 0, cost_pct, cost_flat) or "")
+
+	# Over the hard network ceiling, whatever the cost is.
+	assert "3%" in (surcharge_cap_error(3.5, 0, 4, 1) or "")
+
+	# Flat component over cost, percent fine.
+	assert "flat" in (surcharge_cap_error(2.9, 0.50, cost_pct, cost_flat) or "").lower()
+
+	# Cost not configured at all: refuse rather than assume.
+	assert "Cost of Acceptance" in (surcharge_cap_error(1, 0, 0, 0) or "")
 
 
 def test_surcharge_je_legs_balance_and_route_to_income():
@@ -351,6 +445,222 @@ def test_surcharge_je_legs_balance_and_route_to_income():
 	total_credit = sum(leg["credit_in_account_currency"] for leg in legs)
 	assert total_debit == total_credit == 7.55
 	assert all(leg["cost_center"] == "Main - SF" for leg in legs)
+
+
+def test_confirmation_token_yields_the_funding_type_before_any_charge():
+	"""_confirmation_token_method reads type + card funding from payment_method_preview.
+
+	This is the whole reason the Payment Element flow exists: the ConfirmationToken is
+	readable server-side *before* an amount is committed, so the surcharge can be
+	priced from the real card instead of guessed from the chosen method.
+	"""
+	install_frappe_stub()
+
+	from erpnext_enhancements.stripe_payments.core import card_element
+
+	tokens = {
+		"ct_credit": {"payment_method_preview": {"type": "card", "card": {"funding": "credit"}}},
+		"ct_debit": {"payment_method_preview": {"type": "card", "card": {"funding": "debit"}}},
+		"ct_prepaid": {"payment_method_preview": {"type": "card", "card": {"funding": "prepaid"}}},
+		"ct_unknown": {"payment_method_preview": {"type": "card", "card": {"funding": "unknown"}}},
+		"ct_bank": {"payment_method_preview": {"type": "us_bank_account", "us_bank_account": {}}},
+	}
+	# Patched on card_element, not client: the name is bound at import time there.
+	original = card_element.retrieve_confirmation_token
+	card_element.retrieve_confirmation_token = lambda token_id: tokens[token_id]
+	try:
+		assert card_element._confirmation_token_method("ct_credit") == ("card", "credit")
+		assert card_element._confirmation_token_method("ct_debit") == ("card", "debit")
+		assert card_element._confirmation_token_method("ct_prepaid") == ("card", "prepaid")
+		assert card_element._confirmation_token_method("ct_unknown") == ("card", "unknown")
+		assert card_element._confirmation_token_method("ct_bank") == ("us_bank_account", None)
+
+		# No token at all must fail loudly rather than price as "no card, no fee".
+		try:
+			card_element._confirmation_token_method(None)
+			raise AssertionError("expected a missing confirmation token to be rejected")
+		except Exception as exc:
+			assert "payment details" in str(exc).lower()
+	finally:
+		card_element.retrieve_confirmation_token = original
+
+
+def test_card_element_prices_each_funding_type_correctly():
+	"""End-to-end pricing: the funding type off the token drives the fee, credit only."""
+	install_frappe_stub()
+
+	from erpnext_enhancements.stripe_payments.core.checkout import _compute_surcharge
+
+	settings = types.SimpleNamespace(
+		surcharge_enabled=1, card_surcharge_percent=2.9, card_surcharge_flat=0
+	)
+	# What price_card_payment computes for a $200 invoice, per funding type.
+	expected = {"credit": 5.8, "debit": 0.0, "prepaid": 0.0, "unknown": 0.0}
+	for funding, fee in expected.items():
+		assert _compute_surcharge(settings, pm_type="card", funding=funding, base=200) == fee, funding
+
+
+def _fake_sp(**fields):
+	"""A Stripe Payment stand-in whose ``db_set`` writes back onto itself, like the real doc."""
+	sp = types.SimpleNamespace(name="STR-PAY-0001", currency="USD", customer="CUST-1", **fields)
+
+	def db_set(field, value=None, **kwargs):
+		for key, val in (field if isinstance(field, dict) else {field: value}).items():
+			setattr(sp, key, val)
+
+	sp.db_set = db_set
+	sp.get = lambda key, default=None: getattr(sp, key, default)
+	return sp
+
+
+def test_confirm_card_payment_guards_against_a_swapped_token_or_replay():
+	"""Confirming accepts only the exact card the quote was priced against.
+
+	Without the binding a client could take a quote on a debit card (fee 0) and then
+	pay with a credit card, or — the compliance-relevant direction — take a quote on
+	credit and present a debit card to the charge. One token, one price, one charge.
+	"""
+	install_frappe_stub()
+	import frappe as frappe_stub
+
+	from erpnext_enhancements.stripe_payments.core import card_element
+
+	original_get_settings = card_element.get_settings
+	original_is_enabled = card_element.is_enabled
+	card_element.get_settings = lambda: types.SimpleNamespace(enabled=1, enable_card=1)
+	card_element.is_enabled = lambda settings=None: True
+	try:
+
+		def confirm(sp, token):
+			frappe_stub.get_doc = lambda doctype, name=None: sp
+			return card_element.confirm_card_payment(
+				stripe_payment=sp.name, confirmation_token=token
+			)
+
+		# A different card than the one quoted.
+		quoted_on_credit = _fake_sp(
+			status="Draft", confirmation_token="ct_credit", amount=100, surcharge_amount=2.9
+		)
+		try:
+			confirm(quoted_on_credit, "ct_debit")
+			raise AssertionError("expected a swapped confirmation token to be rejected")
+		except Exception as exc:
+			assert "different card" in str(exc).lower()
+
+		# A row that carries no quote at all cannot be charged through this path.
+		unpriced = _fake_sp(status="Draft", confirmation_token=None, amount=100, surcharge_amount=0)
+		try:
+			confirm(unpriced, "ct_credit")
+			raise AssertionError("expected an unpriced payment to be rejected")
+		except Exception as exc:
+			assert "different card" in str(exc).lower()
+
+		# Replay of an already-settled payment must not start a second PaymentIntent.
+		for status in ("Paid", "Processing"):
+			already = _fake_sp(
+				status=status, confirmation_token="ct_credit", amount=100, surcharge_amount=2.9
+			)
+			try:
+				confirm(already, "ct_credit")
+				raise AssertionError(f"expected a {status} payment to be rejected")
+			except Exception as exc:
+				assert "already" in str(exc).lower()
+	finally:
+		card_element.get_settings = original_get_settings
+		card_element.is_enabled = original_is_enabled
+
+
+def test_void_surcharge_fires_only_on_known_non_credit_funding():
+	"""The backstop voids a collected fee for debit/prepaid/unknown — and only those.
+
+	``None`` funding means *we* could not determine it (usually a failed API lookup),
+	not that the card was non-credit. Refunding on missing data would claw back
+	legitimate credit surcharges on every Stripe blip, so that case alerts instead.
+	"""
+	install_frappe_stub()
+	import frappe as frappe_stub
+
+	from erpnext_enhancements.stripe_payments.core import reconcile
+
+	enqueued = []
+	frappe_stub.enqueue = lambda method, **kwargs: enqueued.append(kwargs.get("stripe_payment"))
+
+	for funding in ("debit", "prepaid", "unknown"):
+		enqueued.clear()
+		sp = _fake_sp(surcharge_amount=2.9, surcharge_voided=0)
+		reconcile._void_surcharge_if_not_credit(sp, funding)
+		assert sp.surcharge_voided == 1, funding
+		assert enqueued == ["STR-PAY-0001"], funding
+
+	# Credit: the fee stands and gets booked to income as normal.
+	enqueued.clear()
+	sp = _fake_sp(surcharge_amount=2.9, surcharge_voided=0)
+	reconcile._void_surcharge_if_not_credit(sp, "credit")
+	assert sp.surcharge_voided == 0 and enqueued == []
+
+	# Funding we could not determine: alert, don't refund.
+	enqueued.clear()
+	sp = _fake_sp(surcharge_amount=2.9, surcharge_voided=0)
+	reconcile._void_surcharge_if_not_credit(sp, None)
+	assert sp.surcharge_voided == 0 and enqueued == []
+
+	# Nothing was surcharged, so there is nothing to void.
+	enqueued.clear()
+	reconcile._void_surcharge_if_not_credit(_fake_sp(surcharge_amount=0, surcharge_voided=0), "debit")
+	assert enqueued == []
+
+	# Redelivered event on an already-voided row: no second refund is enqueued.
+	enqueued.clear()
+	reconcile._void_surcharge_if_not_credit(_fake_sp(surcharge_amount=2.9, surcharge_voided=1), "debit")
+	assert enqueued == []
+
+
+def test_redelivered_event_never_refunds_the_surcharge_twice():
+	"""Webhook redelivery must not issue a second refund.
+
+	Stripe's Idempotency-Key expires after 24 hours, so an event redelivered a day
+	later would slip past it — the persisted ``surcharge_refund_id`` is what actually
+	holds the line.
+	"""
+	install_frappe_stub()
+	import frappe as frappe_stub
+
+	from erpnext_enhancements.stripe_payments.core import client, reconcile
+
+	frappe_stub.db.commit = lambda: None
+	calls = []
+	original_create_refund = client.create_refund
+	client.create_refund = lambda pi, amount_minor=None, reason=None: (
+		calls.append((pi, amount_minor)) or {"id": f"re_{len(calls)}"}
+	)
+	try:
+		sp = _fake_sp(
+			surcharge_amount=2.9,
+			surcharge_voided=1,
+			surcharge_refund_id=None,
+			stripe_payment_intent="pi_1",
+		)
+		frappe_stub.get_doc = lambda doctype, name=None: sp
+
+		reconcile.refund_voided_surcharge(sp.name)
+		assert calls == [("pi_1", 290)]  # 2.90 USD in minor units
+		assert sp.surcharge_refund_id == "re_1"
+
+		reconcile.refund_voided_surcharge(sp.name)
+		assert calls == [("pi_1", 290)], "a redelivered event issued a second refund"
+
+		# A row that was never voided must never be refunded by this job at all.
+		never_voided = _fake_sp(
+			surcharge_amount=2.9,
+			surcharge_voided=0,
+			surcharge_refund_id=None,
+			stripe_payment_intent="pi_2",
+		)
+		frappe_stub.get_doc = lambda doctype, name=None: never_voided
+		reconcile.refund_voided_surcharge(never_voided.name)
+		assert calls == [("pi_1", 290)]
+	finally:
+		client.create_refund = original_create_refund
 
 
 # --- payout reconciliation (WI-040) -----------------------------------------

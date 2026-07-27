@@ -37,8 +37,8 @@
   "surcharge_enabled",
   "card_surcharge_percent",
   "card_surcharge_flat",
-  "ach_fee_percent",
-  "ach_fee_flat",
+  "cost_of_acceptance_percent",
+  "cost_of_acceptance_flat",
   "column_break_surcharge",
   "surcharge_income_account",
   "surcharge_label",
@@ -213,7 +213,7 @@
    "label": "Cancel Route"
   },
   {
-   "description": "Pass card/ACH processing fees to customers. OFF by default. Card surcharging is legally regulated — read docs/stripe_surcharging_compliance.md before enabling.",
+   "description": "Pass credit-card processing costs to customers. OFF by default. Applies to CREDIT CARDS ONLY — debit, prepaid and ACH are never surcharged, enforced in code rather than by these settings. Card surcharging is legally regulated and requires 30-day advance notice to the networks: read docs/stripe_surcharging_compliance.md before enabling.",
    "fieldname": "surcharge_section",
    "fieldtype": "Section Break",
    "label": "Surcharge / Fee Pass-Through"
@@ -238,16 +238,18 @@
    "label": "Card Surcharge (flat)"
   },
   {
-   "default": "0",
-   "fieldname": "ach_fee_percent",
+   "default": "2.9",
+   "description": "Your actual cost of accepting a card, percent component (Stripe's standard US card rate is 2.9%). Network rules cap a surcharge at 3% OR your cost of acceptance, whichever is lower — the surcharge above is validated against this.",
+   "fieldname": "cost_of_acceptance_percent",
    "fieldtype": "Float",
-   "label": "ACH Fee %"
+   "label": "Cost of Acceptance %"
   },
   {
-   "default": "0",
-   "fieldname": "ach_fee_flat",
+   "default": "0.30",
+   "description": "Your cost of acceptance, flat component (Stripe's standard US card rate adds $0.30 per transaction).",
+   "fieldname": "cost_of_acceptance_flat",
    "fieldtype": "Currency",
-   "label": "ACH Fee (flat)"
+   "label": "Cost of Acceptance (flat)"
   },
   {
    "fieldname": "column_break_surcharge",
@@ -261,13 +263,14 @@
    "options": "Account"
   },
   {
-   "default": "Card processing fee",
+   "default": "Credit card processing fee",
    "fieldname": "surcharge_label",
    "fieldtype": "Data",
    "label": "Surcharge Line Label"
   },
   {
-   "default": "A processing fee applies to card payments and is itemized below. To avoid it, go back and choose bank (ACH) payment.",
+   "default": "A processing fee applies to credit card payments and is itemized separately below. Debit cards, prepaid cards and bank (ACH) payments are never charged this fee — go back and choose another method to avoid it.",
+   "description": "Shown only when a fee actually applies. Must never imply that debit or bank payments are surcharged.",
    "fieldname": "surcharge_disclosure",
    "fieldtype": "Small Text",
    "label": "Surcharge Disclosure (shown before payment)"

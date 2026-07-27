@@ -20,9 +20,13 @@ from __future__ import annotations
 import hashlib
 
 import frappe
-from frappe.utils import flt, get_url, now_datetime
+from frappe.utils import cint, flt, get_url, now_datetime
 
-from erpnext_enhancements.stripe_payments.core.checkout import _payment_method_types, _resolve_target
+from erpnext_enhancements.stripe_payments.core.checkout import (
+	_compute_surcharge,
+	_payment_method_types,
+	_resolve_target,
+)
 from erpnext_enhancements.stripe_payments.core.client import (
 	create_checkout_session,
 	create_payment_intent,
@@ -34,6 +38,31 @@ from erpnext_enhancements.stripe_payments.core.utils import (
 	is_enabled,
 	to_minor_units,
 )
+
+
+def autopay_consent_text(settings=None) -> str:
+	"""The authorization text to show — and store as proof — at autopay enrolment.
+
+	Appends a surcharge disclosure **only while surcharging is actually on**, and
+	derives the rate from settings so the two can never drift apart. Autopay is where
+	a credit-card fee is charged off-session, with the customer not present, so
+	enrolment is the moment the card-network obligation to disclose the fee before
+	payment — and to offer a way to avoid it — has to be met.
+
+	The wording is enrolment-specific rather than reusing ``surcharge_disclosure``,
+	which is written for a checkout page ("go back and choose another method"). Both
+	must stay true for a debit customer: the fee applies to credit cards only.
+	"""
+	settings = settings or get_settings()
+	text = (settings.autopay_consent or "").strip()
+	percent = flt(settings.card_surcharge_percent)
+	if cint(settings.surcharge_enabled) and percent:
+		text = (
+			f"{text}\n\nA {percent:g}% processing fee is added to payments made with a credit "
+			"card. Debit cards, prepaid cards and bank (ACH) accounts are never charged this "
+			"fee — save one of those instead to avoid it."
+		).strip()
+	return text
 
 
 def create_setup_session(customer: str, channel: str = "Desk") -> dict:
@@ -54,9 +83,11 @@ def create_setup_session(customer: str, channel: str = "Desk") -> dict:
 		"success_url": success_url,
 		"cancel_url": cancel_url,
 	}
-	if settings.autopay_consent:
-		# Required consent for charging the saved method off-session in future.
-		params["custom_text"] = {"submit": {"message": settings.autopay_consent[:1200]}}
+	consent_text = autopay_consent_text(settings)
+	if consent_text:
+		# Required consent for charging the saved method off-session in future, plus
+		# the surcharge disclosure when one applies.
+		params["custom_text"] = {"submit": {"message": consent_text[:1200]}}
 
 	try:
 		session = create_checkout_session(
@@ -80,6 +111,11 @@ def charge_saved_method(
 ) -> dict:
 	"""Charge a customer's saved method off-session; post a Payment Entry on success.
 
+	This is the one path that can surcharge correctly without any timing problem:
+	the saved PaymentMethod is read first, so the card's funding type is known
+	before the PaymentIntent is priced. Credit cards may carry a fee; debit,
+	prepaid and bank accounts never do.
+
 	Raises if the customer has no saved method. Returns
 	``{"stripe_payment", "status", "payment_intent"}``.
 	"""
@@ -96,6 +132,12 @@ def charge_saved_method(
 	if not stripe_customer_id or not payment_method:
 		frappe.throw(f"{customer} has no saved Stripe payment method. Enroll them in autopay first.")
 
+	# Unlike hosted Checkout, the exact instrument is known *before* we charge, so
+	# the surcharge can be priced correctly up front: credit cards only, never debit,
+	# prepaid or ACH. No refund-after-the-fact is ever needed on this path.
+	pm_type, funding = _payment_method_funding(payment_method)
+	surcharge = _compute_surcharge(settings, pm_type=pm_type, funding=funding, base=amount)
+
 	sp = frappe.get_doc(
 		{
 			"doctype": "Stripe Payment",
@@ -107,6 +149,9 @@ def charge_saved_method(
 			"channel": channel,
 			"initiated_by": frappe.session.user,
 			"stripe_customer_id": stripe_customer_id,
+			"surcharge_amount": surcharge,
+			"payment_method_type": pm_type,
+			"card_funding": funding,
 			"status": "Draft",
 		}
 	).insert(ignore_permissions=True)
@@ -116,7 +161,10 @@ def charge_saved_method(
 		metadata["erpnext_invoice"] = sales_invoice
 
 	params = {
-		"amount": to_minor_units(amount, currency),
+		# The invoice settles at face value; the surcharge rides on top, exactly as
+		# it does on the hosted path, and is booked to income by the companion
+		# Journal Entry in reconcile._book_surcharge.
+		"amount": to_minor_units(flt(amount) + surcharge, currency),
 		"currency": (currency or "USD").lower(),
 		"customer": stripe_customer_id,
 		"payment_method": payment_method,
@@ -154,6 +202,28 @@ def charge_saved_method(
 	frappe.db.commit()
 	sp.reload()
 	return {"stripe_payment": sp.name, "status": sp.status, "payment_intent": pi.get("id")}
+
+
+def _payment_method_funding(payment_method_id):
+	"""``(type, card funding)`` for a saved PaymentMethod — the surcharge gate's inputs.
+
+	Returns Stripe's own vocabulary: ``type`` is ``"card"``/``"us_bank_account"`` and
+	``funding`` is ``"credit"``/``"debit"``/``"prepaid"``/``"unknown"`` (absent for a
+	bank account). Best-effort: a failed lookup returns ``(None, None)``, which
+	``_compute_surcharge`` treats as non-surchargeable — the safe direction, since
+	the cost of guessing wrong is a card-network violation rather than a lost fee.
+	"""
+	try:
+		from erpnext_enhancements.stripe_payments.core.client import retrieve_payment_method
+
+		pm = retrieve_payment_method(payment_method_id)
+		return pm.get("type"), (pm.get("card") or {}).get("funding")
+	except Exception:
+		frappe.log_error(
+			error_snippet(frappe.get_traceback()),
+			"Stripe: payment method lookup failed (charging without surcharge)",
+		)
+		return None, None
 
 
 def _alert_failed_autocharge(sp, reason):
@@ -242,7 +312,9 @@ def _record_consent(customer, channel, settings, setup_session):
 	never blocks enrollment (the consent text is also shown on the Stripe page).
 	"""
 	try:
-		text = settings.autopay_consent or ""
+		# The exact text the payer was shown, surcharge disclosure included — the
+		# stored proof has to match the page, not just the raw settings field.
+		text = autopay_consent_text(settings)
 		version = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else None
 		user_agent = None
 		if getattr(frappe, "request", None):

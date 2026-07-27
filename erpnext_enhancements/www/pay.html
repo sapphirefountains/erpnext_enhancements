@@ -31,21 +31,23 @@
 						<td class="text-right">
 							{% if inv.custom_stripe_payment_status == "Processing" %}
 								<span class="text-muted">{{ _("Processing…") }}</span>
-							{% elif surcharge_enabled %}
+							{% else %}
+								{# Card and bank go to genuinely different implementations, not to
+								   different prices: cards are collected on our own page so the card's
+								   funding type can be read before pricing, while bank payments stay on
+								   Stripe's hosted Checkout, which already handles Financial Connections,
+								   microdeposits and the Nacha mandate. Neither button quotes a fee —
+								   for cards it isn't knowable yet, and ACH never has one. #}
 								{% if enable_card %}
-								<button class="btn btn-primary btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="card">
-									{{ _("Card") }}{{ card_fee_label }}
-								</button>
+								<a class="btn btn-primary btn-sm" href="/pay-card?invoice={{ inv.name | urlencode }}">
+									{{ _("Card") }}
+								</a>
 								{% endif %}
 								{% if enable_ach %}
 								<button class="btn btn-default btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="ach">
-									{{ _("Bank") }}{{ ach_fee_label }}
+									{{ _("Bank") }}
 								</button>
 								{% endif %}
-							{% else %}
-								<button class="btn btn-primary btn-sm pay-btn" data-invoice="{{ inv.name }}" data-method="">
-									{{ _("Pay now") }}
-								</button>
 							{% endif %}
 						</td>
 					</tr>
