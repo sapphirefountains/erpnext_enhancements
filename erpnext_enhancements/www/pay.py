@@ -9,9 +9,10 @@ list and the CSRF token the page's fetch needs. Mirrors the auth gate in
 """
 
 import frappe
-from frappe.utils import flt, fmt_money, formatdate
+from frappe.utils import fmt_money, formatdate
 
 from erpnext_enhancements.stripe_payments.core.api import get_portal_customers
+from erpnext_enhancements.stripe_payments.core.saved_methods import autopay_consent_text
 from erpnext_enhancements.stripe_payments.core.utils import get_settings, is_enabled
 
 no_cache = 1
@@ -51,15 +52,12 @@ def get_context(context):
 			inv["due_display"] = formatdate(inv["due_date"]) if inv["due_date"] else "—"
 		context.invoices = invoices
 
-	# Surcharge prompts (method-first) for the portal buttons.
-	context.surcharge_enabled = bool(settings.surcharge_enabled)
 	context.enable_card = bool(settings.enable_card)
 	context.enable_ach = bool(settings.enable_ach)
-	context.card_fee_label = _fee_label(settings, "card")
-	context.ach_fee_label = _fee_label(settings, "ach")
 
 	# Autopay / saved-method (Phase 2): consent text + current enrollment state.
-	context.autopay_consent = settings.autopay_consent
+	# Same composed text the Stripe page shows and the consent record stores.
+	context.autopay_consent = autopay_consent_text(settings)
 	context.autopay_enrolled = False
 	context.autopay_label = None
 	for cust in customers:
@@ -69,18 +67,3 @@ def get_context(context):
 			break
 
 	return context
-
-
-def _fee_label(settings, method):
-	"""Human label like ' (+3% fee)' for a method, or '' when no surcharge applies."""
-	if not settings.surcharge_enabled:
-		return ""
-	pct = settings.card_surcharge_percent if method == "card" else settings.ach_fee_percent
-	flat = settings.card_surcharge_flat if method == "card" else settings.ach_fee_flat
-	currency = frappe.db.get_value("Company", settings.company, "default_currency") or "USD"
-	parts = []
-	if flt(pct):
-		parts.append(f"{flt(pct):g}%")
-	if flt(flat):
-		parts.append(fmt_money(flat, currency=currency))
-	return f" (+{' + '.join(parts)} fee)" if parts else ""

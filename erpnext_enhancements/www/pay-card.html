@@ -1,0 +1,202 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("Pay by Card") }}{% endblock %}
+
+{% block page_content %}
+<div class="pay-card" style="max-width:520px;">
+	<h1 class="mb-4">{{ _("Pay by Card") }}</h1>
+
+	{% if not enabled %}
+		<div class="alert alert-warning">{{ _("Card payments are not available right now. Please contact us.") }}</div>
+	{% elif not invoice %}
+		<div class="alert alert-warning">{{ _("That invoice is not available to pay.") }}</div>
+		<a class="btn btn-default" href="/pay">{{ _("Back to invoices") }}</a>
+	{% else %}
+
+	<p class="text-muted">
+		{{ _("Invoice") }} <b>{{ invoice.name }}</b> — {{ amount_display }}
+	</p>
+
+	{# Step 1: collect the card. No amount is committed yet, so the fee (if any) can
+	   still be priced from the card the payer actually enters. #}
+	<div id="step-card">
+		<div id="payment-element" style="margin:16px 0;"></div>
+		<div id="card-error" class="text-danger small" style="margin-bottom:12px;"></div>
+		<button id="continue-btn" class="btn btn-primary btn-block">{{ _("Continue") }}</button>
+		{% if enable_ach %}
+		<p class="text-muted small" style="margin-top:12px;">
+			{{ _("Paying from a bank account instead?") }}
+			<a href="/pay">{{ _("Use bank (ACH)") }}</a> — {{ _("never carries a fee.") }}
+		</p>
+		{% endif %}
+	</div>
+
+	{# Step 2: the true total, including the fee only when one genuinely applies.
+	   Card-network rules require the payer to see this before committing and to be
+	   able to back out and choose another method — hence the Back button. #}
+	<div id="step-review" style="display:none;">
+		<table class="table table-bordered" style="margin-top:16px;">
+			<tbody>
+				<tr>
+					<td>{{ _("Invoice") }} {{ invoice.name }}</td>
+					<td class="text-right" id="review-amount"></td>
+				</tr>
+				<tr id="review-fee-row" style="display:none;">
+					<td id="review-fee-label"></td>
+					<td class="text-right" id="review-fee"></td>
+				</tr>
+				<tr>
+					<th>{{ _("Total") }}</th>
+					<th class="text-right" id="review-total"></th>
+				</tr>
+			</tbody>
+		</table>
+		<div id="review-disclosure" class="alert alert-info small" style="display:none;"></div>
+		<div id="review-nofee" class="text-muted small" style="display:none; margin-bottom:12px;"></div>
+		<div id="review-error" class="text-danger small" style="margin-bottom:12px;"></div>
+		<button id="pay-btn" class="btn btn-primary btn-block"></button>
+		<button id="back-btn" class="btn btn-link btn-block">{{ _("Back — use a different payment method") }}</button>
+	</div>
+
+	<script src="https://js.stripe.com/v3/"></script>
+	<script>
+	frappe.csrf_token = "{{ csrf_token }}";
+
+	(function () {
+		const CURRENCY = {{ currency | tojson }};
+		const INVOICE = {{ invoice.name | tojson }};
+		const WAIT = "{{ _('Please wait…') }}";
+		const CONTINUE = "{{ _('Continue') }}";
+		const PAY = "{{ _('Pay') }}";
+		const NO_FEE = "{{ _('No processing fee applies to this card.') }}";
+		const stripe = Stripe({{ publishable_key | tojson }});
+
+		// Deferred intent mode: the Element renders without a PaymentIntent, so no
+		// amount is locked in before we can see the card. This amount only sizes the
+		// wallet buttons; the server sets what is actually charged.
+		const elements = stripe.elements({
+			mode: "payment",
+			amount: {{ amount_minor }},
+			currency: CURRENCY.toLowerCase(),
+			paymentMethodTypes: ["card"],
+		});
+		elements.create("payment").mount("#payment-element");
+
+		const $ = (id) => document.getElementById(id);
+		let quote = null;
+		let token = null;
+
+		function busy(button, on, label) {
+			button.disabled = on;
+			button.textContent = on ? WAIT : label;
+		}
+
+		$("continue-btn").addEventListener("click", async function () {
+			$("card-error").textContent = "";
+			busy(this, true, CONTINUE);
+
+			// Validates the form and collects wallet details; required before a
+			// ConfirmationToken can be created.
+			const submitted = await elements.submit();
+			if (submitted.error) {
+				$("card-error").textContent = submitted.error.message;
+				busy(this, false, CONTINUE);
+				return;
+			}
+
+			const created = await stripe.createConfirmationToken({ elements });
+			if (created.error) {
+				$("card-error").textContent = created.error.message;
+				busy(this, false, CONTINUE);
+				return;
+			}
+			token = created.confirmationToken.id;
+
+			frappe.call({
+				method: "erpnext_enhancements.stripe_payments.core.api.portal_price_card_payment",
+				args: { sales_invoice: INVOICE, confirmation_token: token },
+				callback: function (r) {
+					busy($("continue-btn"), false, CONTINUE);
+					if (!r || r.exc || !r.message) return;
+					quote = r.message;
+					render_review(quote);
+				},
+				error: function () {
+					busy($("continue-btn"), false, CONTINUE);
+				},
+			});
+		});
+
+		function render_review(q) {
+			$("review-amount").textContent = q.amount_display;
+			$("review-total").textContent = q.total_display;
+
+			if (q.surcharge > 0) {
+				$("review-fee-label").textContent = q.surcharge_label;
+				$("review-fee").textContent = q.surcharge_display;
+				$("review-fee-row").style.display = "";
+				if (q.surcharge_disclosure) {
+					$("review-disclosure").textContent = q.surcharge_disclosure;
+					$("review-disclosure").style.display = "";
+				}
+			} else {
+				// Say so explicitly. A debit or prepaid payer should never be shown a
+				// fee line, and being told there isn't one is worth more than silence.
+				$("review-nofee").textContent = NO_FEE;
+				$("review-nofee").style.display = "";
+			}
+
+			$("pay-btn").textContent = PAY + " " + q.total_display;
+			$("step-card").style.display = "none";
+			$("step-review").style.display = "";
+		}
+
+		$("back-btn").addEventListener("click", function () {
+			// The quote is bound to the card that was entered, so going back discards
+			// it — a different card gets its own quote and its own fee decision.
+			quote = null;
+			token = null;
+			$("review-error").textContent = "";
+			$("step-review").style.display = "none";
+			$("step-card").style.display = "";
+		});
+
+		$("pay-btn").addEventListener("click", function () {
+			if (!quote) return;
+			$("review-error").textContent = "";
+			const label = this.textContent;
+			busy(this, true, label);
+
+			frappe.call({
+				method: "erpnext_enhancements.stripe_payments.core.api.portal_confirm_card_payment",
+				args: { stripe_payment: quote.stripe_payment, confirmation_token: token },
+				callback: async function (r) {
+					if (!r || r.exc) {
+						busy($("pay-btn"), false, label);
+						return;
+					}
+					const res = r.message || {};
+					if (res.requires_action && res.client_secret) {
+						// 3-D Secure. The webhook finalises either way; this only lets
+						// the payer complete the challenge without leaving the flow.
+						const done = await stripe.handleNextAction({ clientSecret: res.client_secret });
+						if (done.error) {
+							$("review-error").textContent = done.error.message;
+							busy($("pay-btn"), false, label);
+							return;
+						}
+					}
+					window.location.href =
+						"/stripe-return?status=success&sp=" + encodeURIComponent(res.stripe_payment || "");
+				},
+				error: function () {
+					busy($("pay-btn"), false, label);
+				},
+			});
+		});
+	})();
+	</script>
+
+	{% endif %}
+</div>
+{% endblock %}

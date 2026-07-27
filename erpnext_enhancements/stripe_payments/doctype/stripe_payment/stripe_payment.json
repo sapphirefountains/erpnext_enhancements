@@ -17,18 +17,22 @@
   "column_break_details",
   "status",
   "payment_method_type",
+  "card_funding",
   "channel",
   "initiated_by",
   "stripe_section",
   "stripe_customer_id",
   "stripe_checkout_session",
   "stripe_payment_intent",
+  "confirmation_token",
   "column_break_stripe",
   "stripe_charge_id",
   "checkout_url",
   "result_section",
   "payment_entry",
   "amount_refunded",
+  "surcharge_voided",
+  "surcharge_refund_id",
   "error_message"
  ],
  "fields": [
@@ -69,7 +73,7 @@
   },
   {
    "default": "0",
-   "description": "Card/ACH fee added on top of the amount (booked to the surcharge income account).",
+   "description": "Credit-card surcharge added on top of the amount (booked to the surcharge income account). Only credit cards are ever surcharged — never debit, prepaid or ACH.",
    "fieldname": "surcharge_amount",
    "fieldtype": "Currency",
    "label": "Surcharge / Fee",
@@ -100,6 +104,13 @@
    "fieldname": "payment_method_type",
    "fieldtype": "Data",
    "label": "Payment Method Type",
+   "read_only": 1
+  },
+  {
+   "description": "Card funding type reported by Stripe: credit, debit, prepaid or unknown. Only 'credit' may carry a surcharge — recorded so the decision stays auditable.",
+   "fieldname": "card_funding",
+   "fieldtype": "Data",
+   "label": "Card Funding",
    "read_only": 1
   },
   {
@@ -141,6 +152,13 @@
    "read_only": 1
   },
   {
+   "description": "ConfirmationToken the surcharge was quoted against (Payment Element flow). Confirming requires this exact token, so the card that was priced is the card that pays.",
+   "fieldname": "confirmation_token",
+   "fieldtype": "Data",
+   "label": "Confirmation Token",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_stripe",
    "fieldtype": "Column Break"
   },
@@ -174,6 +192,22 @@
    "fieldtype": "Currency",
    "label": "Amount Refunded",
    "options": "currency",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when the surcharge was refunded because the card turned out not to be credit. A voided surcharge is never booked to income.",
+   "fieldname": "surcharge_voided",
+   "fieldtype": "Check",
+   "label": "Surcharge Voided",
+   "read_only": 1
+  },
+  {
+   "depends_on": "surcharge_voided",
+   "description": "Stripe refund id for the voided surcharge. Its presence is what stops a redelivered webhook refunding twice.",
+   "fieldname": "surcharge_refund_id",
+   "fieldtype": "Data",
+   "label": "Surcharge Refund ID",
    "read_only": 1
   },
   {

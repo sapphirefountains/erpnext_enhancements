@@ -27,6 +27,13 @@ from erpnext_enhancements.stripe_payments.core.utils import (
 	to_minor_units,
 )
 
+# Stripe ``card.funding`` values that may never carry a surcharge. Debit and prepaid
+# are banned outright by the card networks (no cost-of-acceptance exception, unlike
+# credit, which is merely capped), and "unknown" means Stripe could not classify the
+# card — we fail toward not charging. Used by the reconciler to void a fee that was
+# collected from a card that turned out not to be credit.
+NON_SURCHARGEABLE_FUNDING = frozenset({"debit", "prepaid", "unknown"})
+
 
 def create_payment(
 	*,
@@ -40,10 +47,11 @@ def create_payment(
 	"""Create a Checkout Session for an invoice or ad-hoc amount; return its URL.
 
 	Exactly one of ``sales_invoice`` or (``customer`` + ``amount``) must be given.
-	``method`` ("card"/"ach") locks the session to one method and applies that
-	method's surcharge/fee; when omitted, all enabled methods are offered with no
-	fee. Returns ``{"stripe_payment", "checkout_url", "session_id"}``. The caller is
-	responsible for permission checks (operator role for desk; ownership for portal).
+	``method`` ("card"/"ach") locks the session to one method; when omitted, all
+	enabled methods are offered. **No session created here ever carries a surcharge**
+	— see the note at the ``_compute_surcharge`` call below. Returns
+	``{"stripe_payment", "checkout_url", "session_id"}``. The caller is responsible
+	for permission checks (operator role for desk; ownership for portal).
 	"""
 	settings = get_settings()
 	if not is_enabled(settings):
@@ -54,7 +62,12 @@ def create_payment(
 	)
 
 	payment_method_types = _methods_for(settings, method)
-	surcharge = _compute_surcharge(settings, method, amount)
+	# Always 0 on this path, by construction: hosted Checkout fixes its line items
+	# when the Session is created, which is before the payer's card — and therefore
+	# its funding type — exists. Only credit cards may be surcharged, so funding is
+	# unknowable here and ``_compute_surcharge`` fails toward not charging. Priced
+	# through the same gate anyway so this path can never drift from the policy.
+	surcharge = _compute_surcharge(settings, pm_type=_method_hint(method), funding=None, base=amount)
 	stripe_customer_id = ensure_stripe_customer(customer, settings)
 
 	# Ledger row first, so we have a stable name to use as the idempotency key and
@@ -194,8 +207,8 @@ def _payment_method_types(settings) -> list[str]:
 
 
 def _methods_for(settings, method) -> list[str]:
-	"""Lock the session to a single method when one is chosen (so the fee matches the
-	method); otherwise offer everything enabled."""
+	"""Lock the session to a single method when one is chosen; otherwise offer
+	everything enabled."""
 	if method == "card":
 		return ["card"]
 	if method == "ach":
@@ -203,22 +216,71 @@ def _methods_for(settings, method) -> list[str]:
 	return _payment_method_types(settings)
 
 
-def _compute_surcharge(settings, method, base) -> float:
-	"""Fee to add for the chosen method, per settings.
+def _compute_surcharge(settings, *, pm_type=None, funding=None, base=0) -> float:
+	"""The fee to add for a payment. Zero unless every gate passes.
 
-	Zero unless surcharge is enabled AND a specific method was chosen — we never
-	surcharge an unknown method (hosted Checkout can't tell debit from credit, so a
-	method must be picked first for the fee to be fair and disclosed).
+	This is the single chokepoint every path prices through, and it returns a fee
+	for exactly one case — a **credit card**:
+
+	* ``pm_type`` must be Stripe's ``"card"``. ``us_bank_account`` (ACH) can never
+	  carry a fee: there is no ACH branch and no ACH fee setting to misconfigure.
+	* ``funding`` must be exactly ``"credit"``. Surcharging debit or prepaid is a
+	  flat card-network violation with no cost-of-acceptance exception, and
+	  ``"unknown"`` (Stripe could not classify the card) or ``None`` (funding not
+	  determined yet, or a lookup that failed) fail toward not charging.
+
+	``funding`` is only knowable once the payer's card is in hand. Callers that
+	price *before* that — hosted Checkout, which fixes its line items when the
+	Session is created — pass ``None`` and therefore always get 0. The funding-aware
+	callers are the off-session charge (which reads the saved PaymentMethod first)
+	and the Payment Element flow. See docs/stripe_surcharging_compliance.md.
 	"""
-	if not settings.surcharge_enabled or not method:
+	if not settings.surcharge_enabled:
 		return 0.0
-	if method == "card":
-		pct, flat = flt(settings.card_surcharge_percent), flt(settings.card_surcharge_flat)
-	elif method == "ach":
-		pct, flat = flt(settings.ach_fee_percent), flt(settings.ach_fee_flat)
-	else:
+	if pm_type != "card" or funding != "credit":
 		return 0.0
+	pct, flat = flt(settings.card_surcharge_percent), flt(settings.card_surcharge_flat)
 	return flt(flt(base) * pct / 100.0 + flat, 2)
+
+
+def surcharge_cap_error(percent, flat, cost_percent, cost_flat) -> str | None:
+	"""The reason a surcharge configuration is not allowed, or None if it is (pure).
+
+	US network rules cap a surcharge at **3% or your cost of acceptance, whichever is
+	lower**. Comparing a percent-plus-flat surcharge against a percent-plus-flat cost
+	is amount-dependent, so this enforces it componentwise: percent ≤ cost percent
+	AND flat ≤ cost flat. That is provably within cost at *every* invoice total —
+	``pct·X + flat ≤ cost_pct·X + cost_flat`` holds for all ``X ≥ 0`` — without
+	needing to know the amount in advance.
+
+	A flat 3% ceiling is not sufficient on its own: against a cost of 2.9% + $0.30, a
+	3% surcharge exceeds cost on any invoice over ~$300. Split out from the Settings
+	controller so the policy is unit-tested without a bench, like ``_surcharge_je_legs``.
+	"""
+	percent, flat = flt(percent), flt(flat)
+	cost_percent, cost_flat = flt(cost_percent), flt(cost_flat)
+
+	if percent > 3:
+		return (
+			"Card Surcharge % cannot exceed the US network cap of 3%. "
+			"Some states require less — see docs/stripe_surcharging_compliance.md."
+		)
+	if not cost_percent and not cost_flat:
+		return (
+			"Set your Cost of Acceptance before enabling surcharging — a surcharge must "
+			"never exceed it, and it cannot be validated while it is blank."
+		)
+	if percent > cost_percent:
+		return (
+			f"Card Surcharge % ({percent:g}%) exceeds your cost of acceptance "
+			f"({cost_percent:g}%). Network rules cap the surcharge at whichever is lower."
+		)
+	if flat > cost_flat:
+		return (
+			f"Card Surcharge (flat) of {flat:g} exceeds the flat component of your cost of "
+			f"acceptance ({cost_flat:g}). Network rules cap the surcharge at whichever is lower."
+		)
+	return None
 
 
 def _method_hint(method) -> str | None:

@@ -1,7 +1,8 @@
 # Card Surcharging & Fee Pass-Through — Compliance Reference
 
 **Status:** reference for the Stripe Payments surcharge feature (configurable, default **OFF**).
-**Last researched:** 2026-06-18.
+**Last researched:** 2026-07-27 (Stripe API surface re-checked; debit/prepaid/ACH exemption
+now enforced in code — see [How our integration implements this](#how-our-integration-implements-this)).
 **This is not legal advice.** Surcharging rules change and vary by state and card network.
 Before enabling card surcharging in production, confirm with legal counsel **and** notify
 Stripe (your acquirer) and the card networks. Sapphire is in **Bountiful, Utah** — Utah
@@ -12,19 +13,61 @@ below matter.
 
 ## TL;DR decision for our build
 
-- We surcharge **card and ACH**, but the feature ships **OFF** until the steps in
+- We surcharge **credit cards only**. The feature ships **OFF** until the steps in
   [Go-live checklist](#go-live-checklist) are done.
-- **Cards:** surcharge **credit only**, **≤ 3%**, never on **debit/prepaid**, never in a
-  **banned state**, always **disclosed before payment** and **itemized on the receipt**.
-- **ACH:** a bank-debit "convenience/processing fee" is **not** governed by card-network
-  rules — simpler, but still disclose it and keep it reasonable.
-- **Hosted-Checkout limitation (important):** on Stripe's hosted Checkout we **cannot detect
-  debit vs credit funding** before the customer pays, so we can't auto-exempt debit cards.
-  Our integration mitigates this by being **method-first** (the payer explicitly chooses
-  "card" vs "bank" and sees the fee before paying) and by keeping the surcharge a clearly
-  labelled, separately-itemized line. To *automatically* exempt debit you would need Stripe's
-  **Payment Element + a surcharge-provider app** (Yeeld or InterPayments) on a preview API —
-  see [Stripe options](#stripe-native-surcharging-options).
+- **Cards:** surcharge **credit only**, **≤ 3% and ≤ cost of acceptance**, never on
+  **debit/prepaid**, never in a **banned state**, always **disclosed before payment**
+  and **itemized on the receipt**.
+- **ACH: no fee, ever.** There is no ACH fee setting. A bank-debit convenience fee
+  would be lawful (ACH is outside card-network rules), but we decided not to charge
+  one, and the capability was removed rather than left switched off — a dormant
+  setting is a compliance accident waiting to happen.
+- **Debit/prepaid exemption is structural, not configuration.** `_compute_surcharge`
+  returns a fee for exactly one input combination: `pm_type == "card"` **and**
+  `funding == "credit"`. `debit`, `prepaid`, `unknown` and "not yet known" all return
+  zero. No settings value can override this.
+
+### Where a surcharge can and cannot be priced
+
+The funding type only exists once the payer's card does, which decides what each
+channel can do:
+
+| Path | Funding known before pricing? | Surcharge |
+| --- | --- | --- |
+| Hosted Checkout (`checkout.create_payment`) — bank/ACH, emailed links | **No** — line items are fixed when the Session is created | **Always zero** |
+| Off-session / autopay / dunning (`saved_methods.charge_saved_method`) | **Yes** — the saved PaymentMethod is read first | Credit only |
+| Portal card page (`card_element`, `/pay-card`) | **Yes** — `payment_method_preview.card.funding`, server-side, before the amount is fixed | Credit only |
+
+Hosted Checkout previously priced a fee from the *chosen method* ("card"), which
+covers credit, debit and prepaid alike — so a debit customer was shown, and charged,
+a fee they may never be charged. That is now impossible: the hosted path passes
+`funding=None` through the same gate and always gets zero.
+
+### The portal card page (`/pay-card`)
+
+One-off card payments are collected on our own page so the funding type is knowable
+before pricing. The flow, in `stripe_payments/core/card_element.py`:
+
+1. A Payment Element mounts in **deferred intent** mode — no PaymentIntent, so no
+   amount is committed.
+2. The payer submits; Stripe.js returns a **ConfirmationToken**.
+3. `price_card_payment` retrieves it server-side, reads
+   `payment_method_preview.card.funding`, prices through the shared gate, and records
+   the quote **bound to that token**.
+4. The page shows the true total — the fee line appears only if a fee genuinely
+   applies, and a debit payer is told plainly that none does — with a **Back** button
+   to use a different method. That is the network-required disclosure and opt-out.
+5. `confirm_card_payment` charges the quoted total, accepting **only** the token the
+   quote was priced against.
+
+The binding in step 5 is the security crux: without it a client could take a quote on
+one card and pay with another, which is precisely the debit-surcharge case we are
+preventing. One token, one price, one charge.
+
+**Bank/ACH stays on hosted Checkout** — see [ACH fees](#ach-bank-debit-fees).
+**Emailed payment links also stay on hosted Checkout**, so they remain fee-free: the
+Element page requires a logged-in portal session, and a tokenized guest route is not
+built yet.
 
 ---
 
@@ -60,9 +103,20 @@ below matter.
 
 ## ACH (bank debit) fees
 ACH is **not** a card-network transaction, so the card-brand surcharge rules above don't
-apply. A flat or small-percent **bank processing/convenience fee** is generally permissible
-**with disclosure**. Keep it reasonable (Stripe's ACH cost is 0.8% capped at $5.00), and in
-cost-cap states keep any fee at/under your cost. Disclose it the same way.
+apply, and a flat or small-percent bank convenience fee **would** be permissible with
+disclosure. **We do not charge one.**
+
+Because ACH never carries a fee, it has nothing for the Payment Element to detect, so
+bank payments deliberately stay on Stripe's **hosted Checkout**. Moving them onto the
+Element would buy nothing and cost Financial Connections (with its own per-account
+pricing), the microdeposit fallback and its 10-day verification window, and Nacha
+mandate collection at confirmation — all of which hosted Checkout already handles.
+
+The `ach_fee_percent` / `ach_fee_flat` settings
+were removed in v1.185.0 rather than set to zero: keeping fields that the code refuses
+to honour invites someone to set one, see no fee, and file a bug — and invites the
+opposite failure if the gate is ever loosened. If the business later wants an ACH
+convenience fee, re-adding the fields is a deliberate change with its own review.
 
 ---
 
@@ -86,32 +140,64 @@ automatically. For **partial** refunds, prorate the surcharge into the refund am
 ---
 
 ## Stripe-native surcharging options
-Stripe does **not** auto-surcharge in standard hosted Checkout. Two native routes exist but
-both are heavier than our line-item approach:
-- **Automatic surcharge** (`automatic_surcharge` on Checkout/Payment Links): **preview API**,
-  **US only**, **cards/Apple Pay only**, requires installing a **surcharge-provider app**
-  (Yeeld or InterPayments) that computes a compliant, funding-type-aware amount. This is the
-  way to **auto-exempt debit**.
-- **PaymentIntents `surcharge` API** (public preview, `2026-03-25.preview`): pass the total
-  `amount` inclusive of surcharge plus `amount_details[surcharge][amount]` (do **not** add a
-  separate line item in that mode); returns `surcharge.maximum_amount` to validate against.
+*(Re-researched 2026-07-27.)* Stripe does **not** auto-surcharge in standard hosted
+Checkout. Three routes exist:
 
-If/when compliant debit exemption becomes a hard requirement, migrate the card path to the
-Payment Element + a provider app. Until then we use the method-first, line-item approach.
+- **Automatic surcharge** (`automatic_surcharge` on Checkout Sessions / Payment Links):
+  the only thing that fixes hosted Checkout's timing problem, because Stripe computes a
+  funding-, brand- and country-aware amount and renders it on the hosted page. But it is
+  **private preview**, needs a preview `Stripe-Version` header, and requires installing a
+  **paid third-party provider app** (Yeeld or InterPayments). US only, cards + Apple Pay,
+  `payment` mode only, incompatible with Adaptive Pricing.
+- **PaymentIntents `amount_details[surcharge]`** (**public** preview,
+  `2026-03-25.preview`): pass the total `amount` inclusive of surcharge plus
+  `amount_details[surcharge][amount]`; with `enforce_validation=enabled` Stripe returns
+  `maximum_amount` and a `status` of `available`/`unavailable` derived from the real card
+  (US/Canada availability is credit-only, so a debit card returns `unavailable`).
+  PaymentIntents only — **does not apply to hosted Checkout Sessions**.
+- **Payment Element + ConfirmationToken** — **no preview API, no provider app, all GA.**
+  `stripe.createConfirmationToken()` on the client returns a token whose
+  [`payment_method_preview`](https://docs.stripe.com/api/confirmation_tokens/object) the
+  server can retrieve **before any amount is fixed**; it carries `type` (`card` vs
+  `us_bank_account`) and `card.funding` (`credit`/`debit`/`prepaid`/`unknown`). Read
+  funding → price the surcharge → show the real total → confirm. This also satisfies the
+  network requirement to disclose before commitment *and* let the payer back out.
+
+**This is what we built** (v1.186.0) — see
+[The portal card page](#the-portal-card-page-pay-card).
+
+Note that "embedded Checkout" (`ui_mode: embedded`) does **not** help: it keeps the
+customer on our domain but still fixes line items at session creation, so its surcharge
+behaviour is identical to the hosted page. Only collecting the card ourselves — via the
+Payment Element — makes the funding type visible before pricing.
 
 ---
 
 ## How our integration implements this
 - **Settings (Stripe Payments Settings → Surcharge section):** `surcharge_enabled` (default
-  off), `card_surcharge_percent` (cap ≤ 3, validated), `card_surcharge_flat`,
-  `ach_fee_percent`, `ach_fee_flat`, `surcharge_income_account`, `surcharge_label`,
-  `surcharge_disclosure`.
-- **Method-first:** when surcharge is on, the payer picks **card** or **bank** first; we
-  create a Checkout Session **locked to that method** with the correct fee as a separate line
-  item, and show the disclosure before payment.
-- **Accounting:** the Payment Entry allocates the **invoice** amount to the invoice and books
-  the **surcharge to `surcharge_income_account`** (via a Payment Entry deduction row), so the
-  invoice is never over-allocated.
+  off), `card_surcharge_percent`, `card_surcharge_flat`, `cost_of_acceptance_percent`
+  (2.9), `cost_of_acceptance_flat` (0.30), `surcharge_income_account`, `surcharge_label`,
+  `surcharge_disclosure`. There are no ACH fee fields.
+- **The gate:** every path prices through `checkout._compute_surcharge`, which returns a
+  fee only for `pm_type == "card"` **and** `funding == "credit"`.
+- **Cap validation:** `checkout.surcharge_cap_error` enforces percent ≤ 3, percent ≤ cost
+  percent **and** flat ≤ cost flat. Componentwise comparison is provably within cost at
+  every invoice total, since `pct·X + flat ≤ cost_pct·X + cost_flat` for all `X ≥ 0`. The
+  old flat-3% ceiling was not enough: 3% against 2.9% + $0.30 exceeds cost above ~$300.
+- **Audit:** `Stripe Payment.card_funding` records what the card actually turned out to
+  be, so the decision is reviewable after the fact. `surcharge_voided` /
+  `surcharge_refund_id` record a fee that was refunded because the card wasn't credit.
+- **Backstop:** if a booked surcharge meets positively-known non-credit funding at
+  reconcile time, `reconcile._void_surcharge_if_not_credit` flags the row and enqueues a
+  refund, and the income JE is skipped. Idempotent on the persisted refund id — Stripe's
+  own idempotency keys expire after 24h, so a late webhook redelivery would slip past them.
+- **Disclosure:** shown only when a fee actually applies. `saved_methods.autopay_consent_text`
+  composes the enrolment authorization with a surcharge sentence **only while surcharging
+  is on**, and the same composed text is what gets stored as proof of authorization.
+- **Accounting:** the Payment Entry allocates the **invoice** amount to the invoice and the
+  **surcharge is booked to `surcharge_income_account` by a companion Journal Entry** (Dr
+  deposit/clearing, Cr surcharge income). It cannot ride on the Payment Entry: erpnext's
+  `set_amounts` forces `received_amount == paid_amount` on a same-currency Receive.
 
 ---
 
@@ -122,8 +208,9 @@ Payment Element + a provider app. Until then we use the method-first, line-item 
    cost of acceptance).
 4. ☐ Decide handling for **banned states (CT, MA, ME, PR) and California** — suppress card
    surcharge for those customers.
-5. ☐ Accept or mitigate the **debit-exemption limitation** (hosted Checkout can't detect
-   debit; migrate to Payment Element + provider app if you must auto-exempt).
+5. ☑ **Debit/prepaid exemption** — done in code (v1.185.0), not a limitation to accept any
+   more. Only `funding == "credit"` is ever surcharged. Hosted Checkout cannot price a fee
+   at all; one-off card surcharging requires the Payment Element work.
 6. ☐ Verify the **disclosure** text and that the fee shows as a **separate line item** on the
    Stripe page and receipt.
 7. ☐ Confirm **refunds return the surcharge** (full/prorated).
