@@ -80,6 +80,7 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 
 	The core decision tree, driven by the (entity_type, qbo_id) mapping ledger:
 
+	  0. Mapping marked ``Ignored``  -> ``ignored``, untouched (unless QBO moved on).
 	  1. No mapper / no Id          -> ``skipped``.
 	  2. Preflight validation fails -> ``manual_review`` (records a pending mapping).
 	  3. Already mapped & exists    -> update it, unless user edits collide with
@@ -104,9 +105,31 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 	if not qbo_id:
 		return {"action": "skipped", "reason": "QBO payload has no Id"}
 
+	mapping = get_mapping(entity_type, qbo_id)
+
+	# Durable "Ignored". A human closed this record out -- typically a voided or $0.00
+	# QuickBooks transaction that can never produce an ERPNext document. Its preflight
+	# fails on every run, and save_manual_review_mapping resets BOTH conflict_status and
+	# match_status to "Pending Review", so without this branch a single full Import All
+	# silently undoes every one of those decisions. Honour it: return before preflight,
+	# writing nothing. The one way back in is QuickBooks itself moving -- a SyncToken
+	# (or LastUpdatedTime) past what we stored means the record really changed there, so
+	# someone un-voiding a transaction is re-evaluated normally rather than staying
+	# permanently invisible.
+	if mapping and mapping.conflict_status == "Ignored" and not _qbo_record_advanced(mapping, payload):
+		return {
+			"action": "ignored",
+			"doctype": mapping.erpnext_doctype or erpnext_doctype,
+			"name": mapping.erpnext_name,
+			"qbo_id": qbo_id,
+			"reason": "Mapping is marked Ignored and is unchanged in QuickBooks since it was closed out",
+		}
+
 	# Preflight: only the fields we actually mapped (don't yet enforce all
 	# DocType-required fields -- a later create-time check does that).
-	preflight_issues = validate_mapped_values(entity_type, erpnext_doctype, values, include_doc_required=False)
+	preflight_issues = validate_mapped_values(
+		entity_type, erpnext_doctype, values, include_doc_required=False, payload=payload
+	)
 	if preflight_issues:
 		if not preview:
 			save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, preflight_issues)
@@ -124,7 +147,7 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		_ensure_group_parent(erpnext_doctype, values)
 
 	# Already-linked path: update the previously synced ERPNext record in place.
-	mapping = get_mapping(entity_type, qbo_id)
+	# (``mapping`` was read above for the Ignored check; nothing since then writes to it.)
 	if mapping and mapping.erpnext_name and frappe.db.exists(erpnext_doctype, mapping.erpnext_name):
 		doc = frappe.get_doc(erpnext_doctype, mapping.erpnext_name)
 		# A QBO job must never re-clobber an existing Project's title with its prefixed
@@ -345,7 +368,7 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 		}
 
 	if preview:
-		create_issues = validate_mapped_values(entity_type, erpnext_doctype, values)
+		create_issues = validate_mapped_values(entity_type, erpnext_doctype, values, payload=payload)
 		if create_issues:
 			return {
 				"action": "manual_review",
@@ -356,7 +379,7 @@ def upsert_entity(entity_type: str, payload: dict, settings, *, overwrite=False,
 			}
 		return {"action": "create", "doctype": erpnext_doctype, "fields": list(values)}
 
-	create_issues = validate_mapped_values(entity_type, erpnext_doctype, values)
+	create_issues = validate_mapped_values(entity_type, erpnext_doctype, values, payload=payload)
 	if create_issues:
 		save_manual_review_mapping(entity_type, qbo_id, payload, erpnext_doctype, create_issues)
 		return {
@@ -611,14 +634,25 @@ def save_manual_review_mapping(entity_type: str, qbo_id: str, payload: dict, erp
 
 
 def validate_mapped_values(
-	entity_type: str, erpnext_doctype: str, values: dict, *, include_doc_required: bool = True
+	entity_type: str,
+	erpnext_doctype: str,
+	values: dict,
+	*,
+	include_doc_required: bool = True,
+	payload: dict | None = None,
 ) -> list[str]:
 	"""Return a list of blocking issues, or empty if the mapped values are insertable.
 
 	Checks required fields (entity-specific plus, when ``include_doc_required``,
-	the DocType's own reqd fields) and the QBO->ERPNext quirk that journal lines
-	posting to Stock accounts can't be booked via a plain Journal Entry. A
-	non-empty list routes the record to manual review.
+	the DocType's own reqd fields), the QBO->ERPNext quirk that journal lines
+	posting to Stock accounts can't be booked via a plain Journal Entry, and that
+	the mapped document still totals what QuickBooks says it totals. A non-empty
+	list routes the record to manual review.
+
+	``payload`` is the source QBO record. It is optional so the field-level checks
+	stay callable on their own, but the two totals guards need it: one to compare
+	against QuickBooks' own ``TotalAmt``, both to name which QBO lines could not be
+	carried across instead of reporting a bare arithmetic difference.
 	"""
 	issues = []
 	for fieldname in sorted(_required_mapped_fields(entity_type, erpnext_doctype, values, include_doc_required)):
@@ -628,9 +662,12 @@ def validate_mapped_values(
 		issues.append(f"Stock account requires a stock transaction: {account}")
 	for account in _blocked_party_accounts(erpnext_doctype, values):
 		issues.append(f"Journal Entry line requires a Party for Receivable/Payable account: {account}")
-	imbalance = _journal_imbalance(erpnext_doctype, values)
+	imbalance = _journal_imbalance(erpnext_doctype, values, payload)
 	if imbalance:
 		issues.append(imbalance)
+	shortfall = _purchase_invoice_imbalance(erpnext_doctype, values, payload)
+	if shortfall:
+		issues.append(shortfall)
 	unlinked_project = _blocked_unlinked_project(erpnext_doctype, values, include_doc_required)
 	if unlinked_project:
 		issues.append(unlinked_project)
@@ -784,15 +821,22 @@ def _blocked_party_accounts(erpnext_doctype: str, values: dict) -> list[str]:
 	return accounts
 
 
-def _journal_imbalance(erpnext_doctype: str, values: dict) -> str | None:
+def _journal_imbalance(erpnext_doctype: str, values: dict, payload: dict | None = None) -> str | None:
 	"""Return an issue string if a Journal Entry's debits and credits don't match.
 
 	Applies to every entity mapped onto a Journal Entry (native JournalEntry, the
 	cash-movement types Purchase/Transfer/BillPayment/Deposit/..., and expense-only
-	Bills). A lopsided total almost always means a line referenced a QBO account
-	that isn't mapped into ERPNext yet (e.g. an inactive account that wasn't
-	imported), so it is routed to manual review with a clear reason instead of
-	failing on insert with ERPNext's opaque "Total Debit must equal Total Credit".
+	Bills). Routing a lopsided entry to manual review beats failing on insert with
+	ERPNext's opaque "Total Debit must equal Total Credit".
+
+	The message names the actual cause, because the two causes need opposite fixes
+	and this used to blame the wrong one. An unresolved ``AccountRef`` is fixed by
+	importing that account; a skipped item-based line is a mapping limitation
+	(``_map_purchase`` and the other JE mappers read only account-based lines --
+	an item line's expense account lives on the ERPNext Item, not the QBO line)
+	that importing accounts will never fix. The old wording asserted the former for
+	every case, which is wrong for all 18 Purchase records parked today: every
+	account on them is correctly mapped.
 	"""
 	if erpnext_doctype != "Journal Entry":
 		return None
@@ -803,10 +847,197 @@ def _journal_imbalance(erpnext_doctype: str, values: dict) -> str | None:
 	credit = sum(_to_amount(row.get("credit_in_account_currency")) for row in rows)
 	if round(debit - credit, 2) == 0:
 		return None
+	causes = _journal_imbalance_causes(payload)
+	if not causes:
+		causes = [
+			"No QuickBooks account on this transaction is unresolved and no line was skipped, "
+			"so the mapping does not account for the difference."
+		]
+	return f"Journal Entry is unbalanced (debit {debit:.2f} vs credit {credit:.2f}). " + " ".join(causes)
+
+
+def _journal_imbalance_causes(payload: dict | None) -> list[str]:
+	"""Explain what a Journal Entry mapping could not carry across from its QBO payload."""
+	if not payload:
+		return []
+	causes = []
+	skipped = [line for line in payload.get("Line") or [] if line.get("ItemBasedExpenseLineDetail")]
+	if skipped:
+		total = sum(_to_amount(line.get("Amount")) for line in skipped)
+		causes.append(
+			f"{len(skipped)} item-based line(s) totalling {total:.2f} were skipped during mapping: "
+			"an item line's expense account lives on the ERPNext Item, not the QuickBooks line, "
+			"so no journal line can be built from it."
+		)
+	unresolved = _unresolved_account_refs(payload)
+	if unresolved:
+		causes.append(
+			f"{len(unresolved)} QuickBooks account(s) referenced by this transaction are not "
+			f"imported into ERPNext: {_format_refs(unresolved)}."
+		)
+	return causes
+
+
+def _purchase_invoice_imbalance(erpnext_doctype: str, values: dict, payload: dict | None) -> str | None:
+	"""Return an issue string if a Purchase Invoice doesn't total the QBO ``TotalAmt``.
+
+	Journal Entries have ``_journal_imbalance``; Purchase Invoices had no equivalent,
+	and that gap is precisely what let a mixed-shape Bill import 67.54 short while
+	validating, saving and looking like a clean invoice. Compare what was actually
+	mapped (item amounts plus Actual charges) against QuickBooks' own stated total,
+	and park anything that doesn't reconcile -- naming the lines that could not be
+	carried across. No fallback is ever invented to close the gap: a
+	wrong-but-plausible invoice that posts is worse than a parked one, because
+	nobody looks at it again.
+
+	Skipped when the payload carries no ``TotalAmt``: there is then nothing
+	authoritative to reconcile against, and inventing a total would be the same
+	mistake in a different place.
+	"""
+	if erpnext_doctype != "Purchase Invoice" or not payload:
+		return None
+	if payload.get("TotalAmt") is None:
+		return None
+	qbo_total = _to_amount(payload.get("TotalAmt"))
+	mapped = sum(_to_amount(row.get("amount")) for row in values.get("items") or [])
+	mapped += sum(_to_amount(row.get("tax_amount")) for row in values.get("taxes") or [])
+	difference = round(qbo_total - mapped, 2)
+	if difference == 0:
+		return None
+	causes = _purchase_invoice_shortfall_causes(payload)
+	if not causes:
+		causes = [
+			"Every QuickBooks line on this bill was carried across, so the mapping does not "
+			"account for the difference (the bill may carry tax, a discount or a charge the "
+			"importer does not model)."
+		]
 	return (
-		f"Journal Entry is unbalanced (debit {debit:.2f} vs credit {credit:.2f}); "
-		"some lines may reference QuickBooks accounts not yet imported into ERPNext."
+		f"Purchase Invoice does not reconcile to QuickBooks (mapped {mapped:.2f} vs "
+		f"TotalAmt {qbo_total:.2f}, off by {difference:.2f}). " + " ".join(causes)
 	)
+
+
+def _purchase_invoice_shortfall_causes(payload: dict) -> list[str]:
+	"""Explain which QBO Bill lines the Purchase Invoice mapping could not carry across."""
+	causes = []
+	unmapped_items = [
+		line
+		for line in payload.get("Line") or []
+		if line.get("ItemBasedExpenseLineDetail")
+		and not _linked_name(
+			"Item", "Item", ((line["ItemBasedExpenseLineDetail"].get("ItemRef") or {}).get("value"))
+		)
+	]
+	if unmapped_items:
+		total = sum(_to_amount(line.get("Amount")) for line in unmapped_items)
+		refs = [line["ItemBasedExpenseLineDetail"].get("ItemRef") or {} for line in unmapped_items]
+		causes.append(
+			f"{len(unmapped_items)} item line(s) totalling {total:.2f} reference QuickBooks items "
+			f"not imported into ERPNext: {_format_refs(refs)}."
+		)
+	unresolved_accounts = [
+		line
+		for line in payload.get("Line") or []
+		if line.get("AccountBasedExpenseLineDetail")
+		and _to_amount(line.get("Amount")) != 0
+		and not _linked_name(
+			"Account",
+			"Account",
+			((line["AccountBasedExpenseLineDetail"].get("AccountRef") or {}).get("value")),
+		)
+	]
+	if unresolved_accounts:
+		total = sum(_to_amount(line.get("Amount")) for line in unresolved_accounts)
+		refs = [line["AccountBasedExpenseLineDetail"].get("AccountRef") or {} for line in unresolved_accounts]
+		causes.append(
+			f"{len(unresolved_accounts)} expense line(s) totalling {total:.2f} reference QuickBooks "
+			f"accounts not imported into ERPNext: {_format_refs(refs)}."
+		)
+	return causes
+
+
+# Every key a QBO payload can hang an account reference off, at the top level or on a
+# line detail. APAccountRef is deliberately absent: _supplier_payable_line falls back to
+# the company default payable, so an unmapped A/P reference still produces a line and
+# naming it would send triage after a non-problem.
+_ACCOUNT_REF_KEYS = (
+	"AccountRef",
+	"FromAccountRef",
+	"ToAccountRef",
+	"DepositToAccountRef",
+	"BankAccountRef",
+	"CCAccountRef",
+	"CreditCardAccountRef",
+)
+
+
+def _payload_account_refs(payload: dict):
+	"""Yield every account reference a mapper would try to resolve on this payload."""
+	containers = [payload]
+	# CheckPayment / CreditCardPayment hang a BillPayment's funding account one level down.
+	containers.extend(
+		payload[key] for key in ("CheckPayment", "CreditCardPayment") if isinstance(payload.get(key), dict)
+	)
+	for line in payload.get("Line") or []:
+		containers.append(line)
+		containers.extend(
+			detail
+			for key, detail in line.items()
+			if key.endswith("LineDetail") and isinstance(detail, dict)
+		)
+	for container in containers:
+		for key in _ACCOUNT_REF_KEYS:
+			ref = container.get(key)
+			if isinstance(ref, dict) and ref.get("value"):
+				yield ref
+
+
+def _unresolved_account_refs(payload: dict) -> list[dict]:
+	"""Every account reference in a QBO payload with no ERPNext Account mapped to it."""
+	unresolved, seen = [], set()
+	for ref in _payload_account_refs(payload):
+		qbo_id = str(ref.get("value"))
+		if qbo_id in seen:
+			continue
+		seen.add(qbo_id)
+		if not _linked_name("Account", "Account", qbo_id):
+			unresolved.append(ref)
+	return unresolved
+
+
+def _format_refs(refs) -> str:
+	"""Render QBO refs as ``id (name)`` so an issue message is triageable as written."""
+	return ", ".join(
+		f"{ref.get('value')} ({ref.get('name')})" if ref.get("name") else str(ref.get("value"))
+		for ref in refs
+	)
+
+
+def _qbo_record_advanced(mapping, payload: dict) -> bool:
+	"""True when a QBO payload is newer than what the mapping last recorded.
+
+	QuickBooks bumps ``SyncToken`` on every edit, so a token past the stored one means
+	the record genuinely changed there. When the tokens aren't comparable (either side
+	missing, or non-numeric) fall back to QBO's ``LastUpdatedTime`` cursor. With
+	neither signal available this reports "not advanced", which is the safe answer for
+	its one caller: the Ignored check would otherwise reopen a deliberately closed-out
+	record on every single sync.
+	"""
+	incoming_token = payload.get("SyncToken")
+	stored_token = mapping.sync_token
+	if incoming_token is not None and stored_token not in (None, ""):
+		try:
+			return int(str(incoming_token)) > int(str(stored_token))
+		except (TypeError, ValueError):
+			return str(incoming_token) != str(stored_token)
+	incoming_updated = parse_qbo_datetime((payload.get("MetaData") or {}).get("LastUpdatedTime"))
+	stored_updated = mapping.last_qbo_updated_at
+	if incoming_updated and stored_updated:
+		try:
+			return incoming_updated > stored_updated
+		except TypeError:
+			return False
+	return False
 
 
 def detect_conflicts(doc, incoming_values: dict, mapping) -> list[str]:
@@ -1254,12 +1485,21 @@ def _map_sales_receipt(payload, settings):
 def _map_purchase_invoice(payload, settings):
 	"""Map a QBO Bill to an ERPNext Purchase Invoice or Journal Entry.
 
-	QBO Bills come in two shapes. Item-based bills (``ItemBasedExpenseLineDetail``)
-	map to a Purchase Invoice with line items. Expense-account bills
-	(``AccountBasedExpenseLineDetail`` -- the common case: a vendor charge booked
-	straight to an expense account, with no inventory item) have no ERPNext items,
-	so they map to a Journal Entry that debits each expense account and credits A/P
-	with the supplier as party -- the same payable a Purchase Invoice would create.
+	QBO Bills come in three shapes, not two. Item-based bills
+	(``ItemBasedExpenseLineDetail``) map to a Purchase Invoice with line items.
+	Expense-account-only bills (``AccountBasedExpenseLineDetail`` -- the common case:
+	a vendor charge booked straight to an expense account, with no inventory item)
+	have no ERPNext items, so they map to a Journal Entry that debits each expense
+	account and credits A/P with the supplier as party -- the same payable a Purchase
+	Invoice would create.
+
+	A MIXED bill carries both (an item order with a freight line on it). It stays a
+	Purchase Invoice, since the item lines need real item rows, and its account-based
+	lines are folded into Purchase Taxes and Charges as ``Actual`` charges booked to
+	each line's own account -- the same posting the Journal Entry branch would make,
+	and the same correction an accountant applies by hand. Before this, the
+	account-based lines were silently dropped: the invoice validated, saved and
+	looked clean while posting short of the QuickBooks total.
 	"""
 	items = _purchase_items(payload)
 	if not items and _has_account_expense_lines(payload):
@@ -1274,6 +1514,11 @@ def _map_purchase_invoice(payload, settings):
 		"conversion_rate": rate,
 		"credit_to": _company_value(settings, "default_payable_account"),
 		"items": items,
+		# Always mapped, even when empty, so a re-sync REPLACES the charges table
+		# instead of leaving a stale row beside a fresh one: apply_values rewrites
+		# child tables wholesale, which is what makes re-syncing a hand-corrected
+		# invoice idempotent rather than double-counting its freight.
+		"taxes": _purchase_charges(payload, settings),
 		"remarks": f"Imported from QuickBooks Online Bill {payload.get('DocNumber') or payload.get('Id')}",
 	}
 
@@ -1281,6 +1526,45 @@ def _map_purchase_invoice(payload, settings):
 def _has_account_expense_lines(payload) -> bool:
 	"""True if a Bill has any ``AccountBasedExpenseLineDetail`` (expense-account) line."""
 	return any(line.get("AccountBasedExpenseLineDetail") for line in payload.get("Line") or [])
+
+
+def _purchase_charges(payload, settings):
+	"""Build Purchase Taxes and Charges rows from a Bill's account-based expense lines.
+
+	Each line becomes an ``Actual`` charge in the ``Total`` category, booked straight
+	to the line's resolved account and carrying the QBO ``Description`` so the row is
+	legible on the invoice.
+
+	A line whose ``AccountRef`` does not resolve is left out rather than given a
+	fallback account -- inventing one would produce a balanced-but-wrong invoice that
+	posts to the ledger and is never looked at again. The omission makes the invoice
+	fall short of ``TotalAmt``, and ``_purchase_invoice_imbalance`` then parks the
+	bill naming the account that is missing. Zero-amount lines are dropped (QBO emits
+	placeholder rows), matching ``_ledger_line``'s treatment on the journal side.
+	"""
+	charges = []
+	for line in payload.get("Line") or []:
+		detail = line.get("AccountBasedExpenseLineDetail")
+		if not detail:
+			continue
+		amount = _to_amount(line.get("Amount"))
+		account_ref = detail.get("AccountRef") or {}
+		account = _resolve_account(settings, account_ref.get("value"))
+		if not account or amount == 0:
+			continue
+		row = {
+			"charge_type": "Actual",
+			"account_head": account,
+			"description": line.get("Description") or account_ref.get("name") or account,
+			"tax_amount": amount,
+			"category": "Total",
+			"add_deduct_tax": "Add",
+		}
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		charges.append(row)
+	return charges
 
 
 def _map_bill_as_journal_entry(payload, settings):

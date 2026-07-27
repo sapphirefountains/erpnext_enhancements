@@ -171,7 +171,8 @@ function renderLogs(root, logs) {
 					${__("C")} ${log.created_count || 0} /
 					${__("L")} ${log.linked_count || 0} /
 					${__("R")} ${log.manual_review_count || 0} /
-					${__("X")} ${log.conflict_count || 0}
+					${__("X")} ${log.conflict_count || 0} /
+					${__("I")} ${log.ignored_count || 0}
 				</div>
 			</div>
 		`).appendTo(list);
@@ -295,12 +296,13 @@ function pollResyncPreview(previewId, attempts) {
 }
 
 function offerRunResync(previewId, summary) {
-	const message = __("Preview {0}: {1} creates, {2} updates, {3} deletes, {4} conflicts.", [
+	const message = __("Preview {0}: {1} creates, {2} updates, {3} deletes, {4} conflicts, {5} ignored.", [
 		previewId,
 		summary.created || 0,
 		summary.updated || 0,
 		summary.deleted || 0,
 		summary.conflicts || 0,
+		summary.ignored || 0,
 	]);
 	frappe.confirm(message + "<br>" + __("Run overwrite resync for QuickBooks-owned fields?"), () => {
 		frappe.call({

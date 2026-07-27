@@ -707,6 +707,9 @@ def _track_result(log, result):
 	(created/updated/...) to the same counter so previews and real runs summarize
 	identically. Failures additionally append a human-readable line via
 	``_append_failure_message``.
+
+	``ignored`` is counted so records a human closed out stay visible as a category
+	in every run's summary rather than just being absent from it.
 	"""
 	action = result.get("action")
 	if action == "created" or action == "create":
@@ -719,6 +722,8 @@ def _track_result(log, result):
 		log.deleted_count = (log.deleted_count or 0) + 1
 	elif action == "manual_review":
 		log.manual_review_count = (log.manual_review_count or 0) + 1
+	elif action == "ignored":
+		log.ignored_count = (log.ignored_count or 0) + 1
 	elif action == "conflict":
 		log.conflict_count = (log.conflict_count or 0) + 1
 	elif action == "failed":

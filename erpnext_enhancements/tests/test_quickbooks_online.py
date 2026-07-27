@@ -1997,6 +1997,7 @@ def test_get_sync_log_summary_maps_counters(monkeypatch):
 			deleted_count=0,
 			conflict_count=2,
 			manual_review_count=0,
+			ignored_count=4,
 			failed_count=0,
 			error_message=None,
 		),
@@ -2008,6 +2009,7 @@ def test_get_sync_log_summary_maps_counters(monkeypatch):
 	assert out["status"] == "Completed"
 	assert out["summary"]["created"] == 3
 	assert out["summary"]["conflicts"] == 2
+	assert out["summary"]["ignored"] == 4
 
 
 def test_error_snippet_bounds_response_bodies():
@@ -2723,3 +2725,420 @@ def test_remediation_project_folder_name_for_relocated_folder():
 	assert _project_folder_name("PRJ-00401", {"DisplayName": "PRJ-00401 4th West"}) == "PRJ-00401 4th West"
 	# a not-yet-created project ("(new) ...") -> just the leaf
 	assert _project_folder_name("(new) Foo", {"DisplayName": "Foo"}) == "Foo"
+
+
+# A verbatim QuickBooks Bill payload pulled from the production raw-payload store
+# (QBO-RAW-2026-249022). Bill 19019 is the mixed-shape case: two item-based lines
+# (285.27 + 60.20) plus one account-based freight line (67.54) that the mapper used
+# to drop, importing the invoice at 345.47 against a QuickBooks TotalAmt of 413.01.
+BILL_19019 = {
+	"APAccountRef": {"name": "Accounts Payable", "value": "124"},
+	"Balance": 0,
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"DocNumber": "2132402.01",
+	"DueDate": "2025-12-13",
+	"Id": "19019",
+	"Line": [
+		{
+			"Amount": 285.27,
+			"Description": "SCE-30EL2408LP EL Enclosure, 30H X 24W  X 8D",
+			"DetailType": "ItemBasedExpenseLineDetail",
+			"Id": "1",
+			"ItemBasedExpenseLineDetail": {
+				"BillableStatus": "NotBillable",
+				"CustomerRef": {"value": "2380"},
+				"ItemRef": {
+					"name": "BUILD -  FOUNTAIN MATERIALS & EQUIPMENT:BUILD -  FOUNTAIN MATERIALS & EQUIPMENT",
+					"value": "312",
+				},
+				"Qty": 1,
+				"TaxCodeRef": {"value": "NON"},
+				"UnitPrice": 285.27,
+			},
+			"LineNum": 1,
+		},
+		{
+			"Amount": 60.2,
+			"Description": "SCE-30P24 Subpanel, Bent; 27H X 21W  X 0.88D",
+			"DetailType": "ItemBasedExpenseLineDetail",
+			"Id": "2",
+			"ItemBasedExpenseLineDetail": {
+				"BillableStatus": "NotBillable",
+				"CustomerRef": {"value": "2380"},
+				"ItemRef": {
+					"name": "BUILD -  FOUNTAIN MATERIALS & EQUIPMENT:BUILD -  FOUNTAIN MATERIALS & EQUIPMENT",
+					"value": "312",
+				},
+				"Qty": 1,
+				"TaxCodeRef": {"value": "NON"},
+				"UnitPrice": 60.2,
+			},
+			"LineNum": 2,
+		},
+		{
+			"AccountBasedExpenseLineDetail": {
+				"AccountRef": {"name": "51300 Build COGS:Build Freight & Delivery", "value": "210"},
+				"BillableStatus": "NotBillable",
+				"CustomerRef": {"value": "2380"},
+				"TaxCodeRef": {"value": "NON"},
+			},
+			"Amount": 67.54,
+			"Description": "SHIPPING EXPENSE",
+			"DetailType": "AccountBasedExpenseLineDetail",
+			"Id": "3",
+			"LineNum": 3,
+		},
+	],
+	"MetaData": {"CreateTime": "2025-11-22T14:20:53-08:00", "LastUpdatedTime": "2026-01-07T09:05:03-08:00"},
+	"SyncToken": "3",
+	"TotalAmt": 413.01,
+	"TxnDate": "2025-11-13",
+	"VendorRef": {"name": "SCE Saginaw Control and Engineering", "value": "2211"},
+	"domain": "QBO",
+	"sparse": False,
+}
+
+
+def _bill_stub(monkeypatch, *, account_210="Build Freight & Delivery - SF", item_312="BUILD -  FOUNTAIN MATERIALS & EQUIPMENT"):
+	"""Frappe stub resolving Bill 19019's vendor/item/account as production does.
+
+	Pass ``account_210=None`` or ``item_312=None`` to simulate a reference that is
+	not imported into ERPNext yet.
+	"""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "2110 - Creditors - SF" if fieldname == "default_payable_account" else None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Vendor" and f.get("qbo_id") == "2211":
+				return "SCE Saginaw Control and Engineering"
+			if f.get("qbo_entity_type") == "Account" and f.get("qbo_id") == "210":
+				return account_210
+			if f.get("qbo_entity_type") == "Item" and f.get("qbo_id") == "312":
+				return item_312
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	return frappe
+
+
+def test_mixed_bill_folds_account_lines_into_purchase_charges(monkeypatch):
+	"""A Bill with BOTH item and expense-account lines keeps the account lines.
+
+	Production Bill 19019: the 67.54 freight line used to vanish, leaving a 345.47
+	invoice against a 413.01 QuickBooks total with nothing to flag it.
+	"""
+	_bill_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Bill", BILL_19019, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert doctype == "Purchase Invoice"
+	assert [i["amount"] for i in values["items"]] == [285.27, 60.2]
+	assert values["taxes"] == [
+		{
+			"charge_type": "Actual",
+			"account_head": "Build Freight & Delivery - SF",
+			"description": "SHIPPING EXPENSE",
+			"tax_amount": 67.54,
+			"category": "Total",
+			"add_deduct_tax": "Add",
+		}
+	]
+	# The whole point: the invoice now totals what QuickBooks says the bill totals.
+	items_total = sum(i["amount"] for i in values["items"])
+	charges_total = sum(t["tax_amount"] for t in values["taxes"])
+	assert round(items_total + charges_total, 2) == 413.01
+	assert validate_mapped_values("Bill", doctype, values, payload=BILL_19019) == []
+
+
+def test_mixed_bill_mapping_is_replayable(monkeypatch):
+	"""Re-mapping the same Bill yields identical values, and always maps ``taxes``.
+
+	These are the two properties that make a re-sync idempotent rather than
+	double-counting: the transform is pure, and ``taxes`` is present on EVERY
+	Purchase Invoice (empty included), so ``apply_values``' wholesale child-table
+	rewrite replaces the charges table instead of appending beside a stale row.
+	"""
+	_bill_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	settings = types.SimpleNamespace(company="Sapphire Fountains")
+	first = map_qbo_to_erpnext("Bill", BILL_19019, settings)[1]
+	second = map_qbo_to_erpnext("Bill", BILL_19019, settings)[1]
+
+	assert first == second
+
+	item_only = json.loads(json.dumps(BILL_19019))
+	item_only["Line"] = item_only["Line"][:2]
+	item_only["TotalAmt"] = 345.47
+	_, values = map_qbo_to_erpnext("Bill", item_only, settings)
+	assert values["taxes"] == []  # mapped, not omitted -- so a stale row gets cleared
+
+
+def test_zero_amount_expense_line_adds_no_charge(monkeypatch):
+	"""A $0.00 account line contributes no charge row (QBO emits placeholder lines)."""
+	_bill_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = json.loads(json.dumps(BILL_19019))
+	payload["Line"][2]["Amount"] = 0
+	payload["TotalAmt"] = 345.47
+
+	_, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert values["taxes"] == []
+	assert validate_mapped_values("Bill", "Purchase Invoice", values, payload=payload) == []
+
+
+def test_mixed_bill_with_unimported_expense_account_is_parked(monkeypatch):
+	"""An unresolved expense AccountRef parks the bill naming it -- never a fallback.
+
+	No balancing account is invented: a wrong-but-plausible invoice that posts to the
+	ledger is worse than a parked one, because nobody looks at it again.
+	"""
+	_bill_stub(monkeypatch, account_210=None)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_, values = map_qbo_to_erpnext("Bill", BILL_19019, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert values["taxes"] == []  # dropped rather than booked to a guessed account
+	issues = validate_mapped_values("Bill", "Purchase Invoice", values, payload=BILL_19019)
+	assert len(issues) == 1
+	assert "does not reconcile" in issues[0]
+	assert "mapped 345.47" in issues[0] and "TotalAmt 413.01" in issues[0] and "off by 67.54" in issues[0]
+	assert "210 (51300 Build COGS:Build Freight & Delivery)" in issues[0]
+
+
+def test_purchase_invoice_totals_guard_names_unimported_items(monkeypatch):
+	"""A Bill with one un-imported ItemRef is parked, not imported short.
+
+	The dangerous shape: enough lines map that the invoice looks plausible, so only
+	a totals check against QuickBooks catches the gap.
+	"""
+	_bill_stub(monkeypatch)  # item 312 resolves, item 999 does not
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = json.loads(json.dumps(BILL_19019))
+	payload["Line"][1]["ItemBasedExpenseLineDetail"]["ItemRef"] = {"value": "999", "name": "SHOP SUPPLIES"}
+
+	doctype, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Purchase Invoice"
+	assert [i["amount"] for i in values["items"]] == [285.27]  # the 60.20 line dropped out
+	issues = validate_mapped_values("Bill", doctype, values, payload=payload)
+	assert len(issues) == 1
+	assert "off by 60.20" in issues[0]
+	assert "1 item line(s) totalling 60.20 reference QuickBooks items" in issues[0]
+	assert "999 (SHOP SUPPLIES)" in issues[0]
+
+
+def test_bill_with_no_mappable_items_falls_through_to_a_journal_entry(monkeypatch):
+	"""When no ItemRef resolves, a mixed Bill takes the expense-only JE branch.
+
+	The freight line alone cannot carry the 413.01 payable, so the balance guard
+	catches it -- and says the item lines were skipped rather than blaming accounts.
+	"""
+	_bill_stub(monkeypatch, item_312=None)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Bill", BILL_19019, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert doctype == "Journal Entry"
+	issues = validate_mapped_values("Bill", doctype, values, include_doc_required=False, payload=BILL_19019)
+	assert any("2 item-based line(s) totalling 345.47 were skipped" in issue for issue in issues)
+
+
+def test_purchase_invoice_guard_reports_an_unexplained_difference(monkeypatch):
+	"""A shortfall no QBO line explains is still parked, and says exactly that."""
+	_bill_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	# Every line maps, but QuickBooks says the bill is 25.00 more than its lines --
+	# e.g. tax carried in TxnTaxDetail, which the importer does not model.
+	payload = json.loads(json.dumps(BILL_19019))
+	payload["TotalAmt"] = 438.01
+
+	_, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+	issues = validate_mapped_values("Bill", "Purchase Invoice", values, payload=payload)
+
+	assert len(issues) == 1
+	assert "off by 25.00" in issues[0]
+	assert "does not account for the difference" in issues[0]
+
+
+def test_purchase_invoice_guard_is_skipped_without_a_quickbooks_total(monkeypatch):
+	"""With no TotalAmt there is nothing authoritative to reconcile against."""
+	_bill_stub(monkeypatch)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = json.loads(json.dumps(BILL_19019))
+	payload.pop("TotalAmt")
+
+	_, values = map_qbo_to_erpnext("Bill", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert validate_mapped_values("Bill", "Purchase Invoice", values, payload=payload) == []
+
+
+def test_journal_imbalance_blames_skipped_item_lines_not_missing_accounts(monkeypatch):
+	"""The unbalanced-JE message distinguishes a skipped line from a missing account.
+
+	The two need opposite fixes, and the old wording asserted "accounts not yet
+	imported" for every case -- wrong for all 18 Purchase records parked today,
+	where every account is correctly mapped and the debit is missing because
+	_map_purchase reads only account-based lines.
+	"""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("qbo_entity_type") == "Account":
+			return "Chase Checking - SF"  # every account on this payload IS imported
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = {
+		"Id": "9001",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 2352.35,
+		"AccountRef": {"value": "40", "name": "Chase Checking"},
+		"Line": [
+			{
+				"Amount": 2352.35,
+				"DetailType": "ItemBasedExpenseLineDetail",
+				"ItemBasedExpenseLineDetail": {"ItemRef": {"value": "312"}},
+			}
+		],
+	}
+	_, values = map_qbo_to_erpnext("Purchase", payload, types.SimpleNamespace(company="Sapphire Fountains"))
+	issues = validate_mapped_values("Purchase", "Journal Entry", values, include_doc_required=False, payload=payload)
+
+	assert len(issues) == 1
+	assert "unbalanced (debit 0.00 vs credit 2352.35)" in issues[0]
+	assert "1 item-based line(s) totalling 2352.35 were skipped during mapping" in issues[0]
+	assert "not imported into ERPNext" not in issues[0]  # the misleading old clause
+
+
+def test_journal_imbalance_names_the_accounts_that_are_missing():
+	"""When an AccountRef genuinely doesn't resolve, the message names it."""
+	install_frappe_stub()  # default stub resolves no account mappings
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	payload = {
+		"Id": "9002",
+		"TxnDate": "2026-06-02",
+		"TotalAmt": 100,
+		"AccountRef": {"value": "40", "name": "Chase Checking"},
+		"Line": [
+			{
+				"Amount": 100,
+				"DetailType": "AccountBasedExpenseLineDetail",
+				"AccountBasedExpenseLineDetail": {"AccountRef": {"value": "61", "name": "Shop Supplies"}},
+			}
+		],
+	}
+	_, values = map_qbo_to_erpnext("Purchase", payload, types.SimpleNamespace(company="SF"))
+	# Both legs dropped -> caught by the required-accounts check, not the balance one.
+	assert values["accounts"] == []
+
+	# One leg resolves, the other doesn't: now it's an imbalance, named precisely.
+	values["accounts"] = [{"account": "Chase Checking - SF", "debit_in_account_currency": 0, "credit_in_account_currency": 100}]
+	issues = validate_mapped_values("Purchase", "Journal Entry", values, include_doc_required=False, payload=payload)
+
+	assert len(issues) == 1
+	assert "unbalanced" in issues[0]
+	assert "61 (Shop Supplies)" in issues[0] and "40 (Chase Checking)" in issues[0]
+	assert "skipped during mapping" not in issues[0]
+
+
+def _ignored_mapping(**overrides):
+	"""A Sync Mapping double for a record a human closed out as Ignored."""
+	fields = {
+		"erpnext_doctype": "Journal Entry",
+		"erpnext_name": None,
+		"conflict_status": "Ignored",
+		"match_status": "Pending Review",
+		"sync_token": "2",
+		"last_qbo_updated_at": datetime(2026, 7, 20, 12, 0, 0),
+		"owned_fields": json.dumps({"issues": ["Missing required field: accounts"], "ignored_at": "2026-07-27"}),
+	}
+	fields.update(overrides)
+	return types.SimpleNamespace(**fields)
+
+
+def test_ignored_mapping_survives_a_full_import(monkeypatch):
+	"""An Ignored mapping is returned untouched: no preflight, no mapping write.
+
+	Without this a single full Import All silently reverts every record a human
+	closed out -- save_manual_review_mapping resets BOTH statuses to Pending Review.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	touched = []
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: _ignored_mapping())
+	monkeypatch.setattr(
+		mapping, "validate_mapped_values", lambda *a, **k: touched.append("preflight") or []
+	)
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *a, **k: touched.append("parked"))
+	monkeypatch.setattr(mapping, "save_mapping", lambda *a, **k: touched.append("saved"))
+
+	# SyncToken "2" matches what the mapping stored -> nothing changed in QuickBooks.
+	payload = {"Id": "9786", "SyncToken": "2", "TotalAmt": 0, "TxnDate": "2026-06-02"}
+	result = mapping.upsert_entity("Purchase", payload, types.SimpleNamespace(company="SF"))
+
+	assert result["action"] == "ignored"
+	assert result["qbo_id"] == "9786"
+	assert touched == []  # preflight never ran; the mapping was never rewritten
+
+
+def test_ignored_mapping_reopens_when_quickbooks_moves(monkeypatch):
+	"""A SyncToken past the stored one re-evaluates the record normally.
+
+	Someone un-voiding a QuickBooks transaction must not stay permanently invisible.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	parked = []
+	monkeypatch.setattr(mapping, "get_mapping", lambda *args: _ignored_mapping())
+	monkeypatch.setattr(mapping, "save_manual_review_mapping", lambda *a, **k: parked.append(a[1]))
+
+	payload = {"Id": "9786", "SyncToken": "3", "TotalAmt": 0, "TxnDate": "2026-06-02"}
+	result = mapping.upsert_entity("Purchase", payload, types.SimpleNamespace(company="SF"))
+
+	assert result["action"] == "manual_review"
+	assert parked == ["9786"]
+
+
+def test_qbo_record_advanced_falls_back_to_last_updated_time():
+	"""With no comparable SyncToken, QBO's LastUpdatedTime decides; neither -> False."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _qbo_record_advanced
+
+	stored = _ignored_mapping(sync_token=None)
+	assert _qbo_record_advanced(stored, {"MetaData": {"LastUpdatedTime": "2026-07-25 12:00:00+00:00"}}) is True
+	assert _qbo_record_advanced(stored, {"MetaData": {"LastUpdatedTime": "2026-07-01 12:00:00+00:00"}}) is False
+	# No signal at all -> "not advanced", so a closed-out record stays closed out.
+	assert _qbo_record_advanced(stored, {}) is False
+	# A non-numeric token that simply differs counts as movement.
+	assert _qbo_record_advanced(_ignored_mapping(sync_token="abc"), {"SyncToken": "abd"}) is True
+
+
+def test_ignored_results_are_counted_in_the_sync_log():
+	"""_track_result counts 'ignored' so closed-out records are a visible category."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.sync import _track_result
+
+	log = types.SimpleNamespace(ignored_count=0)
+	_track_result(log, {"action": "ignored", "qbo_id": "9786"})
+	_track_result(log, {"action": "ignored", "qbo_id": "9785"})
+
+	assert log.ignored_count == 2
