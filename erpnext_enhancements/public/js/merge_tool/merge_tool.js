@@ -32,15 +32,30 @@
 	// ---------------------------------------------------------------------
 	// Form button
 	// ---------------------------------------------------------------------
+
+	// Doctypes that fold "Merge into…" into an existing toolbar dropdown instead of
+	// showing it top-level. Opt-in per doctype rather than a blanket rule: this
+	// button is global, and most forms have no "Actions" group, so grouping
+	// everywhere would mint single-item dropdowns across the whole desk. Project is
+	// listed because ERPNext already gives it an "Actions" group and its toolbar
+	// carries five app-specific buttons.
+	const TOOLBAR_GROUPS = {
+		Project: "Actions",
+	};
+
 	$(document).on("form-refresh", function (e, frm) {
 		if (!is_enabled()) return;
 		if (!frm || frm.is_new()) return;
 		if (frm.meta && frm.meta.issingle) return; // singletons can't be merged
 		if (frm.doc.docstatus === 1) return; // submitted docs are refused server-side
 
-		frm.add_custom_button(__("Merge into…"), function () {
-			open_loser_picker(frm.doctype, frm.doc.name);
-		});
+		frm.add_custom_button(
+			__("Merge into…"),
+			function () {
+				open_loser_picker(frm.doctype, frm.doc.name);
+			},
+			TOOLBAR_GROUPS[frm.doctype] ? __(TOOLBAR_GROUPS[frm.doctype]) : undefined
+		);
 	});
 
 	// Prompt for the document to absorb (the loser); the current doc is the survivor.

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.183.0] - 2026-07-27
+
+### Changed
+
+- **The Project form's toolbar is five buttons shorter.** It had grown to
+  `Merge into… | Actions | Merge Project | Maintenance Contract | Project Brief |
+  Create | Open Drive Folder | ⋯ | Save` — a button per feature, because the five
+  form scripts that build it are independent and none can see the others, so each
+  defaulted to a top-level button.
+
+  They now declare a group, folding into the dropdowns ERPNext already puts on
+  Project rather than inventing new ones:
+
+  - **Actions** (alongside Duplicate Project / Update Costing / Set Project
+    Status) — `Merge Project`, `Merge into…`. Both are rare and irreversible, so
+    they belong with the other whole-document operations rather than next to Save.
+  - **View** (alongside Gantt Chart / Kanban Board) — `Project Brief`,
+    `Open Drive Folder`, and `Maintenance Contract` when a contract already
+    exists. All three are ways of looking at the project.
+  - **Create** — unchanged: `Maintenance Contract` when there is none yet, and
+    `Generate Contract`.
+
+  The toolbar reads `Actions | View | Create | ⋯ | Save`. Nothing was removed and
+  no behaviour changed; every action is one click deeper, inside a labelled menu.
+
+  Two of these buttons are shared. `Open Drive Folder` also appears on Customer
+  and Opportunity, and `Merge into…` is registered on *every* desk form — both
+  keep their existing top-level placement everywhere else, since those forms have
+  no such group and a dropdown holding a single item costs a click while reading
+  worse than the button it replaced. The grouping is an explicit per-doctype
+  opt-in in both files.
+
 ## [1.182.0] - 2026-07-27
 
 ### Fixed
