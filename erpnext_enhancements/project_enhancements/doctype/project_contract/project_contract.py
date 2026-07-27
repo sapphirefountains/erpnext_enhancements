@@ -6,6 +6,13 @@ output is the template's Jinja HTML rendered over this document at print
 time (``render_body()``, used by the "Project Contract" print format), so a
 legal-text edit on the template flows into every not-yet-signed contract.
 
+Reading it: :func:`get_contract_html` returns that same rendered agreement —
+the full legal language with this contract's data filled in — for the
+**Preview** button on the form (which renders the values on screen, unsaved
+edits included, so the finished document can be read while it is being written)
+and for the **Contracts tab** on the Project form, which lists every agreement
+issued on a job (:func:`get_project_contracts`) and opens any of them in place.
+
 Revision model (the meeting's estimate-revision convention, natively):
 the doctype is **submittable** — Draft = editable working copy; Submit =
 issued (data locked, ``status`` workflow continues via allow-on-submit:
@@ -315,19 +322,7 @@ class ProjectContract(Document):
 		Falls back to :meth:`render_body` for unsigned contracts and for anything
 		signed on paper.
 		"""
-		try:
-			executed = frappe.db.get_value(
-				"Contract Signature Request",
-				{"project_contract": self.get("name"), "status": "Signed"},
-				"agreement_html",
-				order_by="signed_on desc",
-			)
-			if executed:
-				return executed
-		except Exception:
-			# Never let an evidence lookup break a print.
-			frappe.log_error(frappe.get_traceback(), "Project Contract: executed body lookup failed")
-		return self.render_body()
+		return _executed_html(self.get("name")) or self.render_body()
 
 	def render_body(self):
 		"""Rendered agreement HTML — called by the 'Project Contract' print format."""
@@ -335,6 +330,30 @@ class ProjectContract(Document):
 		if not body:
 			frappe.throw(_("Contract Template {0} has no body.").format(self.get("contract_template")))
 		return frappe.render_template(body, _render_context(self))
+
+
+def _executed_html(name):
+	"""The stored executed instrument for a contract, or None.
+
+	Never raises — every caller is on a read path (print, preview, the Project
+	form's Contracts tab) and none of them may 500 because an evidence lookup
+	hiccupped; they fall back to a live render of the template instead.
+	"""
+	if not name:
+		return None
+	try:
+		return (
+			frappe.db.get_value(
+				"Contract Signature Request",
+				{"project_contract": name, "status": "Signed"},
+				"agreement_html",
+				order_by="signed_on desc",
+			)
+			or None
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: executed body lookup failed")
+		return None
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +486,202 @@ def compose_scope_of_work(source_doctype, source_name):
 	source = frappe.get_doc(source_doctype, source_name)
 	source.check_permission("read")
 	return _compose_scope(source)
+
+
+# ---------------------------------------------------------------------------
+# Reading the agreement (form preview + the Project form's Contracts tab)
+# ---------------------------------------------------------------------------
+
+PRINT_FORMAT = "Project Contract Print"
+
+# The one figure worth showing per agreement type in the Contracts list; each
+# is computed by _compute_totals. Types with no single headline number (MSA,
+# NDA, architect, employee-contractor) are absent and print no amount.
+CONTRACT_VALUE_FIELD = {
+	"owner": ("total_contract_value", "Contract Value"),
+	"rental": ("total_rental_amount", "Rental Total"),
+	"maintenance": ("annual_maintenance_fee", "Annual Fee"),
+	"sow": ("not_to_exceed", "Not to Exceed"),
+}
+
+
+def _contract_css():
+	"""The print format's CSS, so screen and paper render the same document.
+
+	Read from the Print Format record rather than duplicated in JS: a site edit
+	to the print styling reaches the on-screen viewer too, and the two can never
+	drift into showing the customer's agreement two different ways.
+	"""
+	try:
+		return frappe.db.get_value("Print Format", PRINT_FORMAT, "css") or ""
+	except Exception:
+		return ""
+
+
+def _preview_doc(payload):
+	"""A Project Contract built from the form's current values — never saved.
+
+	The doctype is forced, so the endpoint cannot be talked into instantiating
+	something else, and the agreement's language always comes from a site-owned
+	Contract Template — never from the payload.
+	"""
+	if isinstance(payload, str):
+		try:
+			payload = frappe.parse_json(payload)
+		except Exception:
+			payload = None
+	if not isinstance(payload, dict):
+		frappe.throw(_("Could not read the contract to preview."))
+	payload = dict(payload)
+	payload["doctype"] = "Project Contract"
+	doc = frappe.get_doc(payload)
+
+	# template_key is stamped on save, so a draft whose Contract Type was just
+	# changed still carries the old one — and it picks the template's whole
+	# layout. Resolved here directly rather than through _fetch_template_props,
+	# which throws for an unset party type: a preview must render a half-filled
+	# draft, not refuse it.
+	if doc.get("contract_template"):
+		doc.template_key = (
+			frappe.db.get_value("Contract Template", doc.contract_template, "template_key")
+			or doc.get("template_key")
+		)
+
+	# Totals and the party's display name are also stamped on save, so an
+	# unsaved draft still carries the previous save's numbers (or none at all).
+	# Redoing them here is what makes the preview show what the agreement WILL
+	# say — the whole point of reading it before saving.
+	messages = list(getattr(frappe.local, "message_log", None) or [])
+	for step in (doc._resolve_party_display, doc._compute_totals):
+		try:
+			step()
+		except Exception:
+			continue
+	# Nothing a swallowed step queued may reach the client: the preview
+	# succeeded, and popping a validation complaint over a rendered agreement
+	# would misreport what happened.
+	frappe.local.message_log = messages
+	return doc
+
+
+@frappe.whitelist()
+def get_contract_html(name=None, doc=None):
+	"""The complete agreement — the template's language with this data filled in.
+
+	Two callers, one renderer:
+
+	* the **Preview** button on the Project Contract form passes ``doc`` (the
+	  form's current values, unsaved edits and brand-new drafts included), so
+	  the whole agreement can be read while it is being filled in rather than
+	  saved-and-printed to find out what it says;
+	* the **Contracts tab** on the Project form passes ``name``.
+
+	A signed contract returns its executed instrument — the document the
+	customer actually signed — rather than a fresh render, exactly as the print
+	format does; ``executed`` says which one came back. The CSS travels with the
+	HTML (see :func:`_contract_css`) so the viewer and the printed PDF are the
+	same document.
+	"""
+	if doc:
+		contract = _preview_doc(doc)
+	elif name:
+		contract = frappe.get_doc("Project Contract", name)
+	else:
+		frappe.throw(_("Nothing to show: pass a contract name or a document to render."))
+
+	contract.check_permission("read")
+
+	if not contract.get("contract_template"):
+		frappe.throw(
+			_("Choose a Contract Type first — the agreement's language comes from its template."),
+			title=_("No Contract Type"),
+		)
+
+	executed = _executed_html(contract.get("name"))
+	return {
+		"name": contract.get("name"),
+		"title": contract.get("title") or contract.get("name"),
+		"html": executed or contract.render_body(),
+		"css": _contract_css(),
+		"executed": 1 if executed else 0,
+	}
+
+
+@frappe.whitelist()
+def get_project_contracts(project):
+	"""Every agreement issued on a project, newest first — the Contracts tab.
+
+	Customer agreements (owner / rental / maintenance) and subcontractor
+	agreements (MSA / SOW) alike, in one place: what has been committed on this
+	job, and to whom. Metadata only — each contract's body is fetched by
+	:func:`get_contract_html` when the reader opens it, so a project carrying a
+	dozen agreements costs one small query to list.
+
+	Permission-filtered via ``get_list``, and a user with no read access to
+	Project Contract at all gets an empty tab rather than an error — the tab is
+	an aside on someone else's form, not a page they asked for.
+	"""
+	frappe.get_doc("Project", project).check_permission("read")
+	if not frappe.has_permission("Project Contract", "read"):
+		return []
+
+	rows = frappe.get_list(
+		"Project Contract",
+		filters={"project": project},
+		fields=[
+			"name",
+			"template_key",
+			"contract_template",
+			"status",
+			"docstatus",
+			"party",
+			"party_type",
+			"party_display",
+			"contract_date",
+			"signed_on",
+			"revision",
+			"amended_from",
+			*[field for field, _label in CONTRACT_VALUE_FIELD.values()],
+		],
+		order_by="contract_date desc, creation desc",
+	)
+	if not rows:
+		return []
+
+	titles = dict(
+		frappe.get_all(
+			"Contract Template",
+			filters={"name": ["in", list({row.contract_template for row in rows if row.contract_template})]},
+			fields=["name", "title"],
+			as_list=True,
+		)
+	)
+	# Which of these carry an executed instrument — one query, so the list can
+	# say "signed copy on file" without rendering a single body.
+	signed = set()
+	try:
+		signed = {
+			row.project_contract
+			for row in frappe.get_all(
+				"Contract Signature Request",
+				filters={"project_contract": ["in", [row.name for row in rows]], "status": "Signed"},
+				fields=["project_contract"],
+			)
+		}
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Project Contract: signed-request lookup failed")
+
+	for row in rows:
+		field, label = CONTRACT_VALUE_FIELD.get(row.template_key, (None, None))
+		row.value = flt(row.get(field)) if field else 0
+		row.value_label = _(label) if label else None
+		row.type_label = titles.get(row.contract_template) or row.contract_template
+		row.executed = 1 if row.name in signed else 0
+		# Subcontractor paper (MSA/SOW) is listed alongside the customer's
+		# agreements but grouped apart — they are commitments in opposite
+		# directions and reading them as one list invites a costly mix-up.
+		row.is_subcontract = 1 if row.party_type == "Supplier" else 0
+	return rows
 
 
 # ---------------------------------------------------------------------------

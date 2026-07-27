@@ -14,6 +14,9 @@
  * - Serial No picks are filtered to the configured water-feature Item and,
  *   when a Project is set, to that project's serials; warehouses to
  *   non-group leaves.
+ * - "View Agreement" reads the signed Maintenance Services Agreement this
+ *   contract was mapped from, in full (public/js/project_enhancements/
+ *   contract_viewer.js) — the legal language lives there, not here.
  */
 frappe.ui.form.on("Sapphire Maintenance Contract", {
 	setup(frm) {
@@ -43,8 +46,21 @@ frappe.ui.form.on("Sapphire Maintenance Contract", {
 	refresh(frm) {
 		if (frm.doc.status === "Active") {
 			frm.page.set_indicator(__("Active"), "green");
-		} else if (frm.doc.status === "Expired" || frm.doc.status === "Cancelled") {
+		} else if (frm.doc.status === "Expired" || frm.doc.status === "Canceled") {
 			frm.page.set_indicator(__(frm.doc.status), "red");
+		}
+
+		// This is the operational contract — the schedule, not the language.
+		// When it came from a signed Maintenance Services Agreement, offer that
+		// agreement's full text without a trip to another form.
+		if (frm.doc.project_contract) {
+			frm.add_custom_button(__("View Agreement"), () =>
+				erpnext_enhancements.contract_viewer.open({
+					name: frm.doc.project_contract,
+					template_key: "maintenance",
+					print_name: frm.doc.project_contract,
+				})
+			);
 		}
 
 		if (frm.doc.docstatus === 0 && !frm._ee_batch_button) {

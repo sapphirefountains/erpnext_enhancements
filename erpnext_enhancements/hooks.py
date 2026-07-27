@@ -71,6 +71,11 @@ doctype_js = {
 		"public/js/project_migrated_scripts.js",
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
+		# Contracts tab (custom_contracts_html): every agreement issued on the
+		# job, each openable in place to its full legal text. The viewer is the
+		# shared renderer and must load first.
+		"public/js/project_enhancements/contract_viewer.js",
+		"public/js/project_enhancements/project_contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		# Schedule tab Gantt (custom_gantt_chart_html): read-only embed of the
 		# reusable Gantt widget (erpnext_enhancements.gantt.mount — see
@@ -79,6 +84,12 @@ doctype_js = {
 		"public/js/project_enhancements/project_gantt_widget.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
+	# Reading a contract on screen — the template's language with the data
+	# filled in. Loaded on the two forms that offer it (Preview Contract on the
+	# agreement itself, View Agreement on the operational maintenance contract);
+	# the Project form gets it in its own list above.
+	"Project Contract": ["public/js/project_enhancements/contract_viewer.js"],
+	"Sapphire Maintenance Contract": ["public/js/project_enhancements/contract_viewer.js"],
 	# NOTE: the custom Comments App is now mounted globally by comments_auto.js
 	# (see app_include_js + COMMENT_APP_DOCTYPES). Doctypes that only needed the
 	# comments tab no longer require a doctype_js entry; the entries below keep
