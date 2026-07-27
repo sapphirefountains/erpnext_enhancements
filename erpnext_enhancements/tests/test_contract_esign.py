@@ -13,11 +13,15 @@ The cases here are the ones where a mistake would be expensive and silent:
 * the plaintext token must never be storable;
 * ``sig()`` must degrade to exactly ``blank()`` so every existing contract
   template renders unchanged;
-* the signature-block patch must be idempotent and must refuse to guess.
+* the signature-block patch must be idempotent and must refuse to guess;
+* the field-binding patch must reproduce the shipped template exactly, change
+  no visible wording, and let a diverged section fail on its own without
+  costing the other sections their fix.
 
 Run: python -m unittest erpnext_enhancements.tests.test_contract_esign
 """
 
+import re
 import sys
 import types
 import unittest
@@ -35,6 +39,7 @@ STATE = {"signature": None, "raises": False}
 tokens = None
 render = None
 patch_mod = None
+bind_mod = None
 
 
 def _install_frappe_stub():
@@ -79,18 +84,19 @@ def _install_frappe_stub():
 
 
 def setUpModule():
-    global tokens, render, patch_mod
+    global tokens, render, patch_mod, bind_mod
     _install_frappe_stub()
     for mod in list(sys.modules):
         if mod.startswith("erpnext_enhancements.project_enhancements.esign") or mod.endswith(
-            "patches.add_esign_signature_block"
+            ("patches.add_esign_signature_block", "patches.bind_maintenance_template_fields")
         ):
             sys.modules.pop(mod, None)
     from erpnext_enhancements.patches import add_esign_signature_block as _patch
+    from erpnext_enhancements.patches import bind_maintenance_template_fields as _bind
     from erpnext_enhancements.project_enhancements.esign import render as _render
     from erpnext_enhancements.project_enhancements.esign import tokens as _tokens
 
-    tokens, render, patch_mod = _tokens, _render, _patch
+    tokens, render, patch_mod, bind_mod = _tokens, _render, _patch, _bind
 
 
 def tearDownModule():
@@ -248,6 +254,75 @@ class TestSignatureBlockPatch(unittest.TestCase):
     def test_patch_handles_an_empty_body(self):
         self.assertEqual(patch_mod.rewrite_signature_block(""), ("", False))
         self.assertEqual(patch_mod.rewrite_signature_block(None), (None, False))
+
+
+class TestFieldBindingPatch(unittest.TestCase):
+    """The three fields a live maintenance agreement was printing blank.
+
+    Same discipline as the signature block: exact-match or refuse. The strongest
+    assertion here is that unwinding the shipped template to its pre-binding form
+    and re-applying the patch reproduces the shipped template byte for byte — the
+    patch and the repo cannot drift apart without this failing.
+    """
+
+    def _template(self):
+        return (APP_DIR / "templates" / "contracts" / "maintenance_services_agreement.html").read_text(
+            encoding="utf-8"
+        )
+
+    def _unbound(self):
+        """The shipped template rolled back to what the live site still has."""
+        body = self._template()
+        for _label, old, new in bind_mod.REPLACEMENTS:
+            body = body.replace(new, old)
+        return body
+
+    def test_shipped_template_binds_all_three(self):
+        body = self._template()
+        for _label, _old, new in bind_mod.REPLACEMENTS:
+            self.assertIn(new, body)
+
+    def test_each_block_appears_exactly_once(self):
+        # The guard is `count(old) != 1`; a block that matched twice would be
+        # refused, and one that matched zero times would silently do nothing.
+        unbound = self._unbound()
+        for label, old, _new in bind_mod.REPLACEMENTS:
+            self.assertEqual(unbound.count(old), 1, label)
+
+    def test_patching_the_unbound_body_reproduces_the_shipped_template(self):
+        new_body, applied, refused = bind_mod.rewrite_bindings(self._unbound())
+        self.assertEqual(refused, [])
+        self.assertEqual(len(applied), len(bind_mod.REPLACEMENTS))
+        self.assertEqual(new_body, self._template())
+
+    def test_patch_is_idempotent_on_an_already_bound_body(self):
+        _, applied, refused = bind_mod.rewrite_bindings(self._template())
+        self.assertEqual(applied, [])
+        self.assertEqual(refused, [])
+
+    def test_a_diverged_block_is_refused_without_blocking_the_others(self):
+        """Bespoke wording in one section must not cost the other two their fix."""
+        label, old, _new = bind_mod.REPLACEMENTS[1]
+        diverged = self._unbound().replace(old, old.replace("Invoices shall be issued", "Invoices are issued"))
+        _, applied, refused = bind_mod.rewrite_bindings(diverged)
+        self.assertEqual(refused, [label])
+        self.assertEqual(len(applied), len(bind_mod.REPLACEMENTS) - 1)
+
+    def test_patch_only_changes_the_binding_not_the_wording(self):
+        """What a reader sees must be identical, or this stopped being a
+        data-binding fix and became a drafting change."""
+
+        def visible(text):
+            return re.sub(r"\{\{.*?\}\}", "", text)
+
+        for label, old, new in bind_mod.REPLACEMENTS:
+            # the paper placeholder becomes a rendered checkbox; everything
+            # else — every word of the agreement — must survive untouched
+            self.assertEqual(visible(old).replace("[ ]", ""), visible(new), label)
+
+    def test_patch_handles_an_empty_body(self):
+        self.assertEqual(bind_mod.rewrite_bindings(""), ("", [], []))
+        self.assertEqual(bind_mod.rewrite_bindings(None), (None, [], []))
 
 
 class TestDoctypeContract(unittest.TestCase):

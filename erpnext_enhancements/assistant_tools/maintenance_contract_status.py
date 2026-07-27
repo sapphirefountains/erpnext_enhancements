@@ -44,7 +44,7 @@ class MaintenanceContractStatus(BaseTool):
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["Active", "Draft", "Expired", "Cancelled"],
+                    "enum": ["Active", "Draft", "Expired", "Canceled"],
                     "default": "Active",
                     "description": "Contract status filter (default Active)",
                 },

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.181.0] - 2026-07-27
+
+### Added
+
+- **Reading the contract, not just filling it in.** Until now the only way to see
+  what an agreement actually says was to save it and open the print view. A
+  **Preview Contract** button on Project Contract now renders the whole document
+  on screen — the Contract Template's legal language with this contract's data in
+  it — **from the values currently on the form**, unsaved edits and brand-new
+  drafts included. So the sentence a customer will read can be checked while it
+  is being written, rather than discovered after the fact.
+
+  A signed contract shows its **executed instrument** instead of a fresh render:
+  the document the customer actually signed, labelled as such. Both the HTML and
+  the styling come from the same print format that produces the PDF, so the
+  agreement on screen and the agreement in the customer's hands cannot drift into
+  saying — or looking like — two different things.
+
+- **A Contracts tab on Project.** Every agreement issued on a job, in one place
+  between Budget and Costing: customer agreements and subcontractor paper grouped
+  apart, each with its status, party, date and headline figure, and each opening
+  **in place** to its full text. Bodies are fetched only when a row is opened, so
+  a project carrying a dozen agreements still lists in one small query.
+
+- **"View Agreement" on Sapphire Maintenance Contract**, which reads the signed
+  Maintenance Services Agreement it was mapped from. The operational contract
+  holds the schedule; the language lives on the agreement, and now says so.
+
+### Changed
+
+- **Sapphire Maintenance Contract's terminal status is spelled `Canceled`**, not
+  `Cancelled` — matching Project and Task, which already use the single-l
+  spelling. Stored rows are carried over by patch, without which a contract left
+  on the old spelling would refuse to save the next time anyone touched it.
+
+### Fixed
+
+- **Three fields the maintenance agreement was printing blank.** §4.2's invoicing
+  cadence, §9.1's initial term and the Service Plan Selection's **Annual Service
+  Fee Total** all rendered as empty paper placeholders on the live template, even
+  though every one of them is filled in on the form — and the annual fee is one
+  the system computes for you. A maintenance agreement therefore went out to
+  customers without saying how often they would be billed, how long the term ran,
+  or what the year cost.
+
+  The repo template already bound all three; the live Contract Template did not,
+  because `seed_contract_templates` is insert-only and a repo edit never reaches
+  a site that already has the record — the same trap the e-signature block hit.
+  A patch closes the gap, replacing each block only where it matches the expected
+  wording exactly and logging (rather than overwriting) any section a site has
+  rewritten. Each block stands alone, so bespoke wording in one does not cost the
+  others their fix.
+
+  A data-binding fix only: not one word of the agreement changes, and the patched
+  live template comes out byte-identical to the one in the repo.
+
+  Found by the preview above — the first time anyone could read a filled-in
+  maintenance agreement without printing it.
 ## [1.180.0] - 2026-07-27
 
 ### Fixed

@@ -13,7 +13,11 @@
  *   did before online signing shipped.
  * - "Mark as Signed" remains for paper and in-person signatures, recording how
  *   it was signed so every executed contract carries an evidence trail.
- * - "Preview / Print" jumps straight to the Project Contract Print format.
+ * - "Preview Contract" reads the whole agreement on screen — the template's
+ *   legal language with this contract's data filled in, rendered from the
+ *   form's current values so an unsaved draft shows what it will say. Print /
+ *   PDF is offered from inside the dialog. See public/js/project_enhancements/
+ *   contract_viewer.js.
  * - Signed Maintenance Services Agreements get "Create > Maintenance
  *   Contract", mapping the legal terms into an operational Sapphire
  *   Maintenance Contract (visit scheduling + modular visit forms).
@@ -139,10 +143,21 @@ frappe.ui.form.on("Project Contract", {
 			);
 		}
 
-		if (!frm.is_new()) {
-			frm.add_custom_button(__("Preview / Print"), () => {
-				frappe.set_route("print", "Project Contract", frm.doc.name);
-			});
+		// The complete agreement on screen — the template's legal language with
+		// this contract's data in it, unsaved edits included, so what the
+		// customer will read can be checked while it is being written instead
+		// of saved-and-printed to find out. Needs a Contract Type: that is
+		// where the language comes from. Printing lives inside the dialog,
+		// offered once there is a saved document to print.
+		if (frm.doc.contract_template) {
+			frm.add_custom_button(__("Preview Contract"), () =>
+				erpnext_enhancements.contract_viewer.open({
+					doc: frm.doc,
+					template_key: frm.doc.template_key,
+					print_name: frm.is_new() ? null : frm.doc.name,
+					title: __("Preview — {0}", [frm.doc.title || frm.doc.name]),
+				})
+			);
 		}
 
 		if (frm.doc.template_key === "maintenance" && frm.doc.status === "Signed") {

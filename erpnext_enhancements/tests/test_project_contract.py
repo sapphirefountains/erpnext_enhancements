@@ -8,7 +8,11 @@ Covers the decision logic that protects the legal workflow:
 * revision stamping from the amend chain;
 * every shipped template parses and renders against both an empty and a
   populated context (so a template edit that breaks Jinja fails in tests,
-  not at print time).
+  not at print time);
+* the on-screen preview — that it renders the values on the form rather than
+  the last save's, rebuilds child tables (without which owner totals would
+  quietly print zero), refuses an unreadable payload and cannot be pointed at
+  another doctype.
 """
 
 import os
@@ -18,9 +22,12 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
+	CONTRACT_VALUE_FIELD,
 	SERIES_BY_KEY,
 	ProjectContract,
 	_compose_scope,
+	_executed_html,
+	_preview_doc,
 	_render_context,
 )
 
@@ -258,3 +265,75 @@ class TestTemplatesRender(FrappeTestCase):
 				out = self._render(body, doc)
 				self.assertNotIn("{{", out, f"unrendered jinja in {filename}")
 				self.assertNotIn("{%", out, f"unrendered jinja block in {filename}")
+
+
+class TestPreviewDoc(FrappeTestCase):
+	"""The unsaved-values render behind the form's Preview Contract button."""
+
+	def test_totals_are_recomputed_from_the_values_on_screen(self):
+		# The point of previewing before saving: the numbers must be the ones
+		# this draft WILL print, not the ones the last save left behind.
+		doc = _preview_doc(
+			{
+				"template_key": "rental",
+				"base_rental_fee": 1200,
+				"delivery_setup_fee": 300,
+				"chemicals_fee": 100,
+				"security_deposit": 500,
+				"total_rental_amount": 7,  # stale value from a previous save
+			}
+		)
+		self.assertEqual(doc.total_rental_amount, 1600)
+		self.assertEqual(doc.total_due_at_signing, 2100)
+
+	def test_a_half_filled_draft_still_builds(self):
+		# Preview is a read: a draft with nothing in it yet must render its
+		# language and its blanks rather than raise.
+		doc = _preview_doc({})
+		self.assertEqual(doc.doctype, "Project Contract")
+
+	def test_the_doctype_cannot_be_overridden(self):
+		doc = _preview_doc({"doctype": "User", "template_key": "owner"})
+		self.assertEqual(doc.doctype, "Project Contract")
+		self.assertIsInstance(doc, ProjectContract)
+
+	def test_json_string_payloads_are_parsed(self):
+		doc = _preview_doc('{"template_key": "maintenance", "maintenance_deposit": 250}')
+		self.assertEqual(doc.total_due_at_signing, 250)
+
+	def test_unreadable_payload_is_refused(self):
+		self.assertRaises(frappe.ValidationError, _preview_doc, "not a document")
+
+	def test_child_tables_survive_the_round_trip(self):
+		# The owner contract's totals come from its phase rows; if the payload's
+		# child tables did not rebuild, the preview would silently print zero.
+		doc = _preview_doc(
+			{
+				"template_key": "owner",
+				"phases": [
+					{"phase_key": "design", "included": 1, "fee": 5000, "retainer": 1000},
+					{"phase_key": "construction", "included": 0, "fee": 90000, "retainer": 20000},
+				],
+			}
+		)
+		self.assertEqual(doc.total_contract_value, 5000)
+		self.assertEqual(doc.total_due_at_signing, 1000)
+
+
+class TestContractsTab(FrappeTestCase):
+	def test_value_fields_exist_on_the_doctype(self):
+		# The Contracts tab prints one headline figure per agreement type; a
+		# renamed field would show every contract as worth nothing.
+		meta = frappe.get_meta("Project Contract")
+		for template_key, (fieldname, label) in CONTRACT_VALUE_FIELD.items():
+			self.assertTrue(meta.has_field(fieldname), f"{template_key}: no field {fieldname}")
+			self.assertTrue(label)
+
+	def test_value_field_keys_are_known_templates(self):
+		for template_key in CONTRACT_VALUE_FIELD:
+			self.assertIn(template_key, SERIES_BY_KEY)
+
+	def test_executed_lookup_without_a_name_is_none(self):
+		# An unsaved preview has no stored signature to find.
+		self.assertIsNone(_executed_html(None))
+		self.assertIsNone(_executed_html(""))

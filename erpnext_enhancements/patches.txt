@@ -237,3 +237,17 @@ erpnext_enhancements.patches.seed_contract_esign_defaults
 # Single is first created, and it already exists everywhere, so without this the
 # whole reminder feature reads a blank cadence and never chases anyone.
 erpnext_enhancements.patches.seed_contract_esign_reminder_days
+# v1.181.0 contracts: the Project form's Contracts tab — one HTML host for the
+# list of every agreement issued on a job, each openable in place to its full
+# legal text (public/js/project_enhancements/project_contracts.js).
+erpnext_enhancements.patches.add_project_contracts_tab
+# v1.181.0 Sapphire Maintenance Contract: respell the terminal status
+# Cancelled -> Canceled (Project and Task already use the single-l spelling).
+# The Select option moves with the doctype JSON; this carries stored rows over,
+# without which a contract on the old spelling refuses to save.
+erpnext_enhancements.patches.rename_maintenance_contract_canceled_status
+# v1.181.0 contracts: bind three fields the live Maintenance Services Agreement
+# prints blank (annual fee, §4.2 invoicing cadence, §9.1 initial term). Same trap
+# as add_esign_signature_block — seed_contract_templates is insert-only, so the
+# repo template's bindings never reached the existing Contract Template record.
+erpnext_enhancements.patches.bind_maintenance_template_fields
