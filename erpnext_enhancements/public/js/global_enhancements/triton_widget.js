@@ -16,6 +16,10 @@
 	const METHOD = "erpnext_enhancements.triton_chat";
 	const LS_SESSION = "triton_session_id";
 	const LS_MODEL = "triton_model";
+	// Selected persona key ("" = Triton's default voice). Personas live in
+	// Triton and are keyed on the same user the identity bridge resolves to, so
+	// one created here also shows up in the Triton web app.
+	const LS_PERSONA = "triton_persona_key";
 	// Local date (YYYY-MM-DD) the morning briefing was last shown, so it appears
 	// once on the first chat of each day.
 	const LS_BRIEF = "triton_briefing_date";
@@ -25,6 +29,9 @@
 		sessionId: null,
 		// Selected model id ("" = let Triton auto-route). Persisted in LS_MODEL.
 		model: "",
+		// Selected persona key ("" = default voice). Persisted in LS_PERSONA.
+		persona: "",
+		personas: [],
 		contextRefs: [],
 		open: false,
 		streaming: false,
@@ -216,6 +223,7 @@
 			<div class="triton-header">
 				<span class="triton-logo">🔱</span>
 				<span class="triton-title">Triton</span>
+				<select class="triton-persona-select" title="Choose persona"></select>
 				<select class="triton-model-select" title="Choose model"></select>
 				<button class="triton-icon-btn triton-history" title="Chat history">🕘</button>
 				<button class="triton-icon-btn triton-new" title="New chat">✎</button>
@@ -235,6 +243,14 @@
 					<span class="triton-history-heading">Chat history</span>
 				</div>
 				<div class="triton-history-list"></div>
+			</div>
+			<div class="triton-history-panel triton-personas-panel">
+				<div class="triton-history-head">
+					<button class="triton-icon-btn triton-personas-back" title="Back">←</button>
+					<span class="triton-history-heading">Personas</span>
+					<button class="triton-icon-btn triton-persona-new" title="New persona">＋</button>
+				</div>
+				<div class="triton-history-list triton-personas-list"></div>
 			</div>`;
 		document.body.appendChild(panel);
 
@@ -247,6 +263,11 @@
 			text: panel.querySelector(".triton-text"),
 			send: panel.querySelector(".triton-send"),
 			modelSelect: panel.querySelector(".triton-model-select"),
+			personaSelect: panel.querySelector(".triton-persona-select"),
+			personasPanel: panel.querySelector(".triton-personas-panel"),
+			personasList: panel.querySelector(".triton-personas-list"),
+			personasBack: panel.querySelector(".triton-personas-back"),
+			personaNew: panel.querySelector(".triton-persona-new"),
 			historyBtn: panel.querySelector(".triton-history"),
 			historyPanel: panel.querySelector(".triton-history-panel"),
 			historyList: panel.querySelector(".triton-history-list"),
@@ -255,11 +276,16 @@
 
 		populateModels();
 		refreshModels(); // replace the fallback list with Triton's live models
+		applyPersonas([]); // "Default" + the manage sentinel until the list lands
+		refreshPersonas();
 		panel.querySelector(".triton-close").addEventListener("click", () => toggle(false));
 		panel.querySelector(".triton-new").addEventListener("click", newChat);
 		state.els.historyBtn.addEventListener("click", openHistory);
 		state.els.historyBack.addEventListener("click", closeHistory);
 		state.els.modelSelect.addEventListener("change", (e) => setModel(e.target.value));
+		state.els.personaSelect.addEventListener("change", onPersonaChange);
+		state.els.personasBack.addEventListener("click", closePersonas);
+		state.els.personaNew.addEventListener("click", () => showPersonaForm(null));
 		state.els.contextAdd.addEventListener("click", addCurrentPage);
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
@@ -351,6 +377,250 @@
 	function setModel(v) {
 		state.model = v || "";
 		localStorage.setItem(LS_MODEL, state.model);
+	}
+
+	// ---- persona picker --------------------------------------------------
+	// Mirrors the model picker above, with two differences: the list is
+	// per-user (it contains the caller's own private personas), and it carries
+	// a trailing "Manage…" sentinel that opens the CRUD panel instead of
+	// selecting anything.
+	const PERSONA_MANAGE = "__manage__";
+
+	function applyPersonas(personas) {
+		const sel = state.els.personaSelect;
+		if (!sel) return;
+		state.personas = Array.isArray(personas) ? personas : [];
+		sel.innerHTML = "";
+
+		const mk = (value, label) => {
+			const o = document.createElement("option");
+			o.value = value;
+			o.textContent = label;
+			return o;
+		};
+		sel.appendChild(mk("", __("Default")));
+
+		const groups = [
+			[__("Built in"), state.personas.filter((p) => p.is_builtin)],
+			[__("Yours"), state.personas.filter((p) => !p.is_builtin && p.editable)],
+			[__("Shared"), state.personas.filter((p) => !p.is_builtin && !p.editable)],
+		];
+		groups.forEach(([label, items]) => {
+			if (!items.length) return;
+			const g = document.createElement("optgroup");
+			g.label = label;
+			items.forEach((p) => {
+				g.appendChild(mk(p.key, `${p.emoji ? p.emoji + " " : ""}${p.name}`));
+			});
+			sel.appendChild(g);
+		});
+		sel.appendChild(mk(PERSONA_MANAGE, __("⚙ Manage…")));
+
+		// Selection priority: current pick (if still listed) > saved choice > none.
+		// Anything else is dropped rather than pinned, so a persona deleted from
+		// the Triton web app stops riding along on every request from here.
+		const keys = state.personas.map((p) => p.key);
+		const saved = localStorage.getItem(LS_PERSONA);
+		let initial = "";
+		if (state.persona && keys.includes(state.persona)) {
+			initial = state.persona;
+		} else if (saved && keys.includes(saved)) {
+			initial = saved;
+		}
+		state.persona = initial;
+		sel.value = initial;
+	}
+
+	async function refreshPersonas() {
+		try {
+			applyPersonas(await xcall("list_personas"));
+		} catch (e) {
+			/* keep whatever is rendered; "Default" always works */
+		}
+	}
+
+	function setPersona(v) {
+		state.persona = v || "";
+		if (state.persona) localStorage.setItem(LS_PERSONA, state.persona);
+		else localStorage.removeItem(LS_PERSONA);
+		if (state.els.personaSelect) state.els.personaSelect.value = state.persona;
+	}
+
+	function onPersonaChange(e) {
+		if (e.target.value === PERSONA_MANAGE) {
+			// Sentinel, not a choice — restore the real selection and open the panel.
+			e.target.value = state.persona;
+			openPersonas();
+			return;
+		}
+		setPersona(e.target.value);
+	}
+
+	function openPersonas() {
+		state.els.personasPanel.classList.add("triton-history-open");
+		loadPersonas();
+	}
+
+	function closePersonas() {
+		state.els.personasPanel.classList.remove("triton-history-open");
+	}
+
+	async function loadPersonas() {
+		const list = state.els.personasList;
+		list.innerHTML = `<div class="triton-history-empty">${__("Loading…")}</div>`;
+		try {
+			const personas = await xcall("list_personas");
+			applyPersonas(personas);
+			if (!state.personas.length) {
+				list.innerHTML = `<div class="triton-history-empty">${__("No personas yet.")}</div>`;
+				return;
+			}
+			list.innerHTML = "";
+			state.personas.forEach((p) => list.appendChild(renderPersonaItem(p)));
+		} catch (e) {
+			list.innerHTML = `<div class="triton-history-empty">${__("Couldn't load personas.")}</div>`;
+		}
+	}
+
+	function renderPersonaItem(p) {
+		// A div, not a button: the row carries its own edit/delete buttons and
+		// nesting buttons inside a button is invalid HTML.
+		const item = document.createElement("div");
+		item.className = "triton-history-item triton-persona-item";
+		item.tabIndex = 0;
+		if (p.key === state.persona) item.classList.add("active");
+
+		const label = document.createElement("div");
+		label.className = "triton-persona-label";
+		const sub = p.description || (p.is_builtin
+			? __("Built in")
+			: p.editable
+				? (p.visibility === "company" ? __("Yours · shared") : __("Yours"))
+				: __("Shared by {0}", [p.author || __("a colleague")]));
+		label.innerHTML =
+			`<span class="triton-history-title">${esc((p.emoji ? p.emoji + " " : "") + p.name)}</span>` +
+			`<span class="triton-history-when">${esc(sub)}</span>`;
+		label.addEventListener("click", () => {
+			setPersona(p.key);
+			closePersonas();
+		});
+		item.appendChild(label);
+
+		const actions = document.createElement("div");
+		actions.className = "triton-persona-actions";
+		const btn = (glyph, title, fn) => {
+			const b = document.createElement("button");
+			b.className = "triton-icon-btn";
+			b.title = title;
+			b.textContent = glyph;
+			b.addEventListener("click", (e) => {
+				e.stopPropagation();
+				fn();
+			});
+			return b;
+		};
+
+		if (p.editable) {
+			actions.appendChild(btn("✎", __("Edit"), () => showPersonaForm(p)));
+			actions.appendChild(btn("🗑", __("Delete"), () => confirmDeletePersona(p)));
+		} else {
+			// Built-ins and colleagues' personas are read-only; duplicating is how
+			// you customise one.
+			actions.appendChild(btn("⧉", __("Duplicate"), () => duplicatePersona(p)));
+		}
+		item.appendChild(actions);
+		return item;
+	}
+
+	function showPersonaForm(p) {
+		const editing = !!(p && p.editable);
+		const d = new frappe.ui.Dialog({
+			title: editing ? __("Edit persona") : __("New persona"),
+			fields: [
+				{ fieldname: "name", fieldtype: "Data", label: __("Name"), reqd: 1, default: p ? p.name : "" },
+				{ fieldname: "emoji", fieldtype: "Data", label: __("Emoji"), default: p ? p.emoji : "" },
+				{
+					fieldname: "description",
+					fieldtype: "Small Text",
+					label: __("Description"),
+					description: __("One line, shown in the picker."),
+					default: p ? p.description : "",
+				},
+				{
+					fieldname: "system_prompt",
+					fieldtype: "Long Text",
+					label: __("System prompt"),
+					reqd: 1,
+					description: __(
+						"Sets tone and voice. Triton's tool rules and approval gates always still apply."
+					),
+					default: p ? p.system_prompt : "",
+				},
+				{
+					fieldname: "visibility",
+					fieldtype: "Check",
+					label: __("Share with everyone at the company"),
+					default: p && p.visibility === "company" ? 1 : 0,
+				},
+			],
+			primary_action_label: __("Save"),
+			primary_action: async (values) => {
+				const args = {
+					name: values.name,
+					system_prompt: values.system_prompt,
+					description: values.description || "",
+					emoji: values.emoji || "",
+					visibility: values.visibility ? "company" : "private",
+				};
+				d.disable_primary_action();
+				try {
+					let saved;
+					if (editing) {
+						args.persona_id = p.key.split(":")[1];
+						saved = await xcall("update_persona", args);
+					} else {
+						saved = await xcall("create_persona", args);
+					}
+					d.hide();
+					await refreshPersonas();
+					if (saved && saved.key) setPersona(saved.key);
+					if (state.els.personasPanel.classList.contains("triton-history-open")) {
+						loadPersonas();
+					}
+				} catch (e) {
+					d.enable_primary_action();
+				}
+			},
+		});
+		d.show();
+	}
+
+	async function duplicatePersona(p) {
+		try {
+			const copy = await xcall("duplicate_persona", { persona_key: p.key });
+			await refreshPersonas();
+			if (copy && copy.key) setPersona(copy.key);
+			loadPersonas();
+			if (copy) showPersonaForm(copy);
+		} catch (e) {
+			/* Frappe surfaces the server error */
+		}
+	}
+
+	function confirmDeletePersona(p) {
+		frappe.confirm(
+			__("Delete the persona {0}? This cannot be undone.", [`<b>${esc(p.name)}</b>`]),
+			async () => {
+				try {
+					await xcall("delete_persona", { persona_id: p.key.split(":")[1] });
+					if (state.persona === p.key) setPersona("");
+					await refreshPersonas();
+					loadPersonas();
+				} catch (e) {
+					/* Frappe surfaces the server error */
+				}
+			}
+		);
 	}
 
 	// ---- session history -------------------------------------------------
@@ -949,7 +1219,10 @@
 
 	async function ensureSession() {
 		if (state.sessionId) return state.sessionId;
-		const s = await xcall("start_session", { model: state.model || state.config.default_model });
+		const s = await xcall("start_session", {
+			model: state.model || state.config.default_model,
+			persona_key: state.persona || "",
+		});
 		state.sessionId = s.id;
 		localStorage.setItem(LS_SESSION, String(s.id));
 		return state.sessionId;
@@ -1008,6 +1281,8 @@
 				hidden: opts.hidden ? 1 : 0,
 				// Per-message model override; "" lets Triton auto-route.
 				model: state.model || "",
+				// Per-message persona; "" means the plain Triton voice.
+				persona_key: state.persona || "",
 			}),
 		});
 

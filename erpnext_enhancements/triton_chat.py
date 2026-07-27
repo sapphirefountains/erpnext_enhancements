@@ -263,13 +263,24 @@ def get_config() -> dict:
 
 
 @frappe.whitelist()
-def start_session(title: str | None = None, model: str | None = None) -> dict:
-    """Create a new Triton chat session for the current user."""
+def start_session(
+    title: str | None = None,
+    model: str | None = None,
+    persona_key: str | None = None,
+) -> dict:
+    """Create a new Triton chat session for the current user.
+
+    An empty `persona_key` means the plain Triton voice; omitting it entirely
+    lets Triton fall back to the user's account-level default persona.
+    """
     settings = get_settings()
-    return _request("POST", "/api/v1/assistant/sessions", {
+    payload = {
         "title": title or "ERPNext Chat",
         "model_name": model or settings["default_model"],
-    })
+    }
+    if persona_key is not None:
+        payload["persona_key"] = persona_key
+    return _request("POST", "/api/v1/assistant/sessions", payload)
 
 
 @frappe.whitelist()
@@ -328,6 +339,153 @@ def list_models() -> list:
     return models
 
 
+# ---------------------------------------------------------------------------
+# Personas
+# ---------------------------------------------------------------------------
+# Personas live in Triton, keyed on the Triton user the identity bridge resolves
+# this ERPNext user to — so a persona created here shows up in the Triton web app
+# and vice versa. Nothing about a persona is stored in Frappe.
+def _persona_cache_key() -> str:
+    """Per-USER cache key.
+
+    Deliberately unlike `triton_models_list`, which is a single site-wide key.
+    The model list is identical for everyone; a persona list is not — it holds
+    the caller's own private personas. A shared key here would serve one user's
+    personas to the whole site.
+    """
+    return f"triton_personas::{frappe.session.user}"
+
+
+def _invalidate_personas() -> None:
+    """Drop this user's cached persona list after any mutation.
+
+    Without this a persona created in the widget stays invisible for up to the
+    cache TTL, and a deleted one keeps appearing in the picker.
+    """
+    try:
+        frappe.cache().delete_value(_persona_cache_key())
+    except Exception:
+        pass
+
+
+def _custom_persona_path(persona_id) -> str:
+    """Validate and build the mutation path.
+
+    Only user-authored personas are mutable, and they are addressed by integer
+    id (Triton keeps the colon-bearing key out of URLs for exactly this reason),
+    so anything non-numeric is rejected rather than interpolated into a path.
+    """
+    try:
+        pid = int(str(persona_id).strip())
+    except (TypeError, ValueError):
+        frappe.throw(_("Invalid persona id."))
+    if pid <= 0:
+        frappe.throw(_("Invalid persona id."))
+    return f"/api/v1/personas/custom/{pid}"
+
+
+@frappe.whitelist()
+def list_personas() -> list:
+    """Personas visible to the current user: Triton's built-ins, their own, and
+    anything shared company-wide.
+
+    Cached briefly per user. The TTL is short (60s, versus 300s for models)
+    because a user who just created a persona in this widget must see it in the
+    picker straight away. On error we return an empty list rather than a curated
+    fallback — the widget then just offers "Default", which is always valid.
+    """
+    cache = frappe.cache()
+    ckey = _persona_cache_key()
+    cached = cache.get_value(ckey)
+    if cached is not None:
+        return cached
+    try:
+        personas = _request("GET", "/api/v1/personas")
+    except Exception:
+        return []
+    if not isinstance(personas, list):
+        return []
+    cache.set_value(ckey, personas, expires_in_sec=60)
+    return personas
+
+
+@frappe.whitelist()
+def create_persona(
+    name: str,
+    system_prompt: str,
+    description: str | None = None,
+    emoji: str | None = None,
+    visibility: str | None = None,
+) -> dict:
+    """Create a persona owned by the current user."""
+    result = _request("POST", "/api/v1/personas", {
+        "name": name,
+        "system_prompt": system_prompt,
+        "description": description or "",
+        "emoji": emoji or "",
+        "visibility": visibility if visibility in ("private", "company") else "private",
+    })
+    _invalidate_personas()
+    return result
+
+
+@frappe.whitelist()
+def update_persona(
+    persona_id: str,
+    name: str | None = None,
+    system_prompt: str | None = None,
+    description: str | None = None,
+    emoji: str | None = None,
+    visibility: str | None = None,
+) -> dict:
+    """Update one of the current user's own personas."""
+    payload = {}
+    if name is not None:
+        payload["name"] = name
+    if system_prompt is not None:
+        payload["system_prompt"] = system_prompt
+    if description is not None:
+        payload["description"] = description
+    if emoji is not None:
+        payload["emoji"] = emoji
+    if visibility in ("private", "company"):
+        payload["visibility"] = visibility
+
+    result = _request("PUT", _custom_persona_path(persona_id), payload)
+    _invalidate_personas()
+    return result
+
+
+@frappe.whitelist()
+def delete_persona(persona_id: str) -> dict:
+    """Delete one of the current user's own personas."""
+    result = _request("DELETE", _custom_persona_path(persona_id))
+    _invalidate_personas()
+    return result
+
+
+@frappe.whitelist()
+def duplicate_persona(persona_key: str) -> dict:
+    """Fork any visible persona into an editable copy owned by this user.
+
+    This is how a built-in gets customized — built-ins themselves are frozen
+    constants in Triton and cannot be edited.
+    """
+    result = _request("POST", "/api/v1/personas/duplicate", {"key": persona_key})
+    _invalidate_personas()
+    return result
+
+
+@frappe.whitelist()
+def set_default_persona(persona_key: str | None = None) -> dict:
+    """Set the persona the current user's new chats start on (both surfaces)."""
+    result = _request("PUT", "/api/v1/personas/selection", {
+        "default_persona_key": (persona_key or "").strip() or None,
+    })
+    _invalidate_personas()
+    return result
+
+
 @frappe.whitelist()
 def morning_briefing(force: int | str = 0, cached_only: int | str = 0) -> dict:
     """Proxy to Triton's Morning Briefing for the current user.
@@ -380,7 +538,8 @@ def _sse_error(message: str) -> bytes:
 
 @frappe.whitelist()
 def stream_query(session_id: str, prompt: str | None = None, context: str | None = None,
-                 hidden: int | str = 0, model: str | None = None):
+                 hidden: int | str = 0, model: str | None = None,
+                 persona_key: str | None = None):
     """Relay Triton's SSE chat stream back to the browser.
 
     Returns a streaming werkzeug Response (text/event-stream). Everything the
@@ -399,6 +558,11 @@ def stream_query(session_id: str, prompt: str | None = None, context: str | None
     payload: dict = {"prompt": _build_prompt(prompt, context), "hidden": cint(hidden) == 1}
     if model:
         payload["model_name"] = model
+    # Sent even when empty: "" explicitly means the plain Triton voice for this
+    # turn, which Triton distinguishes from omitting the field (inherit the
+    # session's sticky persona, then the account default).
+    if persona_key is not None:
+        payload["persona_key"] = persona_key
 
     url = f"{base_url}/api/v1/assistant/sessions/{cint(session_id)}/query/stream"
 
