@@ -22,6 +22,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
+	CONTRACT_SOURCES,
 	CONTRACT_VALUE_FIELD,
 	SERIES_BY_KEY,
 	ProjectContract,
@@ -337,3 +338,46 @@ class TestContractsTab(FrappeTestCase):
 		# An unsaved preview has no stored signature to find.
 		self.assertIsNone(_executed_html(None))
 		self.assertIsNone(_executed_html(""))
+
+
+class TestContractSources(FrappeTestCase):
+	"""How each host form finds the contracts that belong to it.
+
+	The bug these guard: the tab originally listed only Project Contracts, so a
+	site whose maintenance work lives on Sapphire Maintenance Contract saw an
+	empty tab on every project.
+	"""
+
+	def test_both_host_forms_are_supported(self):
+		self.assertEqual(set(CONTRACT_SOURCES), {"Project", "Customer"})
+
+	def test_every_host_lists_both_kinds_of_contract(self):
+		for host, sources in CONTRACT_SOURCES.items():
+			self.assertEqual(
+				set(sources),
+				{"Project Contract", "Sapphire Maintenance Contract"},
+				f"{host} must list agreements and operational contracts alike",
+			)
+
+	def test_filters_target_fields_that_exist(self):
+		for host, sources in CONTRACT_SOURCES.items():
+			for doctype, build in sources.items():
+				meta = frappe.get_meta(doctype)
+				for fieldname in build("SOME-NAME"):
+					self.assertTrue(
+						meta.has_field(fieldname),
+						f"{host} -> {doctype}: no field {fieldname}",
+					)
+
+	def test_project_scopes_by_project_on_both(self):
+		for doctype, build in CONTRACT_SOURCES["Project"].items():
+			self.assertEqual(build("PRJ-0001").get("project"), "PRJ-0001", doctype)
+
+	def test_customer_sees_only_agreements_it_is_a_party_to(self):
+		# A subcontractor SOW issued on the customer's job is our commitment to
+		# a supplier, not theirs — it must not surface on their form.
+		agreements = CONTRACT_SOURCES["Customer"]["Project Contract"]("CUST-0001")
+		self.assertEqual(agreements.get("party_type"), "Customer")
+		self.assertEqual(agreements.get("party"), "CUST-0001")
+		operational = CONTRACT_SOURCES["Customer"]["Sapphire Maintenance Contract"]("CUST-0001")
+		self.assertEqual(operational.get("customer"), "CUST-0001")

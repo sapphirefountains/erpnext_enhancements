@@ -1,7 +1,7 @@
 """One-time migration patch (post_model_sync; listed in patches.txt).
 
 Adds the Project form's **Contracts** tab — a single HTML host rendered by
-``public/js/project_enhancements/project_contracts.js`` into the list of every
+``public/js/project_enhancements/contracts_tab.js`` into the list of every
 agreement issued on the job, each openable in place to its full legal text.
 
 Placed between Budget and Costing (``insert_after`` the Budget tab's last
