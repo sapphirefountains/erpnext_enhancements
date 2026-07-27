@@ -255,3 +255,10 @@ erpnext_enhancements.patches.bind_maintenance_template_fields
 # agreements that customer is a party to. Separate from add_project_contracts_tab
 # because that one has already run on live sites and a patch never runs twice.
 erpnext_enhancements.patches.add_customer_contracts_tab
+# v1.187.0 procurement: the overhead buckets WI-014 needed but never created.
+# `Purchase Order Item.project` is mandatory so cost lands on the job, yet the 13
+# `Internal` projects are all specific R&D jobs — a purchaser buying office
+# supplies had no legitimate target and was blocked at save. Seeds an "Overhead"
+# Project Type plus five standing buckets (Office & Admin, Shop & Warehouse,
+# Fleet & Vehicles, IT & Software, Marketing & Trade Shows).
+erpnext_enhancements.patches.seed_overhead_projects

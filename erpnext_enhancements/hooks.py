@@ -138,7 +138,12 @@ doctype_js = {
 	],
 	"Travel Trip": ["public/js/travel_trip.js", "public/js/travel/travel_trip_map.js"],
 	"Call Log": ["public/js/call_log.js"],
-	"Purchase Order": ["public/js/vue.global.js", "public/js/comments.js", "public/js/procurement_links.js"],
+	"Purchase Order": [
+		"public/js/vue.global.js",
+		"public/js/comments.js",
+		"public/js/procurement_links.js",
+		"public/js/purchase_order_project.js",
+	],
 	"Material Request": [
 		"public/js/vue.global.js",
 		"public/js/comments.js",
@@ -296,6 +301,12 @@ doc_events = {
 	# 0 disables) unless the user holds the "PO Approver" role — the CEO sign-off
 	# escalation. Threshold resolution is per-project-ready (see po_approval.py).
 	"Purchase Order": {
+		# WI-014 follow-through: `Purchase Order Item.project` is mandatory, but
+		# ERPNext never pushes the header project down to the item rows — fill the
+		# blank ones before the mandatory check runs. Desk saves are already
+		# handled client-side (public/js/purchase_order_project.js); this covers
+		# the REST API, data import and Material-Request-mapped documents.
+		"before_validate": "erpnext_enhancements.procurement_project.cascade_project_to_items",
 		"before_submit": "erpnext_enhancements.po_approval.enforce_threshold",
 	},
 	"Opportunity": {

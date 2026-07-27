@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.187.0] - 2026-07-27
+
+### Added
+
+- **Buying office supplies no longer dead-ends at a mandatory Project.** WI-014 made
+  `Purchase Order Item.project` mandatory so material and subcontract cost lands on the
+  job — but it shipped without the one thing that requirement assumed: somewhere for
+  non-job spend to go. The 13 `Internal` projects are all specific R&D jobs
+  (IDP000–IDP016), so a purchaser buying printer paper had nothing legitimate to pick
+  and was blocked at save. The WI-014 migration note flagged this as an unmet
+  precondition; this closes it.
+
+  New `patches.seed_overhead_projects` creates an **`Overhead` Project Type** and five
+  standing buckets — Office & Admin, Shop & Warehouse, Fleet & Vehicles, IT & Software,
+  Marketing & Trade Shows. Their own Project Type rather than `Internal`, so overhead
+  stays separable from R&D in reporting and the Projects Dashboard keeps excluding them
+  (it lists only Build/Design/Events/Service/Delivery). Insert-only and matched on
+  `project_name`, so a later rename survives re-migration.
+
+### Fixed
+
+- **A Purchase Order that names its job on the header no longer refuses to save.**
+  ERPNext never pushes `Purchase Order.project` down to `Purchase Order Item.project`,
+  which the mandatory flag turned from a cosmetic gap into a hard block: on prod, **44 of
+  the 204** lines sitting under a PO that *did* have a header project were still blank.
+  The purchaser had to re-pick the same project on every row.
+
+  New `public/js/purchase_order_project.js` fills blank line projects from the header —
+  on header change, on row add, and once more on `validate` for rows pulled in by "Get
+  Items From", which bypasses the row-add event. The client copy is the one that matters
+  in the Desk, because the mandatory check runs in the browser before the request is
+  sent; `procurement_project.cascade_project_to_items` (`before_validate`) repeats it for
+  the REST API, data import and Material-Request-mapped documents.
+
+  **Blank rows only** — a PO legitimately spanning two jobs keeps its per-line
+  attribution. A draft PO with no project at all now shows a dashboard hint naming the
+  five overhead buckets, so the non-job case is signposted instead of being a dead end.
+
 ## [1.186.0] - 2026-07-27
 
 ### Added
