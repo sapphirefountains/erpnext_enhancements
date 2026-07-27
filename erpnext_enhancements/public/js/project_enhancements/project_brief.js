@@ -23,9 +23,16 @@ frappe.ui.form.on("Project", {
 			return;
 		}
 
-		frm.add_custom_button(__("Project Brief"), function () {
-			open_project_brief(frm);
-		});
+		// Grouped under ERPNext's native "View" dropdown (Gantt Chart / Kanban
+		// Board): the brief is a read-only viewer, so it belongs with the other
+		// ways of looking at the project rather than as its own toolbar button.
+		frm.add_custom_button(
+			__("Project Brief"),
+			function () {
+				open_project_brief(frm);
+			},
+			__("View")
+		);
 	},
 });
 

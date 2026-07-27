@@ -12,8 +12,18 @@
  */
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
-		if (!frm.is_new()) {
-			frm.add_custom_button(__("Merge Project"), function () {
+		if (frm.is_new()) {
+			return;
+		}
+
+		// Grouped under ERPNext's native "Actions" dropdown (Duplicate Project /
+		// Update Costing / Set Project Status) rather than sitting top-level: the
+		// Project toolbar carries five app-specific buttons and this one is both
+		// rare and irreversible, so it belongs beside the other whole-document
+		// operations, not next to Save.
+		frm.add_custom_button(
+			__("Merge Project"),
+			function () {
 				frappe.prompt(
 					[
 						{
@@ -52,8 +62,9 @@ frappe.ui.form.on("Project", {
 					__("Merge Project"),
 					__("Analyze")
 				);
-			});
-		}
+			},
+			__("Actions")
+		);
 	},
 });
 

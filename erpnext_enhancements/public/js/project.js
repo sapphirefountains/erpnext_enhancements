@@ -25,9 +25,13 @@ frappe.ui.form.on("Project", {
                 .then((r) => {
                     const active = r.message && r.message.name;
                     if (active) {
+                        // Jumping to the existing contract is a way of LOOKING at the
+                        // project, so it groups under ERPNext's native "View" dropdown
+                        // (Gantt Chart / Kanban Board) -- mirroring the create variant
+                        // below, which already lives under "Create".
                         frm.add_custom_button(__("Maintenance Contract"), () => {
                             frappe.set_route("Form", "Sapphire Maintenance Contract", active);
-                        });
+                        }, __("View"));
                     } else {
                         frm.add_custom_button(__("Maintenance Contract"), () => {
                             frappe.model.open_mapped_doc({
