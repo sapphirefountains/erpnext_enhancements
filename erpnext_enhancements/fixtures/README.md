@@ -36,6 +36,11 @@ record set (but with different record order and key formatting — see below). T
 canonical procedure is the MCP export (ask Claude; this README is the spec):
 
 - records sorted by `name`; serialized with `indent=1`, sorted keys, trailing newline, LF;
+  - **Exception:** `custom_docperm.json` is ordered by **`(parent, permlevel, role)`**, not `name`
+    — Custom DocPerm names are meaningless hashes, and grouping the rows by doctype is what
+    makes the file readable as the permission matrix it actually is. Rows hand-authored in a
+    PR use a hash-shaped but greppable `name` (e.g. `wi066pocr0`) so a later site re-export
+    diffs cleanly; Frappe preserves a supplied name during fixture import.
 - volatile metadata stripped: `modified`, `modified_by`, `creation`, `owner`, `idx`,
   user tags/comments/assignments;
 - all other keys kept verbatim, including nulls, so imports reproduce records exactly.

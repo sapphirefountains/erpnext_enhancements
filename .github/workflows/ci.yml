@@ -78,6 +78,15 @@ jobs:
       # becoming a stop, and the PO -> Project union that either link alone drops.
       - name: Supplier pick-up routing (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_pickup_routing -v
+      # Own step, not folded into a multi-module list: each bench-free suite
+      # installs its own `frappe` stub in setUpModule, and a separate process
+      # keeps them from cross-talking.
+      - name: PO separation of duties (WI-066, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_po_segregation -v
+      # Guards the seeded mermaid charts (must start with "graph ", no raw "<",
+      # no pre-escaped entities). It existed but ran nowhere until WI-066.
+      - name: Seeded process documents (mermaid contract)
+        run: python -m unittest erpnext_enhancements.tests.test_process_documents -v
       - name: Contract e-signature (tokens, sig() fallthrough, template patch)
         run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants

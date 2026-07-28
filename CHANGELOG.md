@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.191.0] - 2026-07-28
+
+### Added
+
+- **Purchase Order creation now belongs to a dedicated `PO Creator` role** (WI-066).
+  WI-012 shipped the Material Request → Purchase Order split and, on its face, reserved
+  PO creation for purchasing. It did not: it granted create/write/submit to
+  **`Purchase User`**, and four Role Profiles carry that role — Production Team, Design
+  Team, Finance Team and Sales Team. The effective permission set let **sixteen enabled
+  users commit company money.** Five people actually buy (Parker 74 POs, James 24,
+  Nikolas 23, Daniel 3, Clegg 2), so the fix costs almost nothing operationally and
+  closes a control that until now existed only on paper.
+
+  This release is the **additive half** and takes nothing away. It seeds the role, adds
+  the `PO Creator` permission rows, and leaves `Purchase User` / `Purchase Manager`
+  untouched. The subtractive half ships separately, *after* the five people actually
+  hold the role — because role assignment is a manual Desk step, and doing both at once
+  would leave a window in which nobody but `Administrator` could raise a Purchase Order.
+
+  Two mechanics are load-bearing and easy to get wrong. **The role is seeded by a patch,
+  not a fixture:** fixture files import in *alphabetical filename order* — not the order
+  of the `hooks.py` list, which governs export only — so `custom_docperm.json` lands
+  before `role.json`, and a permission row would name a Role that does not exist yet.
+  **And a user who carries a Role Profile cannot hold a direct role at all:**
+  `User.validate` rebuilds `roles` from the union of their profiles on *every* save, and
+  the Desk disables the Roles grid outright. So Clegg and Lisa get the role through a
+  new single-role **`PO Creators`** profile added alongside their existing one (Frappe
+  unions multiple profiles, already in live use here), while James, Nikolas and Parker —
+  who have no profile — take it directly. Giving *them* a profile would have wiped
+  `System Manager` and `PO Approver`.
+
+- **Whoever raised the request can no longer be the one who buys it** — a separation-of-
+  duties gate on Purchase Order submit (`po_segregation.py`). Of 127 Purchase Orders only
+  7 carry a Material Request link, and in **all 7 the PO owner was the MR owner**: every
+  requisition ever converted on this site was self-approved.
+
+  **No role clears this** — not `Purchase Manager`, not `PO Approver`, not the CEO; only
+  `Administrator`, which is break-glass and also voids the WI-013 threshold, so it should
+  be a named-account decision rather than a habit. It runs *ahead* of the threshold gate
+  <why: leading with "only a PO Approver can submit it" would imply self-submission
+  becomes possible at some amount, and reads as flatly wrong when the CEO is himself the
+  requester>. The identity checked is whoever presses Submit, not the drafter, so
+  handing a draft to a colleague is the intended path and amended POs work with no
+  special case. A dangling Material Request link fails **open** — a deleted MR can never
+  brick a Purchase Order. Killable without a deploy: *Settings → Purchasing Controls →
+  Enforce PO Separation of Duties*.
+
+  Scope is deliberately narrow and worth stating plainly: the gate only fires on POs
+  whose lines carry a Material Request link, which is 7 of 127 today. It is traceability
+  hygiene, not a spend control — and it creates a mild perverse incentive, since linking
+  an MR is now what makes a PO *harder* to submit. The work item carries a 90-day
+  re-measure for exactly that reason.
+
+- **Anyone employed here can now raise a Material Request.** `Employee Self Service`
+  gains create/write/submit on Material Request and joins the `HR` role profile. Kendalyn
+  Harris held none of the five roles with MR access and literally could not file a
+  request — which contradicted the rule the whole purchasing flow rests on. Deliberately
+  not granted to role `All`, which includes Guest and Website Users and would have
+  exposed request creation to the portal.
+
+- **Lisa Symanski is now a third `PO Approver`.** Above the threshold only an approver may
+  submit, and the new SoD gate does not exempt them — so a PO built from one approver's
+  own request could only be submitted by the other, and a PO consolidating requests from
+  both by nobody but `Administrator`. 37 POs a year worth $221,685 (97% of PO spend) sat
+  behind two people's availability.
+
+### Changed
+
+- **The optional supplier-quoting path is documented for the first time.** Nothing in the
+  migration design covered Request for Quotation, Supplier Quotation or competitive
+  bidding — while the seeded "Buying and Procurement" diagram told staff that quoting was
+  mandatory *and the only route to a PO*, contradicting the purchasing SOP, which said
+  Material Request → PO with nothing in between. Both seeded diagrams are corrected and
+  the SOP now describes RFQ → Supplier Quotation as a real, encouraged, **ungated** step.
+  No dollar amount requires a quote and skipping one blocks nothing.
+
+  Request for Quotation and Supplier Quotation keep **standard** ERPNext permissions —
+  deliberately no Custom DocPerm rows <why: one row flips a doctype to fully-overridden
+  permanently, and RFQ has a supplier *portal* flow that would then break silently>. So
+  the eleven people losing PO creation can still shop the market; they just cannot commit.
+
+- The "Create → Purchase Order" affordances now disappear for users who cannot act on
+  them. ERPNext's own button on Material Request carries no permission check and fails
+  late, in a red dialog; worse, the Project form's **+ Purchase Order** called
+  `frappe.new_doc`, which opens a *fully editable* form and only fails at save — a user
+  could type a dozen line items and lose all of them.
+
+- `docs/migration/wi011-apply-runbook.md` claimed this site has no multi role-profile
+  support. It does, four users already have two, and WI-066 depends on it.
+
 ## [1.190.0] - 2026-07-28
 
 ### Added

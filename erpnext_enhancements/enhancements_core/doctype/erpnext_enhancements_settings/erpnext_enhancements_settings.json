@@ -72,6 +72,7 @@
   "package_dispatch_enabled",
   "purchasing_section",
   "po_approval_threshold",
+  "po_sod_enforcement_enabled",
   "pickup_route_start_address",
   "fleet_section",
   "fleet_maintenance_enabled",
@@ -571,6 +572,13 @@
    "fieldname": "po_approval_threshold",
    "fieldtype": "Currency",
    "label": "PO Approval Threshold (Amount)"
+  },
+  {
+   "default": "1",
+   "description": "ON: whoever raised a Material Request cannot also *submit* the Purchase Order that fills it — they may draft it, but another \"PO Creator\" must submit (WI-066). No role overrides this, not even \"PO Approver\"; only Administrator, which also bypasses the threshold above. OFF = the check does not run and a requester can commit their own request unaided. Only applies to POs whose lines carry a Material Request link. Server behavior changes immediately.",
+   "fieldname": "po_sod_enforcement_enabled",
+   "fieldtype": "Check",
+   "label": "Enforce PO Separation of Duties"
   },
   {
    "default": "85 W 300 S, Bountiful, UT 84010",

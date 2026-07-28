@@ -263,7 +263,7 @@ PROCESSES = [
 			"flowchart TD\n"
 			'    A["Job sold — kicked off from Closed-Won (Brian / Clegg)"] --> B["Assign responsible PM (Clegg)"]\n'
 			'    B --> C["Design complete &amp; handed to production"]\n'
-			'    C --> D["Procurement: Material Request → PO → Receipt"]\n'
+			'    C --> D["Procurement: Material Request → RFQ (optional) → PO → Receipt"]\n'
 			'    D --> E["Assembly / fabrication — quality &amp; efficiency monitored (Clegg / James / Nick / Lisa)"]\n'
 			'    E --> F{"QA &amp; quality sign-off (Clegg)"}\n'
 			"    F -- Fail --> E\n"

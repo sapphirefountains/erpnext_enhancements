@@ -6,7 +6,7 @@ This plan was built against the **live systems on 14 July 2026** (production `er
 
 Companion documents:
 - [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) — the 7 business decisions **with their 14 Jul 2026 resolutions** (OD-1 No-JDH · OD-2 follow-Utah-law/branch-b w/ CPA written confirmation as sign-off gate · OD-3 rename Rent→Events · OD-4 branch a · OD-5 Jan 1 committed, sooner if possible · OD-6 bulk delete · OD-7 no surcharge at launch)
-- [`work-items/`](work-items/) — 65 self-contained work items (WI-001 … WI-065; WI-061 ON HOLD per OD-1)
+- [`work-items/`](work-items/) — 66 self-contained work items (WI-001 … WI-066; WI-061 ON HOLD per OD-1)
 
 ---
 
@@ -159,6 +159,7 @@ graph TD
     CHAIN2 --> WI057
     WI057 --> WI058[WI-058 % escalation 75/85]
     WI013 --> WI058
+    WI013 --> WI066[WI-066 PO Creator role + SoD gate]
     WI043 --> WI056[WI-056 Plaid tx sync]
     WI039 --> WI055[WI-055 surcharge gate]
   end
@@ -256,8 +257,9 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-063](work-items/WI-063-document-hub.md) | Document hub (Drive-backed; define before building) | 2 | CONFIG | S | WI-006 |
 | [WI-064](work-items/WI-064-triton-reporting-boundary.md) | Triton management-reporting integration (non-statutory only) | 2 | CONFIG | S | WI-035 |
 | [WI-065](work-items/WI-065-rent-to-events-rename.md) | Rename 'Rent' value stream → 'Events' (OD-3; ~60 verified touch points, atomic) | 1 | APP_CODE | M | — |
+| [WI-066](work-items/WI-066-po-creator-role-and-sod.md) | `PO Creator` role (16 holders → 5) + MR-requester ≠ PO-submitter gate; optional RFQ path documented | 0 | APP_CODE | M | WI-012, WI-013 |
 
-Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 9 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
+Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 10 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
 
 ---
 

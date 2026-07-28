@@ -152,6 +152,7 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/procurement_links.js",
+		"public/js/po_creation_guard.js",
 	],
 	"Supplier": [
 		"public/js/vue.global.js",
@@ -311,7 +312,20 @@ doc_events = {
 		# handled client-side (public/js/purchase_order_project.js); this covers
 		# the REST API, data import and Material-Request-mapped documents.
 		"before_validate": "erpnext_enhancements.procurement_project.cascade_project_to_items",
-		"before_submit": "erpnext_enhancements.po_approval.enforce_threshold",
+		# Two independent submit gates, in this order deliberately:
+		#   1. WI-066 separation of duties — the person who raised the Material
+		#      Request may not submit the PO that fills it. NON-waivable: no role
+		#      clears it, not "PO Approver", not the CEO. Only Administrator.
+		#   2. WI-013 approval threshold — waivable by the "PO Approver" role.
+		# SoD reports first because it is the hard constraint. Leading with the
+		# threshold's "only a PO Approver can submit it" would imply self-submission
+		# becomes possible at some amount — and reads as flatly wrong when the CEO
+		# is himself the requester. The SoD message names both remedies, so a
+		# blocked user never needs a second round trip to discover the other gate.
+		"before_submit": [
+			"erpnext_enhancements.po_segregation.enforce_requester_separation",
+			"erpnext_enhancements.po_approval.enforce_threshold",
+		],
 	},
 	"Opportunity": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
@@ -743,13 +757,17 @@ fixtures = [
 		"dt": "Custom DocPerm",
 		"filters": [["parent", "in", ["Material Request", "Purchase Order"]]],
 	},
-	# WI-010: version-control the security architecture — the 17 hand-built Role
+	# WI-010: version-control the security architecture — the 18 hand-built Role
 	# Profiles + the one is_custom Role ("Employee Self Service"). name-in allowlists
-	# so re-export never sweeps user-created records. The Role entry MUST precede the
-	# Role Profile entry: profiles reference "Employee Self Service", and fixtures sync
-	# in list order. "PO Approver" is deliberately absent here — it is owned by
-	# patches/seed_po_approver_role.py (post_model_sync, i.e. before fixture sync).
-	# Retire/rename of the legacy "Poseidon" profile is out of scope (needs sign-off).
+	# so re-export never sweeps user-created records. "PO Approver" and "PO Creator"
+	# are deliberately absent from the Role entry — they are owned by
+	# patches/seed_po_approver_role.py and patches/seed_po_creator_role.py.
+	# NOTE: this list's order governs *export* only. Fixtures IMPORT in alphabetical
+	# filename order (frappe/utils/fixtures.py sorts the directory), so
+	# custom_docperm.json lands before role.json and role.json before
+	# role_profile.json. Any Role a fixture references must therefore be seeded by a
+	# post_model_sync patch, which runs before fixture sync — not added here and
+	# hoped for. Retire/rename of the legacy "Poseidon" profile is out of scope.
 	{
 		"dt": "Role",
 		"filters": [["name", "in", ["Employee Self Service"]]],
@@ -769,6 +787,12 @@ fixtures = [
 					"HR",
 					"Inventory",
 					"Manufacturing",
+					# WI-066: single-role add-on profile carrying only "PO Creator".
+					# Deliberately NOT named "Purchasing" — a legacy "Purchase" profile
+					# already exists below, and assigning the wrong one to a
+					# profile-less user regenerates their roles from it (see
+					# User.populate_role_profile_roles) and wipes System Manager.
+					"PO Creators",
 					"Poseidon",
 					"Production Team",
 					"Projects & Operations",
