@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.192.0] - 2026-07-28
+
+### Added
+
+- **Version-controls the `PO Approvers` role profile** (WI-066 follow-up). WI-066 gave
+  Lisa Symanski the `PO Approver` role so a Purchase Order consolidating requests from
+  the only two existing approvers could not become unsubmittable by anyone but
+  `Administrator`. Because she carries a role profile, Frappe rebuilds her roles from the
+  union of her profiles on every save — a direct grant would not have survived — so the
+  role had to reach her through a profile.
+
+  The plan was to add `PO Approver` to the departmental **`Finance Team`** profile, which
+  has exactly one member. That plan was wrong and is not what shipped. A departmental
+  profile carrying an approval authority means **every future finance hire silently gains
+  the power to approve POs over the threshold**, with nobody deciding it — which is
+  precisely how `Purchase User` grew to sixteen holders and made WI-066 necessary in the
+  first place. An authority now gets its own single-role profile, handed to named people:
+  `PO Approvers` alongside `PO Creators`.
+
+  The profile was created by hand during the production apply, so this commit is what
+  stops it being unversioned config — without it a fresh site would never get it and a
+  fixture re-export would not capture it, the exact gap WI-010 exists to close. Fixture
+  sync is an upsert, so it adopts the existing record rather than duplicating it.
+
 ## [1.191.0] - 2026-07-28
 
 ### Added

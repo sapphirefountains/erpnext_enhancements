@@ -59,7 +59,7 @@ Above the threshold only a `PO Approver` may submit. With two holders and no seg
 | Artifact | File |
 |---|---|
 | `PO Creator` Role | `patches/seed_po_creator_role.py` |
-| `PO Creators` Role Profile | `fixtures/role_profile.json` + the `hooks.py` name-in allowlist |
+| `PO Creators` + `PO Approvers` Role Profiles | `fixtures/role_profile.json` + the `hooks.py` name-in allowlist |
 | Purchase Order / Material Request perms | `fixtures/custom_docperm.json` (13 rows) |
 | Segregation gate | `po_segregation.py`, `hooks.py` `doc_events`, `tests/test_po_segregation.py` |
 | Kill switch default | `patches/default_po_sod_on.py` |
@@ -74,7 +74,8 @@ The role must be **held** before the old grant is removed. Role assignment is a 
 |---|---|
 | **v1.191.0** — additive, safe | Seed the role and profile; *add* the `PO Creator` permission rows; Material Request access fix; the segregation gate; docs; diagram fixes. Nobody loses anything. |
 | *(manual)* | The Desk runbook below, then the verification queries. |
-| **v1.192.0** — subtractive | `Purchase User` and `Purchase Manager` lose create/write/submit on Purchase Order. |
+| **v1.192.0** — fixture | Version-controls the `PO Approvers` profile, created by hand during the apply. |
+| **v1.193.0** — subtractive | `Purchase User` and `Purchase Manager` lose create/write/submit on Purchase Order. |
 
 ## Desk runbook
 
@@ -91,13 +92,15 @@ The role must be **held** before the old grant is removed. Role assignment is a 
 > ⚠️ Do not confuse **`PO Creators`** with the pre-existing **`Purchase`** profile.
 > Save each user a **second** time and re-check that `PO Creator` is still present. That round-trip is the durability proof this whole mechanism exists for.
 
-**Step 3 — Lisa Symanski also gets `PO Approver`.** Via the `PO Creators` profile she holds only `PO Creator`; `PO Approver` is a separate grant. Because she carries role profiles, it must reach her through a profile too — add it to `Finance Team`, of which she is the only member.
+**Step 3 — Lisa Symanski also gets `PO Approver`,** via a second single-role profile: **`PO Approvers`**. She ends up on `Finance Team + PO Creators + PO Approvers`.
+
+> **Why not just put `PO Approver` into `Finance Team`?** That was the original plan and it is wrong. `Finance Team` is a *departmental* profile with one member today, so it looked harmless — but it would mean every future finance hire silently gains authority to approve POs over the threshold, with nobody deciding it. That is precisely how `Purchase User` grew to sixteen holders and made this work item necessary. An authority gets its own single-role profile, handed to named people.
 
 **Step 4 — Daniel Blass.** Reassign or delete his one $0 draft Purchase Order (`PO-2026-00029`) before the subtractive release; afterwards he can read it but not write, discard or delete it.
 
 **Step 5 — nobody else needs editing.** The other eleven lose PO create/submit at the DocPerm level. Do **not** strip `Purchase User` from anyone — they still need it for Material Request, Supplier, Item and RFQ access.
 
-**Step 6 — hold the gate.** Merge v1.192.0 only once the verification below passes on prod.
+**Step 6 — hold the gate.** Merge the subtractive release only once the verification below passes on prod.
 
 *Timing note:* `RoleProfile.on_update` queues a locking background job, and a deploy's Redis flush can orphan that lock for up to 3h (`setup/document_locks.py` sweeps it on `before_migrate`). Editing the **profile itself** in Desk inside that window can raise `DocumentLockedError`; adding it to a **User** is a User save and is unaffected.
 
@@ -146,7 +149,7 @@ WHERE IFNULL(material_request,'')<>'';
 
 ## Rollback
 
-Revert the v1.192.0 `custom_docperm.json` commit — the next migrate restores the old grants; no data impact. For the gate alone, untick the Settings flag (instant) or remove the `po_segregation` entry from `hooks.py` (needs a deploy). Roles restore from the step-0 snapshot in Desk.
+Revert the subtractive release's `custom_docperm.json` commit — the next migrate restores the old grants; no data impact. For the gate alone, untick the Settings flag (instant) or remove the `po_segregation` entry from `hooks.py` (needs a deploy). Roles restore from the step-0 snapshot in Desk.
 
 The **additive** release cannot be rolled back by reverting JSON: fixture sync is create/update-only, so the added rows and the profile would survive. Removing them needs a one-shot `frappe.delete_doc` patch. In practice leave it — an unheld role grants nobody anything.
 
