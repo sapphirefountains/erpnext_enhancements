@@ -11,7 +11,11 @@ Large purchases need CEO sign-off. A Purchase Order whose **grand total exceeds 
 
 ## Who can submit over the threshold
 
-Holders of **`PO Approver`** — currently **James Harris (CEO) + Nikolas Bradshaw (sys-admin)** (seeded in WI-010, assigned in WI-011). `Administrator` always bypasses. Everyone else gets an "Approval Required" error on submit and must hand the draft to an approver.
+Holders of **`PO Approver`** — **James Harris (CEO), Nikolas Bradshaw (sys-admin) and Lisa Symanski** (seeded in WI-010, assigned in WI-011; Lisa added in WI-066). `Administrator` always bypasses. Everyone else gets an "Approval Required" error on submit and must hand the draft to an approver.
+
+> **Why three.** With two approvers and WI-066's segregation gate — which `PO Approver` does **not** bypass — a PO built from one approver's own Material Request could only be submitted by the other, and a PO consolidating requests from both by nobody except `Administrator`. 37 POs a year worth $221,685 sat behind two people's availability. See [WI-066](wi066-po-creator-and-sod.md).
+
+> **This gate is not the only one on submit.** [WI-066](wi066-po-creator-and-sod.md) registers a segregation-of-duties check **ahead** of this one: whoever raised the linked Material Request cannot submit the PO that fills it, and **no role clears that** — so "only a `PO Approver` can submit it" is true of the *threshold* rule only. A `PO Approver` who is himself the requester is still blocked.
 
 ## Design & extension point (per-project / %)
 

@@ -269,3 +269,20 @@ erpnext_enhancements.patches.seed_overhead_projects
 # Settings seed is the usual Single trap: a field default only applies when the
 # Single is first created, and it already exists on every live site.
 erpnext_enhancements.patches.add_project_pick_routing_button
+# v1.191.0 WI-066: seed the "PO Creator" role. Purchase Order create/write/submit
+# moves off `Purchase User` — which four Role Profiles carry, so sixteen enabled
+# users could commit company money — onto a role held by five. Must precede
+# fixture sync: fixtures import in alphabetical filename order, so
+# custom_docperm.json lands before role.json and a PO Creator perm row would
+# reference a Role that does not exist yet. Assign to users in Desk (WI-066).
+erpnext_enhancements.patches.seed_po_creator_role
+# v1.191.0 WI-066: turn the separation-of-duties gate on for existing sites. Same
+# trap as default_contacts_ux_on — a Check field's `default` only applies when the
+# Settings Single is first created, and it already exists everywhere, so without
+# this the guard ships permanently dormant and silently enforces nothing.
+erpnext_enhancements.patches.default_po_sod_on
+# v1.191.0 WI-066: show the optional quoting step in the live "Production — Job
+# Production" process map. Same trap as bind_maintenance_template_fields —
+# seed_process_maps_finance_production is insert-only, so editing its literal
+# only reaches fresh sites and never the document already on prod.
+erpnext_enhancements.patches.update_production_procurement_step

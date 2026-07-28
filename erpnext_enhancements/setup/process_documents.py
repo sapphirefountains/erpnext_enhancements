@@ -150,11 +150,19 @@ graph TD
     class A,B,C,D,E,F,G crm;
     class H,I,J handoff;
 """,
+	# WI-066: this chart used to route every purchase through a Supplier Quotation,
+	# which contradicted the governing SOP (docs/migration/wi012-purchasing-flow.md)
+	# and the 127-PO / 7-quotation reality on this site. Quoting is a real option and
+	# worth encouraging on new or high-value spend, but it is not a gate — the direct
+	# Material Request to Purchase Order path is the standard one. The role gate is
+	# drawn where it actually bites: only a PO Creator raises the PO.
 	"Buying and Procurement ERPNext Flow": """
 graph TD
-    A[Material Request] --> |Request Quotes From| B[Supplier]
+    A[Material Request] --> |PO Creator converts - standard path| D[Purchase Order]
+    A --> |Optional - shop the market| R[Request for Quotation]
+    R --> |Sent to| B[Supplier]
     B --> |Sends| C[Supplier Quotation]
-    C --> |Compare & Create| D[Purchase Order]
+    C --> |Compare and create| D
     D --> |Receive Goods Against| E[Purchase Receipt]
     E --> |Updates Inventory Levels| F[Item Stock]
     D --> |Receive Bill| G[Purchase Invoice]
@@ -167,7 +175,7 @@ graph TD
     classDef accounting fill:#ECEFF1,stroke:#607D8B,stroke-width:2px;
 
     %% Class Assignments
-    class A,B,C,D,E,G buying;
+    class A,B,C,D,E,G,R buying;
     class F stock;
     class H accounting;
 """,

@@ -265,6 +265,9 @@
   "role_profile": "HR",
   "roles": [
    {
+    "role": "Employee Self Service"
+   },
+   {
     "role": "Expense Approver"
    },
    {
@@ -307,6 +310,16 @@
    },
    {
     "role": "Stock User"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
+  "name": "PO Creators",
+  "role_profile": "PO Creators",
+  "roles": [
+   {
+    "role": "PO Creator"
    }
   ]
  },

@@ -344,6 +344,19 @@ frappe.ui.form.on("Project", {
 			frappe.msgprint(__("Please save the Project before creating linked documents."));
 			return;
 		}
+		// WI-066: Purchase Order create belongs to the "PO Creator" role. frappe.new_doc
+		// performs no permission check, so without this the form opens fully editable and
+		// only fails at save — losing however many line items were typed. Refuse up front.
+		if (!frappe.model.can_create("Purchase Order")) {
+			frappe.msgprint({
+				title: __("PO Creator role required"),
+				indicator: "orange",
+				message: __(
+					"Creating a Purchase Order needs the PO Creator role. Raise a Material Request against this project instead, and a PO Creator will convert it."
+				),
+			});
+			return;
+		}
 		frappe.new_doc("Purchase Order", {
 			project: frm.doc.name,
 		});
