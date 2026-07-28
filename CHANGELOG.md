@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.193.0] - 2026-07-28
+
+### Changed
+
+- **Only five people can now raise a Purchase Order** (WI-066, subtractive half).
+  `Purchase User` and `Purchase Manager` lose create / write / submit / cancel / amend /
+  delete on Purchase Order; `PO Creator` is the only role that carries them. Before this
+  release **18 enabled users could create and submit a PO**, because `Purchase User` held
+  those bits and four Role Profiles hand out `Purchase User`. Five people actually buy.
+
+  This is the half that closes the control. It ships **after** the additive release
+  (v1.191.0) and after the five grantees were confirmed to hold `PO Creator` in
+  production — deliberately, because role assignment is a manual step and shipping both
+  halves together would have left a window in which nobody but `Administrator` could
+  raise a Purchase Order.
+
+  The two rows are edited **in place**, not deleted. Removing a record from a fixture
+  file stops managing it but does **not** remove it from the database — fixture sync only
+  creates and updates. A deletion would have read in git as though the control shipped
+  while changing nothing on production, which is the worst possible failure mode for a
+  permission change.
+
+  `Purchase User` and `Purchase Manager` keep **read / report / print / email**. That is
+  not leniency: the Procurement and Executive Summary dashboards evaluate under the
+  viewing user's permissions, so dropping `read` would blank those charts for eleven
+  people, and a PM still needs to print a committed PO or email it to a supplier.
+  Reading and transmitting a purchase order is not committing one.
+
+  <what moves with it: ERPNext gates the PO **Close / Hold / Re-open** buttons on
+  `submit` permission (`update_status`, purchase_order.py), not `write` — so closing a PO
+  out is now a `PO Creator` action too. Lisa (AP) and Parker (the main purchaser) both
+  hold the role, so the people who actually do it still can.>
+
+  Request for Quotation and Supplier Quotation are untouched and stay on standard
+  permissions, so the eleven people losing PO creation can still raise an RFQ and shop
+  the market — they just cannot commit the money.
+
 ## [1.192.0] - 2026-07-28
 
 ### Added
