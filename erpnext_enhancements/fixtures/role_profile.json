@@ -315,6 +315,16 @@
  },
  {
   "doctype": "Role Profile",
+  "name": "PO Approvers",
+  "role_profile": "PO Approvers",
+  "roles": [
+   {
+    "role": "PO Approver"
+   }
+  ]
+ },
+ {
+  "doctype": "Role Profile",
   "name": "PO Creators",
   "role_profile": "PO Creators",
   "roles": [

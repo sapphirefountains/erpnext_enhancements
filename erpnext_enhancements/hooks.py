@@ -787,11 +787,23 @@ fixtures = [
 					"HR",
 					"Inventory",
 					"Manufacturing",
-					# WI-066: single-role add-on profile carrying only "PO Creator".
+					# WI-066: two single-role add-on profiles, each carrying exactly one
+					# purchasing authority. They exist because a user who holds ANY role
+					# profile has `roles` regenerated from the union of their profiles on
+					# every save (User.populate_role_profile_roles) — a direct role grant
+					# does not survive, so an authority can only reach a profiled user
+					# through a profile of its own.
+					#
+					# Single-role on purpose. The alternative was folding "PO Approver"
+					# into the departmental "Finance Team" profile, which had one member
+					# at the time; that would have silently promoted every future finance
+					# hire to approving POs over the threshold — the same way "Purchase
+					# User" quietly grew to sixteen people and made WI-066 necessary.
+					#
 					# Deliberately NOT named "Purchasing" — a legacy "Purchase" profile
-					# already exists below, and assigning the wrong one to a
-					# profile-less user regenerates their roles from it (see
-					# User.populate_role_profile_roles) and wipes System Manager.
+					# already exists below, and assigning the wrong one to a profile-less
+					# user regenerates their roles from it and wipes System Manager.
+					"PO Approvers",
 					"PO Creators",
 					"Poseidon",
 					"Production Team",
