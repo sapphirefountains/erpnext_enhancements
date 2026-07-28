@@ -73,6 +73,11 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
+      # Guards the "routes the truck to the wrong address, confidently" class of
+      # bug: the supplier pick-up address fallback order, our own yard never
+      # becoming a stop, and the PO -> Project union that either link alone drops.
+      - name: Supplier pick-up routing (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_pickup_routing -v
       - name: Contract e-signature (tokens, sig() fallthrough, template patch)
         run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants

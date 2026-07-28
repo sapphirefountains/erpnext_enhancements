@@ -14,6 +14,10 @@ The app-wide configuration hub (``issingle``). Holds:
   * ``fountain_move_*`` / ``fmr_*`` — the Cactus & Tropicals fountain-move intake
     feature (see ``crm_enhancements/fountain_move/``). Read by
     ``feature_flags.fountain_move_*`` and by the conversion engine.
+  * ``pickup_route_start_address`` — the shop a supplier pick-up run leaves from,
+    read by ``api.pickup_routing._depot_address()`` for the Project Budget tab's
+    Pick Routing Map. Seeded on existing sites by the
+    ``add_project_pick_routing_button`` patch.
 
 Values are read via ``frappe.get_single`` / ``frappe.get_cached_doc`` elsewhere.
 The only controller logic is the fail-closed guard below.

@@ -14,6 +14,7 @@ Each patch's module docstring describes what it migrates. This README is the ind
 | `rename_poseidon_service_user` | post | Renames the telephony service user `poseidon@…` → `triton@…` (or creates it) and repoints residual references (Communication.sender, owners, ToDo) and "Poseidon" branding. |
 | `add_project_procurement_buttons` | post | Adds a Project "Procurement" section + 6 create-document buttons in 3 columns. |
 | `reorder_procurement_buttons` | post | Re-applies the Procurement layout to fix `insert_after` ordering. |
+| `add_project_pick_routing_button` | post | Adds the Project Budget tab's "Material Pickup" section + **Pick Routing Map** button, and seeds `ERPNext Enhancements Settings.pickup_route_start_address` with the shop address (fill-blanks-only). |
 | `reset_travel_child_table_fields` | post | Deletes `in_list_view` Property Setters on the 4 Trip child tables. |
 | `add_item_purchase_links` | post | Adds `purchase_url` to Item Supplier + a read-only `purchase_links` "Buy" HTML field to Purchase Order / Material Request Item. |
 | `create_home_workspace` | post | Creates the standard public "Home" Workspace if missing. |

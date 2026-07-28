@@ -104,6 +104,17 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
 
 A lightweight container doctype grouping ordinary Projects into a program/portfolio. Projects join via the **`Project.custom_master_project`** Link field (no child table on the Master side); **`Project.custom_subproject_order`** controls ordering under the master. `get_projects_and_tasks` returns member Projects and their Tasks for the form's read-only HTML tables. The dashboard's `get_master_project_projects` / `update_master_project_structure` reuse the same grouping (the latter persists drag-reordering).
 
+## Pick Routing Map (v1.190.0)
+
+A job's material sits at several vendors' will-call counters at once, and nothing in Desk answered "what is still out there, and what is the shortest way round to collect it?". The **Pick Routing Map** button in the Budget tab's *Material Pickup* section now does.
+
+- **Server:** [`api/pickup_routing.py`](../api/pickup_routing.py) → `get_pickup_route_data(project, scope)`. One round-trip: the Google Maps browser key, the depot, the job-site address, and one *stop* per supplier pick-up address carrying the Purchase Orders and lines behind it. Gated on `Project.check_permission("read")` **and nothing more** — the purchasing reads use `frappe.get_all` (ignore-permissions), matching the Procurement Tracker higher up the same tab. See the [api README's security model](../api/README.md#security-model).
+- **Which POs:** the union of the header `Purchase Order.project` and the item-row `Purchase Order Item.project` — they disagree on real data, and either alone drops POs. `scope` is `outstanding` (default: submitted, `status` not `Closed`/`Delivered`, `per_received < 100`), `submitted`, or `all` (drafts too).
+- **Where each stop is:** a four-step chain — `po.dispatch_address` → `po.supplier_address` → `Supplier.supplier_primary_address` → the Address directory (`Dynamic Link`), preferring a `Shipping`/`Warehouse`/`Shop`/`Plant` address type. `po.shipping_address` is **excluded on purpose**: on this site it is our own yard on nearly every PO. The winning step comes back in `address_source`, and a supplier that resolves to nothing is still returned with `address: null` so the UI can link to the vendor record that needs an address.
+- **Client:** [`public/js/project_enhancements/pick_routing_map.js`](../public/js/project_enhancements/pick_routing_map.js) — an extra-large dialog, ordered stop list beside the map. The optimisation is Google's `DirectionsService` with `optimizeWaypoints: true`, run in the browser, so nothing is geocoded or cached server-side. Finish at the shop (default), the job site, or a typed address.
+- **Settings:** `ERPNext Enhancements Settings.pickup_route_start_address` (Purchasing Controls) is where the run starts; blank falls back to the shop. The map reuses `Travel Settings.google_maps_api_key`, which needs the **Directions API** enabled on it as well as Maps JavaScript.
+- **Degrades in three steps, each still usable:** optimised route → geocoded pins in PO order (key without the Directions API) → an ordered list of Google Maps links (no key at all). "Open in Google Maps" works at every step.
+
 ## `hooks.py` touchpoints
 
 - `doc_events`: Project `after_save` → `sync_attachments_from_opportunity`; Project/Task `on_update` → `…project_dashboard.publish_realtime_update`.
@@ -111,6 +122,7 @@ A lightweight container doctype grouping ordinary Projects into a program/portfo
 - `override_doctype_dashboards`: `Project` → `get_dashboard_data`; `Employee` → `dashboard_overrides.get_data`.
 - `override_whitelisted_methods`: `erpnext…opportunity.make_project` → `opportunity_enhancements.make_project`.
 - `doctype_js["Project"]` includes `public/js/project_enhancements/project_gantt_widget.js` — the embeddable Gantt widget's first embed, mounted into `custom_gantt_chart_html` on the Schedule tab (read-only, status filter + Today; replaced the legacy interactive frappe-gantt renderer that lived in `doctype/project/project.js` — see the [public README](../public/README.md)).
+- `doctype_js["Project"]` also includes `public/js/project_enhancements/pick_routing_map.js`, which binds the Budget tab's `custom_btn_pick_routing_map` Button (created by the `add_project_pick_routing_button` patch).
 
 ## Gotchas
 

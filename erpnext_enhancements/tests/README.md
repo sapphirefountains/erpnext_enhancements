@@ -28,6 +28,7 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 | `test_comments_api.py` | `api.comments` CRUD | `unittest.mock` (no DB) |
 | `test_dashboard_override.py` | Project dashboard `get_dashboard_data` | Pure unit, no mocks |
 | `test_geo_telemetry.py` | `api.time_kiosk` geolocation (single-point, batch, history, purge) | `FrappeTestCase`; two employees (unlinked + user-linked w/ Job Interval); `patch` for the DB-error path |
+| `test_pickup_routing.py` | `api.pickup_routing` supplier pick-up run: the four-step address fallback in order (and `po.shipping_address` — our own yard — never reachable), the PO→Project header/item union, `per_received` beating the `status` label, stops keyed on supplier *and* address, money never summed across currencies | **Bench-free**: `_install_frappe_stub()` fakes `frappe`/`frappe.utils` in `sys.modules` and backs `get_all`/`db.get_value` with a tiny in-memory query engine; plain `unittest` |
 | `test_procurement_status.py` | `project_enhancements` procurement rollup | `FrappeTestCase`; full company/item/supplier/warehouse + `custom_project`; `frappe.enqueue` patched |
 | `test_project_enhancements.py` | Project-scoped comment endpoints | `unittest.mock` (no DB) |
 | `test_project_merge.py` | `project_merge.merge_projects` | `FrappeTestCase`; source/target Project + linked Task |
