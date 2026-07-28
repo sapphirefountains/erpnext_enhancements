@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.190.0] - 2026-07-28
+
+### Added
+
+- **The Project Budget tab can now plan the material pick-up run.** A job's material sits
+  at several vendors' will-call counters at once, and nothing in Desk answered the two
+  questions a driver actually has: what is still out there, and what is the shortest way
+  round to collect it. The Budget tab's Procurement block could *create* six kinds of
+  purchasing document and tell you nothing about fetching what they bought.
+
+  A new **Material Pickup** section carries one button, **Pick Routing Map**. It opens an
+  extra-large dialog — ordered stop list on the left, Google map on the right — with every
+  supplier on the job that still owes material, in drive-time order out of the shop
+  (85 W 300 S, Bountiful) and back. Tick stops off the run, finish at the shop, the job
+  site or a typed address, and hand the whole thing to Google Maps on the phone.
+
+  The optimisation is Google's `DirectionsService` with `optimizeWaypoints: true`, run in
+  the browser against plain address strings, so **nothing is geocoded, cached or stored
+  server-side** and the feature needs no Google credentials of its own — it reuses the
+  referrer-restricted browser key already in Travel Settings. That key now needs the
+  **Directions API** enabled on it as well as Maps JavaScript.
+
+  New `api/pickup_routing.py::get_pickup_route_data` builds the payload, gated on read
+  access to the Project. Purchase Orders are the union of the header `project` and the
+  item-row `project` — on prod those two disagree (POs exist with a blank header but a
+  filled line, and the reverse), so querying either alone silently drops stops. "Still to
+  collect" is `docstatus = 1`, `status` not `Closed`/`Delivered`, and `per_received < 100`:
+  the number, not the label, because `Closed` is the one status that can hide a PO whose
+  goods never arrived. Two other scopes — every submitted PO, and drafts too — are one
+  dropdown away.
+
+  Settings gains `pickup_route_start_address` under Purchasing Controls (blank falls back
+  to the shop), seeded on existing sites by `patches.add_project_pick_routing_button` —
+  the usual Single trap, where a field default only applies at creation and the record
+  already exists everywhere.
+
+### Notes
+
+- **Where a stop actually is takes four tries, and the answer is shown.** Only a minority
+  of Purchase Orders carry a `supplier_address` at all, and on prod 10 of the 21 suppliers
+  with `supplier_primary_address` set have no `Dynamic Link` row on that Address — so
+  neither lookup path alone is sufficient. The chain is `po.dispatch_address` →
+  `po.supplier_address` → `Supplier.supplier_primary_address` → the Address directory
+  (preferring a `Shipping`/`Warehouse`/`Shop`/`Plant` address type over Billing). Which
+  step won comes back as `address_source`.
+
+  `po.shipping_address` is **deliberately not in that chain**: on this site it is our own
+  yard on essentially every PO, and routing to it would send the truck home between every
+  stop. A supplier that resolves to nothing is still listed — under "No address on file",
+  linked to the vendor record — rather than dropped, because a pick list that quietly
+  omits a stop is worse than one that admits it cannot place it.
+
+- **Three degradation steps, each still usable.** Optimised route with per-leg distance and
+  time; then, when the key loads Maps but lacks the Directions API, geocoded pins in
+  purchase-order order with a banner saying so; then, with no key at all, an ordered list
+  of Google Maps links. "Open in Google Maps" works at every step. Google's own ceilings
+  are surfaced rather than silently applied — stops past the 23-waypoint optimisation limit
+  are listed under their own heading, and the 9-stop cap on a Maps URL raises an alert on
+  click instead of quietly truncating the link.
+
 ## [1.189.0] - 2026-07-27
 
 ### Added

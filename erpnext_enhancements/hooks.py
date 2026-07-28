@@ -83,6 +83,10 @@ doctype_js = {
 		# public/js/gantt_widget/). Replaces the legacy frappe-gantt renderer
 		# that lived in project_enhancements/doctype/project/project.js.
 		"public/js/project_enhancements/project_gantt_widget.js",
+		# Budget tab "Pick Routing Map" button (custom_btn_pick_routing_map):
+		# every supplier with material still to collect, in drive-time order out
+		# of the shop. Backed by api/pickup_routing.py.
+		"public/js/project_enhancements/pick_routing_map.js",
 	],
 	"Master Project": ["public/js/global_enhancements/unified_tab_controller.js"],
 	# Reading a contract on screen — the template's language with the data

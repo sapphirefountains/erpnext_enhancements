@@ -262,3 +262,10 @@ erpnext_enhancements.patches.add_customer_contracts_tab
 # Project Type plus five standing buckets (Office & Admin, Shop & Warehouse,
 # Fleet & Vehicles, IT & Software, Marketing & Trade Shows).
 erpnext_enhancements.patches.seed_overhead_projects
+# v1.190.0 procurement: the Project Budget tab's "Material Pickup" section and
+# its Pick Routing Map button, plus the shop address the run starts from. The
+# button is its own section rather than a seventh entry in the 3x2 Procurement
+# grid — those six all create a document, this one opens a read-only view. The
+# Settings seed is the usual Single trap: a field default only applies when the
+# Single is first created, and it already exists on every live site.
+erpnext_enhancements.patches.add_project_pick_routing_button

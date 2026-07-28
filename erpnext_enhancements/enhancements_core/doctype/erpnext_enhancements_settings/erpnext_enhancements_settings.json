@@ -72,6 +72,7 @@
   "package_dispatch_enabled",
   "purchasing_section",
   "po_approval_threshold",
+  "pickup_route_start_address",
   "fleet_section",
   "fleet_maintenance_enabled",
   "fleet_reminders_enabled",
@@ -570,6 +571,13 @@
    "fieldname": "po_approval_threshold",
    "fieldtype": "Currency",
    "label": "PO Approval Threshold (Amount)"
+  },
+  {
+   "default": "85 W 300 S, Bountiful, UT 84010",
+   "description": "Where a supplier pick-up run starts and, by default, ends - the Project Budget tab's \"Pick Routing Map\" button. Any address Google Maps can find. Blank falls back to the shop, 85 W 300 S, Bountiful, UT 84010. The map itself uses the browser key in Travel Settings, which needs the Directions API enabled on it as well as Maps JavaScript.",
+   "fieldname": "pickup_route_start_address",
+   "fieldtype": "Data",
+   "label": "Pickup Route Start Address"
   },
   {
    "fieldname": "fleet_section",
