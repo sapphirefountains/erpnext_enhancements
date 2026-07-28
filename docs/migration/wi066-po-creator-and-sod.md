@@ -1,5 +1,13 @@
 # WI-066 — `PO Creator` role, and separation of duties on Purchase Order submit
 
+> ## Application status (2026-07-28) — ✅ complete
+>
+> - **v1.191.0 additive** deployed: role, `PO Creators` profile, `PO Creator` permission rows, `Employee Self Service` on Material Request, the segregation gate (**enabled**), docs and diagram fixes.
+> - **Roles applied in production.** `PO Creator`: James Harris, Nikolas Bradshaw, Parker Bailey (direct — they hold no role profile), Clegg Mabey and Lisa Symanski (via the `PO Creators` profile). `PO Approver`: James, Nikolas, **Lisa**. Verified no collateral loss — `System Manager`, `Accounts Manager` and `Production Team` all survived, and `Finance Team` does **not** carry `PO Approver`.
+> - **v1.192.0** version-controlled the `PO Approvers` profile; **v1.193.0** is the subtractive release below.
+> - **⚠️ Open:** `kendalyn.harris@` still lacks `Employee Self Service` and cannot raise a Material Request. The `HR` profile carries the role; her user never re-derived it. Fix: open her User, remove `HR` from Role Profiles, save, re-add it, save.
+> - **Note for future applies:** MCP/REST **cannot** write `User.role_profiles` at all — it is a Table MultiSelect and the tool passes raw dicts, failing with `'dict' object has no attribute 'is_new'` in both patch and replace mode. The plain `roles` table writes fine. Profile assignment is Desk-only.
+
 Two controls on the same document. **Who may commit company money** is narrowed from sixteen people to five. **Whoever asked for the materials may not also be the one who buys them.**
 
 Shipped in two releases on purpose — see [Rollout](#rollout-two-releases).
