@@ -1,6 +1,6 @@
 # ERPNext Enhancements
 
-A single [Frappe](https://frappeframework.com/) v16 app that bundles **Sapphire Fountains'** customizations and enhancements to ERPNext. It consolidates what used to be several separate apps (CRM, Global, Project, Task, and QuickBooks Time enhancements) into one installable app made up of eight Frappe **modules**, plus a standalone **Time Kiosk** Progressive Web App and a large library of desk (browser) customizations.
+A single [Frappe](https://frappeframework.com/) v16 app that bundles **Sapphire Fountains'** customizations and enhancements to ERPNext. It consolidates what used to be several separate apps (CRM, Global, Project, Task, and QuickBooks Time enhancements) into one installable app made up of the Frappe **modules** listed in `modules.txt`, plus a standalone **Time Kiosk** Progressive Web App and a large library of desk (browser) customizations.
 
 - **App name:** `erpnext_enhancements`
 - **Publisher:** Sapphire Fountains · `info@sapphirefountains.com`
@@ -46,7 +46,7 @@ This is a conventional Frappe app. If you know Frappe, the layout will be famili
 ```
 erpnext_enhancements/                 ← the Python package (one folder per Frappe module + shared code)
 ├── hooks.py                          ← THE control center: every customization registers here
-├── modules.txt                       ← the 8 Frappe modules this app ships
+├── modules.txt                       ← the Frappe modules this app ships
 ├── patches.txt                       ← ordered list of one-time migration patches
 ├── <module>/                         ← one folder per module (see "Module map")
 │   ├── doctype/<doctype>/            ← DocType: .json (schema) + .py (controller) + .js (form script)
@@ -58,13 +58,13 @@ erpnext_enhancements/                 ← the Python package (one folder per Fra
 ├── setup/                            ← idempotent setup run after every migrate (custom fields, etc.)
 ├── scripts/                          ← build/codegen tools (contract template pipeline, form-layout generator)
 ├── utils/                            ← shared helpers (global Triton sync, delete patching)
+├── custom_html_blocks/               ← source of truth for the "Custom HTML Block" dashboard widgets
 ├── fixtures/                         ← exported records installed on migrate (custom fields, workflows…)
 ├── public/                           ← browser assets (JS form scripts, CSS, kiosk front-end)
 ├── www/                              ← the standalone Time Kiosk PWA (`/kiosk`)
 ├── templates/                        ← Jinja web templates
 └── tests/                            ← test suite
 
-Custom HTML Block/                    ← exported source of a Frappe "Custom HTML Block" dashboard widget
 sync_time_kiosk.py                    ← standalone REST tool: Job Intervals → Timesheets
 ```
 
@@ -76,18 +76,36 @@ sync_time_kiosk.py                    ← standalone REST tool: Job Intervals �
 
 ## Module map
 
-The app ships eight Frappe modules (see [`modules.txt`](erpnext_enhancements/modules.txt)). Each has its own README:
+The app ships the Frappe modules registered in [`modules.txt`](erpnext_enhancements/modules.txt). Each has its own README, and that README is the primary reference for the module.
 
 | Module (folder) | What it covers | README |
 |---|---|---|
-| **Enhancements Core** (`enhancements_core/`) | Catch-all: app Single settings, Time Kiosk data doctypes (Job Interval, Time Kiosk Log), Asset Booking, GA4 dashboard page, Location Timeline map page | [README](erpnext_enhancements/enhancements_core/README.md) |
-| **Project Enhancements** (`project_enhancements/`) | Project Dashboard page, Master Project, procurement status, project merge, dashboard overrides | [README](erpnext_enhancements/project_enhancements/README.md) |
-| **Sapphire Maintenance** (`sapphire_maintenance/`) | Template→Record→Result maintenance subsystem, portal, print format, on-submit automation | [README](erpnext_enhancements/sapphire_maintenance/README.md) |
-| **CRM Enhancements** (`crm_enhancements/`) | Opportunity customizations + Google Drive project-folder provisioning | [README](erpnext_enhancements/crm_enhancements/README.md) |
-| **Global Enhancements** (`global_enhancements/`) | Triton AI assistant settings + Directory Link Exclusion doctype | [README](erpnext_enhancements/global_enhancements/README.md) |
+| **Enhancements Core** (`enhancements_core/`) | Catch-all: app Single settings, Directory Link Exclusion, contact/address directory UI | [README](erpnext_enhancements/enhancements_core/README.md) |
+| **Project Enhancements** (`project_enhancements/`) | Project Dashboard page, Master Project, procurement status, project merge, contracts + e-signature | [README](erpnext_enhancements/project_enhancements/README.md) |
+| **CRM Enhancements** (`crm_enhancements/`) | Opportunity customizations, fountain-move intake, lead attribution | [README](erpnext_enhancements/crm_enhancements/README.md) |
 | **Task Enhancements** (`task_enhancements/`) | Overrides the core Task class; Hierarchical Task View page | [README](erpnext_enhancements/task_enhancements/README.md) |
+| **Sapphire Maintenance** (`sapphire_maintenance/`) | Template→Record→Result maintenance subsystem, visit wizard, portal, on-submit automation | [README](erpnext_enhancements/sapphire_maintenance/README.md) |
+| **Fleet Maintenance** (`fleet_maintenance/`) | Vehicle maintenance scheduling | [README](erpnext_enhancements/fleet_maintenance/README.md) |
 | **Travel Management** (`travel_management/`) | Travel Trip workflow + child tables → draft Expense Claim | [README](erpnext_enhancements/travel_management/README.md) |
-| **QuickBooks Time Integration** (`quickbooks_time_integration/`) | QuickBooks Online accounting sync (OAuth2, CDC, webhooks) + QB Time webhook | [README](erpnext_enhancements/quickbooks_time_integration/README.md) |
+| **Asset Management** (`asset_management/`) | Asset Booking (Rental / Travel / Maintenance reservations) | [README](erpnext_enhancements/asset_management/README.md) |
+| **Package Dispatch** (`package_dispatch/`) | Package dispatch tracking | [README](erpnext_enhancements/package_dispatch/README.md) |
+| **Inventory Enhancements** (`inventory_enhancements/`) | Barcode count sessions, storage locations, scanner audit | [README](erpnext_enhancements/inventory_enhancements/README.md) |
+| **Workforce** (`workforce/`) | Time Kiosk pages, Job Interval clock-in sessions, location timeline | [README](erpnext_enhancements/workforce/README.md) |
+| **Water Engineering** (`water_engineering/`) | Fountain hydraulic design engine, Water Feature Design, wizard, print formats | [README](erpnext_enhancements/water_engineering/README.md) |
+| **Product Configurator** (`product_configurator/`) | Configure-to-order products → Item + BOM + price + build sheets | [README](erpnext_enhancements/product_configurator/README.md) |
+| **Process Documentation** (`process_documentation/`) | Mermaid.js process maps | [README](erpnext_enhancements/process_documentation/README.md) |
+| **QuickBooks Online** (`quickbooks_online/`) | QBO accounting sync: OAuth2, REST client, entity mapping, idempotent upsert, CDC, webhooks | [README](erpnext_enhancements/quickbooks_online/README.md) |
+| **QuickBooks Time** (`quickbooks_time/`) | Standalone QB Time integration, independent of QBO | [README](erpnext_enhancements/quickbooks_time/README.md) |
+| **Stripe Payments** (`stripe_payments/`) | Card + ACH payments, saved methods, dunning, payout reconciliation | [README](erpnext_enhancements/stripe_payments/README.md) |
+| **Plaid Banking** (`plaid_banking/`) | Bank balance retrieval and caching | [README](erpnext_enhancements/plaid_banking/README.md) |
+| **Accounting Intake** (`accounting_intake/`) | Document intake → AI extraction → two-gate review → draft posting | [README](erpnext_enhancements/accounting_intake/README.md) |
+| **KPI Dashboards** (`kpi_dashboards/`) | Nightly department KPI snapshots and dashboard workspaces | [README](erpnext_enhancements/kpi_dashboards/README.md) |
+| **AI Governance** (`ai_governance/`) | AI write-confirmation records, Triton settings, model usage | [README](erpnext_enhancements/ai_governance/README.md) |
+| **Integration Hub** (`integration_hub/`) | Integrations Health page, GA4 / Search Console dashboard | [README](erpnext_enhancements/integration_hub/README.md) |
+| **Google Drive** (`google_drive/`) | Drive folder provisioning, sync, link manager | [README](erpnext_enhancements/google_drive/README.md) |
+| **Morning Briefing** (`morning_briefing/`) | The per-user Daily Briefing cache | [README](erpnext_enhancements/morning_briefing/README.md) |
+| **Device Management** (`device_management/`) | Device inventory and dashboard | [README](erpnext_enhancements/device_management/README.md) |
+| **MDM Integration** (`mdm_integration/`) | Mobile device management (locate / lock / wipe / patch) | [README](erpnext_enhancements/mdm_integration/README.md) |
 
 Shared / cross-cutting code (not a Frappe module):
 
@@ -100,7 +118,12 @@ Shared / cross-cutting code (not a Frappe module):
 | `public/` | Browser assets (JS/CSS) | [README](erpnext_enhancements/public/README.md) |
 | `www/` | Time Kiosk PWA shell | [README](erpnext_enhancements/www/README.md) |
 | `tests/` | Test suite | [README](erpnext_enhancements/tests/README.md) |
-| `Custom HTML Block/` | Exported dashboard-widget source | [README](Custom%20HTML%20Block/README.md) |
+| `custom_html_blocks/` | Dashboard-widget sources (Projects Dashboard, Task Dashboard, Morning Briefing, Desk Shortcuts) — the source of truth, upserted on migrate | [README](erpnext_enhancements/custom_html_blocks/README.md) |
+| `workspace_sidebar/` | Dashboard sidebar definitions | [README](erpnext_enhancements/workspace_sidebar/README.md) |
+| `fixtures/` | Version-controlled Custom Fields, Property Setters, roles, workflows | [README](erpnext_enhancements/fixtures/README.md) |
+| `setup/` | Migrate-time provisioning re-asserted on every `bench migrate` | [README](erpnext_enhancements/setup/README.md) |
+| `utils/` | Cross-cutting helpers, including two site-wide monkeypatches/hooks | [README](erpnext_enhancements/utils/README.md) |
+| `assistant_tools/` · `data/` | MCP tools and skills for AI assistants, plus the AI write gate | [tools](erpnext_enhancements/assistant_tools/README.md) · [skills](erpnext_enhancements/data/README.md) |
 
 > **History:** v0.2.0 merged the previously separate `crm_enhancements`, `global_enhancements`, `project_enhancements`, `task_enhancements`, and `qb_time_integration` apps into this one app. Their public assets are namespaced under `public/{js,css}/<module>/` to avoid collisions. Uninstall the old standalone apps from existing benches after deploying.
 
@@ -149,7 +172,7 @@ A few subsystems are large enough to call out; each is documented fully in its m
 - **Live collaborative editing** — Google-Docs-style multi-user form editing, configured per-doctype on **ERPNext Enhancements Settings** (master switch + allowlist child table; toggle doctypes with no deploy — seeded at launch with Task, Project, Opportunity, Customer, Contact, Address, Item, Supplier, Purchase Order drafts, ToDo). A client engine (`public/js/collab/live_form_sync.js`) streams debounced field changes through a permission-checked relay (`api/collab.py`) into Frappe's per-document realtime rooms; collaborators' saves merge silently (adopting the new `modified` timestamp, so `TimestampMismatchError` can't occur between collaborators), and theme-aware per-field presence highlights show who is editing which field. → [API README](erpnext_enhancements/api/README.md) and [public README](erpnext_enhancements/public/README.md#live-collaborative-editing-jscollab)
 - **Custom Comments App** — a Vue 3 notes UI mounted on ~23 doctypes. → [public README](erpnext_enhancements/public/README.md#the-comments-app)
 - **Contact / primary-contact / directory model** — denormalized primary contacts kept in sync both directions, plus an aggregated contacts/addresses directory with per-document exclusions. → [script_migrations README](erpnext_enhancements/script_migrations/README.md) and `sync_contact.py`
-- **QuickBooks Online sync** — OAuth2 → REST client → entity mapping → idempotent upsert → audit log, with CDC polling, webhooks, and retries. → [QuickBooks README](erpnext_enhancements/quickbooks_time_integration/README.md)
+- **QuickBooks Online sync** — OAuth2 → REST client → entity mapping → idempotent upsert → audit log, with CDC polling, webhooks, and retries. → [QuickBooks Online README](erpnext_enhancements/quickbooks_online/README.md)
 
 ## Installation
 
@@ -198,7 +221,15 @@ Most tests under [`tests/`](erpnext_enhancements/tests/) require a real bench (`
 bench --site <site> run-tests --app erpnext_enhancements
 ```
 
-Two suites are deliberately bench-free and run with plain `pytest`/`unittest`: `tests/test_quickbooks_online.py` (stubs `frappe`/`requests` in `sys.modules`) and the root `test_sync_time_kiosk.py` (mocks `httpx`). See the [tests README](erpnext_enhancements/tests/README.md).
+Many suites are deliberately **bench-free** — they install their own `frappe` stub in `setUpModule` (or are pure filesystem/algorithm checks) — and those are the ones CI runs. They split between `unittest` and `pytest`, and the split matters: `python -m unittest` silently collects *nothing* from pytest-style function tests and reports success, so a new bench-free pytest suite needs its own `python -m pytest` step in [`ci.yml`](.github/workflows/ci.yml). The authoritative list of what runs where is that workflow.
+
+```bash
+python -m unittest erpnext_enhancements.tests.test_doctype_modules -v      # bench-free, unittest
+python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q   # bench-free, pytest
+python -m unittest test_sync_time_kiosk.py -v                              # bench-free, repo root
+```
+
+See [`docs/development.md`](docs/development.md) and the [tests README](erpnext_enhancements/tests/README.md).
 
 ## Conventions
 
@@ -211,10 +242,19 @@ Two suites are deliberately bench-free and run with plain `pytest`/`unittest`: `
 
 ## Documentation index
 
-- **Server modules:** [Enhancements Core](erpnext_enhancements/enhancements_core/README.md) · [Project Enhancements](erpnext_enhancements/project_enhancements/README.md) · [Sapphire Maintenance](erpnext_enhancements/sapphire_maintenance/README.md) · [CRM Enhancements](erpnext_enhancements/crm_enhancements/README.md) · [Global Enhancements](erpnext_enhancements/global_enhancements/README.md) · [Task Enhancements](erpnext_enhancements/task_enhancements/README.md) · [Travel Management](erpnext_enhancements/travel_management/README.md) · [QuickBooks Time Integration](erpnext_enhancements/quickbooks_time_integration/README.md)
-- **Cross-cutting:** [API endpoints](erpnext_enhancements/api/README.md) · [Script migrations](erpnext_enhancements/script_migrations/README.md) · [Patches](erpnext_enhancements/patches/README.md) · [Frontend assets](erpnext_enhancements/public/README.md) · [Time Kiosk PWA](erpnext_enhancements/www/README.md) · [Tests](erpnext_enhancements/tests/README.md) · [Custom HTML Block](Custom%20HTML%20Block/README.md)
+**Every module directory carries its own README**, and that is the primary reference — it maps the module's files, DocTypes, and the decisions behind them.
+
+- **Core & CRM:** [Enhancements Core](erpnext_enhancements/enhancements_core/README.md) · [CRM Enhancements](erpnext_enhancements/crm_enhancements/README.md) · [Project Enhancements](erpnext_enhancements/project_enhancements/README.md) · [Task Enhancements](erpnext_enhancements/task_enhancements/README.md)
+- **Operations:** [Sapphire Maintenance](erpnext_enhancements/sapphire_maintenance/README.md) · [Fleet Maintenance](erpnext_enhancements/fleet_maintenance/README.md) · [Travel Management](erpnext_enhancements/travel_management/README.md) · [Asset Management](erpnext_enhancements/asset_management/README.md) · [Package Dispatch](erpnext_enhancements/package_dispatch/README.md) · [Inventory Enhancements](erpnext_enhancements/inventory_enhancements/README.md) · [Workforce](erpnext_enhancements/workforce/README.md)
+- **Engineering & product:** [Water Engineering](erpnext_enhancements/water_engineering/README.md) · [Product Configurator](erpnext_enhancements/product_configurator/README.md) · [Process Documentation](erpnext_enhancements/process_documentation/README.md)
+- **Finance:** [Stripe Payments](erpnext_enhancements/stripe_payments/README.md) · [QuickBooks Online](erpnext_enhancements/quickbooks_online/README.md) · [QuickBooks Time](erpnext_enhancements/quickbooks_time/README.md) · [Plaid Banking](erpnext_enhancements/plaid_banking/README.md) · [Accounting Intake](erpnext_enhancements/accounting_intake/README.md)
+- **AI & integrations:** [AI Governance](erpnext_enhancements/ai_governance/README.md) · [Assistant Tools (MCP)](erpnext_enhancements/assistant_tools/README.md) · [Assistant Skills](erpnext_enhancements/data/README.md) · [Morning Briefing](erpnext_enhancements/morning_briefing/README.md) · [Integration Hub](erpnext_enhancements/integration_hub/README.md) · [Google Drive](erpnext_enhancements/google_drive/README.md) · [Google Calendar](erpnext_enhancements/google_calendar/README.md) · [Device Management](erpnext_enhancements/device_management/README.md) · [MDM Integration](erpnext_enhancements/mdm_integration/README.md)
+- **Dashboards:** [KPI Dashboards](erpnext_enhancements/kpi_dashboards/README.md) · [Custom HTML Blocks](erpnext_enhancements/custom_html_blocks/README.md) · [Workspace Sidebars](erpnext_enhancements/workspace_sidebar/README.md)
+- **Cross-cutting:** [API endpoints](erpnext_enhancements/api/README.md) · [Utils](erpnext_enhancements/utils/README.md) · [Fixtures](erpnext_enhancements/fixtures/README.md) · [Patches](erpnext_enhancements/patches/README.md) · [Migrate-time setup](erpnext_enhancements/setup/README.md) · [Script migrations](erpnext_enhancements/script_migrations/README.md) · [Frontend assets](erpnext_enhancements/public/README.md) · [Time Kiosk PWA](erpnext_enhancements/www/README.md) · [Tests](erpnext_enhancements/tests/README.md)
 - **Build/codegen tools:** [Contract template pipeline](scripts/contract_templates/README.md) · [Form layout generator](scripts/layout/README.md)
-- **Reference:** [`CHANGELOG.md`](CHANGELOG.md) · [`hooks.py`](erpnext_enhancements/hooks.py) (annotated)
+- **Guides & design docs:** [`docs/`](docs/README.md) — including [development.md](docs/development.md) (setup, tests, deploys)
+- **Planning:** [`PLAN.md`](PLAN.md) · [`work-items/`](work-items/) · [`decisions/OPEN-DECISIONS.md`](decisions/OPEN-DECISIONS.md) (business) · [`decisions/adr/`](decisions/adr/README.md) (engineering)
+- **Reference:** [`CHANGELOG.md`](CHANGELOG.md) · [`hooks.py`](erpnext_enhancements/hooks.py) (annotated) · [`CLAUDE.md`](CLAUDE.md) and [`.claude/skills/`](.claude/skills/) (context for AI contributors)
 
 ## Contributing
 

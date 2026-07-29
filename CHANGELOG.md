@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.193.1] - 2026-07-29
+
+### Added
+
+- **`CLAUDE.md`** — the repo had none, which meant every AI contributor rediscovered the
+  same expensive facts from scratch: that indentation is mixed and must be matched
+  per-file, that `ruff check` is advisory because of a known backlog, that bench-free
+  suites split between `unittest` and `pytest` and `python -m unittest` silently collects
+  *nothing* from a pytest-style suite, that removing a fixture record does not delete it
+  from the database, that a `www/` controller with a hyphen in its filename is never
+  imported by Frappe, and that `stripe_payments` ships without the Stripe SDK on purpose.
+
+  Written to Anthropic's [new rules of context engineering for Claude 5 generation
+  models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models):
+  short, spent on gotchas rather than on facts inferable from the file tree, with
+  procedures pushed into skills that load only when relevant.
+
+- **`.claude/skills/`** — six skills covering the procedures that used to live only in
+  people's heads: `add-doctype` (including the module-placement test), `add-endpoint`
+  (permission and validation conventions, plus the AI-tool rules), `run-tests` (which suite
+  runs where, and the unittest/pytest collection trap), `fixtures-and-patches` (which of the
+  three version-control mechanisms to use, the two-step deletion, the dormant-Check trap),
+  `release-prep`, and `work-item` (the WI lifecycle and the native-first rule).
+
+- **`decisions/adr/`** — eight architecture decision records, alongside the existing `OD-n`
+  *business* register in `decisions/OPEN-DECISIONS.md` and explicitly distinguished from it.
+  They capture reasoning that was real but scattered across `pyproject.toml` comments,
+  `ci.yml` comments, `patches/README.md` table rows and the CHANGELOG: native-first, the
+  repo as source of truth for customizations, no vendor SDKs, bench-free-only CI, desk-only
+  AI write confirmation, tolerating mixed indentation, and bundle-only global assets.
+
+- **READMEs for the 19 module directories that had none**, following the house style
+  `api/README.md` set. The largest gaps were `water_engineering` (6.5k LOC across 64 files),
+  `stripe_payments` (3.7k), `product_configurator` (2.5k), `kpi_dashboards`,
+  `accounting_intake`, `setup` and `plaid_banking`. Each maps the module's files and
+  DocTypes and records the decisions a reader would otherwise mistake for oversights — that
+  `water_engineering/engine/` may never import `frappe`, that `product_configurator`'s
+  condition evaluator is an AST whitelist because users author the expressions, that
+  `erp_integration.py` contains no `frappe.db.commit()` on purpose, that Plaid's
+  `plaid_auth_blocked` flag exists to prevent retry storms.
+
+- **`docs/README.md`** and **`docs/development.md`** — a documentation index, and a
+  development guide covering bench setup, the three ways tests run, the lint posture, the
+  version gate, where a change goes, and the deploy path.
+
+- A module docstring for **`hooks.py`**, which carried extensive inline annotation but no
+  statement of what the file is or why its comments are load-bearing.
+
+### Fixed
+
+- **Broken and stale links in `README.md`.** The module map advertised "eight Frappe
+  modules" and listed two that no longer exist under those names — `global_enhancements`
+  (folded into AI Governance and Enhancements Core) and `quickbooks_time_integration`
+  (split into `quickbooks_online` and `quickbooks_time`) — so three README links 404'd, as
+  did the root `Custom HTML Block/` entry after that directory moved into the package as
+  `custom_html_blocks/`. `modules.txt` actually registers 26 modules; the map now lists them
+  all. `enhancements_core/README.md` pointed at the removed `global_enhancements` README for
+  the Triton Assistant Settings cross-reference and now points at AI Governance.
+
+- **The "Running tests" section understated what CI covers.** It described exactly two
+  bench-free suites; there are now many, split across `unittest` and `pytest` steps. It now
+  states the collection trap that silently disabled the QuickBooks suite and points at
+  `ci.yml` as the authoritative list.
+
 ## [1.193.0] - 2026-07-28
 
 ### Changed
