@@ -2,7 +2,7 @@
 
 `erpnext_enhancements` is Sapphire Fountains' custom Frappe app: ~94k lines of Python
 across 40+ modules customising ERPNext for a fountain design, build, service and rental
-business. It runs on Frappe/ERPNext v16 and deploys from `main` to Frappe Cloud.
+business. It runs on Frappe/ERPNext v16 and deploys from `main` to Google Cloud.
 
 [`README.md`](README.md) has the module map, the wiring model, and an index of the
 per-directory READMEs — every module documents itself next to its code. Read those rather
