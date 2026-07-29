@@ -33,7 +33,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 | **Time Kiosk Settings** | Location-tracking toggles/sampling (distance filter, heartbeat, high accuracy, min accuracy, max batch, wake lock) + `retention_days` | `api.time_kiosk`, `public/js/kiosk/geo.js` |
 | **Triton Settings** | External AI/telephony gateway: URL, prompts/guidelines, model IDs, Password secrets (Maps/Vertex key, Twilio creds, admin webhook secret) | `api.telephony`, `api.gemini`, `triton_chat.py` |
 
-> Note the two related-but-distinct Triton doctypes: **Triton Settings** (here, the gateway *connection* + secrets) vs **Triton Assistant Settings** (in [Global Enhancements](../global_enhancements/README.md), the in-app *widget* behavior).
+> Note the two related-but-distinct Triton doctypes: **Triton Settings** (here, the gateway *connection* + secrets) vs **Triton Assistant Settings** (in [AI Governance](../ai_governance/README.md), the in-app *widget* behavior).
 
 ## Time Kiosk data model
 

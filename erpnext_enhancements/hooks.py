@@ -1,3 +1,23 @@
+"""Frappe hook registry — the wiring diagram for every customization in this app.
+
+Nothing here executes logic; it is a declaration of what Frappe should load and when.
+Read it as the index it is: `doc_events` shows which controllers this app attaches to,
+`scheduler_events` shows every recurring job, `override_whitelisted_methods` and the
+monkeypatches show where core behaviour is replaced, and the `app_include_*` / `doctype_js`
+lists show which browser assets reach which form.
+
+**This file is annotated, and the annotations are documentation.** Several of the comments
+below record why an apparently odd choice is load-bearing — why global assets ship as
+esbuild bundles rather than raw `/assets` paths (the immutable one-year cache means edits
+never reach a device that already cached them), why two vendored UMD libraries are
+deliberately excluded from that rule, why `setup.document_locks` runs on `before_migrate`
+rather than `after_migrate`. Keep that density when you add an entry; a bare hook line with
+no explanation is the thing that gets "cleaned up" two years later.
+
+Every customization added to the app needs a line here **and** a matching entry in the
+owning module's README. See `CLAUDE.md` and `.claude/skills/`.
+"""
+
 app_name = "erpnext_enhancements"
 app_title = "ERPNext Enhancements"
 app_publisher = "Sapphire Fountains"
