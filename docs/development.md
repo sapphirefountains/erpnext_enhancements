@@ -91,7 +91,7 @@ the merge, leaving `main` deployed but untagged (this happened at v0.9.0).
 
 [`release.yml`](../.github/workflows/release.yml) tags and publishes a GitHub Release whenever
 a new `__version__` lands on `main`, using the matching `CHANGELOG.md` section as the release
-notes. Because Frappe Cloud deploys from `main`, the Releases page is a 1:1 log of what is
+notes. Because `main` deploys automatically, the Releases page is a 1:1 log of what is
 deployed — which is why changelog entries here are long and explain *why*.
 
 ## Where a change goes
@@ -111,9 +111,20 @@ density.
 
 ## Deployment
 
-Frappe Cloud deploys from `main`. [`cloudbuild.yaml`](../cloudbuild.yaml) and
-[`infra/`](../infra/) cover the supporting Google Cloud infrastructure (the Terraform modules
-live in [`modules/`](../modules/)).
+`main` deploys to a **self-hosted bench on a Google Cloud VM** —
+`production-erpnext-standard-vm` (us-east4-a) behind `production-glb`, with
+`beta.erp.sapphirefountains.com` on a spot VM. [`cloudbuild.yaml`](../cloudbuild.yaml) and
+[`infra/`](../infra/) are that infrastructure, not merely supporting it:
+[`infra/configs/startup_script.sh`](../infra/configs/startup_script.sh) provisions the whole
+bench, and `startup_script_packages` in [`infra/variables.tf`](../infra/variables.tf) is the
+host's package list.
+
+> Earlier revisions of this file said "Frappe Cloud deploys from `main`". That is **stale**
+> and it was actively misleading: it implies a managed host where packages cannot be
+> installed, which is the reason `stripe_payments` ships without the Stripe SDK. On our own
+> VM we *can* install packages — and the fact that nobody realised is why PDF generation
+> shipped with neither Chromium nor wkhtmltopdf present. See
+> [`pdf-generation.md`](pdf-generation.md).
 
 `bench migrate` runs the `before_migrate` / `after_migrate` hooks in
 [`setup/`](../erpnext_enhancements/setup/README.md), then patches, then fixture sync. Expect a

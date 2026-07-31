@@ -771,7 +771,46 @@ variable "spot_vm_labels" {
 variable "startup_script_packages" {
   type        = list(string)
   description = "List of APT packages to install on first boot."
-  default     = ["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]
+  # The PDF toolchain, and its absence is why PDF generation was broken on the first
+  # VM built from this stack. Two separate backends, both of which were unusable:
+  #
+  #  * wkhtmltopdf — used by every SERVER-side caller (frappe.attach_print, and
+  #    frappe.get_print/get_pdf without an explicit generator). Not installed at all.
+  #    Note Print Settings.pdf_generator = "chrome" does NOT redirect these; it only
+  #    governs the HTTP download_pdf path.
+  #  * headless Chromium over the DevTools protocol — used by the Download PDF button.
+  #    Frappe ships and manages its OWN build under the bench
+  #    (frappe-bench/chromium/chrome-linux/headless_shell) and never looks at
+  #    /usr/bin/chromium, so the `chromium` package below is NOT what it runs. It is
+  #    here because it drags in the shared libraries that build needs — libnss3,
+  #    libatk, libgbm, libasound and friends — without which headless_shell exits
+  #    immediately and Frappe reports only "Chromium took too long to start."
+  #
+  # See docs/pdf-generation.md; installing the package alone is not sufficient, and
+  # that document carries the by-hand launch that names the actual cause.
+  #
+  # Fonts are not cosmetic. Without them a headless browser renders boxes or
+  # substitutes silently, which produces a PDF that "succeeds" and looks wrong —
+  # worse than an error, because nobody finds out.
+  #
+  # NOTE: the apt-get in configs/startup_script.sh is guarded behind
+  # SKIP_FIRST_BOOT, so changing this list does NOT retrofit a running VM. It only
+  # means a rebuilt one starts correct. See docs/pdf-generation.md for the manual
+  # install and its verification steps.
+  default = [
+    "curl",
+    "git",
+    "nginx",
+    "python3",
+    "python3-pip",
+    "python3-venv",
+    "pipx",
+    "chromium",
+    "wkhtmltopdf",
+    "fonts-liberation",
+    "fonts-dejavu-core",
+    "fontconfig",
+  ]
 }
 
 variable "deploy_user" {

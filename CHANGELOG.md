@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.200.1] - 2026-07-31
+
+### Added
+
+- **`docs/pdf-generation.md`** — diagnosis and runbook for the broken PDF generator.
+
+  **Both backends fail, so there is no working way to produce a PDF at all.** The default
+  path (`Print Settings.pdf_generator = "chrome"`) raises `Chromium took too long to
+  start.`; the manual fallback in the print view raises `No wkhtmltopdf executable found:
+  "b''"` — the empty `b''` being `which wkhtmltopdf` returning nothing. Eleven logged
+  failures between 2026-07-20 and 07-28. The volume is low only because the failure is
+  total: people try once and stop. One of them is literally an attempt to PDF a Purchase
+  Order print format.
+
+  Root cause is the host, not the app: `infra/variables.tf` provisioned the VM with
+  `["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]` — no
+  browser, no wkhtmltopdf, no fonts — and nothing in this repo installed either. The bench
+  was built on a host that never had a PDF toolchain.
+
+  Worth knowing for anyone reading the error: Frappe 16 does not shell out to a binary for
+  the chrome backend. It drives a headless Chromium over the **DevTools Protocol**
+  (`frappe/utils/pdf_generator/browser.py`), so "took too long to start" covers three
+  different causes — no binary, a binary that cannot launch (sandbox, missing shared
+  libraries, 64 MB `/dev/shm`), or one that starts too slowly under memory pressure. The
+  runbook is diagnostic-first for that reason: steps 1–3 are read-only and decide which
+  fix applies.
+
+  Also documented: the two callers that have been failing **silently** rather than
+  erroring, so nobody reported them — `esign/lifecycle.py` builds the signed-contract PDF
+  inside a bare `try/except` that logs and returns `None`, and
+  `api/maintenance_workflow.py` calls `frappe.attach_print` inside a `sendmail`, so
+  customer maintenance reports have been going out without their attachment.
+
+### Changed
+
+- **`infra/variables.tf` and `infra/terraform.tfvars.template`** gain `chromium`,
+  `wkhtmltopdf`, `fonts-liberation`, `fonts-dejavu-core` and `fontconfig`, so a rebuilt VM
+  inherits a working toolchain.
+
+  This **does not fix the running VM**, and the comment in `variables.tf` says so: the
+  `apt-get` in `configs/startup_script.sh` is guarded behind `SKIP_FIRST_BOOT` and runs
+  only on first boot. Two changes were needed and only one of them lives in this repo.
+
+  Fonts are in the list deliberately. Without them a headless browser renders boxes or
+  substitutes silently — producing a PDF that "succeeds" and looks wrong, which is a worse
+  failure than the current one because nobody finds out.
+
+- **Corrected the deployment target in the docs.** `docs/development.md`, `README.md` and
+  `.claude/skills/release-prep/SKILL.md` all still said *"Frappe Cloud deploys from
+  `main`"*. Production is a **self-hosted bench on a Google Cloud VM**
+  (`production-erpnext-standard-vm`), provisioned by `infra/configs/startup_script.sh`.
+
+  This was not a cosmetic inaccuracy. "Frappe Cloud" implies a managed host where packages
+  cannot be installed — which is exactly the stated reason `stripe_payments` ships without
+  the Stripe SDK. Reading the repo honestly led to the conclusion that the PDF toolchain
+  *could not* be installed, when on our own VM it always could. `docs/development.md` now
+  carries a note naming the stale claim, so anyone who remembers the old wording sees why
+  it changed.
+
 ## [1.200.0] - 2026-07-31
 
 ### Fixed
