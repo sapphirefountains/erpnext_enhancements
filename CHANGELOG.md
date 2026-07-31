@@ -40,6 +40,508 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Directions call (the existing code re-routes on blur rather than keystroke for exactly
   this reason), and the map **degrades in three steps** — a detail view that only works at
   step one would be a regression in the field.
+## [1.201.0] - 2026-07-31
+
+### Added
+
+- **A supplier-facing Purchase Order print format** — `Purchase Order - Sapphire`. The
+  site had two abandoned print-format-builder attempts (`Test Purchase Order Format`,
+  `PO Test Print Format`, both untouched since October 2025) and three ERPNext standards,
+  none of which is something you would send a vendor.
+
+  Contents, each confirmed rather than assumed: letterhead, PO number and date,
+  required-by date, supplier with address and contact, deliver-to, itemised lines with
+  **project per line** (`Purchase Order Item.project` is mandatory here under WI-014, and
+  a supplier delivering to a job site needs it), net total, taxes, grand total, payment
+  terms, and delivery/receiving instructions. **No item images** — heavy on a multi-page
+  order and little help for parts identified by number.
+
+  Print-safe CSS only: no flexbox, no grid, `page-break-inside: avoid` on rows and
+  totals, and a `thead` that repeats across pages. The PDF engine on this host has been
+  unreliable enough (see `docs/pdf-generation.md`) without asking it to do anything
+  clever.
+
+  It lives in **Enhancements Core** because procurement has no module of its own —
+  `po_approval`, `po_segregation` and `procurement_project` all sit at the app root, and
+  a Print Format needs a real Module Def to belong to.
+
+- **`custom_approved_by` / `custom_approved_on` on Purchase Order**, and this is the part
+  worth reading. The format prints an approver, and **there was nowhere truthful to read
+  one from**: Purchase Order has no approver field, and `modified_by` is whoever touched
+  the document *last* — which after any post-submit edit is not the approver at all.
+  Printing that would have been confidently wrong on a document that goes to a vendor.
+
+  So the two gates that already establish the fact now record it.
+  `po_approval.stamp_approval` runs **last** in the `before_submit` chain, after
+  `enforce_requester_separation` and `enforce_threshold` have both passed, so the stamp
+  means "this order cleared both gates in this person's hands" rather than "somebody
+  pressed submit". Orders submitted before this shipped print an em dash rather than an
+  invented name.
+
+### Notes
+
+- **Not signed off.** The task's own acceptance criteria require generating real PDFs for
+  a one-line order, a 30-line multi-page order, and one with very long descriptions — and
+  PDF generation is broken on this host in both backends (v1.199.1). This format has been
+  validated as HTML and its Jinja parses; it has **not** been through the PDF engine,
+  because there currently is no working PDF engine to put it through. That was true
+  before this change and is the reason the two earlier attempts were abandoned.
+- Shipped via the `after_migrate` upsert that eight of the ten existing formats use,
+  rather than the `hooks.py` fixtures allowlist that the other two use. Template edits
+  then deploy on the next migrate with no export step, and `after_migrate` runs after
+  fixture sync so it cannot be silently overridden. The trade-off — an admin's UI edit is
+  overwritten on the next deploy — is the intended direction, the repo being the source
+  of truth. Switching to the fixtures allowlist is a small change if preferred.
+## [1.200.1] - 2026-07-31
+
+### Added
+
+- **`docs/pdf-generation.md`** — diagnosis and runbook for the broken PDF generator.
+
+  **Both backends fail, so there is no working way to produce a PDF at all.** The default
+  path (`Print Settings.pdf_generator = "chrome"`) raises `Chromium took too long to
+  start.`; the manual fallback in the print view raises `No wkhtmltopdf executable found:
+  "b''"` — the empty `b''` being `which wkhtmltopdf` returning nothing. Eleven logged
+  failures between 2026-07-20 and 07-28. The volume is low only because the failure is
+  total: people try once and stop. One of them is literally an attempt to PDF a Purchase
+  Order print format.
+
+  Root cause is the host, not the app: `infra/variables.tf` provisioned the VM with
+  `["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]` — no
+  browser, no wkhtmltopdf, no fonts — and nothing in this repo installed either. The bench
+  was built on a host that never had a PDF toolchain.
+
+  Worth knowing for anyone reading the error: Frappe 16 does not shell out to a binary for
+  the chrome backend. It drives a headless Chromium over the **DevTools Protocol**
+  (`frappe/utils/pdf_generator/browser.py`), so "took too long to start" covers three
+  different causes — no binary, a binary that cannot launch (sandbox, missing shared
+  libraries, 64 MB `/dev/shm`), or one that starts too slowly under memory pressure. The
+  runbook is diagnostic-first for that reason: steps 1–3 are read-only and decide which
+  fix applies.
+
+  Also documented: the two callers that have been failing **silently** rather than
+  erroring, so nobody reported them — `esign/lifecycle.py` builds the signed-contract PDF
+  inside a bare `try/except` that logs and returns `None`, and
+  `api/maintenance_workflow.py` calls `frappe.attach_print` inside a `sendmail`, so
+  customer maintenance reports have been going out without their attachment.
+
+### Changed
+
+- **`infra/variables.tf` and `infra/terraform.tfvars.template`** gain `chromium`,
+  `wkhtmltopdf`, `fonts-liberation`, `fonts-dejavu-core` and `fontconfig`, so a rebuilt VM
+  inherits a working toolchain.
+
+  This **does not fix the running VM**, and the comment in `variables.tf` says so: the
+  `apt-get` in `configs/startup_script.sh` is guarded behind `SKIP_FIRST_BOOT` and runs
+  only on first boot. Two changes were needed and only one of them lives in this repo.
+
+  Fonts are in the list deliberately. Without them a headless browser renders boxes or
+  substitutes silently — producing a PDF that "succeeds" and looks wrong, which is a worse
+  failure than the current one because nobody finds out.
+
+- **Corrected the deployment target in the docs.** `docs/development.md`, `README.md` and
+  `.claude/skills/release-prep/SKILL.md` all still said *"Frappe Cloud deploys from
+  `main`"*. Production is a **self-hosted bench on a Google Cloud VM**
+  (`production-erpnext-standard-vm`), provisioned by `infra/configs/startup_script.sh`.
+
+  This was not a cosmetic inaccuracy. "Frappe Cloud" implies a managed host where packages
+  cannot be installed — which is exactly the stated reason `stripe_payments` ships without
+  the Stripe SDK. Reading the repo honestly led to the conclusion that the PDF toolchain
+  *could not* be installed, when on our own VM it always could. `docs/development.md` now
+  carries a note naming the stale claim, so anyone who remembers the old wording sees why
+  it changed.
+## [1.200.0] - 2026-07-31
+
+### Fixed
+
+- **The Opportunity Kanban's name field showed the wrong contact.** The card was
+  configured with `contact_person`, not the Opportunity's Primary Contact.
+
+  It was hard to spot because Opportunity carries **two** Link-to-Contact fields and
+  *both were labelled "Full Name"* — so the field picker offered the same label twice
+  and the board was configured with whichever one came first. `contact_person` is now
+  labelled **"Contact Person"** (Property Setter fixture), which is the change that
+  stops this recurring.
+
+### Changed
+
+- **Opportunity Kanban cards now show `primary_contact`.** `opportunity_amount` stays in
+  the card field list on purpose: `opportunity_kanban_totals.js` sums it per column and
+  receives it *via the board's own field list* — it is not in
+  `crm_enhancements/opportunity_list.js`'s `add_fields`, so dropping it would have
+  silently emptied the column totals rather than erroring.
+
+  Shipped as a **patch, not a fixture**, because `Kanban Board` is not in the `fixtures`
+  list in `hooks.py`: the board exists only as a live database record, so a UI edit would
+  not survive a fresh site build and would never reach a second site at all. The patch
+  swaps the one entry in place, leaves `field_name` / `filters` / `private` alone, and
+  backs off with a log line if the board has since been re-arranged by hand.
+
+### Added
+
+- **`patches.backfill_opportunity_primary_contact`** — and without it this change would
+  have made the board worse. Of 814 Opportunities on production, 154 have
+  `contact_person` and only **21** have `primary_contact`; 142 have the first and not the
+  second. A straight field swap would have blanked 142 cards that show a name today.
+
+  The backfill fills those 142 (all of them — no dangling Contact links) and leaves alone
+  the **five** where both fields are set and genuinely differ, e.g. `CRM-OPP-2026-00120`
+  (primary *Nick Hess*, contact person *Kaia Whetman*). Where somebody drew a distinction
+  between "the contact on this deal" and "the primary contact", this patch is not
+  entitled to collapse it.
+
+  Net effect measured against production: **154 cards show a name today, 163 after.** The
+  swap is an improvement rather than a regression only because of this ordering, which
+  `patches.txt` enforces.
+
+  Writes with `db.set_value(..., update_modified=False)` rather than `doc.save()`, so a
+  142-row backfill does not fire `on_update` — and through it `sync_from_main_doc`, the
+  Drive folder hooks and the global Triton `after_save` — 142 times.
+
+## [1.199.0] - 2026-07-31
+
+### Fixed
+
+- **Setting a Primary Contact or Primary Address on a Project or Opportunity silently
+  re-pointed the Customer's.** Both handlers in the directory widget derived their
+  account as
+  `frm.doc.customer || frm.doc.supplier || frm.doc.party_name || frm.doc.name`:
+
+  - On a **Project** that resolves to the Project's Customer. One click cleared
+    `is_primary_contact` across every contact on that account and set it on the chosen
+    one — a project-level decision rewriting a company-level fact, with no indication
+    anything outside the Project had changed.
+  - On an **Opportunity** it resolved to the incoherent pair `("Opportunity", <a
+    Customer id>)`, because Opportunity's party discriminator is `opportunity_from`, not
+    `party_type`. The `Dynamic Link` query behind "unset the others" matched nothing, so
+    the flag was set without the previous one being cleared — which is how four
+    Customers ended up with two contacts each flagged primary.
+
+  The root cause is architectural, which is why the fix is a rule rather than a patch:
+  `Contact.is_primary_contact` and `Address.is_primary_address` are columns on the
+  Contact/Address **record**, not on the `Dynamic Link` row. Setting one is a statement
+  about a whole account, and there is physically nowhere in that scheme to record
+  "primary for *this* Project". Only Customer and Supplier are accounts in that sense.
+  Every other form — Project, Opportunity, Master Project, Contact — now records its
+  primary in its own doc-local `primary_contact` / `primary_address` Link field
+  (`setup/custom_fields.py`) and touches nothing else. Customer, Supplier and the
+  supplier pick-up address ordering in `api/pickup_routing.py` are unchanged by design.
+
+  Note the ticket named `sync_contact.sync_from_main_doc` as the prime suspect. That
+  function only ever writes the Contact's three convenience fields, has no
+  Project→Customer edge at all, and was never involved; the propagation was entirely
+  client-side. A test now pins that down so the diagnosis does not have to be redone.
+
+  Visible consequence worth watching: the Project Brief's owner contact
+  (`project_enhancements/doctype/project/project.py`) and ERPNext's own default-address
+  pick on a Customer's transactions both read the global flag. They now reflect the
+  Customer's real primary rather than whatever a Project user last clicked — correct,
+  but it may be a different name than yesterday.
+
+- **`frm.save().done(...)`** in both handlers. `frm.save()` returns a native Promise,
+  which has no `.done`, so the post-save re-render and the "Primary contact updated"
+  toast never ran — the action worked but appeared not to. Replaced with the documented
+  `frm.save("Save", callback)` signature already used in `task_enhancements.js`.
+
+- **The primary-contact auto-fill ran almost nowhere, and read the wrong columns where
+  it did.** `primary_contact.js` binds five doctypes but was registered under the
+  **Lead** entry only, and `frappe.ui.form.on` registrations are global once a file is
+  parsed — so on a Project it ran only if the user happened to have opened a Lead
+  earlier in the same session, and did nothing otherwise. That reads as flakiness rather
+  than a bug. It also fetched `Contact.phone` / `mobile_no` while the server writes
+  `custom_phone_number` / `custom_mobile_number`, so on the occasions it *did* run it
+  blanked the phone. Both halves are fixed together: fixing only the registration would
+  have spread the second defect to four more forms.
+
+### Added
+
+- **`patches.dedupe_party_primary_flags`** — clears the stray flags the Opportunity path
+  left behind. On production that is four Customers with two primary contacts (AE URBIA,
+  Insomniac, Kapture Vision, Michael Stone) and one with two primary addresses (Hess
+  Construction LLC): **four flags cleared across five accounts**.
+
+  It only ever *removes* a duplicate. It never invents a primary and never moves one
+  where exactly one exists, because the Project path overwrote the account's previous
+  value with no record anywhere of what it had been — that class is genuinely
+  unrecoverable and pretending otherwise would be worse than leaving it.
+
+  The winner is whichever record the account's own `customer_primary_contact` /
+  `*_primary_address` field points at — ERPNext maintains those and `sync_contact` has
+  never written them, so where one is set it is the only uncorrupted witness. Two of the
+  four were decided that way; the rest fall back to the least recently modified, on the
+  reasoning that the strays are what the buggy widget added on top. Writes with
+  `update_modified=False`, because a real `doc.save()` would fan out through
+  `sync_from_contact` into a re-save of every party naming that Contact.
+
+  One live edge case it handles rather than mangles: Customer "Michael  Stone" has the
+  *same* Contact linked twice by duplicate `Dynamic Link` rows. That is a different
+  defect and emphatically not two competing primaries — clearing "the other one" would
+  have unflagged the only primary there is.
+
+- **`tests/test_sync_contact_primary.py`** — 13 bench-free tests with their own CI step.
+  `sync_contact` had **zero** tests, which is how a module that writes across document
+  boundaries went this long unfenced.
+
+### Security
+
+- `sync_contact.set_primary_contact` / `set_primary_address` were whitelisted with **no
+  permission check of any kind** — any logged-in user could re-point any customer's
+  primary contact. They now require write permission on the account and reject any
+  `account_doctype` other than Customer or Supplier. The doctype guard is defence in
+  depth behind the client fix: it makes the bug above unrepresentable rather than merely
+  unwritten.
+## [1.198.0] - 2026-07-31
+
+### Added
+
+- **Create a Purchase Receipt straight from the Procurement Tracker.** A quiet
+  **Receive** action on each Purchase Order row, so a delivery can be booked from the
+  screen the buyer is already looking at rather than by navigating out to the order.
+
+  It runs ERPNext's own mapper,
+  `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, so
+  supplier, items, warehouse and — on a partly-received order — only the outstanding
+  quantity all come across. Nothing is hand-rolled.
+
+  It lands on an **unsaved draft** and stops there. A Purchase Receipt is a stock
+  transaction: submitting writes Stock Ledger and GL entries, and cancelling one
+  afterwards is an accounting event rather than an undo. There is no version of this
+  that submits on click.
+
+  Shown only where receiving makes sense — submitted, not `Closed`/`Delivered`, and
+  `per_received < 100`. That is the rule `api/pickup_routing.py` already settled on, and
+  it is reused rather than reinvented: two different answers to "is there anything left
+  to collect" on the same Project form would be worse than either alone. It is *hidden*,
+  not disabled, for anyone without create permission on Purchase Receipt, because
+  `frappe.new_doc` and the mapper both perform no permission check and a visible button
+  would open a form that only fails at save — the same reasoning as the PO Creator gate
+  on **+ Purchase Order**.
+
+### Changed
+
+- **The Project form's "+ Purchase Receipt" button now asks which order arrived.** It
+  used to open a blank Purchase Receipt carrying nothing but the project — no supplier,
+  no order, no lines — so the receiver retyped a delivery ERPNext already knew about and
+  could not link it back to the order afterwards. On this site that also meant the
+  receipt landed unattributed, because the `Purchase Order Item.project` cascade has no
+  equivalent for a hand-built receipt.
+
+  It now lists the project's outstanding orders and routes the chosen one through the
+  same mapper. A single outstanding order skips the prompt. Where there are none it says
+  so rather than falling back to the blank form — a receipt with no order behind it is
+  the thing this replaced.
+
+  New whitelisted `procurement_project.get_receivable_purchase_orders(project)` backs
+  it, matching on the union of the header `Purchase Order.project` and the item-row
+  `Purchase Order Item.project`. Those agree on all 70 orders here today, but only
+  because `cascade_project_to_items` fills blank item rows on save — blanks only, on
+  save only. An order written before that hook, or re-pointed by a path that bypasses
+  it, can still carry one and not the other; that is the state the pick-up routing map
+  found on 44 of 204 lines. The union costs one query and cannot be wrong.
+
+  Note there are **no** partly-received Purchase Orders on production, so the
+  outstanding-quantity path has no live example and needs a constructed case on a test
+  site before sign-off.
+
+## [1.197.0] - 2026-07-31
+
+### Added
+
+- **Sortable columns in the Procurement Tracker.** Click a header to sort the item table
+  ascending, again for descending, a third time to clear it. The active column and
+  direction are shown by an indicator, and the header carries `aria-sort` so a screen
+  reader gets the same information. Keyboard-reachable: the headers are focusable and
+  respond to Enter and Space.
+
+  Sorting is client-side. The largest project on this site is 54 item rows, so there is
+  nothing to paginate and no reason to make the server do it.
+
+  Decisions worth knowing before "fixing" any of them:
+
+  - **Blanks sort last in both directions.** A missing warehouse is not "before A" — it
+    is absent information, and absent information belongs at the bottom whichever way you
+    sorted. The blank comparison deliberately returns before the direction is applied.
+  - **Zero is not blank.** An ordered quantity of `0` is a real value and sorts at the
+    numeric bottom with the numbers. `Requested` on a direct Purchase Order line *is*
+    blank — there is no request behind it — and sorts with the blanks.
+  - **Status sorts by workflow order, not alphabetically.** A–Z gives *Not Received /
+    Over Received / Partially Received / Received*, interleaving "done" between two "not
+    done" states. Worst-first ascending means one click surfaces exactly the lines
+    somebody has to chase. An unrecognised status sorts after every known one rather than
+    first.
+  - **Item codes sort numerically.** This site's codes are `417-080`, `417-100`,
+    `2622-010`; a plain string compare puts `2622-010` in the middle.
+  - **Doc Chain is not sortable**, and has no click affordance. It is one cell holding up
+    to seven chain nodes; there is no single value to order by, and giving it a handler
+    would mean inventing an ordering the column does not show.
+  - **Sort state is per document**, keyed like the existing collapse state. Two documents
+    in a group can want different sorts, and a global sort would silently reorder
+    collapsed tables nobody asked about.
+  - **Search filters first, then sort sorts.** Sorting is applied in a render method
+    rather than inside `filteredGroups`, so the existing filter, the auto-expand watcher
+    and the match highlighting are untouched.
+
+  Two Vue traps avoided, both silent: the sort copies the array before sorting, because
+  `Array.prototype.sort` mutates and mutating `doc.items` during a render is an infinite
+  reactivity loop; and rows are keyed on a new server-supplied `row_id` rather than the
+  array index, because index keys make Vue reuse the wrong DOM nodes once rows can
+  reorder — which smears the search-highlight spans across neighbouring rows.
+
+  Headers are rendered from the same registry the comparator reads, so a column cannot
+  exist in one and not the other.
+
+## [1.196.0] - 2026-07-31
+
+### Added
+
+- **Requested / Ordered / Received as real quantities in the Procurement Tracker**, per
+  item line and totalled per document. Previously one column headed "Qty (Ord / Rec)"
+  carried two numbers, the first of which was the *requested* quantity whenever nothing
+  had been ordered — so an untouched line read as ordered-and-awaiting-delivery. Three
+  separate columns, three separate facts.
+
+  Three columns rather than one combined `4 / 4 / 0` cell for two reasons. A combined
+  cell cannot be sorted without inventing hidden sort keys for one header, and column
+  sorting lands next. And the ambiguity of a slash-pair is what let the original defect
+  hide; a slash-triple is no clearer.
+
+  - **Requested** prints `-`, not `0`, on a direct Purchase Order line. There is no
+    request behind one, and "nobody asked" is a different fact from "asked for none" —
+    the feed used to print both as zero.
+  - **Ordered** carries a muted `+N draft` suffix where quantity is sitting on
+    unsubmitted Purchase Orders, so the excluded amount is visible without being counted.
+  - **Status** now shows the line's own receive status as a badge rather than a bare
+    "N% Received" percentage; the percentage moved into the cell tooltip alongside the
+    arithmetic behind it.
+  - Quantities are in the stock UOM, and the cell tooltip says so — naming the line's own
+    UOM when it differs. Real on this data: `MAT-MR-2026-00001` requests `PD-400-100` in
+    **FT** against a stock UOM of **Unit**.
+
+- **Per-document totals on the Material Request / Purchase Order header row** —
+  `362 req · 358 ord · 0 rec`, computed server-side so the `project_procurement_status`
+  MCP tool gets them too. One span rather than three, because the supplier name is the
+  only element in that flex row that grows and three `nowrap` spans squeeze it to
+  nothing on a narrow screen. Hidden entirely when there is nothing to total, so an RFQ
+  header does not sprout a row of zeroes that reads as a failure rather than an absence.
+
+- **`procurement_quantities.dedupe_lines`** — and it is the reason the totals are
+  right. The feed's Purchase Order join matches `supplier_quotation_item OR
+  material_request_item`, so a request line reachable by both paths comes back more than
+  once: `MAT-MR-2026-00001`'s **ten** lines arrive as **nineteen** rows. Summing those
+  directly reports **720 requested / 716 ordered** against a true **362 / 358**. Keying
+  on the child row name collapses the duplicates and reproduces the child table exactly.
+  Rows with no child row of their own — the supplementary sweep builds those for
+  documents that never joined a chain — stay distinct and each count once.
+
+  Three more bench-free tests cover it, including the naive-sum case, so a future
+  refactor that drops the de-duplication fails rather than silently doubling.
+
+## [1.195.0] - 2026-07-31
+
+A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bump.
+
+### Fixed
+
+- **Every line of a partially-ordered Material Request read "Partially Ordered" in the
+  Procurement Tracker, including the lines that were fully ordered.** On
+  `MAT-MR-2026-00001` (PRJ-00566) that is nine fully-ordered lines and one untouched
+  one, all wearing the same badge; on `MAT-MR-2026-00003` it is twenty and two. Across
+  production, 29 of 32 item rows under a partially-ordered request were mislabelled.
+
+  Root cause is one line. `get_procurement_status` selected `mr.status` — the *parent
+  request's header status* — onto a row whose grain is the **item**, so a single value
+  was fetched once and painted once per line. `Material Request.per_ordered` and
+  `Material Request Item.ordered_qty` were never queried by the feed at all.
+
+  The second half of the same defect was in the colour mapper: `getStatusColorClass`
+  matched on the substring `'ordered'`, which `"Partially Ordered"` and `"Ordered"`
+  both contain, so the two resolved to the same CSS class. A correct status string
+  alone would still have rendered identically. Same collision existed on
+  `'received'`. Both vocabularies now match exactly first, and the fallback heuristic
+  kept for ERPNext's own status strings tests `partial` before the generic terms.
+
+  Item rows now carry `order_status` and `receive_status` computed from that line's own
+  quantities. The request's header status is still fetched, still shown on the document
+  header where it belongs, and is deliberately still visible in the item row's tooltip
+  alongside the line's own figures — the two legitimately differ, and seeing them
+  together is what makes it obvious the row is no longer echoing its parent.
+
+- **A Material Request line with nothing ordered rendered as though it were fully
+  ordered.** The feed substituted the requested quantity whenever no Purchase Order
+  line joined (`ordered_qty if ordered_qty > 0 else mr_qty`), so an untouched line
+  showed `4 / 0` under a column headed "Qty (Ord / Rec)" and read as ordered-and-
+  awaiting-delivery. It now reads `0`, and the completion percentage is measured
+  against what was ordered rather than against a denominator that fell back to the ask.
+
+- **Quantities were read from one arbitrary row of a fanned-out join.** The feed's
+  Purchase Order join matches `supplier_quotation_item OR material_request_item`, so a
+  request line split across two Purchase Orders arrives as two rows — and `po_item.qty`
+  was being read as the line's total. Likewise `COALESCE(pr_item.qty, sed.qty)` reported
+  one receipt for a line received over several. Both now come from ERPNext's per-line
+  rollups, which are immune to the duplication by construction.
+
+- **Cancelled Purchase Orders still joined the Material Request chain.** Part 2 of the
+  query has always filtered them; Part 1 never did. Latent only because this site has no
+  cancelled Purchase Orders yet.
+
+### Changed
+
+- **`ordered_qty` counts only submitted Purchase Orders.** Ten Purchase Order Item rows
+  against draft orders are linked to Material Request lines on production today. They
+  inflated the tracker while ERPNext's own `ordered_qty` excluded them — so the tracker
+  and the Material Request form it links to disagreed. Draft quantity is still reported,
+  as `draft_ordered_qty`, and surfaces in the item row's tooltip.
+
+  This is a genuine semantic change and figures will *drop* for anyone with draft orders
+  outstanding. On PRJ-00566, 14 of 61 rows change; on PRJ-00567 (54 rows, the largest
+  project) nothing changes at all.
+
+- **`project_procurement_status` (MCP tool)** gains `total_requested_qty` and reports the
+  per-line statuses. Its `total_ordered_qty` was accidentally carrying the *requested*
+  figure whenever nothing had been ordered, so a project with untouched lines looked
+  fully ordered to an assistant. The tool description was updated in the same change —
+  a stale description is what an assistant actually reads.
+
+### Added
+
+- **`erpnext_enhancements/procurement_quantities.py`** — one place where "how much was
+  asked for, how much is on order, how much arrived" is decided. The tracker asked that
+  question at two levels and answered it two different ways; that divergence *is* the
+  bug, and the next two tracker changes both need the same arithmetic.
+
+  It reads ERPNext's denormalized rollups rather than recomputing. They are per-line, so
+  the join fan-out cannot inflate them; they already net out amendments, cancellations
+  and returns — three cases with almost no live examples here, which is exactly where a
+  hand-rolled `SUM` would be wrong and nobody would notice; and they are the same numbers
+  the Material Request form, the MR list status and `po_creation_guard.js` already show.
+  Verified against `SUM(Purchase Order Item.stock_qty)` over every MR-linked submitted
+  Purchase Order line on production: zero discrepancies.
+
+  Stock UOM is the basis on the request axis and transaction UOM on the Purchase Order
+  axis, because `status_updater` maintains each against a different field. Every line on
+  this site currently has `conversion_factor = 1`, so the two are indistinguishable in
+  live data — which is precisely why the choice is written down rather than discovered
+  later by a 120 FT line reading as 12000% ordered.
+
+  Nothing is clamped: over-ordering and over-receipt get their own statuses and exceed
+  100%. The defect being fixed was a number quietly substituted to make a line look
+  complete.
+
+  It lives at the app root beside `procurement_project` / `po_approval` /
+  `po_segregation` rather than under `project_enhancements/`, because that package
+  imports `frappe` and a submodule of it cannot be imported bench-free however pure it
+  is. Same invariant as `water_engineering/engine`, reached from the other direction.
+
+- **`tests/test_procurement_quantities.py`** — 18 bench-free pytest tests with their own
+  CI step. Zero lines on this site are genuinely part-ordered, so the item-level
+  "Partially Ordered" state has no live example and is covered synthetically; without
+  that, the state most central to the bug would ship untested.
+
+- Two CSS classes the tracker never had: `.status-partial` (something has happened, but
+  not all of it — distinct from `.status-pending`, which means nothing has) and
+  `.status-warning` for the over-ordered / over-received anomalies. Both with dark
+  variants, because the tracker's `th` and badge rules hard-code light-mode colours and a
+  new class written only for light mode is illegible in dark.
 
 ## [1.194.1] - 2026-07-31
 
@@ -120,6 +622,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same CSS through `style.textContent`, where markup cannot escape; on an
   unauthenticated page a `</style>` in a site-edited Print Format would have ended the
   element and let everything after it parse as content.
+
+## [1.194.2] - 2026-07-31
+
+### Added
+
+- **`docs/procurement-tracker-map.md`** — a code map for the Project form's **Procurement
+  Tracker**, the collapsible procurement tree on the Budget tab. It had no documentation
+  anywhere: no section in the Project Enhancements README, no CHANGELOG entry of its own
+  (it landed in `a8021db`, before the per-module README pass and before this changelog
+  became a discipline), and only a single table row in the public README. Four queued
+  changes all land in the same two files, so the groundwork is written down once.
+
+  What it records, beyond the file map:
+
+  - **The name collision.** ERPNext ships a *standard* Script Report called "Procurement
+    Tracker" (module Buying, `ref_doctype` Purchase Order). It is unrelated and not in this
+    repo. The thing on the Project form is an in-house Vue 3 widget, and the field it mounts
+    into is labelled "Material Request Feed" — a misnomer, it renders all six procurement
+    doctypes.
+  - **There is no table library.** It is Vue 3 with an inline template string, not a frappe
+    DataTable, so sorting and per-row actions are hand-written work rather than configuration.
+  - **The `OR`-join fan-out** at `project_enhancements/__init__.py:69-72`: one Material
+    Request line split across two Purchase Orders produces two rows for that one line. Nothing
+    de-duplicates today because nothing aggregates today — but any future per-item arithmetic
+    has to, or it double-counts.
+  - **Three different things on screen are called "status"**, from three different sources —
+    and the item-row Doc Chain badge reads the *parent* Material Request's header status
+    (`mr.status`, `:36`) on a child-grain row, so every line of a partially-ordered MR reads
+    "Partially Ordered" whether or not that particular line is fully ordered. Reproduction on
+    `MAT-MR-2026-00001` / `PRJ-00566`. `Material Request.per_ordered` and
+    `Material Request Item.ordered_qty` are never queried by the feed at all.
+  - **The return shape is a public contract.** `assistant_tools/project_procurement_status.py`
+    consumes both endpoints, so renaming `ordered_qty` / `received_qty` breaks the MCP tool
+    silently.
+  - **Production volumes**, so nobody reaches for pagination: the largest project is 54
+    Purchase Order Item rows. Also that *no* `Material Request Item` row has `project` set —
+    Material Requests reach the feed only via `Material Request.custom_project` — and that
+    `Material Request Item.ordered_qty` agreed with the child tables on all 160 submitted rows
+    checked, so quantity work can trust the denormalized fields.
+  - Gotchas worth the reading: the Vue app is never unmounted (every form refresh orphans the
+    previous instance with its watchers live, onto a hard-coded document-global element id),
+    `v-html` renders item codes and supplier names unescaped, both endpoints are whitelisted
+    with **no** permission check, and `_supplementary_documents` swallows every exception so a
+    failing doctype silently vanishes from the feed instead of erroring.
+
+### Changed
+
+- **`project_enhancements/README.md`** gains the Procurement Tracker section it never had, and
+  `docs/README.md` indexes the new map. Documentation only — no executable behaviour changed.
 
 ## [1.193.1] - 2026-07-29
 

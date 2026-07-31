@@ -14,6 +14,73 @@
  * project-linked procurement docs. Tracker styling lives in
  * desk_enhancements.bundle.css (`.procurement-tracker`, `.sapphire-theme`).
  */
+/**
+ * Sortable columns for the Procurement Tracker's item table.
+ *
+ * Declared once, outside the Vue options object, so the template and the comparator
+ * cannot drift apart — a header rendered against a key the sorter does not know is a
+ * click that silently does nothing.
+ *
+ * Doc Chain is deliberately absent. It is a multi-row cell holding up to seven chain
+ * nodes; there is no single value to order by, and giving it a click handler would mean
+ * inventing an ordering that the column does not show.
+ */
+const PROCUREMENT_RECEIVE_RANK = ["Not Received", "Partially Received", "Received", "Over Received"];
+
+const PROCUREMENT_SORT_COLUMNS = {
+	item: {
+		label: "Item Details",
+		type: "text",
+		value: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim(),
+	},
+	warehouse: { label: "Warehouse", type: "text", value: (r) => r.warehouse },
+	requested: { label: "Requested", cls: "qty-col", type: "number", value: (r) => r.requested_qty },
+	ordered: { label: "Ordered", cls: "qty-col", type: "number", value: (r) => r.ordered_qty },
+	received: { label: "Received", cls: "qty-col", type: "number", value: (r) => r.received_qty },
+	// Workflow order, not A-Z. Alphabetical gives Not Received / Partially Received /
+	// Received, which interleaves "done" between two "not done" states. Worst-first
+	// ascending means one click surfaces exactly the lines somebody has to chase.
+	status: {
+		label: "Status",
+		type: "rank",
+		value: (r) => r.receive_status,
+		ranks: PROCUREMENT_RECEIVE_RANK,
+	},
+};
+
+/**
+ * Blanks sort last in BOTH directions, so the return value is never multiplied by the
+ * sort direction. A missing warehouse is not "before A" — it is absent information, and
+ * absent information belongs at the bottom whichever way you sorted.
+ *
+ * Zero is not blank. An ordered quantity of 0 is a real, meaningful value and sorts at
+ * the numeric bottom with the numbers, which is why these are strict comparisons and
+ * not a falsy check.
+ *
+ * Returns null when both values are present, meaning "no opinion, go and compare them".
+ */
+function procurementBlankOrder(a, b) {
+	const aBlank = a === null || a === undefined || a === "";
+	const bBlank = b === null || b === undefined || b === "";
+	if (!aBlank && !bBlank) return null;
+	if (aBlank && bBlank) return 0;
+	return aBlank ? 1 : -1;
+}
+
+function procurementCompare(a, b, column) {
+	if (column.type === "number") return Number(a) - Number(b);
+	if (column.type === "rank") {
+		// An unrecognised status sorts after every known one rather than at -1, which
+		// would silently put it first.
+		const ai = column.ranks.indexOf(a);
+		const bi = column.ranks.indexOf(b);
+		return (ai < 0 ? column.ranks.length : ai) - (bi < 0 ? column.ranks.length : bi);
+	}
+	// `numeric` matters here: this site's item codes are 417-080, 417-100, 2622-010,
+	// which a plain string compare orders wrong.
+	return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
@@ -67,6 +134,12 @@ frappe.ui.form.on("Project", {
 										}, {}),
 										// Individual documents collapsed by default (keyed "DocType::name").
 										collapsedDocs: {},
+										// Sort state per document, same key shape. Per-document
+										// rather than global: expansion already works that way, two
+										// documents in one group can want different sorts, and a
+										// global sort would silently reorder collapsed tables
+										// nobody asked about.
+										sortByDoc: {},
 									};
 								},
 								watch: {
@@ -90,6 +163,15 @@ frappe.ui.form.on("Project", {
 									}
 								},
 								computed: {
+									// Headers are rendered from the same registry the comparator
+									// reads, so a column cannot exist in one and not the other.
+									sortableColumns() {
+										return Object.keys(PROCUREMENT_SORT_COLUMNS).map((key) => ({
+											key: key,
+											label: PROCUREMENT_SORT_COLUMNS[key].label,
+											cls: PROCUREMENT_SORT_COLUMNS[key].cls || '',
+										}));
+									},
 									filteredGroups() {
 										const tokens = this.tokenize(this.globalSearchTerm);
 										if (!tokens.length) return this.groups;
@@ -164,10 +246,191 @@ frappe.ui.form.on("Project", {
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
 									},
+									// Only where receiving actually makes sense. The rule is the same
+									// one api/pickup_routing.py settled on: the number, not the
+									// label — "Closed" can hide an order whose goods never turned
+									// up, and "To Bill" means they are already here.
+									//
+									// Hidden rather than disabled for a user without create
+									// permission: frappe.new_doc and the mapper both perform no
+									// permission check, so a visible button would open a form and
+									// only fail at save, losing whatever was typed. Same reasoning
+									// as the PO Creator gate on the + Purchase Order button.
+									canReceive(doctype, doc) {
+										if (doctype !== 'Purchase Order') return false;
+										if (doc.docstatus !== 1) return false;
+										if (['Closed', 'Delivered'].includes(doc.status)) return false;
+										if (Number(doc.per_received || 0) >= 100) return false;
+										return frappe.model.can_create('Purchase Receipt');
+									},
+									receiveAgainst(poName) {
+										// ERPNext's own mapper. It carries supplier, items, warehouse
+										// and only the outstanding quantity, and it lands on an
+										// UNSAVED draft. Nothing here submits: a Purchase Receipt is
+										// a stock transaction, so submitting writes Stock Ledger and
+										// GL entries, and cancelling one later is an accounting event
+										// rather than an undo.
+										//
+										// `frm` is deliberately not passed. open_mapped_doc falls back
+										// to frm.doc.name for the source, and the source here is a
+										// Purchase Order while the open form is the Project.
+										frappe.model.open_mapped_doc({
+											method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt',
+											source_name: poName,
+											freeze_message: __('Building the receipt...'),
+										});
+									},
+									sortFor(doctype, name) {
+										return this.sortByDoc[this.docKey(doctype, name)] || null;
+									},
+									toggleSort(doctype, name, key) {
+										if (!PROCUREMENT_SORT_COLUMNS[key]) return;
+										const dk = this.docKey(doctype, name);
+										const current = this.sortByDoc[dk];
+										if (!current || current.key !== key) {
+											this.sortByDoc[dk] = { key: key, dir: 'asc' };
+										} else if (current.dir === 'asc') {
+											this.sortByDoc[dk] = { key: key, dir: 'desc' };
+										} else {
+											// Third click clears it. Without a way back, line order is
+											// lost until the form is reloaded — and line order is
+											// meaningful on a request, it is how the job was grouped.
+											this.sortByDoc[dk] = null;
+										}
+									},
+									isSorted(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										return !!(s && s.key === key);
+									},
+									sortIndicator(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										if (!s || s.key !== key) return '⇅';
+										return s.dir === 'asc' ? '↑' : '↓';
+									},
+									sortAria(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										if (!s || s.key !== key) return 'none';
+										return s.dir === 'asc' ? 'ascending' : 'descending';
+									},
+									// Search filters first, then sort sorts — the order a user expects,
+									// and it leaves filteredGroups, the auto-expand watcher and
+									// highlight() completely untouched.
+									displayItems(doctype, doc) {
+										const items = doc.items || [];
+										const sort = this.sortFor(doctype, doc.name);
+										const column = sort && PROCUREMENT_SORT_COLUMNS[sort.key];
+										if (!column) return items;
+
+										const dir = sort.dir === 'desc' ? -1 : 1;
+										// slice() before sort(): Array.prototype.sort mutates in place,
+										// and mutating doc.items during a render is an infinite
+										// reactivity loop. This method runs on every render.
+										return items.slice().sort((a, b) => {
+											const av = column.value(a);
+											const bv = column.value(b);
+											const blanks = procurementBlankOrder(av, bv);
+											// Not multiplied by dir — see procurementBlankOrder.
+											if (blanks !== null) return blanks;
+											return dir * procurementCompare(av, bv, column);
+										});
+									},
+									// Quantities arrive as floats. "4" reads as a quantity; "4.0"
+									// reads as a rounding artefact, and a column of them is noise.
+									fmtQty(value) {
+										if (value === null || value === undefined || value === '') return '-';
+										const n = Number(value);
+										if (!isFinite(n)) return '-';
+										return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+									},
+									// The figures are in the stock UOM; the line may have been written
+									// in another. Say so rather than leaving someone to wonder why a
+									// 120 FT line reads 120 against a stock UOM of Unit.
+									uomTitle(row) {
+										if (!row.stock_uom) return '';
+										if (row.uom && row.uom !== row.stock_uom) {
+											return `Quantities in ${row.stock_uom}. Line written in ${row.uom}.`;
+										}
+										return `Quantities in ${row.stock_uom}.`;
+									},
+									lineReceiveTitle(row) {
+										const parts = [`This line: ${this.fmtQty(row.received_qty)} of ${this.fmtQty(row.ordered_qty)} received`];
+										if (row.over_received_qty) {
+											parts.push(`${this.fmtQty(row.over_received_qty)} more than was ordered`);
+										}
+										return parts.join(' · ');
+									},
+									// Hidden when there is nothing to total, so the pre-order doctypes
+									// (RFQ, Supplier Quotation) do not sprout a row of zeroes that
+									// reads as a failure rather than an absence.
+									hasRollup(doc) {
+										const r = doc.rollup;
+										return !!(r && (r.requested_qty || r.ordered_qty || r.received_qty));
+									},
+									rollupText(doc) {
+										const r = doc.rollup || {};
+										const parts = [];
+										if (r.requested_qty) parts.push(`${this.fmtQty(r.requested_qty)} req`);
+										if (r.ordered_qty) parts.push(`${this.fmtQty(r.ordered_qty)} ord`);
+										parts.push(`${this.fmtQty(r.received_qty || 0)} rec`);
+										return parts.join(' · ');
+									},
+									rollupTitle(doc) {
+										const r = doc.rollup || {};
+										// No unit: a document's lines can span UOMs, so a single total
+										// carries no one unit. Per-line units are on the cells.
+										return [
+											`${r.item_count || 0} line(s)`,
+											`ordered: ${r.order_status}`,
+											`received: ${r.receive_status}`,
+										].join(' · ');
+									},
+									// Spells out the arithmetic behind an item row's badge, and names
+									// the parent's own status alongside it — the two legitimately
+									// differ, and seeing them together is what makes it obvious that
+									// the row is no longer just echoing its parent.
+									lineOrderTitle(row) {
+										const parts = [];
+										if (row.requested_qty !== null && row.requested_qty !== undefined) {
+											parts.push(`This line: ${this.fmtQty(row.ordered_qty)} of ${this.fmtQty(row.requested_qty)} ordered`);
+										} else {
+											parts.push(`This line: ${this.fmtQty(row.ordered_qty)} ordered (no request behind it)`);
+										}
+										if (row.draft_ordered_qty) {
+											parts.push(`${this.fmtQty(row.draft_ordered_qty)} on draft orders (not counted)`);
+										}
+										if (row.mr_status) {
+											parts.push(`Request ${row.mr} is ${row.mr_status}`);
+										}
+										return parts.join(' · ');
+									},
 									getStatusColorClass(status) {
 										if (!status) return '';
+
+										// Our own vocabulary first, by exact match. The substring
+										// heuristic below cannot separate "Partially Ordered" from
+										// "Ordered" (both contain "ordered") or "Partially Received"
+										// from "Received", so it painted a half-done line and a
+										// finished one identically — the second half of the
+										// item-status bug, which a correct status string alone would
+										// not have fixed.
+										const known = {
+											'Not Ordered': 'status-pending',
+											'Partially Ordered': 'status-partial',
+											'Ordered': 'status-submitted',
+											'Over Ordered': 'status-warning',
+											'Not Received': 'status-pending',
+											'Partially Received': 'status-partial',
+											'Received': 'status-completed',
+											'Over Received': 'status-warning',
+										};
+										if (known[status]) return known[status];
+
+										// Fallback for ERPNext's own status strings, which still
+										// reach the RFQ/SQ/PO/PR/PI/Stock Entry badges. `partial`
+										// is tested before the generic terms for the same reason.
 										const s = status.toLowerCase();
 										if (s.includes('draft')) return 'status-draft';
+										if (s.includes('partial')) return 'status-partial';
 										if (s.includes('received') || s.includes('bill') || s === 'completed') return 'status-completed';
 										if (s.includes('cancel') || s.includes('closed')) return 'status-cancelled';
 										if (s.includes('submit') || s.includes('ordered')) return 'status-submitted';
@@ -206,7 +469,19 @@ frappe.ui.form.on("Project", {
 														<span class="doc-meta doc-date">{{ formatDate(doc.date) }}</span>
 														<span class="doc-meta doc-supplier" v-html="highlight(doc.supplier || '-', globalSearchTerm)"></span>
 														<span class="status-badge" :class="getStatusColorClass(doc.status)">{{ doc.status }}</span>
+														<!-- One span rather than three: .doc-supplier is the only element
+														     in this flex row that grows, so three nowrap spans would
+														     squeeze a supplier name to nothing on a narrow screen. Hidden
+														     entirely when there is nothing to total, so an RFQ header does
+														     not gain a "0 req · 0 ord · 0 rec" that reads as an error. -->
+														<span v-if="hasRollup(doc)" class="doc-meta doc-qty-rollup" :title="rollupTitle(doc)">{{ rollupText(doc) }}</span>
 														<span class="doc-meta doc-itemcount">{{ doc.items.length }} item(s)</span>
+														<!-- @click.stop is load-bearing: .doc-header's own click toggles
+														     expansion, so without it every Receive click also collapses
+														     the row the user was reading. -->
+														<button v-if="canReceive(group.doctype, doc)" type="button" class="btn-receive"
+																@click.stop="receiveAgainst(doc.name)"
+																:title="'Create a Purchase Receipt against ' + doc.name">Receive</button>
 													</div>
 
 													<!-- Level 3: items inside the document -->
@@ -215,33 +490,52 @@ frappe.ui.form.on("Project", {
 															<table class="glass-table">
 																<thead>
 																	<tr>
-																		<th>Item Details</th>
-																		<th>Warehouse</th>
-																		<th>Qty (Ord / Rec)</th>
-																		<th>Status</th>
+																		<th v-for="col in sortableColumns" :key="col.key"
+																			class="sortable"
+																			:class="[col.cls, { sorted: isSorted(group.doctype, doc.name, col.key) }]"
+																			role="button" tabindex="0"
+																			:aria-sort="sortAria(group.doctype, doc.name, col.key)"
+																			:title="'Sort by ' + col.label"
+																			@click="toggleSort(group.doctype, doc.name, col.key)"
+																			@keydown.enter.prevent="toggleSort(group.doctype, doc.name, col.key)"
+																			@keydown.space.prevent="toggleSort(group.doctype, doc.name, col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(group.doctype, doc.name, col.key) }}</span></th>
+																		<!-- Not sortable: seven chain nodes in one cell, no single
+																		     value to order by. No click handler, no cursor. -->
 																		<th>Doc Chain</th>
 																	</tr>
 																</thead>
 																<tbody>
 																	<tr v-if="(doc.items || []).length === 0">
-																		<td colspan="5" class="text-center text-muted">No items.</td>
+																		<td colspan="7" class="text-center text-muted">No items.</td>
 																	</tr>
-																	<tr v-for="(row, idx) in doc.items" :key="idx" class="procurement-item-row">
+																	<tr v-for="row in displayItems(group.doctype, doc)" :key="row.row_id" class="procurement-item-row">
 																		<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
 																			:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
 																			v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + (row.item_name || '') + '</small>', globalSearchTerm)">
 																		</td>
 																		<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
-																		<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
-																		<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
-																			{{ row.completion_percentage }}% Received
+																		<!-- "-", not 0, when nothing was requested: a direct Purchase
+																		     Order line has no request behind it, and "nobody asked" is
+																		     a different fact from "asked for none". -->
+																		<td class="qty-col" :title="uomTitle(row)">{{ fmtQty(row.requested_qty) }}</td>
+																		<td class="qty-col" :title="lineOrderTitle(row)">
+																			{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
+																		</td>
+																		<td class="qty-col" :title="lineReceiveTitle(row)">{{ fmtQty(row.received_qty) }}</td>
+																		<td>
+																			<span class="status-badge" :class="getStatusColorClass(row.receive_status)" :title="lineReceiveTitle(row)">{{ row.receive_status }}</span>
 																		</td>
 																		<td>
 																			<div class="doc-chain-container">
 																				<div v-if="row.mr" class="doc-chain-step">
 																					<span class="text-muted" style="margin-right:4px;">MR:</span>
 																					<span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm)"></span>
-																					<span class="status-badge" :class="getStatusColorClass(row.mr_status)">{{ row.mr_status }}</span>
+																					<!-- THIS line's ordering status, not the request header's.
+																					     The header status was painted here on every child row, so
+																					     a fully ordered line inside a partially ordered request
+																					     read "Partially Ordered". The request's own status is on
+																					     the document header above, where it belongs. -->
+																					<span class="status-badge" :class="getStatusColorClass(row.order_status)" :title="lineOrderTitle(row)">{{ row.order_status }}</span>
 																				</div>
 																				<div v-if="row.rfq" class="doc-chain-step">
 																					<span class="text-muted" style="margin-right:4px;">RFQ:</span>
@@ -367,8 +661,79 @@ frappe.ui.form.on("Project", {
 			frappe.msgprint(__("Please save the Project before creating linked documents."));
 			return;
 		}
-		frappe.new_doc("Purchase Receipt", {
-			project: frm.doc.name,
+		if (!frappe.model.can_create("Purchase Receipt")) {
+			frappe.msgprint({
+				title: __("Purchase Receipt permission required"),
+				indicator: "orange",
+				message: __("Creating a Purchase Receipt needs create permission on Purchase Receipt."),
+			});
+			return;
+		}
+
+		// This button used to open a blank Purchase Receipt carrying nothing but the
+		// project — no supplier, no order, no lines — so the receiver retyped a delivery
+		// ERPNext already knew about, and could not link it back to the order afterwards.
+		// Ask which order arrived instead, then let ERPNext's own mapper fill it in.
+		frappe.call({
+			method: "erpnext_enhancements.procurement_project.get_receivable_purchase_orders",
+			args: { project: frm.doc.name },
+			freeze: true,
+			callback: function (r) {
+				const orders = (r && r.message) || [];
+
+				if (!orders.length) {
+					// Deliberately not falling back to the old blank form: a receipt with
+					// no order behind it is the thing this replaced.
+					frappe.msgprint({
+						title: __("Nothing to receive"),
+						indicator: "blue",
+						message: __(
+							"No submitted Purchase Order on this project still has goods outstanding. Raise or submit an order first."
+						),
+					});
+					return;
+				}
+
+				const receive = (name) =>
+					frappe.model.open_mapped_doc({
+						method: "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
+						source_name: name,
+						freeze_message: __("Building the receipt..."),
+					});
+
+				// One outstanding order is the common case on a job; asking which of one
+				// is a click for nothing.
+				if (orders.length === 1) {
+					receive(orders[0].name);
+					return;
+				}
+
+				const label = (po) => {
+					const parts = [po.name];
+					if (po.supplier) parts.push(po.supplier);
+					const pct = Math.round(Number(po.per_received || 0));
+					if (pct > 0) parts.push(__("{0}% received", [pct]));
+					return parts.join(" — ");
+				};
+
+				frappe.prompt(
+					[
+						{
+							fieldname: "purchase_order",
+							label: __("Which order arrived?"),
+							fieldtype: "Select",
+							reqd: 1,
+							options: orders.map(label),
+						},
+					],
+					(values) => {
+						const chosen = orders.find((po) => label(po) === values.purchase_order);
+						if (chosen) receive(chosen.name);
+					},
+					__("Receive against a Purchase Order"),
+					__("Continue")
+				);
+			},
 		});
 	},
 

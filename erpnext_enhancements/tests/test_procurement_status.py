@@ -242,10 +242,9 @@ class TestProcurementStatus(FrappeTestCase):
 		self.assertEqual(mr_entry["stock_entry"], se.name)
 		self.assertEqual(mr_entry["stock_entry_status"], "Draft")  # docstatus 0
 
-	def test_get_procurement_status_direct_po(self):
-		"""A direct PO (no MR) surfaces under 'Purchase Order' with its ordered qty."""
-		# Scenario: Direct Purchase Order (No MR)
-		po = frappe.get_doc(
+	def _direct_po(self, qty=10):
+		"""A Purchase Order raised straight against the project, with no Material Request."""
+		return frappe.get_doc(
 			{
 				"doctype": "Purchase Order",
 				"supplier": "Test Supplier Proc",
@@ -254,7 +253,7 @@ class TestProcurementStatus(FrappeTestCase):
 				"items": [
 					{
 						"item_code": self.item.item_code,
-						"qty": 10,
+						"qty": qty,
 						"rate": 100,
 						"schedule_date": frappe.utils.nowdate(),
 						"project": self.project.name,
@@ -265,18 +264,116 @@ class TestProcurementStatus(FrappeTestCase):
 			}
 		).insert()
 
-		# Run function
+	def _direct_po_entry(self, po):
 		status = get_procurement_status(self.project.name)
-
-		# Expect the item to be "graduated" to the Purchase Order stage
 		self.assertIn("Purchase Order", status, "Result should contain 'Purchase Order' key")
+		entry = next((x for x in status["Purchase Order"] if x.get("po") == po.name), None)
+		self.assertIsNotNone(entry, "Direct PO not found in Purchase Order group")
+		return entry
 
-		# Verify
-		po_list = status["Purchase Order"]
-		po_entry = next((x for x in po_list if x.get("po") == po.name), None)
+	def test_draft_purchase_order_is_not_ordered_yet(self):
+		"""A draft PO is an intention, not an order.
 
-		self.assertIsNotNone(po_entry, "Direct PO not found in Purchase Order group")
-		self.assertEqual(po_entry["ordered_qty"], 10)
+		This used to assert ``ordered_qty == 10`` on a PO that is inserted and never
+		submitted. Ten such lines exist on production and they inflated the tracker
+		while ERPNext's own ``Material Request Item.ordered_qty`` excluded them — so
+		the tracker and the Material Request form it links to disagreed. The quantity
+		is still reported, just not counted.
+		"""
+		entry = self._direct_po_entry(self._direct_po(qty=10))
+
+		self.assertEqual(entry["ordered_qty"], 0)
+		self.assertEqual(entry["draft_ordered_qty"], 10)
+		self.assertEqual(entry["order_status"], "Not Ordered")
+
+	def test_submitted_direct_po_is_ordered(self):
+		"""A direct PO (no MR) surfaces under 'Purchase Order' with its ordered qty."""
+		po = self._direct_po(qty=10)
+		po.submit()
+
+		entry = self._direct_po_entry(po)
+
+		self.assertEqual(entry["ordered_qty"], 10)
+		self.assertEqual(entry["draft_ordered_qty"], 0)
+		self.assertEqual(entry["order_status"], "Ordered")
+		# No Material Request behind it, so nothing was "requested" — which is not the
+		# same as having requested zero, and the feed used to print both as 0.
+		self.assertIsNone(entry["requested_qty"])
+
+	def test_item_status_is_not_inherited_from_the_material_request(self):
+		"""The reported bug, end to end through the real query.
+
+		One Material Request, three lines. A submitted Purchase Order covers line 1 in
+		full and line 2 in part; line 3 is untouched. ERPNext labels the request
+		"Partially Ordered" — and the feed used to paint that one label onto all three
+		item rows, so the fully ordered line read "Partially Ordered" too.
+		"""
+		mr = frappe.get_doc(
+			{
+				"doctype": "Material Request",
+				"material_request_type": "Purchase",
+				"transaction_date": frappe.utils.nowdate(),
+				"schedule_date": frappe.utils.nowdate(),
+				"company": self.company,
+				"custom_project": self.project.name,
+				"items": [
+					{
+						"item_code": self.item.item_code,
+						"qty": qty,
+						"schedule_date": frappe.utils.nowdate(),
+						"warehouse": self.warehouse,
+					}
+					for qty in (4, 4, 4)
+				],
+			}
+		).insert()
+		mr.submit()
+
+		po = frappe.get_doc(
+			{
+				"doctype": "Purchase Order",
+				"supplier": "Test Supplier Proc",
+				"transaction_date": frappe.utils.nowdate(),
+				"company": self.company,
+				"items": [
+					{
+						"item_code": self.item.item_code,
+						"qty": ordered,
+						"rate": 100,
+						"schedule_date": frappe.utils.nowdate(),
+						"project": self.project.name,
+						"warehouse": self.warehouse,
+						"material_request": mr.name,
+						"material_request_item": mr.items[idx].name,
+					}
+					for idx, ordered in ((0, 4), (1, 2))
+				],
+			}
+		).insert()
+		po.submit()
+
+		mr.reload()
+		self.assertEqual(mr.status, "Partially Ordered")
+
+		rows = [
+			row
+			for rows in get_procurement_status(self.project.name).values()
+			for row in rows
+			if row.get("mr") == mr.name
+		]
+		by_line = {row["mr_item"]: row for row in rows}
+
+		expected = [("Ordered", 4), ("Partially Ordered", 2), ("Not Ordered", 0)]
+		for line, (status, ordered_qty) in zip(mr.items, expected, strict=True):
+			row = by_line[line.name]
+			self.assertEqual(row["order_status"], status, f"line {line.idx}")
+			self.assertEqual(row["ordered_qty"], ordered_qty, f"line {line.idx}")
+			self.assertEqual(row["requested_qty"], 4, f"line {line.idx}")
+			# The parent's label is still available and still says something else. That
+			# is the point: the two levels are now computed independently.
+			self.assertEqual(row["mr_status"], "Partially Ordered")
+
+		self.assertNotEqual(by_line[mr.items[0].name]["order_status"], mr.status)
 
 	def test_get_procurement_documents_structure_and_order(self):
 		"""get_procurement_documents returns ordered, non-empty groups exposing doc items."""

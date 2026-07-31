@@ -124,6 +124,42 @@ def _remove_exclusion(source_doctype, source_name, ref_doctype, ref_name):
     ):
         frappe.delete_doc(EXCLUSION_DOCTYPE, excl, ignore_permissions=True)
 
+#: The only doctypes that own the ACCOUNT-WIDE primary flags.
+#:
+#: ``Contact.is_primary_contact`` and ``Address.is_primary_address`` are columns on
+#: the Contact/Address record, not on the ``Dynamic Link`` row, so setting one is a
+#: statement about a whole account and there is nowhere in that scheme to say
+#: "primary for this Project". Project / Opportunity / Master Project record their
+#: primary in their own ``primary_contact`` / ``primary_address`` Link field
+#: (``setup/custom_fields.py``) and must never reach these endpoints.
+#:
+#: Until v1.198.0 the directory widget derived the account from
+#: ``frm.doc.customer`` — so a "Set Primary" click on a **Project** passed that
+#: Project's Customer here, and one project-level decision rewrote a company-level
+#: fact. This guard is what makes that unrepresentable rather than merely unwritten.
+GLOBAL_PRIMARY_PARTY_DOCTYPES = ("Customer", "Supplier")
+
+
+def _assert_account(account_doctype, account_name):
+    """Reject a non-account context, and require write permission on the account.
+
+    Both endpoints were whitelisted with no permission check of any kind, so any
+    logged-in user could re-point any customer's primary contact.
+    """
+    if account_doctype not in GLOBAL_PRIMARY_PARTY_DOCTYPES:
+        # frappe._ rather than a module-level `from frappe import _`: this module has
+        # only ever imported `frappe`, and adding the name would be a wider change than
+        # the one line that needs it.
+        frappe.throw(
+            frappe._(
+                "{0} stores its primary contact and address on the document itself. "
+                "Only {1} carry the account-wide primary flag."
+            ).format(account_doctype, " / ".join(GLOBAL_PRIMARY_PARTY_DOCTYPES)),
+            title=frappe._("Not an account"),
+        )
+    frappe.has_permission(account_doctype, "write", doc=account_name, throw=True)
+
+
 @frappe.whitelist()
 def set_primary_contact(account_doctype, account_name, contact_name):
     """Mark one Contact as primary for an account, unsetting the others.
@@ -131,7 +167,12 @@ def set_primary_contact(account_doctype, account_name, contact_name):
     Clears ``is_primary_contact`` on every Contact dynamically linked to the
     given account (``account_doctype`` / ``account_name``), then sets it on
     ``contact_name``. Called from the directory widget.
+
+    Only Customer and Supplier are accounts — see
+    :data:`GLOBAL_PRIMARY_PARTY_DOCTYPES`.
     """
+    _assert_account(account_doctype, account_name)
+
     # Find all contacts linked to this account context
     linked_contacts = frappe.get_all(
         "Dynamic Link", 
@@ -154,8 +195,10 @@ def set_primary_contact(account_doctype, account_name, contact_name):
 def set_primary_address(account_doctype, account_name, address_name):
     """Mark one Address as primary for an account, unsetting the others.
 
-    Address counterpart of :func:`set_primary_contact`.
+    Address counterpart of :func:`set_primary_contact`, same account restriction.
     """
+    _assert_account(account_doctype, account_name)
+
     # Find all addresses linked to this account context
     linked_addresses = frappe.get_all(
         "Dynamic Link", 

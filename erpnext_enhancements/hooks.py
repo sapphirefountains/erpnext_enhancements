@@ -71,6 +71,10 @@ doctype_js = {
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		# primary_contact.js binds five doctypes but was listed under "Lead" only, so
+		# on the other four it ran only if the user had opened a Lead earlier in the
+		# same session. Listed on all five now (v1.198.0).
+		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
 		"public/js/crm_enhancements/opportunity_handoff.js",
@@ -85,6 +89,7 @@ doctype_js = {
 		"public/js/project_enhancements.js",
 		"public/js/project.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
@@ -141,6 +146,7 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/customer.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		"public/js/stripe_payments/customer_autopay.js",
 		# Contracts tab — the same list the Project form carries, scoped to the
@@ -178,6 +184,7 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"public/js/contracts.js",
 	],
 	"Lead": [
@@ -345,6 +352,11 @@ doc_events = {
 		"before_submit": [
 			"erpnext_enhancements.po_segregation.enforce_requester_separation",
 			"erpnext_enhancements.po_approval.enforce_threshold",
+			# Last, deliberately: the stamp records that this order cleared BOTH gates
+			# in this person's hands. The supplier-facing print format reads it, and
+			# there is nowhere else truthful to read an approver from — Purchase Order
+			# has no approver field and `modified_by` is whoever touched it last.
+			"erpnext_enhancements.po_approval.stamp_approval",
 		],
 	},
 	"Opportunity": {
@@ -593,6 +605,11 @@ after_migrate = [
 	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
+	# enhancements_core: the supplier-facing Purchase Order print format. Procurement
+	# has no module of its own (po_approval / po_segregation / procurement_project sit
+	# at the app root) and a Print Format needs a real Module Def, so it lands in the
+	# catch-all. Idempotent + guarded like the others.
+	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_enhancements_core_print_formats",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",

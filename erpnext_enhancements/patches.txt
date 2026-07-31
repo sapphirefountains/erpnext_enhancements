@@ -290,3 +290,32 @@ erpnext_enhancements.patches.update_production_procurement_step
 # refresh token — Frappe never revokes rotated ones, so log-clearing quietly
 # killed the grant of anyone idle for a month and forced a relink.
 erpnext_enhancements.patches.set_oauth_token_retention
+# v1.199.2: record who submitted a Purchase Order and when. The supplier-facing
+# print format shows an approver and there was nowhere truthful to read one from --
+# Purchase Order has no approver field, and modified_by is whoever touched the doc
+# LAST, which after any post-submit edit is not the approver. po_approval.stamp_approval
+# writes these once both submit gates have passed.
+erpnext_enhancements.patches.add_po_approval_stamp_fields
+# v1.198.0: de-duplicate accounts left with several Contacts/Addresses flagged
+# primary. The directory widget derived its account from frm.doc.customer /
+# party_name, so a "Set Primary" click on an Opportunity passed the incoherent
+# pair ("Opportunity", <a Customer id>); the "unset the others" query matched
+# nothing and the flag was set without the previous one being cleared. Only
+# de-duplicates — the Project path overwrote the account's real primary with no
+# record of what it had been, and that class is genuinely unrecoverable.
+erpnext_enhancements.patches.dedupe_party_primary_flags
+# v1.199.0: seed Opportunity.primary_contact from contact_person where blank.
+# Opportunity has TWO Link-to-Contact fields and both were labelled "Full Name",
+# which is how the Kanban ended up on the wrong one. 142 of 814 Opportunities
+# have contact_person but no primary_contact, so swapping the board's card field
+# without this backfill would blank 142 cards that show a name today. Insert-only;
+# the 5 where both are set and differ are left alone. MUST run before the board
+# swap below.
+erpnext_enhancements.patches.backfill_opportunity_primary_contact
+# v1.199.0: point the Opportunity Kanban's name card field at primary_contact.
+# A patch rather than a fixture because Kanban Board is not in the hooks.py
+# fixtures list -- the board exists only as a live DB record, so a UI edit would
+# not survive a fresh site build. Keeps opportunity_amount in the field list:
+# opportunity_kanban_totals.js sums it and receives it via the board's own field
+# list, so dropping it would silently empty the column totals.
+erpnext_enhancements.patches.set_opportunity_kanban_primary_contact
