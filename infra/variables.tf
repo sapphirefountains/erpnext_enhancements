@@ -772,22 +772,31 @@ variable "startup_script_packages" {
   type        = list(string)
   description = "List of APT packages to install on first boot."
   # The PDF toolchain, and its absence is why PDF generation was broken on the first
-  # VM built from this stack. Two separate backends, both of which were unusable:
+  # VM built from this stack.
   #
-  #  * wkhtmltopdf — used by every SERVER-side caller (frappe.attach_print, and
-  #    frappe.get_print/get_pdf without an explicit generator). Not installed at all.
-  #    Note Print Settings.pdf_generator = "chrome" does NOT redirect these; it only
-  #    governs the HTTP download_pdf path.
+  # This host is DEBIAN 12 (bookworm). Package names here are Debian names — do not
+  # copy Ubuntu ones in. An unknown name makes apt-get abort the WHOLE install, so a
+  # single wrong word silently installs nothing; that has already happened once, to
+  # the runbook's library step (`libasound2t64`). See docs/pdf-generation.md.
+  #
+  #  * wkhtmltopdf is DELIBERATELY ABSENT from this list. Debian's package is built
+  #    against system Qt5WebKit — the "unpatched qt" build — and on this host it does
+  #    not merely drop headers and footers, it SEGFAULTS (rc 139) on a one-line HTML
+  #    file with no options at all. Installing it produces a /usr/bin/wkhtmltopdf that
+  #    looks provisioned and cannot render anything, which is worse than having none.
+  #    The working build is the patched-Qt .deb from the (archived) wkhtmltopdf
+  #    project — wkhtmltox_0.12.6.1-3.bookworm_amd64.deb — which is not in apt and so
+  #    cannot be expressed here. docs/pdf-generation.md step 1 has it, with a checksum.
+  #    This matters more than it looks: frappe pins Print Format.pdf_generator to
+  #    "wkhtmltopdf" on 28 formats via its own upgrade patch, so this is the backend
+  #    most server-side rendering actually uses.
   #  * headless Chromium over the DevTools protocol — used by the Download PDF button.
   #    Frappe ships and manages its OWN build under the bench
   #    (frappe-bench/chromium/chrome-linux/headless_shell) and never looks at
   #    /usr/bin/chromium, so the `chromium` package below is NOT what it runs. It is
-  #    here because it drags in the shared libraries that build needs — libnss3,
-  #    libatk, libgbm, libasound and friends — without which headless_shell exits
-  #    immediately and Frappe reports only "Chromium took too long to start."
-  #
-  # See docs/pdf-generation.md; installing the package alone is not sufficient, and
-  # that document carries the by-hand launch that names the actual cause.
+  #    here because it drags in the shared libraries that build needs. libvulkan1 is
+  #    listed explicitly because it is the one entry in that build's own deb.deps
+  #    manifest which `chromium` does NOT pull in.
   #
   # Fonts are not cosmetic. Without them a headless browser renders boxes or
   # substitutes silently, which produces a PDF that "succeeds" and looks wrong —
@@ -806,7 +815,7 @@ variable "startup_script_packages" {
     "python3-venv",
     "pipx",
     "chromium",
-    "wkhtmltopdf",
+    "libvulkan1",
     "fonts-liberation",
     "fonts-dejavu-core",
     "fontconfig",

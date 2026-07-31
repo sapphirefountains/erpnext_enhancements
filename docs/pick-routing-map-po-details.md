@@ -1,7 +1,11 @@
 # Pick Routing Map — showing PO detail (spike)
 
-**Status: recommendation, awaiting a direction. No POC built yet** — the task asked for the
-read-out and the options first.
+**Status: decided and built (v1.202.0).** Options **(b) and (c)** were both chosen. (a) was
+not built — see why below, it is the one that would have created a second source of truth.
+
+The sections below are the original spike, kept because the reasoning is still what the
+implementation rests on. "What was actually built" at the end records where the delivery
+departed from the option as costed, and why.
 
 The ask: when creating the Pick Routing Map, show the PO details of what we are collecting,
 as an optional formatted report or a custom HTML block.
@@ -131,3 +135,70 @@ detail is what you open when you arrive.
 Should fully-received lines appear at all? Dimming them costs nothing and answers "did we
 already collect that?" at the counter — but it makes the list longer on a phone, and there
 are currently **zero partly-received POs on production**, so no live example either way.
+
+**Resolved: dimmed, not hidden.** At a will-call counter, a line's *absence* is ambiguous
+between "we already collected that" and "it was never ordered" — and only one of those is a
+reason to stop arguing with the counter staff. The phone-length cost is real but smaller than
+that ambiguity. Implemented as `lineModel().done`, with `QTY_TOLERANCE = 0.005` matching
+`procurement_quantities.py` so the two features agree on what "fully received" means.
+
+---
+
+## What was actually built (v1.202.0)
+
+Both surfaces live in
+[`pick_routing_map.js`](../erpnext_enhancements/public/js/project_enhancements/pick_routing_map.js).
+
+### (c) In-dialog disclosure — as costed
+
+One `<details>` per stop, collapsed, grouped by PO. Two implementation notes that are not
+obvious from the option description:
+
+- **Open/closed state is held on the controller, not in the DOM.** `renderList()` rebuilds
+  every row from scratch on each tick, re-route and reorder. State read back off the old
+  nodes is lost, so unticking one stop silently collapsed the lines being read on another.
+- **Opening a stop does not `recompute()`.** Every re-route is a billable Directions call.
+  Looking at what you are collecting must not cost one — the same discipline the existing
+  custom-address field already applies by re-routing on blur rather than keystroke.
+
+### (b) Pick sheet — built as a browser print view, *not* a Frappe Print Format
+
+This is the one real departure from the option as costed, and it was forced by two things:
+
+1. **The optimised stop order exists only in the browser.** Google returns `waypoint_order`
+   to the dialog; the server never sees it. A Print Format would have had to re-query and
+   would have printed in purchase-order sequence — a sheet contradicting the screen it was
+   printed from. That is precisely the divergence this spike rejected option (a) over, so
+   reproducing it in (b) would have been incoherent.
+2. **Both server-side PDF backends are broken on this host** (see
+   [pdf-generation.md](pdf-generation.md)). A Print Format would have shipped unusable.
+
+What the option promised — "a printable sheet the driver carries, grouped by stop in route
+order" — is delivered. The mechanism differs. The stated cost of (b) still applies and is
+written into the code: paper is a snapshot, so a PO received after printing is invisible.
+
+The sheet adds a tick box per line, which the costing did not mention and which is the point
+of a pick sheet: it is checked off at the counter.
+
+### One renderer for the numbers, two for the layout
+
+`lineModel()` computes ordered / received / still-to-collect / done **once**; the disclosure
+and the sheet both consume it. The layouts differ deliberately — a 300px-wide dialog pane
+gets a compact list, paper gets a table — but the arithmetic does not fork, so the sheet in a
+driver's hand cannot disagree with the screen.
+
+## Production notes found while building
+
+- **The Directions API is not enabled on the Maps key.** Live console on PRJ-00567:
+  `Directions Service: This API key is not authorized to use this service or API` →
+  `MapsRequestError: DIRECTIONS_ROUTE: REQUEST_DENIED`. The map is therefore permanently in
+  degradation step two — geocoded pins in PO order, no drive-time optimisation. This is a
+  Google Cloud Console API-restrictions change, not a code fix. Until it is done, the pick
+  sheet correctly prints "Stops are in purchase-order sequence, not drive-time order."
+- **Most stops have no resolvable address.** PRJ-00567: 2 of 5 routable. PRJ-00566: 3 of 6.
+  That is why the line detail is rendered on no-address stops too — those are exactly the
+  ones somebody has to ring, and the first question back is what they are collecting.
+- **Multi-PO stops are the norm, not the edge case.** PRJ-00566's Harrington stop carries
+  **6 POs and 42 lines**. Grouping by PO is load-bearing, not decoration.
+- **Still no partly-received PO exists on production**, so the dimmed "already collected"
+  state has been exercised only against constructed data, not live records.

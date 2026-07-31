@@ -59,6 +59,54 @@
 		'supplier.address_directory': __('from the supplier’s address directory'),
 	};
 
+	// The pick sheet opens in its own window, so desk theme vars do not exist
+	// there — every colour is literal, and the palette matches the app's other
+	// print surfaces (#333 / #555 / #777 / #ccc / #eee / #f4f5f7).
+	const PICK_SHEET_CSS = `
+		* { box-sizing: border-box; }
+		body {
+			font-family: 'Helvetica Neue', Arial, sans-serif; color: #222;
+			font-size: 11px; margin: 14px;
+		}
+		h1 { font-size: 19px; margin: 0; }
+		h2 {
+			font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+			color: #777; margin: 16px 0 6px; border-bottom: 1px solid #ccc;
+			padding-bottom: 3px;
+		}
+		.sheet-head { border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
+		.sheet-sub { font-size: 13px; margin-top: 2px; }
+		.sheet-meta { color: #777; font-size: 10px; margin-top: 2px; }
+		.sheet-endpoint {
+			padding: 4px 6px; background: #f4f5f7; border-radius: 3px; margin: 6px 0;
+		}
+		.sheet-stop { margin: 10px 0 12px; page-break-inside: avoid; }
+		.sheet-stop-head { display: flex; align-items: center; gap: 7px; }
+		.sheet-seq {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 20px; height: 20px; border-radius: 50%; background: #333;
+			color: #fff; font-weight: 700; font-size: 11px;
+		}
+		.sheet-stop-name { font-size: 14px; font-weight: 700; }
+		.sheet-stop-addr { color: #555; margin: 2px 0 5px 27px; }
+		.sheet-po { margin: 0 0 7px 27px; }
+		.sheet-po-head { font-weight: 600; color: #555; margin-bottom: 2px; }
+		table { width: 100%; border-collapse: collapse; }
+		th {
+			text-align: left; font-weight: 600; color: #777; font-size: 10px;
+			border-bottom: 1px solid #ccc; padding: 3px 4px;
+		}
+		td { padding: 3px 4px; border-bottom: 1px solid #eee; vertical-align: top; }
+		td.num, th.num { text-align: right; white-space: nowrap; }
+		td.code { font-weight: 600; white-space: nowrap; }
+		td.tick, th.tick { width: 16px; font-size: 13px; }
+		tr.is-done td { color: #999; }
+		.sheet-sign { margin-top: 22px; padding-top: 8px; border-top: 1px solid #ccc; }
+		.sheet-foot { margin-top: 10px; font-style: italic; }
+		@page { margin: 12mm; }
+		@media print { body { margin: 0; } }
+	`;
+
 	const SCOPE_LABELS = [
 		{ value: 'outstanding', label: __('Still to collect') },
 		{ value: 'submitted', label: __('All submitted POs') },
@@ -176,6 +224,34 @@
 				background: var(--subtle-fg); color: var(--text-muted); font-size: var(--text-sm);
 			}
 			.ee-pickroute-empty { padding: 24px; text-align: center; color: var(--text-muted); }
+			.ee-pickroute-detail { margin-top: 6px; }
+			.ee-pickroute-detail > summary {
+				cursor: pointer; font-size: var(--text-xs); color: var(--text-muted);
+				list-style: none; user-select: none; display: inline-flex; gap: 4px;
+				padding: 1px 6px; border-radius: 10px; border: 1px solid var(--border-color);
+			}
+			.ee-pickroute-detail > summary:hover { background: var(--subtle-fg); }
+			.ee-pickroute-detail > summary::-webkit-details-marker { display: none; }
+			.ee-pickroute-detail > summary::before { content: '\\25B8'; }
+			.ee-pickroute-detail[open] > summary::before { content: '\\25BE'; }
+			.ee-pickroute-po-group { margin-top: 6px; }
+			.ee-pickroute-po-head {
+				font-size: var(--text-xs); color: var(--text-muted); font-weight: 600;
+				border-bottom: 1px solid var(--border-color); padding-bottom: 2px;
+			}
+			.ee-pickroute-line {
+				display: flex; gap: 6px; align-items: baseline;
+				padding: 3px 0; border-bottom: 1px solid var(--border-color);
+				font-size: var(--text-sm);
+			}
+			.ee-pickroute-line.is-done { opacity: .45; }
+			.ee-pickroute-line-code { font-weight: 600; white-space: nowrap; }
+			.ee-pickroute-line-name {
+				flex: 1 1 auto; min-width: 0; color: var(--text-muted);
+				overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+			}
+			.ee-pickroute-line-qty { white-space: nowrap; font-variant-numeric: tabular-nums; }
+			.ee-pickroute-line-sub { font-size: var(--text-xs); color: var(--text-muted); }
 			@media (max-width: 900px) {
 				.ee-pickroute-panes { grid-template-columns: 1fr; height: auto; }
 				.ee-pickroute-map { height: 320px; }
@@ -241,6 +317,107 @@
 		return bits.join(' · ');
 	}
 
+	// ------------------------------------------------------------- item lines
+
+	// Float quantities never land exactly on zero, so "fully received" is a
+	// tolerance test, not an equality one. Matches TOLERANCE in
+	// procurement_quantities.py, which computes the same idea for the tracker.
+	const QTY_TOLERANCE = 0.005;
+
+	/** Trim a float quantity to something a human reads: 2, not 2.0. */
+	function qtyText(value) {
+		const n = Number(value || 0);
+		if (!isFinite(n)) return '0';
+		return String(Math.round(n * 1000) / 1000);
+	}
+
+	/**
+	 * The one place a PO line's numbers are worked out.
+	 *
+	 * Both the in-dialog disclosure and the printed pick sheet consume this, so a
+	 * driver holding the sheet cannot be told a different outstanding quantity
+	 * from the one on screen. Presentation differs by medium (a phone gets a
+	 * compact list, paper gets a table); the arithmetic does not fork.
+	 */
+	function lineModel(line) {
+		const ordered = Number(line.qty || 0);
+		const received = Number(line.received_qty || 0);
+		const outstanding = Math.max(0, ordered - received);
+		return {
+			code: line.item_code || '',
+			name: line.item_name || '',
+			uom: line.uom || '',
+			ordered: ordered,
+			received: received,
+			outstanding: outstanding,
+			// Dimmed rather than dropped: "did we already collect that?" is asked
+			// at the counter, and absence from the list is ambiguous between
+			// "already collected" and "never ordered".
+			done: outstanding <= QTY_TOLERANCE,
+		};
+	}
+
+	/** Every line at a stop, flattened, for counting. */
+	function stopLineModels(stop) {
+		const out = [];
+		(stop.purchase_orders || []).forEach((po) => {
+			(po.items || []).forEach((line) => out.push(lineModel(line)));
+		});
+		return out;
+	}
+
+	/** "4 lines · 3 still to collect" — the disclosure's summary label. */
+	function stopLinesLabel(stop) {
+		const models = stopLineModels(stop);
+		if (!models.length) return __('No lines');
+		const open = models.filter((m) => !m.done).length;
+		const lines = models.length === 1 ? __('1 line') : __('{0} lines', [models.length]);
+		if (!open) return lines + ' · ' + __('all collected');
+		return lines + ' · ' + __('{0} still to collect', [open]);
+	}
+
+	function poGroupHeadText(po) {
+		const bits = [po.name];
+		if (po.status) bits.push(po.status);
+		if (po.required_by) bits.push(__('needed {0}', [frappe.datetime.str_to_user(po.required_by)]));
+		return bits.join(' · ');
+	}
+
+	/** Compact per-line list for the dialog's left pane (narrow, phone-first). */
+	function stopLinesHtml(stop) {
+		const groups = (stop.purchase_orders || []).map((po) => {
+			const rows = (po.items || [])
+				.map((line) => {
+					const m = lineModel(line);
+					const qty = m.done
+						? __('collected')
+						: __('{0} {1}', [qtyText(m.outstanding), m.uom]);
+					const sub = m.received
+						? ' <span class="ee-pickroute-line-sub">' +
+							esc(__('({0} of {1} received)', [qtyText(m.received), qtyText(m.ordered)])) +
+							'</span>'
+						: '';
+					return (
+						'<div class="ee-pickroute-line' + (m.done ? ' is-done' : '') + '">' +
+							'<span class="ee-pickroute-line-code">' + esc(m.code) + '</span>' +
+							'<span class="ee-pickroute-line-name" title="' + esc(m.name) + '">' +
+								esc(m.name) + '</span>' +
+							'<span class="ee-pickroute-line-qty">' + esc(qty) + sub + '</span>' +
+						'</div>'
+					);
+				})
+				.join('');
+			return (
+				'<div class="ee-pickroute-po-group">' +
+					'<div class="ee-pickroute-po-head">' + esc(poGroupHeadText(po)) + '</div>' +
+					(rows || '<div class="ee-pickroute-line is-done">' +
+						esc(__('No lines on this order.')) + '</div>') +
+				'</div>'
+			);
+		});
+		return groups.join('');
+	}
+
 	// --------------------------------------------------------------- controller
 
 	/**
@@ -263,6 +440,12 @@
 			);
 			// Optimised order, once Directions has answered: [{stop, leg}].
 			this.ordered = null;
+			// Which stops have their line list open. Held on the controller, not
+			// in the DOM: renderList() rebuilds every row from scratch on each
+			// tick, re-route and reorder, so anything read off the old nodes is
+			// lost. Without this, unticking one stop silently collapses the lines
+			// the driver was reading on another.
+			this.expanded = new Set();
 			this.markers = {};
 			this.notice = null;
 			this.mapBuilt = false;
@@ -521,12 +704,33 @@
 							'<a class="ee-pickroute-po" href="' + mapsNavigateUrl(stop.address) +
 								'" target="_blank" rel="noopener">' + esc(__('Navigate')) + '</a>' +
 						'</div>' +
+						this.stopDetailHtml(stop) +
 					'</div>' +
 					'<div class="ee-pickroute-toggle">' +
 						'<input type="checkbox" data-role="include" ' +
 							(ticked ? 'checked' : '') + '>' +
 					'</div>' +
 				'</div>'
+			);
+		}
+
+		/**
+		 * The collapsible line list for one stop.
+		 *
+		 * Rendered eagerly rather than on first open: the lines are already in the
+		 * payload, a whole project is tens of rows, and lazy rendering would mean
+		 * a second code path that renderList() has to re-run anyway.
+		 */
+		stopDetailHtml(stop) {
+			const models = stopLineModels(stop);
+			if (!models.length) return '';
+			return (
+				'<details class="ee-pickroute-detail" data-role="detail"' +
+					' data-detail-key="' + esc(stop.key) + '"' +
+					(this.expanded.has(stop.key) ? ' open' : '') + '>' +
+					'<summary>' + esc(stopLinesLabel(stop)) + '</summary>' +
+					stopLinesHtml(stop) +
+				'</details>'
 			);
 		}
 
@@ -549,6 +753,10 @@
 									esc(__('Add an address')) + '</a>'
 								: '') +
 						'</div>' +
+						// Lines shown here too: a stop with no address is precisely
+						// the one where somebody has to ring the vendor and ask, and
+						// the first question back is "what are you collecting?".
+						this.stopDetailHtml(stop) +
 					'</div>' +
 				'</div>'
 			);
@@ -563,9 +771,21 @@
 				this.recompute();
 			});
 
-			// Clicking the row (not its checkbox or links) pans to that pin.
+			// Opening the lines is a local, free action: it records the state and
+			// stops there. No recompute() — that would spend a billable Directions
+			// call every time a driver looked at what they were collecting.
+			this.$list.find('[data-role="detail"]').on('toggle', (e) => {
+				const key = $(e.currentTarget).attr('data-detail-key');
+				if (!key) return;
+				if (e.currentTarget.open) this.expanded.add(key);
+				else this.expanded.delete(key);
+			});
+
+			// Clicking the row (not its checkbox, links, or line list) pans to that
+			// pin. Without the details guard, opening the lines also yanks the map.
 			this.$list.find('.ee-pickroute-stop[data-key]').on('click', (e) => {
 				if ($(e.target).is('input, a') || $(e.target).closest('a').length) return;
+				if ($(e.target).closest('[data-role="detail"]').length) return;
 				const key = $(e.currentTarget).data('key');
 				const marker = this.markers && this.markers[key];
 				if (marker && this.map) {
@@ -918,6 +1138,166 @@
 			return marker;
 		}
 
+		// ---- the printed pick sheet
+
+		/**
+		 * A printable sheet of what to collect, in the order now on screen.
+		 *
+		 * Built in the browser from the payload already in memory rather than as a
+		 * Frappe Print Format, for two reasons that are not stylistic:
+		 *
+		 *  - **Route order only exists here.** The optimised sequence comes back
+		 *    from Google inside this dialog; the server never sees it. A Print
+		 *    Format would have to re-query and would print in purchase-order
+		 *    sequence — a sheet that contradicts the screen it was printed from,
+		 *    which is the exact failure docs/pick-routing-map-po-details.md argued
+		 *    against when it rejected option (a).
+		 *  - **It works while the PDF toolchain does not.** Both server-side PDF
+		 *    backends are broken on this host (see docs/pdf-generation.md); browser
+		 *    print needs neither.
+		 *
+		 * The trade-off is real and worth stating: paper is a snapshot, so a PO
+		 * received after printing is invisible on the sheet. That is inherent to
+		 * printing, not to this implementation.
+		 */
+		openPickSheet() {
+			const win = window.open('', '_blank');
+			if (!win) {
+				frappe.msgprint(
+					__('Allow pop-ups for this site to print the pick sheet.')
+				);
+				return;
+			}
+			win.document.write(this.pickSheetHtml());
+			win.document.close();
+			win.focus();
+			// Let the new document lay out before the print dialog measures it;
+			// printing a half-laid-out page drops the last table's borders.
+			win.setTimeout(() => win.print(), 250);
+		}
+
+		pickSheetHtml() {
+			const project = this.data.project || {};
+			const title = [project.name, project.project_name].filter(Boolean).join(' — ');
+			const scope = SCOPE_LABELS.find((o) => o.value === this.scope);
+			const stops = this.displayStops();
+			const overflow = this.overflowStops();
+			const unroutable = (this.data.stops || []).filter((s) => !s.address);
+			const excluded = (this.data.stops || []).filter(
+				(s) => s.address && !this.selected.has(s.key)
+			);
+
+			const sections = [];
+			sections.push(
+				'<div class="sheet-endpoint"><b>' + esc(__('Start')) + ':</b> ' +
+					esc(this.origin() || __('Not set')) + '</div>'
+			);
+			stops.forEach((stop, idx) => {
+				sections.push(this.sheetStopHtml(stop, idx + 1));
+			});
+			sections.push(
+				'<div class="sheet-endpoint"><b>' + esc(__('Finish')) + ':</b> ' +
+					esc(this.destination() || __('Not set')) + '</div>'
+			);
+
+			if (overflow.length) {
+				sections.push(
+					'<h2>' + esc(__('Not on the optimised route — run separately')) + '</h2>'
+				);
+				overflow.forEach((stop) => sections.push(this.sheetStopHtml(stop, null)));
+			}
+			if (unroutable.length) {
+				sections.push('<h2>' + esc(__('No address on file — ring before going')) + '</h2>');
+				unroutable.forEach((stop) => sections.push(this.sheetStopHtml(stop, null)));
+			}
+
+			// Say out loud whether these stops are drive-time ordered. With the
+			// Directions API unavailable the list is in purchase-order sequence,
+			// and a driver must not read it as an optimised run.
+			const orderNote = this.ordered
+				? __('Stops are in drive-time order.')
+				: __('Stops are in purchase-order sequence, not drive-time order.');
+
+			return (
+				'<!doctype html><html><head><meta charset="utf-8">' +
+				'<title>' + esc(__('Pick sheet') + ' — ' + (project.name || '')) + '</title>' +
+				'<style>' + PICK_SHEET_CSS + '</style></head><body>' +
+					'<div class="sheet-head">' +
+						'<h1>' + esc(__('Pick sheet')) + '</h1>' +
+						'<div class="sheet-sub">' + esc(title) + '</div>' +
+						'<div class="sheet-meta">' +
+							esc(__('Printed {0}', [frappe.datetime.str_to_user(frappe.datetime.now_datetime())])) +
+							' · ' + esc(scope ? scope.label : this.scope) +
+							' · ' + esc(orderNote) +
+						'</div>' +
+					'</div>' +
+					sections.join('') +
+					(excluded.length
+						? '<div class="sheet-meta sheet-foot">' +
+							esc(__('{0} stop(s) were unticked and are not on this sheet.', [excluded.length])) +
+							'</div>'
+						: '') +
+					'<div class="sheet-sign">' +
+						esc(__('Collected by')) + ' _____________________&nbsp;&nbsp;&nbsp;' +
+						esc(__('Date')) + ' _______________' +
+					'</div>' +
+				'</body></html>'
+			);
+		}
+
+		sheetStopHtml(stop, seq) {
+			const contact = [stop.contact, stop.phone].filter(Boolean).join(' · ');
+			const tables = (stop.purchase_orders || [])
+				.map((po) => {
+					const rows = (po.items || [])
+						.map((line) => {
+							const m = lineModel(line);
+							return (
+								'<tr' + (m.done ? ' class="is-done"' : '') + '>' +
+									'<td class="tick">' + (m.done ? '&#9745;' : '&#9744;') + '</td>' +
+									'<td class="code">' + esc(m.code) + '</td>' +
+									'<td>' + esc(m.name) + '</td>' +
+									'<td class="num"><b>' + esc(qtyText(m.outstanding)) + '</b></td>' +
+									'<td class="num">' + esc(qtyText(m.ordered)) + '</td>' +
+									'<td class="num">' + esc(qtyText(m.received)) + '</td>' +
+									'<td>' + esc(m.uom) + '</td>' +
+								'</tr>'
+							);
+						})
+						.join('');
+					if (!rows) return '';
+					return (
+						'<div class="sheet-po">' +
+							'<div class="sheet-po-head">' + esc(poGroupHeadText(po)) + '</div>' +
+							'<table><thead><tr>' +
+								'<th class="tick"></th>' +
+								'<th>' + esc(__('Item')) + '</th>' +
+								'<th>' + esc(__('Description')) + '</th>' +
+								'<th class="num">' + esc(__('Collect')) + '</th>' +
+								'<th class="num">' + esc(__('Ordered')) + '</th>' +
+								'<th class="num">' + esc(__('Received')) + '</th>' +
+								'<th>' + esc(__('UOM')) + '</th>' +
+							'</tr></thead><tbody>' + rows + '</tbody></table>' +
+						'</div>'
+					);
+				})
+				.join('');
+
+			return (
+				'<div class="sheet-stop">' +
+					'<div class="sheet-stop-head">' +
+						'<span class="sheet-seq">' + esc(seq == null ? '–' : String(seq)) + '</span>' +
+						'<span class="sheet-stop-name">' + esc(stop.supplier_name) + '</span>' +
+					'</div>' +
+					'<div class="sheet-stop-addr">' +
+						esc(stop.address || __('No address on file')) +
+						(contact ? ' · ' + esc(contact) : '') +
+					'</div>' +
+					(tables || '<div class="sheet-meta">' + esc(__('No lines on this stop.')) + '</div>') +
+				'</div>'
+			);
+		}
+
 		/** Keep "Open in Google Maps" pointing at whatever is on screen now. */
 		updatePrimaryAction() {
 			const stops = this.displayStops();
@@ -997,6 +1377,11 @@
 				dialog.show();
 				const controller = new PickRoutingMap(frm, data, dialog);
 				controller.updatePrimaryAction();
+				// Secondary, not primary: the map is the point of this dialog and
+				// "Open in Google Maps" is what the driver reaches for. The sheet is
+				// for whoever is sending them.
+				dialog.set_secondary_action_label(__('Print pick sheet'));
+				dialog.set_secondary_action(() => controller.openPickSheet());
 			},
 		});
 	}
