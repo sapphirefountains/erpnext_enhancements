@@ -43,6 +43,11 @@ def get_procurement_status(project_name):
                 mr_item.stock_qty as mr_requested_qty,
                 mr_item.ordered_qty as mr_ordered_qty,
                 mr_item.received_qty as mr_received_qty,
+                /* Both UOMs, so the displayed figure can say which one it is in. A
+                   line requested in FT against a stock UOM of Unit is real on this
+                   data, and the quantities above are the stock-UOM ones. */
+                mr_item.uom as line_uom,
+                mr_item.stock_uom as line_stock_uom,
                 mr.name as mr_name,
                 mr.transaction_date as transaction_date,
                 mr.status as mr_status,
@@ -136,6 +141,8 @@ def get_procurement_status(project_name):
                 NULL as mr_requested_qty,
                 NULL as mr_ordered_qty,
                 NULL as mr_received_qty,
+                po_item.uom as line_uom,
+                po_item.stock_uom as line_stock_uom,
                 NULL as mr_name,
                 po.transaction_date as transaction_date,
                 NULL as mr_status,
@@ -249,6 +256,8 @@ def get_procurement_status(project_name):
 			"stock_entry": row.get("se_name"),
 			"stock_entry_status": row.get("se_status"),
 			"warehouse": row.get("warehouse"),
+			"uom": row.get("line_uom"),
+			"stock_uom": row.get("line_stock_uom"),
 		}
 		# requested_qty / ordered_qty / received_qty / order_status / receive_status /
 		# completion_percentage, all computed from THIS line's own quantities. The
@@ -377,6 +386,8 @@ def _minimal_item_row(doctype, docname, status, item):
 		"pi": None, "pi_status": None,
 		"stock_entry": None, "stock_entry_status": None,
 		"warehouse": item.get("warehouse"),
+		"uom": item.get("uom"),
+		"stock_uom": item.get("stock_uom"),
 	}
 	row.update(progress)
 	field = _CHAIN_FIELD[doctype]
@@ -418,8 +429,13 @@ def _supplementary_documents(project_name, doctype, existing_names):
 	)
 
 	item_fields = ["parent", "item_code", "item_name", "qty"]
-	if item_meta.has_field("warehouse"):
-		item_fields.append("warehouse")
+	# Guarded per field: these child tables are not uniform, and a missing column here
+	# raises rather than degrades. `_supplementary_documents` is wrapped in a bare
+	# except upstream, so an unguarded read would silently drop a whole doctype group
+	# from the feed rather than erroring visibly.
+	for optional in ("warehouse", "uom", "stock_uom"):
+		if item_meta.has_field(optional):
+			item_fields.append(optional)
 
 	result = {}
 	for v in valid:
@@ -427,6 +443,22 @@ def _supplementary_documents(project_name, doctype, existing_names):
 		items = frappe.get_all(item_doctype, filters={"parent": v.name}, fields=item_fields)
 		result[v.name] = [_minimal_item_row(doctype, v.name, status, it) for it in items]
 	return result
+
+
+def _document_rollup(items):
+	"""Requested / ordered / received totalled across one document's item rows.
+
+	**De-duplicates before summing, and that is the whole reason this is a function.**
+	The feed's Purchase Order join matches ``supplier_quotation_item OR
+	material_request_item``, so a request line reachable by both paths comes back more
+	than once — on PRJ-00566 that is 19 rows for MAT-MR-2026-00001's 10 lines. A naive
+	``sum(row["ordered_qty"] for row in items)`` nearly doubles the total. Keying on the
+	child row name collapses the duplicates; rows with no child row of their own (the
+	supplementary sweep builds those) are distinct objects and count once each.
+	"""
+	return procurement_quantities.rollup_quantity_progress(
+		procurement_quantities.dedupe_lines(items)
+	)
 
 
 def _fetch_doc_meta(doctype, names):
@@ -496,13 +528,18 @@ def get_procurement_documents(project_name):
 		documents = []
 		for name in names:
 			m = meta.get(name) or {}
+			items = doc_items[dt][name]
 			documents.append(
 				{
 					"name": name,
 					"date": str(m.get("doc_date")) if m.get("doc_date") else None,
 					"supplier": m.get("supplier"),
 					"status": m.get("status") or _docstatus_label(m.get("docstatus")),
-					"items": doc_items[dt][name],
+					"items": items,
+					# Totals across this document's lines, computed here rather than in
+					# the browser so the MCP tool gets them too and so the de-duplication
+					# happens where the child row names are known.
+					"rollup": _document_rollup(items),
 				}
 			)
 		# Newest documents first.
