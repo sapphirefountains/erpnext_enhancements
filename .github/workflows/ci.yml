@@ -78,6 +78,14 @@ jobs:
       # becoming a stop, and the PO -> Project union that either link alone drops.
       - name: Supplier pick-up routing (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_pickup_routing -v
+      # Guards the "set a primary here, silently re-point it over there" class of
+      # bug: is_primary_contact / is_primary_address are columns on the
+      # Contact/Address record, so only Customer and Supplier can own them. A
+      # Project or Opportunity context must be refused, not quietly applied to
+      # whichever account happened to be nearby. Also fences the Supplier path
+      # that the pick-up routing address ordering depends on.
+      - name: Primary contact/address scoping (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_sync_contact_primary -v
       # Own step, not folded into a multi-module list: each bench-free suite
       # installs its own `frappe` stub in setUpModule, and a separate process
       # keeps them from cross-talking.
