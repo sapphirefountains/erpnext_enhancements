@@ -5,7 +5,7 @@ description: Bump the erpnext_enhancements version and write the CHANGELOG entry
 
 # Release prep
 
-Every PR bumps the version. Frappe Cloud deploys from `main` and `release.yml` tags each
+Every PR bumps the version. `main` deploys automatically and `release.yml` tags each
 new `__version__`, so the Releases page is a 1:1 log of what is deployed — a change that
 lands without a bump is invisible in that log.
 
