@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.200.0] - 2026-07-31
+
+### Fixed
+
+- **The Opportunity Kanban's name field showed the wrong contact.** The card was
+  configured with `contact_person`, not the Opportunity's Primary Contact.
+
+  It was hard to spot because Opportunity carries **two** Link-to-Contact fields and
+  *both were labelled "Full Name"* — so the field picker offered the same label twice
+  and the board was configured with whichever one came first. `contact_person` is now
+  labelled **"Contact Person"** (Property Setter fixture), which is the change that
+  stops this recurring.
+
+### Changed
+
+- **Opportunity Kanban cards now show `primary_contact`.** `opportunity_amount` stays in
+  the card field list on purpose: `opportunity_kanban_totals.js` sums it per column and
+  receives it *via the board's own field list* — it is not in
+  `crm_enhancements/opportunity_list.js`'s `add_fields`, so dropping it would have
+  silently emptied the column totals rather than erroring.
+
+  Shipped as a **patch, not a fixture**, because `Kanban Board` is not in the `fixtures`
+  list in `hooks.py`: the board exists only as a live database record, so a UI edit would
+  not survive a fresh site build and would never reach a second site at all. The patch
+  swaps the one entry in place, leaves `field_name` / `filters` / `private` alone, and
+  backs off with a log line if the board has since been re-arranged by hand.
+
+### Added
+
+- **`patches.backfill_opportunity_primary_contact`** — and without it this change would
+  have made the board worse. Of 814 Opportunities on production, 154 have
+  `contact_person` and only **21** have `primary_contact`; 142 have the first and not the
+  second. A straight field swap would have blanked 142 cards that show a name today.
+
+  The backfill fills those 142 (all of them — no dangling Contact links) and leaves alone
+  the **five** where both fields are set and genuinely differ, e.g. `CRM-OPP-2026-00120`
+  (primary *Nick Hess*, contact person *Kaia Whetman*). Where somebody drew a distinction
+  between "the contact on this deal" and "the primary contact", this patch is not
+  entitled to collapse it.
+
+  Net effect measured against production: **154 cards show a name today, 163 after.** The
+  swap is an improvement rather than a regression only because of this ordering, which
+  `patches.txt` enforces.
+
+  Writes with `db.set_value(..., update_modified=False)` rather than `doc.save()`, so a
+  142-row backfill does not fire `on_update` — and through it `sync_from_main_doc`, the
+  Drive folder hooks and the global Triton `after_save` — 142 times.
+
 ## [1.199.0] - 2026-07-31
 
 ### Fixed
