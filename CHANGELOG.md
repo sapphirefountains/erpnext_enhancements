@@ -7,6 +7,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.200.0] - 2026-07-31
+
+### Fixed
+
+- **The Opportunity Kanban's name field showed the wrong contact.** The card was
+  configured with `contact_person`, not the Opportunity's Primary Contact.
+
+  It was hard to spot because Opportunity carries **two** Link-to-Contact fields and
+  *both were labelled "Full Name"* — so the field picker offered the same label twice
+  and the board was configured with whichever one came first. `contact_person` is now
+  labelled **"Contact Person"** (Property Setter fixture), which is the change that
+  stops this recurring.
+
+### Changed
+
+- **Opportunity Kanban cards now show `primary_contact`.** `opportunity_amount` stays in
+  the card field list on purpose: `opportunity_kanban_totals.js` sums it per column and
+  receives it *via the board's own field list* — it is not in
+  `crm_enhancements/opportunity_list.js`'s `add_fields`, so dropping it would have
+  silently emptied the column totals rather than erroring.
+
+  Shipped as a **patch, not a fixture**, because `Kanban Board` is not in the `fixtures`
+  list in `hooks.py`: the board exists only as a live database record, so a UI edit would
+  not survive a fresh site build and would never reach a second site at all. The patch
+  swaps the one entry in place, leaves `field_name` / `filters` / `private` alone, and
+  backs off with a log line if the board has since been re-arranged by hand.
+
+### Added
+
+- **`patches.backfill_opportunity_primary_contact`** — and without it this change would
+  have made the board worse. Of 814 Opportunities on production, 154 have
+  `contact_person` and only **21** have `primary_contact`; 142 have the first and not the
+  second. A straight field swap would have blanked 142 cards that show a name today.
+
+  The backfill fills those 142 (all of them — no dangling Contact links) and leaves alone
+  the **five** where both fields are set and genuinely differ, e.g. `CRM-OPP-2026-00120`
+  (primary *Nick Hess*, contact person *Kaia Whetman*). Where somebody drew a distinction
+  between "the contact on this deal" and "the primary contact", this patch is not
+  entitled to collapse it.
+
+  Net effect measured against production: **154 cards show a name today, 163 after.** The
+  swap is an improvement rather than a regression only because of this ordering, which
+  `patches.txt` enforces.
+
+  Writes with `db.set_value(..., update_modified=False)` rather than `doc.save()`, so a
+  142-row backfill does not fire `on_update` — and through it `sync_from_main_doc`, the
+  Drive folder hooks and the global Triton `after_save` — 142 times.
+
+## [1.199.0] - 2026-07-31
+
+### Fixed
+
+- **Setting a Primary Contact or Primary Address on a Project or Opportunity silently
+  re-pointed the Customer's.** Both handlers in the directory widget derived their
+  account as
+  `frm.doc.customer || frm.doc.supplier || frm.doc.party_name || frm.doc.name`:
+
+  - On a **Project** that resolves to the Project's Customer. One click cleared
+    `is_primary_contact` across every contact on that account and set it on the chosen
+    one — a project-level decision rewriting a company-level fact, with no indication
+    anything outside the Project had changed.
+  - On an **Opportunity** it resolved to the incoherent pair `("Opportunity", <a
+    Customer id>)`, because Opportunity's party discriminator is `opportunity_from`, not
+    `party_type`. The `Dynamic Link` query behind "unset the others" matched nothing, so
+    the flag was set without the previous one being cleared — which is how four
+    Customers ended up with two contacts each flagged primary.
+
+  The root cause is architectural, which is why the fix is a rule rather than a patch:
+  `Contact.is_primary_contact` and `Address.is_primary_address` are columns on the
+  Contact/Address **record**, not on the `Dynamic Link` row. Setting one is a statement
+  about a whole account, and there is physically nowhere in that scheme to record
+  "primary for *this* Project". Only Customer and Supplier are accounts in that sense.
+  Every other form — Project, Opportunity, Master Project, Contact — now records its
+  primary in its own doc-local `primary_contact` / `primary_address` Link field
+  (`setup/custom_fields.py`) and touches nothing else. Customer, Supplier and the
+  supplier pick-up address ordering in `api/pickup_routing.py` are unchanged by design.
+
+  Note the ticket named `sync_contact.sync_from_main_doc` as the prime suspect. That
+  function only ever writes the Contact's three convenience fields, has no
+  Project→Customer edge at all, and was never involved; the propagation was entirely
+  client-side. A test now pins that down so the diagnosis does not have to be redone.
+
+  Visible consequence worth watching: the Project Brief's owner contact
+  (`project_enhancements/doctype/project/project.py`) and ERPNext's own default-address
+  pick on a Customer's transactions both read the global flag. They now reflect the
+  Customer's real primary rather than whatever a Project user last clicked — correct,
+  but it may be a different name than yesterday.
+
+- **`frm.save().done(...)`** in both handlers. `frm.save()` returns a native Promise,
+  which has no `.done`, so the post-save re-render and the "Primary contact updated"
+  toast never ran — the action worked but appeared not to. Replaced with the documented
+  `frm.save("Save", callback)` signature already used in `task_enhancements.js`.
+
+- **The primary-contact auto-fill ran almost nowhere, and read the wrong columns where
+  it did.** `primary_contact.js` binds five doctypes but was registered under the
+  **Lead** entry only, and `frappe.ui.form.on` registrations are global once a file is
+  parsed — so on a Project it ran only if the user happened to have opened a Lead
+  earlier in the same session, and did nothing otherwise. That reads as flakiness rather
+  than a bug. It also fetched `Contact.phone` / `mobile_no` while the server writes
+  `custom_phone_number` / `custom_mobile_number`, so on the occasions it *did* run it
+  blanked the phone. Both halves are fixed together: fixing only the registration would
+  have spread the second defect to four more forms.
+
+### Added
+
+- **`patches.dedupe_party_primary_flags`** — clears the stray flags the Opportunity path
+  left behind. On production that is four Customers with two primary contacts (AE URBIA,
+  Insomniac, Kapture Vision, Michael Stone) and one with two primary addresses (Hess
+  Construction LLC): **four flags cleared across five accounts**.
+
+  It only ever *removes* a duplicate. It never invents a primary and never moves one
+  where exactly one exists, because the Project path overwrote the account's previous
+  value with no record anywhere of what it had been — that class is genuinely
+  unrecoverable and pretending otherwise would be worse than leaving it.
+
+  The winner is whichever record the account's own `customer_primary_contact` /
+  `*_primary_address` field points at — ERPNext maintains those and `sync_contact` has
+  never written them, so where one is set it is the only uncorrupted witness. Two of the
+  four were decided that way; the rest fall back to the least recently modified, on the
+  reasoning that the strays are what the buggy widget added on top. Writes with
+  `update_modified=False`, because a real `doc.save()` would fan out through
+  `sync_from_contact` into a re-save of every party naming that Contact.
+
+  One live edge case it handles rather than mangles: Customer "Michael  Stone" has the
+  *same* Contact linked twice by duplicate `Dynamic Link` rows. That is a different
+  defect and emphatically not two competing primaries — clearing "the other one" would
+  have unflagged the only primary there is.
+
+- **`tests/test_sync_contact_primary.py`** — 13 bench-free tests with their own CI step.
+  `sync_contact` had **zero** tests, which is how a module that writes across document
+  boundaries went this long unfenced.
+
+### Security
+
+- `sync_contact.set_primary_contact` / `set_primary_address` were whitelisted with **no
+  permission check of any kind** — any logged-in user could re-point any customer's
+  primary contact. They now require write permission on the account and reject any
+  `account_doctype` other than Customer or Supplier. The doctype guard is defence in
+  depth behind the client fix: it makes the bug above unrepresentable rather than merely
+  unwritten.
+
 ## [1.198.0] - 2026-07-31
 
 ### Added
@@ -260,6 +401,55 @@ A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bu
   variants, because the tracker's `th` and badge rules hard-code light-mode colours and a
   new class written only for light mode is illegible in dark.
 
+## [1.194.2] - 2026-07-31
+
+### Added
+
+- **`docs/procurement-tracker-map.md`** — a code map for the Project form's **Procurement
+  Tracker**, the collapsible procurement tree on the Budget tab. It had no documentation
+  anywhere: no section in the Project Enhancements README, no CHANGELOG entry of its own
+  (it landed in `a8021db`, before the per-module README pass and before this changelog
+  became a discipline), and only a single table row in the public README. Four queued
+  changes all land in the same two files, so the groundwork is written down once.
+
+  What it records, beyond the file map:
+
+  - **The name collision.** ERPNext ships a *standard* Script Report called "Procurement
+    Tracker" (module Buying, `ref_doctype` Purchase Order). It is unrelated and not in this
+    repo. The thing on the Project form is an in-house Vue 3 widget, and the field it mounts
+    into is labelled "Material Request Feed" — a misnomer, it renders all six procurement
+    doctypes.
+  - **There is no table library.** It is Vue 3 with an inline template string, not a frappe
+    DataTable, so sorting and per-row actions are hand-written work rather than configuration.
+  - **The `OR`-join fan-out** at `project_enhancements/__init__.py:69-72`: one Material
+    Request line split across two Purchase Orders produces two rows for that one line. Nothing
+    de-duplicates today because nothing aggregates today — but any future per-item arithmetic
+    has to, or it double-counts.
+  - **Three different things on screen are called "status"**, from three different sources —
+    and the item-row Doc Chain badge reads the *parent* Material Request's header status
+    (`mr.status`, `:36`) on a child-grain row, so every line of a partially-ordered MR reads
+    "Partially Ordered" whether or not that particular line is fully ordered. Reproduction on
+    `MAT-MR-2026-00001` / `PRJ-00566`. `Material Request.per_ordered` and
+    `Material Request Item.ordered_qty` are never queried by the feed at all.
+  - **The return shape is a public contract.** `assistant_tools/project_procurement_status.py`
+    consumes both endpoints, so renaming `ordered_qty` / `received_qty` breaks the MCP tool
+    silently.
+  - **Production volumes**, so nobody reaches for pagination: the largest project is 54
+    Purchase Order Item rows. Also that *no* `Material Request Item` row has `project` set —
+    Material Requests reach the feed only via `Material Request.custom_project` — and that
+    `Material Request Item.ordered_qty` agreed with the child tables on all 160 submitted rows
+    checked, so quantity work can trust the denormalized fields.
+  - Gotchas worth the reading: the Vue app is never unmounted (every form refresh orphans the
+    previous instance with its watchers live, onto a hard-coded document-global element id),
+    `v-html` renders item codes and supplier names unescaped, both endpoints are whitelisted
+    with **no** permission check, and `_supplementary_documents` swallows every exception so a
+    failing doctype silently vanishes from the feed instead of erroring.
+
+### Changed
+
+- **`project_enhancements/README.md`** gains the Procurement Tracker section it never had, and
+  `docs/README.md` indexes the new map. Documentation only — no executable behaviour changed.
+
 ## [1.194.1] - 2026-07-31
 
 ### Changed
@@ -339,55 +529,6 @@ A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bu
   the same CSS through `style.textContent`, where markup cannot escape; on an
   unauthenticated page a `</style>` in a site-edited Print Format would have ended the
   element and let everything after it parse as content.
-
-## [1.194.2] - 2026-07-31
-
-### Added
-
-- **`docs/procurement-tracker-map.md`** — a code map for the Project form's **Procurement
-  Tracker**, the collapsible procurement tree on the Budget tab. It had no documentation
-  anywhere: no section in the Project Enhancements README, no CHANGELOG entry of its own
-  (it landed in `a8021db`, before the per-module README pass and before this changelog
-  became a discipline), and only a single table row in the public README. Four queued
-  changes all land in the same two files, so the groundwork is written down once.
-
-  What it records, beyond the file map:
-
-  - **The name collision.** ERPNext ships a *standard* Script Report called "Procurement
-    Tracker" (module Buying, `ref_doctype` Purchase Order). It is unrelated and not in this
-    repo. The thing on the Project form is an in-house Vue 3 widget, and the field it mounts
-    into is labelled "Material Request Feed" — a misnomer, it renders all six procurement
-    doctypes.
-  - **There is no table library.** It is Vue 3 with an inline template string, not a frappe
-    DataTable, so sorting and per-row actions are hand-written work rather than configuration.
-  - **The `OR`-join fan-out** at `project_enhancements/__init__.py:69-72`: one Material
-    Request line split across two Purchase Orders produces two rows for that one line. Nothing
-    de-duplicates today because nothing aggregates today — but any future per-item arithmetic
-    has to, or it double-counts.
-  - **Three different things on screen are called "status"**, from three different sources —
-    and the item-row Doc Chain badge reads the *parent* Material Request's header status
-    (`mr.status`, `:36`) on a child-grain row, so every line of a partially-ordered MR reads
-    "Partially Ordered" whether or not that particular line is fully ordered. Reproduction on
-    `MAT-MR-2026-00001` / `PRJ-00566`. `Material Request.per_ordered` and
-    `Material Request Item.ordered_qty` are never queried by the feed at all.
-  - **The return shape is a public contract.** `assistant_tools/project_procurement_status.py`
-    consumes both endpoints, so renaming `ordered_qty` / `received_qty` breaks the MCP tool
-    silently.
-  - **Production volumes**, so nobody reaches for pagination: the largest project is 54
-    Purchase Order Item rows. Also that *no* `Material Request Item` row has `project` set —
-    Material Requests reach the feed only via `Material Request.custom_project` — and that
-    `Material Request Item.ordered_qty` agreed with the child tables on all 160 submitted rows
-    checked, so quantity work can trust the denormalized fields.
-  - Gotchas worth the reading: the Vue app is never unmounted (every form refresh orphans the
-    previous instance with its watchers live, onto a hard-coded document-global element id),
-    `v-html` renders item codes and supplier names unescaped, both endpoints are whitelisted
-    with **no** permission check, and `_supplementary_documents` swallows every exception so a
-    failing doctype silently vanishes from the feed instead of erroring.
-
-### Changed
-
-- **`project_enhancements/README.md`** gains the Procurement Tracker section it never had, and
-  `docs/README.md` indexes the new map. Documentation only — no executable behaviour changed.
 
 ## [1.193.1] - 2026-07-29
 
