@@ -15,7 +15,7 @@ project budgets exist, since every project's ``estimated_costing`` is 0/NULL tod
 
 import frappe
 from frappe import _
-from frappe.utils import flt, fmt_money
+from frappe.utils import flt, fmt_money, now_datetime
 
 APPROVING_ROLE = "PO Approver"
 
@@ -39,6 +39,30 @@ def enforce_threshold(doc, method=None):
 		),
 		title=_("Approval Required"),
 	)
+
+
+def stamp_approval(doc, method=None):
+	"""`before_submit` hook on Purchase Order: record who submitted it, and when.
+
+	Runs **last** in the ``before_submit`` chain, so it only fires once
+	``enforce_requester_separation`` and ``enforce_threshold`` have both passed — the
+	stamp means "this order cleared both gates in this person's hands", not merely
+	"somebody pressed submit".
+
+	It exists because the supplier-facing print format shows an approver, and there was
+	nowhere truthful to read one from: Purchase Order has no approver field, and
+	``modified_by`` is whoever touched the document *last*, which after any post-submit
+	edit is not the approver at all.
+
+	Guarded with ``has_field``: the fields are created by
+	``patches.add_po_approval_stamp_fields``, and this hook fires during ERPNext's own
+	test bootstrap, before that patch has run on a fresh database.
+	"""
+	meta = doc.meta
+	if meta.has_field("custom_approved_by"):
+		doc.custom_approved_by = frappe.session.user
+	if meta.has_field("custom_approved_on"):
+		doc.custom_approved_on = now_datetime()
 
 
 def has_approval_authority(user=None):

@@ -345,6 +345,11 @@ doc_events = {
 		"before_submit": [
 			"erpnext_enhancements.po_segregation.enforce_requester_separation",
 			"erpnext_enhancements.po_approval.enforce_threshold",
+			# Last, deliberately: the stamp records that this order cleared BOTH gates
+			# in this person's hands. The supplier-facing print format reads it, and
+			# there is nowhere else truthful to read an approver from — Purchase Order
+			# has no approver field and `modified_by` is whoever touched it last.
+			"erpnext_enhancements.po_approval.stamp_approval",
 		],
 	},
 	"Opportunity": {
@@ -593,6 +598,11 @@ after_migrate = [
 	# QC Checklist / Pricing Summary Print Formats (idempotent + guarded).
 	"erpnext_enhancements.product_configurator.setup.create_configurator_item_fields",
 	"erpnext_enhancements.product_configurator.setup_print_formats.ensure_configurator_print_formats",
+	# enhancements_core: the supplier-facing Purchase Order print format. Procurement
+	# has no module of its own (po_approval / po_segregation / procurement_project sit
+	# at the app root) and a Print Format needs a real Module Def, so it lands in the
+	# catch-all. Idempotent + guarded like the others.
+	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_enhancements_core_print_formats",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
