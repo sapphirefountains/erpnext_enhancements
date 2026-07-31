@@ -198,7 +198,7 @@ def get_procurement_status(project_name):
 
 	# Post-processing to group by doctype and format data
 	result = {}
-	for row in data:
+	for index, row in enumerate(data):
 		progress = _line_progress(row)
 
 		# Determine the latest stage for this procurement chain (Graduation Logic)
@@ -241,6 +241,14 @@ def get_procurement_status(project_name):
 			# array index is not an identity — it is a position.
 			"mr_item": row.get("mr_item_name"),
 			"po_item": row.get("po_item_name"),
+			# Unique per emitted row, which the child-row names above are not: the
+			# fan-out can repeat the same (request line, order line) pair. The browser
+			# needs a key that survives re-ordering — an array index makes Vue reuse
+			# the wrong DOM nodes the moment a column is sorted, smearing the search
+			# highlight spans across rows.
+			"row_id": "{0}#{1}".format(
+				row.get("mr_item_name") or row.get("po_item_name") or "row", index
+			),
 			"mr": row.get("mr_name"),
 			"mr_status": row.get("mr_status"),
 			"rfq": row.get("rfq_name"),
@@ -388,6 +396,10 @@ def _minimal_item_row(doctype, docname, status, item):
 		"warehouse": item.get("warehouse"),
 		"uom": item.get("uom"),
 		"stock_uom": item.get("stock_uom"),
+		# This document never joined a chain, so the row has no mr_item/po_item to key
+		# on — but the child row it was built from has its own name, which is identity
+		# enough for the browser's row key.
+		"row_id": "{0}#{1}".format(doctype, item.get("name") or item.get("item_code")),
 	}
 	row.update(progress)
 	field = _CHAIN_FIELD[doctype]
@@ -428,7 +440,7 @@ def _supplementary_documents(project_name, doctype, existing_names):
 		fields=["name", "status", "docstatus"],
 	)
 
-	item_fields = ["parent", "item_code", "item_name", "qty"]
+	item_fields = ["name", "parent", "item_code", "item_name", "qty"]
 	# Guarded per field: these child tables are not uniform, and a missing column here
 	# raises rather than degrades. `_supplementary_documents` is wrapped in a bare
 	# except upstream, so an unguarded read would silently drop a whole doctype group
