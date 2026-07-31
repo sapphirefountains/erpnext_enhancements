@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.194.1] - 2026-07-31
+
+### Changed
+
+- **OAuth Bearer Token retention raised from 30 days to 90** (`patches/set_oauth_token_retention.py`).
+  Frappe's log-clearing job treats `OAuth Bearer Token` as a log doctype, but the row *is*
+  the refresh token: Frappe mints a new row on every refresh and never revokes the old
+  ones, so a stored refresh token stays usable only while its row survives. At 30 days,
+  anyone who left the integration alone for a month came back to a dead grant.
+
+  The failure was worth documenting because it does not look like an expiry. Triton's
+  refresh POST is unauthenticated by design (client credentials in the body), so it runs as
+  `Guest`; when `validate_refresh_token` finds no Active row, Frappe's
+  `check_doctype_permission` rewrites the resulting `DoesNotExistError` into a
+  `PermissionError` — anti-enumeration hardening — and the client sees
+  `403 {"exc_type":"PermissionError", … "User <strong>Guest</strong> does not have doctype
+  access … <strong>OAuth Bearer Token</strong>"}` instead of OAuth's `400 invalid_grant`.
+  Nothing in this app is involved, and no permission change fixes it.
+
+  The client-side half (refresh ahead of expiry, and a relink prompt when a grant really
+  is dead) ships in Triton 0.38.0 (sapphirefountains/triton#272). The patch never lowers
+  a retention that has been raised deliberately, and appends the row on sites where Log
+  Settings has not seeded it.
+
 ## [1.194.0] - 2026-07-31
 
 ### Added
