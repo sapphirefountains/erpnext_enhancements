@@ -202,6 +202,34 @@ def quantity_progress(requested, ordered, received, draft_ordered=0):
 	}
 
 
+#: Keys carrying a line's own child-row name, in preference order. A row reached
+#: through the Material Request chain has both; a direct Purchase Order line has only
+#: the second.
+_LINE_ID_KEYS = ("mr_item", "po_item")
+
+
+def dedupe_lines(rows):
+	"""Collapse rows that are the same line seen more than once.
+
+	The feed's Purchase Order join matches ``supplier_quotation_item OR
+	material_request_item``, so a request line reachable by both paths comes back
+	repeatedly — on production, MAT-MR-2026-00001's ten lines arrive as nineteen rows.
+	Summing those directly reports 720 requested against a true 362.
+
+	Rows with no child-row name of their own — the supplementary sweep builds those for
+	documents that never joined a chain — are distinct by position and each count once.
+	"""
+	distinct = {}
+	for index, row in enumerate(rows):
+		key = None
+		for id_key in _LINE_ID_KEYS:
+			if row.get(id_key):
+				key = row[id_key]
+				break
+		distinct.setdefault(key if key is not None else ("__row__", index), row)
+	return list(distinct.values())
+
+
 def rollup_quantity_progress(rows):
 	"""Aggregate per-line progress dicts into one document-level answer.
 

@@ -164,6 +164,56 @@ frappe.ui.form.on("Project", {
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
 									},
+									// Quantities arrive as floats. "4" reads as a quantity; "4.0"
+									// reads as a rounding artefact, and a column of them is noise.
+									fmtQty(value) {
+										if (value === null || value === undefined || value === '') return '-';
+										const n = Number(value);
+										if (!isFinite(n)) return '-';
+										return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+									},
+									// The figures are in the stock UOM; the line may have been written
+									// in another. Say so rather than leaving someone to wonder why a
+									// 120 FT line reads 120 against a stock UOM of Unit.
+									uomTitle(row) {
+										if (!row.stock_uom) return '';
+										if (row.uom && row.uom !== row.stock_uom) {
+											return `Quantities in ${row.stock_uom}. Line written in ${row.uom}.`;
+										}
+										return `Quantities in ${row.stock_uom}.`;
+									},
+									lineReceiveTitle(row) {
+										const parts = [`This line: ${this.fmtQty(row.received_qty)} of ${this.fmtQty(row.ordered_qty)} received`];
+										if (row.over_received_qty) {
+											parts.push(`${this.fmtQty(row.over_received_qty)} more than was ordered`);
+										}
+										return parts.join(' · ');
+									},
+									// Hidden when there is nothing to total, so the pre-order doctypes
+									// (RFQ, Supplier Quotation) do not sprout a row of zeroes that
+									// reads as a failure rather than an absence.
+									hasRollup(doc) {
+										const r = doc.rollup;
+										return !!(r && (r.requested_qty || r.ordered_qty || r.received_qty));
+									},
+									rollupText(doc) {
+										const r = doc.rollup || {};
+										const parts = [];
+										if (r.requested_qty) parts.push(`${this.fmtQty(r.requested_qty)} req`);
+										if (r.ordered_qty) parts.push(`${this.fmtQty(r.ordered_qty)} ord`);
+										parts.push(`${this.fmtQty(r.received_qty || 0)} rec`);
+										return parts.join(' · ');
+									},
+									rollupTitle(doc) {
+										const r = doc.rollup || {};
+										// No unit: a document's lines can span UOMs, so a single total
+										// carries no one unit. Per-line units are on the cells.
+										return [
+											`${r.item_count || 0} line(s)`,
+											`ordered: ${r.order_status}`,
+											`received: ${r.receive_status}`,
+										].join(' · ');
+									},
 									// Spells out the arithmetic behind an item row's badge, and names
 									// the parent's own status alongside it — the two legitimately
 									// differ, and seeing them together is what makes it obvious that
@@ -171,12 +221,12 @@ frappe.ui.form.on("Project", {
 									lineOrderTitle(row) {
 										const parts = [];
 										if (row.requested_qty !== null && row.requested_qty !== undefined) {
-											parts.push(`This line: ${row.ordered_qty} of ${row.requested_qty} ordered`);
+											parts.push(`This line: ${this.fmtQty(row.ordered_qty)} of ${this.fmtQty(row.requested_qty)} ordered`);
 										} else {
-											parts.push(`This line: ${row.ordered_qty} ordered`);
+											parts.push(`This line: ${this.fmtQty(row.ordered_qty)} ordered (no request behind it)`);
 										}
 										if (row.draft_ordered_qty) {
-											parts.push(`${row.draft_ordered_qty} on draft orders (not counted)`);
+											parts.push(`${this.fmtQty(row.draft_ordered_qty)} on draft orders (not counted)`);
 										}
 										if (row.mr_status) {
 											parts.push(`Request ${row.mr} is ${row.mr_status}`);
@@ -249,6 +299,12 @@ frappe.ui.form.on("Project", {
 														<span class="doc-meta doc-date">{{ formatDate(doc.date) }}</span>
 														<span class="doc-meta doc-supplier" v-html="highlight(doc.supplier || '-', globalSearchTerm)"></span>
 														<span class="status-badge" :class="getStatusColorClass(doc.status)">{{ doc.status }}</span>
+														<!-- One span rather than three: .doc-supplier is the only element
+														     in this flex row that grows, so three nowrap spans would
+														     squeeze a supplier name to nothing on a narrow screen. Hidden
+														     entirely when there is nothing to total, so an RFQ header does
+														     not gain a "0 req · 0 ord · 0 rec" that reads as an error. -->
+														<span v-if="hasRollup(doc)" class="doc-meta doc-qty-rollup" :title="rollupTitle(doc)">{{ rollupText(doc) }}</span>
 														<span class="doc-meta doc-itemcount">{{ doc.items.length }} item(s)</span>
 													</div>
 
@@ -260,14 +316,16 @@ frappe.ui.form.on("Project", {
 																	<tr>
 																		<th>Item Details</th>
 																		<th>Warehouse</th>
-																		<th>Qty (Ord / Rec)</th>
+																		<th class="qty-col">Requested</th>
+																		<th class="qty-col">Ordered</th>
+																		<th class="qty-col">Received</th>
 																		<th>Status</th>
 																		<th>Doc Chain</th>
 																	</tr>
 																</thead>
 																<tbody>
 																	<tr v-if="(doc.items || []).length === 0">
-																		<td colspan="5" class="text-center text-muted">No items.</td>
+																		<td colspan="7" class="text-center text-muted">No items.</td>
 																	</tr>
 																	<tr v-for="(row, idx) in doc.items" :key="idx" class="procurement-item-row">
 																		<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
@@ -275,9 +333,16 @@ frappe.ui.form.on("Project", {
 																			v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + (row.item_name || '') + '</small>', globalSearchTerm)">
 																		</td>
 																		<td v-html="highlight(row.warehouse || '-', globalSearchTerm)"></td>
-																		<td>{{ row.ordered_qty }} / {{ row.received_qty }}</td>
-																		<td :class="row.completion_percentage >= 100 ? 'status-complete' : 'status-pending'">
-																			{{ row.completion_percentage }}% Received
+																		<!-- "-", not 0, when nothing was requested: a direct Purchase
+																		     Order line has no request behind it, and "nobody asked" is
+																		     a different fact from "asked for none". -->
+																		<td class="qty-col" :title="uomTitle(row)">{{ fmtQty(row.requested_qty) }}</td>
+																		<td class="qty-col" :title="lineOrderTitle(row)">
+																			{{ fmtQty(row.ordered_qty) }}<span v-if="row.draft_ordered_qty" class="qty-draft"> +{{ fmtQty(row.draft_ordered_qty) }} draft</span>
+																		</td>
+																		<td class="qty-col" :title="lineReceiveTitle(row)">{{ fmtQty(row.received_qty) }}</td>
+																		<td>
+																			<span class="status-badge" :class="getStatusColorClass(row.receive_status)" :title="lineReceiveTitle(row)">{{ row.receive_status }}</span>
 																		</td>
 																		<td>
 																			<div class="doc-chain-container">

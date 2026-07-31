@@ -415,6 +415,30 @@ header.navbar {
     color: #ef6c00;
 }
 
+/* The three quantity columns. Right-aligned and nowrap so the digits line up and a
+   long item description cannot push them onto two lines. */
+.procurement-tracker .glass-table th.qty-col,
+.procurement-tracker .glass-table td.qty-col {
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Quantity sitting on unsubmitted Purchase Orders. Muted because it is context, not
+   the number — an order that has not been placed has not been placed. */
+.procurement-tracker .qty-draft {
+    color: #999;
+    font-size: 0.85em;
+    margin-left: 4px;
+}
+
+/* Per-document totals in the header row. Sits between the status badge and the item
+   count; kept to one span so the supplier name, the only element in that flex row
+   that grows, is not squeezed to nothing on a narrow screen. */
+.procurement-tracker .doc-qty-rollup {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
 /* "Partially Ordered" / "Partially Received". Distinct from .status-pending, which
    means nothing has happened yet — this means something has, but not all of it. The
    Procurement Tracker's colour mapper used to match on the substring "ordered", so
