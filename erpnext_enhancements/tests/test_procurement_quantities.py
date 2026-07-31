@@ -28,6 +28,7 @@ from erpnext_enhancements.procurement_quantities import (  # noqa: E402
 	PARTIALLY_RECEIVED,
 	RECEIVE_STATUSES,
 	RECEIVED,
+	dedupe_lines,
 	order_status,
 	quantity_progress,
 	receive_status,
@@ -221,6 +222,47 @@ def test_rollup_ignores_statuses_from_another_vocabulary():
 	rollup = rollup_quantity_progress(rows)
 	assert rollup["order_status"] == ORDERED
 	assert rollup["receive_status"] == RECEIVED
+
+
+def test_a_line_split_across_two_orders_counts_once():
+	"""The fan-out guard, with the numbers it was measured against.
+
+	MAT-MR-2026-00001's ten lines arrive from the feed's query as nineteen rows,
+	because the Purchase Order join matches ``supplier_quotation_item OR
+	material_request_item`` and a line reachable both ways comes back twice. Summing
+	the rows straight reports 720 requested against a true 362.
+	"""
+	line = dict(quantity_progress(4, 4, 0), mr_item="MRI-0001")
+	other = dict(quantity_progress(2, 0, 0), mr_item="MRI-0002")
+
+	# Same line twice, as the join emits it.
+	rows = [line, line, other]
+	assert len(dedupe_lines(rows)) == 2
+
+	rollup = rollup_quantity_progress(dedupe_lines(rows))
+	assert rollup["requested_qty"] == 6
+	assert rollup["ordered_qty"] == 4
+	assert rollup["item_count"] == 2
+
+	# Without the de-duplication the same rows nearly double.
+	naive = rollup_quantity_progress(rows)
+	assert naive["requested_qty"] == 10
+
+
+def test_rows_with_no_child_row_of_their_own_each_count_once():
+	"""Documents that never joined a chain get rows built by the supplementary sweep,
+	which has no child-row name to key on. They must not collapse into one."""
+	rows = [quantity_progress(4, 0, 0), quantity_progress(4, 0, 0), quantity_progress(1, 0, 0)]
+	assert len(dedupe_lines(rows)) == 3
+	assert rollup_quantity_progress(dedupe_lines(rows))["requested_qty"] == 9
+
+
+def test_direct_purchase_order_lines_dedupe_on_their_own_row():
+	rows = [
+		dict(quantity_progress(None, 5, 0), po_item="POI-1"),
+		dict(quantity_progress(None, 5, 0), po_item="POI-1"),
+	]
+	assert len(dedupe_lines(rows)) == 1
 
 
 def test_vocabularies_are_ordered_worst_first():

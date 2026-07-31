@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.196.0] - 2026-07-31
+
+### Added
+
+- **Requested / Ordered / Received as real quantities in the Procurement Tracker**, per
+  item line and totalled per document. Previously one column headed "Qty (Ord / Rec)"
+  carried two numbers, the first of which was the *requested* quantity whenever nothing
+  had been ordered — so an untouched line read as ordered-and-awaiting-delivery. Three
+  separate columns, three separate facts.
+
+  Three columns rather than one combined `4 / 4 / 0` cell for two reasons. A combined
+  cell cannot be sorted without inventing hidden sort keys for one header, and column
+  sorting lands next. And the ambiguity of a slash-pair is what let the original defect
+  hide; a slash-triple is no clearer.
+
+  - **Requested** prints `-`, not `0`, on a direct Purchase Order line. There is no
+    request behind one, and "nobody asked" is a different fact from "asked for none" —
+    the feed used to print both as zero.
+  - **Ordered** carries a muted `+N draft` suffix where quantity is sitting on
+    unsubmitted Purchase Orders, so the excluded amount is visible without being counted.
+  - **Status** now shows the line's own receive status as a badge rather than a bare
+    "N% Received" percentage; the percentage moved into the cell tooltip alongside the
+    arithmetic behind it.
+  - Quantities are in the stock UOM, and the cell tooltip says so — naming the line's own
+    UOM when it differs. Real on this data: `MAT-MR-2026-00001` requests `PD-400-100` in
+    **FT** against a stock UOM of **Unit**.
+
+- **Per-document totals on the Material Request / Purchase Order header row** —
+  `362 req · 358 ord · 0 rec`, computed server-side so the `project_procurement_status`
+  MCP tool gets them too. One span rather than three, because the supplier name is the
+  only element in that flex row that grows and three `nowrap` spans squeeze it to
+  nothing on a narrow screen. Hidden entirely when there is nothing to total, so an RFQ
+  header does not sprout a row of zeroes that reads as a failure rather than an absence.
+
+- **`procurement_quantities.dedupe_lines`** — and it is the reason the totals are
+  right. The feed's Purchase Order join matches `supplier_quotation_item OR
+  material_request_item`, so a request line reachable by both paths comes back more than
+  once: `MAT-MR-2026-00001`'s **ten** lines arrive as **nineteen** rows. Summing those
+  directly reports **720 requested / 716 ordered** against a true **362 / 358**. Keying
+  on the child row name collapses the duplicates and reproduces the child table exactly.
+  Rows with no child row of their own — the supplementary sweep builds those for
+  documents that never joined a chain — stay distinct and each count once.
+
+  Three more bench-free tests cover it, including the naive-sum case, so a future
+  refactor that drops the de-duplication fails rather than silently doubling.
+
 ## [1.195.0] - 2026-07-31
 
 A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bump.
