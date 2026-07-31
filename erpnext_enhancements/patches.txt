@@ -313,3 +313,9 @@ erpnext_enhancements.patches.backfill_opportunity_primary_contact
 # opportunity_kanban_totals.js sums it and receives it via the board's own field
 # list, so dropping it would silently empty the column totals.
 erpnext_enhancements.patches.set_opportunity_kanban_primary_contact
+# v1.199.2: record who submitted a Purchase Order and when. The supplier-facing
+# print format shows an approver and there was nowhere truthful to read one from --
+# Purchase Order has no approver field, and modified_by is whoever touched the doc
+# LAST, which after any post-submit edit is not the approver. po_approval.stamp_approval
+# writes these once both submit gates have passed.
+erpnext_enhancements.patches.add_po_approval_stamp_fields
