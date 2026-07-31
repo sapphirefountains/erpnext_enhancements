@@ -71,6 +71,10 @@ doctype_js = {
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		# primary_contact.js binds five doctypes but was listed under "Lead" only, so
+		# on the other four it ran only if the user had opened a Lead earlier in the
+		# same session. Listed on all five now (v1.198.0).
+		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
 		"public/js/crm_enhancements/opportunity_handoff.js",
@@ -85,6 +89,7 @@ doctype_js = {
 		"public/js/project_enhancements.js",
 		"public/js/project.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/project/project.js",
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
@@ -141,6 +146,7 @@ doctype_js = {
 		"public/js/comments.js",
 		"public/js/customer.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"public/js/global_enhancements/drive_folder_button.js",
 		"public/js/stripe_payments/customer_autopay.js",
 		# Contracts tab — the same list the Project form carries, scoped to the
@@ -178,6 +184,7 @@ doctype_js = {
 		"public/js/vue.global.js",
 		"public/js/comments.js",
 		"public/js/global_enhancements/unified_tab_controller.js",
+		"public/js/global_enhancements/primary_contact.js",
 		"public/js/contracts.js",
 	],
 	"Lead": [
