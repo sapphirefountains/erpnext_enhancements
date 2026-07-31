@@ -163,7 +163,10 @@ spot_vm_labels = {
 # ============================================================================
 # 9. STARTUP SCRIPT CONFIGURATION
 # ============================================================================
-startup_script_packages   = ["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx"]
+# chromium / wkhtmltopdf / fonts are the PDF toolchain — see variables.tf and
+# docs/pdf-generation.md. Omitting them leaves the bench with no working way to
+# produce a PDF at all, which is how the first VM shipped.
+startup_script_packages   = ["curl", "git", "nginx", "python3", "python3-pip", "python3-venv", "pipx", "chromium", "wkhtmltopdf", "fonts-liberation", "fonts-dejavu-core", "fontconfig"]
 deploy_user               = "deploy"
 deploy_user_sudo_command  = "/usr/bin/systemctl restart frappe-bench"
 
