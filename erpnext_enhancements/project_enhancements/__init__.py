@@ -7,6 +7,8 @@ as erpnext_enhancements.project_enhancements.<fn> from hooks.py and client scrip
 import frappe
 from frappe import _
 
+from erpnext_enhancements import procurement_quantities
+
 
 @frappe.whitelist()
 def get_procurement_status(project_name):
@@ -30,6 +32,17 @@ def get_procurement_status(project_name):
                 mr_item.item_code,
                 mr_item.item_name,
                 mr_item.qty as mr_qty,
+                /* Per-line truth. These are ERPNext's own denormalized rollups on the
+                   request line, so they are immune to the OR-join fan-out below (one
+                   request line split across two Purchase Orders arrives as two rows)
+                   and they already net out amendments, cancellations and returns.
+                   Stock-UOM basis throughout: status_updater maintains ordered_qty and
+                   received_qty against stock_qty, so stock_qty is the only denominator
+                   that makes the ratio mean anything. */
+                mr_item.name as mr_item_name,
+                mr_item.stock_qty as mr_requested_qty,
+                mr_item.ordered_qty as mr_ordered_qty,
+                mr_item.received_qty as mr_received_qty,
                 mr.name as mr_name,
                 mr.transaction_date as transaction_date,
                 mr.status as mr_status,
@@ -39,6 +52,10 @@ def get_procurement_status(project_name):
                 sq.status as sq_status,
                 po.name as po_name,
                 po.status as po_status,
+                po_item.name as po_item_name,
+                po.docstatus as po_docstatus,
+                po_item.qty as po_line_qty,
+                po_item.received_qty as po_line_received_qty,
                 pr.name as pr_name,
                 pr.status as pr_status,
                 pi.name as pi_name,
@@ -50,8 +67,14 @@ def get_procurement_status(project_name):
                     ELSE 'Draft'
                 END as se_status,
                 COALESCE(pr_item.warehouse, sed.t_warehouse) as warehouse,
-                po_item.qty as ordered_qty,
-                COALESCE(pr_item.qty, sed.qty) as received_qty,
+                /* The old `po_item.qty as ordered_qty` and
+                   `COALESCE(pr_item.qty, sed.qty) as received_qty` are gone: both were
+                   *one chain row's* quantities being read as the line's totals, so an
+                   MR line split across two Purchase Orders reported whichever row came
+                   back, and a line received over two Purchase Receipts reported one of
+                   them. The per-line rollups selected at the top of this SELECT answer
+                   the same question correctly, Stock Entry receipts on internal
+                   transfers included. */
                 pr.is_subcontracted as is_subcontracted
             FROM
                 `tabMaterial Request Item` mr_item
@@ -71,7 +94,10 @@ def get_procurement_status(project_name):
                     OR po_item.material_request_item = mr_item.name
                 )
             LEFT JOIN
-                `tabPurchase Order` po ON po.name = po_item.parent
+                /* Cancelled orders are not part of the chain. Part 2 has always
+                   filtered them; Part 1 never did, which was latent only because this
+                   site has no cancelled Purchase Orders yet. */
+                `tabPurchase Order` po ON po.name = po_item.parent AND po.docstatus < 2
             LEFT JOIN
                 `tabPurchase Receipt Item` pr_item ON pr_item.purchase_order_item = po_item.name
             LEFT JOIN
@@ -103,6 +129,13 @@ def get_procurement_status(project_name):
                 po_item.item_code,
                 po_item.item_name,
                 0 as mr_qty,
+                /* No Material Request behind this line. NULL, not 0 — "nobody asked"
+                   and "asked for none" are different facts and the feed used to print
+                   both as 0. */
+                NULL as mr_item_name,
+                NULL as mr_requested_qty,
+                NULL as mr_ordered_qty,
+                NULL as mr_received_qty,
                 NULL as mr_name,
                 po.transaction_date as transaction_date,
                 NULL as mr_status,
@@ -112,6 +145,16 @@ def get_procurement_status(project_name):
                 NULL as sq_status,
                 po.name as po_name,
                 po.status as po_status,
+                po_item.name as po_item_name,
+                po.docstatus as po_docstatus,
+                /* Transaction-UOM basis on this axis, deliberately unlike the request
+                   line above: status_updater maintains Purchase Order Item.received_qty
+                   against `qty`, not `stock_qty`, so comparing it to stock_qty would be
+                   wrong the day a line carries a conversion factor. Every line on this
+                   site has conversion_factor = 1 today, which is exactly why the error
+                   would be invisible. */
+                po_item.qty as po_line_qty,
+                po_item.received_qty as po_line_received_qty,
                 pr.name as pr_name,
                 pr.status as pr_status,
                 pi.name as pi_name,
@@ -119,8 +162,6 @@ def get_procurement_status(project_name):
                 NULL as se_name,
                 NULL as se_status,
                 pr_item.warehouse as warehouse,
-                po_item.qty as ordered_qty,
-                pr_item.qty as received_qty,
                 pr.is_subcontracted as is_subcontracted
             FROM
                 `tabPurchase Order Item` po_item
@@ -151,13 +192,7 @@ def get_procurement_status(project_name):
 	# Post-processing to group by doctype and format data
 	result = {}
 	for row in data:
-		ordered_qty = row.get("ordered_qty") or 0
-		mr_qty = row.get("mr_qty") or 0
-		display_ordered_qty = ordered_qty if ordered_qty > 0 else mr_qty
-		received_qty = row.get("received_qty") or 0
-		completion_percentage = 0
-		if display_ordered_qty > 0:
-			completion_percentage = (received_qty / display_ordered_qty) * 100
+		progress = _line_progress(row)
 
 		# Determine the latest stage for this procurement chain (Graduation Logic)
 		stage = "Material Request"
@@ -189,34 +224,70 @@ def get_procurement_status(project_name):
 			source_doc_name = row.get('po_name')
 
 
-		result[stage].append(
-			{
-				"source_doc_type": source_doc_type,
-				"source_doc_name": source_doc_name,
-				"item_code": row.get("item_code"),
-				"item_name": row.get("item_name"),
-				"mr": row.get("mr_name"),
-				"mr_status": row.get("mr_status"),
-				"rfq": row.get("rfq_name"),
-				"rfq_status": row.get("rfq_status"),
-				"sq": row.get("sq_name"),
-				"sq_status": row.get("sq_status"),
-				"po": row.get("po_name"),
-				"po_status": row.get("po_status"),
-				"pr": row.get("pr_name"),
-				"pr_status": row.get("pr_status"),
-				"pi": row.get("pi_name"),
-				"pi_status": row.get("pi_status"),
-				"stock_entry": row.get("se_name"),
-				"stock_entry_status": row.get("se_status"),
-				"warehouse": row.get("warehouse"),
-				"ordered_qty": display_ordered_qty,
-				"received_qty": received_qty,
-				"completion_percentage": round(completion_percentage, 2),
-			}
-		)
+		item_row = {
+			"source_doc_type": source_doc_type,
+			"source_doc_name": source_doc_name,
+			"item_code": row.get("item_code"),
+			"item_name": row.get("item_name"),
+			# Stable identity for this line. The feed's own OR-join can emit the same
+			# request line twice (once per Purchase Order it was split across), so an
+			# array index is not an identity — it is a position.
+			"mr_item": row.get("mr_item_name"),
+			"po_item": row.get("po_item_name"),
+			"mr": row.get("mr_name"),
+			"mr_status": row.get("mr_status"),
+			"rfq": row.get("rfq_name"),
+			"rfq_status": row.get("rfq_status"),
+			"sq": row.get("sq_name"),
+			"sq_status": row.get("sq_status"),
+			"po": row.get("po_name"),
+			"po_status": row.get("po_status"),
+			"pr": row.get("pr_name"),
+			"pr_status": row.get("pr_status"),
+			"pi": row.get("pi_name"),
+			"pi_status": row.get("pi_status"),
+			"stock_entry": row.get("se_name"),
+			"stock_entry_status": row.get("se_status"),
+			"warehouse": row.get("warehouse"),
+		}
+		# requested_qty / ordered_qty / received_qty / order_status / receive_status /
+		# completion_percentage, all computed from THIS line's own quantities. The
+		# item row no longer borrows its parent's answer.
+		item_row.update(progress)
+		result[stage].append(item_row)
 
 	return result
+
+
+def _line_progress(row):
+	"""Per-line quantity progress for one chain row.
+
+	Two shapes reach here. A **Material Request line** answers from ERPNext's own
+	denormalized rollups on that line — per-line, so the OR-join fan-out cannot
+	inflate them, and already net of amendments, cancellations and returns. A
+	**direct Purchase Order line** has no request behind it, so the order is the ask.
+
+	The two use different UOM bases on purpose; see the SELECT comments. Both are
+	internally consistent, which is what matters — the ratio is always taken between
+	two numbers maintained against the same basis.
+	"""
+	if row.get("mr_item_name"):
+		return procurement_quantities.quantity_progress(
+			requested=row.get("mr_requested_qty"),
+			ordered=row.get("mr_ordered_qty"),
+			received=row.get("mr_received_qty"),
+		)
+
+	# Direct Purchase Order line. Only a submitted order is an order; a draft is an
+	# intention, reported separately so it is visible without being counted.
+	line_qty = row.get("po_line_qty")
+	submitted = row.get("po_docstatus") == 1
+	return procurement_quantities.quantity_progress(
+		requested=None,
+		ordered=line_qty if submitted else 0,
+		received=row.get("po_line_received_qty"),
+		draft_ordered=0 if submitted else line_qty,
+	)
 
 
 # ---------------------------------------------------------------------------
@@ -269,15 +340,35 @@ def _docstatus_label(docstatus):
 	return {0: "Draft", 1: "Submitted", 2: "Cancelled"}.get(docstatus, "")
 
 
+#: Stages at which a quantity on the document is a *commitment to buy*, as opposed to
+#: a request or a quote. Used only for documents that never joined a chain — see
+#: :func:`_minimal_item_row`.
+_ORDER_STAGE_DOCTYPES = {"Purchase Order", "Purchase Receipt", "Purchase Invoice"}
+
+
 def _minimal_item_row(doctype, docname, status, item):
 	"""Builds an item row (same shape the feed expects) for a document that was
 	not reached through the chain query. Only the document's own chain node is
 	populated; upstream/downstream nodes are left blank."""
+	# All that is knowable here is the document's own line quantity — by definition
+	# this document is not in a chain, so there is no ordered-against-requested pair
+	# to compare. Which side of the fence that quantity falls on depends on the stage:
+	# a Material Request line is an ask, a Purchase Order line is an order. The old
+	# code put it in `ordered_qty` for every doctype, so an untouched request rendered
+	# as fully ordered here too.
+	qty = item.get("qty") or 0
+	if doctype in _ORDER_STAGE_DOCTYPES:
+		progress = procurement_quantities.quantity_progress(requested=None, ordered=qty, received=0)
+	else:
+		progress = procurement_quantities.quantity_progress(requested=qty, ordered=0, received=0)
+
 	row = {
 		"source_doc_type": doctype,
 		"source_doc_name": docname,
 		"item_code": item.get("item_code"),
 		"item_name": item.get("item_name"),
+		"mr_item": None,
+		"po_item": None,
 		"mr": None, "mr_status": None,
 		"rfq": None, "rfq_status": None,
 		"sq": None, "sq_status": None,
@@ -286,10 +377,8 @@ def _minimal_item_row(doctype, docname, status, item):
 		"pi": None, "pi_status": None,
 		"stock_entry": None, "stock_entry_status": None,
 		"warehouse": item.get("warehouse"),
-		"ordered_qty": item.get("qty") or 0,
-		"received_qty": 0,
-		"completion_percentage": 0,
 	}
+	row.update(progress)
 	field = _CHAIN_FIELD[doctype]
 	row[field] = docname
 	row[field + "_status"] = status

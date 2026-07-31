@@ -415,6 +415,25 @@ header.navbar {
     color: #ef6c00;
 }
 
+/* "Partially Ordered" / "Partially Received". Distinct from .status-pending, which
+   means nothing has happened yet — this means something has, but not all of it. The
+   Procurement Tracker's colour mapper used to match on the substring "ordered", so
+   "Partially Ordered" and "Ordered" resolved to the same class and a half-ordered
+   line was visually identical to a finished one. Amber-toward-green, deliberately
+   between .status-pending and .status-completed. */
+.status-partial {
+    background-color: #fff8e1;
+    color: #8d6e00;
+}
+
+/* "Over Ordered" / "Over Received". Not an error, but not done either — more arrived
+   than was ordered, which is a question someone has to answer rather than a state to
+   hide behind a green badge. */
+.status-warning {
+    background-color: #fdecea;
+    color: #b54708;
+}
+
 [data-theme="dark"] .status-draft {
     background-color: #4a4a4a;
     color: #f0f0f0;
@@ -438,6 +457,16 @@ header.navbar {
 [data-theme="dark"] .status-pending {
     background-color: #ef6c00;
     color: #fff3e0;
+}
+
+[data-theme="dark"] .status-partial {
+    background-color: #8d6e00;
+    color: #fff8e1;
+}
+
+[data-theme="dark"] .status-warning {
+    background-color: #b54708;
+    color: #fdecea;
 }
 
 

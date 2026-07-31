@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.195.0] - 2026-07-31
+
+A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bump.
+
+### Fixed
+
+- **Every line of a partially-ordered Material Request read "Partially Ordered" in the
+  Procurement Tracker, including the lines that were fully ordered.** On
+  `MAT-MR-2026-00001` (PRJ-00566) that is nine fully-ordered lines and one untouched
+  one, all wearing the same badge; on `MAT-MR-2026-00003` it is twenty and two. Across
+  production, 29 of 32 item rows under a partially-ordered request were mislabelled.
+
+  Root cause is one line. `get_procurement_status` selected `mr.status` — the *parent
+  request's header status* — onto a row whose grain is the **item**, so a single value
+  was fetched once and painted once per line. `Material Request.per_ordered` and
+  `Material Request Item.ordered_qty` were never queried by the feed at all.
+
+  The second half of the same defect was in the colour mapper: `getStatusColorClass`
+  matched on the substring `'ordered'`, which `"Partially Ordered"` and `"Ordered"`
+  both contain, so the two resolved to the same CSS class. A correct status string
+  alone would still have rendered identically. Same collision existed on
+  `'received'`. Both vocabularies now match exactly first, and the fallback heuristic
+  kept for ERPNext's own status strings tests `partial` before the generic terms.
+
+  Item rows now carry `order_status` and `receive_status` computed from that line's own
+  quantities. The request's header status is still fetched, still shown on the document
+  header where it belongs, and is deliberately still visible in the item row's tooltip
+  alongside the line's own figures — the two legitimately differ, and seeing them
+  together is what makes it obvious the row is no longer echoing its parent.
+
+- **A Material Request line with nothing ordered rendered as though it were fully
+  ordered.** The feed substituted the requested quantity whenever no Purchase Order
+  line joined (`ordered_qty if ordered_qty > 0 else mr_qty`), so an untouched line
+  showed `4 / 0` under a column headed "Qty (Ord / Rec)" and read as ordered-and-
+  awaiting-delivery. It now reads `0`, and the completion percentage is measured
+  against what was ordered rather than against a denominator that fell back to the ask.
+
+- **Quantities were read from one arbitrary row of a fanned-out join.** The feed's
+  Purchase Order join matches `supplier_quotation_item OR material_request_item`, so a
+  request line split across two Purchase Orders arrives as two rows — and `po_item.qty`
+  was being read as the line's total. Likewise `COALESCE(pr_item.qty, sed.qty)` reported
+  one receipt for a line received over several. Both now come from ERPNext's per-line
+  rollups, which are immune to the duplication by construction.
+
+- **Cancelled Purchase Orders still joined the Material Request chain.** Part 2 of the
+  query has always filtered them; Part 1 never did. Latent only because this site has no
+  cancelled Purchase Orders yet.
+
+### Changed
+
+- **`ordered_qty` counts only submitted Purchase Orders.** Ten Purchase Order Item rows
+  against draft orders are linked to Material Request lines on production today. They
+  inflated the tracker while ERPNext's own `ordered_qty` excluded them — so the tracker
+  and the Material Request form it links to disagreed. Draft quantity is still reported,
+  as `draft_ordered_qty`, and surfaces in the item row's tooltip.
+
+  This is a genuine semantic change and figures will *drop* for anyone with draft orders
+  outstanding. On PRJ-00566, 14 of 61 rows change; on PRJ-00567 (54 rows, the largest
+  project) nothing changes at all.
+
+- **`project_procurement_status` (MCP tool)** gains `total_requested_qty` and reports the
+  per-line statuses. Its `total_ordered_qty` was accidentally carrying the *requested*
+  figure whenever nothing had been ordered, so a project with untouched lines looked
+  fully ordered to an assistant. The tool description was updated in the same change —
+  a stale description is what an assistant actually reads.
+
+### Added
+
+- **`erpnext_enhancements/procurement_quantities.py`** — one place where "how much was
+  asked for, how much is on order, how much arrived" is decided. The tracker asked that
+  question at two levels and answered it two different ways; that divergence *is* the
+  bug, and the next two tracker changes both need the same arithmetic.
+
+  It reads ERPNext's denormalized rollups rather than recomputing. They are per-line, so
+  the join fan-out cannot inflate them; they already net out amendments, cancellations
+  and returns — three cases with almost no live examples here, which is exactly where a
+  hand-rolled `SUM` would be wrong and nobody would notice; and they are the same numbers
+  the Material Request form, the MR list status and `po_creation_guard.js` already show.
+  Verified against `SUM(Purchase Order Item.stock_qty)` over every MR-linked submitted
+  Purchase Order line on production: zero discrepancies.
+
+  Stock UOM is the basis on the request axis and transaction UOM on the Purchase Order
+  axis, because `status_updater` maintains each against a different field. Every line on
+  this site currently has `conversion_factor = 1`, so the two are indistinguishable in
+  live data — which is precisely why the choice is written down rather than discovered
+  later by a 120 FT line reading as 12000% ordered.
+
+  Nothing is clamped: over-ordering and over-receipt get their own statuses and exceed
+  100%. The defect being fixed was a number quietly substituted to make a line look
+  complete.
+
+  It lives at the app root beside `procurement_project` / `po_approval` /
+  `po_segregation` rather than under `project_enhancements/`, because that package
+  imports `frappe` and a submodule of it cannot be imported bench-free however pure it
+  is. Same invariant as `water_engineering/engine`, reached from the other direction.
+
+- **`tests/test_procurement_quantities.py`** — 18 bench-free pytest tests with their own
+  CI step. Zero lines on this site are genuinely part-ordered, so the item-level
+  "Partially Ordered" state has no live example and is covered synthetically; without
+  that, the state most central to the bug would ship untested.
+
+- Two CSS classes the tracker never had: `.status-partial` (something has happened, but
+  not all of it — distinct from `.status-pending`, which means nothing has) and
+  `.status-warning` for the over-ordered / over-received anomalies. Both with dark
+  variants, because the tracker's `th` and badge rules hard-code light-mode colours and a
+  new class written only for light mode is illegible in dark.
+
 ## [1.194.1] - 2026-07-31
 
 ### Changed
@@ -742,6 +849,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Found by the preview above — the first time anyone could read a filled-in
   maintenance agreement without printing it.
+
 ## [1.180.0] - 2026-07-27
 
 ### Fixed
@@ -1000,6 +1108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project (e.g. `Internal - Shop Overhead`) so non-job POs have a target — the 13
   existing `Internal` projects are specific R&D projects. SOP:
   `docs/migration/wi014-project-on-purchase-lines.md`.
+
 ## [1.173.0] - 2026-07-24
 
 ### Added
@@ -1879,6 +1988,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unaffected (it comes from the template). This same trap had already broken
   `www/stripe-return.py`; the fix and the CI guard that prevents recurrence ship
   separately in v1.159.10.
+
 ## [1.159.11] - 2026-07-21
 
 ### Fixed
@@ -1928,6 +2038,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Leads that no longer exist, and does not touch Lead status — some of these sit
   at `Opportunity` or `Lost Quotation` rather than `Converted`, which is
   deliberate pipeline state.
+
 ## [1.159.10] - 2026-07-21
 
 ### Fixed
@@ -2038,6 +2149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-applies after any core re-sync (the hook runs after Frappe syncs the standard
   sidebars). Verified against the live sidebar: 18 items → 17, only the `Project` DocType
   row removed.
+
 ## [1.159.5] - 2026-07-17
 
 ### Fixed
@@ -2055,6 +2167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     read-only Text Editor display where HTML is expected and is left untouched.
   - `patches.clear_invalid_primary_address_links` proactively nulls the existing bad
     values across the three doctypes on deploy (idempotent).
+
 ## [1.159.4] - 2026-07-17
 
 ### Added
@@ -2129,6 +2242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fixture Comments tab) still uses `create_comments_tab`.
   - **Not** included: `Contact`, whose second "Comments" tab is *not* empty (it holds a
     "More Information" section and contact fields) — a mislabel, tracked separately.
+
 ## [1.159.1] - 2026-07-17
 
 ### Fixed
@@ -2227,6 +2341,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The bench-free Stripe unit suite (`test_stripe_payments.py`) now runs in CI — like the QuickBooks suite before it, it existed but was wired into no CI step, so it ran nowhere.
+
 ## [1.157.1] - 2026-07-16
 
 ### Fixed
@@ -2245,7 +2360,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **The migration's target Chart of Accounts design + the 359-row mapping workbook (docs only — nothing imports until the WI-029 cutover-window rebuild).** `docs/migration/chart_of_accounts.csv` is the full 213-account numbered chart in the native Chart of Accounts Importer format — validated by the actual importer on the test site with zero errors — with per-stream income (Design/Build/Service/Events/Products) matched by per-stream COGS including first-class Subcontract Labor lines, the Stripe Clearing / Undeposited Funds / Merchant Fees payment plumbing, Utah sales- and use-tax liability sub-accounts, payroll summary-JE landing spots, perpetual-inventory structure for Phase 2, exactly one Temporary opening account, and a Historical P&L Offset equity account — all company-agnostic (no "SF" in names). `docs/migration/coa_mapping.csv` maps every one of the 359 production accounts (264 MAP / 95 RETIRE with reasons). `docs/migration/COA_DESIGN.md` carries the rationale, the Company default designations, and the explicit CPA ratification checklist (tax bucket shape, use-tax treatment, meals/entertainment deductibility, LLC member equity, the retirement list). Adversarially reviewed (mechanical constraints + accountant lens; all 11 findings applied, including Use Tax Payable and the meals/entertainment deductibility split).
-
 
 ## [1.156.1] - 2026-07-14
 
@@ -2522,6 +2636,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Department Role Profiles + process-map visibility (Phase 1 of the process-mapping program).** Seeded four onboarding **Role Profiles** — *Finance*, *Sales & Marketing*, *Projects & Operations*, *Executive* — each bundling the standard ERPNext roles for that department, so a new hire gets the right access from a single profile. Role-existence-guarded and insert-only (optional roles like Marketing Manager / Maintenance Manager are skipped on sites where that module isn't installed; site-side edits survive). **No new roles created** — the small team reuses the standard Accounts / Sales / Projects / Maintenance roles.
   - Opened **`Process Document` read access to `Employee`** (read / report / print / email / share) so the Phase 0 process maps + RACI are visible to the team; `System Manager` keeps full control.
   - `DEPARTMENT_ROLES` (`api/kpi.py`) reviewed against the org RACI — already correct, left unchanged. Assigning the profiles/roles to the actual users (Lisa, James, Brian, Clegg) is an operator step (User form) — the people's accounts aren't created in code.
+
 ## [1.128.0] - 2026-06-26
 
 ### Added
@@ -2762,6 +2877,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Schematic dashboard** — the summary panel is now a live hydraulic schematic (`Basin → Features → Pump → Piping`) with the key numbers, a static-vs-friction **TDH breakdown bar**, a per-segment list with color-coded velocity **status badges** (green Okay / amber Increase Size / red Exceeds Legal), a completion bar, and a warnings list. Pipe-segment grid rows also get their `velocity_status` cell color-coded live. Theme-aware (Frappe CSS vars + `indicator-pill` classes — works in Light and Timeless Night).
   - **Tabbed layout** — the long single-column form is split into `Model` (live summary + inputs + basin/features/piping/pumps), `Treatment & Drainage`, and `Results & Audit` tabs to cut scrolling and group the modeling stages.
   - **Quick-start templates** — a `New from Template` button pre-fills a common fountain type (Rectangular weir basin / Spray-jet pool / Vanishing edge) so a design starts in seconds; replacing existing rows asks for confirmation.
+
+## [1.99.0] - 2026-06-23
+
+### Added
+- **Water Feature Design — two Print Formats** (simple results + a robust formula audit) so a design's output can be reviewed and hand-checked against the source workbooks. Both render server-side (Jinja) from the persisted rollups + `calc_results` audit trail; created idempotently on `after_migrate` (Frappe-Cloud-safe, no shell needed).
+  - **`Water Feature Design - Results`** — the simple, final end-results: a Key Results table (basin gallons, required circulation, design flow, TDH, selected pump, chlorinator feed, drain capacity, surge basin — only the values that are set) plus a compact final value/unit/status table for every calculation.
+  - **`Water Feature Design - Calculation Audit`** — the robust view: for each calculation, the exact **formula**, the **inputs with provenance** (value, unit, and where each number came from — user / lookup / prior calc / default / standard, plus the source cell), the step-by-step **working**, the source **citation**, and any **warnings** — laid out to hand-compare against the spreadsheet.
+  - To feed the audit view, the `Water Feature Calc Result` child table now also persists `status`, `inputs_text` (tab-delimited, rendered as a table since the print Jinja sandbox can't parse JSON), and `inputs_json` (the exact structured input set with provenance); the three audit writers in the controller were refactored to one `_calc_row()` helper that captures the complete envelope. Open a design → **Print** → pick either format (or download PDF).
+
 ## [1.98.0] - 2026-06-23
 
 ### Added
@@ -2796,13 +2920,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`npsh_available`** — pump cavitation go/no-go. `NPSHa = Ha + Hz − Hf − Hvp` (atmospheric head de-rated for site altitude, signed static suction, suction friction, temperature-interpolated vapor pressure); compares to the pump's NPSHr + a 2–3 ft margin → Okay / Marginal / Cavitation Risk. Reuses the suction-side friction the TDH calc already produces.
   - **`water_hammer`** — Joukowsky surge. `ΔH = a·ΔV/g` with material-specific wave speed (PVC ≈1300 ft/s), scaled down for slow valve closure (when closure time exceeds the `2L/a` reflection period); peak (static + surge) vs. the pipe's pressure rating.
   - Golden-value tests in `test_water_engine.py` (VGB reproduces the P-sheet example; NPSH altitude/temperature/status bands; Joukowsky instantaneous + slow-closure + rating check). Bench-free suite green (76); ruff clean. NPSH and water-hammer constants are flagged as engineering standards (Hydraulic Institute / Joukowsky), not source-document formulas.
-## [1.99.0] - 2026-06-23
-
-### Added
-- **Water Feature Design — two Print Formats** (simple results + a robust formula audit) so a design's output can be reviewed and hand-checked against the source workbooks. Both render server-side (Jinja) from the persisted rollups + `calc_results` audit trail; created idempotently on `after_migrate` (Frappe-Cloud-safe, no shell needed).
-  - **`Water Feature Design - Results`** — the simple, final end-results: a Key Results table (basin gallons, required circulation, design flow, TDH, selected pump, chlorinator feed, drain capacity, surge basin — only the values that are set) plus a compact final value/unit/status table for every calculation.
-  - **`Water Feature Design - Calculation Audit`** — the robust view: for each calculation, the exact **formula**, the **inputs with provenance** (value, unit, and where each number came from — user / lookup / prior calc / default / standard, plus the source cell), the step-by-step **working**, the source **citation**, and any **warnings** — laid out to hand-compare against the spreadsheet.
-  - To feed the audit view, the `Water Feature Calc Result` child table now also persists `status`, `inputs_text` (tab-delimited, rendered as a table since the print Jinja sandbox can't parse JSON), and `inputs_json` (the exact structured input set with provenance); the three audit writers in the controller were refactored to one `_calc_row()` helper that captures the complete envelope. Open a design → **Print** → pick either format (or download PDF).
 
 ## [1.95.0] - 2026-06-23
 
@@ -3101,6 +3218,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deploy:** `bench migrate` (new doctypes + custom fields + Modes of Payment) and `bench build` (form/portal/dashboard JS). **No new Python dependency** — uses `requests` (already a Frappe dependency), so no `pip install` is required (the host is a managed server).
 - **Config before use:** enter test keys (`sk_test_`/`pk_test_`), set a **Deposit / Clearing Account**, and register the webhook endpoint (shown read-only on Settings; locally use `stripe listen --forward-to …/api/method/erpnext_enhancements.stripe_payments.api.stripe_webhook`) and paste its `whsec_…` signing secret. Verify on the Stripe **sandbox** before the account goes live.
 - **Phase 2 (next):** saved payment methods + off-session/recurring charging for maintenance contracts (Stripe SetupIntents, ACH mandates, consent) and refund-initiation UI. This phase records refunds but does not yet reverse the Payment Entry.
+
 ## [1.63.1] - 2026-06-18
 
 ### Fixed
@@ -3292,6 +3410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dropped the orphaned `Project Note` child-table doctype.** "Project Note" (singular, `istable`) was a leftover with **no parent** — a repo-wide grep for `"options": "Project Note"` is empty, and nothing imports or references it by name. The in-use project-notes child table is **`Project Notes`** (plural, on the Project Custom Field), which is untouched. Removed the `enhancements_core/doctype/project_note/` folder and added a **guarded, idempotent** patch (`drop_orphan_project_note`, post-model-sync) that deletes the DocType + its table — skipping (and logging) if `tabProject Note` somehow holds rows, so data is never silently dropped.
 
 > Version note: this independent cleanup is numbered 1.48.0 to sit above the in-flight 1.47.0 PR (#458, Travel/Expense Claim Type); merge that first to keep the changelog ordered.
+
 ## [1.47.0] - 2026-06-16
 
 ### Added
@@ -3475,6 +3594,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Subfolders were never scanned.** The folder listing was non-recursive (`'<folder>' in parents`), so any file dropped inside a provisioned subfolder (Build, Design, Project Manager, …) was invisible. The sync now **walks the full folder tree** (`_walk_drive_folder`), depth-capped at 10 with a cycle guard for Drive shortcuts.
   - **Folders were excluded outright.** The query filtered out `mimeType = folder`. Subfolders are now mirrored as **link-only `File` shadows** too (`file_url` = the folder's Drive link), so the folder structure is visible on the Project/Customer/Opportunity. Nested item names are path-prefixed (e.g. `Design/Renderings/front.png`) and folders carry a trailing slash, keeping the flat attachment list legible.
 - Sync remains **link-only and de-duplicated** — no bytes are copied (Drive stays the source of truth) and shadows are keyed on `custom_drive_file_id`, so re-runs never create duplicate links. Deletions still never propagate; a vanished file/folder is flagged `Stale`, never removed.
+
 ## [1.32.2] - 2026-06-15
 
 ### Fixed
@@ -3577,7 +3697,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Call recordings + voicemails mirrored to Google Drive** (`api/call_recording_export.py`). Every recording ingested by `process_unified_recording` and every Twilio voicemail ingested by `process_call_intelligence` is uploaded in a background job to the folder configured in the new `Triton Settings.call_recordings_drive_folder` (empty = feature off), organised into monthly `YYYY_MM` subfolders. Filenames: `2026-06-12 1530 — Inbound — Caller Name (+1801…) — <CallSid>.wav`, voicemails prefixed `Voicemail — `. Auth reuses the project-folders service account (Project Folder Google Drive Settings) with Shared Drive support; uploads are idempotent per Call SID (webhook retries dedupe against Drive); answered-call audio is read from the already-saved private File, voicemail audio is fetched from Twilio with the stored credentials. Export failures only log to Error Log ("Call Recording Export") — webhooks are never affected.
 
-
 ## [1.25.0] - 2026-06-12
 
 ### Changed
@@ -3600,12 +3719,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Supplier's read-only "Primary Address" text now shows the Address's `custom_full_address`** (new Supplier `validate` hook) instead of frappe's multi-line address-template rendering, falling back to the stock text when the custom field is empty. The Google Maps embed feeds from the same `custom_full_address` (existing behavior, now actually reachable on Supplier since the docname resolves).
+
 ## [1.23.2] - 2026-06-12
 
 ### Fixed
 - **/wall TV display crashed with "SQL functions are not allowed as strings in SELECT"** — frappe 16 rejects aggregate functions passed as `get_all` field strings. Rewrote the wall's per-project task-stats query with the query builder, plus the three other sites with the same latent pattern (Travel Trip claim/advance rollups in `travel_trip.py` and `integrations.py`, and the Trip Cost Summary traveler counts). Both query shapes verified against the live frappe build.
 - **Console spam "Failed to execute 'clone' on 'Response'" on every desk page** — the kiosk service worker (whose scope covers the whole site) cloned asset responses inside an async `caches.open()` callback, by which time the page had usually consumed the body. The clone now happens synchronously before the response is handed back.
 - **Squished avatars in the Comments App** — profile photos that aren't square stretched to fill the round frame (which is why only some users looked squished). Avatar images now use `object-fit: cover` and the frames no longer flex-shrink.
+
 ## [1.23.1] - 2026-06-12
 
 ### Fixed
@@ -3615,6 +3736,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Per-user desk softphone identities** (pairs with Triton >= 0.8.0; fixes Answer/Decline never appearing on the desk call panel). All desk sessions previously registered ONE shared Twilio identity, so with several `softphone_users` configured only the most recently opened desk could ever ring — and whether the desk rang at all depended on a Triton env var matching the hard-coded identity. Now each configured answerer registers their own `erpnext_<email>` identity, and the new `get_telephony_routing` webhook (Bearer/`token`-guarded) hands Triton the identity list plus the business caller-ID number (`Triton Settings.primary_twilio_number`) — Triton dials every answerer in parallel and no env configuration is needed. With `softphone_users` empty, the legacy shared identity is kept for backward compatibility. (1.22.0 is the threaded-comments release on PR #420.)
+
 ## [1.22.0] - 2026-06-12
 
 ### Added
@@ -3635,6 +3757,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ai_governance.json` lacked the mandatory `type` field (its synced DB row had `type` NULL, so any save of the workspace failed with a MandatoryError) and its two shortcuts (Pending Confirmations / Action Log) were defined but never rendered because the content had no shortcut blocks. Now ships `"type": "Workspace"` and a shortcuts row.
   - `sapphire_maintenance.json` sat directly in `workspace/` instead of the required `workspace/<name>/<name>.json` layout, so module sync never imported it — the workspace didn't exist on the live site at all. Moved to the correct path and rebuilt with content blocks, "Maintenance" and "Tools" cards (now also linking Service Plan, Visit Wizard, and Day Board), shortcuts (Visit Wizard / Day Board / Add Maintenance Record), and the `type` field.
   - Both live rows were hot-patched/created to the same state so the workspaces work before the deploy; fixture `modified` stamps are later so `bench migrate` still re-syncs them.
+
 ## [1.19.0] - 2026-06-12
 
 ### Fixed
@@ -3642,6 +3765,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Google Maps for Travel POIs.** The Travel POI form gains an "Open in Google Maps" button (uses the Geolocation pin's coordinates; falls back to a text search on the linked Address). The Travel Trip itinerary map and the /itinerary day map marker popups now include a Google Maps link per stop (tiles stay Leaflet/OSM — multi-marker embeds need an API key; the external links are Google Maps, matching the itinerary's existing "Open in Maps" links).
+
 ## [1.18.0] - 2026-06-12
 
 ### Added
@@ -3731,6 +3855,7 @@ Maintenance UX overhaul (pre-deployment, so schema moved freely): the contract f
 
 ### Removed
 - Travel Trip Workflow fixtures (workflow/states/actions), the `workflow_state`/`custom_expense_claim` fields, and the trip-level single-employee model. The `accommodation` table fieldname is now `accommodations`.
+
 ## [1.14.0] - 2026-06-11
 
 ### Added
@@ -3997,6 +4122,7 @@ Phase 1 of the Jun 9 Projects/Invoice-processing meeting: the hand-off automatio
 ### Notes
 - The alert hooks are inert until recipients are added in settings — deploy is behavior-neutral.
 - `bench migrate` will be slower on this deploy: the fixture files changed, so all ~781 customization records re-import (known cost, see fixtures/README.md).
+
 ## [1.0.4] - 2026-06-10
 
 ### Fixed
@@ -4111,6 +4237,7 @@ Deploy-staleness audit, kiosk edition. Verified first that the **server and desk
 - **Server-rendered HTML** now emits theme variables: the Opportunity→Project notes block ([`crm_enhancements/api.py`](erpnext_enhancements/crm_enhancements/api.py)) and the Task hierarchy `<style>` block ([`task.py`](erpnext_enhancements/task_enhancements/doctype/task/task.py)).
 - **The Projects Dashboard shell** ([`projects_dashboard.html`](Custom%20HTML%20Block/projects_dashboard.html)) dropped fixed-light Bootstrap utilities (`bg-white`/`bg-light`/`btn-white`) that glared in dark mode, in favour of theme-aware surfaces and `btn-default`.
 - **Dark-mode contrast bugs in already-themed files.** The Triton assistant's mermaid diagram box (a white panel inside the dark chat), the high-value Opportunity kanban card (deep-navy card with no edge against the dark desk), and three Time-Kiosk surfaces (outline button, badge, inactive tracking dot) now have proper dark-theme treatments.
+
 ## [0.3.4] - 2026-06-09
 
 ### Changed
@@ -4151,6 +4278,7 @@ Deploy-staleness audit, kiosk edition. Verified first that the **server and desk
 ### Fixed
 - **Time Kiosk not installable as a PWA**: `kiosk-manifest.json` listed only SVG icons (`sizes: "any"`). Chrome/Edge require at least one raster PNG icon at 192×192 and one at 512×512 to satisfy their installability criteria, so the "Install app" prompt never appeared. Added PNG icons (`kiosk-icon-192.png`, `kiosk-icon-512.png`, and a maskable `kiosk-maskable-512.png`, rendered to match the existing clock glyph) and listed them first in the manifest; the SVGs are retained as supplementary entries. The `apple-touch-icon` now points at the 192px PNG (iOS ignores SVG touch icons). Bumped the service-worker cache to `time-kiosk-v2` and precached the new icons so existing installs pick up the change.
 - **Kiosk clock unreadable in dark mode**: `kiosk.css` switched to its dark palette only via `@media (prefers-color-scheme: dark)`, flipping the text to near-white, while the page body background was pinned to Frappe's light `--bg-color`. The result was light text on a light body (the top wall-clock was nearly invisible). The body background now follows the kiosk's own `--tk-bg`, the dark palette also responds to Frappe's `[data-theme="dark"]` attribute, and the clock/timer have explicit `--tk-text` colors — keeping background and text contrast in sync in every light/dark combination.
+
 ## [0.2.9] - 2026-06-08
 
 ### Removed
@@ -4236,3 +4364,4 @@ Deploy-staleness audit, kiosk edition. Verified first that the **server and desk
 - **Travel Management**: Custom "Travel Trip" workflow and enhancements for Expense Claims.
 - **Dashboard Overrides**: Custom dashboard data logic for Projects and Employees.
 - **Comment Enhancements**: Custom Vue.js components for improved commenting experience on various doctypes.
+

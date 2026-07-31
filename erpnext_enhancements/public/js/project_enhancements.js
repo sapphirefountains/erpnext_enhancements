@@ -164,10 +164,53 @@ frappe.ui.form.on("Project", {
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
 									},
+									// Spells out the arithmetic behind an item row's badge, and names
+									// the parent's own status alongside it — the two legitimately
+									// differ, and seeing them together is what makes it obvious that
+									// the row is no longer just echoing its parent.
+									lineOrderTitle(row) {
+										const parts = [];
+										if (row.requested_qty !== null && row.requested_qty !== undefined) {
+											parts.push(`This line: ${row.ordered_qty} of ${row.requested_qty} ordered`);
+										} else {
+											parts.push(`This line: ${row.ordered_qty} ordered`);
+										}
+										if (row.draft_ordered_qty) {
+											parts.push(`${row.draft_ordered_qty} on draft orders (not counted)`);
+										}
+										if (row.mr_status) {
+											parts.push(`Request ${row.mr} is ${row.mr_status}`);
+										}
+										return parts.join(' · ');
+									},
 									getStatusColorClass(status) {
 										if (!status) return '';
+
+										// Our own vocabulary first, by exact match. The substring
+										// heuristic below cannot separate "Partially Ordered" from
+										// "Ordered" (both contain "ordered") or "Partially Received"
+										// from "Received", so it painted a half-done line and a
+										// finished one identically — the second half of the
+										// item-status bug, which a correct status string alone would
+										// not have fixed.
+										const known = {
+											'Not Ordered': 'status-pending',
+											'Partially Ordered': 'status-partial',
+											'Ordered': 'status-submitted',
+											'Over Ordered': 'status-warning',
+											'Not Received': 'status-pending',
+											'Partially Received': 'status-partial',
+											'Received': 'status-completed',
+											'Over Received': 'status-warning',
+										};
+										if (known[status]) return known[status];
+
+										// Fallback for ERPNext's own status strings, which still
+										// reach the RFQ/SQ/PO/PR/PI/Stock Entry badges. `partial`
+										// is tested before the generic terms for the same reason.
 										const s = status.toLowerCase();
 										if (s.includes('draft')) return 'status-draft';
+										if (s.includes('partial')) return 'status-partial';
 										if (s.includes('received') || s.includes('bill') || s === 'completed') return 'status-completed';
 										if (s.includes('cancel') || s.includes('closed')) return 'status-cancelled';
 										if (s.includes('submit') || s.includes('ordered')) return 'status-submitted';
@@ -241,7 +284,12 @@ frappe.ui.form.on("Project", {
 																				<div v-if="row.mr" class="doc-chain-step">
 																					<span class="text-muted" style="margin-right:4px;">MR:</span>
 																					<span class="doc-link" @click="openDoc('Material Request', row.mr)" v-html="highlight(row.mr, globalSearchTerm)"></span>
-																					<span class="status-badge" :class="getStatusColorClass(row.mr_status)">{{ row.mr_status }}</span>
+																					<!-- THIS line's ordering status, not the request header's.
+																					     The header status was painted here on every child row, so
+																					     a fully ordered line inside a partially ordered request
+																					     read "Partially Ordered". The request's own status is on
+																					     the document header above, where it belongs. -->
+																					<span class="status-badge" :class="getStatusColorClass(row.order_status)" :title="lineOrderTitle(row)">{{ row.order_status }}</span>
 																				</div>
 																				<div v-if="row.rfq" class="doc-chain-step">
 																					<span class="text-muted" style="margin-right:4px;">RFQ:</span>
