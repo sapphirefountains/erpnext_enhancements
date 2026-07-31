@@ -126,6 +126,13 @@ jobs:
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_gantt_api.py -q
+      # Guards the "the badge says Partially Ordered on a line that is fully
+      # ordered" class of bug: an item's status must be computed from that item's
+      # own ordered-vs-requested quantity, never inherited from its parent
+      # document's header status. The Procurement Tracker did exactly that, so 29
+      # of 32 item rows on production were mislabelled.
+      - name: Procurement quantity/status math (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

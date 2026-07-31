@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.195.0] - 2026-07-31
+
+A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bump.
+
+### Fixed
+
+- **Every line of a partially-ordered Material Request read "Partially Ordered" in the
+  Procurement Tracker, including the lines that were fully ordered.** On
+  `MAT-MR-2026-00001` (PRJ-00566) that is nine fully-ordered lines and one untouched
+  one, all wearing the same badge; on `MAT-MR-2026-00003` it is twenty and two. Across
+  production, 29 of 32 item rows under a partially-ordered request were mislabelled.
+
+  Root cause is one line. `get_procurement_status` selected `mr.status` — the *parent
+  request's header status* — onto a row whose grain is the **item**, so a single value
+  was fetched once and painted once per line. `Material Request.per_ordered` and
+  `Material Request Item.ordered_qty` were never queried by the feed at all.
+
+  The second half of the same defect was in the colour mapper: `getStatusColorClass`
+  matched on the substring `'ordered'`, which `"Partially Ordered"` and `"Ordered"`
+  both contain, so the two resolved to the same CSS class. A correct status string
+  alone would still have rendered identically. Same collision existed on
+  `'received'`. Both vocabularies now match exactly first, and the fallback heuristic
+  kept for ERPNext's own status strings tests `partial` before the generic terms.
+
+  Item rows now carry `order_status` and `receive_status` computed from that line's own
+  quantities. The request's header status is still fetched, still shown on the document
+  header where it belongs, and is deliberately still visible in the item row's tooltip
+  alongside the line's own figures — the two legitimately differ, and seeing them
+  together is what makes it obvious the row is no longer echoing its parent.
+
+- **A Material Request line with nothing ordered rendered as though it were fully
+  ordered.** The feed substituted the requested quantity whenever no Purchase Order
+  line joined (`ordered_qty if ordered_qty > 0 else mr_qty`), so an untouched line
+  showed `4 / 0` under a column headed "Qty (Ord / Rec)" and read as ordered-and-
+  awaiting-delivery. It now reads `0`, and the completion percentage is measured
+  against what was ordered rather than against a denominator that fell back to the ask.
+
+- **Quantities were read from one arbitrary row of a fanned-out join.** The feed's
+  Purchase Order join matches `supplier_quotation_item OR material_request_item`, so a
+  request line split across two Purchase Orders arrives as two rows — and `po_item.qty`
+  was being read as the line's total. Likewise `COALESCE(pr_item.qty, sed.qty)` reported
+  one receipt for a line received over several. Both now come from ERPNext's per-line
+  rollups, which are immune to the duplication by construction.
+
+- **Cancelled Purchase Orders still joined the Material Request chain.** Part 2 of the
+  query has always filtered them; Part 1 never did. Latent only because this site has no
+  cancelled Purchase Orders yet.
+
+### Changed
+
+- **`ordered_qty` counts only submitted Purchase Orders.** Ten Purchase Order Item rows
+  against draft orders are linked to Material Request lines on production today. They
+  inflated the tracker while ERPNext's own `ordered_qty` excluded them — so the tracker
+  and the Material Request form it links to disagreed. Draft quantity is still reported,
+  as `draft_ordered_qty`, and surfaces in the item row's tooltip.
+
+  This is a genuine semantic change and figures will *drop* for anyone with draft orders
+  outstanding. On PRJ-00566, 14 of 61 rows change; on PRJ-00567 (54 rows, the largest
+  project) nothing changes at all.
+
+- **`project_procurement_status` (MCP tool)** gains `total_requested_qty` and reports the
+  per-line statuses. Its `total_ordered_qty` was accidentally carrying the *requested*
+  figure whenever nothing had been ordered, so a project with untouched lines looked
+  fully ordered to an assistant. The tool description was updated in the same change —
+  a stale description is what an assistant actually reads.
+
+### Added
+
+- **`erpnext_enhancements/procurement_quantities.py`** — one place where "how much was
+  asked for, how much is on order, how much arrived" is decided. The tracker asked that
+  question at two levels and answered it two different ways; that divergence *is* the
+  bug, and the next two tracker changes both need the same arithmetic.
+
+  It reads ERPNext's denormalized rollups rather than recomputing. They are per-line, so
+  the join fan-out cannot inflate them; they already net out amendments, cancellations
+  and returns — three cases with almost no live examples here, which is exactly where a
+  hand-rolled `SUM` would be wrong and nobody would notice; and they are the same numbers
+  the Material Request form, the MR list status and `po_creation_guard.js` already show.
+  Verified against `SUM(Purchase Order Item.stock_qty)` over every MR-linked submitted
+  Purchase Order line on production: zero discrepancies.
+
+  Stock UOM is the basis on the request axis and transaction UOM on the Purchase Order
+  axis, because `status_updater` maintains each against a different field. Every line on
+  this site currently has `conversion_factor = 1`, so the two are indistinguishable in
+  live data — which is precisely why the choice is written down rather than discovered
+  later by a 120 FT line reading as 12000% ordered.
+
+  Nothing is clamped: over-ordering and over-receipt get their own statuses and exceed
+  100%. The defect being fixed was a number quietly substituted to make a line look
+  complete.
+
+  It lives at the app root beside `procurement_project` / `po_approval` /
+  `po_segregation` rather than under `project_enhancements/`, because that package
+  imports `frappe` and a submodule of it cannot be imported bench-free however pure it
+  is. Same invariant as `water_engineering/engine`, reached from the other direction.
+
+- **`tests/test_procurement_quantities.py`** — 18 bench-free pytest tests with their own
+  CI step. Zero lines on this site are genuinely part-ordered, so the item-level
+  "Partially Ordered" state has no live example and is covered synthetically; without
+  that, the state most central to the bug would ship untested.
+
+- Two CSS classes the tracker never had: `.status-partial` (something has happened, but
+  not all of it — distinct from `.status-pending`, which means nothing has) and
+  `.status-warning` for the over-ordered / over-received anomalies. Both with dark
+  variants, because the tracker's `th` and badge rules hard-code light-mode colours and a
+  new class written only for light mode is illegible in dark.
+
 ## [1.194.1] - 2026-07-31
 
 ### Changed
