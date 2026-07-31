@@ -24,6 +24,7 @@ import, and documents mapped in from a Material Request.
 """
 
 import frappe
+from frappe.utils import flt
 
 #: Project Type that marks a project as a non-job overhead bucket. Deliberately
 #: its own type rather than reusing ``Internal`` — the 13 Internal projects are
@@ -47,6 +48,60 @@ def cascade_project_to_items(doc, method=None):
 	for row in doc.get("items") or []:
 		if not (row.get("project") or "").strip():
 			row.project = project
+
+
+#: A Purchase Order with nothing left to receive. Same rule as
+#: ``api/pickup_routing.py::_is_outstanding`` — the *number*, not the label: ``Closed``
+#: can hide an order whose goods never turned up, and ``To Bill`` means they are already
+#: here. Kept identical on purpose; two different answers to "is there anything still to
+#: collect" on the same Project form would be worse than either answer alone.
+SETTLED_PO_STATUSES = ("Closed", "Delivered")
+
+
+@frappe.whitelist()
+def get_receivable_purchase_orders(project):
+	"""Purchase Orders on this project that still have goods to receive.
+
+	Backs the Project form's "+ Purchase Receipt" button, which until now opened a
+	blank Purchase Receipt carrying nothing but the project — no supplier, no order, no
+	lines — leaving the receiver to retype a delivery that ERPNext already knew about.
+
+	Matches on the **union** of the header ``Purchase Order.project`` and the item-row
+	``Purchase Order Item.project``, the same rule the pick-up routing map uses. The two
+	agree on every order on this site today (70 of 70) — but only because
+	:func:`cascade_project_to_items` fills blank item rows on save, and it fills *blanks
+	only*, on *save only*. An order written before that hook existed, or re-pointed by a
+	path that bypasses it, can still carry one and not the other; that is exactly the
+	state the pick-up routing map found on 44 of 204 lines (CHANGELOG v1.190.0). The
+	union costs one extra query and cannot be wrong.
+	"""
+	project = (project or "").strip()
+	if not project:
+		return []
+
+	names = set(
+		frappe.get_all("Purchase Order", filters={"project": project}, pluck="name")
+	)
+	for row in frappe.get_all(
+		"Purchase Order Item", filters={"project": project}, fields=["parent"], distinct=True
+	):
+		if row.get("parent"):
+			names.add(row["parent"])
+
+	if not names:
+		return []
+
+	orders = frappe.get_all(
+		"Purchase Order",
+		filters={"name": ["in", list(names)], "docstatus": 1},
+		fields=["name", "supplier", "transaction_date", "per_received", "grand_total", "currency", "status"],
+		order_by="transaction_date desc, name desc",
+	)
+	return [
+		po
+		for po in orders
+		if po.status not in SETTLED_PO_STATUSES and flt(po.per_received) < 100
+	]
 
 
 @frappe.whitelist()

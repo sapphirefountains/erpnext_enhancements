@@ -23,10 +23,17 @@ class ProjectProcurementStatus(BaseTool):
             "(1) 'stage_summary' (default) — items grouped by the latest stage their "
             "chain has reached ('graduation' logic; subcontracted receipts surface as "
             "'Subcontracting Receipt'), each row carrying every document in its chain "
-            "plus ordered vs received qty and completion %, with per-stage counts; "
+            "plus requested / ordered / received qty, a per-line order_status and "
+            "receive_status, and completion %, with per-stage counts; "
             "(2) 'documents' — a document-centric tree (DocType -> documents -> item "
             "rows) including project-linked documents that never joined a chain. "
-            "Use this to answer 'what materials are we waiting on for project X'."
+            "Use this to answer 'what materials are we waiting on for project X'. "
+            "Quantities are per line and never inherited from a parent document: "
+            "order_status is that line's own ordered-vs-requested state (Not Ordered / "
+            "Partially Ordered / Ordered / Over Ordered), so a fully ordered line inside "
+            "a partially ordered Material Request reads 'Ordered'. Only submitted "
+            "Purchase Orders count toward ordered qty; anything on a draft order is "
+            "reported separately as draft_ordered_qty."
         )
         self.category = "Project Management"
         self.source_app = "erpnext_enhancements"
@@ -68,6 +75,15 @@ class ProjectProcurementStatus(BaseTool):
         summary = {
             "items_by_stage": {stage: len(rows) for stage, rows in stages.items()},
             "total_items": sum(len(rows) for rows in stages.values()),
+            # `total_requested_qty` is new alongside the two below. It restores what the
+            # old `total_ordered_qty` was accidentally carrying: that figure used to fall
+            # back to the requested quantity whenever nothing had been ordered, so an
+            # untouched line inflated it and the project looked fully ordered. It now
+            # counts only quantity on submitted Purchase Orders, and the requested figure
+            # is reported in its own right.
+            "total_requested_qty": sum(
+                row.get("requested_qty") or 0 for rows in stages.values() for row in rows
+            ),
             "total_ordered_qty": sum(
                 row.get("ordered_qty") or 0 for rows in stages.values() for row in rows
             ),

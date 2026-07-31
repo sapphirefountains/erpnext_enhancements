@@ -99,6 +99,258 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `account_doctype` other than Customer or Supplier. The doctype guard is defence in
   depth behind the client fix: it makes the bug above unrepresentable rather than merely
   unwritten.
+## [1.198.0] - 2026-07-31
+
+### Added
+
+- **Create a Purchase Receipt straight from the Procurement Tracker.** A quiet
+  **Receive** action on each Purchase Order row, so a delivery can be booked from the
+  screen the buyer is already looking at rather than by navigating out to the order.
+
+  It runs ERPNext's own mapper,
+  `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, so
+  supplier, items, warehouse and — on a partly-received order — only the outstanding
+  quantity all come across. Nothing is hand-rolled.
+
+  It lands on an **unsaved draft** and stops there. A Purchase Receipt is a stock
+  transaction: submitting writes Stock Ledger and GL entries, and cancelling one
+  afterwards is an accounting event rather than an undo. There is no version of this
+  that submits on click.
+
+  Shown only where receiving makes sense — submitted, not `Closed`/`Delivered`, and
+  `per_received < 100`. That is the rule `api/pickup_routing.py` already settled on, and
+  it is reused rather than reinvented: two different answers to "is there anything left
+  to collect" on the same Project form would be worse than either alone. It is *hidden*,
+  not disabled, for anyone without create permission on Purchase Receipt, because
+  `frappe.new_doc` and the mapper both perform no permission check and a visible button
+  would open a form that only fails at save — the same reasoning as the PO Creator gate
+  on **+ Purchase Order**.
+
+### Changed
+
+- **The Project form's "+ Purchase Receipt" button now asks which order arrived.** It
+  used to open a blank Purchase Receipt carrying nothing but the project — no supplier,
+  no order, no lines — so the receiver retyped a delivery ERPNext already knew about and
+  could not link it back to the order afterwards. On this site that also meant the
+  receipt landed unattributed, because the `Purchase Order Item.project` cascade has no
+  equivalent for a hand-built receipt.
+
+  It now lists the project's outstanding orders and routes the chosen one through the
+  same mapper. A single outstanding order skips the prompt. Where there are none it says
+  so rather than falling back to the blank form — a receipt with no order behind it is
+  the thing this replaced.
+
+  New whitelisted `procurement_project.get_receivable_purchase_orders(project)` backs
+  it, matching on the union of the header `Purchase Order.project` and the item-row
+  `Purchase Order Item.project`. Those agree on all 70 orders here today, but only
+  because `cascade_project_to_items` fills blank item rows on save — blanks only, on
+  save only. An order written before that hook, or re-pointed by a path that bypasses
+  it, can still carry one and not the other; that is the state the pick-up routing map
+  found on 44 of 204 lines. The union costs one query and cannot be wrong.
+
+  Note there are **no** partly-received Purchase Orders on production, so the
+  outstanding-quantity path has no live example and needs a constructed case on a test
+  site before sign-off.
+
+## [1.197.0] - 2026-07-31
+
+### Added
+
+- **Sortable columns in the Procurement Tracker.** Click a header to sort the item table
+  ascending, again for descending, a third time to clear it. The active column and
+  direction are shown by an indicator, and the header carries `aria-sort` so a screen
+  reader gets the same information. Keyboard-reachable: the headers are focusable and
+  respond to Enter and Space.
+
+  Sorting is client-side. The largest project on this site is 54 item rows, so there is
+  nothing to paginate and no reason to make the server do it.
+
+  Decisions worth knowing before "fixing" any of them:
+
+  - **Blanks sort last in both directions.** A missing warehouse is not "before A" — it
+    is absent information, and absent information belongs at the bottom whichever way you
+    sorted. The blank comparison deliberately returns before the direction is applied.
+  - **Zero is not blank.** An ordered quantity of `0` is a real value and sorts at the
+    numeric bottom with the numbers. `Requested` on a direct Purchase Order line *is*
+    blank — there is no request behind it — and sorts with the blanks.
+  - **Status sorts by workflow order, not alphabetically.** A–Z gives *Not Received /
+    Over Received / Partially Received / Received*, interleaving "done" between two "not
+    done" states. Worst-first ascending means one click surfaces exactly the lines
+    somebody has to chase. An unrecognised status sorts after every known one rather than
+    first.
+  - **Item codes sort numerically.** This site's codes are `417-080`, `417-100`,
+    `2622-010`; a plain string compare puts `2622-010` in the middle.
+  - **Doc Chain is not sortable**, and has no click affordance. It is one cell holding up
+    to seven chain nodes; there is no single value to order by, and giving it a handler
+    would mean inventing an ordering the column does not show.
+  - **Sort state is per document**, keyed like the existing collapse state. Two documents
+    in a group can want different sorts, and a global sort would silently reorder
+    collapsed tables nobody asked about.
+  - **Search filters first, then sort sorts.** Sorting is applied in a render method
+    rather than inside `filteredGroups`, so the existing filter, the auto-expand watcher
+    and the match highlighting are untouched.
+
+  Two Vue traps avoided, both silent: the sort copies the array before sorting, because
+  `Array.prototype.sort` mutates and mutating `doc.items` during a render is an infinite
+  reactivity loop; and rows are keyed on a new server-supplied `row_id` rather than the
+  array index, because index keys make Vue reuse the wrong DOM nodes once rows can
+  reorder — which smears the search-highlight spans across neighbouring rows.
+
+  Headers are rendered from the same registry the comparator reads, so a column cannot
+  exist in one and not the other.
+
+## [1.196.0] - 2026-07-31
+
+### Added
+
+- **Requested / Ordered / Received as real quantities in the Procurement Tracker**, per
+  item line and totalled per document. Previously one column headed "Qty (Ord / Rec)"
+  carried two numbers, the first of which was the *requested* quantity whenever nothing
+  had been ordered — so an untouched line read as ordered-and-awaiting-delivery. Three
+  separate columns, three separate facts.
+
+  Three columns rather than one combined `4 / 4 / 0` cell for two reasons. A combined
+  cell cannot be sorted without inventing hidden sort keys for one header, and column
+  sorting lands next. And the ambiguity of a slash-pair is what let the original defect
+  hide; a slash-triple is no clearer.
+
+  - **Requested** prints `-`, not `0`, on a direct Purchase Order line. There is no
+    request behind one, and "nobody asked" is a different fact from "asked for none" —
+    the feed used to print both as zero.
+  - **Ordered** carries a muted `+N draft` suffix where quantity is sitting on
+    unsubmitted Purchase Orders, so the excluded amount is visible without being counted.
+  - **Status** now shows the line's own receive status as a badge rather than a bare
+    "N% Received" percentage; the percentage moved into the cell tooltip alongside the
+    arithmetic behind it.
+  - Quantities are in the stock UOM, and the cell tooltip says so — naming the line's own
+    UOM when it differs. Real on this data: `MAT-MR-2026-00001` requests `PD-400-100` in
+    **FT** against a stock UOM of **Unit**.
+
+- **Per-document totals on the Material Request / Purchase Order header row** —
+  `362 req · 358 ord · 0 rec`, computed server-side so the `project_procurement_status`
+  MCP tool gets them too. One span rather than three, because the supplier name is the
+  only element in that flex row that grows and three `nowrap` spans squeeze it to
+  nothing on a narrow screen. Hidden entirely when there is nothing to total, so an RFQ
+  header does not sprout a row of zeroes that reads as a failure rather than an absence.
+
+- **`procurement_quantities.dedupe_lines`** — and it is the reason the totals are
+  right. The feed's Purchase Order join matches `supplier_quotation_item OR
+  material_request_item`, so a request line reachable by both paths comes back more than
+  once: `MAT-MR-2026-00001`'s **ten** lines arrive as **nineteen** rows. Summing those
+  directly reports **720 requested / 716 ordered** against a true **362 / 358**. Keying
+  on the child row name collapses the duplicates and reproduces the child table exactly.
+  Rows with no child row of their own — the supplementary sweep builds those for
+  documents that never joined a chain — stay distinct and each count once.
+
+  Three more bench-free tests cover it, including the naive-sum case, so a future
+  refactor that drops the de-duplication fails rather than silently doubling.
+
+## [1.195.0] - 2026-07-31
+
+A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bump.
+
+### Fixed
+
+- **Every line of a partially-ordered Material Request read "Partially Ordered" in the
+  Procurement Tracker, including the lines that were fully ordered.** On
+  `MAT-MR-2026-00001` (PRJ-00566) that is nine fully-ordered lines and one untouched
+  one, all wearing the same badge; on `MAT-MR-2026-00003` it is twenty and two. Across
+  production, 29 of 32 item rows under a partially-ordered request were mislabelled.
+
+  Root cause is one line. `get_procurement_status` selected `mr.status` — the *parent
+  request's header status* — onto a row whose grain is the **item**, so a single value
+  was fetched once and painted once per line. `Material Request.per_ordered` and
+  `Material Request Item.ordered_qty` were never queried by the feed at all.
+
+  The second half of the same defect was in the colour mapper: `getStatusColorClass`
+  matched on the substring `'ordered'`, which `"Partially Ordered"` and `"Ordered"`
+  both contain, so the two resolved to the same CSS class. A correct status string
+  alone would still have rendered identically. Same collision existed on
+  `'received'`. Both vocabularies now match exactly first, and the fallback heuristic
+  kept for ERPNext's own status strings tests `partial` before the generic terms.
+
+  Item rows now carry `order_status` and `receive_status` computed from that line's own
+  quantities. The request's header status is still fetched, still shown on the document
+  header where it belongs, and is deliberately still visible in the item row's tooltip
+  alongside the line's own figures — the two legitimately differ, and seeing them
+  together is what makes it obvious the row is no longer echoing its parent.
+
+- **A Material Request line with nothing ordered rendered as though it were fully
+  ordered.** The feed substituted the requested quantity whenever no Purchase Order
+  line joined (`ordered_qty if ordered_qty > 0 else mr_qty`), so an untouched line
+  showed `4 / 0` under a column headed "Qty (Ord / Rec)" and read as ordered-and-
+  awaiting-delivery. It now reads `0`, and the completion percentage is measured
+  against what was ordered rather than against a denominator that fell back to the ask.
+
+- **Quantities were read from one arbitrary row of a fanned-out join.** The feed's
+  Purchase Order join matches `supplier_quotation_item OR material_request_item`, so a
+  request line split across two Purchase Orders arrives as two rows — and `po_item.qty`
+  was being read as the line's total. Likewise `COALESCE(pr_item.qty, sed.qty)` reported
+  one receipt for a line received over several. Both now come from ERPNext's per-line
+  rollups, which are immune to the duplication by construction.
+
+- **Cancelled Purchase Orders still joined the Material Request chain.** Part 2 of the
+  query has always filtered them; Part 1 never did. Latent only because this site has no
+  cancelled Purchase Orders yet.
+
+### Changed
+
+- **`ordered_qty` counts only submitted Purchase Orders.** Ten Purchase Order Item rows
+  against draft orders are linked to Material Request lines on production today. They
+  inflated the tracker while ERPNext's own `ordered_qty` excluded them — so the tracker
+  and the Material Request form it links to disagreed. Draft quantity is still reported,
+  as `draft_ordered_qty`, and surfaces in the item row's tooltip.
+
+  This is a genuine semantic change and figures will *drop* for anyone with draft orders
+  outstanding. On PRJ-00566, 14 of 61 rows change; on PRJ-00567 (54 rows, the largest
+  project) nothing changes at all.
+
+- **`project_procurement_status` (MCP tool)** gains `total_requested_qty` and reports the
+  per-line statuses. Its `total_ordered_qty` was accidentally carrying the *requested*
+  figure whenever nothing had been ordered, so a project with untouched lines looked
+  fully ordered to an assistant. The tool description was updated in the same change —
+  a stale description is what an assistant actually reads.
+
+### Added
+
+- **`erpnext_enhancements/procurement_quantities.py`** — one place where "how much was
+  asked for, how much is on order, how much arrived" is decided. The tracker asked that
+  question at two levels and answered it two different ways; that divergence *is* the
+  bug, and the next two tracker changes both need the same arithmetic.
+
+  It reads ERPNext's denormalized rollups rather than recomputing. They are per-line, so
+  the join fan-out cannot inflate them; they already net out amendments, cancellations
+  and returns — three cases with almost no live examples here, which is exactly where a
+  hand-rolled `SUM` would be wrong and nobody would notice; and they are the same numbers
+  the Material Request form, the MR list status and `po_creation_guard.js` already show.
+  Verified against `SUM(Purchase Order Item.stock_qty)` over every MR-linked submitted
+  Purchase Order line on production: zero discrepancies.
+
+  Stock UOM is the basis on the request axis and transaction UOM on the Purchase Order
+  axis, because `status_updater` maintains each against a different field. Every line on
+  this site currently has `conversion_factor = 1`, so the two are indistinguishable in
+  live data — which is precisely why the choice is written down rather than discovered
+  later by a 120 FT line reading as 12000% ordered.
+
+  Nothing is clamped: over-ordering and over-receipt get their own statuses and exceed
+  100%. The defect being fixed was a number quietly substituted to make a line look
+  complete.
+
+  It lives at the app root beside `procurement_project` / `po_approval` /
+  `po_segregation` rather than under `project_enhancements/`, because that package
+  imports `frappe` and a submodule of it cannot be imported bench-free however pure it
+  is. Same invariant as `water_engineering/engine`, reached from the other direction.
+
+- **`tests/test_procurement_quantities.py`** — 18 bench-free pytest tests with their own
+  CI step. Zero lines on this site are genuinely part-ordered, so the item-level
+  "Partially Ordered" state has no live example and is covered synthetically; without
+  that, the state most central to the bug would ship untested.
+
+- Two CSS classes the tracker never had: `.status-partial` (something has happened, but
+  not all of it — distinct from `.status-pending`, which means nothing has) and
+  `.status-warning` for the over-ordered / over-received anomalies. Both with dark
+  variants, because the tracker's `th` and badge rules hard-code light-mode colours and a
+  new class written only for light mode is illegible in dark.
 
 ## [1.194.1] - 2026-07-31
 
@@ -179,6 +431,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same CSS through `style.textContent`, where markup cannot escape; on an
   unauthenticated page a `</style>` in a site-edited Print Format would have ended the
   element and let everything after it parse as content.
+
+## [1.194.2] - 2026-07-31
+
+### Added
+
+- **`docs/procurement-tracker-map.md`** — a code map for the Project form's **Procurement
+  Tracker**, the collapsible procurement tree on the Budget tab. It had no documentation
+  anywhere: no section in the Project Enhancements README, no CHANGELOG entry of its own
+  (it landed in `a8021db`, before the per-module README pass and before this changelog
+  became a discipline), and only a single table row in the public README. Four queued
+  changes all land in the same two files, so the groundwork is written down once.
+
+  What it records, beyond the file map:
+
+  - **The name collision.** ERPNext ships a *standard* Script Report called "Procurement
+    Tracker" (module Buying, `ref_doctype` Purchase Order). It is unrelated and not in this
+    repo. The thing on the Project form is an in-house Vue 3 widget, and the field it mounts
+    into is labelled "Material Request Feed" — a misnomer, it renders all six procurement
+    doctypes.
+  - **There is no table library.** It is Vue 3 with an inline template string, not a frappe
+    DataTable, so sorting and per-row actions are hand-written work rather than configuration.
+  - **The `OR`-join fan-out** at `project_enhancements/__init__.py:69-72`: one Material
+    Request line split across two Purchase Orders produces two rows for that one line. Nothing
+    de-duplicates today because nothing aggregates today — but any future per-item arithmetic
+    has to, or it double-counts.
+  - **Three different things on screen are called "status"**, from three different sources —
+    and the item-row Doc Chain badge reads the *parent* Material Request's header status
+    (`mr.status`, `:36`) on a child-grain row, so every line of a partially-ordered MR reads
+    "Partially Ordered" whether or not that particular line is fully ordered. Reproduction on
+    `MAT-MR-2026-00001` / `PRJ-00566`. `Material Request.per_ordered` and
+    `Material Request Item.ordered_qty` are never queried by the feed at all.
+  - **The return shape is a public contract.** `assistant_tools/project_procurement_status.py`
+    consumes both endpoints, so renaming `ordered_qty` / `received_qty` breaks the MCP tool
+    silently.
+  - **Production volumes**, so nobody reaches for pagination: the largest project is 54
+    Purchase Order Item rows. Also that *no* `Material Request Item` row has `project` set —
+    Material Requests reach the feed only via `Material Request.custom_project` — and that
+    `Material Request Item.ordered_qty` agreed with the child tables on all 160 submitted rows
+    checked, so quantity work can trust the denormalized fields.
+  - Gotchas worth the reading: the Vue app is never unmounted (every form refresh orphans the
+    previous instance with its watchers live, onto a hard-coded document-global element id),
+    `v-html` renders item codes and supplier names unescaped, both endpoints are whitelisted
+    with **no** permission check, and `_supplementary_documents` swallows every exception so a
+    failing doctype silently vanishes from the feed instead of erroring.
+
+### Changed
+
+- **`project_enhancements/README.md`** gains the Procurement Tracker section it never had, and
+  `docs/README.md` indexes the new map. Documentation only — no executable behaviour changed.
 
 ## [1.193.1] - 2026-07-29
 
