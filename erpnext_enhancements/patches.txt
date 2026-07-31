@@ -290,3 +290,11 @@ erpnext_enhancements.patches.update_production_procurement_step
 # refresh token — Frappe never revokes rotated ones, so log-clearing quietly
 # killed the grant of anyone idle for a month and forced a relink.
 erpnext_enhancements.patches.set_oauth_token_retention
+# v1.198.0: de-duplicate accounts left with several Contacts/Addresses flagged
+# primary. The directory widget derived its account from frm.doc.customer /
+# party_name, so a "Set Primary" click on an Opportunity passed the incoherent
+# pair ("Opportunity", <a Customer id>); the "unset the others" query matched
+# nothing and the flag was set without the previous one being cleared. Only
+# de-duplicates — the Project path overwrote the account's real primary with no
+# record of what it had been, and that class is genuinely unrecoverable.
+erpnext_enhancements.patches.dedupe_party_primary_flags
