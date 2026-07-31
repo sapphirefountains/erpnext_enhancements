@@ -211,7 +211,7 @@ Configured hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)):
 ### CI & releases
 
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the standalone `unit-tests` job. (The heavier Frappe integration-test job was removed in v0.2.9 — see the CHANGELOG — because it gated PRs on upstream/environment churn; the Frappe-dependent tests under `tests/` can still be run against a real bench locally.)
-- **Release** ([`.github/workflows/release.yml`](.github/workflows/release.yml)) tags and publishes a GitHub Release whenever a new `__version__` lands on `main`, using the matching `CHANGELOG.md` section as release notes. Because Frappe Cloud deploys from `main`, the Releases page is a 1:1 log of what is deployed.
+- **Release** ([`.github/workflows/release.yml`](.github/workflows/release.yml)) tags and publishes a GitHub Release whenever a new `__version__` lands on `main`, using the matching `CHANGELOG.md` section as release notes. Because `main` deploys automatically to the Google Cloud bench VM, the Releases page is a 1:1 log of what is deployed.
 
 ### Running tests
 
