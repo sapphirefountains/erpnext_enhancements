@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.201.1] - 2026-07-31
+
+### Added
+
+- **`docs/pick-routing-map-po-details.md`** — a spike, not a feature: three costed options
+  for showing Purchase Order item detail on the Pick Routing Map, with a recommendation.
+  No behaviour change.
+
+  The finding that changes the estimate: **the item lines are already on the wire.**
+  `get_pickup_route_data` already returns `item_code`, `item_name`, `qty`, `received_qty`
+  and `uom` for every line of every order behind every stop — they are simply not
+  rendered. This is a rendering question, not a data question, so no new endpoint and no
+  second round-trip.
+
+  Recommendation is the inline HTML block, and the deciding argument is *agreement* rather
+  than effort. The map already decides which suppliers have material outstanding using a
+  rule that took production data to get right (`per_received`, not the status label). A
+  separate report or print sheet re-derives that rule somewhere else, and the moment the
+  two disagree the driver is holding a sheet that contradicts the screen — the same
+  divergence the Procurement Tracker had to be fixed for. Rendering the payload the map is
+  already drawing cannot diverge from it.
+
+  Secondary argument: this is used in the field, and the inline option is the only one that
+  needs no network at the moment it is read.
+
+  Per the decision on this task, **no pricing appears**: a driver needs to know what to
+  collect and check it at the counter, not what it cost. `grand_total` and `currency` stay
+  in the payload and go unrendered.
+
+  Two constraints recorded for whoever builds it: every re-route is a **billable**
+  Directions call (the existing code re-routes on blur rather than keystroke for exactly
+  this reason), and the map **degrades in three steps** — a detail view that only works at
+  step one would be a regression in the field.
 ## [1.201.0] - 2026-07-31
 
 ### Added
