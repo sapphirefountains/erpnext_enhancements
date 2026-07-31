@@ -106,7 +106,14 @@ _HTML = """
       {%- for row in doc.items %}
       <tr style="page-break-inside:avoid;">
         <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top;">{{ row.item_code | e }}</td>
-        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; color:#555;">{{ (row.description or row.item_name or "") | e }}</td>
+        <!-- Rendered as HTML, NOT escaped. Purchase Order Item.description is a Text
+             Editor field, so it holds markup authored by staff in the Item master —
+             escaping it printed a literal "&lt;div&gt;&lt;p&gt;Use for waterproofing…"
+             at the supplier. Every stock ERPNext print format renders this field the
+             same way. item_name is a plain Data field and stays escaped. -->
+        <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; color:#555;">
+          {%- if row.description %}{{ row.description }}{% else %}{{ row.item_name | e }}{% endif -%}
+        </td>
         <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; color:#555;">{{ (row.project or "") | e }}</td>
         <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; text-align:right; white-space:nowrap;">{{ row.qty }}</td>
         <td style="padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top;">{{ (row.uom or "") | e }}</td>
@@ -149,9 +156,13 @@ _HTML = """
     {%- if doc.payment_terms_template or doc.payment_schedule %}
       {%- if doc.payment_terms_template %}<div>{{ doc.payment_terms_template | e }}</div>{% endif %}
       {%- for term in doc.payment_schedule %}
+      {#- Parenthesised on purpose: `a or b or "" | e` binds the filter to the empty
+          string alone, so the real values went out unescaped. And the separator is
+          emitted only when there is a label, rather than leaving a dangling dash. -#}
+      {%- set term_label = (term.description or term.payment_term or "") %}
       <div style="color:#555;">
-        {{ term.description or term.payment_term or "" | e }} &mdash;
-        {{ frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
+        {%- if term_label %}{{ term_label | e }} &mdash; {% endif %}
+        {{- frappe.utils.fmt_money(term.payment_amount, currency=doc.currency) }}
         {%- if term.due_date %} due {{ frappe.format(term.due_date, {"fieldtype": "Date"}) }}{% endif %}
       </div>
       {%- endfor %}

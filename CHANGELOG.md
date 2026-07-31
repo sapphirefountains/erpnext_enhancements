@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.201.4] - 2026-07-31
+
+### Fixed
+
+- **The Purchase Order print format showed suppliers raw HTML markup.**
+  `Purchase Order Item.description` is a **Text Editor** field, so it holds markup authored
+  by staff in the Item master. The template escaped it, which printed a literal
+  `<div><p>Use for waterproofing, first apply primer.</p>…` on a document that goes to a
+  vendor. It now renders as HTML, which is what every stock ERPNext print format does with
+  this field; `item_name`, a plain Data field, is still escaped.
+
+  Only visible by rendering the format against real data — `PO-2026-00028` carries a
+  389-character rich-text description. A one-line Purchase Order with a plain description
+  looks perfect, which is why the structural checks (valid HTML, no Jinja errors, every
+  section present) all passed.
+
+- **Nothing in the payment-terms line was being escaped.** `a or b or "" | e` is a Jinja
+  precedence trap: the filter binds to the empty string alone, so the two real values went
+  out unescaped. Parenthesised into a `set`. The separator dash is now emitted only when
+  there is a label, instead of leaving a dangling `—` in front of the amount.
+
+  Both fixes verified by rendering against `PO-2026-00028` on the live site.
+
 ## [1.201.2] - 2026-07-31
 
 ### Fixed
