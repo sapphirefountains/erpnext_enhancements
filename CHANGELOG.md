@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.201.2] - 2026-07-31
+
+### Fixed
+
+- **`bench migrate` aborted on production, taking every pending patch with it.**
+
+  ```
+  bad json: .../erpnext_enhancements/workspace_sidebar/README.md
+  orjson.JSONDecodeError: unexpected character: line 1 column 1 (char 0)
+  ```
+
+  Frappe's `frappe/model/sync.py` keeps a list of `IMPORTABLE_DOCTYPES`, and for each entry
+  it scans the matching **app-level** directory and calls `orjson.loads()` on **every file
+  it finds** — there is no `*.json` filter and no skip-list. The first non-JSON file aborts
+  the entire schema sync, and with it the migrate.
+
+  **Nothing in this repo changed to cause it.** `workspace_sidebar/README.md` had been
+  sitting there since 2026-07-29 doing no harm. Frappe **16.29.0**, which landed in the same
+  deploy, added `("desk", "workspace_sidebar")` to the importable list — so a directory that
+  had been inert for months became an import target overnight, and a documentation file
+  became a production outage.
+
+  The README moved to [`docs/workspace-sidebars.md`](docs/workspace-sidebars.md), which also
+  records why it cannot live beside the files it describes.
+
+  Consequence while it was broken: the code from v1.194.2–v1.201.1 was deployed and live, but
+  **no patch, fixture or `after_migrate` hook from any of it had applied** — so the
+  Opportunity Kanban swap, its backfill, the primary-flag repair, the Purchase Order print
+  format and the approval-stamp custom fields were all absent on a site whose version said
+  otherwise.
+
+### Added
+
+- **`scripts/check_import_dirs.py`** + a CI step — fails the build if a non-JSON file appears
+  in any app-level directory Frappe imports from.
+
+  This class of bug deserves a guard rather than a note: the blast radius is the whole
+  migrate, the failure is remote (it surfaces on deploy, not in review), and the triggering
+  change lives in *someone else's* dependency — nothing in a PR diff would have shown it
+  coming. Same shape as the hyphenated `www/` controller that `check_www_controllers.py`
+  guards.
+
+  The directory list is read from the **installed Frappe** rather than hard-coded, so it
+  keeps up when Frappe adds another importable doctype; it falls back to a pinned list so CI
+  still runs bench-free. Verified against the real failure: the guard flags the README before
+  the fix and passes after it.
+
 ## [1.201.1] - 2026-07-31
 
 ### Added
