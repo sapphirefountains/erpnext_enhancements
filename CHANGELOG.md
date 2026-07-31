@@ -194,6 +194,55 @@ A fix, not a feature — but it adds a module and a CI step, so it is a MINOR bu
   unauthenticated page a `</style>` in a site-edited Print Format would have ended the
   element and let everything after it parse as content.
 
+## [1.194.2] - 2026-07-31
+
+### Added
+
+- **`docs/procurement-tracker-map.md`** — a code map for the Project form's **Procurement
+  Tracker**, the collapsible procurement tree on the Budget tab. It had no documentation
+  anywhere: no section in the Project Enhancements README, no CHANGELOG entry of its own
+  (it landed in `a8021db`, before the per-module README pass and before this changelog
+  became a discipline), and only a single table row in the public README. Four queued
+  changes all land in the same two files, so the groundwork is written down once.
+
+  What it records, beyond the file map:
+
+  - **The name collision.** ERPNext ships a *standard* Script Report called "Procurement
+    Tracker" (module Buying, `ref_doctype` Purchase Order). It is unrelated and not in this
+    repo. The thing on the Project form is an in-house Vue 3 widget, and the field it mounts
+    into is labelled "Material Request Feed" — a misnomer, it renders all six procurement
+    doctypes.
+  - **There is no table library.** It is Vue 3 with an inline template string, not a frappe
+    DataTable, so sorting and per-row actions are hand-written work rather than configuration.
+  - **The `OR`-join fan-out** at `project_enhancements/__init__.py:69-72`: one Material
+    Request line split across two Purchase Orders produces two rows for that one line. Nothing
+    de-duplicates today because nothing aggregates today — but any future per-item arithmetic
+    has to, or it double-counts.
+  - **Three different things on screen are called "status"**, from three different sources —
+    and the item-row Doc Chain badge reads the *parent* Material Request's header status
+    (`mr.status`, `:36`) on a child-grain row, so every line of a partially-ordered MR reads
+    "Partially Ordered" whether or not that particular line is fully ordered. Reproduction on
+    `MAT-MR-2026-00001` / `PRJ-00566`. `Material Request.per_ordered` and
+    `Material Request Item.ordered_qty` are never queried by the feed at all.
+  - **The return shape is a public contract.** `assistant_tools/project_procurement_status.py`
+    consumes both endpoints, so renaming `ordered_qty` / `received_qty` breaks the MCP tool
+    silently.
+  - **Production volumes**, so nobody reaches for pagination: the largest project is 54
+    Purchase Order Item rows. Also that *no* `Material Request Item` row has `project` set —
+    Material Requests reach the feed only via `Material Request.custom_project` — and that
+    `Material Request Item.ordered_qty` agreed with the child tables on all 160 submitted rows
+    checked, so quantity work can trust the denormalized fields.
+  - Gotchas worth the reading: the Vue app is never unmounted (every form refresh orphans the
+    previous instance with its watchers live, onto a hard-coded document-global element id),
+    `v-html` renders item codes and supplier names unescaped, both endpoints are whitelisted
+    with **no** permission check, and `_supplementary_documents` swallows every exception so a
+    failing doctype silently vanishes from the feed instead of erroring.
+
+### Changed
+
+- **`project_enhancements/README.md`** gains the Procurement Tracker section it never had, and
+  `docs/README.md` indexes the new map. Documentation only — no executable behaviour changed.
+
 ## [1.193.1] - 2026-07-29
 
 ### Added
