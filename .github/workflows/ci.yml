@@ -123,6 +123,13 @@ jobs:
       # broken this way from the day it was written until v1.159.10.
       - name: www controller filenames must be importable
         run: python scripts/check_www_controllers.py
+      # Frappe calls orjson.loads() on EVERY file in the app-level directories named by
+      # IMPORTABLE_DOCTYPES — no *.json filter. One stray file aborts the whole schema
+      # sync, so the site fails to migrate on deploy. This killed production's migrate on
+      # 2026-07-31 when Frappe 16.29.0 added ("desk", "workspace_sidebar") to that list
+      # and a README that had sat there harmlessly for two days became an import target.
+      - name: app-level import directories must contain only JSON
+        run: python scripts/check_import_dirs.py
       # Guards the "writes to a field that doesn't exist, silently" class of bug:
       # every field the Lead/Opportunity hooks assign must be a declared Custom
       # Field, and nothing may target the removed `source` field.

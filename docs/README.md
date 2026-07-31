@@ -23,6 +23,7 @@ anything.
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
+| [workspace-sidebars.md](workspace-sidebars.md) | The `Workspace Sidebar` records, and why Frappe's importable app-level directories may contain nothing but JSON |
 | [pdf-generation.md](pdf-generation.md) | Why PDF generation fails on both backends, and the runbook to fix the host |
 | [procurement-tracker-map.md](procurement-tracker-map.md) | The Project form's Procurement Tracker: what renders it, the chain SQL underneath, and where its status/quantity arithmetic lives |
 | [stripe_surcharging_compliance.md](stripe_surcharging_compliance.md) | The surcharging compliance checklist gating OD-7 |
