@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.202.2] - 2026-07-31
+
+### Fixed
+
+- **Purchase Orders were going to suppliers with no company branding.** `Purchase Order -
+  Sapphire` now renders the letter head.
+
+  A print format with `custom_format = 1` supplies the entire document body, so Frappe does
+  **not** inject the letter head into it — it only emits the `#header-html` block that
+  `repeat_header_footer` builds for *standard* formats. `letter_head` is offered to the
+  template in the render args (`www/printview.py`, the same `args` dict used for both code
+  paths) and is silently dropped if the template never asks for it. Every stock ERPNext
+  format asks; ours did not.
+
+  This was invisible from the outside and easy to misread. The rendered HTML *does* contain
+  the string `letter-head` — but only as a CSS rule (`.print-format .letter-head { ... }`),
+  which is what a naive grep finds. The real signal is that the PO HTML has no
+  `#header-html` div at all where a Sales Invoice has one, and that the PO's PDF was
+  **byte-identical** (18,475) with and without a letter head attached to the document.
+
+  Rendered on page one only, deliberately: the identifier a counter clerk needs on every
+  sheet is the PO number, which is already in the header bar and repeats via the table
+  header. A logo on every page would add roughly 52 KB per page for no working benefit.
+
+  Related: the logo only reaches any PDF at all as of the letter head change made the same
+  day — it is now inlined as a base64 data URI, because wkhtmltopdf's separate
+  `--header-html` sub-render cannot fetch `/private/files/…`. See `docs/pdf-generation.md`.
+
 ## [1.202.1] - 2026-07-31
 
 ### Fixed
