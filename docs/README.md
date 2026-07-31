@@ -24,6 +24,7 @@ anything.
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
 | [procurement-tracker-map.md](procurement-tracker-map.md) | The Project form's Procurement Tracker: what renders it, the chain SQL underneath, and where its status/quantity arithmetic lives |
 | [pdf-generation.md](pdf-generation.md) | Why PDF generation fails on both backends, and the runbook to fix the host |
+| [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
 | [stripe_surcharging_compliance.md](stripe_surcharging_compliance.md) | The surcharging compliance checklist gating OD-7 |
 | [migration/](migration/) | Chart-of-accounts design, mapping workbooks, and the per-work-item apply runbooks |
 
