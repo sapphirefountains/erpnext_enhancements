@@ -117,6 +117,30 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
 
 A lightweight container doctype grouping ordinary Projects into a program/portfolio. Projects join via the **`Project.custom_master_project`** Link field (no child table on the Master side); **`Project.custom_subproject_order`** controls ordering under the master. `get_projects_and_tasks` returns member Projects and their Tasks for the form's read-only HTML tables. The dashboard's `get_master_project_projects` / `update_master_project_structure` reuse the same grouping (the latter persists drag-reordering).
 
+## Procurement Tracker
+
+The collapsible procurement tree at the bottom of the Budget tab. A self-contained **Vue 3** app
+(no table library) mounted into the `custom_material_request_feed` HTML field by
+[`public/js/project_enhancements.js`](../public/js/project_enhancements.js) — the field label
+"Material Request Feed" is a historical misnomer, it renders all six procurement doctypes.
+Not to be confused with ERPNext's standard **"Procurement Tracker"** Script Report (module
+Buying), which is unrelated and not in this repo.
+
+- **Server:** `get_procurement_documents` (`__init__.py:355-423`) regroups the output of
+  `get_procurement_status` (`:11-219`) from item-centric into document-centric — DocType → document
+  → items, each item still carrying its full MR/RFQ/SQ/PO/PR/PI/Stock-Entry chain. Both are
+  whitelisted with **no permission check**; the MCP tool `project_procurement_status` adds its own
+  `require_doc_read("Project", …)` gate precisely because the browser path has none.
+- **Which documents:** one `UNION ALL` — the Material Request chain (matched on `mr_item.project`,
+  `mr.custom_project` or `rfq.custom_project`) plus direct Purchase Orders with no MR link — then a
+  per-doctype sweep for documents linked to the project that never appeared in a chain.
+- **No caching**, server or client: a fresh round-trip on every form refresh.
+
+Anything beyond a passing change here wants
+[`docs/procurement-tracker-map.md`](../../docs/procurement-tracker-map.md) first — it maps the
+render path, the chain SQL and its `OR`-join fan-out, the three separate things called "status",
+and the production data volumes.
+
 ## Pick Routing Map (v1.190.0)
 
 A job's material sits at several vendors' will-call counters at once, and nothing in Desk answered "what is still out there, and what is the shortest way round to collect it?". The **Pick Routing Map** button in the Budget tab's *Material Pickup* section now does.
