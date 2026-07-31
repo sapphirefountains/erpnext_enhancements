@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.201.0] - 2026-07-31
+
+### Added
+
+- **A supplier-facing Purchase Order print format** — `Purchase Order - Sapphire`. The
+  site had two abandoned print-format-builder attempts (`Test Purchase Order Format`,
+  `PO Test Print Format`, both untouched since October 2025) and three ERPNext standards,
+  none of which is something you would send a vendor.
+
+  Contents, each confirmed rather than assumed: letterhead, PO number and date,
+  required-by date, supplier with address and contact, deliver-to, itemised lines with
+  **project per line** (`Purchase Order Item.project` is mandatory here under WI-014, and
+  a supplier delivering to a job site needs it), net total, taxes, grand total, payment
+  terms, and delivery/receiving instructions. **No item images** — heavy on a multi-page
+  order and little help for parts identified by number.
+
+  Print-safe CSS only: no flexbox, no grid, `page-break-inside: avoid` on rows and
+  totals, and a `thead` that repeats across pages. The PDF engine on this host has been
+  unreliable enough (see `docs/pdf-generation.md`) without asking it to do anything
+  clever.
+
+  It lives in **Enhancements Core** because procurement has no module of its own —
+  `po_approval`, `po_segregation` and `procurement_project` all sit at the app root, and
+  a Print Format needs a real Module Def to belong to.
+
+- **`custom_approved_by` / `custom_approved_on` on Purchase Order**, and this is the part
+  worth reading. The format prints an approver, and **there was nowhere truthful to read
+  one from**: Purchase Order has no approver field, and `modified_by` is whoever touched
+  the document *last* — which after any post-submit edit is not the approver at all.
+  Printing that would have been confidently wrong on a document that goes to a vendor.
+
+  So the two gates that already establish the fact now record it.
+  `po_approval.stamp_approval` runs **last** in the `before_submit` chain, after
+  `enforce_requester_separation` and `enforce_threshold` have both passed, so the stamp
+  means "this order cleared both gates in this person's hands" rather than "somebody
+  pressed submit". Orders submitted before this shipped print an em dash rather than an
+  invented name.
+
+### Notes
+
+- **Not signed off.** The task's own acceptance criteria require generating real PDFs for
+  a one-line order, a 30-line multi-page order, and one with very long descriptions — and
+  PDF generation is broken on this host in both backends (v1.199.1). This format has been
+  validated as HTML and its Jinja parses; it has **not** been through the PDF engine,
+  because there currently is no working PDF engine to put it through. That was true
+  before this change and is the reason the two earlier attempts were abandoned.
+- Shipped via the `after_migrate` upsert that eight of the ten existing formats use,
+  rather than the `hooks.py` fixtures allowlist that the other two use. Template edits
+  then deploy on the next migrate with no export step, and `after_migrate` runs after
+  fixture sync so it cannot be silently overridden. The trade-off — an admin's UI edit is
+  overwritten on the next deploy — is the intended direction, the repo being the source
+  of truth. Switching to the fixtures allowlist is a small change if preferred.
 ## [1.200.1] - 2026-07-31
 
 ### Added

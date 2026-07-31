@@ -8,6 +8,7 @@ the bench-only suites' ``import frappe`` skip-guards.
 Run: python -m unittest erpnext_enhancements.tests.test_po_approval
 """
 
+import datetime
 import sys
 import types
 import unittest
@@ -47,6 +48,9 @@ def _install_frappe_stub():
     utils = types.ModuleType("frappe.utils")
     utils.flt = lambda v, precision=None: float(v or 0)
     utils.fmt_money = lambda v, currency=None: f"{(currency or '').strip()} {float(v or 0):,.2f}".strip()
+    # `stamp_approval` records when an order cleared the submit gates. Fixed rather than
+    # `datetime.now()` so an assertion on it can be exact.
+    utils.now_datetime = lambda: datetime.datetime(2026, 1, 1, 12, 0, 0)
     frappe.utils = utils
 
     sys.modules["frappe"] = frappe
@@ -76,6 +80,12 @@ class _Doc(dict):
         except KeyError as exc:
             raise AttributeError(key) from exc
 
+    def __setattr__(self, key, value):
+        # A real Document round-trips: `doc.field = x` is readable as `doc.get("field")`.
+        # Without this, a hook that WRITES to the doc appears to succeed while the test
+        # sees nothing — which is how stamp_approval nearly shipped unfenced.
+        self[key] = value
+
 
 def _po(total, currency="USD", project=None):
     return _Doc(grand_total=total, currency=currency, project=project)
@@ -103,6 +113,50 @@ class TestApprovalAuthority(unittest.TestCase):
     def test_administrator_bypasses(self):
         _set(user="Administrator", roles=[])
         self.assertTrue(po_approval.has_approval_authority())
+
+
+class _Meta:
+    """Stands in for doc.meta. `has_field` is what stamp_approval guards on."""
+
+    def __init__(self, fields):
+        self._fields = set(fields)
+
+    def has_field(self, fieldname):
+        return fieldname in self._fields
+
+
+STAMP_FIELDS = ("custom_approved_by", "custom_approved_on")
+
+
+class TestStampApproval(unittest.TestCase):
+    """The supplier-facing print format reads these, so they have to be true.
+
+    `modified_by` is whoever touched the document last, which after any post-submit edit
+    is not the approver — printing that on a document that goes to a vendor would be
+    confidently wrong. stamp_approval records the fact at the moment it is established.
+    """
+
+    def test_it_records_the_submitting_user_and_time(self):
+        _set(user="ceo@example.com", roles=["PO Approver"])
+        doc = _po(1000)
+        doc["meta"] = _Meta(STAMP_FIELDS)
+
+        po_approval.stamp_approval(doc)
+
+        self.assertEqual(doc["custom_approved_by"], "ceo@example.com")
+        self.assertEqual(doc["custom_approved_on"], datetime.datetime(2026, 1, 1, 12, 0, 0))
+
+    def test_it_no_ops_when_the_fields_do_not_exist(self):
+        """The fields are created by a patch, and this hook fires during ERPNext's own
+        test bootstrap — before that patch has run on a fresh database."""
+        _set(user="ceo@example.com", roles=["PO Approver"])
+        doc = _po(1000)
+        doc["meta"] = _Meta([])
+
+        po_approval.stamp_approval(doc)  # must not raise
+
+        self.assertNotIn("custom_approved_by", doc)
+        self.assertNotIn("custom_approved_on", doc)
 
 
 class TestEnforceThreshold(unittest.TestCase):
