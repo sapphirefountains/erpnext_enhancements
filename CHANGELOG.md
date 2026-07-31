@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.202.0] - 2026-07-31
+
+### Added
+
+- **Pick Routing Map now shows what you are collecting, on screen and on paper**
+  (WI/TASK-2026-01077, options (b) and (c) of the spike in
+  `docs/pick-routing-map-po-details.md`).
+  - **In the dialog**, each stop gains a collapsed disclosure listing its Purchase
+    Order lines, grouped by PO: item code, description, quantity still to collect,
+    and — where any has been received — an "(n of m received)" note. Fully received
+    lines are dimmed rather than hidden, because at a will-call counter "it is not
+    on the list" is ambiguous between *already collected* and *never ordered*.
+  - **On paper**, a "Print pick sheet" action produces a route-ordered sheet with a
+    tick box per line, addresses, contact numbers, and a sign-off line.
+
+  Both read the payload `get_pickup_route_data` already returns — the item lines
+  were on the wire and simply unrendered — so there is **no new endpoint, no second
+  query, and no extra network call at the moment a driver in a truck needs the
+  detail**. Opening a stop's lines deliberately does not `recompute()`: every
+  re-route is a billable Directions call, and looking at what you are collecting
+  must not cost one.
+
+  The disclosure's open/closed state lives on the controller rather than in the DOM,
+  because `renderList()` rebuilds every row on each tick, re-route and reorder;
+  reading it back off the old nodes meant unticking one stop silently collapsed the
+  lines being read on another.
+
+  The sheet is generated in the browser rather than as a Frappe Print Format, which
+  is a deliberate departure from how this app ships its other print surfaces. Two
+  reasons, both structural: the optimised stop order exists **only** in the browser
+  (Google returns it to the dialog; the server never sees it), so a Print Format
+  would have re-queried and printed in purchase-order sequence — a sheet that
+  contradicts the screen it came from, which is the divergence the spike rejected
+  option (a) over. And browser print needs neither of the server-side PDF backends,
+  which are both currently broken on this host (see `docs/pdf-generation.md`). The
+  cost of that choice is stated in the code: paper is a snapshot, so a PO received
+  after printing is invisible on the sheet.
+
+  Line arithmetic (ordered / received / still to collect, and the fully-received
+  tolerance) is computed once in `lineModel()` and consumed by both surfaces, so the
+  sheet in a driver's hand cannot disagree with the screen it was printed from.
+
 ## [1.201.4] - 2026-07-31
 
 ### Fixed

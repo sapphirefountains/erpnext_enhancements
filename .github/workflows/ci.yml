@@ -148,6 +148,18 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
+      # The repo's first JavaScript test, and it needs no runner beyond the node
+      # already on the GitHub image — deliberately not a new framework.
+      #
+      # It guards the Pick Routing Map's line arithmetic: the "collect 3" figure a
+      # driver reads off a printed pick sheet at a supplier's counter. That number
+      # is rendered twice (compact list in the dialog, table on the sheet) from one
+      # computation, and a wrong one is discovered across the valley rather than in
+      # review. It also covers what production cannot — there is still no partly
+      # received Purchase Order on the live site, so the "(n of m received)" and
+      # dimmed already-collected states have no real record to exercise them.
+      - name: Pick routing line arithmetic + escaping (bench-free, node)
+        run: node scripts/test_pick_routing_lines.js
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.
