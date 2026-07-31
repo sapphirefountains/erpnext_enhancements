@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.194.0] - 2026-07-31
+
+### Added
+
+- **Branding on generated contracts.** Every agreement the contract generator produces —
+  all eight types — now opens with the Sapphire Fountains wordmark over a navy rule, sets
+  its numbered sections in sans-serif navy against a serif body, bands the label column of
+  its data tables, and carries a running footer with the contract number and page numbers.
+  New module `project_enhancements/contract_style.py` builds that chrome; the
+  `Project Contract Print` fixture's CSS is the stylesheet.
+
+  Two constraints shaped the implementation, and both are worth knowing before changing it.
+
+  **The chrome is emitted by the wrapper, never by the templates.** A contract's legal text
+  lives in the site-editable `Contract Template` record, not in `templates/contracts/*.html`
+  (`seed_contract_templates.py` is insert-only, so editing the repo file changes nothing on
+  a live site), and a *signed* contract prints the frozen `agreement_html` snapshot from its
+  Contract Signature Request. Chrome placed inside either one would have been unreachable —
+  the first without a data patch, the second forever. Placed in the wrapper it needs no
+  patch, and it appears on contracts that were signed before it existed, without altering a
+  word of what they say.
+
+  **The document title is styled by position, not by tag.** The eight templates disagree:
+  `<h3>` opens the document in six of them but is a mid-document section heading in the
+  employee-contractor agreement and the NDA, and the architect agreement and NDA have no
+  title block at all. So the stylesheet targets "the `<h3>` immediately after the
+  letterhead" and the run of `<p>` after that. It is inert everywhere it should be.
+
+  The logo goes in as **inline `<svg>`**, not `<img src>`, because wkhtmltopdf renders the
+  latter unreliably; and the footer carries **inline** styles because
+  `frappe.utils.pdf` lifts `#footer-html` out of the document and renders it as a separate
+  wkhtmltopdf input, where the print format's stylesheet may not reach. The page numbers
+  come from frappe's own `pdf_header_footer.html`, which fills elements classed `page` and
+  `topage` from wkhtmltopdf's query string — which is why those two class names are asserted
+  in tests rather than left to be discovered when a footer silently prints "Page  of ".
+
+### Fixed
+
+- **The contract looked like three different documents depending on where you read it.**
+  The print styling had been hand-copied into three places and had drifted: the
+  `Project Contract Print` fixture (Georgia 10.5pt, `#444`/`#000` borders), `_print_wrapper`
+  in `project_enhancements/esign/lifecycle.py` (Times New Roman 11pt, `#999`/`#333`) and
+  `public/css/contract_sign/contract_sign.css` (Times New Roman again). Those are, in order,
+  the document staff print, **the executed PDF emailed to the customer after signing**, and
+  **the page the customer reads while deciding whether to sign** — the two nobody compares
+  against the desk view. Both now read the one stylesheet on the Print Format record, which
+  `_contract_css()` was already serving to the on-screen viewer for exactly this reason.
+
+### Security
+
+- The public signing page now embeds the contract stylesheet in a `<style>` element, so
+  `www/contract_sign.py` strips `<` from it first (`_safe_css`). The desk viewer publishes
+  the same CSS through `style.textContent`, where markup cannot escape; on an
+  unauthenticated page a `</style>` in a site-edited Print Format would have ended the
+  element and let everything after it parse as content.
+
 ## [1.193.1] - 2026-07-29
 
 ### Added

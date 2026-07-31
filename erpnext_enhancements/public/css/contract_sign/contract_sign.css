@@ -21,16 +21,21 @@
 	margin: 4px 0;
 }
 
-/* The agreement itself: scrollable on desktop, full flow on a phone so the
-   browser's own scrolling does the work rather than a nested scroller. */
+/* The card the agreement sits in: scrollable on desktop, full flow on a phone so
+   the browser's own scrolling does the work rather than a nested scroller.
+
+   Chrome only — no typography. The agreement's own look (fonts, headings,
+   tables, blanks) comes from the "Project Contract Print" format's CSS, which
+   the controller passes into the page as `contract_css` and which is scoped to
+   the .contract-doc class this element also carries. This block used to
+   re-declare all of it in Times New Roman, so what the customer read here never
+   quite matched the PDF they were about to sign. */
 .cs-agreement {
 	border: 1px solid #d1d5db;
 	border-radius: 8px;
 	padding: 16px;
 	margin: 16px 0;
 	background: #fff;
-	font-family: "Times New Roman", Times, serif;
-	line-height: 1.5;
 	overflow-x: auto;
 }
 @media (min-width: 768px) {
@@ -38,35 +43,6 @@
 		max-height: 60vh;
 		overflow-y: auto;
 	}
-}
-.cs-agreement h1 {
-	font-size: 1.05rem;
-	text-align: center;
-	margin: 14px 0 8px;
-}
-.cs-agreement h2,
-.cs-agreement h3 {
-	font-size: 0.95rem;
-	margin: 12px 0 6px;
-}
-.cs-agreement p {
-	margin: 5px 0;
-}
-.cs-agreement table.ct-table {
-	width: 100%;
-	border-collapse: collapse;
-	margin: 8px 0;
-}
-.cs-agreement table.ct-table td {
-	border: 1px solid #9ca3af;
-	padding: 4px 7px;
-	vertical-align: top;
-}
-.cs-agreement .ct-blank {
-	display: inline-block;
-	border-bottom: 1px solid #111;
-	min-height: 1em;
-	min-width: 8em;
 }
 
 .cs-section {

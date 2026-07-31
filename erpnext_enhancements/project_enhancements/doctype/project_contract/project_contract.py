@@ -42,6 +42,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt, today
 
 from erpnext_enhancements.feature_flags import throw_if_process_automation_disabled
+from erpnext_enhancements.project_enhancements import contract_style
 
 # Series include the generation year (SF-OC-2026-0001); frappe keys the
 # counter on the resolved prefix, so numbering restarts at 0001 each year.
@@ -333,6 +334,20 @@ class ProjectContract(Document):
 			frappe.throw(_("Contract Template {0} has no body.").format(self.get("contract_template")))
 		return frappe.render_template(body, _render_context(self))
 
+	# The branded chrome, called by name from the print format's Jinja — whose
+	# only scope variable is `doc`, so it cannot reach contract_style directly.
+	# Kept outside executed_body() on purpose: chrome that lived inside the body
+	# would be baked into the signed snapshot and could never reach a contract
+	# signed before it existed. See project_enhancements/contract_style.py.
+
+	def letterhead_html(self):
+		"""The logo-and-rule header that opens the printed agreement."""
+		return contract_style.letterhead_html()
+
+	def footer_html(self):
+		"""The running footer (contract number, page numbers). PDF only."""
+		return contract_style.footer_html(self)
+
 
 def _executed_html(name):
 	"""The stored executed instrument for a contract, or None.
@@ -582,7 +597,9 @@ def get_contract_html(name=None, doc=None):
 	customer actually signed — rather than a fresh render, exactly as the print
 	format does; ``executed`` says which one came back. The CSS travels with the
 	HTML (see :func:`_contract_css`) so the viewer and the printed PDF are the
-	same document.
+	same document, and the returned HTML carries the same branded chrome the
+	print format wraps around it (``contract_style.wrap``) — the letterhead is
+	part of the document, not a print-only flourish.
 	"""
 	if doc:
 		contract = _preview_doc(doc)
@@ -603,7 +620,7 @@ def get_contract_html(name=None, doc=None):
 	return {
 		"name": contract.get("name"),
 		"title": contract.get("title") or contract.get("name"),
-		"html": executed or contract.render_body(),
+		"html": contract_style.wrap(executed or contract.render_body(), contract),
 		"css": _contract_css(),
 		"executed": 1 if executed else 0,
 	}
