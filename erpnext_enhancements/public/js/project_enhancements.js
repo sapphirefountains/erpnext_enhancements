@@ -246,6 +246,40 @@ frappe.ui.form.on("Project", {
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
 									},
+									// Only where receiving actually makes sense. The rule is the same
+									// one api/pickup_routing.py settled on: the number, not the
+									// label — "Closed" can hide an order whose goods never turned
+									// up, and "To Bill" means they are already here.
+									//
+									// Hidden rather than disabled for a user without create
+									// permission: frappe.new_doc and the mapper both perform no
+									// permission check, so a visible button would open a form and
+									// only fail at save, losing whatever was typed. Same reasoning
+									// as the PO Creator gate on the + Purchase Order button.
+									canReceive(doctype, doc) {
+										if (doctype !== 'Purchase Order') return false;
+										if (doc.docstatus !== 1) return false;
+										if (['Closed', 'Delivered'].includes(doc.status)) return false;
+										if (Number(doc.per_received || 0) >= 100) return false;
+										return frappe.model.can_create('Purchase Receipt');
+									},
+									receiveAgainst(poName) {
+										// ERPNext's own mapper. It carries supplier, items, warehouse
+										// and only the outstanding quantity, and it lands on an
+										// UNSAVED draft. Nothing here submits: a Purchase Receipt is
+										// a stock transaction, so submitting writes Stock Ledger and
+										// GL entries, and cancelling one later is an accounting event
+										// rather than an undo.
+										//
+										// `frm` is deliberately not passed. open_mapped_doc falls back
+										// to frm.doc.name for the source, and the source here is a
+										// Purchase Order while the open form is the Project.
+										frappe.model.open_mapped_doc({
+											method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt',
+											source_name: poName,
+											freeze_message: __('Building the receipt...'),
+										});
+									},
 									sortFor(doctype, name) {
 										return this.sortByDoc[this.docKey(doctype, name)] || null;
 									},
@@ -442,6 +476,12 @@ frappe.ui.form.on("Project", {
 														     not gain a "0 req · 0 ord · 0 rec" that reads as an error. -->
 														<span v-if="hasRollup(doc)" class="doc-meta doc-qty-rollup" :title="rollupTitle(doc)">{{ rollupText(doc) }}</span>
 														<span class="doc-meta doc-itemcount">{{ doc.items.length }} item(s)</span>
+														<!-- @click.stop is load-bearing: .doc-header's own click toggles
+														     expansion, so without it every Receive click also collapses
+														     the row the user was reading. -->
+														<button v-if="canReceive(group.doctype, doc)" type="button" class="btn-receive"
+																@click.stop="receiveAgainst(doc.name)"
+																:title="'Create a Purchase Receipt against ' + doc.name">Receive</button>
 													</div>
 
 													<!-- Level 3: items inside the document -->
@@ -621,8 +661,79 @@ frappe.ui.form.on("Project", {
 			frappe.msgprint(__("Please save the Project before creating linked documents."));
 			return;
 		}
-		frappe.new_doc("Purchase Receipt", {
-			project: frm.doc.name,
+		if (!frappe.model.can_create("Purchase Receipt")) {
+			frappe.msgprint({
+				title: __("Purchase Receipt permission required"),
+				indicator: "orange",
+				message: __("Creating a Purchase Receipt needs create permission on Purchase Receipt."),
+			});
+			return;
+		}
+
+		// This button used to open a blank Purchase Receipt carrying nothing but the
+		// project — no supplier, no order, no lines — so the receiver retyped a delivery
+		// ERPNext already knew about, and could not link it back to the order afterwards.
+		// Ask which order arrived instead, then let ERPNext's own mapper fill it in.
+		frappe.call({
+			method: "erpnext_enhancements.procurement_project.get_receivable_purchase_orders",
+			args: { project: frm.doc.name },
+			freeze: true,
+			callback: function (r) {
+				const orders = (r && r.message) || [];
+
+				if (!orders.length) {
+					// Deliberately not falling back to the old blank form: a receipt with
+					// no order behind it is the thing this replaced.
+					frappe.msgprint({
+						title: __("Nothing to receive"),
+						indicator: "blue",
+						message: __(
+							"No submitted Purchase Order on this project still has goods outstanding. Raise or submit an order first."
+						),
+					});
+					return;
+				}
+
+				const receive = (name) =>
+					frappe.model.open_mapped_doc({
+						method: "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
+						source_name: name,
+						freeze_message: __("Building the receipt..."),
+					});
+
+				// One outstanding order is the common case on a job; asking which of one
+				// is a click for nothing.
+				if (orders.length === 1) {
+					receive(orders[0].name);
+					return;
+				}
+
+				const label = (po) => {
+					const parts = [po.name];
+					if (po.supplier) parts.push(po.supplier);
+					const pct = Math.round(Number(po.per_received || 0));
+					if (pct > 0) parts.push(__("{0}% received", [pct]));
+					return parts.join(" — ");
+				};
+
+				frappe.prompt(
+					[
+						{
+							fieldname: "purchase_order",
+							label: __("Which order arrived?"),
+							fieldtype: "Select",
+							reqd: 1,
+							options: orders.map(label),
+						},
+					],
+					(values) => {
+						const chosen = orders.find((po) => label(po) === values.purchase_order);
+						if (chosen) receive(chosen.name);
+					},
+					__("Receive against a Purchase Order"),
+					__("Continue")
+				);
+			},
 		});
 	},
 
