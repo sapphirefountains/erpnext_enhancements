@@ -481,6 +481,10 @@ def _fetch_doc_meta(doctype, names):
 	fields = ["name", "status", "docstatus", f"{date_field} as doc_date"]
 	if doctype in _HAS_SUPPLIER:
 		fields.append("supplier")
+	# Drives the tracker's "Receive" action: whether this order still has goods
+	# outstanding is a question about the number, not the status label.
+	if doctype == "Purchase Order":
+		fields.append("per_received")
 	rows = frappe.get_all(doctype, filters={"name": ["in", list(names)]}, fields=fields)
 	return {r.name: r for r in rows}
 
@@ -547,6 +551,8 @@ def get_procurement_documents(project_name):
 					"date": str(m.get("doc_date")) if m.get("doc_date") else None,
 					"supplier": m.get("supplier"),
 					"status": m.get("status") or _docstatus_label(m.get("docstatus")),
+					"docstatus": m.get("docstatus"),
+					"per_received": m.get("per_received"),
 					"items": items,
 					# Totals across this document's lines, computed here rather than in
 					# the browser so the MCP tool gets them too and so the de-duplication

@@ -415,6 +415,40 @@ header.navbar {
     color: #ef6c00;
 }
 
+/* "Receive" quick action on a Purchase Order row. Deliberately quiet — it sits in a
+   header whose job is to be scanned, and it is an action on one order rather than the
+   subject of the row. */
+.procurement-tracker .btn-receive {
+    margin-left: 8px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.6;
+    border: 1px solid #c8ccd0;
+    border-radius: 10px;
+    background: #fff;
+    color: #333;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.procurement-tracker .btn-receive:hover {
+    background: #e3f2fd;
+    border-color: #0d47a1;
+    color: #0d47a1;
+}
+
+[data-theme="dark"] .procurement-tracker .btn-receive {
+    background: transparent;
+    border-color: #4a5a6a;
+    color: #ecf0f1;
+}
+
+[data-theme="dark"] .procurement-tracker .btn-receive:hover {
+    background: #0d47a1;
+    border-color: #0d47a1;
+    color: #e3f2fd;
+}
+
 /* Sortable column headers.
    The indicator is always rendered, at low opacity when inactive, rather than appearing
    on click. This header row is `white-space: nowrap` inside a min-width:1000px table, so

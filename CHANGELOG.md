@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.198.0] - 2026-07-31
+
+### Added
+
+- **Create a Purchase Receipt straight from the Procurement Tracker.** A quiet
+  **Receive** action on each Purchase Order row, so a delivery can be booked from the
+  screen the buyer is already looking at rather than by navigating out to the order.
+
+  It runs ERPNext's own mapper,
+  `erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt`, so
+  supplier, items, warehouse and — on a partly-received order — only the outstanding
+  quantity all come across. Nothing is hand-rolled.
+
+  It lands on an **unsaved draft** and stops there. A Purchase Receipt is a stock
+  transaction: submitting writes Stock Ledger and GL entries, and cancelling one
+  afterwards is an accounting event rather than an undo. There is no version of this
+  that submits on click.
+
+  Shown only where receiving makes sense — submitted, not `Closed`/`Delivered`, and
+  `per_received < 100`. That is the rule `api/pickup_routing.py` already settled on, and
+  it is reused rather than reinvented: two different answers to "is there anything left
+  to collect" on the same Project form would be worse than either alone. It is *hidden*,
+  not disabled, for anyone without create permission on Purchase Receipt, because
+  `frappe.new_doc` and the mapper both perform no permission check and a visible button
+  would open a form that only fails at save — the same reasoning as the PO Creator gate
+  on **+ Purchase Order**.
+
+### Changed
+
+- **The Project form's "+ Purchase Receipt" button now asks which order arrived.** It
+  used to open a blank Purchase Receipt carrying nothing but the project — no supplier,
+  no order, no lines — so the receiver retyped a delivery ERPNext already knew about and
+  could not link it back to the order afterwards. On this site that also meant the
+  receipt landed unattributed, because the `Purchase Order Item.project` cascade has no
+  equivalent for a hand-built receipt.
+
+  It now lists the project's outstanding orders and routes the chosen one through the
+  same mapper. A single outstanding order skips the prompt. Where there are none it says
+  so rather than falling back to the blank form — a receipt with no order behind it is
+  the thing this replaced.
+
+  New whitelisted `procurement_project.get_receivable_purchase_orders(project)` backs
+  it, matching on the union of the header `Purchase Order.project` and the item-row
+  `Purchase Order Item.project`. Those agree on all 70 orders here today, but only
+  because `cascade_project_to_items` fills blank item rows on save — blanks only, on
+  save only. An order written before that hook, or re-pointed by a path that bypasses
+  it, can still carry one and not the other; that is the state the pick-up routing map
+  found on 44 of 204 lines. The union costs one query and cannot be wrong.
+
+  Note there are **no** partly-received Purchase Orders on production, so the
+  outstanding-quantity path has no live example and needs a constructed case on a test
+  site before sign-off.
+
 ## [1.197.0] - 2026-07-31
 
 ### Added
