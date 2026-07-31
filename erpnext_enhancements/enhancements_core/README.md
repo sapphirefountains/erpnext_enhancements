@@ -6,6 +6,7 @@ The catch-all module. It holds the app's **Single settings doctypes**, the **Tim
 
 | File | Purpose | Key functions |
 |---|---|---|
+| `setup_print_formats.py` | The supplier-facing **Purchase Order** print format, upserted on every `after_migrate`. Lives here because procurement has no module of its own and a Print Format needs a real Module Def | `ensure_enhancements_core_print_formats` |
 | `doctype/asset_booking/asset_booking.py` / `.js` | Submittable asset reservation, overlap guard, calendar feed | `validate`/`check_overlap`, `update_asset_status` (bg), whitelisted `check_availability`, `get_events` |
 | `doctype/erpnext_enhancements_settings/…py` | App-wide Single config | (stub) |
 | `doctype/expense_claim_type/…py` | Customised HR doctype controller | (stub) |

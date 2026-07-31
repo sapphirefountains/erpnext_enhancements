@@ -290,3 +290,9 @@ erpnext_enhancements.patches.update_production_procurement_step
 # refresh token — Frappe never revokes rotated ones, so log-clearing quietly
 # killed the grant of anyone idle for a month and forced a relink.
 erpnext_enhancements.patches.set_oauth_token_retention
+# v1.199.2: record who submitted a Purchase Order and when. The supplier-facing
+# print format shows an approver and there was nowhere truthful to read one from --
+# Purchase Order has no approver field, and modified_by is whoever touched the doc
+# LAST, which after any post-submit edit is not the approver. po_approval.stamp_approval
+# writes these once both submit gates have passed.
+erpnext_enhancements.patches.add_po_approval_stamp_fields
