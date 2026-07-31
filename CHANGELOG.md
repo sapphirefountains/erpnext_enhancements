@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.202.1] - 2026-07-31
+
+### Fixed
+
+- **`docs/pdf-generation.md` gave a command that installed nothing, and named the wrong
+  setting.** Docs-only; no executable behaviour changes. Corrected with a shell on the VM,
+  which the two earlier passes did not have — and which is why they misdiagnosed it.
+  - **The host is Debian 12 (bookworm), not Ubuntu.** The runbook's library step listed
+    `libasound2t64`, an Ubuntu 24.04 `time_t`-transition name that does not exist on
+    bookworm. `apt-get install` aborts wholesale on one unknown package, so that single
+    word meant **none** of the other fifteen packages installed — while appearing to be a
+    normal failed attempt. Same root cause explains the leftover `rc wkhtmltox …jammy`
+    entry in dpkg: the Ubuntu build depends on `libjpeg-turbo8`, which bookworm does not
+    have.
+  - **`Print Settings.pdf_generator` is not what the server reads.** `print_utils.py`
+    resolves the generator from **`Print Format.pdf_generator`**; Print Settings is only
+    read client-side and appended to the download URL. Frappe's own patch
+    `sets_wkhtmltopdf_as_default_for_pdf_generator_field` has run here and pinned **28
+    formats to `wkhtmltopdf`** — including this app's `Purchase Order - Sapphire`. So the
+    `chrome` setting never governed server-side rendering, and fixing wkhtmltopdf is a
+    prerequisite for the PO print format rather than an alternative.
+  - **Both backends are non-functional rather than degraded.** Debian's wkhtmltopdf
+    **segfaults (rc=139)** on a one-line HTML file with no flags — the `unpatched qt`
+    lines are warnings, not the cause. The bench's Chromium **traps (rc=133, SIGTRAP)** on
+    `--version`, writing zero bytes to stdout and stderr, which rules out the timeout,
+    memory and `/dev/shm` theories the document previously offered.
+  - **Retracted: the missing-shared-libraries theory.** All 53 `ldd` entries resolve. Also
+    ruled out and recorded so nobody re-checks: glibc (needs ≤2.25, host has 2.36), CPU
+    features, ASLR (`setarch -R`), seccomp, `/dev/shm` (16 GB), and a corrupt download.
+  - The runbook now leads with a verified patched-Qt **bookworm** package
+    (`wkhtmltox_0.12.6.1-3.bookworm_amd64.deb`, with its sha256), notes it installs to
+    `/usr/local/bin` which precedes `/usr/bin` on the bench PATH, and points Chromium
+    re-provisioning at `bench setup-chrome`.
+  - Restart guidance now states this box runs **systemd** (`frappe-bench.service`) and has
+    **no supervisor**, so the common `supervisorctl restart all` idiom fails here.
+
+- **`infra/` provisioned a rebuilt VM with the segfaulting wkhtmltopdf.** Not docs — this
+  changes what a rebuild installs. `startup_script_packages` listed the Debian
+  `wkhtmltopdf` package, which is the unpatched-Qt build proven above to segfault on any
+  input. A rebuilt VM would have come up with a `/usr/bin/wkhtmltopdf` that looks
+  provisioned and cannot render, which is worse than having none at all. Removed from both
+  `variables.tf` and `terraform.tfvars.template`, with the reason recorded next to the list
+  — the working patched-Qt build is a `.deb` that is not in apt and therefore cannot be
+  expressed there. Added `libvulkan1`, the one entry in the bench Chromium's own
+  `deb.deps` that the `chromium` package does not pull in.
+
 ## [1.202.0] - 2026-07-31
 
 ### Added
