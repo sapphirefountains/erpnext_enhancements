@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.201.2] - 2026-07-31
+
+### Changed
+
+- **`docs/procurement-tracker-map.md` refreshed against the merged code.** It was written as
+  groundwork *before* the four changes it was groundwork for, so on merge it described a
+  tracker that no longer exists — the old five-column layout, "there is no sorting of any
+  kind", and the item-status bug presented as current.
+
+  Now accurate to v1.197.0: the seven-column layout and which columns sort, the per-document
+  quantity rollup and the Receive action on the header row, the sort state and the two silent
+  Vue traps its implementation avoids, `procurement_quantities.py` and the four decisions
+  baked into it, and the Purchase Receipt flow through ERPNext's own mapper.
+
+  Where a defect it originally documented has since been fixed, the entry **says so and dates
+  it** rather than quietly disappearing — the reasoning behind a fix is usually the part worth
+  keeping, and a reader who remembers the old wording should be able to see what changed. The
+  Gotchas section is now split into *still open* (the unmounted Vue app, the `v-html` XSS
+  surface, the two whitelisted endpoints with no permission check, the bare `except` around
+  the supplementary sweep, the surviving display duplication) and *closed, and worth not
+  reintroducing*.
+
+  Two facts recorded that were not known when it was first written: the `OR`-join fan-out
+  turns ten request lines into nineteen rows and a naive total reports 720 against a true 362;
+  and header and item-row `project` now agree on all 70 Purchase Orders, but only because
+  `cascade_project_to_items` fills blanks on save — blanks only, on save only — so the union
+  query is still the right one.
+
+  Every file:line anchor in the document was checked against the merged tree rather than
+  carried over.
+
 ## [1.201.1] - 2026-07-31
 
 ### Added
