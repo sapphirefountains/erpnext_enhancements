@@ -89,6 +89,12 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_process_documents -v
       - name: Contract e-signature (tokens, sig() fallthrough, template patch)
         run: python -m unittest erpnext_enhancements.tests.test_contract_esign -v
+      # Own step for the same reason as the suites above: its frappe stub points
+      # get_app_path at the repo so the real logo.svg is read. Guards the print
+      # format fixture too — the footer's #footer-html / .page / .topage hooks
+      # and the one rule that keeps that footer off every non-PDF surface.
+      - name: Contract branding (letterhead, footer, print CSS)
+        run: python -m unittest erpnext_enhancements.tests.test_contract_style -v
       - name: KPI dashboard metrics (pure math) + cockpit workspace constants
         run: >-
           python -m unittest

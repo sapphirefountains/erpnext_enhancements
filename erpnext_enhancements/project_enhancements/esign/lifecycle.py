@@ -358,7 +358,7 @@ def _build_signed_pdf(request):
 		html = request.agreement_html or request.document_snapshot
 		if not html:
 			return None
-		content = get_pdf(_print_wrapper(html))
+		content = get_pdf(_print_wrapper(html, request.project_contract))
 		safe_contract = frappe.utils.cstr(request.project_contract).replace("/", "-")
 		file_doc = frappe.get_doc(
 			{
@@ -378,24 +378,29 @@ def _build_signed_pdf(request):
 		return None
 
 
-def _print_wrapper(html):
+def _print_wrapper(html, contract_name=None):
 	"""Wrap the executed agreement in the contract print styling.
 
-	Mirrors the "Project Contract Print" format so the emailed PDF looks like the
-	document staff see in the desk.
+	Both the styling and the branded chrome come from the same places the desk
+	print format uses — the "Project Contract Print" record's CSS and
+	``contract_style`` — rather than from a copy kept here. This function used to
+	carry its own hand-written stylesheet, and it had drifted: Times New Roman
+	11pt against the print format's Georgia 10.5pt, different border greys. The
+	customer's emailed copy of their own signed agreement was the one rendering
+	nobody ever compared, and it did not match the document they had signed.
 	"""
-	css = (
-		"body{font-family:'Times New Roman',serif;font-size:11pt;line-height:1.45;}"
-		"h1{font-size:13pt;margin:18px 0 6px;}h3{font-size:11pt;margin:12px 0 4px;}"
-		".ct-table{width:100%;border-collapse:collapse;margin:6px 0;}"
-		".ct-table td{border:1px solid #999;padding:4px 6px;vertical-align:top;}"
-		".ct-blank{border-bottom:1px solid #333;display:inline-block;}"
-		".ct-sig{max-height:60px;vertical-align:bottom;}"
-		".ct-sig-typed{font-family:'Times New Roman',serif;font-style:italic;font-size:15pt;}"
-		".ct-certificate{margin-top:28px;padding-top:10px;border-top:2px solid #333;}"
-		"p{margin:4px 0;}"
+	from erpnext_enhancements.project_enhancements import contract_style
+	from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
+		_contract_css,
 	)
-	return f"<html><head><meta charset='utf-8'><style>{css}</style></head><body>{html}</body></html>"
+
+	doc = frappe._dict({"name": contract_name}) if contract_name else None
+	body = contract_style.wrap(html, doc)
+	return (
+		"<html><head><meta charset='utf-8'>"
+		f"<style>{_contract_css()}</style></head>"
+		f'<body><div class="contract-doc">{body}</div></body></html>'
+	)
 
 
 def _email_signed_copy(request, pdf_url):

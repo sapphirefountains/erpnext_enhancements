@@ -16,6 +16,12 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <link rel="stylesheet" href="/assets/erpnext_enhancements/css/contract_sign/contract_sign.css?v={{ deploy_version }}">
+{# The agreement's own stylesheet, straight from the "Project Contract Print"
+   format — the same rules the desk view and the PDF use, so the customer signs
+   the document they will receive rather than a web approximation of it. Emitted
+   after the page stylesheet so the document's rules win inside .contract-doc.
+   Sanitised in the controller (_safe_css): this is a public page. #}
+<style>{{ contract_css | safe }}</style>
 {% endblock %}
 
 {% block page_content %}
@@ -30,8 +36,11 @@
 
 	{# The stored snapshot: exactly the text that was emailed, never a live
 	   re-render. Everything a user supplied inside it was escaped when the
-	   contract body was composed. #}
-	<article class="cs-agreement" id="cs-agreement" tabindex="0" aria-label="{{ _('Agreement') }}">
+	   contract body was composed. The letterhead and footer around it are the
+	   app's own markup (contract_style.wrap) and leave the snapshot untouched.
+	   .contract-doc is what the print format's rules are scoped to; .cs-agreement
+	   is the page's card around it. #}
+	<article class="cs-agreement contract-doc" id="cs-agreement" tabindex="0" aria-label="{{ _('Agreement') }}">
 		{{ agreement_html | safe }}
 	</article>
 

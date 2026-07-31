@@ -26,6 +26,10 @@ Two deliberate departures from the sibling page (``www/fountain_move.py``):
 import frappe
 
 from erpnext_enhancements.feature_flags import contract_esign_public_page_enabled
+from erpnext_enhancements.project_enhancements import contract_style
+from erpnext_enhancements.project_enhancements.doctype.project_contract.project_contract import (
+	_contract_css,
+)
 from erpnext_enhancements.project_enhancements.esign import lifecycle, turnstile
 from erpnext_enhancements.utils.deploy import get_deploy_version
 
@@ -47,9 +51,36 @@ def get_context(context):
 
 	state, agreement_html = _state_for(request)
 	context.state = state
-	context.agreement_html = agreement_html
+	# The agreement carries the same letterhead and the same stylesheet the desk
+	# print and the emailed PDF use, so the customer signs the document they will
+	# later receive — not a plainer web rendering of it. The chrome wraps the
+	# snapshot without touching it; the snapshot itself is still byte-for-byte
+	# what was sent, which is what the stored hash attests to.
+	context.agreement_html = (
+		contract_style.wrap(agreement_html, _contract_ref(request)) if agreement_html else ""
+	)
+	context.contract_css = _safe_css(_contract_css())
 	context.boot = _boot(request, state, ref)
 	return context
+
+
+def _contract_ref(request):
+	"""Just enough of the contract for the footer to name it."""
+	name = request.project_contract if request else None
+	return frappe._dict({"name": name}) if name else None
+
+
+def _safe_css(css):
+	"""The print format's CSS, with any chance of escaping its <style> removed.
+
+	The desk viewer publishes the same stylesheet through ``style.textContent``,
+	where markup cannot escape. Here it goes into the page as raw HTML, so a
+	``</style>`` inside it would end the element and everything after it would
+	parse as content — on a **public, unauthenticated** page. ``<`` has no
+	legitimate use in CSS, so dropping it costs nothing and closes the hole
+	without trusting whoever last edited the Print Format record.
+	"""
+	return (css or "").replace("<", "")
 
 
 def _state_for(request):

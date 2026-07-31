@@ -98,7 +98,20 @@ superseded originals (DOC-0032/0034/0099/0100/0102) are deliberately NOT templat
   re-pullable via the form's "Pull Scope from Source" button (`compose_scope_of_work`).
 - **Printing** — the "Project Contract Print" Jinja print format (fixtures) calls
   `doc.render_body()`; blanks print as fillable lines so the paper flow still works.
-  E-signature is a planned follow-up.
+- **Branding** (`contract_style.py`, v1.194.0) — the letterhead (inline SVG wordmark over a
+  navy rule) and the running footer (contract number + page numbers) that wrap every
+  agreement. Deliberately emitted by the *wrapper*, not by the templates: a signed contract
+  prints its frozen `agreement_html` snapshot, so chrome inside the body could never reach
+  one, and the templates themselves live in the site-editable `Contract Template` record
+  rather than in this repo. The footer's `#footer-html` / `.page` / `.topage` names are
+  frappe's PDF contract, not ours — `frappe.utils.pdf` extracts the div into wkhtmltopdf's
+  `--footer-html` and its wrapper's `subst()` fills the spans.
+- **One stylesheet, four surfaces** — the `Project Contract Print` record's CSS is the only
+  definition of how a contract looks. `_contract_css()` serves it to the desk print, the
+  on-screen viewer (`contract_viewer.js`), the public signing page (`www/contract_sign.py`,
+  sanitised) and the executed PDF emailed after signing (`esign/lifecycle._print_wrapper`).
+  Do not re-declare `.ct-*` rules anywhere else; all three copies that once existed had
+  drifted into showing the customer a different document from the one staff printed.
 
 ## Master Project
 
