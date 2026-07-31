@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.197.0] - 2026-07-31
+
+### Added
+
+- **Sortable columns in the Procurement Tracker.** Click a header to sort the item table
+  ascending, again for descending, a third time to clear it. The active column and
+  direction are shown by an indicator, and the header carries `aria-sort` so a screen
+  reader gets the same information. Keyboard-reachable: the headers are focusable and
+  respond to Enter and Space.
+
+  Sorting is client-side. The largest project on this site is 54 item rows, so there is
+  nothing to paginate and no reason to make the server do it.
+
+  Decisions worth knowing before "fixing" any of them:
+
+  - **Blanks sort last in both directions.** A missing warehouse is not "before A" — it
+    is absent information, and absent information belongs at the bottom whichever way you
+    sorted. The blank comparison deliberately returns before the direction is applied.
+  - **Zero is not blank.** An ordered quantity of `0` is a real value and sorts at the
+    numeric bottom with the numbers. `Requested` on a direct Purchase Order line *is*
+    blank — there is no request behind it — and sorts with the blanks.
+  - **Status sorts by workflow order, not alphabetically.** A–Z gives *Not Received /
+    Over Received / Partially Received / Received*, interleaving "done" between two "not
+    done" states. Worst-first ascending means one click surfaces exactly the lines
+    somebody has to chase. An unrecognised status sorts after every known one rather than
+    first.
+  - **Item codes sort numerically.** This site's codes are `417-080`, `417-100`,
+    `2622-010`; a plain string compare puts `2622-010` in the middle.
+  - **Doc Chain is not sortable**, and has no click affordance. It is one cell holding up
+    to seven chain nodes; there is no single value to order by, and giving it a handler
+    would mean inventing an ordering the column does not show.
+  - **Sort state is per document**, keyed like the existing collapse state. Two documents
+    in a group can want different sorts, and a global sort would silently reorder
+    collapsed tables nobody asked about.
+  - **Search filters first, then sort sorts.** Sorting is applied in a render method
+    rather than inside `filteredGroups`, so the existing filter, the auto-expand watcher
+    and the match highlighting are untouched.
+
+  Two Vue traps avoided, both silent: the sort copies the array before sorting, because
+  `Array.prototype.sort` mutates and mutating `doc.items` during a render is an infinite
+  reactivity loop; and rows are keyed on a new server-supplied `row_id` rather than the
+  array index, because index keys make Vue reuse the wrong DOM nodes once rows can
+  reorder — which smears the search-highlight spans across neighbouring rows.
+
+  Headers are rendered from the same registry the comparator reads, so a column cannot
+  exist in one and not the other.
+
 ## [1.196.0] - 2026-07-31
 
 ### Added

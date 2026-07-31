@@ -14,6 +14,73 @@
  * project-linked procurement docs. Tracker styling lives in
  * desk_enhancements.bundle.css (`.procurement-tracker`, `.sapphire-theme`).
  */
+/**
+ * Sortable columns for the Procurement Tracker's item table.
+ *
+ * Declared once, outside the Vue options object, so the template and the comparator
+ * cannot drift apart — a header rendered against a key the sorter does not know is a
+ * click that silently does nothing.
+ *
+ * Doc Chain is deliberately absent. It is a multi-row cell holding up to seven chain
+ * nodes; there is no single value to order by, and giving it a click handler would mean
+ * inventing an ordering that the column does not show.
+ */
+const PROCUREMENT_RECEIVE_RANK = ["Not Received", "Partially Received", "Received", "Over Received"];
+
+const PROCUREMENT_SORT_COLUMNS = {
+	item: {
+		label: "Item Details",
+		type: "text",
+		value: (r) => `${r.item_code || ""} ${r.item_name || ""}`.trim(),
+	},
+	warehouse: { label: "Warehouse", type: "text", value: (r) => r.warehouse },
+	requested: { label: "Requested", cls: "qty-col", type: "number", value: (r) => r.requested_qty },
+	ordered: { label: "Ordered", cls: "qty-col", type: "number", value: (r) => r.ordered_qty },
+	received: { label: "Received", cls: "qty-col", type: "number", value: (r) => r.received_qty },
+	// Workflow order, not A-Z. Alphabetical gives Not Received / Partially Received /
+	// Received, which interleaves "done" between two "not done" states. Worst-first
+	// ascending means one click surfaces exactly the lines somebody has to chase.
+	status: {
+		label: "Status",
+		type: "rank",
+		value: (r) => r.receive_status,
+		ranks: PROCUREMENT_RECEIVE_RANK,
+	},
+};
+
+/**
+ * Blanks sort last in BOTH directions, so the return value is never multiplied by the
+ * sort direction. A missing warehouse is not "before A" — it is absent information, and
+ * absent information belongs at the bottom whichever way you sorted.
+ *
+ * Zero is not blank. An ordered quantity of 0 is a real, meaningful value and sorts at
+ * the numeric bottom with the numbers, which is why these are strict comparisons and
+ * not a falsy check.
+ *
+ * Returns null when both values are present, meaning "no opinion, go and compare them".
+ */
+function procurementBlankOrder(a, b) {
+	const aBlank = a === null || a === undefined || a === "";
+	const bBlank = b === null || b === undefined || b === "";
+	if (!aBlank && !bBlank) return null;
+	if (aBlank && bBlank) return 0;
+	return aBlank ? 1 : -1;
+}
+
+function procurementCompare(a, b, column) {
+	if (column.type === "number") return Number(a) - Number(b);
+	if (column.type === "rank") {
+		// An unrecognised status sorts after every known one rather than at -1, which
+		// would silently put it first.
+		const ai = column.ranks.indexOf(a);
+		const bi = column.ranks.indexOf(b);
+		return (ai < 0 ? column.ranks.length : ai) - (bi < 0 ? column.ranks.length : bi);
+	}
+	// `numeric` matters here: this site's item codes are 417-080, 417-100, 2622-010,
+	// which a plain string compare orders wrong.
+	return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
 frappe.ui.form.on("Project", {
 	refresh: function (frm) {
 		if (!frm.doc.__islocal) {
@@ -67,6 +134,12 @@ frappe.ui.form.on("Project", {
 										}, {}),
 										// Individual documents collapsed by default (keyed "DocType::name").
 										collapsedDocs: {},
+										// Sort state per document, same key shape. Per-document
+										// rather than global: expansion already works that way, two
+										// documents in one group can want different sorts, and a
+										// global sort would silently reorder collapsed tables
+										// nobody asked about.
+										sortByDoc: {},
 									};
 								},
 								watch: {
@@ -90,6 +163,15 @@ frappe.ui.form.on("Project", {
 									}
 								},
 								computed: {
+									// Headers are rendered from the same registry the comparator
+									// reads, so a column cannot exist in one and not the other.
+									sortableColumns() {
+										return Object.keys(PROCUREMENT_SORT_COLUMNS).map((key) => ({
+											key: key,
+											label: PROCUREMENT_SORT_COLUMNS[key].label,
+											cls: PROCUREMENT_SORT_COLUMNS[key].cls || '',
+										}));
+									},
 									filteredGroups() {
 										const tokens = this.tokenize(this.globalSearchTerm);
 										if (!tokens.length) return this.groups;
@@ -163,6 +245,60 @@ frappe.ui.form.on("Project", {
 										const escapedTokens = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 										const regex = new RegExp(`(${escapedTokens.join('|')})`, 'gi');
 										return String(text).replace(regex, '<mark>$1</mark>');
+									},
+									sortFor(doctype, name) {
+										return this.sortByDoc[this.docKey(doctype, name)] || null;
+									},
+									toggleSort(doctype, name, key) {
+										if (!PROCUREMENT_SORT_COLUMNS[key]) return;
+										const dk = this.docKey(doctype, name);
+										const current = this.sortByDoc[dk];
+										if (!current || current.key !== key) {
+											this.sortByDoc[dk] = { key: key, dir: 'asc' };
+										} else if (current.dir === 'asc') {
+											this.sortByDoc[dk] = { key: key, dir: 'desc' };
+										} else {
+											// Third click clears it. Without a way back, line order is
+											// lost until the form is reloaded — and line order is
+											// meaningful on a request, it is how the job was grouped.
+											this.sortByDoc[dk] = null;
+										}
+									},
+									isSorted(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										return !!(s && s.key === key);
+									},
+									sortIndicator(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										if (!s || s.key !== key) return '⇅';
+										return s.dir === 'asc' ? '↑' : '↓';
+									},
+									sortAria(doctype, name, key) {
+										const s = this.sortFor(doctype, name);
+										if (!s || s.key !== key) return 'none';
+										return s.dir === 'asc' ? 'ascending' : 'descending';
+									},
+									// Search filters first, then sort sorts — the order a user expects,
+									// and it leaves filteredGroups, the auto-expand watcher and
+									// highlight() completely untouched.
+									displayItems(doctype, doc) {
+										const items = doc.items || [];
+										const sort = this.sortFor(doctype, doc.name);
+										const column = sort && PROCUREMENT_SORT_COLUMNS[sort.key];
+										if (!column) return items;
+
+										const dir = sort.dir === 'desc' ? -1 : 1;
+										// slice() before sort(): Array.prototype.sort mutates in place,
+										// and mutating doc.items during a render is an infinite
+										// reactivity loop. This method runs on every render.
+										return items.slice().sort((a, b) => {
+											const av = column.value(a);
+											const bv = column.value(b);
+											const blanks = procurementBlankOrder(av, bv);
+											// Not multiplied by dir — see procurementBlankOrder.
+											if (blanks !== null) return blanks;
+											return dir * procurementCompare(av, bv, column);
+										});
 									},
 									// Quantities arrive as floats. "4" reads as a quantity; "4.0"
 									// reads as a rounding artefact, and a column of them is noise.
@@ -314,12 +450,17 @@ frappe.ui.form.on("Project", {
 															<table class="glass-table">
 																<thead>
 																	<tr>
-																		<th>Item Details</th>
-																		<th>Warehouse</th>
-																		<th class="qty-col">Requested</th>
-																		<th class="qty-col">Ordered</th>
-																		<th class="qty-col">Received</th>
-																		<th>Status</th>
+																		<th v-for="col in sortableColumns" :key="col.key"
+																			class="sortable"
+																			:class="[col.cls, { sorted: isSorted(group.doctype, doc.name, col.key) }]"
+																			role="button" tabindex="0"
+																			:aria-sort="sortAria(group.doctype, doc.name, col.key)"
+																			:title="'Sort by ' + col.label"
+																			@click="toggleSort(group.doctype, doc.name, col.key)"
+																			@keydown.enter.prevent="toggleSort(group.doctype, doc.name, col.key)"
+																			@keydown.space.prevent="toggleSort(group.doctype, doc.name, col.key)">{{ col.label }}<span class="sort-indicator">{{ sortIndicator(group.doctype, doc.name, col.key) }}</span></th>
+																		<!-- Not sortable: seven chain nodes in one cell, no single
+																		     value to order by. No click handler, no cursor. -->
 																		<th>Doc Chain</th>
 																	</tr>
 																</thead>
@@ -327,7 +468,7 @@ frappe.ui.form.on("Project", {
 																	<tr v-if="(doc.items || []).length === 0">
 																		<td colspan="7" class="text-center text-muted">No items.</td>
 																	</tr>
-																	<tr v-for="(row, idx) in doc.items" :key="idx" class="procurement-item-row">
+																	<tr v-for="row in displayItems(group.doctype, doc)" :key="row.row_id" class="procurement-item-row">
 																		<td @click="row.source_doc_type && row.source_doc_name && openDoc(row.source_doc_type, row.source_doc_name)"
 																			:class="{ 'doc-link': row.source_doc_type && row.source_doc_name }"
 																			v-html="highlight(row.item_code + '<br><small class=\\\'text-muted\\\'>' + (row.item_name || '') + '</small>', globalSearchTerm)">

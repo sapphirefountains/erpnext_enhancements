@@ -415,6 +415,45 @@ header.navbar {
     color: #ef6c00;
 }
 
+/* Sortable column headers.
+   The indicator is always rendered, at low opacity when inactive, rather than appearing
+   on click. This header row is `white-space: nowrap` inside a min-width:1000px table, so
+   a glyph that appears would shift the column widths and visibly jiggle the whole table
+   on every click. */
+.procurement-tracker .glass-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.procurement-tracker .glass-table th.sortable:hover {
+    background-color: #e4e4e4;
+}
+
+.procurement-tracker .glass-table th .sort-indicator {
+    opacity: 0.25;
+    margin-left: 6px;
+    font-size: 0.85em;
+}
+
+.procurement-tracker .glass-table th.sorted .sort-indicator {
+    opacity: 1;
+}
+
+.procurement-tracker .glass-table th.sorted {
+    background-color: rgba(0, 123, 255, 0.12);
+}
+
+/* Required, not optional: the tracker's own `th` rules hard-code #f0f0f0/#333 for light
+   and #2c3e50/#ecf0f1 for dark, so a hover or active colour written only for light mode
+   is invisible or illegible in the dark theme. */
+[data-theme="dark"] .procurement-tracker .glass-table th.sortable:hover {
+    background-color: #34495e;
+}
+
+[data-theme="dark"] .procurement-tracker .glass-table th.sorted {
+    background-color: #34495e;
+}
+
 /* The three quantity columns. Right-aligned and nowrap so the digits line up and a
    long item description cannot push them onto two lines. */
 .procurement-tracker .glass-table th.qty-col,
