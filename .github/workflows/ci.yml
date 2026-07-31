@@ -78,6 +78,14 @@ jobs:
       # becoming a stop, and the PO -> Project union that either link alone drops.
       - name: Supplier pick-up routing (bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_pickup_routing -v
+      # Guards the "set a primary here, silently re-point it over there" class of
+      # bug: is_primary_contact / is_primary_address are columns on the
+      # Contact/Address record, so only Customer and Supplier can own them. A
+      # Project or Opportunity context must be refused, not quietly applied to
+      # whichever account happened to be nearby. Also fences the Supplier path
+      # that the pick-up routing address ordering depends on.
+      - name: Primary contact/address scoping (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_sync_contact_primary -v
       # Own step, not folded into a multi-module list: each bench-free suite
       # installs its own `frappe` stub in setUpModule, and a separate process
       # keeps them from cross-talking.
@@ -126,6 +134,13 @@ jobs:
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_gantt_api.py -q
+      # Guards the "the badge says Partially Ordered on a line that is fully
+      # ordered" class of bug: an item's status must be computed from that item's
+      # own ordered-vs-requested quantity, never inherited from its parent
+      # document's header status. The Procurement Tracker did exactly that, so 29
+      # of 32 item rows on production were mislabelled.
+      - name: Procurement quantity/status math (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

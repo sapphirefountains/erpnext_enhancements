@@ -22,6 +22,8 @@ anything.
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
+| [pdf-generation.md](pdf-generation.md) | Why PDF generation fails on both backends, and the runbook to fix the host |
+| [procurement-tracker-map.md](procurement-tracker-map.md) | The Project form's Procurement Tracker: what renders it, the chain SQL underneath, and where its status/quantity arithmetic lives |
 | [stripe_surcharging_compliance.md](stripe_surcharging_compliance.md) | The surcharging compliance checklist gating OD-7 |
 | [migration/](migration/) | Chart-of-accounts design, mapping workbooks, and the per-work-item apply runbooks |
 

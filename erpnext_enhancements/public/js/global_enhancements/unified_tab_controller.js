@@ -15,9 +15,14 @@
  * child-table rows referencing parties or Dynamic Links — then asks the backend
  * (`sync_contact.*`) for all contacts/addresses linked to ANY of them. This is
  * why, e.g., a Project shows contacts attached to its Customer. Link Existing /
- * Set Primary / Unlink actions all round-trip through the same sync_contact API
- * and re-render; New Contact / New Address open the quick-entry dialogs
- * (contact_address_quick_entry.js), which re-render this widget after insert.
+ * Unlink round-trip through the same sync_contact API and re-render; New Contact /
+ * New Address open the quick-entry dialogs (contact_address_quick_entry.js), which
+ * re-render this widget after insert.
+ *
+ * Set Primary is the exception, and deliberately so: only Customer and Supplier
+ * write the account-wide `is_primary_contact` / `is_primary_address` flags through
+ * that API. Every other form records its primary in its own doc-local field and
+ * touches nothing else — see the `party_context` block below for why.
  */
 frappe.provide("erpnext_enhancements.unified_controller");
 
@@ -98,6 +103,50 @@ erpnext_enhancements.unified_controller = {
 			this.frm.doc.customer_address ||
 			this.frm.doc.supplier_address
 		);
+	},
+
+	primary_contact_name: function () {
+		return this.frm.doc.primary_contact || null;
+	},
+
+	// ---------------------------------------------------------------- primaries
+	//
+	// `Contact.is_primary_contact` and `Address.is_primary_address` are columns on
+	// the CONTACT/ADDRESS record — not on the Dynamic Link row. Setting one is
+	// therefore a statement about an entire account, and there is physically
+	// nowhere in that scheme to record "primary for THIS Project". Only Customer
+	// and Supplier are accounts in that sense.
+	//
+	// Everything else records its primary in its own doc-local Link field
+	// (`primary_contact` / `primary_address`, provisioned by
+	// setup/custom_fields.py). Until v1.198.0 this file derived the account as
+	// `frm.doc.customer || frm.doc.supplier || frm.doc.party_name || frm.doc.name`,
+	// which meant:
+	//
+	//   - on a **Project**, one "Set Primary" click re-pointed the CUSTOMER's
+	//     primary across every contact on that account — a project-level decision
+	//     silently rewriting a company-level fact;
+	//   - on an **Opportunity**, it produced the pair ("Opportunity", <a Customer
+	//     id>), because Opportunity's discriminator is `opportunity_from`, not
+	//     `party_type`. The "unset the others" Dynamic Link query matched nothing,
+	//     so the flag was set without clearing the previous one and several
+	//     contacts ended up flagged primary for the same account at once.
+	PARTY_DOCTYPES: ["Customer", "Supplier"],
+
+	is_party_form: function () {
+		return this.PARTY_DOCTYPES.indexOf(this.frm.doctype) !== -1;
+	},
+
+	// The account whose GLOBAL flag this form may write, or null. Always the open
+	// document itself — never a related Customer or Lead.
+	party_context: function () {
+		if (!this.is_party_form()) return null;
+		return { doctype: this.frm.doctype, name: this.frm.doc.name };
+	},
+
+	primary_scope_label: function () {
+		const party = this.party_context();
+		return party ? party.name : `${__(this.frm.doctype)} ${this.frm.doc.name}`;
 	},
 
 	setup_queries: function () {
@@ -258,13 +307,28 @@ erpnext_enhancements.unified_controller = {
 						<tbody>
 				`;
 
+				const primary_contact_name = this.primary_contact_name();
+				const on_party_form = this.is_party_form();
 				r.message.forEach((c) => {
 					const first_name = c.first_name || "";
 					const last_name = c.last_name || "";
 					const phone = c.custom_phone_number || c.custom_mobile_number || "";
-					const is_primary = c.is_primary_contact
+					// This document's own answer. The global is_primary_contact flag only
+					// means "primary for the Customer/Supplier", so it earns the badge on
+					// an account form and nowhere else.
+					const is_doc_primary =
+						c.name === primary_contact_name || (on_party_form && !!c.is_primary_contact);
+					const is_primary = is_doc_primary
 						? `<span class="badge badge-info" style="font-size: 10px; margin-left: 8px; vertical-align: middle;">Primary</span>`
 						: "";
+					// A Project lists its Customer's contacts too, and which one the rest
+					// of the business treats as primary is worth knowing — it is just a
+					// different fact from this document's own primary. Second, quieter
+					// badge rather than dropping the information.
+					const account_primary =
+						!is_doc_primary && !on_party_form && c.is_primary_contact
+							? `<span class="badge badge-light" style="font-size: 10px; margin-left: 8px; vertical-align: middle;" title="${__("Primary for the account, not for this document")}">${__("Account primary")}</span>`
+							: "";
 
 					const contact_url = frappe.urllib.get_full_url(`/app/contact/${c.name}`);
 					const email_link = c.custom_email
@@ -285,7 +349,7 @@ erpnext_enhancements.unified_controller = {
 						<tr data-name="${c.name}">
 							<td>
 								<a href="${contact_url}" target="_blank"><b>${first_name} ${last_name}</b></a>
-								${is_primary}
+								${is_primary}${account_primary}
 							</td>
 							<td>${c.custom_title || ""}</td>
 							<td>${email_link}</td>
@@ -295,9 +359,14 @@ erpnext_enhancements.unified_controller = {
 								<button class="btn btn-xs btn-default edit-contact" data-name="${c.name}" title="Edit">
 									<i class="fa fa-pencil"></i>
 								</button>
+								${
+									primary_contact_name !== c.name
+										? `
 								<button class="btn btn-xs btn-primary set-primary-contact" data-name="${c.name}" style="margin-left: 5px;">
 									Set Primary
-								</button>
+								</button>`
+										: ""
+								}
 								<button class="btn btn-xs btn-danger unlink-contact" data-name="${c.name}" style="margin-left: 5px;" title="Unlink">
 									<i class="fa fa-unlink"></i>
 								</button>
@@ -389,14 +458,22 @@ erpnext_enhancements.unified_controller = {
 						<tbody>
 				`;
 
-						const primary_address_name = this.primary_address_name();
+				const primary_address_name = this.primary_address_name();
+				const on_party_form = this.is_party_form();
 				r.message.forEach((a) => {
 					const full_address =
 						a.custom_full_address ||
 						[a.address_line1, a.address_line2].filter(Boolean).join(", ");
-					const is_primary =
-						a.name === primary_address_name || a.is_primary_address
-							? `<span class="badge badge-info" style="font-size: 10px; margin-left: 8px; vertical-align: middle;">Primary</span>`
+					// Same rule as the contact table: the doc-local field is this
+					// document's answer; the global flag only speaks for the account.
+					const is_doc_primary =
+						a.name === primary_address_name || (on_party_form && !!a.is_primary_address);
+					const is_primary = is_doc_primary
+						? `<span class="badge badge-info" style="font-size: 10px; margin-left: 8px; vertical-align: middle;">Primary</span>`
+						: "";
+					const account_primary =
+						!is_doc_primary && !on_party_form && a.is_primary_address
+							? `<span class="badge badge-light" style="font-size: 10px; margin-left: 8px; vertical-align: middle;" title="${__("Primary for the account, not for this document")}">${__("Account primary")}</span>`
 							: "";
 					const address_url = frappe.urllib.get_full_url(`/app/address/${a.name}`);
 
@@ -413,7 +490,7 @@ erpnext_enhancements.unified_controller = {
 						<tr data-name="${a.name}">
 							<td>
 								<a href="${address_url}" target="_blank"><b>${full_address}</b></a>
-								${is_primary}
+								${is_primary}${account_primary}
 							</td>
 							<td>${a.address_type || ""}</td>
 							<td>${a.address_title || ""}</td>
@@ -494,28 +571,16 @@ erpnext_enhancements.unified_controller = {
 
 	set_primary_address: function (address_name) {
 		const frm = this.frm;
-		const main_party_name =
-			frm.doc.customer || frm.doc.supplier || frm.doc.party_name || frm.doc.name;
-		const main_party_doctype = frm.doc.customer
-			? "Customer"
-			: frm.doc.supplier
-				? "Supplier"
-				: frm.doc.party_type || frm.doctype;
+		// Write the docname into the doctype's actual Address LINK field — on
+		// Customer/Supplier `primary_address` is the read-only TEXT display, which
+		// the server fills on save (for Supplier: Address.custom_full_address).
+		const link_field = this.primary_address_link_field();
+		const party = this.party_context();
 
-		frappe.confirm(`Set this as primary address for ${main_party_name}?`, () => {
-			frappe.call({
-				method: "erpnext_enhancements.sync_contact.set_primary_address",
-				args: {
-					account_doctype: main_party_doctype,
-					account_name: main_party_name,
-					address_name: address_name,
-				},
-				callback: (r) => {
-					// Write the docname into the doctype's actual Address LINK
-					// field — on Customer/Supplier `primary_address` is the
-					// read-only TEXT display, which the server fills on save
-					// (for Supplier: Address.custom_full_address).
-					const link_field = this.primary_address_link_field();
+		frappe.confirm(
+			__("Set this as the primary address for {0}?", [this.primary_scope_label()]),
+			() => {
+				const sync_party = () => {
 					const done = () => {
 						this.render_address_table();
 						this.render_google_map();
@@ -524,47 +589,68 @@ erpnext_enhancements.unified_controller = {
 							indicator: "green",
 						});
 					};
-					if (link_field) {
-						frm.set_value(link_field, address_name);
-						frm.save().done(done);
-					} else {
-						done();
-					}
-				},
-			});
-		});
+					// Only an account carries the global flag. On every other form
+					// the doc-local write above is the whole operation.
+					if (!party) return done();
+					frappe.call({
+						method: "erpnext_enhancements.sync_contact.set_primary_address",
+						args: {
+							account_doctype: party.doctype,
+							account_name: party.name,
+							address_name: address_name,
+						},
+						callback: done,
+					});
+				};
+
+				if (link_field) {
+					frm.set_value(link_field, address_name);
+					// `frm.save("Save", cb)` is the documented signature. The old code
+					// called `frm.save().done(cb)` — frm.save() returns a native
+					// Promise, which has no .done, so the re-render and the
+					// confirmation toast never ran.
+					frm.save("Save", sync_party);
+				} else {
+					sync_party();
+				}
+			},
+		);
 	},
 
 	set_primary_contact: function (contact_name) {
 		const frm = this.frm;
-		const main_party_name =
-			frm.doc.customer || frm.doc.supplier || frm.doc.party_name || frm.doc.name;
-		const main_party_doctype = frm.doc.customer
-			? "Customer"
-			: frm.doc.supplier
-				? "Supplier"
-				: frm.doc.party_type || frm.doctype;
+		if (!frm.fields_dict.primary_contact) return;
+		const party = this.party_context();
 
-		frappe.confirm(`Set ${contact_name} as primary for ${main_party_name}?`, () => {
-			frappe.call({
-				method: "erpnext_enhancements.sync_contact.set_primary_contact",
-				args: {
-					account_doctype: main_party_doctype,
-					account_name: main_party_name,
-					contact_name: contact_name,
-				},
-				callback: (r) => {
-					frm.set_value("primary_contact", contact_name);
-					frm.save().done(() => {
+		frappe.confirm(
+			__("Set {0} as the primary contact for {1}?", [contact_name, this.primary_scope_label()]),
+			() => {
+				// Doc-local first: it is the authoritative per-document answer, and a
+				// save that fails validation must not leave a global flag flipped
+				// behind it. The old order did exactly that. On a non-account form
+				// this is the ONLY write.
+				frm.set_value("primary_contact", contact_name);
+				frm.save("Save", () => {
+					const done = () => {
 						this.render_contact_table();
 						frappe.show_alert({
 							message: __("Primary contact updated"),
 							indicator: "green",
 						});
+					};
+					if (!party) return done();
+					frappe.call({
+						method: "erpnext_enhancements.sync_contact.set_primary_contact",
+						args: {
+							account_doctype: party.doctype,
+							account_name: party.name,
+							contact_name: contact_name,
+						},
+						callback: done,
 					});
-				},
-			});
-		});
+				});
+			},
+		);
 	},
 
 	get_base_links: function () {
