@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.206.0] - 2026-08-01
+
+### Changed
+
+- **Maps now reuse the coordinates an address was picked with, instead of geocoding its
+  text.** v1.205.0 started storing an exact point on every Address chosen from the Places
+  autocomplete. Three consumers were still throwing that away and asking Google to re-derive
+  it from the address string on every load: the Pick Routing Map, the Travel Trip agenda map,
+  and the Travel POI form's location picker.
+
+  Two wins, and the second is the one that matters. Every geocode is **billable** and needs
+  the Geocoding API enabled — a stored column read is neither. And a geocode returns Google's
+  best interpretation of a *string*, whereas the stored point is the building somebody
+  actually picked out of a dropdown. For a supplier's will-call counter on a industrial
+  street, those are not reliably the same place.
+
+  **It is an optimisation layered on the text, never a replacement for it.** The
+  overwhelming majority of Addresses predate v1.205.0 or were typed by hand and have no
+  point at all, so every path keeps its geocode fallback and a single run mixes the two
+  freely. Nothing gets worse for a coordinate-less Address — that is the whole design
+  constraint, and it is what the new tests pin down.
+
+  Where the point is now used:
+
+  | Surface | Before | Now |
+  |---|---|---|
+  | Pick Routing Map — fallback pins | one billable geocode per stop | stored point, else geocode |
+  | Pick Routing Map — `DirectionsService` waypoints | address string | stored point, else string |
+  | Travel Trip agenda map | geocode, cached back onto the POI | resolved server-side, no client change |
+  | Travel POI form picker | geocode on open and on "Locate from linked address" | stored point, else geocode |
+  | `/itinerary` mobile map | **could not plot at all** without a POI Geolocation | stored point places it |
+
+  That last row is a capability, not a saving: the `/itinerary` map is Leaflet with no
+  geocoder, so a POI without its own Geolocation was simply absent from it.
+
+  **0.0 is the "no point" sentinel, and that drove the guard.** Float custom fields are
+  created `NOT NULL DEFAULT 0`, so every Address in the table reads back as `0.0` rather than
+  `NULL` — and the autocomplete blanks the pair to a literal `0` when the address is edited
+  by hand. An `is not None` check would therefore be true for the entire table and route
+  every legacy stop to 0°N 0°E in the Gulf of Guinea, which Google will accept without
+  complaint. So the guard is non-zero **plus** a range check: a lat/lng written the wrong way
+  round is a valid-looking pair that lands in the wrong hemisphere, and a Utah longitude is
+  not a valid latitude. Half a pair is refused outright.
+
+  **A place ID does not imply coordinates.** The autocomplete stores `meta.latitude || 0`, so
+  a pick whose Place carried no location persists a real place ID next to 0/0. Every check
+  here branches on the numbers, never on the ID.
+
+  **Every read of those columns is guarded, because a missing one fails hard.** `main`
+  auto-deploys with no staging gate, so this code can be live before `bench migrate` has
+  created the v1.205.0 fixtures on a site. Server-side that is a raw SQL error on every call
+  rather than a graceful `None` — frappe's query builder validates the *format* of a select
+  field, never its existence — so both Python readers gate on `frappe.db.has_column`, the
+  same idiom as `api/comments.py`.
+
+  The **client** read needed a different answer: `frappe.db.get_value` has no `has_column`,
+  and asking for a field that is not in meta is rejected outright ("Field not permitted in
+  query"), not returned as null. Since every consumer of that lookup sits inside its `.then`,
+  an unguarded request would have taken the entire Travel POI picker down with it — no map,
+  no pin, and not even the "link an Address first" message, which lives in the same dead
+  callback. It now retries with the six fields that have always existed, so the form geocodes
+  exactly as it did before. Caught in review, not in production.
+
+### Notes
+
+- **The Routes API engine deliberately still sends address text for its waypoints**, even
+  where the legacy engine now sends coordinates. `Waypoint.location` is documented to accept
+  a string; that it also accepts a bare `{lat,lng}` is inference from the origin/destination
+  union and has not been checked against a live key. A rejected shape there does not fail one
+  stop — it throws the whole request, and the catch latches `routesUnavailable` for the life
+  of the dialog and only `console.warn`s. One coordinate-bearing stop would silently demote
+  every re-route to the legacy engine with nothing on screen to explain it. Verify against a
+  live key, record it in `docs/pick-routing-map-po-details.md`, then switch.
+- **The depot and the typed finish point cannot carry coordinates.**
+  `pickup_route_start_address` is a Data field with no Address record behind it, and the
+  dialog's "custom" finish is typed live. Making either exact is a schema change, not a code
+  one. It is one geocode for the same address every request, so Google caches it hard.
+- **Address-derived points are not written back onto a Travel POI.** `cache_poi_geocode`
+  never overwrites, so the copy would become permanent and outlive corrections to the
+  Address — inverting the v1.205.0 rule that editing an address clears its point. There is no
+  geocode being saved either, so the cost motive is absent.
+- **The clearing guarantee remains client-side only.** No Address hook invalidates the
+  coordinates server-side, so a REST write, Data Import or bulk edit that changes
+  `address_line1` leaves the old point in place. The range guard cannot catch a stale point
+  that is still a valid coordinate. Worth knowing before trusting these for anything
+  automated.
+- Maps deep links and the printed pick sheet still use the address **text** everywhere. A
+  driver reading `40.889,-111.881` off a printed sheet would be a regression, and Maps URLs
+  require `waypoint_place_ids` to pair 1:1 with `waypoints`, which a partially-covered run
+  cannot satisfy.
+
 ## [1.205.0] - 2026-08-01
 
 ### Added

@@ -291,6 +291,23 @@
 
 	const esc = (s) => frappe.utils.escape_html(s == null ? '' : String(s));
 
+	/**
+	 * The exact point stored on a stop's Address when it was picked from the
+	 * Places autocomplete, as a LatLngLiteral -- or null, which is the case for
+	 * every Address that predates v1.205.0 or was typed by hand.
+	 *
+	 * The server sends null rather than 0 for "no point", but this still checks
+	 * for zero: the underlying columns are NOT NULL DEFAULT 0 and a hand edit
+	 * blanks them to a literal 0, so 0/0 is the cleared state, not Null Island.
+	 */
+	function stopLatLng(stop) {
+		const lat = stop && stop.latitude;
+		const lng = stop && stop.longitude;
+		if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+		if (!lat || !lng) return null;
+		return { lat: lat, lng: lng };
+	}
+
 	/** A `?api=1` Google Maps directions URL for the whole run. */
 	function mapsDirectionsUrl(origin, destination, waypoints) {
 		const params = [
@@ -1068,6 +1085,17 @@
 				// was `waypoints: [{location, stopover: true}]`. `stopover` has no
 				// equivalent -- it is the default, and the inverse (`via: true`) is
 				// documented as incompatible with optimizeWaypointOrder.
+				// Text on purpose, even where a stop has a stored point (the
+				// legacy engine below does use it). `Waypoint.location` is
+				// documented to take a string; that it also takes a bare
+				// {lat,lng} is inference from the origin/destination union and
+				// has NOT been checked against a live key. A rejected shape here
+				// does not fail one stop -- it throws the whole request, and the
+				// catch latches routesUnavailable for the life of the dialog and
+				// only console.warns, so a single coordinate-bearing stop would
+				// silently demote every re-route to the legacy engine with
+				// nothing on screen to explain it. Verify against a live key,
+				// record it in docs/pick-routing-map-po-details.md, then switch.
 				intermediates: stops.map((s) => ({ location: s.address })),
 				travelMode: 'DRIVING',
 				units: this.maps.UnitSystem.IMPERIAL,
@@ -1163,7 +1191,16 @@
 					{
 						origin: this.origin(),
 						destination: this.destination(),
-						waypoints: stops.map((s) => ({ location: s.address, stopover: true })),
+						// Per-waypoint union: DirectionsWaypoint.location takes a
+						// string OR a LatLng/LatLngLiteral, so a run may mix the
+						// two freely -- which it will, since most Addresses have
+						// no stored point. A coordinate skips Google's internal
+						// geocode of that waypoint and routes to the exact
+						// building the address was picked as.
+						waypoints: stops.map((s) => ({
+							location: stopLatLng(s) || s.address,
+							stopover: true,
+						})),
 						optimizeWaypoints: true,
 						travelMode: this.maps.TravelMode.DRIVING,
 						unitSystem: this.maps.UnitSystem.IMPERIAL,
@@ -1513,6 +1550,17 @@
 			};
 
 			stops.forEach((stop, idx) => {
+				// Free and exact: this Address was picked from the autocomplete,
+				// so its point is the building itself rather than Google's
+				// reading of the address text. Deliberately NOT written into
+				// this.geocoded -- that memo is keyed by address *text*, and
+				// seeding it would let a second, hand-typed Address with the
+				// same text inherit this record's point.
+				const stored = stopLatLng(stop);
+				if (stored) {
+					drop(stop, idx, stored);
+					return;
+				}
 				// Geocoding is billable and these addresses do not move, so a
 				// second degrade in the same dialog reuses the points.
 				if (this.geocoded[stop.address]) {

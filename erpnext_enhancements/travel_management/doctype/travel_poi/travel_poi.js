@@ -2,9 +2,12 @@
  * Travel POI form.
  *
  *  - Google Maps location picker in the `location_map` HTML field. The map is
- *    centred on the POI's point if one is set, otherwise it geocodes the linked
- *    **Address** and shows that — so a POI located purely by its address still
- *    appears on Google Maps. Click the map or drag the pin to set an exact
+ *    centred on the POI's point if one is set; otherwise it falls back to the
+ *    linked **Address** — using the exact point stored when that address was
+ *    picked from the Places autocomplete (v1.205.0) if it has one, and only
+ *    geocoding the address text when it does not. So a POI located purely by
+ *    its address still appears, and increasingly without a billable geocode.
+ *    Click the map or drag the pin to set an exact
  *    point, or press "Locate from linked address" to (re)place it from the
  *    address. The chosen point is stored in the *hidden* native `geolocation`
  *    field as a GeoJSON Point — the shape api/travel.py `_poi_latlng` reads — so
@@ -85,30 +88,50 @@
 		});
 	}
 
-	// A geocodable one-line string for the POI's linked Address, or null.
-	function addressString(frm) {
-		if (!frm.doc.address) return Promise.resolve(null);
-		return frappe.db
-			.get_value('Address', frm.doc.address, [
-				'address_line1',
-				'address_line2',
-				'city',
-				'state',
-				'pincode',
-				'country',
-			])
-			.then((r) => {
-				const a = (r && r.message) || {};
-				const parts = [
-					a.address_line1,
-					a.address_line2,
-					a.city,
-					a.state,
-					a.pincode,
-					a.country,
-				].filter(Boolean);
-				return parts.length ? parts.join(', ') : null;
-			});
+	// The POI's linked Address as {text, lat, lng}; any part may be null.
+	//
+	// lat/lng are the point the Places autocomplete stored when the address was
+	// picked (v1.205.0) — exact, and free, where geocoding the text is neither.
+	// 0 means absent, not Null Island: the columns are NOT NULL DEFAULT 0 and a
+	// hand edit blanks them back to a literal 0.
+	function addressLocation(frm) {
+		if (!frm.doc.address) return Promise.resolve({ text: null, lat: null, lng: null });
+
+		const BASE = ['address_line1', 'address_line2', 'city', 'state', 'pincode', 'country'];
+		const POINT = ['custom_latitude', 'custom_longitude'];
+
+		const shape = (r) => {
+			const a = (r && r.message) || {};
+			const parts = [
+				a.address_line1,
+				a.address_line2,
+				a.city,
+				a.state,
+				a.pincode,
+				a.country,
+			].filter(Boolean);
+			const lat = a.custom_latitude || null;
+			const lng = a.custom_longitude || null;
+			return {
+				text: parts.length ? parts.join(', ') : null,
+				lat: lat && lng ? lat : null,
+				lng: lat && lng ? lng : null,
+			};
+		};
+
+		return frappe.db.get_value('Address', frm.doc.address, BASE.concat(POINT)).then(
+			shape,
+			// The point fields arrive with `bench migrate`, and main auto-deploys —
+			// so this code can be live on a site that does not have them yet. The
+			// server half guards with frappe.db.has_column; the client cannot, and
+			// asking for a field that is not in meta is a hard rejection ("Field
+			// not permitted in query"), not a null. Without this retry the whole
+			// picker dies: every consumer of this function lives inside .then, so
+			// the map would never render and even the "link an Address first"
+			// message would never fire. Falling back to the six fields that have
+			// always existed leaves the form geocoding exactly as it did before.
+			() => frappe.db.get_value('Address', frm.doc.address, BASE).then(shape)
+		);
 	}
 
 	function ensureKey(frm) {
@@ -210,12 +233,24 @@
 					// action); otherwise it only displays, so opening a POI never
 					// dirties the form.
 					const locateFromAddress = (persist) => {
-						addressString(frm).then((addr) => {
-							if (!addr) {
+						addressLocation(frm).then((addr) => {
+							// The Address was picked from the autocomplete, so its
+							// exact point is already known — no Geocoder call, no
+							// bill, and the pin lands on the building rather than
+							// on Google's reading of the text. Routed through the
+							// same place()/commit() pair, so the display-only
+							// contract above still holds for the auto-run.
+							if (addr.lat && addr.lng) {
+								map.setCenter({ lat: addr.lat, lng: addr.lng });
+								map.setZoom(POINT_ZOOM);
+								persist ? commit(addr.lat, addr.lng) : place(addr.lat, addr.lng);
+								return;
+							}
+							if (!addr.text) {
 								if (persist) frappe.msgprint(__('The linked Address has no details to locate.'));
 								return;
 							}
-							new maps.Geocoder().geocode({ address: addr }, (results, status) => {
+							new maps.Geocoder().geocode({ address: addr.text }, (results, status) => {
 								if (status === 'OK' && results && results[0]) {
 									const loc = results[0].geometry.location;
 									const lat = loc.lat();
@@ -266,12 +301,18 @@
 			window.open('https://maps.google.com/?q=' + coords.lat + ',' + coords.lng, '_blank');
 			return;
 		}
-		addressString(frm).then((addr) => {
-			if (!addr) {
+		addressLocation(frm).then((addr) => {
+			// The Address's own picked point beats its text: Maps opens on the
+			// building instead of re-resolving the string.
+			if (addr.lat && addr.lng) {
+				window.open('https://maps.google.com/?q=' + addr.lat + ',' + addr.lng, '_blank');
+				return;
+			}
+			if (!addr.text) {
 				frappe.msgprint(__('Set the location on the map or link an Address first.'));
 				return;
 			}
-			window.open('https://maps.google.com/?q=' + encodeURIComponent(addr), '_blank');
+			window.open('https://maps.google.com/?q=' + encodeURIComponent(addr.text), '_blank');
 		});
 	}
 

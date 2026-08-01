@@ -11,8 +11,14 @@ browser key, the depot the run starts from, the candidate finish points, and one
 *stop* per supplier pick-up address carrying the Purchase Orders and lines behind
 it. The client hands those addresses straight to Google's ``DirectionsService``
 with ``optimizeWaypoints: true``, so the travelling-salesman ordering is
-drive-time based and happens in the browser -- nothing is geocoded or stored
-server-side, and this module needs no Google credentials of its own.
+drive-time based and happens in the browser -- this module still calls no Google
+API of its own and needs no credentials.
+
+A stop also carries ``latitude``/``longitude`` when its Address was picked from
+the Places autocomplete (v1.205.0), which lets the client skip a billable
+geocode and route to the exact building rather than to Google's reading of the
+address text. Most Addresses predate that and have no point, so this is strictly
+an optimisation layered on the text -- never a replacement for it.
 
 Three things this module is careful about:
 
@@ -98,6 +104,13 @@ _ADDRESS_FIELDS = (
 	"custom_full_address",
 )
 
+#: The point the Places autocomplete stored when this Address was picked
+#: (v1.205.0). Requested only once ``bench migrate`` has created the columns:
+#: ``main`` auto-deploys, so a code deploy can land before the fixture does, and
+#: selecting a column that does not exist is a SQL error on every call rather
+#: than a graceful ``None``. Same reasoning as ``api/comments.py``.
+_ADDRESS_POINT_FIELDS = ("custom_latitude", "custom_longitude")
+
 
 # ------------------------------------------------------------------ addresses
 
@@ -125,12 +138,53 @@ def _address_line(addr):
 	return line or (addr.get("custom_full_address") or None)
 
 
+def _address_coords(addr):
+	"""``(lat, lng)`` picked from Google for an Address row, or None.
+
+	**0.0 means absent, not Null Island.** Float custom fields are ``NOT NULL
+	DEFAULT 0``, so every Address that predates v1.205.0 reads back as 0.0 --
+	and both writers blank the pair to a literal 0 when the address is edited by
+	hand. ``if lat is not None`` would therefore be true for the whole table and
+	route the entire run to the Gulf of Guinea, which Google will happily accept.
+
+	The range check catches the other realistic corruption: a lat/lng written the
+	wrong way round is a valid-looking pair that lands in the wrong hemisphere.
+	"""
+	if not addr:
+		return None
+	lat = flt(addr.get("custom_latitude"))
+	lng = flt(addr.get("custom_longitude"))
+	if not lat or not lng:
+		return None
+	if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
+		return None
+	return lat, lng
+
+
+def _address_field_list(cache):
+	"""``_ADDRESS_FIELDS`` plus the stored point when the columns exist.
+
+	Resolved once per request rather than once per address -- ``has_column`` is
+	cached by frappe, but the tuple key keeps it off the hot path entirely. The
+	key is a tuple so it cannot collide with an Address literally named this.
+	"""
+	key = ("__address_fields",)
+	if key not in cache:
+		fields = list(_ADDRESS_FIELDS)
+		if frappe.db.has_column("Address", "custom_latitude"):
+			fields += list(_ADDRESS_POINT_FIELDS)
+		cache[key] = fields
+	return cache[key]
+
+
 def _get_address(name, cache):
 	"""Fetch an Address row as a dict (memoised per request), or None."""
 	if not name:
 		return None
 	if name not in cache:
-		cache[name] = frappe.db.get_value("Address", name, list(_ADDRESS_FIELDS), as_dict=True)
+		cache[name] = frappe.db.get_value(
+			"Address", name, _address_field_list(cache), as_dict=True
+		)
 	return cache[name]
 
 
@@ -365,6 +419,7 @@ def _build_stops(purchase_orders, items_by_po, cache):
 	for po in purchase_orders:
 		addr, source = _resolve_pickup_address(po, cache)
 		address_line = _address_line(addr)
+		coords = _address_coords(addr)
 		key = _stop_key(po.get("supplier"), addr.get("name") if addr else None, address_line)
 
 		stop = stops.get(key)
@@ -376,6 +431,12 @@ def _build_stops(purchase_orders, items_by_po, cache):
 				"address": address_line,
 				"address_name": addr.get("name") if addr else None,
 				"address_source": source,
+				# None, never 0, so the client can test these directly. The text
+				# is always sent as well -- it is what the stop list, the pick
+				# sheet and every Maps deep link render, and a driver reading
+				# "40.889,-111.881" off a printed sheet is a regression.
+				"latitude": coords[0] if coords else None,
+				"longitude": coords[1] if coords else None,
 				"phone": (addr.get("phone") if addr else None) or po.get("contact_mobile"),
 				"contact": po.get("contact_display") or po.get("contact_person"),
 				"purchase_orders": [],

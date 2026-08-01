@@ -11,6 +11,14 @@
  *   string (from the linked Address) when no point is set — address-only stops
  *   are geocoded here client-side and the result is cached back via
  *   api.travel.cache_poi_geocode (needs the Geocoding API enabled on the key).
+ *
+ *   Since v1.206.0 that last rung is reached less often: api/travel.py resolves
+ *   a POI's point from its own Geolocation, THEN from the linked Address's
+ *   stored autocomplete point, and only sends `address` alone when neither
+ *   exists. Nothing changes here — such a POI simply arrives with lat/lng
+ *   already set and takes the first branch below. Address-derived points are
+ *   deliberately not cached back onto the POI: cache_poi_geocode never
+ *   overwrites, so the copy would outlive corrections to the Address.
  *   api_key is the Google Maps **browser** key from Travel Settings
  *   (Maps JavaScript API, referrer-restricted) — client-side by design.
  *
