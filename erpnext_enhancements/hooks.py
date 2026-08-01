@@ -613,6 +613,13 @@ after_migrate = [
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
+	# Point every Print Format at the chrome PDF backend. Must run on EVERY migrate, not
+	# once as a patch: standard formats re-sync from their app's JSON, so the setting is
+	# reverted by the same migrate that would have applied a patch. It also has to use
+	# frappe.db.set_value, because Print Format.validate refuses ORM writes to standard
+	# formats outright. LAST in this list on purpose -- it should see any format the hooks
+	# above have just created. See setup_print_formats.ensure_chrome_pdf_generator.
+	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_chrome_pdf_generator",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

@@ -319,3 +319,9 @@ erpnext_enhancements.patches.backfill_opportunity_primary_contact
 # opportunity_kanban_totals.js sums it and receives it via the board's own field
 # list, so dropping it would silently empty the column totals.
 erpnext_enhancements.patches.set_opportunity_kanban_primary_contact
+# v1.203.0: delete the Property Setter that narrowed Print Format.pdf_generator's
+# options to "wkhtmltopdf" alone. Select options are enforced on every save, so
+# while it existed NO format could be moved to the chrome backend -- saving one
+# threw 'PDF Generator cannot be "chrome"'. Frappe ships the field as
+# "wkhtmltopdf\nchrome"; nothing in any installed app recreates the restriction.
+erpnext_enhancements.patches.drop_pdf_generator_options_restriction
