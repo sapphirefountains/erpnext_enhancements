@@ -724,8 +724,92 @@
 		};
 	}
 
+	// ------------------------------------------------------- shared point rules
+	//
+	// The Address form and the quick-entry dialog both write and clear the stored
+	// point, and they must agree on when. Two hand-maintained copies of these
+	// rules would drift, and the failure mode is silent: coordinates surviving
+	// when they should not, or vanishing when they should not.
+
+	/** A finite, non-zero, in-range pair, or null. 0 is the "absent" sentinel. */
+	function usable_point(lat, lng) {
+		lat = typeof lat === "number" ? lat : parseFloat(lat);
+		lng = typeof lng === "number" ? lng : parseFloat(lng);
+		if (!isFinite(lat) || !isFinite(lng) || !lat || !lng) return null;
+		if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+		return { lat: lat, lng: lng };
+	}
+
+	/**
+	 * Does a hand edit of the address text invalidate this doc's point?
+	 *
+	 * Only a point Google gave us describes the address text, so only that one
+	 * dies with it. A point somebody typed was typed *because* the text cannot
+	 * locate the site — new construction, a lot number — so editing the text
+	 * must not throw it away. Blank source means Google: every point stored
+	 * before this existed came from a pick, so no backfill is needed.
+	 */
+	function point_survives_text_edit(doc) {
+		return (doc && doc.custom_location_source) === "Manual";
+	}
+
+	/**
+	 * Split a pasted "lat, lng" pair into two numbers, or null.
+	 *
+	 * Load-bearing, not a nicety. Frappe's Float control runs its input through
+	 * frappe.utils.eval_expression, which literally eval()s anything matching an
+	 * arithmetic expression — so pasting "40.889402, -111.880771" into Latitude
+	 * silently becomes 40.889402 - 111.880771 = -70.99, a perfectly valid
+	 * latitude in the Southern Ocean that no range check anywhere can reject.
+	 * Pasting the pair is the single most likely thing a user does with these
+	 * fields, so it is intercepted before the control ever sees it.
+	 */
+	function parse_point_paste(text) {
+		const match = String(text || "")
+			.trim()
+			.match(/^\(?\s*(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)\s*\)?$/);
+		if (!match) return null;
+		return usable_point(parseFloat(match[1]), parseFloat(match[2]));
+	}
+
+	/**
+	 * Bind the pasted-pair guard to a coordinate control.
+	 *
+	 * Shared because BOTH surfaces need it and the failure is silent: without
+	 * it, pasting a "lat, lng" pair anywhere stores a single wrong-but-plausible
+	 * number that passes every range check on the way to the database.
+	 *
+	 * @param {Object} control - a frappe control (form field or dialog field)
+	 * @param {Function} on_point - ({lat, lng}) => void, called with the pair
+	 */
+	function bind_point_paste(control, on_point) {
+		if (!control || !control.$input) return;
+		// Inputs are reused for the life of the page on a Desk form, so binding
+		// on every refresh would stack handlers on the same node.
+		if (control.$input.data("eePastePoint")) return;
+		control.$input.data("eePastePoint", true);
+
+		control.$input.on("paste", function (event) {
+			var clipboard =
+				(event.originalEvent || event).clipboardData || window.clipboardData;
+			if (!clipboard) return;
+			var point = parse_point_paste(clipboard.getData("text"));
+			if (!point) return;
+			event.preventDefault();
+			on_point(point);
+			frappe.show_alert({
+				message: __("Pasted coordinates into Latitude and Longitude."),
+				indicator: "green",
+			});
+		});
+	}
+
 	erpnext_enhancements.address_autocomplete = {
 		attach: attach,
 		map_address_components: map_address_components,
+		usable_point: usable_point,
+		point_survives_text_edit: point_survives_text_edit,
+		parse_point_paste: parse_point_paste,
+		bind_point_paste: bind_point_paste,
 	};
 })();
