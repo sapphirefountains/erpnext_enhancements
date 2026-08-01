@@ -187,6 +187,34 @@ and the sheet both consume it. The layouts differ deliberately — a 300px-wide 
 gets a compact list, paper gets a table — but the arithmetic does not fork, so the sheet in a
 driver's hand cannot disagree with the screen.
 
+## Routing engine (v1.204.0)
+
+The map can use either engine. **Travel Settings → "Use Routes API (beta)"**, off by default,
+picks which is tried first; the legacy one always remains as an automatic fallback.
+
+| Rung | Engine | Notes |
+|---|---|---|
+| 1 | `routes.Route.computeRoutes` | Only when the setting is on. Needs **Routes API** enabled on the Cloud project *and* on the key |
+| 2 | `DirectionsService` | Deprecated 2026-02-25, not scheduled for removal, ≥12 months' notice promised |
+| 3 | Geocoded pins in purchase-order order | No optimisation |
+| 4 | Plain list + Google Maps deep links | Works with no key at all |
+
+**Turn the setting on only after the console change**, in this order: enable Routes API on the
+project → add it to the key's API restriction list → tick the setting. Doing it the other way
+round means every route falls to rung 2 until Google is updated, which works but silently
+costs a legacy call each time.
+
+The two engines return different field names for the same numbers, and the differences do not
+throw — they yield `undefined`. The three that matter are commented at the point of use in
+`pick_routing_map.js`; the worst is `durationMillis` (Routes) against `duration.value`
+(legacy, **seconds**), which is a 1000x error if the arithmetic is copied across.
+
+Three things remain unverified against a live key and are marked in the code:
+`fields: ['legs']` returning `localizedValues`, whether `'viewport'` is a legal field-mask
+string, and the rejection shape of `computeRoutes`. All three have fallbacks, so the map works
+either way — but the per-leg "12.4 mi · 24 min" text is the one to eyeball first when the
+setting is switched on.
+
 ## Production notes found while building
 
 - **The Directions API is not enabled on the Maps key.** Live console on PRJ-00567:

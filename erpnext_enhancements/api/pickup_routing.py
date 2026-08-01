@@ -236,6 +236,25 @@ def _maps_api_key():
 		return ""
 
 
+def _use_routes_api():
+	"""Whether the client should try ``routes.Route.computeRoutes`` before DirectionsService.
+
+	Off by default, and deliberately a *setting* rather than a constant. Routes needs
+	"Routes API" enabled on the Cloud project and added to the key's restriction list --
+	a console change that no deploy or rollback can make. This app auto-deploys from
+	``main``, so a code-only switch would take the map down for every driver in the window
+	between merge and somebody remembering to flip it in Google.
+
+	It is also the kill switch for the failure the automatic fallback cannot catch: a Routes
+	call that *succeeds* with output we read wrongly (see the field-name traps in
+	pick_routing_map.js). A fallback only helps when the call fails.
+	"""
+	try:
+		return 1 if frappe.db.get_single_value("Travel Settings", "use_routes_api") else 0
+	except Exception:
+		return 0
+
+
 def _depot_address():
 	"""The address a pick-up run starts from (the shop), from Settings."""
 	try:
@@ -454,6 +473,7 @@ def get_pickup_route_data(project, scope=SCOPE_OUTSTANDING):
 
 	return {
 		"api_key": _maps_api_key(),
+		"use_routes_api": _use_routes_api(),
 		"scope": scope,
 		"project": {
 			"name": project_doc.name,
