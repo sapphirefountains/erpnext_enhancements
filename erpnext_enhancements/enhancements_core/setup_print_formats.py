@@ -22,6 +22,11 @@ Design decisions, all confirmed rather than assumed:
   site (WI-014), and a supplier delivering to a job site rather than the shop needs it.
 - **No item images.** They make a multi-page order much heavier for little gain on
   fittings that are identified by part number.
+- **The letter head is rendered explicitly**, at the top of the body. A `custom_format`
+  template supplies the whole document, so Frappe never injects one — it only builds the
+  `#header-html` block for *standard* formats. `letter_head` is handed to the template in
+  the render args and dropped if unused, which is how this format spent its first month
+  going to suppliers unbranded.
 - **Print-safe CSS only**: no flexbox, no grid, `page-break-inside: avoid` on rows, and a
   `thead` that repeats across pages. The PDF engine on this host has been unreliable
   enough (see docs/pdf-generation.md) without asking it to do anything clever.
@@ -38,6 +43,21 @@ PURCHASE_ORDER_FORMAT = "Purchase Order - Sapphire"
 
 _HTML = """
 <div style="font-family:'Helvetica Neue',Arial,sans-serif; color:#222; font-size:12px;">
+
+  {#- A custom Jinja format has to render the letterhead itself. Frappe injects it only for
+      *standard* formats, via the `#header-html` block that `repeat_header_footer` produces;
+      a format with `custom_format = 1` supplies the whole body, so `letter_head` is offered
+      to the template and simply dropped if nothing asks for it. That is why this order went
+      to suppliers unbranded for its first month while every stock format carried the logo.
+      Verified on production: the rendered HTML contains no `#header-html` div at all, and
+      the PDF was byte-identical with and without a letter head attached to the document.
+
+      Page one only, and deliberately. The identifier a counter clerk needs on every sheet is
+      the PO number, which is in the bar below and repeats through the table header. A logo
+      on each page would cost ~52 KB per page for no working benefit. -#}
+  {%- if letter_head %}
+  <div style="margin-bottom:10px;">{{ letter_head }}</div>
+  {%- endif %}
 
   <div style="display:table; width:100%; border-bottom:2px solid #333; padding-bottom:6px; margin-bottom:12px;">
     <div style="display:table-cell; vertical-align:bottom;">
