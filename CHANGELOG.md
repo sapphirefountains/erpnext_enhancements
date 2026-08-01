@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.204.1] - 2026-08-01
+
+### Fixed
+
+- **The Routes engine could crash the map with a stack trace three frames from its cause.**
+  With "Use Routes API" on, production threw:
+
+  ```
+  TypeError: Cannot read properties of undefined (reading 'key')
+      at PickRoutingMap.placeMarkers
+      at PickRoutingMap.drawRoute
+  ```
+
+  `drawRoute` trusted `optimizedIntermediateWaypointIndices` to be a complete, in-range
+  permutation of the stops submitted. When it was not, `stops[originalIdx]` came back
+  `undefined` and the failure only surfaced later, inside the marker loop, reading `.key`
+  off nothing. `safeRoute()` caught it and degraded, so the map stayed usable — but the
+  reported error named the wrong function.
+
+  The order is now validated rather than trusted: every index must be a whole number inside
+  `stops`, with no duplicates, and the array must cover every stop exactly once. An
+  over-long array is rejected too, because something like `[0,1,2]` for two stops filters
+  down to a plausible-looking `[0,1]`, and accepting that would mean quietly reinterpreting
+  a response whose convention we evidently do not understand.
+
+  **The dangerous case here was never the crash.** An order that is merely *incomplete*
+  would have dropped a supplier from a driver's run while still looking like a valid
+  optimised route. That is why an unusable order now degrades to purchase-order sequence
+  with an honest message instead of being patched up.
+
+  The mismatch is logged with both the raw value and the stop count, so a recurrence names
+  itself instead of needing another round of production archaeology.
+
+- **Localized distance/duration strings are type-checked.** Observed on a live key,
+  `leg.localizedValues` logs as an obfuscated object, so `.distance` returning a string is
+  not safe to assume. A non-string would have passed the `||` fallback in `drawRoute` and
+  printed `[object Object]` as a distance on a driver's pick sheet. Only real strings are
+  used now; anything else falls back to formatting `distanceMeters` client-side.
+
+### Notes
+
+Three of the unknowns shipped in 1.204.0 were settled against a live key and need no further
+work: `optimizedIntermediateWaypointIndices` returns a genuine `Array` with the documented
+zero-based semantics (`[1, 0]` for a two-stop run), `'viewport'` **is** a legal field-mask
+string and comes back as a real `LatLngBounds`, and `leg.startLocation.lat` **is** a number
+property rather than a method. Note `route.legs` has one more entry than there are stops
+(origin→A, A→B, B→finish), which is the same convention the legacy engine used.
+
 ## [1.204.0] - 2026-08-01
 
 ### Added
