@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.202.3] - 2026-08-01
+
+### Fixed
+
+- **The Pick Routing Map never drew a map, and said nothing about it.** The map pane was
+  blank on every open; no route, no console error, and no notice.
+
+  `buildMap()` needs a sized container, because a Google map initialised in a 0x0 box
+  renders blank. It waited for dimensions by re-scheduling itself on
+  `requestAnimationFrame` while the modal animated in. That chain could stop, and when it
+  did the method returned before ever calling `ensureGoogleMaps()` — so the feature died
+  *upstream of every error path it has*. All three degradation messages, carefully written
+  to explain each failure, live past that early return.
+
+  Verified on production: `document.querySelectorAll('script[src*=maps.googleapis]')` was
+  empty and `window.__eeGoogleMapsPickupReady` undefined, proving the loader was never
+  invoked, while the container measured 850x601 by the time anyone looked. Changing any
+  control re-rendered against a sized container and the map appeared immediately.
+
+  Replaced with a `ResizeObserver` on the container, a slow interval as a backstop (a
+  `ResizeObserver` does not fire under a `display:none` ancestor on every engine), and a
+  hard 8-second deadline that **shows a message** instead of failing silently. `buildMap()`
+  is now also called from Bootstrap's `shown.bs.modal` — the event that exists for precisely
+  this — so it no longer has to win a race against the show animation. It is idempotent
+  behind the `mapBuilt` latch, so both entry points are safe.
+
+- **The printed pick sheet could not distinguish "Google refused" from "routing never
+  started".** It printed the same sentence — *"Stops are in purchase-order sequence, not
+  drive-time order"* — for every unoptimised case. That ambiguity sent a real diagnosis at
+  the Google Directions API and its Cloud Console key restrictions for hours, while the
+  actual fault was the 0x0 container above and no request was ever made. The sheet now
+  appends the specific reason from `this.notice`, which already held it.
+
+  Worth stating plainly: a status line that cannot tell "it failed" from "it never ran" is
+  worse than no status line, because it points confidently at the wrong system.
+
 ## [1.202.2] - 2026-07-31
 
 ### Fixed
