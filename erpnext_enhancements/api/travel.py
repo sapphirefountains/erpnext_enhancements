@@ -277,10 +277,18 @@ def shape_itinerary(doc, viewing_employee=None):
 			poi = frappe.db.get_value(
 				"Travel POI",
 				poi_name,
-				["poi_name", "category", "geolocation"],
+				["poi_name", "category", "geolocation", "address"],
 				as_dict=True,
 			)
 			latlng = _poi_latlng(poi.geolocation) if poi else None
+			# Second rung, and here it is the only one: the /itinerary map is
+			# Leaflet with no geocoder, so before v1.206.0 a POI without its own
+			# Geolocation simply could not be plotted. A linked Address that was
+			# picked from the autocomplete now places it.
+			if poi and not latlng:
+				_, addr_lat, addr_lng = _poi_address_location(poi.address)
+				if addr_lat is not None:
+					latlng = (addr_lat, addr_lng)
 			poi_cache[poi_name] = (
 				{
 					"name": poi_name,
@@ -345,18 +353,31 @@ def get_maps_api_key():
 	return _maps_api_key()
 
 
-def _poi_address_string(address_name):
-	"""A geocodable one-line string for a linked Address, or None."""
+def _poi_address_location(address_name):
+	"""``(text, lat, lng)`` for a linked Address. Any part may be None.
+
+	``lat``/``lng`` are the point the Places autocomplete stored when the address
+	was picked (v1.205.0) -- exact, and free, where geocoding the text is neither.
+	Most Addresses predate that and return ``(text, None, None)``.
+
+	**0.0 means absent.** Float custom fields are ``NOT NULL DEFAULT 0``, so the
+	whole pre-v1.205.0 table reads back as 0.0, and a hand edit blanks the pair to
+	a literal 0. Testing ``is not None`` would put every legacy POI on Null Island.
+	"""
 	if not address_name:
-		return None
-	addr = frappe.db.get_value(
-		"Address",
-		address_name,
-		["address_line1", "address_line2", "city", "state", "pincode", "country"],
-		as_dict=True,
-	)
+		return None, None, None
+
+	fields = ["address_line1", "address_line2", "city", "state", "pincode", "country"]
+	# The columns arrive with `bench migrate`, and main auto-deploys -- selecting
+	# one that does not exist yet is a SQL error, not a None (cf. api/comments.py).
+	has_point = frappe.db.has_column("Address", "custom_latitude")
+	if has_point:
+		fields += ["custom_latitude", "custom_longitude"]
+
+	addr = frappe.db.get_value("Address", address_name, fields, as_dict=True)
 	if not addr:
-		return None
+		return None, None, None
+
 	parts = [p for p in (
 		addr.address_line1,
 		addr.address_line2,
@@ -365,15 +386,33 @@ def _poi_address_string(address_name):
 		addr.pincode,
 		addr.country,
 	) if p]
-	return ", ".join(parts) if parts else None
+	text = ", ".join(parts) if parts else None
+
+	lat = lng = None
+	if has_point:
+		lat = flt(addr.custom_latitude) or None
+		lng = flt(addr.custom_longitude) or None
+		if lat is None or lng is None:
+			lat = lng = None  # never emit half a point
+		elif not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
+			lat = lng = None
+
+	return text, lat, lng
 
 
 def _trip_pois(doc):
 	"""POIs referenced by a trip's agenda, one entry per POI with the agenda
-	dates that visit it. Each entry carries *either* coordinates (from the POI's
-	Geolocation) *or* — when no point is set — a geocodable ``address`` string
-	(from the linked Address) so the client can place it from the address. POIs
-	with neither are skipped (nothing to plot). Shared by ``get_trip_map_data``."""
+	dates that visit it.
+
+	Each entry's point is resolved down three rungs: the POI's own Geolocation,
+	then the linked Address's stored autocomplete point (v1.205.0), then nothing
+	-- in which case the ``address`` text is sent and the client geocodes it.
+	POIs with no point and no text are skipped (nothing to plot).
+
+	The middle rung is the cheap one: it costs a column read instead of a
+	billable geocode, and it places the pin on the building somebody actually
+	picked. ``address`` is populated whenever it is known, point or not, so the
+	popup's deep links keep working. Shared by ``get_trip_map_data``."""
 	pois = {}
 	for row in doc.itinerary:
 		if not row.location:
@@ -389,7 +428,9 @@ def _trip_pois(doc):
 			if not poi:
 				continue
 			latlng = _poi_latlng(poi.geolocation)
-			address = None if latlng else _poi_address_string(poi.address)
+			address, addr_lat, addr_lng = _poi_address_location(poi.address)
+			if not latlng and addr_lat is not None:
+				latlng = (addr_lat, addr_lng)
 			if not latlng and not address:
 				continue
 			entry = pois[row.location] = {

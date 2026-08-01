@@ -16,7 +16,11 @@ route:
   * "still to collect" being ``per_received < 100`` and not the ``status`` label,
     because ``Closed`` hides POs whose goods never arrived;
   * stops keyed on supplier *and* address, so a two-branch vendor is two stops;
-  * money never summed across currencies.
+  * money never summed across currencies;
+  * the stored autocomplete point being accepted only when it is real — 0/0 is
+    the cleared state rather than Null Island, half a pair is not a point, and a
+    lat/lng written the wrong way round would route a driver to the wrong
+    hemisphere while looking perfectly valid.
 
 Run: python -m unittest erpnext_enhancements.tests.test_pickup_routing
 """
@@ -52,6 +56,10 @@ def _reset_state():
 			"singles": {},
 			"project": {},
 			"permission_checks": [],
+			# Columns the site does not have yet. Lets a test reproduce the
+			# window where a code deploy has landed but `bench migrate` has not
+			# created the v1.205.0 Address point fixtures.
+			"missing_columns": (),
 		}
 	)
 
@@ -119,6 +127,10 @@ def _db_get_single_value(doctype, fieldname):
 	return STATE["singles"].get((doctype, fieldname))
 
 
+def _db_has_column(doctype, column):
+	return column not in STATE.get("missing_columns", ())
+
+
 class _FakeProject:
 	def __init__(self, data):
 		self._data = dict(data)
@@ -161,6 +173,7 @@ def _install_frappe_stub():
 	frappe.db = types.SimpleNamespace(
 		get_value=_db_get_value,
 		get_single_value=_db_get_single_value,
+		has_column=_db_has_column,
 	)
 
 	utils = types.ModuleType("frappe.utils")
@@ -226,6 +239,12 @@ def make_address(name, **overrides):
 		"country": "United States",
 		"phone": None,
 		"custom_full_address": None,
+		# DB-shaped defaults: these Float custom fields are NOT NULL DEFAULT 0,
+		# so an Address that never went through the Places autocomplete reads
+		# back as 0.0 — not None. Getting this wrong here would make every
+		# coordinate test pass while exercising only the fallback path.
+		"custom_latitude": 0.0,
+		"custom_longitude": 0.0,
 		"address_type": "Billing",
 		"is_primary_address": 0,
 		"disabled": 0,
@@ -280,6 +299,56 @@ class TestAddressLine(PickupRoutingTest):
 				)
 			)
 		)
+
+
+class TestAddressCoords(PickupRoutingTest):
+	"""The stored autocomplete point, and every way it can be absent.
+
+	The stakes are asymmetric: a missing point costs one geocode, but a *wrongly
+	accepted* one silently routes a driver to the wrong place, and 0/0 is a real
+	coordinate Google will happily accept.
+	"""
+
+	def test_returns_the_picked_pair(self):
+		addr = make_address("A", custom_latitude=40.889402, custom_longitude=-111.880771)
+		self.assertEqual(pickup_routing._address_coords(addr), (40.889402, -111.880771))
+
+	def test_unset_reads_as_zero_not_none(self):
+		# Float custom fields are NOT NULL DEFAULT 0, so every Address predating
+		# v1.205.0 arrives as 0.0. `is not None` would be true for all of them
+		# and put the whole run in the Gulf of Guinea.
+		self.assertIsNone(pickup_routing._address_coords(make_address("A")))
+
+	def test_zero_zero_is_not_a_coordinate(self):
+		addr = make_address("A", custom_latitude=0.0, custom_longitude=0.0)
+		self.assertIsNone(pickup_routing._address_coords(addr))
+
+	def test_half_a_point_is_refused(self):
+		lat_only = make_address("A", custom_latitude=40.889402, custom_longitude=0.0)
+		lng_only = make_address("B", custom_latitude=0.0, custom_longitude=-111.880771)
+		self.assertIsNone(pickup_routing._address_coords(lat_only))
+		self.assertIsNone(pickup_routing._address_coords(lng_only))
+
+	def test_out_of_range_is_refused(self):
+		self.assertIsNone(
+			pickup_routing._address_coords(
+				make_address("A", custom_latitude=91.0, custom_longitude=-111.880771)
+			)
+		)
+		self.assertIsNone(
+			pickup_routing._address_coords(
+				make_address("B", custom_latitude=40.889402, custom_longitude=181.0)
+			)
+		)
+
+	def test_swapped_pair_is_refused(self):
+		# The realistic corruption: lat/lng written the wrong way round is a
+		# valid-looking pair, and a Utah longitude is not a valid latitude.
+		addr = make_address("A", custom_latitude=-111.880771, custom_longitude=40.889402)
+		self.assertIsNone(pickup_routing._address_coords(addr))
+
+	def test_no_address_is_none(self):
+		self.assertIsNone(pickup_routing._address_coords(None))
 
 
 class TestResolvePickupAddress(PickupRoutingTest):
@@ -455,6 +524,50 @@ class TestBuildStops(PickupRoutingTest):
 		self.assertEqual(stops[0]["item_count"], 2)
 		self.assertEqual(stops[0]["total_qty"], 5.0)
 		self.assertEqual(stops[0]["amount"], 1250.0)
+		self.assertEqual(stops[0]["address"], "10 North St, Salt Lake City, UT, 84104, United States")
+
+	def test_stop_carries_the_stored_point(self):
+		STATE["Address"] = [
+			make_address(
+				"North",
+				address_line1="10 North St",
+				custom_latitude=40.889402,
+				custom_longitude=-111.880771,
+			)
+		]
+		stops = pickup_routing._build_stops([make_po("PO-1", supplier_address="North")], {}, {})
+		self.assertEqual(stops[0]["latitude"], 40.889402)
+		self.assertEqual(stops[0]["longitude"], -111.880771)
+		# The text always rides along: it is what the stop list, the printed pick
+		# sheet and every Maps deep link render.
+		self.assertEqual(stops[0]["address"], "10 North St, Salt Lake City, UT, 84104, United States")
+
+	def test_stop_without_a_point_still_carries_its_address(self):
+		# The no-regression case, and the majority of real data: an Address that
+		# predates the autocomplete must be exactly as routable as before.
+		stops = pickup_routing._build_stops([make_po("PO-1", supplier_address="North")], {}, {})
+		self.assertIsNone(stops[0]["latitude"])
+		self.assertIsNone(stops[0]["longitude"])
+		self.assertEqual(stops[0]["address"], "10 North St, Salt Lake City, UT, 84104, United States")
+
+	def test_missing_columns_degrade_to_address_only(self):
+		# main auto-deploys, so this code can be live before `bench migrate` has
+		# created the fixtures. Selecting a column that does not exist is a SQL
+		# error, not a None — so the field list has to shrink, and the stop has
+		# to stay routable on its text.
+		STATE["missing_columns"] = ("custom_latitude", "custom_longitude")
+		STATE["Address"] = [
+			make_address(
+				"North",
+				address_line1="10 North St",
+				custom_latitude=40.889402,
+				custom_longitude=-111.880771,
+			)
+		]
+		cache = {}
+		self.assertNotIn("custom_latitude", pickup_routing._address_field_list(cache))
+		stops = pickup_routing._build_stops([make_po("PO-1", supplier_address="North")], {}, cache)
+		self.assertIsNone(stops[0]["latitude"])
 		self.assertEqual(stops[0]["address"], "10 North St, Salt Lake City, UT, 84104, United States")
 
 	def test_two_branches_of_one_supplier_are_two_stops(self):
