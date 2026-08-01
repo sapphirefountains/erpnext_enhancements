@@ -380,11 +380,59 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 			];
 		}
 
+		render_dialog() {
+			super.render_dialog();
+			this.ee_attach_address_autocomplete();
+		}
+
+		/** Google Places on the dialog's address_line1, same widget the full
+		 *  Address form uses. It has to be wired here rather than by a form
+		 *  script because this is a frappe.ui.Dialog — `frappe.ui.form.on`
+		 *  never fires for it — and with ee_contacts_ux on, this dialog is
+		 *  where list+New, the awesomebar and link-field creates all land. */
+		ee_attach_address_autocomplete() {
+			const places =
+				window.erpnext_enhancements && erpnext_enhancements.address_autocomplete;
+			const field = this.dialog && this.dialog.fields_dict.address_line1;
+			if (!places || !field || !field.$input) return;
+
+			const control = places.attach(field.$input.get(0), {
+				get_country: () => this.dialog.get_value("country"),
+				on_pick: (values, meta) => {
+					this.dialog.set_values(values);
+					// The dialog shows no field for these, so they ride on the doc
+					// itself — update_doc() copies dialog values over the same
+					// object and leaves keys it does not know about alone.
+					this.doc.custom_google_place_id = meta.place_id || "";
+					this.doc.custom_latitude = meta.latitude || 0;
+					this.doc.custom_longitude = meta.longitude || 0;
+					// What the pick actually claims, so a later hand edit can be
+					// detected on save (see ee_finalize_doc).
+					this.ee_picked_line1 = values.address_line1 || "";
+				},
+			});
+			if (!control) return;
+
+			// The listbox lives on document.body, so it outlives the dialog's own
+			// DOM unless it is torn down with it.
+			this.dialog.$wrapper.on("hidden.bs.modal", () => control.destroy());
+		}
+
 		ee_finalize_doc(doc) {
 			// Zero-context safety: Address.autoname throws "Address Title is
 			// mandatory." when there is no title and no link to fall back on.
 			if (!doc.address_title && !(doc.links || []).length) {
 				doc.address_title = doc.address_line1;
+			}
+
+			// The dialog has no visible place fields to watch for edits, so the
+			// check happens once, here: if line 1 no longer reads what the pick
+			// filled in, the coordinates belong to a different building and must
+			// not be saved alongside it.
+			if (doc.custom_google_place_id && doc.address_line1 !== this.ee_picked_line1) {
+				doc.custom_google_place_id = "";
+				doc.custom_latitude = 0;
+				doc.custom_longitude = 0;
 			}
 		}
 	};

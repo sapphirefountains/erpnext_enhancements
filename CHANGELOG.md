@@ -7,6 +7,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.205.0] - 2026-08-01
+
+### Added
+
+- **Addresses autocomplete as you type.** Start typing in **Address line 1** and Google
+  suggests real addresses; pick one and line 1, line 2, city, state, ZIP and country fill
+  themselves in. It works on the full Address form *and* in the Address quick-entry dialog.
+
+  **Both surfaces, because one of them is where the work actually happens.** With
+  `ee_contacts_ux` on, "New Address" from a list, the awesomebar, a link field's *Create a
+  new…*, or a party form's Contacts & Addresses section all open a quick-entry **dialog**,
+  not the form. That dialog is a `frappe.ui.Dialog`, so `frappe.ui.form.on("Address")` never
+  fires for it — a form-only implementation would have covered the minority of real address
+  entry and been reported as "the autocomplete is intermittent". So the widget is a global
+  (`erpnext_enhancements.address_autocomplete.attach`) that both surfaces call, which is
+  also why it is in `erpnext_enhancements.bundle.js` rather than `doctype_js["Address"]`:
+  the dialog opens from any doctype.
+
+  **Why a hand-rolled combobox and not Google's own widget.** There is no supported way to
+  attach Google's UI to a field Frappe built. `places.Autocomplete` — the widget that used
+  to bind itself to an `<input>` — is closed to new customers, and its replacement
+  `PlaceAutocompleteElement` is a sealed custom element that renders its own input and
+  cannot wrap an existing one. What is left is the Autocomplete **Data** API
+  (`AutocompleteSuggestion`), which returns predictions and leaves the UI to the caller. So
+  this renders its own WAI-ARIA listbox — arrow keys, Enter, Escape, `aria-activedescendant`
+  — and carries the "Powered by Google" mark the data API's policy requires whenever
+  predictions are shown off a map. The public fountain-move form already went through this
+  reasoning; this is that implementation, ported to the desk and corrected in four places
+  (below).
+
+  **This needs a Google console change that no deploy can make.** The key is the shared desk
+  browser key, `Travel Settings.google_maps_api_key`, and it now needs **Places API (New)**
+  enabled on it — the *legacy* "Places API" is a different Cloud service and does not
+  authorise these calls. A key with Maps JavaScript but without Places (New) is the nasty
+  case: the bootstrap loads, `importLibrary("places")` resolves, `AutocompleteSuggestion`
+  exists, and then **every** request 403s. There is no init-time signal to check, so the
+  widget counts consecutive failures and after three unbinds itself and hands the field back
+  as plain text. The field description in Travel Settings now lists every API the desk maps
+  features need, since that is where an admin actually looks.
+
+  **Four corrections to the ported implementation**, each of which would have been a real
+  bug here:
+
+  | Ported as | Changed to | Because |
+  |---|---|---|
+  | No `language` on the request | `language: "en"` | Component text follows the *browser* locale otherwise. A desk in `es-MX` would return `Estados Unidos`, and country is a Link to Country. |
+  | Country never read | Country resolved via `shortText` → `Country.code` | `longText` is localised; the ISO code is not. Looking the Country up by code is exact, and if there is no match the field is simply left alone rather than filled with a value that fails validation on save. |
+  | `includedRegionCodes: ["us"]` hardcoded | Derived from the record's own `country` | The public form is US-only; the Address doctype is not. Non-US addresses would have returned nothing at all. |
+  | New session token minted in `.then()` | Minted in `.finally()` | A *failed* details call left the spent token in place, and Google bills a reused token as if none had been sent. |
+
+  Also: `state` now falls back to the long name when Google has no two-letter form, which
+  outside the US is most of the time — writing "Nordrhein-Westfalen" beats writing nothing.
+  And the street line follows the *local* order rather than always leading with the number:
+  half the world writes "Hauptstrasse 12". The order is read back off the place's own
+  formatted address instead of a hardcoded list of countries, falling back to number-first
+  whenever it cannot be determined — which includes the common US case where the formatted
+  line abbreviates the route ("Pkwy" for "Parkway") and so cannot be matched against it.
+
+  **A pick replaces the address; it does not merge into it.** The public form fills empty
+  fields, so "only overwrite what Google actually knows" was safe there. On a saved Address
+  it is not. Correct an existing record from "100 First St, Suite 5, Phoenix AZ 85004" to a
+  place with no `subpremise`, and the old rule leaves "Suite 5" behind — the record now
+  reads as a real, deliverable address carrying the unit number of a different building.
+  So line 2, city, state and ZIP are written even when empty. Two deliberate exceptions:
+  line 1 is never blanked (picking a locality or a POI returns no street at all, and the
+  field is mandatory), and country is only ever written when the code lookup resolves,
+  rather than emptying a mandatory Link.
+
+  **Escape closes the list, and nothing else.** Left to bubble, it reaches bootstrap's modal
+  handler and frappe's window-level `handle_escape_key` → `cur_dialog.cancel()` — so
+  dismissing a suggestion list in the quick-entry dialog would have discarded every field
+  already typed, with no confirmation. Frappe stops Escape for its own dropdowns, but only
+  for controls wrapped in `.awesomplete`, and a Data field is not one. Tab keeps its default
+  and still moves to the next field.
+
+  **One pick, one map redraw.** The Address form already rebuilds its Google Maps embed
+  whenever any component field changes. Filling five fields fires that five times, so the
+  join is suspended while the pick is applied and run once at the end. The fields go in as a
+  single `frm.set_value({...})` object call, which also skips fields that do not exist
+  instead of throwing.
+
+  **Bind-once, reset-per-document.** There is one `Form` object — and one `<input>` — per
+  doctype for an entire page load; routing to another Address just refreshes it. Binding on
+  each `refresh` would stack listeners on the same node, so the widget attaches once per
+  input (compared by *node*, not a boolean — a layout rebuild would replace the input while
+  leaving a flag looking satisfied) and each refresh only resets the search session, minting
+  a fresh token so one document's typing is not billed against the next one's.
+
+  The listbox is appended to `<body>` and positioned `fixed` at `z-index: 1100`: the dialog
+  scrolls its own body and stacks at 1050, and the desk's own Awesomplete listbox sits at 4
+  — under both the sticky form tab bar (5) and the page head (6).
+
+  Degrades to a plain text field on every failure path — no key configured, blocked script,
+  wrong API tier — and says so with `console.warn`. Deliberately never silent: a swallowed
+  `TypeError` in this exact code once looked identical to "no key configured" for days
+  (v1.160.2).
+
+  **The picked place is recorded, not just its text.** Three new read-only Custom Fields on
+  Address — **Google Place ID**, **Latitude**, **Longitude** — filled from the same Place
+  Details call the address text comes from, so they cost nothing extra. Coordinates remove a
+  billable, approximate geocode for every map that would otherwise look the address up from
+  its text again (the trip map, the POI pins, the Pick Routing Map all do this today), and
+  the place ID is the one field Google explicitly exempts from its no-caching rule — it can
+  be stored indefinitely and survives the address text being reformatted.
+
+  They are **cleared the moment the address is edited by hand.** Coordinates still pointing
+  at the previously picked building, while the visible address says somewhere else, is worse
+  than storing nothing: anything downstream that trusts the coordinates over the text routes
+  to the wrong place, and nothing on screen looks wrong. On the form that is a handler on
+  every component field; in the quick-entry dialog, which shows no place fields to watch,
+  the check happens once on save by comparing line 1 against what the pick actually filled
+  in.
+
+  New bench-free node test, `scripts/test_address_components.js`, covers the Google →
+  Frappe component mapping (the `locality` → `postal_town` → `sublocality` city ladder, the
+  short-vs-long state rule, the bare ZIP that must not become ZIP+4). It exercises the
+  UK/Nordic and no-short-form branches, which a US-only production site never can.
+
+### Notes
+
+- **The three new fields are added to the pinned Address `field_order` Property Setter**, not
+  just to `custom_field.json`. That layout is customised, so `insert_after` alone would not
+  have put them on the form.
+- **The widget itself stores nothing.** It hands `{place_id, formatted_address, latitude,
+  longitude}` to whoever attached it and lets them decide; the Address-specific field names
+  live in the two callers. That is what keeps it attachable to a second doctype later.
+- **The attribution image is still the `maps.gstatic.com` hotlink** the public form uses,
+  with the same `onerror` fallback to plain text. It is an undocumented legacy Maps v3
+  asset; current Google guidance points at a downloadable logo pack instead. Kept identical
+  to the portal so there is one attribution mechanism rather than two, and the text fallback
+  keeps the policy satisfied if it ever disappears.
+- Frappe v16 ships its own `AddressAutocompleteDialog` (Geoapify/HERE/Nominatim), gated on
+  **Geolocation Settings**. It is a separate search-then-create dialog and does not touch
+  `address_line1`. If that setting is ever switched on, two autocomplete UIs will coexist.
+
 ## [1.204.2] - 2026-08-01
 
 ### Fixed

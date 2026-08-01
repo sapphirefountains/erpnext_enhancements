@@ -1,0 +1,54 @@
+/*
+ * Address autocomplete listbox (public/js/global_enhancements/address_autocomplete.js).
+ *
+ * The box is appended to <body> and positioned with position:fixed from the
+ * input's bounding rect, so it needs a z-index above the quick-entry modal
+ * (1050) — the desk's own Awesomplete listbox sits at 4 and slides under both
+ * the sticky form tab bar (5) and the page head (6).
+ *
+ * Desk theme variables only: this renders inside the desk, in light and dark.
+ */
+.ee-address-suggest {
+	position: fixed;
+	z-index: 1100;
+	max-height: 320px;
+	overflow-y: auto;
+	padding: 4px 0;
+	background-color: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius-md);
+	box-shadow: var(--shadow-lg);
+}
+
+.ee-address-suggest[hidden] {
+	display: none;
+}
+
+.ee-address-suggest-option {
+	padding: 6px 12px;
+	font-size: var(--text-md);
+	color: var(--text-color);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ee-address-suggest-option[aria-selected="true"] {
+	background-color: var(--fg-hover-color);
+}
+
+.ee-address-suggest-footer {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	padding: 6px 12px 2px;
+	margin-top: 4px;
+	border-top: 1px solid var(--border-color);
+	font-size: var(--text-xs);
+	color: var(--text-muted);
+}
+
+.ee-address-suggest-footer img {
+	height: 16px;
+}
