@@ -213,7 +213,8 @@ Verified against a live key on 2026-08-01, so these no longer need checking:
 
 | Question | Answer |
 |---|---|
-| `optimizedIntermediateWaypointIndices` semantics | a real `Array`, zero-based, documented semantics — `[1, 0]` for a two-stop run |
+| `optimizedIntermediateWaypointIndices` semantics | a real `Array`, zero-based — `[1, 0]` for a two-stop run |
+| …for a run with nothing to optimise | **`[-1]`** — a sentinel meaning "not reordered", not an error. A one-stop run returns this, and it is treated as submission order |
 | Is `'viewport'` a legal field-mask string? | **yes**, and it returns a real `LatLngBounds` |
 | `leg.startLocation.lat` — property or method? | **property** (a number) |
 | `route.legs` length | **one more than the stop count** (origin→A, A→B, B→finish) — same as the legacy engine |

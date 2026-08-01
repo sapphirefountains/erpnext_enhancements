@@ -466,6 +466,7 @@
 			);
 			// Optimised order, once Directions has answered: [{stop, leg}].
 			this.ordered = null;
+			this.orderIsOptimised = false;
 			// Which stops have their line list open. Held on the controller, not
 			// in the DOM: renderList() rebuilds every row from scratch on each
 			// tick, re-route and reorder, so anything read off the old nodes is
@@ -845,6 +846,7 @@
 		reload(scope) {
 			this.scope = scope;
 			this.ordered = null;
+			this.orderIsOptimised = false;
 			this.notice = null;
 			this.generation++;
 			const generation = this.generation;
@@ -872,6 +874,7 @@
 		/** Re-run the optimiser after the stop set or the finish point changed. */
 		recompute() {
 			this.ordered = null;
+			this.orderIsOptimised = false;
 			this.generation++;
 			// Repaint before asking Google, not after: a Directions round trip is
 			// hundreds of milliseconds and there is no freeze on it, so without
@@ -1096,11 +1099,16 @@
 			// was `route.waypoint_order`. Note the PLURAL "Indices" -- the REST API uses
 			// the singular, so anything copied from REST docs is silently wrong. Same
 			// zero-based semantics, so the index arithmetic below is unchanged.
-			// Documented to be empty (not absent) when optimisation is off.
+			//
+			// -1 means "not reordered", and it is a normal answer rather than a fault.
+			// Observed on a live key: a one-stop run returns [-1], because there is
+			// nothing to optimise. Treating that as corruption threw away a perfectly good
+			// route and degraded the map to geocoded pins. The docs' "empty when
+			// optimisation is off" does not cover this; the sentinel does.
 			const optimized = route.optimizedIntermediateWaypointIndices;
-			const orderedIndexes = optimized && optimized.length
-				? Array.prototype.slice.call(optimized)
-				: stops.map((_s, i) => i);
+			const rawOrder = Array.isArray(optimized) ? Array.prototype.slice.call(optimized) : [];
+			const notReordered = !rawOrder.length || rawOrder.every((i) => i === -1);
+			const orderedIndexes = notReordered ? stops.map((_s, i) => i) : rawOrder;
 
 			// Only accept the localized strings if they really are strings. Observed on a
 			// live key, `leg.localizedValues` logs as an obfuscated object, so `.distance`
@@ -1124,6 +1132,10 @@
 			const path = (route.path || []).map(toLiteral).filter(Boolean);
 			return {
 				engine: 'routes',
+				// False when Google returned the -1 sentinel: the stops are in the order we
+				// submitted, which is purchase-order sequence, not drive-time order. The
+				// route still draws -- it just must not be described as optimised.
+				optimised: !notReordered,
 				orderedIndexes: orderedIndexes,
 				legs: legs,
 				viewport: route.viewport || null,
@@ -1176,6 +1188,7 @@
 						}));
 						resolve({
 							engine: 'directions',
+							optimised: !!(route.waypoint_order && route.waypoint_order.length),
 							orderedIndexes: route.waypoint_order || stops.map((_s, i) => i),
 							legs: legs,
 							viewport: null,
@@ -1209,6 +1222,7 @@
 			if (!stops.length) {
 				this.clearRouteLine();
 				this.ordered = null;
+				this.orderIsOptimised = false;
 				this.notice = null;
 				this.setSummary('');
 				this.renderList();
@@ -1335,6 +1349,11 @@
 				);
 				return;
 			}
+
+			// A single stop has exactly one possible order, so "not reordered" there is not
+			// a caveat worth printing. With more than one it is: the run is in the order
+			// the POs were raised, and the sheet must say so.
+			this.orderIsOptimised = result.optimised !== false || order.length <= 1;
 
 			this.ordered = order.map((originalIdx, position) => {
 				const leg = legs[position];
@@ -1464,6 +1483,7 @@
 		degrade(message, stops) {
 			this.notice = message;
 			this.ordered = null;
+			this.orderIsOptimised = false;
 			this.setSummary('');
 			this.renderList();
 			this.updatePrimaryAction();
@@ -1613,7 +1633,11 @@
 			// indistinguishable on paper — and that ambiguity sent a real diagnosis at the
 			// Directions API for hours while the actual fault was a 0x0 map container.
 			// `this.notice` already holds the specific reason; carry it through.
-			const orderNote = this.ordered
+			// Three states, not two. "We have an order" is not the same as "the order is
+			// optimised": Google returns a -1 sentinel when it did not reorder, and a run
+			// drawn from that is in purchase-order sequence even though the map looks
+			// exactly like an optimised one.
+			const orderNote = this.ordered && this.orderIsOptimised
 				? __('Stops are in drive-time order.')
 				: __('Stops are in purchase-order sequence, not drive-time order.') +
 					(this.notice ? ' ' + this.notice : '');
