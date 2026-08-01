@@ -20,7 +20,8 @@
   "mileage_rate_section",
   "mileage_rate",
   "maps_section",
-  "google_maps_api_key"
+  "google_maps_api_key",
+  "use_routes_api"
  ],
  "fields": [
   {
@@ -119,6 +120,13 @@
    "fieldname": "google_maps_api_key",
    "fieldtype": "Data",
    "label": "Google Maps API Key"
+  },
+  {
+   "default": "0",
+   "description": "Use the newer Routes API (routes.Route.computeRoutes) for the Pick Routing Map instead of the deprecated DirectionsService. Requires \"Routes API\" enabled on the Cloud project AND added to this key's API restriction list -- that is a console change outside any deploy, so leave this off until it is done. When on, the map still falls back to DirectionsService automatically if a Routes call fails. Turn it off to stop using Routes immediately, without a deploy.",
+   "fieldname": "use_routes_api",
+   "fieldtype": "Check",
+   "label": "Use Routes API (beta)"
   }
  ],
  "issingle": 1,

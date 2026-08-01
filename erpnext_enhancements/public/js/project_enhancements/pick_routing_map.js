@@ -39,6 +39,12 @@
 
 	// Google caps a Directions request at 25 waypoints total (origin +
 	// destination + 23 intermediate stops).
+	// Deliberately still 23, not the 25 the Routes API documents. The legacy
+	// DirectionsService counted origin + destination + 23 intermediates toward 25; Routes
+	// documents 25 *intermediates*. But no lower cap for optimisation is documented on
+	// Routes, and that is a claim from absence rather than a positive statement -- and the
+	// legacy engine is still rung 2, where 23 is the real ceiling. Raise it only after 25
+	// intermediates with optimizeWaypointOrder has been run against a live key.
 	const MAX_ROUTE_STOPS = 23;
 	// The documented ceiling for the `?api=1` Maps URL's `waypoints` parameter.
 	const MAX_LINK_WAYPOINTS = 9;
@@ -122,28 +128,48 @@
 	// travel_poi.js).
 	let mapsPromise = null;
 	function ensureGoogleMaps(apiKey) {
-		if (window.google && window.google.maps) return Promise.resolve(window.google.maps);
 		if (mapsPromise) return mapsPromise;
-		if (!apiKey) return Promise.reject(new Error('Google Maps API key not set'));
-		mapsPromise = new Promise((resolve, reject) => {
-			const callbackName = '__eeGoogleMapsPickupReady';
-			window[callbackName] = () => {
-				delete window[callbackName];
-				resolve(window.google.maps);
-			};
-			const script = document.createElement('script');
-			script.src =
-				'https://maps.googleapis.com/maps/api/js?key=' +
-				encodeURIComponent(apiKey) +
-				'&callback=' + callbackName +
-				'&loading=async';
-			script.async = true;
-			script.onerror = () => {
-				mapsPromise = null; // let a later open retry
-				reject(new Error('Google Maps failed to load'));
-			};
-			document.head.appendChild(script);
+
+		// The old fast path returned as soon as `window.google.maps` existed. That is
+		// unsafe now: the singleton is shared with travel_trip_map.js and travel_poi.js,
+		// neither of which imports a library, so whichever consumer loads first decides
+		// what is present. `google.maps.routes` and `google.maps.marker` stay *undefined*
+		// until importLibrary is awaited, even though the root namespace looks complete.
+		// Resolve on the libraries we actually use, not on the namespace.
+		mapsPromise = (async () => {
+			if (!(window.google && window.google.maps && window.google.maps.importLibrary)) {
+				if (!apiKey) throw new Error('Google Maps API key not set');
+				await new Promise((resolve, reject) => {
+					const callbackName = '__eeGoogleMapsPickupReady';
+					window[callbackName] = () => {
+						delete window[callbackName];
+						resolve();
+					};
+					const script = document.createElement('script');
+					script.src =
+						'https://maps.googleapis.com/maps/api/js?key=' +
+						encodeURIComponent(apiKey) +
+						'&callback=' + callbackName +
+						// Keep. Verified against Google bundle v3.65.11b: with this flag the
+						// legacy root namespace (DirectionsService, TravelMode, UnitSystem,
+						// Marker) *is* fully populated when the callback fires. An earlier
+						// theory that this flag emptied the namespace was wrong.
+						'&loading=async';
+					script.async = true;
+					script.onerror = () => reject(new Error('Google Maps failed to load'));
+					document.head.appendChild(script);
+				});
+			}
+			// `maps` and `core` cover everything the legacy path needs; `routes` is
+			// requested lazily in computeViaRoutes so a project without the Routes API
+			// enabled does not fail the whole map load.
+			await window.google.maps.importLibrary('maps');
+			return window.google.maps;
+		})().catch((err) => {
+			mapsPromise = null; // let a later open retry
+			throw err;
 		});
+
 		return mapsPromise;
 	}
 
@@ -458,6 +484,12 @@
 			this.destroyed = false;
 			// Held while waiting for the modal to finish sizing; see waitForContainerSize.
 			this.sizeWatch = null;
+			// Set once a Routes call has failed in this dialog, so later re-routes do not
+			// each pay another doomed billable request before falling back.
+			this.routesUnavailable = false;
+			// Polylines drawn by the Routes engine. The legacy engine uses
+			// directionsRenderer instead; clearRouteLine() tears down whichever is live.
+			this.polylines = null;
 			// Nothing in flight should touch a closed dialog.
 			dialog.$wrapper.on('hidden.bs.modal', () => {
 				this.destroyed = true;
@@ -849,7 +881,7 @@
 			this.updatePrimaryAction();
 			if (this.maps && this.map) {
 				this.setSummary(esc(__('Optimising...')));
-				this.route();
+				this.safeRoute();
 			}
 		}
 
@@ -946,7 +978,14 @@
 
 			ensureGoogleMaps(apiKey)
 				.then((maps) => {
-					if (this.isStale(generation)) return;
+					// Only `destroyed` aborts here, NOT isStale. The map object itself is
+					// not generation-specific; only the route drawn on it is, and route()
+					// does its own staleness checks. Returning on a bumped generation left
+					// `mapBuilt` latched true with no map ever created, so buildMap() would
+					// never retry -- a permanently blank pane with no message, which is the
+					// same silent failure v1.202.3 was about. Ticking a stop while Google
+					// was still loading was enough to trigger it.
+					if (this.destroyed) return;
 					this.maps = maps;
 					this.map = new maps.Map(container, {
 						zoom: 9,
@@ -963,7 +1002,7 @@
 						polylineOptions: { strokeColor: STOP_COLOR, strokeWeight: 5, strokeOpacity: 0.8 },
 					});
 					this.info = new maps.InfoWindow();
-					this.route();
+					this.safeRoute();
 				})
 				.catch(() => {
 					this.degrade(
@@ -972,13 +1011,196 @@
 				});
 		}
 
-		/** Ask Google for the optimised order, then draw it. */
-		route() {
+		/**
+		 * Call route() so a rejection can never escape.
+		 *
+		 * route() became async for the Routes migration. An uncaught rejection from an
+		 * async method is invisible: it skips all four degradation rungs at once and leaves
+		 * the dialog showing nothing, which is precisely the failure v1.202.3 was about.
+		 * Every caller goes through here.
+		 */
+		safeRoute() {
+			try {
+				const p = this.route();
+				if (p && p.catch) {
+					p.catch((err) => {
+						console.error('[pickroute] routing threw', err);
+						if (!this.destroyed) {
+							this.degrade(__('Could not build the route right now.'), this.routeStops());
+						}
+					});
+				}
+			} catch (err) {
+				console.error('[pickroute] routing threw', err);
+				this.degrade(__('Could not build the route right now.'), this.routeStops());
+			}
+		}
+
+		/** Take whichever route line is on the map off it, whichever engine drew it. */
+		clearRouteLine() {
+			if (this.directionsRenderer) this.directionsRenderer.setDirections({ routes: [] });
+			(this.polylines || []).forEach((p) => {
+				if (p && p.setMap) p.setMap(null);
+			});
+			this.polylines = null;
+		}
+
+		/**
+		 * Optimised route via the modern `routes.Route.computeRoutes`.
+		 *
+		 * Returns the same normalised shape as the legacy path so `drawRoute` does not
+		 * care which engine ran. Three renames in here are silent-corruption traps rather
+		 * than compile errors, so each is called out where it happens.
+		 */
+		async computeViaRoutes(stops) {
+			// `routes` is imported here rather than in ensureGoogleMaps so a project
+			// without the Routes API enabled still gets a working map on the legacy path.
+			const lib = await window.google.maps.importLibrary('routes');
+			const Route = lib && lib.Route;
+			if (!Route) throw new Error('Routes library did not provide Route');
+
+			const response = await Route.computeRoutes({
+				origin: this.origin(),
+				destination: this.destination(),
+				// was `waypoints: [{location, stopover: true}]`. `stopover` has no
+				// equivalent -- it is the default, and the inverse (`via: true`) is
+				// documented as incompatible with optimizeWaypointOrder.
+				intermediates: stops.map((s) => ({ location: s.address })),
+				travelMode: 'DRIVING',
+				units: this.maps.UnitSystem.IMPERIAL,
+				optimizeWaypointOrder: true,
+				// REQUIRED, not an optimisation. Documented verbatim: "If
+				// 'optimizedIntermediateWaypointIndices' is not requested in
+				// ComputeRoutesRequest.fields, the request fails." Never use ['*'].
+				fields: ['legs', 'path', 'optimizedIntermediateWaypointIndices', 'viewport'],
+			});
+
+			const route = response && response.routes && response.routes[0];
+			if (!route) {
+				const err = new Error('computeRoutes returned no routes');
+				err.computeRoutesResponse = response;
+				throw err;
+			}
+
+			// DirectionalLocation extends LatLngAltitude, where lat/lng are PROPERTIES,
+			// not the legacy LatLng .lat()/.lng() METHODS. Both forms are handled because
+			// only the docs have been read, not the runtime; converting to a plain literal
+			// also sidesteps whether Marker/LatLngBounds accept a LatLngAltitude directly.
+			const toLiteral = (loc) => {
+				if (!loc) return null;
+				if (typeof loc.lat === 'number') return { lat: loc.lat, lng: loc.lng };
+				if (typeof loc.lat === 'function') return { lat: loc.lat(), lng: loc.lng() };
+				return null;
+			};
+
+			// was `route.waypoint_order`. Note the PLURAL "Indices" -- the REST API uses
+			// the singular, so anything copied from REST docs is silently wrong. Same
+			// zero-based semantics, so the index arithmetic below is unchanged.
+			// Documented to be empty (not absent) when optimisation is off.
+			const optimized = route.optimizedIntermediateWaypointIndices;
+			const orderedIndexes = optimized && optimized.length
+				? Array.prototype.slice.call(optimized)
+				: stops.map((_s, i) => i);
+
+			const legs = (route.legs || []).map((leg) => ({
+				distanceText: (leg.localizedValues && leg.localizedValues.distance) || null,
+				durationText: (leg.localizedValues && leg.localizedValues.duration) || null,
+				distanceMeters: leg.distanceMeters || 0,
+				// was `leg.duration.value` in SECONDS. `durationMillis` is MILLISECONDS.
+				// Normalised here so formatDuration() keeps taking seconds; copying the
+				// old arithmetic straight across would be silently 1000x wrong.
+				durationSeconds: (leg.durationMillis || 0) / 1000,
+				start: toLiteral(leg.startLocation),
+				end: toLiteral(leg.endLocation),
+			}));
+
+			const path = (route.path || []).map(toLiteral).filter(Boolean);
+			return {
+				engine: 'routes',
+				orderedIndexes: orderedIndexes,
+				legs: legs,
+				viewport: route.viewport || null,
+				path: path,
+				drawLine: () => {
+					this.clearRouteLine();
+					// RoutePolylineOptions has exactly two members: colorScheme and
+					// polylineOptions. The stroke settings go INSIDE polylineOptions.
+					this.polylines = route.createPolylines({
+						polylineOptions: {
+							map: this.map,
+							strokeColor: STOP_COLOR,
+							strokeWeight: 5,
+							strokeOpacity: 0.8,
+						},
+					});
+				},
+			};
+		}
+
+		/** Optimised route via the deprecated DirectionsService. Same normalised shape. */
+		computeViaDirections(stops) {
+			return new Promise((resolve, reject) => {
+				this.directionsService.route(
+					{
+						origin: this.origin(),
+						destination: this.destination(),
+						waypoints: stops.map((s) => ({ location: s.address, stopover: true })),
+						optimizeWaypoints: true,
+						travelMode: this.maps.TravelMode.DRIVING,
+						unitSystem: this.maps.UnitSystem.IMPERIAL,
+					},
+					(result, status) => {
+						if (status !== 'OK' || !result.routes || !result.routes.length) {
+							const err = new Error('DirectionsService: ' + status);
+							// The status string only exists on this rung. Carried on the
+							// error so route() can still say something specific.
+							err.directionsStatus = status;
+							reject(err);
+							return;
+						}
+						const route = result.routes[0];
+						const legs = (route.legs || []).map((leg) => ({
+							distanceText: (leg.distance && leg.distance.text) || null,
+							durationText: (leg.duration && leg.duration.text) || null,
+							distanceMeters: (leg.distance && leg.distance.value) || 0,
+							durationSeconds: (leg.duration && leg.duration.value) || 0,
+							start: leg.start_location || null,
+							end: leg.end_location || null,
+						}));
+						resolve({
+							engine: 'directions',
+							orderedIndexes: route.waypoint_order || stops.map((_s, i) => i),
+							legs: legs,
+							viewport: null,
+							path: null,
+							drawLine: () => {
+								this.clearRouteLine();
+								this.directionsRenderer.setDirections(result);
+							},
+						});
+					}
+				);
+			});
+		}
+
+		/**
+		 * Ask Google for the optimised order, then draw it.
+		 *
+		 * Four rungs during the Routes transition: computeRoutes -> DirectionsService ->
+		 * geocoded pins -> plain list with Maps deep links. The legacy rung stays because
+		 * enabling the Routes API is a Google Cloud console change that no deploy or
+		 * rollback can perform, and `main` auto-deploys here.
+		 *
+		 * Every `await` is a new suspension point, so `isStale` is re-checked after each
+		 * one rather than once at the top -- the user re-ticks stops mid-flight, and the
+		 * old callback form only ever gave one place for that to matter.
+		 */
+		async route() {
 			const stops = this.routeStops();
 			this.clearMarkers();
 
 			if (!stops.length) {
-				this.directionsRenderer.setDirections({ routes: [] });
+				this.clearRouteLine();
 				this.ordered = null;
 				this.notice = null;
 				this.setSummary('');
@@ -987,24 +1209,42 @@
 				return;
 			}
 
-			const waypoints = stops.map((s) => ({ location: s.address, stopover: true }));
 			const generation = this.generation;
+			const preferRoutes = !!this.data.use_routes_api && !this.routesUnavailable;
 
-			this.directionsService.route(
-				{
-					origin: this.origin(),
-					destination: this.destination(),
-					waypoints: waypoints,
-					optimizeWaypoints: true,
-					travelMode: this.maps.TravelMode.DRIVING,
-					unitSystem: this.maps.UnitSystem.IMPERIAL,
-				},
-				(result, status) => {
-					// The user changed the run while this was in flight.
+			// COMPUTE inside the try blocks; PAINT outside them, below. Keeping the paint
+			// inside was a real defect: drawRoute() throwing for a rendering reason would
+			// be caught by the *engine's* catch, blamed on the engine, and a correct
+			// optimised route discarded in favour of re-running the other one. On a key
+			// that has moved to Routes and no longer allows Directions, that second call
+			// is denied and the driver ends up with purchase-order sequence plus a message
+			// telling them to enable an API that was never the problem.
+			let result = null;
+
+			if (preferRoutes) {
+				try {
+					result = await this.computeViaRoutes(stops);
+				} catch (err) {
 					if (this.isStale(generation)) return;
-					if (status === 'OK' && result.routes && result.routes.length) {
-						this.drawRoute(stops, result);
-					} else if (status === 'REQUEST_DENIED') {
+					// Latch off for the life of this dialog. Without it every checkbox
+					// toggle pays another doomed - and billable - Routes call before
+					// falling back, and this dialog re-routes on every toggle.
+					this.routesUnavailable = true;
+					// Not user-facing: the legacy rung is about to run, and naming an
+					// engine the driver has never heard of is noise. Logged because the
+					// rejection shape of computeRoutes is undocumented and this is where
+					// we will learn it - so keep rendering errors out of this bucket.
+					console.warn('[pickroute] Routes API failed, falling back', err);
+				}
+			}
+
+			if (!result) {
+				try {
+					result = await this.computeViaDirections(stops);
+				} catch (err) {
+					if (this.isStale(generation)) return;
+					const status = err && err.directionsStatus;
+					if (status === 'REQUEST_DENIED') {
 						this.degrade(
 							__(
 								'Stops are in purchase-order sequence, not drive-time order: enable the Directions API on the Google Maps key to optimise the route.'
@@ -1019,14 +1259,23 @@
 							stops
 						);
 					} else {
-						this.degrade(__('Could not build the route right now ({0}).', [status]), stops);
+						this.degrade(
+							__('Could not build the route right now ({0}).', [status || 'error']),
+							stops
+						);
 					}
+					return;
 				}
-			);
+			}
+
+			if (this.isStale(generation)) return;
+			// A throw here escapes to safeRoute(), which degrades with a message. That is
+			// the correct attribution: the route was computed fine and the drawing failed.
+			this.drawRoute(stops, result);
 		}
 
+		/** Paint a normalised route result. Engine-agnostic by design. */
 		drawRoute(stops, result) {
-			const route = result.routes[0];
 			const overflow = this.overflowStops().length;
 			this.notice = overflow
 				? __(
@@ -1034,13 +1283,13 @@
 					[MAX_ROUTE_STOPS, overflow]
 				)
 				: null;
-			this.directionsRenderer.setDirections(result);
+			result.drawLine();
 
-			// waypoint_order maps the optimised sequence back onto the stops we
-			// submitted, in submission order. legs[i] is the drive that *arrives*
-			// at the i-th optimised stop, so the two indexes line up directly.
-			const order = route.waypoint_order || stops.map((_s, i) => i);
-			const legs = route.legs || [];
+			// orderedIndexes maps the optimised sequence back onto the stops we submitted,
+			// in submission order. legs[i] is the drive that *arrives* at the i-th
+			// optimised stop, so the two indexes line up directly.
+			const order = result.orderedIndexes;
+			const legs = result.legs || [];
 
 			this.ordered = order.map((originalIdx, position) => {
 				const leg = legs[position];
@@ -1048,15 +1297,21 @@
 					stop: stops[originalIdx],
 					leg: leg
 						? {
-							distance: leg.distance && leg.distance.text,
-							duration: leg.duration && leg.duration.text,
+							// Fall back to formatting the numbers ourselves. On the Routes
+							// engine the localized strings come from `leg.localizedValues`,
+							// and whether the 'legs' field mask returns them is not
+							// documented -- if it does not, they arrive null and the row
+							// would otherwise render blank with no error.
+							distance: leg.distanceText ||
+								(leg.distanceMeters / 1609.344).toFixed(1) + ' mi',
+							duration: leg.durationText || formatDuration(leg.durationSeconds),
 						}
 						: null,
 				};
 			});
 
-			const meters = legs.reduce((sum, leg) => sum + ((leg.distance && leg.distance.value) || 0), 0);
-			const seconds = legs.reduce((sum, leg) => sum + ((leg.duration && leg.duration.value) || 0), 0);
+			const meters = legs.reduce((sum, leg) => sum + (leg.distanceMeters || 0), 0);
+			const seconds = legs.reduce((sum, leg) => sum + (leg.durationSeconds || 0), 0);
 			this.setSummary(
 				'<b>' + esc(__('{0} stops', [this.ordered.length])) + '</b><br>' +
 				esc(
@@ -1067,12 +1322,12 @@
 				)
 			);
 
-			this.placeMarkers(legs);
+			this.placeMarkers(legs, result);
 			this.renderList();
 			this.updatePrimaryAction();
 		}
 
-		placeMarkers(legs) {
+		placeMarkers(legs, result) {
 			this.clearMarkers();
 			if (!this.maps || !this.map) return;
 
@@ -1103,16 +1358,16 @@
 			};
 
 			this.markers = {};
-			if (legs.length) {
+			if (legs.length && legs[0].start) {
 				// Keyed like the rest: an unkeyed marker is one clearMarkers()
 				// can never take off the map, so re-routing would stack them.
-				this.markers.__depot = add(legs[0].start_location, 'A', DEPOT_COLOR, __('Shop'), null);
+				this.markers.__depot = add(legs[0].start, 'A', DEPOT_COLOR, __('Shop'), null);
 			}
 			this.ordered.forEach((entry, idx) => {
 				const leg = legs[idx];
-				if (!leg) return;
+				if (!leg || !leg.end) return;
 				this.markers[entry.stop.key] = add(
-					leg.end_location,
+					leg.end,
 					idx + 1,
 					STOP_COLOR,
 					entry.stop.supplier_name,
@@ -1120,17 +1375,32 @@
 				);
 			});
 			// The final leg ends at the finish point, which is not a stop.
-			if (legs.length) {
-				const last = legs[legs.length - 1];
+			if (legs.length && legs[legs.length - 1].end) {
 				this.markers['__finish'] = add(
-					last.end_location,
+					legs[legs.length - 1].end,
 					'B',
 					FINISH_COLOR,
 					__('Finish'),
 					null
 				);
 			}
-			if (!bounds.isEmpty()) this.map.fitBounds(bounds, 56);
+
+			// Prefer the route's own viewport when the engine supplies one; otherwise fit
+			// over the markers as before. Routes returns `viewport` as a LatLngBounds, but
+			// whether 'viewport' is even a legal field-mask string is undocumented, so
+			// this must work when it comes back null.
+			// Shape-checked, not just null-checked: fitBounds throws InvalidValueError on
+			// anything that is not a LatLngBounds, and that throw would surface as a
+			// routing failure rather than a rendering one. Falling through to the marker
+			// bounds is always safe.
+			const vp = result && result.viewport;
+			const usableViewport = vp && this.maps && this.maps.LatLngBounds &&
+				vp instanceof this.maps.LatLngBounds;
+			if (usableViewport) {
+				this.map.fitBounds(vp, 56);
+			} else if (!bounds.isEmpty()) {
+				this.map.fitBounds(bounds, 56);
+			}
 		}
 
 		clearMarkers() {
@@ -1154,7 +1424,9 @@
 			this.updatePrimaryAction();
 
 			if (!this.maps || !this.map || !stops || !stops.length) return;
-			if (this.directionsRenderer) this.directionsRenderer.setDirections({ routes: [] });
+			// Both engines, not just the legacy renderer: a Routes polyline left behind
+			// here would sit under the geocoded pins showing a route we just disowned.
+			this.clearRouteLine();
 
 			const generation = this.generation;
 			const geocoder = new this.maps.Geocoder();

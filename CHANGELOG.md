@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.204.0] - 2026-08-01
+
+### Added
+
+- **Pick Routing Map can route via the Routes API** (`routes.Route.computeRoutes`), behind
+  a new **Travel Settings → "Use Routes API (beta)"** check, **off by default**.
+
+  Google deprecated `DirectionsService`, `DirectionsRenderer` and `Marker`. Nothing is
+  scheduled for removal and at least 12 months' notice is promised, so this is longevity
+  work with no deadline — which is exactly why it ships switched off, with the legacy engine
+  retained as an automatic fallback rather than replaced.
+
+  **Why a setting and not a constant.** Routes needs "Routes API" enabled on the Cloud
+  project *and* added to the key's restriction list. That is a Google console change no
+  deploy or rollback can perform, and this app auto-deploys from `main` with no staging
+  gate, so a code-only switch would black out the map for every driver between merge and
+  somebody remembering to flip it in Google. The setting is also the kill switch for the one
+  failure the fallback cannot catch — a Routes call that *succeeds* while we read its output
+  wrongly. A fallback only helps when the call fails.
+
+  Both engines are normalised to one shape, so `drawRoute` does not know which ran. Three
+  renames in that mapping are silent-corruption traps rather than compile errors, and each is
+  commented where it happens:
+
+  | Legacy | Routes | Trap |
+  |---|---|---|
+  | `leg.duration.value` (seconds) | `leg.durationMillis` | **milliseconds** — copying the arithmetic is 1000x wrong |
+  | `routes[0].waypoint_order` | `optimizedIntermediateWaypointIndices` | plural *Indices*; the REST API uses the singular |
+  | `leg.distance.text` | `leg.localizedValues.distance` | may be absent from the `legs` field mask; renders blank without erroring |
+
+  The last one now falls back to formatting `distanceMeters` client-side rather than showing
+  an empty row.
+
+  **Computing happens inside the engine's `try`; painting happens outside it.** Getting this
+  wrong — which the first cut did — means a rendering exception is caught by the *engine's*
+  handler, blamed on the engine, and a correct optimised route thrown away to re-run the
+  other one. On a key that has moved to Routes and no longer permits Directions, that second
+  call is denied and the driver ends up in purchase-order sequence being told to enable an
+  API that was never the problem. Caught in review before it shipped.
+
+  A failed Routes call also latches the engine off for the life of the dialog. Without that,
+  every checkbox toggle pays another doomed *billable* request before falling back, and this
+  dialog re-routes on every toggle.
+
+### Fixed
+
+- **`ensureGoogleMaps` could hand back a Google Maps namespace missing the library its caller
+  needed.** It short-circuited on `window.google && window.google.maps`, but that singleton
+  is shared with `travel_trip_map.js` and `travel_poi.js`, neither of which imports a
+  library — so whichever consumer loaded first decided what was present.
+  `google.maps.routes` and `google.maps.marker` stay `undefined` until `importLibrary` is
+  awaited even though the root namespace looks complete. It now resolves on the imported
+  library. Latent before this change; load-bearing now.
+
+- **An async `route()` could have failed invisibly.** Adding `await` made an uncaught
+  rejection possible, which would skip all four degradation rungs at once and leave a blank
+  dialog with no message — the exact failure v1.202.3 was about. Every call now goes through
+  `safeRoute()`, which degrades with a message instead. `isStale()` is re-checked after every
+  `await` rather than once, because `await` gives more suspension points than the old
+  callback did and the user re-ticks stops mid-flight.
+
+- **`degrade()` only tore down the legacy renderer**, so a Routes polyline would have
+  survived underneath the geocoded pins, drawing a route the code had just disowned. Both
+  engines now tear down through `clearRouteLine()`.
+
+- **`startMap()` could latch the map off permanently.** It set `mapBuilt = true`, then
+  returned silently if the generation had moved on while Google was loading — leaving the
+  latch set with no map ever created, so `buildMap()` would never retry. Ticking a stop
+  while the API was still loading was enough. Only `destroyed` aborts now: the map object
+  is not generation-specific, and `route()` does its own staleness checks. Found by review,
+  and the same silent-blank-pane class as v1.202.3.
+
+### Notes
+
+`MAX_ROUTE_STOPS` deliberately stays at **23**, not the 25 Routes documents. No lower cap for
+optimisation is documented, but that is a claim from *absence*, and the legacy engine is still
+rung 2 where 23 is the real ceiling. Raise it only after 25 intermediates with
+`optimizeWaypointOrder` has run against a live key.
+
 ## [1.203.0] - 2026-08-01
 
 ### Changed
