@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.204.2] - 2026-08-01
+
+### Fixed
+
+- **A single-stop run degraded to geocoded pins instead of drawing its route.** The 1.204.1
+  guard logged, correctly, `unusable stop order from routes: [-1] for 1 stops`.
+
+  **`-1` is not corruption — it is Google's sentinel for "I did not reorder these."** A run
+  with one intermediate waypoint has nothing to optimise, so that is the expected answer,
+  and rejecting it threw away a perfectly good route. The documented behaviour ("empty when
+  optimisation is off") does not mention the sentinel; only a live key surfaced it.
+
+  An all-`-1` response now falls back to submission order and the route draws normally. The
+  1.204.1 validation is unchanged for genuinely malformed input — a *mixed* array containing
+  `-1` alongside real indices is still rejected, because that is not a shape with an obvious
+  reading.
+
+- **The pick sheet could claim drive-time order for a run that was never reordered.** "We
+  have an order" and "the order is optimised" are different things, and the map looks
+  identical either way. Both engines now report whether optimisation actually happened —
+  Routes via the `-1` sentinel, DirectionsService via the presence of `waypoint_order` — and
+  the sheet says *"purchase-order sequence"* unless the run was really optimised.
+
+  A single stop is exempt: there is exactly one possible order, so the caveat would be
+  noise.
+
+  This is the third time in this feature that a status line could not distinguish two
+  different states. It is the recurring failure here, more than any individual API call.
+
 ## [1.204.1] - 2026-08-01
 
 ### Fixed
