@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.203.0] - 2026-08-01
+
+### Changed
+
+- **PDF rendering moves from wkhtmltopdf to the Chromium backend.** wkhtmltopdf has been
+  unmaintained since the project was archived in 2023 and `0.12.6.1-3` is its final release;
+  chrome is the backend with a future. Chromium was only proven working on this host on
+  2026-08-01 (see 1.202.x), so this is the first point at which the switch was possible.
+
+  Two obstacles had to be removed, and neither was the obvious one.
+
+  **A Property Setter was blocking it site-wide.** `Print Format-pdf_generator-options`
+  (created 2025-11-20, `is_system_generated`) narrowed the field's Select options to
+  `wkhtmltopdf` alone. Select options are enforced by `_validate_selects` on every save, so
+  **no** format could be moved to chrome at all — saving one threw `PDF Generator cannot be
+  "chrome". It should be one of "wkhtmltopdf"`. Frappe ships the field as
+  `wkhtmltopdf\nchrome` and types it `DF.Literal["wkhtmltopdf", "chrome"]`. Removed by
+  `patches/drop_pdf_generator_options_restriction`, which backs off if the value has since
+  been widened.
+
+  **Standard formats refuse ORM writes and re-sync on migrate.** `Print Format.validate`
+  throws "Standard Print Format cannot be updated", so `doc.save()` cannot touch
+  `Sales Invoice Standard` or the fourteen like it — and because those formats re-sync from
+  their app's JSON on every migrate, even a successful direct write would not survive the
+  next deploy. Handled by `ensure_chrome_pdf_generator()` on `after_migrate`, using
+  `frappe.db.set_value` (the same low-level write frappe's own
+  `sets_wkhtmltopdf_as_default_for_pdf_generator_field` patch uses) and re-applied every
+  migrate rather than once.
+
+  Blank values are set too, not skipped: `print_utils.get_print` resolves
+  `Print Format.pdf_generator` **or the literal `"wkhtmltopdf"`**, so an empty field is not
+  neutral — it means wkhtmltopdf.
+
+  **Verified before switching**, both engines against every format on this site that has a
+  document to render — 16 of 17 produce a valid PDF under chrome, including a 128-line Sales
+  Invoice at 7 pages and a 91-line Quotation. Two caveats found and recorded:
+
+  - **Chrome output is 2–4x larger** for the same document (a 7-page invoice goes 106 KB →
+    473 KB). That matters most for emailed attachments.
+  - **Pagination is not identical.** `Quotation Standard` goes 5 → 6 pages on the longest
+    quotation; two formats go 2 → 1.
+
+  `Test Purchase Order Format` is **excluded and stays on wkhtmltopdf**. It trips a genuine
+  bug in frappe's chrome path: `pdf_generator/pdf_merge.py` merges one header page onto each
+  body page and indexes `header.pages[i]` without a length check, raising `IndexError:
+  Sequence index out of range` when the body outruns the header render. It reproduces on
+  nothing else here — every real document renders — and the format is an abandoned builder
+  experiment last touched 2025-10-23. The exclusion is a named constant with the reason
+  beside it, so it can be dropped when the format is deleted or upstream bounds that index.
+
 ## [1.202.3] - 2026-08-01
 
 ### Fixed

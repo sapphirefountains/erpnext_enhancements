@@ -219,6 +219,60 @@ def ensure_enhancements_core_print_formats():
 		frappe.log_error(frappe.get_traceback(), "Enhancements Core print formats")
 
 
+# Formats deliberately left on wkhtmltopdf. `Test Purchase Order Format` is an abandoned
+# builder experiment (last touched 2025-10-23) that trips a real bug in frappe's chrome
+# path: `pdf_generator/pdf_merge.py` merges one header page onto each body page and indexes
+# `header.pages[i]` without checking length, so a body longer than the header render raises
+# `IndexError: Sequence index out of range`. It reproduces on nothing else here -- every real
+# document, up to a 128-line Sales Invoice, renders fine -- but the guard stays until either
+# the format is deleted or upstream bounds that index.
+CHROME_EXCLUDED_FORMATS = {"Test Purchase Order Format"}
+
+
+def ensure_chrome_pdf_generator():
+	"""Point every Print Format at the chrome PDF backend, on every migrate.
+
+	Why this is code rather than a one-off data fix, having tried the data fix first:
+
+	- **Standard formats refuse ORM writes.** `Print Format.validate` throws "Standard Print
+	  Format cannot be updated", so `doc.save()` cannot touch `Sales Invoice Standard` and
+	  the fourteen others like it. `frappe.db.set_value` bypasses the controller, which is
+	  what frappe's own `sets_wkhtmltopdf_as_default_for_pdf_generator_field` patch does.
+	- **And standard formats re-sync from app JSON on migrate**, so even a successful direct
+	  write is not durable. Re-applying after every migrate is the only thing that sticks.
+
+	Note frappe reads this field and *not* `Print Settings.pdf_generator`:
+	`print_utils.get_print` resolves `form_dict.pdf_generator` -> explicit argument ->
+	`Print Format.pdf_generator` **or the literal string "wkhtmltopdf"**. An empty field is
+	therefore not neutral, it means wkhtmltopdf -- which is why blanks are set too rather
+	than left alone.
+
+	Chrome was verified against every format on this site that has a document to render:
+	sixteen of seventeen produce a valid PDF, including a 128-line Sales Invoice at 7 pages.
+	Chrome output is 2-4x larger than wkhtmltopdf for the same document, which matters most
+	for emailed attachments.
+	"""
+	try:
+		if not frappe.db.has_column("Print Format", "pdf_generator"):
+			return
+		names = frappe.get_all(
+			"Print Format",
+			filters={"disabled": 0},
+			pluck="name",
+		)
+		for name in names:
+			if name in CHROME_EXCLUDED_FORMATS:
+				continue
+			if frappe.db.get_value("Print Format", name, "pdf_generator") == "chrome":
+				continue
+			# Deliberately the low-level write: see the docstring on standard formats.
+			frappe.db.set_value("Print Format", name, "pdf_generator", "chrome", update_modified=False)
+		frappe.db.commit()
+		frappe.logger().info(f"PDF generator: {len(names)} print formats pointed at chrome")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Chrome PDF generator setup")
+
+
 def _upsert_print_format(name, doc_type, html):
 	if frappe.db.exists("Print Format", name):
 		pf = frappe.get_doc("Print Format", name)
