@@ -116,7 +116,7 @@
    "label": "Maps"
   },
   {
-   "description": "Browser key for the Google Maps JavaScript API, used by the agenda map on the Travel Trip form. In the Google Cloud console, enable \"Maps JavaScript API\" for this key and restrict it by HTTP referrer to your ERPNext domain(s). Leave blank to fall back to a list of Google Maps links.",
+   "description": "Browser key for the Google Maps JavaScript API. Despite living in Travel Settings this is the shared desk maps key: the Travel Trip agenda map, the POI picker, the Pick Routing Map, and address autocomplete on the Address form all read it. In the Google Cloud console enable \"Maps JavaScript API\", \"Places API (New)\" (address autocomplete), \"Geocoding API\" (POI pins) and \"Directions API\" / \"Routes API\" (pick routing) for this key, and restrict it by HTTP referrer to your ERPNext domain(s). A missing API does not break the key — each feature degrades on its own, so an address field that never suggests anything usually means \"Places API (New)\" is off. Leave blank to fall back to a list of Google Maps links.",
    "fieldname": "google_maps_api_key",
    "fieldtype": "Data",
    "label": "Google Maps API Key"

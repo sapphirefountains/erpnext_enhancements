@@ -47,6 +47,12 @@ import "./filter_help.js";
 import "./global_enhancements/global_search_doctypes.js";
 // Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
 import "./global_enhancements/field_description_icons.js";
+// Google Places autocomplete on address_line1 (erpnext_enhancements.address_
+// autocomplete.attach). Global, not doctype_js["Address"], because the Address
+// quick-entry dialog below is a frappe.ui.Dialog — no form script ever fires
+// for it — and it opens from any doctype. Imported first so both consumers
+// (that dialog and the Address form script) find the namespace.
+import "./global_enhancements/address_autocomplete.js";
 // Contact/Address quick-entry dialogs + in-place directory refresh (gated by
 // frappe.boot.ee_contacts_ux; must be global — list/awesomebar/link-field
 // create paths fire outside any doctype_js). Server: contacts_ux.py.
