@@ -456,11 +456,19 @@
 			// on screen.
 			this.generation = 0;
 			this.destroyed = false;
+			// Held while waiting for the modal to finish sizing; see waitForContainerSize.
+			this.sizeWatch = null;
 			// Nothing in flight should touch a closed dialog.
 			dialog.$wrapper.on('hidden.bs.modal', () => {
 				this.destroyed = true;
 				this.generation++;
+				this.stopSizeWatch();
 			});
+			// The event Bootstrap provides for exactly this: the modal is on screen and
+			// laid out. buildMap() is idempotent behind the `mapBuilt` latch, so calling
+			// it from both here and render() costs nothing and means the map no longer
+			// depends on winning a race against the show animation.
+			dialog.$wrapper.on('shown.bs.modal', () => this.buildMap());
 			this.render();
 		}
 
@@ -819,6 +827,10 @@
 					this.selected = new Set(
 						(this.data.stops || []).filter((s) => s.address).map((s) => s.key)
 					);
+					// render() replaces the map container, so any wait still running is
+					// observing a node that is about to be detached. Drop it and let
+					// buildMap() start a fresh one against the new element.
+					this.stopSizeWatch();
 					this.mapBuilt = false;
 					this.render();
 				},
@@ -841,19 +853,86 @@
 			}
 		}
 
+		/**
+		 * Decide whether the map can be built yet, and wait properly if it cannot.
+		 *
+		 * A dialog body is `display:none` until the modal finishes animating in, and a
+		 * map initialised in a 0x0 box renders blank. The first version waited for real
+		 * dimensions by re-scheduling itself on `requestAnimationFrame`, and that is the
+		 * bug this replaces: **the chain could die and take the whole feature with it,
+		 * silently.** On production the very first call measured 0x0, the retry never
+		 * converged, and `ensureGoogleMaps()` was therefore never reached — no map, no
+		 * route, no console error, and no notice, because every message this class can
+		 * show lives *past* that early return. It presented as a Google Directions
+		 * problem and cost a long diagnosis. Changing any control re-rendered against a
+		 * sized container and the map appeared instantly, which is what identified it.
+		 *
+		 * So: observe the element rather than poll it, bound the wait, and make giving up
+		 * *visible*. A blank pane that explains itself is recoverable; a blank pane that
+		 * says nothing sends you to the wrong system.
+		 */
 		buildMap() {
 			if (this.mapBuilt || this.destroyed) return;
 			const container = this.$map[0];
-			// A dialog body is display:none until show(); a map built in a 0x0
-			// box renders blank. Wait for real dimensions — but only while the
-			// container is still in the document, or closing the dialog before it
-			// ever sized would leave this rescheduling itself every frame forever.
-			if (!container || !container.offsetWidth || !container.offsetHeight) {
-				if (container && container.isConnected) {
-					window.requestAnimationFrame(() => this.buildMap());
-				}
+			if (!container) return;
+			if (container.offsetWidth && container.offsetHeight) {
+				this.startMap(container);
 				return;
 			}
+			this.waitForContainerSize(container);
+		}
+
+		/** Wait for the modal to finish sizing, then build. Always terminates. */
+		waitForContainerSize(container) {
+			if (this.sizeWatch || this.destroyed) return;
+
+			const attempt = () => {
+				if (this.destroyed || this.mapBuilt) {
+					this.stopSizeWatch();
+					return true;
+				}
+				const el = this.$map[0];
+				if (el && el.offsetWidth && el.offsetHeight) {
+					this.stopSizeWatch();
+					this.startMap(el);
+					return true;
+				}
+				return false;
+			};
+
+			this.sizeWatch = { observer: null, timer: null, deadline: null };
+
+			// The element tells us the moment it has a box — no polling cadence to tune.
+			if (window.ResizeObserver) {
+				this.sizeWatch.observer = new window.ResizeObserver(() => attempt());
+				this.sizeWatch.observer.observe(container);
+			}
+			// Belt and braces. ResizeObserver does not fire for a `display:none` ancestor
+			// on every engine, so a slow interval backs it up; it is cheap because it
+			// stops the instant either one wins.
+			this.sizeWatch.timer = window.setInterval(attempt, 120);
+			// And a hard stop, so "never sized" ends in a message rather than in silence.
+			this.sizeWatch.deadline = window.setTimeout(() => {
+				if (this.destroyed || this.mapBuilt) return;
+				this.stopSizeWatch();
+				this.mapBuilt = true; // do not keep retrying; the list is still usable
+				this.degrade(
+					__('The map could not be sized in this window, so the route was not drawn. The stops and their items below are complete; "Open in Google Maps" still works.')
+				);
+			}, 8000);
+		}
+
+		stopSizeWatch() {
+			if (!this.sizeWatch) return;
+			if (this.sizeWatch.observer) this.sizeWatch.observer.disconnect();
+			if (this.sizeWatch.timer) window.clearInterval(this.sizeWatch.timer);
+			if (this.sizeWatch.deadline) window.clearTimeout(this.sizeWatch.deadline);
+			this.sizeWatch = null;
+		}
+
+		/** The container is real and sized: load Google and draw. */
+		startMap(container) {
+			if (this.mapBuilt || this.destroyed) return;
 			this.mapBuilt = true;
 
 			const generation = this.generation;
@@ -1211,12 +1290,16 @@
 				unroutable.forEach((stop) => sections.push(this.sheetStopHtml(stop, null)));
 			}
 
-			// Say out loud whether these stops are drive-time ordered. With the
-			// Directions API unavailable the list is in purchase-order sequence,
-			// and a driver must not read it as an optimised run.
+			// Say out loud whether these stops are drive-time ordered, and when they are
+			// not, say WHY. The first version printed one sentence for every unoptimised
+			// case, which made "Google refused the request" and "the map never started"
+			// indistinguishable on paper — and that ambiguity sent a real diagnosis at the
+			// Directions API for hours while the actual fault was a 0x0 map container.
+			// `this.notice` already holds the specific reason; carry it through.
 			const orderNote = this.ordered
 				? __('Stops are in drive-time order.')
-				: __('Stops are in purchase-order sequence, not drive-time order.');
+				: __('Stops are in purchase-order sequence, not drive-time order.') +
+					(this.notice ? ' ' + this.notice : '');
 
 			return (
 				'<!doctype html><html><head><meta charset="utf-8">' +
