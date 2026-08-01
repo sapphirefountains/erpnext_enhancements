@@ -209,11 +209,24 @@ throw — they yield `undefined`. The three that matter are commented at the poi
 `pick_routing_map.js`; the worst is `durationMillis` (Routes) against `duration.value`
 (legacy, **seconds**), which is a 1000x error if the arithmetic is copied across.
 
-Three things remain unverified against a live key and are marked in the code:
-`fields: ['legs']` returning `localizedValues`, whether `'viewport'` is a legal field-mask
-string, and the rejection shape of `computeRoutes`. All three have fallbacks, so the map works
-either way — but the per-leg "12.4 mi · 24 min" text is the one to eyeball first when the
-setting is switched on.
+Verified against a live key on 2026-08-01, so these no longer need checking:
+
+| Question | Answer |
+|---|---|
+| `optimizedIntermediateWaypointIndices` semantics | a real `Array`, zero-based, documented semantics — `[1, 0]` for a two-stop run |
+| Is `'viewport'` a legal field-mask string? | **yes**, and it returns a real `LatLngBounds` |
+| `leg.startLocation.lat` — property or method? | **property** (a number) |
+| `route.legs` length | **one more than the stop count** (origin→A, A→B, B→finish) — same as the legacy engine |
+| `leg.localizedValues` | logs as an **obfuscated object**; `.distance` cannot be assumed to be a string, so it is type-checked and falls back to formatting `distanceMeters` |
+
+Still unverified: the rejection shape of `computeRoutes`. It has a fallback, so the map works
+either way.
+
+**The optimised order is validated, not trusted.** Every index must be a whole number inside
+the submitted stops, no duplicates, covering each stop exactly once, with the array length
+matching. Anything else degrades to purchase-order sequence with a message rather than being
+patched up — an order that is merely *incomplete* would drop a supplier from a driver's run
+while still looking like a valid optimised route, which is worse than not optimising at all.
 
 ## Production notes found while building
 

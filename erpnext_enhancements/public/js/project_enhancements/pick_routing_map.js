@@ -1102,9 +1102,16 @@
 				? Array.prototype.slice.call(optimized)
 				: stops.map((_s, i) => i);
 
+			// Only accept the localized strings if they really are strings. Observed on a
+			// live key, `leg.localizedValues` logs as an obfuscated object, so `.distance`
+			// resolving to a string is not something to assume -- and a non-string here
+			// would sail through the `||` fallback in drawRoute and print "[object
+			// Object]" as a distance on a driver's pick sheet.
+			const str = (v) => (typeof v === 'string' && v ? v : null);
+
 			const legs = (route.legs || []).map((leg) => ({
-				distanceText: (leg.localizedValues && leg.localizedValues.distance) || null,
-				durationText: (leg.localizedValues && leg.localizedValues.duration) || null,
+				distanceText: str(leg.localizedValues && leg.localizedValues.distance),
+				durationText: str(leg.localizedValues && leg.localizedValues.duration),
 				distanceMeters: leg.distanceMeters || 0,
 				// was `leg.duration.value` in SECONDS. `durationMillis` is MILLISECONDS.
 				// Normalised here so formatDuration() keeps taking seconds; copying the
@@ -1288,8 +1295,46 @@
 			// orderedIndexes maps the optimised sequence back onto the stops we submitted,
 			// in submission order. legs[i] is the drive that *arrives* at the i-th
 			// optimised stop, so the two indexes line up directly.
-			const order = result.orderedIndexes;
+			//
+			// VALIDATED, not trusted. An index outside `stops` used to reach
+			// `stops[originalIdx] === undefined` and then throw from inside the marker
+			// loop as "Cannot read properties of undefined (reading 'key')" -- a stack
+			// trace three frames from the real cause, which is how this shipped. Worse,
+			// an order that is merely *incomplete* would silently drop a supplier from a
+			// driver's run while still looking like a valid optimised route.
+			//
+			// So: every index must be a whole number inside `stops`, with no duplicates,
+			// and the set must cover every stop exactly once. Anything else is unusable,
+			// and an unordered run with an honest message beats a confidently wrong one.
 			const legs = result.legs || [];
+			const raw = Array.isArray(result.orderedIndexes) ? result.orderedIndexes : [];
+			const seen = new Set();
+			const order = raw.filter((i) => {
+				if (typeof i !== 'number' || !isFinite(i) || i % 1 !== 0) return false;
+				if (i < 0 || i >= stops.length || seen.has(i)) return false;
+				seen.add(i);
+				return true;
+			});
+
+			// `raw.length` is checked as well as the filtered length: an over-long array
+			// like [0,1,2] for two stops filters down to a perfectly valid-looking [0,1],
+			// and accepting that would mean quietly reinterpreting a response whose
+			// convention we evidently do not understand. Degrade instead.
+			if (order.length !== stops.length || raw.length !== stops.length) {
+				// Logged with both sides so the next occurrence names itself rather than
+				// needing another round of production archaeology.
+				console.warn(
+					'[pickroute] unusable stop order from ' + (result.engine || '?') + ': ',
+					result.orderedIndexes, 'for', stops.length, 'stops'
+				);
+				this.degrade(
+					__(
+						'Stops are in purchase-order sequence, not drive-time order: the optimised order Google returned did not match the stops on this run.'
+					),
+					stops
+				);
+				return;
+			}
 
 			this.ordered = order.map((originalIdx, position) => {
 				const leg = legs[position];
