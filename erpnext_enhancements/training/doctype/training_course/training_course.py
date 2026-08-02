@@ -108,8 +108,23 @@ class TrainingCourse(Document):
 			seen.add(row.role)
 
 	def _validate_rules(self):
-		"""Stamp each rule's target doctype so its value field can be a Dynamic
-		Link, and reject rules that cannot resolve to anybody."""
+		"""Stamp each rule's target doctype and reject rules that resolve to nobody.
+
+		**This stamp is a backstop, not the primary mechanism, and the difference
+		matters.** ``applies_to_value`` is a Dynamic Link resolved through
+		``applies_to_doctype``, and Frappe validates links in ``Document.insert``
+		at line 727 — before ``before_insert``, before naming, and long before
+		``validate`` ever runs. So there is no server hook early enough to derive
+		the field on an insert; a row arriving with ``applies_to_value`` set and
+		``applies_to_doctype`` empty is rejected by the framework before this code
+		is reached, with the unhelpful "Applies To DocType must be set first".
+
+		The desk path is handled client-side in ``public/js/training/training_course.js``,
+		which stamps the field the moment the author picks a target. What this
+		method adds is (a) correctness on every subsequent save, and (b) a message
+		that actually explains the problem when a document is built in Python or
+		over the API without the field.
+		"""
 		if self.weight != "Required":
 			# Rules on an optional course would never fire; keeping them would be a
 			# quiet trap when someone later flips the weight.
@@ -136,6 +151,10 @@ class TrainingCourse(Document):
 				)
 			if not row.applies_to_value:
 				frappe.throw(_("Row {0}: pick which {1} the rule applies to.").format(row.idx, _(target)))
+			if not frappe.db.exists(target, row.applies_to_value):
+				frappe.throw(
+					_("Row {0}: there is no {1} called {2}.").format(row.idx, _(target), row.applies_to_value)
+				)
 
 	def _validate_gates(self):
 		if not 0 < cint(self.passing_score) <= 100:

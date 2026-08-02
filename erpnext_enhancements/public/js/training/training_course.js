@@ -9,8 +9,42 @@
 // api/training_author.py, which re-checks permissions server-side — a
 // whitelisted method is callable directly whatever buttons we choose to draw.
 
+// The assignment-rule value field is a Dynamic Link resolved through
+// `applies_to_doctype`, and that field MUST be populated before the document is
+// sent to the server. Frappe validates links in `Document.insert` at line 727 —
+// before `before_insert`, before naming, and long before `validate` — so there
+// is no server-side hook early enough to derive it. Stamping it here is not a
+// convenience; without it every rule except "All Employees" fails to save with
+// "Applies To DocType must be set first". The controller keeps its own copy of
+// this mapping as a backstop for later saves and for anything built in Python.
+const RULE_TARGET_DOCTYPES = {
+	"All Employees": "",
+	Department: "Department",
+	Designation: "Designation",
+	"Role Profile": "Role Profile",
+	Role: "Role",
+	"Employee Grade": "Employee Grade",
+	"Employment Type": "Employment Type",
+};
+
+frappe.ui.form.on("Training Assignment Rule", {
+	applies_to(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		frappe.model.set_value(cdt, cdn, "applies_to_doctype", RULE_TARGET_DOCTYPES[row.applies_to] ?? "");
+		// The old value belongs to the previous target doctype and would now be a
+		// link into the wrong table.
+		frappe.model.set_value(cdt, cdn, "applies_to_value", null);
+	},
+
+	assign_rules_add(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		frappe.model.set_value(cdt, cdn, "applies_to_doctype", RULE_TARGET_DOCTYPES[row.applies_to] ?? "");
+	},
+});
+
 frappe.ui.form.on("Training Course", {
 	refresh(frm) {
+		backfill_rule_doctypes(frm);
 		if (frm.is_new()) return;
 
 		const is_manager = frappe.user.has_role(["Training Manager", "System Manager"]);
@@ -32,6 +66,20 @@ frappe.ui.form.on("Training Course", {
 		});
 	},
 });
+
+// Repairs rows saved before this script existed, or created through the API, so
+// opening and re-saving such a course does not hit the same link error.
+function backfill_rule_doctypes(frm) {
+	let changed = false;
+	for (const row of frm.doc.assign_rules || []) {
+		const expected = RULE_TARGET_DOCTYPES[row.applies_to] ?? "";
+		if ((row.applies_to_doctype || "") !== expected) {
+			row.applies_to_doctype = expected;
+			changed = true;
+		}
+	}
+	if (changed) frm.refresh_field("assign_rules");
+}
 
 function render_actions(frm, draft, is_manager) {
 	frm.clear_custom_buttons();
