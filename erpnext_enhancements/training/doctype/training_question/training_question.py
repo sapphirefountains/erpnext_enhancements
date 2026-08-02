@@ -39,21 +39,41 @@ class TrainingQuestion(Document):
 	# ------------------------------------------------------------------ helpers
 
 	def _normalise_true_false(self):
-		"""A True-False question is a two-option single choice; materialising the
-		options means the player, the grader and the analytics all treat it
-		identically to every other choice question instead of special-casing it."""
+		"""Materialise a True-False question as a two-option single choice.
+
+		Doing this once here means the player, the grader and the analytics all
+		treat it identically to every other choice question instead of
+		special-casing it everywhere downstream.
+
+		**It refuses rather than guesses.** An earlier version inferred the
+		author's intent by looking for an option literally spelled "false", and
+		defaulted to *True is correct* when it could not find one. That silently
+		rewrote the answer key for any other phrasing — Yes/No, T/F,
+		Correct/Incorrect — and the author had no way to see it had happened: the
+		form simply came back saying True was right. Guessing an answer key is the
+		one thing this module must never do, so an unrecognised pair is now an
+		error the author has to resolve.
+		"""
 		if self.question_type != "True-False":
 			return
-		texts = [(row.option_text or "").strip().lower() for row in self.options or []]
-		if sorted(texts) == ["false", "true"]:
+
+		rows = self.options or []
+		if not rows:
+			# Nothing typed yet — offer the canonical pair, unanswered, and let
+			# _validate_options insist on a correct one being ticked.
+			self.append("options", {"option_text": _("True")})
+			self.append("options", {"option_text": _("False")})
 			return
-		correct_is_true = True
-		for row in self.options or []:
-			if (row.option_text or "").strip().lower() == "false" and row.is_correct:
-				correct_is_true = False
-		self.options = []
-		self.append("options", {"option_text": _("True"), "is_correct": 1 if correct_is_true else 0})
-		self.append("options", {"option_text": _("False"), "is_correct": 0 if correct_is_true else 1})
+
+		texts = [(row.option_text or "").strip().lower() for row in rows]
+		if len(rows) != 2 or sorted(texts) != ["false", "true"]:
+			frappe.throw(
+				_("A True-False question needs exactly two options, spelled True and False. "
+				  "This one has {0}. Relabel them, or switch the question type to Single Choice "
+				  "if you want different wording.").format(
+					", ".join(f'"{row.option_text}"' for row in rows) or _("none")
+				)
+			)
 
 	def _validate_options(self):
 		if self.question_type == "Short Answer":

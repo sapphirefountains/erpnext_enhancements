@@ -39,8 +39,28 @@ MATERIAL_CHANGE = "Material Change (require retake)"
 
 
 class TrainingCourseVersion(Document):
+	def before_naming(self):
+		"""Assign the version number BEFORE the name is built, not in validate.
+
+		The autoname is ``format:{course}-V{version_number}``, and Frappe resolves
+		that inside ``set_new_name`` — which ``Document.insert`` calls at line 729,
+		*before* ``run_before_save_methods`` (line 734) runs ``validate``. Assigning
+		the number in ``validate`` is therefore too late: every version of a course
+		would be named ``<course>-V`` with no number, and the second one would die
+		on a duplicate primary key, making a second version of any course
+		impossible — which is the entire point of this doctype.
+
+		``frappe.model.naming.set_new_name`` calls ``doc.run_method("before_naming")``
+		(naming.py line 156), so this is the one hook that runs early enough.
+		The same trap is documented, and solved the same way, on
+		``kpi_dashboards/doctype/hr_stat_entry``.
+		"""
+		self._assign_version_number()
+
 	def validate(self):
 		self._reject_amend()
+		# Belt and braces: before_naming only fires on insert, so a row that
+		# somehow reached validate without a number still gets one. No-ops once set.
 		self._assign_version_number()
 		self._assign_chapter_keys()
 

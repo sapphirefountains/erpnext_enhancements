@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.209.1] - 2026-08-01
+
+### Fixed
+
+An adversarial review of the Training module after it merged found four real defects, all of
+which shipped in 1.207.0-1.209.0. Three are **ordering** bugs — work done in `validate()` that
+Frappe needs *before* `validate()` runs — and the existing test suites could not have caught
+any of them, because they stub `frappe` wholesale and so never exercise the framework's own
+sequencing. The new `test_training_regressions.py` asserts that sequencing directly, against
+the real Frappe source where a bench checkout is present.
+
+- **No course could ever have a second version.** `Training Course Version` is named
+  `format:{course}-V{version_number}`, but `version_number` was assigned in `validate()`.
+  `Document.insert` calls `set_new_name()` at line 729 and only reaches `validate` at line 734,
+  so the number did not exist yet: every version was named `<course>-V` with no number, and
+  creating a second one died on a duplicate primary key. That is the entire premise of the
+  doctype — "fix a typo without invalidating completions" was unreachable in practice. Moved to
+  `before_naming()`, which `frappe.model.naming.set_new_name` invokes (naming.py line 156)
+  before resolving the format string. The same trap is solved the same way on
+  `kpi_dashboards/doctype/hr_stat_entry`.
+
+- **No targeted assignment rule could be saved.** `applies_to_value` is a Dynamic Link resolved
+  through `applies_to_doctype`, which was stamped in `Course.validate()`. But `_validate_links()`
+  runs at `Document.insert` line **727** — before `before_insert`, before naming, before
+  everything — so any rule other than "All Employees" was rejected with the unhelpful
+  "Applies To DocType must be set first". There is no server hook early enough, so the field is
+  now stamped client-side in `training_course.js` the moment an author picks a target (on both
+  change *and* row-add), with a backfill for rows saved earlier. The server keeps the stamp as a
+  backstop for later saves and now also verifies the target record actually exists.
+
+- **Role Profile rules silently matched nobody.** The rule compared against the legacy scalar
+  `User.role_profile_name`, but users here hold several profiles at once (Brian is Sales + Sales
+  Team; Lian is Production Team + Technician) — and this module's own patch adds a
+  "Training Learner" profile alongside everybody's real one, so secondary profiles are the norm
+  on this site rather than the exception. A rule targeting a secondary profile assigned nobody
+  and reported nothing. Now resolved against the `User Role Profile` child rows, with the scalar
+  kept only as a fallback for a site that never used the table.
+
+- **The True-False normaliser guessed answer keys.** It inferred intent by looking for an option
+  literally spelled "false" and defaulted to *True is correct* when it could not find one — so
+  Yes/No, T/F or Correct/Incorrect phrasing had its answer key silently rewritten, with the form
+  simply coming back saying True was right. Guessing an answer key is the one thing this module
+  must not do. An unrecognised pair is now an error the author has to resolve, and the options
+  table is no longer rebuilt.
+
+### Notes
+
+- Nothing here needs a data patch. The naming bug prevented bad rows from being created rather
+  than creating them, and the module shipped dormant, so on this site the blast radius was
+  "authoring a second course version would have failed the first time it was tried".
+
+- The review ran 21 agents across four independent lenses and raised 17 candidates; 9 were
+  refuted on verification and 8 confirmed (4 unique, each found by two lenses independently).
+  Worth repeating for any future module of this size — the value was concentrated entirely in
+  the ordering findings, which no amount of stubbed unit testing would have surfaced.
+
 ## [1.209.0] - 2026-08-01
 
 ### Added

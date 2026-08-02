@@ -240,7 +240,15 @@ def _matching_rule(course, user):
 			continue
 
 		if rule.applies_to == "Role Profile":
-			if frappe.db.get_value("User", user, "role_profile_name") == rule.applies_to_value:
+			# Against the child table, NOT the scalar ``User.role_profile_name``.
+			# Users here hold several profiles at once (Brian is Sales + Sales
+			# Team; Lian is Production Team + Technician), and the scalar only
+			# ever reflects one of them — so matching on it would silently assign
+			# nobody for every secondary profile. This module makes that worse by
+			# design: ``training/roles.py`` adds a "Training Learner" profile
+			# alongside everybody's real one, so secondary profiles are the norm
+			# on this site rather than the exception.
+			if _has_role_profile(user, rule.applies_to_value):
 				return rule
 			continue
 
@@ -256,6 +264,23 @@ def _matching_rule(course, user):
 			return rule
 
 	return None
+
+
+def _has_role_profile(user, role_profile):
+	"""True when ``user`` holds ``role_profile``, by any route.
+
+	Checks the ``User Role Profile`` child rows first — that is the real,
+	multi-valued answer — and falls back to the legacy scalar for a site or a
+	fixture that only ever set that.
+	"""
+	if not role_profile:
+		return False
+	if frappe.db.exists(
+		"User Role Profile",
+		{"parent": user, "parenttype": "User", "role_profile": role_profile},
+	):
+		return True
+	return frappe.db.get_value("User", user, "role_profile_name") == role_profile
 
 
 def _assign(course, user, rule):
