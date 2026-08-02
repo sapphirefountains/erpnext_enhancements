@@ -31,6 +31,7 @@
   "media_section",
   "drive_training_folder_id",
   "gcs_bucket",
+  "gcs_service_account_json",
   "column_break_media",
   "max_video_mb",
   "signed_url_ttl_minutes",
@@ -205,6 +206,12 @@
    "fieldname": "gcs_bucket",
    "fieldtype": "Data",
    "label": "GCS Video Bucket"
+  },
+  {
+   "description": "The JSON key for the sa-training-media service account, pasted whole. Stored encrypted and never rendered back. Signs the short-lived playback URLs and performs the Drive-to-bucket copy; it can read and write objects in this one bucket and reach nothing else.",
+   "fieldname": "gcs_service_account_json",
+   "fieldtype": "Password",
+   "label": "GCS Service Account JSON"
   },
   {
    "fieldname": "column_break_media",

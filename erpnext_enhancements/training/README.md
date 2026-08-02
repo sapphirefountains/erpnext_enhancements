@@ -103,6 +103,8 @@ regardless of what any endpoint does.
 - `permissions.py` — `permission_query_conditions` / `has_permission` for the
   learner-owned doctypes.
 - `tasks.py` — the scheduled due-reminder and escalation jobs.
+- `gcs_media.py` — signs short-lived playback URLs and copies video from Drive
+  into the private bucket. See **Video** below.
 - `roles.py` — granting the Training Learner role durably. Read this before
   touching role assignment; see **Access** below.
 - `setup.py` — starter Training Categories (`after_migrate`, insert-only).
@@ -137,6 +139,43 @@ An **External Embed** block (Drive preview, unlisted YouTube) is still permitted
 low-stakes content, but the server refuses to apply a coverage gate to it and
 stamps `gate_waived_reason` on the progress row. A compliance course cannot quietly
 lose its teeth because someone picked the convenient block type.
+
+### How the signing works, and why it is hand-rolled
+
+`google-cloud-storage` is not a dependency and cannot be pip-installed on the
+host — the same constraint that made `stripe_payments` talk to Stripe over plain
+REST. But `google-auth` **is** already a dependency, and a service-account
+credential built from it exposes an RSA signer. That is the only primitive a V4
+signature needs; the rest is a documented string-to-sign. So
+[`gcs_media.py`](gcs_media.py) assembles the canonical request by hand and signs
+it with a library we already have. No new package, and the same shape as the
+QuickBooks and Stripe clients.
+
+The infrastructure is [`infra/storage.tf`](../../infra/storage.tf): one private
+bucket (uniform access, public-access prevention *enforced*, no lifecycle
+deletion) and one narrow `sa-training-media` service account with `objectAdmin`
+on that bucket alone. It is gated behind `enable_training_media_bucket`, off by
+default. The service-account key is deliberately **not** a Terraform resource —
+`google_service_account_key` writes the private key in plaintext into the state
+file, and that state lives in a bucket several people can read. It is created by
+hand and pasted into Training Settings, which stores it encrypted.
+
+Two properties worth knowing before you rely on this:
+
+- **A signed URL cannot be revoked.** Once minted it works until it expires, even
+  if the learner's access is removed a minute later. The 15-minute TTL is the
+  mitigation, which is why it is a setting rather than a constant.
+- **Signing must use UTC.** The timestamp and the date-scoped credential are both
+  part of the signature, so signing against site-local time yields URLs that
+  validate only when the site happens to be on UTC. `now_datetime()` is
+  site-local — do not substitute it.
+
+`test_training_gcs_media.py` rebuilds the string-to-sign independently from the
+spec and compares, rather than asserting the implementation's own output. That
+matters because a subtly wrong signature still produces a perfectly well-formed
+URL whose only symptom is an opaque 403.
+
+The full setup runbook lives on the ERPNext task **TASK-2026-01150**.
 
 ## Access
 

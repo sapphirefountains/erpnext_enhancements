@@ -860,3 +860,33 @@ variable "snapshot_schedule_storage_location" {
   description = "The GCS storage location (region) for snapshot data, e.g. 'us', 'us-east1', 'us-central1'."
   default     = "us"
 }
+# ============================================================================
+# Training Media Bucket
+# ============================================================================
+# Private bucket the Training module streams course video from. See storage.tf
+# for why the video is copied out of Drive at all (short version: a Drive
+# preview frame is cross-origin, so the player can neither pause it nor measure
+# what was watched).
+variable "enable_training_media_bucket" {
+  type        = bool
+  description = "If true, creates the private training media bucket and its narrow signing service account. Off by default so the Training module can ship before the bucket exists."
+  default     = false
+}
+
+variable "training_media_bucket_name" {
+  type        = string
+  description = "Globally unique name for the training media bucket. If this name is taken, apply fails immediately with a clear error — pick another and keep Training Settings in step with it."
+  default     = "sf-erpnext-training-media"
+}
+
+variable "training_media_bucket_location" {
+  type        = string
+  description = "Bucket location. Defaults to the region the production VM runs in (us-east4), so playback egress to the bench is same-region and free."
+  default     = "us-east4"
+}
+
+variable "training_media_cors_origins" {
+  type        = list(string)
+  description = "Origins allowed to fetch training video. The player sets crossorigin=\"anonymous\", so without the site's own origin here the browser blocks playback outright. Read from the live site's host_name, not guessed."
+  default     = ["https://erp.sapphirefountains.com"]
+}
