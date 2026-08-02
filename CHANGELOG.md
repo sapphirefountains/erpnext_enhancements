@@ -61,6 +61,26 @@ the real Frappe source where a bench checkout is present.
   saves it once objects exist, but an empty bucket would go without complaint. Keeping it in
   tfvars means every apply agrees.
 
+- **The GCS signing key could not be pasted into its own field.** It was a `Password`, which
+  Frappe renders as a **single-line masked input** — a control that cannot take a 2 KB
+  multi-line service-account JSON by paste without mangling or truncating it, and which then
+  hides the damage behind asterisks. The field is now read-only, and the key goes in through a
+  **Set Service Account Key** dialog with a real multi-line box.
+
+  The dialog validates before storing, which is the more useful half: it checks the JSON parses,
+  that `type` is `service_account`, that `private_key` still has its BEGIN/END markers (losing
+  those is the classic single-line-paste casualty — it parses fine and fails only at signing
+  time), and then actually **signs a probe string** to prove the key works rather than trusting
+  that it looked right. It also warns, without blocking, when the key belongs to an account
+  other than `sa-training-media`, since pasting the wrong file out of a downloads folder is easy.
+  Every one of those turns an opaque 403 on a learner's first video into a sentence at the
+  moment of paste.
+
+  Storage stays encrypted — only the entry path changed. Note this diverged from the repo's own
+  precedent without cause: `Project Folder Google Drive Settings.service_account_json`, the same
+  kind of value, has always been a `Code` field. The Training key keeps `Password` because it is
+  the narrower credential and encryption at rest is worth having, now that pasting works.
+
 ### Notes
 
 - Nothing here needs a data patch. The naming bug prevented bad rows from being created rather
