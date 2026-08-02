@@ -52,6 +52,15 @@ the real Frappe source where a bench checkout is present.
   must not do. An unrecognised pair is now an error the author has to resolve, and the options
   table is no longer rebuilt.
 
+- **The training media bucket is switched on in `prod.tfvars`.** `infra/storage.tf` guards the
+  bucket with `count = var.enable_training_media_bucket ? 1 : 0` and the variable defaults to
+  false, so following the runbook produced a puzzling "No changes. Your infrastructure matches
+  the configuration" — the resource simply did not exist to plan. The flag is set in tfvars
+  rather than passed as `-var` on the command line deliberately: an apply that does not carry
+  the flag evaluates the count to 0 and plans to **destroy** the bucket. `force_destroy = false`
+  saves it once objects exist, but an empty bucket would go without complaint. Keeping it in
+  tfvars means every apply agrees.
+
 ### Notes
 
 - Nothing here needs a data patch. The naming bug prevented bad rows from being created rather
