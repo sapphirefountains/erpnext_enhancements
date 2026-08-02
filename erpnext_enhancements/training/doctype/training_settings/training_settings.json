@@ -1,0 +1,271 @@
+{
+ "actions": [],
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "switches_section",
+  "training_enabled",
+  "portal_enabled",
+  "notifications_enabled",
+  "column_break_switches",
+  "auto_assign_enabled",
+  "overdue_escalation_enabled",
+  "gamification_enabled",
+  "ai_section",
+  "ai_assist_enabled",
+  "defaults_section",
+  "default_passing_score",
+  "default_min_video_coverage",
+  "default_due_days",
+  "column_break_defaults",
+  "default_max_attempts",
+  "default_escalate_after_days",
+  "escalation_role",
+  "runtime_section",
+  "heartbeat_interval_seconds",
+  "progress_flush_seconds",
+  "column_break_runtime",
+  "attempt_idle_timeout_minutes",
+  "max_intervals_per_video",
+  "media_section",
+  "drive_training_folder_id",
+  "gcs_bucket",
+  "column_break_media",
+  "max_video_mb",
+  "signed_url_ttl_minutes",
+  "compliance_section",
+  "warn_on_uncertified_dispatch"
+ ],
+ "fields": [
+  {
+   "fieldname": "switches_section",
+   "fieldtype": "Section Break",
+   "label": "Switches"
+  },
+  {
+   "default": "0",
+   "description": "The master switch. With this off the doctypes exist and courses can be authored, but nothing auto-assigns, nothing is emailed, and the learner page reports that training is not yet available. The module ships dormant on purpose.",
+   "fieldname": "training_enabled",
+   "fieldtype": "Check",
+   "label": "Training Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Allow learners to reach courses at /training. Turn this off to keep authoring internal while a first course is being built.",
+   "fieldname": "portal_enabled",
+   "fieldtype": "Check",
+   "label": "Learner Portal Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Send assignment, due-date and escalation email. Off by default so a bulk first assignment does not surprise 15 people.",
+   "fieldname": "notifications_enabled",
+   "fieldtype": "Check",
+   "label": "Send Notifications"
+  },
+  {
+   "fieldname": "column_break_switches",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Let a course's assignment rules raise assignments automatically when someone is hired or changes department, designation or role profile.",
+   "fieldname": "auto_assign_enabled",
+   "fieldtype": "Check",
+   "label": "Auto-Assign From Rules"
+  },
+  {
+   "default": "0",
+   "description": "Notify the escalation role when an assignment stays overdue.",
+   "fieldname": "overdue_escalation_enabled",
+   "fieldtype": "Check",
+   "label": "Escalate Overdue Assignments"
+  },
+  {
+   "default": "0",
+   "description": "Badges, points and streaks. Staff and customers are always scored on separate boards.",
+   "fieldname": "gamification_enabled",
+   "fieldtype": "Check",
+   "label": "Gamification"
+  },
+  {
+   "fieldname": "ai_section",
+   "fieldtype": "Section Break",
+   "label": "AI Assistance"
+  },
+  {
+   "default": "0",
+   "description": "Let authors ask Vertex AI to draft quiz questions from lesson content. Drafts are never published unreviewed — an author must accept each one, and submitting a version for review fails while any AI draft is still unreviewed.",
+   "fieldname": "ai_assist_enabled",
+   "fieldtype": "Check",
+   "label": "AI Question Drafting"
+  },
+  {
+   "fieldname": "defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Course Defaults"
+  },
+  {
+   "default": "80",
+   "description": "Passing score applied to a new course unless the author overrides it.",
+   "fieldname": "default_passing_score",
+   "fieldtype": "Percent",
+   "label": "Default Passing Score"
+  },
+  {
+   "default": "80",
+   "description": "How much of a video must be watched before a lesson can be finished. Measures time spent, not attention — see the module README.",
+   "fieldname": "default_min_video_coverage",
+   "fieldtype": "Percent",
+   "label": "Default Minimum Watched (%)"
+  },
+  {
+   "default": "14",
+   "description": "Days a learner gets to finish a required course after it is assigned.",
+   "fieldname": "default_due_days",
+   "fieldtype": "Int",
+   "label": "Default Due In (Days)"
+  },
+  {
+   "fieldname": "column_break_defaults",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "3",
+   "description": "Quiz attempts allowed before a learner needs a manager to reset them. 0 means unlimited.",
+   "fieldname": "default_max_attempts",
+   "fieldtype": "Int",
+   "label": "Default Quiz Attempts"
+  },
+  {
+   "default": "7",
+   "description": "Days past the due date before an assignment is escalated.",
+   "fieldname": "default_escalate_after_days",
+   "fieldtype": "Int",
+   "label": "Default Escalate After (Days)"
+  },
+  {
+   "description": "Who hears about overdue training when a course does not name its own escalation role.",
+   "fieldname": "escalation_role",
+   "fieldtype": "Link",
+   "label": "Default Escalation Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "runtime_section",
+   "fieldtype": "Section Break",
+   "label": "Player Runtime"
+  },
+  {
+   "default": "15",
+   "description": "How often the player reports watch progress while a video plays.",
+   "fieldname": "heartbeat_interval_seconds",
+   "fieldtype": "Int",
+   "label": "Heartbeat Interval (Seconds)"
+  },
+  {
+   "default": "60",
+   "description": "How long progress may sit in cache before it is written to the database. This is also the worst-case progress loss if the site is deployed mid-lesson, because a deploy flushes the cache.",
+   "fieldname": "progress_flush_seconds",
+   "fieldtype": "Int",
+   "label": "Progress Flush Interval (Seconds)"
+  },
+  {
+   "fieldname": "column_break_runtime",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "120",
+   "description": "An attempt with no heartbeat for this long is treated as abandoned and flushed to the database.",
+   "fieldname": "attempt_idle_timeout_minutes",
+   "fieldtype": "Int",
+   "label": "Attempt Idle Timeout (Minutes)"
+  },
+  {
+   "default": "200",
+   "description": "Cap on the stored watched-ranges per video. Beyond this the smallest gaps are collapsed, which keeps the progress record a few kilobytes however much a learner scrubs around.",
+   "fieldname": "max_intervals_per_video",
+   "fieldtype": "Int",
+   "label": "Max Watched Ranges Per Video"
+  },
+  {
+   "fieldname": "media_section",
+   "fieldtype": "Section Break",
+   "label": "Media"
+  },
+  {
+   "description": "The Google Drive folder authors upload training video into.",
+   "fieldname": "drive_training_folder_id",
+   "fieldtype": "Data",
+   "label": "Drive Training Folder ID"
+  },
+  {
+   "description": "Private GCS bucket the player streams video from. Video is copied here on publish because a Drive preview frame is cross-origin — the player cannot see into it, so checkpoints and watch coverage would both be impossible.",
+   "fieldname": "gcs_bucket",
+   "fieldtype": "Data",
+   "label": "GCS Video Bucket"
+  },
+  {
+   "fieldname": "column_break_media",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "300",
+   "description": "Largest video an author may attach, in megabytes. Recommend 720p — a 60-minute 1080p lesson runs to a gigabyte or more.",
+   "fieldname": "max_video_mb",
+   "fieldtype": "Int",
+   "label": "Max Video Size (MB)"
+  },
+  {
+   "default": "15",
+   "description": "How long a signed video URL stays valid. Short enough that a copied link dies quickly; long enough to watch a lesson.",
+   "fieldname": "signed_url_ttl_minutes",
+   "fieldtype": "Int",
+   "label": "Signed URL Lifetime (Minutes)"
+  },
+  {
+   "fieldname": "compliance_section",
+   "fieldtype": "Section Break",
+   "label": "Compliance"
+  },
+  {
+   "default": "0",
+   "description": "Warn when a technician without a current certification is put on a maintenance visit or task. This only ever warns — it never blocks the save, because by the time it fires a truck is usually already on site and refusing the form would mean the work happens with no record at all.",
+   "fieldname": "warn_on_uncertified_dispatch",
+   "fieldtype": "Check",
+   "label": "Warn on Uncertified Assignment"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

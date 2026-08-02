@@ -325,3 +325,21 @@ erpnext_enhancements.patches.set_opportunity_kanban_primary_contact
 # threw 'PDF Generator cannot be "chrome"'. Frappe ships the field as
 # "wkhtmltopdf\nchrome"; nothing in any installed app recreates the restriction.
 erpnext_enhancements.patches.drop_pdf_generator_options_restriction
+# v1.208.0 training: seed "Training Author" / "Training Manager" / "Training
+# Learner". NOT a fixtures/role.json entry -- fixtures import in alphabetical
+# filename order, so custom_docperm.json lands before role.json and every DocPerm
+# row naming a not-yet-created role is silently dropped. Same trap as
+# seed_hr_team_role / seed_dispatch_user_role. Training Learner keeps
+# desk_access = 0 on purpose: it is held by customer contacts too, and desk
+# access would turn each of them into a billable System User.
+erpnext_enhancements.patches.seed_training_roles
+# v1.208.0 training: give every active Employee's login the Training Learner
+# role, so the first assignment lands on someone who can actually open /training.
+# Not a plain add_roles: User.validate rebuilds `roles` from the union of a user's
+# Role Profiles on EVERY save, so a direct grant evaporates for the 11 of 15
+# employees who hold a profile. Profiled users get a dedicated single-role
+# profile added alongside theirs; the 4 profile-less users (which include the
+# System Managers) are granted directly and must NEVER be given a profile, since
+# that would regenerate their roles from it and wipe System Manager. Shared logic
+# in training/roles.py, also used by the Employee after_insert hook for new hires.
+erpnext_enhancements.patches.grant_training_learner_to_employees

@@ -24,3 +24,4 @@ Plaid Banking
 Fleet Maintenance
 Product Configurator
 Package Dispatch
+Training

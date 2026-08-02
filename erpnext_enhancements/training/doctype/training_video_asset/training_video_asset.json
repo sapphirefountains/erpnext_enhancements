@@ -1,0 +1,246 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "title",
+  "status",
+  "column_break_head",
+  "duration_seconds",
+  "duration_source",
+  "size_bytes",
+  "source_section",
+  "drive_file_id",
+  "drive_web_view_link",
+  "column_break_source",
+  "mime_type",
+  "thumbnail",
+  "delivery_section",
+  "gcs_object",
+  "gcs_synced_on",
+  "column_break_delivery",
+  "last_verified_on",
+  "last_error",
+  "transcript_section",
+  "transcript_source",
+  "transcript",
+  "audit_section",
+  "uploaded_by",
+  "uploaded_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-VID-.#####",
+   "print_hide": 1
+  },
+  {
+   "description": "What this video is, in plain words. Authors pick it by this name.",
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "description": "Draft until the file is registered; Available once it is playable; Missing or Error when the hourly check cannot resolve it.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nAvailable\nMissing\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Length of the video. Watch coverage is a fraction of this, so an inaccurate value quietly changes what passing means — a hand-typed 600 for a 900-second video passes an 80% gate on 53% of a real watch.",
+   "fieldname": "duration_seconds",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Duration (Seconds)",
+   "reqd": 1
+  },
+  {
+   "default": "Probed",
+   "description": "Probed means the duration came from the file itself and is trustworthy. Manual means a probe failed and someone typed it — coverage gating on such a video is reported as unverified.",
+   "fieldname": "duration_source",
+   "fieldtype": "Select",
+   "label": "Duration Source",
+   "options": "Probed\nManual",
+   "read_only": 1
+  },
+  {
+   "fieldname": "size_bytes",
+   "fieldtype": "Int",
+   "label": "Size (Bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_section",
+   "fieldtype": "Section Break",
+   "label": "Source (Google Drive)"
+  },
+  {
+   "description": "The Drive file authors uploaded. Drive stays the source of truth for the original.",
+   "fieldname": "drive_file_id",
+   "fieldtype": "Data",
+   "label": "Drive File ID",
+   "unique": 1
+  },
+  {
+   "description": "Open the original in Drive. Authors only — a learner never receives this.",
+   "fieldname": "drive_web_view_link",
+   "fieldtype": "Data",
+   "label": "Drive Link",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "mime_type",
+   "fieldtype": "Data",
+   "label": "MIME Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "thumbnail",
+   "fieldtype": "Attach Image",
+   "label": "Thumbnail"
+  },
+  {
+   "fieldname": "delivery_section",
+   "fieldtype": "Section Break",
+   "label": "Delivery (Signed URL)"
+  },
+  {
+   "description": "Object path in the private GCS bucket the player streams from. Populated on publish. The copy exists because a Drive preview frame is cross-origin — the player cannot read currentTime or pause it, so checkpoints and coverage would both be impossible.",
+   "fieldname": "gcs_object",
+   "fieldtype": "Data",
+   "label": "GCS Object",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gcs_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Copied On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_delivery",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Last time the hourly check confirmed this video still resolves. A video that 404s mid-lesson is the worst way to find out somebody moved a file in the shared drive.",
+   "fieldname": "last_verified_on",
+   "fieldtype": "Datetime",
+   "label": "Last Verified",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transcript_section",
+   "fieldtype": "Section Break",
+   "label": "Transcript"
+  },
+  {
+   "default": "None",
+   "description": "A timed transcript (WebVTT) is what makes AI checkpoint-timestamp suggestions possible. Without timings the model has to guess where things happen, and it will guess confidently and wrongly — so that button stays disabled.",
+   "fieldname": "transcript_source",
+   "fieldtype": "Select",
+   "label": "Transcript Source",
+   "options": "None\nAuthor Pasted\nUploaded VTT"
+  },
+  {
+   "depends_on": "eval:doc.transcript_source && doc.transcript_source != \"None\"",
+   "fieldname": "transcript",
+   "fieldtype": "Long Text",
+   "label": "Transcript"
+  },
+  {
+   "fieldname": "audit_section",
+   "fieldtype": "Section Break",
+   "label": "Audit"
+  },
+  {
+   "fieldname": "uploaded_by",
+   "fieldtype": "Link",
+   "label": "Registered By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uploaded_on",
+   "fieldtype": "Datetime",
+   "label": "Registered On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Video Asset",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "title,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

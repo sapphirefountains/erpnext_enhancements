@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "question",
+  "question_preview",
+  "points",
+  "is_required"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "description": "The question to ask. Pick one from the bank, or create a new one inline from this row.",
+   "fieldname": "question",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Question",
+   "options": "Training Question",
+   "reqd": 1
+  },
+  {
+   "columns": 5,
+   "fetch_from": "question.question_text",
+   "fieldname": "question_preview",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Preview",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "How much this question is worth relative to the others.",
+   "fieldname": "points",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Points"
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "Untick to let this question sit in the pool without always being drawn (only meaningful when the lesson draws a subset).",
+   "fieldname": "is_required",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Always Ask"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Quiz Question",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

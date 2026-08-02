@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "block_key",
+  "block_type",
+  "heading",
+  "content",
+  "image",
+  "file",
+  "video_asset",
+  "video_duration_seconds",
+  "embed_url",
+  "poster_image",
+  "caption",
+  "gating_section",
+  "required_for_completion",
+  "min_coverage_percent",
+  "checkpoints_enabled"
+ ],
+ "fields": [
+  {
+   "description": "Stable identifier, generated once and copied verbatim when a version is cloned. Progress and checkpoints key off this, so reordering or inserting blocks never invalidates a learner's place.",
+   "fieldname": "block_key",
+   "fieldtype": "Data",
+   "label": "Block Key",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "default": "Rich Text",
+   "description": "What kind of thing this block is. External Embed cannot be checkpointed or coverage-gated — see the module README.",
+   "fieldname": "block_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Rich Text\nImage\nPDF\nVideo\nExternal Embed\nCallout\nDownloadable File\nDivider",
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "description": "Optional heading shown above the block.",
+   "fieldname": "heading",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Heading"
+  },
+  {
+   "depends_on": "eval:[\"Rich Text\",\"Callout\"].includes(doc.block_type)",
+   "description": "The body text. Sanitized on the server before it is ever served to a learner.",
+   "fieldname": "content",
+   "fieldtype": "Text Editor",
+   "label": "Content"
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"Image\"",
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "Image"
+  },
+  {
+   "depends_on": "eval:[\"PDF\",\"Downloadable File\"].includes(doc.block_type)",
+   "description": "Stored as a private file; the runtime serves it only to a learner with an active enrollment.",
+   "fieldname": "file",
+   "fieldtype": "Attach",
+   "label": "File"
+  },
+  {
+   "columns": 3,
+   "depends_on": "eval:doc.block_type==\"Video\"",
+   "description": "The video to play. Register it once as a Training Video Asset so its duration is probed rather than typed.",
+   "fieldname": "video_asset",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Video",
+   "options": "Training Video Asset"
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"Video\"",
+   "description": "Fetched from the asset. Coverage is measured against this, which is why it is never hand-entered here.",
+   "fetch_from": "video_asset.duration_seconds",
+   "fieldname": "video_duration_seconds",
+   "fieldtype": "Int",
+   "label": "Duration (Seconds)",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"External Embed\"",
+   "description": "A Drive preview or unlisted video URL. Convenient, but the player cannot see into a cross-origin frame: no checkpoints and no watch coverage for this block.",
+   "fieldname": "embed_url",
+   "fieldtype": "Data",
+   "label": "Embed URL"
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"Video\"",
+   "description": "Optional still shown before playback starts.",
+   "fieldname": "poster_image",
+   "fieldtype": "Attach Image",
+   "label": "Poster Image"
+  },
+  {
+   "description": "Optional caption shown under the block.",
+   "fieldname": "caption",
+   "fieldtype": "Small Text",
+   "label": "Caption"
+  },
+  {
+   "fieldname": "gating_section",
+   "fieldtype": "Section Break",
+   "label": "Completion"
+  },
+  {
+   "default": "1",
+   "description": "Untick for supporting material the learner may skip.",
+   "fieldname": "required_for_completion",
+   "fieldtype": "Check",
+   "label": "Required to Finish the Lesson"
+  },
+  {
+   "depends_on": "eval:doc.block_type==\"Video\"",
+   "description": "Per-block override of the course's minimum watch coverage. Leave at 0 to use the course setting. Ignored for External Embed — the player cannot measure it.",
+   "fieldname": "min_coverage_percent",
+   "fieldtype": "Percent",
+   "label": "Minimum Watched (%)"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.block_type==\"Video\"",
+   "description": "Pause the video to ask the checkpoint questions attached to this block. Ignored for External Embed.",
+   "fieldname": "checkpoints_enabled",
+   "fieldtype": "Check",
+   "label": "Ask Checkpoint Questions"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Content Block",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

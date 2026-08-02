@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "applies_to",
+  "applies_to_doctype",
+  "applies_to_value",
+  "due_days"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "default": "1",
+   "description": "Untick to park a rule without deleting it.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "On"
+  },
+  {
+   "columns": 3,
+   "default": "All Employees",
+   "description": "Who this rule targets.",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Applies To",
+   "options": "All Employees\nDepartment\nDesignation\nRole Profile\nRole\nEmployee Grade\nEmployment Type",
+   "reqd": 1
+  },
+  {
+   "description": "Derived from Applies To so the value field below can be a Dynamic Link. Not edited by hand.",
+   "fieldname": "applies_to_doctype",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Applies To DocType",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 4,
+   "depends_on": "eval:doc.applies_to && doc.applies_to != \"All Employees\"",
+   "description": "Which one. Leave blank when the rule applies to all employees.",
+   "fieldname": "applies_to_value",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Value",
+   "options": "applies_to_doctype"
+  },
+  {
+   "columns": 2,
+   "description": "Days from assignment to the due date, for people matched by this rule. Leave at 0 to use the course default.",
+   "fieldname": "due_days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Due In (Days)"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Assignment Rule",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

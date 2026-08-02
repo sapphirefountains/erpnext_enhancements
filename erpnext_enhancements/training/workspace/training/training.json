@@ -1,0 +1,164 @@
+{
+ "app": "erpnext_enhancements",
+ "charts": [],
+ "content": "[{\"id\":\"tr_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"tr_sc_courses\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Published Courses\",\"col\":3}},{\"id\":\"tr_sc_drafts\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"My Drafts\",\"col\":3}},{\"id\":\"tr_sc_review\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Awaiting Review\",\"col\":3}},{\"id\":\"tr_sc_overdue\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Overdue Assignments\",\"col\":3}},{\"id\":\"tr_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"tr_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Training</b></span>\",\"col\":12}},{\"id\":\"tr_card_authoring\",\"type\":\"card\",\"data\":{\"card_name\":\"Authoring\",\"col\":4}},{\"id\":\"tr_card_learners\",\"type\":\"card\",\"data\":{\"card_name\":\"Learners\",\"col\":4}},{\"id\":\"tr_card_setup\",\"type\":\"card\",\"data\":{\"card_name\":\"Setup\",\"col\":4}}]",
+ "creation": "2026-08-01 12:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "education",
+ "is_hidden": 0,
+ "label": "Training",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Authoring",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Course",
+   "link_count": 0,
+   "link_to": "Training Course",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Course Version",
+   "link_count": 0,
+   "link_to": "Training Course Version",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Lesson",
+   "link_count": 0,
+   "link_to": "Training Lesson",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Question",
+   "link_count": 0,
+   "link_to": "Training Question",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Learners",
+   "link_count": 1,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Assignment",
+   "link_count": 0,
+   "link_to": "Training Assignment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Setup",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Settings",
+   "link_count": 0,
+   "link_to": "Training Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Category",
+   "link_count": 0,
+   "link_to": "Training Category",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Training Video Asset",
+   "link_count": 0,
+   "link_to": "Training Video Asset",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training",
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [],
+ "sequence_id": 61,
+ "shortcuts": [
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "label": "Published Courses",
+   "link_to": "Training Course",
+   "stats_filter": "{\"status\":\"Published\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "My Drafts",
+   "link_to": "Training Course",
+   "stats_filter": "{\"status\":\"Draft\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "Awaiting Review",
+   "link_to": "Training Course",
+   "stats_filter": "{\"status\":\"In Review\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "label": "Overdue Assignments",
+   "link_to": "Training Assignment",
+   "stats_filter": "{\"status\":\"Overdue\"}",
+   "type": "DocType"
+  }
+ ],
+ "title": "Training"
+}

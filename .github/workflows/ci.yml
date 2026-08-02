@@ -114,6 +114,25 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # THREE separate steps, not one `unittest a b c`. Each installs its own
+      # frappe stub in setUpModule, and running them in one process cross-talks:
+      # the roles suite imports the real erpnext_enhancements.training.roles, and
+      # `from ... import roles` in training.assignment then resolves the attribute
+      # already set on the package rather than the assignment suite's stub. That
+      # combination fails; individually all three pass. Verified 2026-08-01.
+      #
+      # The publish suite is the load-bearing one: it walks the serialized
+      # learner-facing payload to any depth and fails if a correct-answer marker
+      # appears anywhere, so a newly added field that leaks the quiz key is caught
+      # here rather than by a learner. It already caught one — per-option feedback
+      # text ("why this option is wrong") was being shipped before the learner
+      # answered.
+      - name: Training publish (answer key never reaches the learner payload)
+        run: python -m unittest erpnext_enhancements.tests.test_training_publish -v
+      - name: Training roles (desk_access, profile-vs-direct grant)
+        run: python -m unittest erpnext_enhancements.tests.test_training_roles -v
+      - name: Training assignment rules (targeting, first-match, save guards)
+        run: python -m unittest erpnext_enhancements.tests.test_training_assignment_rules -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

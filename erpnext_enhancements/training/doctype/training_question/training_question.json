@@ -1,0 +1,217 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "question_text",
+  "question_type",
+  "column_break_head",
+  "category",
+  "difficulty",
+  "points",
+  "options_section",
+  "options",
+  "correct_text_answers",
+  "explanation",
+  "reuse_section",
+  "is_bank_question",
+  "source_lesson",
+  "provenance_section",
+  "ai_generated",
+  "ai_reviewed_by",
+  "column_break_provenance",
+  "ai_model",
+  "ai_source"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-Q-.######",
+   "print_hide": 1
+  },
+  {
+   "description": "What the learner is asked.",
+   "fieldname": "question_text",
+   "fieldtype": "Text Editor",
+   "in_list_view": 1,
+   "label": "Question",
+   "reqd": 1
+  },
+  {
+   "default": "Single Choice",
+   "fieldname": "question_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type",
+   "options": "Single Choice\nMultiple Choice\nTrue-False\nShort Answer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "Training Category"
+  },
+  {
+   "default": "Medium",
+   "fieldname": "difficulty",
+   "fieldtype": "Select",
+   "label": "Difficulty",
+   "options": "Easy\nMedium\nHard"
+  },
+  {
+   "default": "1",
+   "fieldname": "points",
+   "fieldtype": "Int",
+   "label": "Points"
+  },
+  {
+   "fieldname": "options_section",
+   "fieldtype": "Section Break",
+   "label": "Answers"
+  },
+  {
+   "depends_on": "eval:doc.question_type != \"Short Answer\"",
+   "description": "Two to six options. Tick the ones that are right — the tick never reaches a browser.",
+   "fieldname": "options",
+   "fieldtype": "Table",
+   "label": "Options",
+   "options": "Training Answer Option"
+  },
+  {
+   "depends_on": "eval:doc.question_type == \"Short Answer\"",
+   "description": "Accepted answers, one per line. Matched case-insensitively after trimming.",
+   "fieldname": "correct_text_answers",
+   "fieldtype": "Small Text",
+   "label": "Accepted Answers"
+  },
+  {
+   "description": "Shown after the learner answers. Worth writing — it is the only teaching a wrong answer produces.",
+   "fieldname": "explanation",
+   "fieldtype": "Text Editor",
+   "label": "Explanation"
+  },
+  {
+   "fieldname": "reuse_section",
+   "fieldtype": "Section Break",
+   "label": "Reuse"
+  },
+  {
+   "default": "0",
+   "description": "Tick to offer this question to every course from the shared bank. Leave unticked for a question written for one lesson.",
+   "fieldname": "is_bank_question",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "In the Shared Bank"
+  },
+  {
+   "depends_on": "eval:!doc.is_bank_question",
+   "description": "The lesson this was written for. Kept for analytics even after the question is promoted to the bank.",
+   "fieldname": "source_lesson",
+   "fieldtype": "Link",
+   "label": "Written For",
+   "options": "Training Lesson"
+  },
+  {
+   "fieldname": "provenance_section",
+   "fieldtype": "Section Break",
+   "label": "Provenance"
+  },
+  {
+   "default": "0",
+   "description": "This question was drafted by AI. It cannot reach a published course until a person has reviewed it.",
+   "fieldname": "ai_generated",
+   "fieldtype": "Check",
+   "label": "AI Drafted",
+   "read_only": 1
+  },
+  {
+   "description": "Who accepted the AI draft. A disputed result has to trace to a named human, not to a model.",
+   "fieldname": "ai_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_provenance",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ai_model",
+   "fieldtype": "Data",
+   "label": "Model",
+   "read_only": 1
+  },
+  {
+   "description": "The sentence from the lesson the draft was grounded in.",
+   "fieldname": "ai_source",
+   "fieldtype": "Small Text",
+   "label": "Grounded In",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Question",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "question_type,category",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "question_text",
+ "track_changes": 1
+}

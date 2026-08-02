@@ -67,6 +67,12 @@ web_include_css = "login_enhancements.bundle.css"
 web_include_js = "login_enhancements.bundle.js"
 
 doctype_js = {
+	# training: the Course form's doors into the authoring flow — New Draft
+	# Version, Send For Review, Publish (Training Manager only, and it asks the
+	# Minor-Edit vs Material-Change question explicitly rather than defaulting it),
+	# Assign To and Retire. The drag-and-drop builder is a later release; this is
+	# what makes authoring usable before it lands.
+	"Training Course": ["public/js/training/training_course.js"],
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
@@ -405,8 +411,29 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Employee": {
-		# Cell Number -> linked User.phone (Call via Triton dials it)
-		"on_update": "erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
+		# training: a new hire picks up the Training Learner role and every Required
+		# course their department/designation owes, on day one. No-ops when user_id
+		# is not set yet (employees are routinely created before a login exists) —
+		# the on_update handler catches it when one appears.
+		"after_insert": "erpnext_enhancements.training.assignment.on_employee_insert",
+		"on_update": [
+			# Cell Number -> linked User.phone (Call via Triton dials it)
+			"erpnext_enhancements.sync_contact.sync_employee_phone_to_user",
+			# training: re-evaluate assignment rules when something a rule keys off
+			# actually moved. Guarded with get_doc_before_save() on department /
+			# designation / grade / employment_type / status (plus user_id first
+			# appearing) — without that comparison EVERY Employee save enqueues a
+			# full rule sweep, and Employee is saved often.
+			"erpnext_enhancements.training.assignment.on_employee_update",
+		],
+	},
+	"User": {
+		# training: a Role Profile change rewrites a user's roles wholesale and can
+		# bring a role-targeted Required course into scope for someone the Employee
+		# hook never sees. Compares the roles child table against
+		# get_doc_before_save() and returns immediately when unchanged; the sweep
+		# itself is enqueue_after_commit so it can never delay a login or a save.
+		"on_update": "erpnext_enhancements.training.assignment.on_user_roles_changed",
 	},
 	"Supplier": {
 		"after_insert": "erpnext_enhancements.accounting_intake.filing.enqueue_supplier_folder",
@@ -458,8 +485,24 @@ scheduler_events = {
 		"0 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.refresh_token_if_needed"],
 		"20 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.cdc_poll"],
 		"40 * * * *": ["erpnext_enhancements.quickbooks_online.core.tasks.retry_failed_syncs"],
+		# Training due/overdue digest — 07:15 site TZ, deliberately AFTER the 06:00
+		# technician dispatch digest so a tech opening their phone finds two clearly
+		# separated emails rather than two competing ones in the same minute. One
+		# digest per learner covering every course they owe, not one per assignment.
+		# Gated by Training Settings -> Send Notifications.
+		"15 7 * * *": ["erpnext_enhancements.training.tasks.send_due_reminders"],
 	},
 	"daily": [
+		# training: move assignments past their due date into Overdue. A separate
+		# pass rather than a side effect of the reminder job, because the status has
+		# to be right whether or not notifications are switched on — the compliance
+		# warning and the completion reports both read it. Must run BEFORE the
+		# escalation below, which only looks at rows already marked Overdue.
+		"erpnext_enhancements.training.tasks.refresh_overdue_status",
+		# training: escalate assignments that have stayed overdue past the course's
+		# grace period to its escalation role. Gated in Training Settings; the
+		# learner is excluded from their own escalation email.
+		"erpnext_enhancements.training.tasks.escalate_overdue_assignments",
 		"erpnext_enhancements.project_enhancements.send_project_start_reminders",
 		"erpnext_enhancements.tasks.predictive_maintenance_scheduling",
 		# maintenance renewal/rate engine: T-30 rate-change notices (§4.5). The
@@ -619,6 +662,10 @@ after_migrate = [
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
+	# training: starter Training Categories, so the builder's category picker is
+	# never empty on a fresh site (an empty picker reads as a broken form).
+	# Insert-only — a category somebody renamed or deleted stays that way.
+	"erpnext_enhancements.training.setup.ensure_training_categories",
 	# Point every Print Format at the chrome PDF backend. Must run on EVERY migrate, not
 	# once as a patch: standard formats re-sync from their app's JSON, so the setting is
 	# reverted by the same migrate that would have applied a patch. It also has to use
@@ -891,12 +938,20 @@ permission_query_conditions = {
 	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
 	# Sapphire Maintenance Record: portal customers see only their own submitted visits
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.get_permission_query_conditions",
+	# Training Assignment: a learner sees only their own; a supervisor also sees
+	# their direct reports (Employee.reports_to), which is what makes the sign-off
+	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
+	# not scoped here at all -- learner roles hold no DocPerm on Training Course /
+	# Version / Lesson / Question / Answer Option, so /api/resource refuses them
+	# outright and the answer key cannot leak through a careless future endpoint.
+	"Training Assignment": "erpnext_enhancements.training.permissions.assignment_query_conditions",
 }
 
 has_permission = {
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",
+	"Training Assignment": "erpnext_enhancements.training.permissions.assignment_has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]
