@@ -73,6 +73,12 @@ doctype_js = {
 	# Assign To and Retire. The drag-and-drop builder is a later release; this is
 	# what makes authoring usable before it lands.
 	"Training Course": ["public/js/training/training_course.js"],
+	# training: the GCS signing key goes in through a dialog, not the field. The
+	# field is a Password, which Frappe renders as a SINGLE-LINE masked input --
+	# a control that cannot take a 2 KB multi-line service-account JSON by paste
+	# without mangling it, and being masked it then hides the damage. Also carries
+	# the Test GCS Connection action.
+	"Training Settings": ["public/js/training/training_settings.js"],
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",

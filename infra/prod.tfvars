@@ -25,3 +25,13 @@ boot_disk_source_attach = "projects/erpnext-465317/zones/us-east4-a/disks/prod-e
 data_disk_source_attach = "projects/erpnext-465317/zones/us-east4-a/disks/prod-erpnext-data-east4"
 
 vm_labels = { role = "web-frontend" }
+
+# Training media bucket (Training module video delivery).
+#
+# Set here rather than passed as -var on the command line, and that is
+# deliberate: the bucket resource is `count = var.enable_training_media_bucket
+# ? 1 : 0`, so an apply that does not carry the flag evaluates count to 0 and
+# plans to DESTROY the bucket. force_destroy = false saves it once objects
+# exist, but an empty bucket would go without complaint. Keeping the flag in
+# tfvars means every apply agrees.
+enable_training_media_bucket = true

@@ -32,6 +32,8 @@
   "drive_training_folder_id",
   "gcs_bucket",
   "gcs_service_account_json",
+  "set_service_account_key",
+  "gcs_key_status",
   "column_break_media",
   "max_video_mb",
   "signed_url_ttl_minutes",
@@ -208,10 +210,23 @@
    "label": "GCS Video Bucket"
   },
   {
-   "description": "The JSON key for the sa-training-media service account, pasted whole. Stored encrypted and never rendered back. Signs the short-lived playback URLs and performs the Drive-to-bucket copy; it can read and write objects in this one bucket and reach nothing else.",
+   "description": "Set with the button below — this control is a single-line masked input and cannot take a multi-line key by paste. Stored encrypted and never rendered back.",
    "fieldname": "gcs_service_account_json",
    "fieldtype": "Password",
-   "label": "GCS Service Account JSON"
+   "label": "GCS Service Account JSON",
+   "read_only": 1
+  },
+  {
+   "description": "Opens a proper multi-line box to paste the sa-training-media key into. The key is checked before it is stored, so a mangled paste is rejected here rather than surfacing later as an unexplained 403 on a video.",
+   "fieldname": "set_service_account_key",
+   "fieldtype": "Button",
+   "label": "Set Service Account Key"
+  },
+  {
+   "fieldname": "gcs_key_status",
+   "fieldtype": "Data",
+   "label": "Key Status",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_media",
