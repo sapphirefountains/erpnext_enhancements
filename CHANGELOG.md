@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.209.0] - 2026-08-01
+
+### Added
+
+- **Training video delivery: a private GCS bucket and hand-rolled V4 signed URLs.** The
+  Phase-2 prerequisite, landed ahead of the player so the spike is a verification exercise
+  rather than a build. Ships **inert** — the Terraform is behind `enable_training_media_bucket`
+  (default false) and the app treats an unconfigured bucket as "video delivery not available",
+  degrading to text, image and PDF blocks plus quizzes rather than erroring.
+
+  **Why the video is copied out of Drive at all.** A Drive preview frame is cross-origin: the
+  player cannot read `currentTime`, cannot `pause()`, and cannot observe seeking. That kills
+  in-video checkpoints *and* watch-coverage measurement — two of the three ways the module
+  checks whether somebody engaged with a lesson. A signed URL on a real `<video>` element
+  restores both, serves correct byte ranges so seeking works, costs no bench disk or
+  bandwidth, and works for a customer who has no Google account.
+
+  **Why the signing is hand-rolled.** `google-cloud-storage` is not a dependency and cannot be
+  pip-installed on the host — the same constraint that made `stripe_payments` talk to Stripe
+  over plain REST. But `google-auth` already is a dependency, and a service-account credential
+  built from it exposes an RSA signer, which is the only primitive a V4 signature needs. So
+  `training/gcs_media.py` assembles the canonical request by hand and signs it with a library
+  we already have. **No new package.**
+
+  `infra/storage.tf` creates one private bucket (uniform access, public-access prevention
+  *enforced*, no lifecycle deletion, `force_destroy = false`) in `us-east4` — the region the
+  production VM runs in, so playback egress to the bench is same-region and free — plus a
+  narrow `sa-training-media` service account holding `objectAdmin` on that bucket and nothing
+  else. The CORS origin is read from the live site (`https://erp.sapphirefountains.com`), not
+  guessed; without it the browser blocks playback outright, because the player sets
+  `crossorigin="anonymous"`.
+
+  The service-account key is deliberately **not** a Terraform resource:
+  `google_service_account_key` writes the private key in plaintext into the state file, and
+  that state lives in a bucket several people can read. It is created by hand and pasted into
+  Training Settings, which stores it in a Password field.
+
+### Notes
+
+- **Signing must use UTC, and this is easy to get wrong here.** The timestamp and the
+  date-scoped credential are both part of the signature, so signing against site-local time
+  produces URLs that validate only when the site happens to be on UTC. `frappe.utils.now_datetime()`
+  is site-local — the code uses `datetime.now(timezone.utc)` and says why in a comment, because
+  this app has already been bitten once by exactly this confusion (the Turnstile always-fail bug).
+
+- **A signed URL cannot be revoked.** Once minted it works until it expires, even if the
+  learner's access is pulled a minute later. The 15-minute TTL is the mitigation, which is why
+  it is a setting rather than a constant, and why it is clamped at both ends.
+
+- The new test suite **rebuilds the string-to-sign independently from the spec and compares**,
+  rather than asserting the implementation's own output. That distinction is the whole value: a
+  subtly wrong signature still produces a perfectly well-formed URL, and the only symptom is an
+  opaque 403 from GCS that cannot be diagnosed by inspection. It gets its own CI step, like the
+  other Training suites, for the stub cross-talk reason already documented in `ci.yml`.
+
+- The full operator runbook — apply, key creation, configuration, eight acceptance criteria,
+  rollback and cost — lives on ERPNext task **TASK-2026-01150**, not in the repo, because it is
+  a one-time operational procedure with credential steps that must not be scripted.
+
 ## [1.208.0] - 2026-08-01
 
 ### Added
