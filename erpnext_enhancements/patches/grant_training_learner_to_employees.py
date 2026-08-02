@@ -1,4 +1,4 @@
-"""Give every active employee's login the Training Learner role (v1.207.0).
+"""Give every active employee's login the Training Learner role (v1.208.0).
 
 Without this the first assignment lands on somebody who cannot open ``/training``,
 which reads as the feature being broken rather than as a missing role. All 15

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.207.0] - 2026-08-01
+## [1.208.0] - 2026-08-01
 
 ### Added
 
@@ -138,6 +138,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - No `portal_menu_items` entry and no `/training` route yet — both would point at a page that
   arrives in phase 2, and a dead menu item teaches people to ignore the menu.
+
+## [1.207.0] - 2026-08-01
+
+### Added
+
+- **Latitude and Longitude on Address are now editable, so a site with no findable
+  address can still be located.** New construction is the case that prompted it: a lot
+  number, a stake in a field, a parcel off an unnamed road — nothing Google can resolve from
+  text, so before this the site simply could not be put on a map. Type a pair and every map
+  in the app uses it: the Pick Routing Map, the Travel Trip map, the POI picker, the
+  `/itinerary` page and the Address form's own preview. None of those needed changing — they
+  have preferred a stored point over geocoding since v1.206.0 and cannot tell where it came
+  from.
+
+  **The hard part was not making the fields writable — it was that the existing rule would
+  have eaten what you typed.** Since v1.205.0 the coordinates are wiped whenever any address
+  component is hand-edited. That rule is load-bearing: a point Google derived from an address
+  that has since changed will route somebody to the wrong building, and nothing on screen
+  looks wrong. But applied to a typed point it is exactly backwards — you entered
+  coordinates *because* the text cannot locate the site, so correcting a typo in the city
+  must not throw them away.
+
+  So the rule now turns on **provenance**, recorded in a new read-only **Location Source**
+  field:
+
+  | Source | Set when | Survives an address edit? |
+  |---|---|---|
+  | `Google` | picked from the autocomplete | no — it described the old text |
+  | `Manual` | typed or pasted into the form or the dialog | yes |
+  | blank | pre-v1.207.0 rows, imports, API writes | treated as `Google` |
+
+  Blank meaning `Google` is what makes this a no-patch change: every coordinate stored before
+  today was written by a pick, so the legacy reading is already the true one.
+
+  **The server deliberately does not stamp a provenance on a blank one**, and review is why.
+  The first cut had `before_save` promote blank to `Manual`, reasoning that a point written by
+  an import or the API would otherwise vanish on the next address edit. But that hook cannot
+  tell an API write from the far commoner case of a legacy row being re-saved for an unrelated
+  reason — ticking *Is Primary Address*, a party link, a patch. All of those carry a
+  Google-derived point and a blank source, so the stamp would have migrated the entire existing
+  Address table to `Manual`, the one value in which clear-on-edit stops firing, silently and on
+  a read-only field. Retarget such a record months later and it keeps the old building's
+  coordinates under the new address — exactly the failure the provenance split exists to
+  prevent. So blank stays blank and is read as `Google`: a point of unknown origin is assumed
+  derived from the text and dies with it. Wrong in the safe direction. An importer that wants
+  its points to survive sets `custom_location_source` itself.
+
+  **Provenance is not inferred from the Place ID**, which was the obvious shortcut and is
+  wrong twice over. A pick stores `meta.latitude || 0`, so a real Place ID can already sit
+  beside 0/0 — and more fundamentally the ID identifies the *address text*, not the point, so
+  using it as the coordinate flag would mean deleting it whenever somebody nudged a pin,
+  discarding the one field Google's terms let us cache indefinitely.
+
+  **A hand edit is detected with `df.onchange`, not a field handler.** A
+  `frappe.ui.form.on("Address", { custom_latitude })` handler fires identically for a person
+  typing and for our own `frm.set_value` during a pick — the framework does not forward that
+  distinction to form scripts. `onchange` is reached only from the control's own
+  validate-and-set path, so it means "a person edited this" and nothing else. It has to be
+  re-planted on every `refresh`, because the layout swaps `df` for a per-docname copy before
+  the form script runs.
+
+  **Pasting "40.889402, -111.880771" into one box is intercepted**, and this is the reason
+  the feature needed a paste handler rather than just a range check. Frappe's Float control
+  runs its input through `frappe.utils.eval_expression`, which literally `eval()`s anything
+  that parses as arithmetic — so that string becomes `40.889402 - 111.880771` = **-70.99**, a
+  perfectly valid latitude in the Southern Ocean. No validation anywhere can reject it,
+  because there is nothing wrong with the number. Pasting the pair is the single most likely
+  thing anyone does with these fields, so it is caught before the control sees it and split
+  across both boxes.
+
+  **Two failures are now refused on save**, in a new `Address` `before_save` hook:
+
+  - **Half a pair.** Every consumer reads a zero axis as *no point at all*, so a filled
+    Latitude with an empty Longitude saved cleanly and located nothing — the worst kind of
+    bug, because the form said it worked.
+  - **Out of range**, which in practice means a transposed pair. A Utah longitude is not a
+    valid latitude, and left alone it puts the site in the wrong hemisphere.
+
+  **The form's map preview now follows the point.** For a site located by coordinates the
+  address text is by definition the thing that could not find it, so embedding the text would
+  show the wrong place — and typing a pair with nothing moving on screen reads as "it didn't
+  work". The embed also gets `z=17`, building scale, which the text form cannot ask for.
+
+  The coordinates are also on the **quick-entry dialog**, in a collapsed "Coordinates"
+  section — that dialog is the main creation path when `ee_contacts_ux` is on, and creating a
+  new-construction site there only to reopen it on the full form to place it would be an odd
+  gap. The paste guard is shared with the form rather than reimplemented, so both surfaces
+  behave identically.
+
+  One more case review caught: **picking a second address whose Place resolves without a
+  location** used to leave the first pick's coordinates sitting under the new text, which
+  every map then preferred over that text. A pick that brings no point now clears a
+  Google-derived one — and still leaves a `Manual` one alone, since that was typed precisely
+  because the address cannot locate the site.
+
+### Notes
+
+- **0.0 remains the "absent" sentinel**, so the equator and the prime meridian cannot be
+  stored. The columns are `NOT NULL DEFAULT 0` and making them nullable would mean changing
+  the guard in four consumers to gain coordinates nobody here will ever need. Sapphire's
+  service area is Utah and Arizona.
+- **`no_copy` stays on**, so duplicating an Address for a neighbouring lot drops the point
+  rather than inheriting it. That is plainly right for a picked point and arguably wrong for a
+  hand-surveyed one, but relaxing it would start copying Google points too.
+- The **Place ID stays read-only**. A user typing a `ChIJ…` string would be forging
+  provenance against their own point.
+- **Ctrl+Z does not round-trip the provenance stamp** — frappe's undo applies changes through
+  `set_value`, which by design does not fire `onchange`. Undoing a typed latitude restores the
+  number while leaving the source as `Manual`. Self-correcting on the next real edit.
+- A new bench-free suite, `tests/test_address_coordinates.py`, covers the gate; both of its
+  guards were mutation-checked (deleting either fails the suite rather than passing quietly).
 
 ## [1.206.0] - 2026-08-01
 

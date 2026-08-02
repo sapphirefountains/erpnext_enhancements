@@ -325,7 +325,7 @@ erpnext_enhancements.patches.set_opportunity_kanban_primary_contact
 # threw 'PDF Generator cannot be "chrome"'. Frappe ships the field as
 # "wkhtmltopdf\nchrome"; nothing in any installed app recreates the restriction.
 erpnext_enhancements.patches.drop_pdf_generator_options_restriction
-# v1.207.0 training: seed "Training Author" / "Training Manager" / "Training
+# v1.208.0 training: seed "Training Author" / "Training Manager" / "Training
 # Learner". NOT a fixtures/role.json entry -- fixtures import in alphabetical
 # filename order, so custom_docperm.json lands before role.json and every DocPerm
 # row naming a not-yet-created role is silently dropped. Same trap as
@@ -333,7 +333,7 @@ erpnext_enhancements.patches.drop_pdf_generator_options_restriction
 # desk_access = 0 on purpose: it is held by customer contacts too, and desk
 # access would turn each of them into a billable System User.
 erpnext_enhancements.patches.seed_training_roles
-# v1.207.0 training: give every active Employee's login the Training Learner
+# v1.208.0 training: give every active Employee's login the Training Learner
 # role, so the first assignment lands on someone who can actually open /training.
 # Not a plain add_roles: User.validate rebuilds `roles` from the union of a user's
 # Role Profiles on EVERY save, so a direct grant evaporates for the 11 of 15

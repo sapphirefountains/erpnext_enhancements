@@ -185,6 +185,12 @@ jobs:
       # two-letter form cannot be exercised on this US-only site at all.
       - name: Address component mapping (bench-free, node)
         run: node scripts/test_address_components.js
+      # The Address coordinate gate. Latitude/longitude are user-editable and
+      # every map trusts that point over the address text, so this is the one
+      # place a typo silently relocates a job site. Both failures it rejects --
+      # half a pair, and a transposed pair -- save cleanly without it.
+      - name: Address coordinate validation
+        run: python -m unittest erpnext_enhancements.tests.test_address_coordinates -v
 
   # ---------------------------------------------------------------------------
   # Version sync — hard gate.

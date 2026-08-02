@@ -294,7 +294,13 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Address": {
-		"before_save": "erpnext_enhancements.script_migrations.address.set_full_address",
+		"before_save": [
+			"erpnext_enhancements.script_migrations.address.set_full_address",
+			# Latitude/longitude are user-editable (v1.207.0) and every map trusts
+			# them over the address text, so they are gated on the way in: half a
+			# pair saves cleanly and then reads as "no point" everywhere.
+			"erpnext_enhancements.script_migrations.address.validate_coordinates",
+		],
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Communication": {

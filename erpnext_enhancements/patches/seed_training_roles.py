@@ -1,4 +1,4 @@
-"""Seed the three Training roles (v1.207.0).
+"""Seed the three Training roles (v1.208.0).
 
 **Training Learner must keep ``desk_access = 0``.** It is held by customer
 contacts as well as staff; granting desk access would turn every one of them into
