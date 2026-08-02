@@ -381,5 +381,90 @@ class TestAssetResolution(unittest.TestCase):
 		)
 
 
+class TestBucketNameComplaints(unittest.TestCase):
+	"""The bucket field rejecting a service account pasted into it.
+
+	This is not hypothetical. The runbook prints the bucket name and the service
+	account email as adjacent Terraform outputs, and on the first real setup the
+	service account went into the bucket field. The only symptom was a 404 from
+	Test GCS Connection several steps later, which reads as "the integration is
+	broken" rather than "one field is wrong".
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_the_exact_mistake_that_happened(self):
+		complaint = gcs_media._bucket_name_complaint("sa-training-media")
+		self.assertTrue(complaint)
+		self.assertIn("service account", complaint)
+
+	def test_full_service_account_email_is_rejected(self):
+		complaint = gcs_media._bucket_name_complaint(
+			"sa-training-media@erpnext-465317.iam.gserviceaccount.com"
+		)
+		self.assertTrue(complaint)
+
+	def test_the_real_bucket_name_is_accepted(self):
+		self.assertEqual(gcs_media._bucket_name_complaint("sf-erpnext-training-media"), "")
+
+	def test_untrimmed_value_is_rejected(self):
+		"""A trailing space from a copy-paste produces a 404 that looks identical
+		to a missing bucket."""
+		self.assertTrue(gcs_media._bucket_name_complaint("sf-erpnext-training-media "))
+
+	def test_absurdly_short_name_is_rejected(self):
+		self.assertTrue(gcs_media._bucket_name_complaint("ab"))
+
+
+class TestErrorDescriptionIsNeverEmpty(unittest.TestCase):
+	"""Guards the dialog that read "Upload failed:" with nothing after the colon.
+
+	str(exc) alone is not enough — several exceptions here carry no message at
+	all, and an empty reason tells an operator less than saying nothing would.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def test_message_less_exception_still_describes_itself(self):
+		self.assertIn("TimeoutError", gcs_media._describe(TimeoutError()))
+
+	def test_never_returns_empty(self):
+		for exc in (TimeoutError(), ValueError(), Exception(), OSError()):
+			self.assertTrue(gcs_media._describe(exc).strip())
+
+	def test_includes_the_exception_type(self):
+		self.assertIn("ValueError", gcs_media._describe(ValueError("boom")))
+
+	def test_includes_the_message_when_there_is_one(self):
+		self.assertIn("boom", gcs_media._describe(ValueError("boom")))
+
+	def test_404_is_translated_into_the_likely_cause(self):
+		"""The single most diagnostic fact available, and the one that would have
+		named this bug on sight."""
+		exc = Exception()
+		exc.resp = types.SimpleNamespace(status=404)
+		described = gcs_media._describe(exc)
+		self.assertIn("404", described)
+		self.assertIn("bucket", described.lower())
+
+	def test_403_points_at_iam_rather_than_the_key(self):
+		exc = Exception()
+		exc.resp = types.SimpleNamespace(status=403)
+		self.assertIn("objectAdmin", gcs_media._describe(exc))
+
+	def test_401_points_at_the_key(self):
+		exc = Exception()
+		exc.resp = types.SimpleNamespace(status=401)
+		self.assertIn("401", gcs_media._describe(exc))
+
+	def test_traceback_goes_to_the_error_log(self):
+		"""The dialog stays short; the detail has to survive somewhere."""
+		STATE["errors"].clear()
+		gcs_media._describe(TimeoutError())
+		self.assertTrue(STATE["errors"])
+
+
 if __name__ == "__main__":
 	unittest.main()
