@@ -339,6 +339,97 @@ def _storage_service():
 		return None
 
 
+# ------------------------------------------------------------------- key entry
+
+
+# The keys a Google service-account file must carry. Checked before storing so a
+# truncated or mangled paste is rejected at the point of entry.
+REQUIRED_KEY_FIELDS = ("type", "project_id", "private_key", "client_email")
+
+EXPECTED_ACCOUNT_PREFIX = "sa-training-media@"
+
+
+@frappe.whitelist()
+def set_service_account_key(key_json):
+	"""Store the signing key, after checking it is actually a usable one.
+
+	This exists because the field it writes to is a ``Password``, which Frappe
+	renders as a **single-line** masked input — a control that cannot take a
+	2 KB multi-line JSON key by paste without mangling or truncating it, and
+	which then hides the damage. Storing has to happen through a proper
+	multi-line box.
+
+	The validation is the other half of the point. A key that is wrong in a way
+	nobody notices does not fail here; it fails much later, as a signed URL that
+	returns an opaque 403 on somebody's first lesson. Every check below turns one
+	of those into a sentence at the moment of paste.
+	"""
+	frappe.only_for(("System Manager", "Training Manager"))
+
+	raw = (key_json or "").strip()
+	if not raw:
+		frappe.throw(_("Paste the service account key first."))
+
+	try:
+		info = json.loads(raw)
+	except ValueError:
+		frappe.throw(
+			_("That is not valid JSON. Paste the whole key file, including the opening and closing "
+			  "braces — a partial paste is the usual cause.")
+		)
+
+	if not isinstance(info, dict):
+		frappe.throw(_("That JSON is not a service account key."))
+
+	missing = [f for f in REQUIRED_KEY_FIELDS if not info.get(f)]
+	if missing:
+		frappe.throw(
+			_("The key is missing: {0}. That normally means the paste was cut short.").format(
+				", ".join(missing)
+			)
+		)
+
+	if info.get("type") != "service_account":
+		frappe.throw(
+			_("That is a {0} key, not a service account key. Create one with "
+			  "'gcloud iam service-accounts keys create'.").format(info.get("type"))
+		)
+
+	# A private key that lost its newlines is the classic single-line-paste
+	# casualty: it looks complete, parses fine, and fails only at signing time.
+	private_key = info.get("private_key") or ""
+	if "BEGIN PRIVATE KEY" not in private_key or "END PRIVATE KEY" not in private_key:
+		frappe.throw(_("The private_key in that file looks incomplete."))
+
+	# Prove it can actually sign, rather than trusting that it parsed.
+	try:
+		from google.oauth2 import service_account
+
+		credentials = service_account.Credentials.from_service_account_info(info)
+		credentials.signer.sign("probe")
+	except Exception as exc:
+		frappe.throw(_("The key parsed but cannot sign: {0}").format(str(exc)[:200]))
+
+	warning = ""
+	email = info.get("client_email") or ""
+	if not email.startswith(EXPECTED_ACCOUNT_PREFIX):
+		# Not fatal — a differently-named account is a legitimate choice — but
+		# pasting the wrong key from a downloads folder is a very easy mistake.
+		warning = _("Note: this key belongs to {0}, not the expected sa-training-media account.").format(email)
+
+	settings = frappe.get_doc("Training Settings")
+	settings.gcs_service_account_json = raw
+	settings.gcs_key_status = _("{0} · stored {1}").format(email, frappe.utils.nowdate())
+	settings.save(ignore_permissions=True)
+	frappe.db.commit()
+
+	# The cached Single still holds the old value; the next signing call would
+	# otherwise use a stale key.
+	frappe.clear_document_cache("Training Settings", "Training Settings")
+
+	return {"ok": True, "client_email": email, "project_id": info.get("project_id"), "warning": warning}
+
+
 # ---------------------------------------------------------------- diagnostics
 
 

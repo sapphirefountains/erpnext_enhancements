@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.209.2] - 2026-08-02
+
+### Fixed
+
+Both of these were found by actually walking the GCS setup runbook rather than by reading it.
+Neither is a code defect exactly — they are places where the procedure could not be followed as
+written, which is the same thing from the operator's side.
+
+- **The training media bucket is now switched on in `prod.tfvars`.** `infra/storage.tf` guards
+  the bucket with `count = var.enable_training_media_bucket ? 1 : 0` and the variable defaults
+  to false, so following the runbook produced a puzzling *"No changes. Your infrastructure
+  matches the configuration"* — the resource did not exist to plan, and
+  `-target google_storage_bucket.training_media` matched nothing either, because at count 0 the
+  address is `...training_media[0]`. The runbook said "ships inert, behind
+  `enable_training_media_bucket`" in prose and then gave commands that never set it.
+
+  The flag is set in tfvars rather than passed as `-var` on the command line **deliberately**: an
+  apply that does not carry the flag evaluates the count to 0 and plans to *destroy* the bucket.
+  `force_destroy = false` saves it once objects exist, but an empty bucket would go without
+  complaint. Keeping the flag in tfvars means every apply agrees with every other one.
+
+- **The GCS signing key could not be pasted into its own field.** It was a `Password`, which
+  Frappe renders as a **single-line masked input** — a control that cannot take a 2 KB
+  multi-line service-account JSON by paste without mangling or truncating it, and which then
+  hides the damage behind asterisks. Capacity was never the issue (`__Auth.password` is TEXT,
+  64 KB); the control was.
+
+  The field is now read-only and the key goes in through a **Set Service Account Key** dialog
+  with a real multi-line box. The validation is the more useful half: it checks the JSON parses,
+  that `type` is `service_account`, that `private_key` still carries its BEGIN/END markers
+  (losing those is the classic single-line-paste casualty — it parses fine and fails only at
+  signing time), and then actually **signs a probe string** to prove the key works rather than
+  trusting that it looked right. It warns without blocking when the key belongs to an account
+  other than `sa-training-media`, since pasting the wrong file out of a downloads folder is easy.
+  Each of those turns an opaque 403 on a learner's first video into a sentence at the moment of
+  paste.
+
+  **Test GCS Connection** is now a button on the same form, so runbook step 5 no longer needs a
+  bench console.
+
+  Storage stays encrypted; only the entry path changed. Worth recording that the original choice
+  diverged from the repo's own precedent without cause —
+  `Project Folder Google Drive Settings.service_account_json`, the same kind of value, has always
+  been a `Code` field. Training keeps `Password` because it is the narrower credential and
+  encryption at rest is worth having, now that pasting actually works.
+
+### Notes
+
+- These two commits were pushed to the branch behind PR #680 after it had already been merged, so
+  they were never part of that release. Hence a separate 1.209.2 rather than an amendment to
+  1.209.1.
+
 ## [1.209.1] - 2026-08-01
 
 ### Fixed
