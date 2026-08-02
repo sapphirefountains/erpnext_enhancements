@@ -1,0 +1,262 @@
+{
+ "actions": [],
+ "autoname": "format:{course}-V{version_number}",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "course",
+  "course_title",
+  "version_number",
+  "column_break_head",
+  "is_current",
+  "submitted_for_review",
+  "change_type",
+  "notes_section",
+  "release_notes",
+  "chapters_section",
+  "chapters",
+  "computed_section",
+  "total_lessons",
+  "total_questions",
+  "column_break_computed",
+  "estimated_minutes",
+  "content_hash",
+  "toc_json",
+  "audit_section",
+  "published_on",
+  "published_by",
+  "column_break_audit",
+  "submitted_for_review_on",
+  "submitted_for_review_by",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fetch_from": "course.course_title",
+   "fieldname": "course_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "read_only": 1
+  },
+  {
+   "description": "Assigned when the draft is created. Completions record the version they passed, so this number is what an audit reads back years later.",
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Version",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "The version learners currently see. Exactly one submitted version per course carries this.",
+   "fieldname": "is_current",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Live",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The author has handed this draft to a Training Manager. Set by Submit for Review, cleared if the manager sends it back.",
+   "fieldname": "submitted_for_review",
+   "fieldtype": "Check",
+   "label": "Awaiting Review",
+   "read_only": 1
+  },
+  {
+   "description": "Chosen at publish. A minor edit — a typo, clearer wording, a better image — leaves everyone's completion valid. A material change means the course now teaches something different, so previous completions are superseded and everyone is asked to retake it.",
+   "fieldname": "change_type",
+   "fieldtype": "Select",
+   "label": "Change Type",
+   "options": "\nMinor Edit (keep completions)\nMaterial Change (require retake)"
+  },
+  {
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Release Notes"
+  },
+  {
+   "description": "What changed and why. This is the only record of it — write it for whoever asks in a year.",
+   "fieldname": "release_notes",
+   "fieldtype": "Small Text",
+   "label": "What Changed"
+  },
+  {
+   "fieldname": "chapters_section",
+   "fieldtype": "Section Break",
+   "label": "Chapters"
+  },
+  {
+   "description": "Grouping only. The lessons themselves are separate records that point back at a chapter's key.",
+   "fieldname": "chapters",
+   "fieldtype": "Table",
+   "label": "Chapters",
+   "options": "Training Chapter"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "computed_section",
+   "fieldtype": "Section Break",
+   "label": "Computed at Publish"
+  },
+  {
+   "fieldname": "total_lessons",
+   "fieldtype": "Int",
+   "label": "Lessons",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_questions",
+   "fieldtype": "Int",
+   "label": "Questions",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_computed",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "estimated_minutes",
+   "fieldtype": "Int",
+   "label": "Estimated Minutes",
+   "read_only": 1
+  },
+  {
+   "description": "A fingerprint of the content as published. A completion stores it too, so an audit can prove which exact material a person passed even if a record is touched afterwards.",
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "read_only": 1
+  },
+  {
+   "description": "The lightweight table of contents the learner page loads. Deliberately not the whole course — a forty-lesson course is megabytes, and shipping that to a phone on every page load is a bad afternoon.",
+   "fieldname": "toc_json",
+   "fieldtype": "Long Text",
+   "label": "Table of Contents (JSON)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "audit_section",
+   "fieldtype": "Section Break",
+   "label": "Audit"
+  },
+  {
+   "fieldname": "published_on",
+   "fieldtype": "Datetime",
+   "label": "Published On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "published_by",
+   "fieldtype": "Link",
+   "label": "Published By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "submitted_for_review_on",
+   "fieldtype": "Datetime",
+   "label": "Sent For Review On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "submitted_for_review_by",
+   "fieldtype": "Link",
+   "label": "Sent For Review By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Training Course Version",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [
+  {
+   "link_doctype": "Training Lesson",
+   "link_fieldname": "course_version"
+  }
+ ],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Course Version",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "course,version_number",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title",
+ "track_changes": 1
+}

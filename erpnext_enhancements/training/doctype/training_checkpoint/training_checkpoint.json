@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "lesson",
+  "course_version",
+  "block_key",
+  "checkpoint_key",
+  "column_break_head",
+  "at_seconds",
+  "question_type",
+  "counts_toward_score",
+  "question_section",
+  "question_text",
+  "options",
+  "explanation",
+  "behaviour_section",
+  "pause_video",
+  "allow_skip",
+  "column_break_behaviour",
+  "max_attempts",
+  "rewind_seconds_on_wrong",
+  "provenance_section",
+  "ai_generated",
+  "ai_reviewed_by"
+ ],
+ "fields": [
+  {
+   "description": "The lesson this checkpoint belongs to.",
+   "fieldname": "lesson",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Lesson",
+   "options": "Training Lesson",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "lesson.course_version",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "read_only": 1
+  },
+  {
+   "description": "Which video block on the lesson this interrupts. Keyed by the block's stable key rather than its position, so reordering the lesson never moves a checkpoint onto the wrong video.",
+   "fieldname": "block_key",
+   "fieldtype": "Data",
+   "label": "Block Key",
+   "reqd": 1
+  },
+  {
+   "description": "Stable identifier, copied verbatim when a version is cloned. A learner who has already answered this checkpoint is not asked again after a minor edit.",
+   "fieldname": "checkpoint_key",
+   "fieldtype": "Data",
+   "label": "Checkpoint Key",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "How far into the video to interrupt, in seconds. Never sent to the player up front — a list of these is a map of exactly where to skip to.",
+   "fieldname": "at_seconds",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "At (Seconds)",
+   "reqd": 1
+  },
+  {
+   "default": "Single Choice",
+   "fieldname": "question_type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Single Choice\nMultiple Choice\nTrue-False",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Count this towards the lesson score as well as gating playback.",
+   "fieldname": "counts_toward_score",
+   "fieldtype": "Check",
+   "label": "Counts Toward Score"
+  },
+  {
+   "fieldname": "question_section",
+   "fieldtype": "Section Break",
+   "label": "Question"
+  },
+  {
+   "description": "Asked over the paused video. Keep it short — the learner is mid-lesson.",
+   "fieldname": "question_text",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Question",
+   "reqd": 1
+  },
+  {
+   "description": "Tick the correct option. It is never sent to the browser.",
+   "fieldname": "options",
+   "fieldtype": "Table",
+   "label": "Options",
+   "options": "Training Answer Option"
+  },
+  {
+   "description": "Shown once the learner answers.",
+   "fieldname": "explanation",
+   "fieldtype": "Small Text",
+   "label": "Explanation"
+  },
+  {
+   "fieldname": "behaviour_section",
+   "fieldtype": "Section Break",
+   "label": "Behaviour"
+  },
+  {
+   "default": "1",
+   "description": "Pause playback until the question is answered. Untick to show it as a non-blocking prompt.",
+   "fieldname": "pause_video",
+   "fieldtype": "Check",
+   "label": "Pause the Video"
+  },
+  {
+   "default": "0",
+   "description": "Let the learner dismiss the question without answering.",
+   "fieldname": "allow_skip",
+   "fieldtype": "Check",
+   "label": "Allow Skip"
+  },
+  {
+   "fieldname": "column_break_behaviour",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "2",
+   "description": "Tries before the explanation is shown and the video continues anyway. A learner trapped in a loop abandons the course and it becomes a support ticket, so this never blocks forever — the miss is recorded instead.",
+   "fieldname": "max_attempts",
+   "fieldtype": "Int",
+   "label": "Attempts Before Moving On"
+  },
+  {
+   "default": "15",
+   "description": "How far to rewind after a wrong answer so the learner sees that part again. Those seconds are already credited, so the cost is time rather than score.",
+   "fieldname": "rewind_seconds_on_wrong",
+   "fieldtype": "Int",
+   "label": "Rewind on Wrong (Seconds)"
+  },
+  {
+   "fieldname": "provenance_section",
+   "fieldtype": "Section Break",
+   "label": "Provenance"
+  },
+  {
+   "default": "0",
+   "fieldname": "ai_generated",
+   "fieldtype": "Check",
+   "label": "AI Drafted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Checkpoint",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "lesson,at_seconds",
+ "sort_field": "at_seconds",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "question_text",
+ "track_changes": 1
+}

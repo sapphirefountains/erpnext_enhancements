@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.207.0] - 2026-08-01
+
+### Added
+
+- **A Training module — courses anyone can author, without a deploy.** This is phase 1 of
+  four: the data model, desk authoring, and the assignment engine. The learner-facing
+  player, the drag-and-drop builder and certificates follow in later releases. Everything
+  ships **dormant** (`Training Settings → Training Enabled` is off), so nothing
+  auto-assigns and nothing is emailed until it is switched on deliberately.
+
+  Built standalone. This site has neither `hrms` (so no `Training Program` / `Training
+  Event` / `Training Result`) nor `lms` — the lms-related exclusions in `hooks.py` are
+  stale defensiveness, not evidence of an install. Every DocType is prefixed `Training ` and
+  deliberately avoids the six hrms names, so installing hrms later cannot collide. Unrelated
+  to `Training Insight` in `ai_governance`, which is AI training data; both READMEs now say so.
+
+  **Content is versioned; progress is not — and the docstatus is the mechanism.** A
+  `Training Course` is the stable identity (title, slug, audience, policy, gates) and holds
+  no content. A `Training Course Version` holds the content and is *submittable*: authors
+  edit `docstatus 0`, the runtime will only ever read `docstatus 1`. Publishing **is**
+  `submit()`. So "an author saved a half-finished edit into a live course" is not a bug
+  prevented by discipline — it cannot be expressed. Amend is disabled, because an amendment
+  would be a second document claiming to be the same version, and completions record version
+  numbers.
+
+  Publishing asks the author one question that cannot be defaulted: **minor edit** (a typo,
+  clearer wording — everyone's completion stays valid) or **material change** (the course now
+  teaches something different — completions are superseded and retakes raised). Deciding it
+  lazily at read time would make a completion's validity depend on when you asked.
+
+  `create_draft_version` deep-clones the live version **preserving every `lesson_key`,
+  `block_key` and `checkpoint_key`**. Regenerating them would have been simpler and would
+  have silently reset every in-flight learner to lesson one on the next typo fix.
+
+  Lessons are top-level records pointing back at a chapter's key, not child rows of a
+  chapter — Frappe has no grandchild tables, and a chapter is already a child row.
+
+- **Answer keys are structurally unable to reach a browser.** At publish, each lesson is
+  materialized into two payloads: `published_content_json` (what the player renders, built
+  with every correct-answer marker stripped) and `answer_key_json` at **permlevel 1**.
+  Learner roles hold *no DocPerm at all* on `Training Course` / `Version` / `Lesson` /
+  `Content Block` / `Checkpoint` / `Question` / `Answer Option`, so `/api/resource/Training
+  Question` refuses them outright — a defence that survives a future endpoint being careless
+  with `fields=["*"]`.
+
+  `_split_lesson` is the single function permitted to build a learner-facing payload, and
+  `tests/test_training_publish.py` walks its serialized output *to any depth* looking for
+  answer markers, rather than asserting that today's known keys are absent. That distinction
+  earned its keep immediately: the test caught the first implementation shipping each
+  option's `explanation` — text written specifically to say why an option is right or wrong —
+  to the client *before* the learner answered. Fixed; explanations now live in the key and
+  are revealed after answering.
+
+  In-video checkpoint timestamps are not shipped either. The public payload carries a
+  per-block *count*; a list of `at_seconds` is a map of exactly where to skip to, so the
+  runtime will hand out the next one at a time.
+
+- **Assignment engine.** Required courses carry rules ("everyone in Production", "every
+  Senior Technician", "anyone on the Technician role profile") which resolve to people on
+  hire and on department/designation/grade/employment-type/role-profile change. First match
+  wins, so somebody caught by two rules is still assigned once and the rule recorded is the
+  one that explains why. One *open* assignment per (course, user), enforced in `validate`
+  rather than by a unique index — because a second row is exactly what recertification is,
+  and an index could not tell the two cases apart.
+
+  Both doc_event guards are load-bearing. `Employee.on_update` compares against
+  `get_doc_before_save()` and returns immediately unless a field a rule keys off actually
+  moved; without it every Employee save enqueues a full sweep. `User.on_update` guards on a
+  roles-set diff and enqueues after commit, because it fires on paths adjacent to login and
+  a slow sweep must never delay one.
+
+- **Video is authored on Drive but will be served from GCS, and that indirection is the
+  feature.** A Drive preview frame is cross-origin: the player cannot read `currentTime`,
+  cannot `pause()`, and therefore cannot run in-video checkpoints *or* measure watch
+  coverage. Embedding from Drive would have quietly cost two of the three attention
+  mechanisms. `Training Video Asset` therefore records both the Drive source and the GCS
+  object the player streams via a short-lived signed URL. An `External Embed` block type is
+  still allowed for low-stakes content — but the server refuses to apply a coverage gate to
+  it and stamps the reason, so a compliance course cannot lose its teeth because somebody
+  picked the convenient block type.
+
+  `duration_source` matters more than it looks: coverage divides by `duration_seconds`, so a
+  hand-typed 600 against a real 900-second video lets an 80% gate pass on 53% of an actual
+  watch. Duration is probed from Drive's `videoMediaMetadata.durationMillis` and the field is
+  locked when probed; manual entry survives only as the flagged fallback.
+
+### Notes
+
+- **Granting `Training Learner` is not `add_roles`, and getting this wrong fails silently.**
+  `User.validate` calls `populate_role_profile_roles`, which — for any user holding at least
+  one Role Profile — rebuilds `roles` from the union of those profiles on *every* save.
+  Direct roles are dropped, not merged. So `add_roles` appears to work, survives until that
+  user is next saved for any reason, and then vanishes. On this site that is **11 of 15**
+  active employees. The inverse is worse: giving a Role Profile to a profile-less user
+  regenerates their roles from it and wipes `System Manager` — and the four profile-less
+  users here include the System Managers.
+
+  `training/roles.py` holds the two correct paths (extra single-role profile for profiled
+  users, direct grant for the rest, never swapped) and is shared by the seeding patch and the
+  new-hire hook so they cannot drift. `tests/test_training_roles.py` pins it, including a
+  test asserting that a *direct* grant to a profiled user still evaporates — so if that
+  assertion ever stops failing, the stub has stopped modelling reality.
+
+- **`Training Learner` keeps `desk_access = 0`** and must continue to. It is held by customer
+  contacts as well as staff; desk access would turn each of them into a billable System User.
+  Nothing at runtime would complain. Pinned in a test.
+
+- The three new bench-free suites each get **their own CI step**. Running them as one
+  `unittest a b c` cross-talks: the roles suite imports the real
+  `erpnext_enhancements.training.roles`, and `from ... import roles` in `training.assignment`
+  then resolves the attribute already set on the package rather than the assignment suite's
+  stub. Individually all three pass; combined, one fails. Same class of trap as the
+  QuickBooks pytest/unittest split.
+
+- Watch coverage measures **time elapsed with the video playing and visible** — never
+  attention. A learner can start a video and walk away. That is precisely why all three
+  mechanisms exist together, and why the compliance artefact is always coverage **plus**
+  checkpoint accuracy **plus** quiz score. The module README says so in as many words, so
+  that nobody discovers the nuance during a disciplinary conversation.
+
+- Assignment rules can target Department, Designation, Role or Role Profile. **Employee Grade
+  and Employment Type are listed but refused on this site**, because those doctypes ship with
+  hrms and are not installed here — even though `Employee.grade` and `Employee.employment_type`
+  exist as columns (ERPNext ships the fields as Links to doctypes that arrive with hrms). A
+  column guard alone would not have caught it: the rule would have saved and then produced a
+  Dynamic Link to a missing doctype, failing at read time rather than where the mistake was
+  made. The course now refuses the row with a message saying why, and the options stay listed
+  so nothing needs changing if hrms is ever installed.
+
+- No `portal_menu_items` entry and no `/training` route yet — both would point at a page that
+  arrives in phase 2, and a dead menu item teaches people to ignore the menu.
+
 ## [1.206.0] - 2026-08-01
 
 ### Changed

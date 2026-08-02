@@ -1,0 +1,441 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "course_title",
+  "slug",
+  "status",
+  "column_break_head",
+  "weight",
+  "category",
+  "current_version",
+  "estimated_minutes",
+  "about_section",
+  "summary",
+  "cover_image",
+  "audience_section",
+  "audience",
+  "allow_self_enrollment",
+  "visible_to_roles",
+  "customer_scope",
+  "visible_to_customers",
+  "policy_section",
+  "auto_assign",
+  "due_days",
+  "recertify_months",
+  "column_break_policy",
+  "escalate_after_days",
+  "escalation_role",
+  "assign_rules",
+  "gates_section",
+  "passing_score",
+  "max_attempts",
+  "column_break_gates",
+  "min_video_coverage",
+  "require_checkpoints_answered",
+  "signoff_section",
+  "require_supervisor_signoff",
+  "signoff_supervisor_source",
+  "signoff_supervisor",
+  "signoff_instructions",
+  "certificate_section",
+  "issues_certificate",
+  "certificate_valid_months",
+  "column_break_certificate",
+  "certificate_print_format",
+  "authoring_section",
+  "author",
+  "reviewed_by",
+  "column_break_authoring",
+  "published_by",
+  "published_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-CRS-.#####",
+   "print_hide": 1
+  },
+  {
+   "description": "What the course is called, as learners will see it.",
+   "fieldname": "course_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "reqd": 1
+  },
+  {
+   "description": "The web address segment for this course, e.g. /training/backwash-basics. Derived from the title, editable while the course is a draft, and frozen once published so a link in an old assignment email never breaks.",
+   "fieldname": "slug",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Slug",
+   "unique": 1
+  },
+  {
+   "default": "Draft",
+   "description": "Driven by the publish flow, not typed. Draft while being written, In Review once submitted for approval, Published once a version is live, Retired when withdrawn.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nIn Review\nPublished\nRetired",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Optional",
+   "description": "Required courses are assigned with a due date and can be recertified and escalated. Optional courses sit in the self-serve library — progress is still recorded, but nobody is chased.",
+   "fieldname": "weight",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Weight",
+   "options": "Optional\nRequired",
+   "reqd": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "Training Category"
+  },
+  {
+   "description": "The version learners currently see. Set by the publish flow.",
+   "fieldname": "current_version",
+   "fieldtype": "Link",
+   "label": "Live Version",
+   "options": "Training Course Version",
+   "read_only": 1
+  },
+  {
+   "description": "Roughly how long the course takes. Computed at publish from the lessons; shown on the course card so a learner can judge whether they have time now.",
+   "fieldname": "estimated_minutes",
+   "fieldtype": "Int",
+   "label": "Estimated Minutes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "about_section",
+   "fieldtype": "Section Break",
+   "label": "About"
+  },
+  {
+   "description": "A sentence or two on what someone will be able to do after taking this.",
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "cover_image",
+   "fieldtype": "Attach Image",
+   "label": "Cover Image"
+  },
+  {
+   "fieldname": "audience_section",
+   "fieldtype": "Section Break",
+   "label": "Who Can See It"
+  },
+  {
+   "default": "Internal Staff",
+   "description": "Internal staff, customers on the portal, or both. Never put internal safety or compliance content on a customer-facing course.",
+   "fieldname": "audience",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Audience",
+   "options": "Internal Staff\nCustomers\nBoth",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.weight==\"Optional\"",
+   "description": "Let people start this from the library without being assigned it.",
+   "fieldname": "allow_self_enrollment",
+   "fieldtype": "Check",
+   "label": "Allow Self-Enrolment"
+  },
+  {
+   "depends_on": "eval:doc.audience != \"Customers\"",
+   "description": "Limit the course to holders of these roles. Leave empty to show it to every internal learner.",
+   "fieldname": "visible_to_roles",
+   "fieldtype": "Table",
+   "label": "Visible To Roles",
+   "options": "Training Audience Role"
+  },
+  {
+   "default": "All Customers",
+   "depends_on": "eval:doc.audience != \"Internal Staff\"",
+   "fieldname": "customer_scope",
+   "fieldtype": "Select",
+   "label": "Customer Scope",
+   "options": "All Customers\nSelected Customers"
+  },
+  {
+   "depends_on": "eval:doc.audience != \"Internal Staff\" && doc.customer_scope == \"Selected Customers\"",
+   "fieldname": "visible_to_customers",
+   "fieldtype": "Table",
+   "label": "Visible To Customers",
+   "options": "Training Audience Customer"
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.weight==\"Required\"",
+   "fieldname": "policy_section",
+   "fieldtype": "Section Break",
+   "label": "Assignment & Recertification"
+  },
+  {
+   "default": "0",
+   "description": "Raise assignments automatically from the rules below when someone is hired or changes department, designation or role profile.",
+   "fieldname": "auto_assign",
+   "fieldtype": "Check",
+   "label": "Assign Automatically"
+  },
+  {
+   "description": "Days a learner gets to finish after it is assigned. Leave at 0 to use the Training Settings default.",
+   "fieldname": "due_days",
+   "fieldtype": "Int",
+   "label": "Due In (Days)"
+  },
+  {
+   "description": "Reassign this course every N months. 0 means it never expires.",
+   "fieldname": "recertify_months",
+   "fieldtype": "Int",
+   "label": "Recertify Every (Months)"
+  },
+  {
+   "fieldname": "column_break_policy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Days past the due date before the escalation role is told. Leave at 0 to use the Training Settings default.",
+   "fieldname": "escalate_after_days",
+   "fieldtype": "Int",
+   "label": "Escalate After (Days)"
+  },
+  {
+   "description": "Who hears about it when this course goes overdue.",
+   "fieldname": "escalation_role",
+   "fieldtype": "Link",
+   "label": "Escalation Role",
+   "options": "Role"
+  },
+  {
+   "description": "Who owes this course. Each row resolves to a set of people; someone matched by two rows is still only assigned once.",
+   "fieldname": "assign_rules",
+   "fieldtype": "Table",
+   "label": "Assignment Rules",
+   "options": "Training Assignment Rule"
+  },
+  {
+   "fieldname": "gates_section",
+   "fieldtype": "Section Break",
+   "label": "What Counts As Finished"
+  },
+  {
+   "default": "80",
+   "description": "Score needed to pass the quizzes.",
+   "fieldname": "passing_score",
+   "fieldtype": "Percent",
+   "label": "Passing Score"
+  },
+  {
+   "default": "3",
+   "description": "Quiz attempts before a learner needs a Training Manager to reset them. 0 means unlimited.",
+   "fieldname": "max_attempts",
+   "fieldtype": "Int",
+   "label": "Quiz Attempts"
+  },
+  {
+   "fieldname": "column_break_gates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "80",
+   "description": "How much of each video must be watched. This measures time spent with the video playing and visible — not attention. Someone can start it and walk away, which is why it is never the only gate.",
+   "fieldname": "min_video_coverage",
+   "fieldtype": "Percent",
+   "label": "Minimum Watched (%)"
+  },
+  {
+   "default": "1",
+   "description": "Require every in-video checkpoint to have been answered before the lesson can be finished.",
+   "fieldname": "require_checkpoints_answered",
+   "fieldtype": "Check",
+   "label": "All Checkpoints Answered"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "signoff_section",
+   "fieldtype": "Section Break",
+   "label": "Supervisor Sign-off"
+  },
+  {
+   "default": "0",
+   "description": "Some things cannot be proved by a quiz. Tick this to require a named supervisor to confirm the learner can actually do it before the course counts as complete.",
+   "fieldname": "require_supervisor_signoff",
+   "fieldtype": "Check",
+   "label": "Require Sign-off"
+  },
+  {
+   "default": "Reports To",
+   "depends_on": "require_supervisor_signoff",
+   "description": "Who signs: the learner's manager, one named person, or whichever Training Manager picks it up.",
+   "fieldname": "signoff_supervisor_source",
+   "fieldtype": "Select",
+   "label": "Who Signs Off",
+   "options": "Reports To\nNamed Supervisor\nAny Training Manager"
+  },
+  {
+   "depends_on": "eval:doc.require_supervisor_signoff && doc.signoff_supervisor_source==\"Named Supervisor\"",
+   "fieldname": "signoff_supervisor",
+   "fieldtype": "Link",
+   "label": "Supervisor",
+   "options": "Employee"
+  },
+  {
+   "depends_on": "require_supervisor_signoff",
+   "description": "Exactly what the supervisor is attesting to. Write it as an observable action — \"can drain and refill a basin unsupervised\", not \"understands basins\".",
+   "fieldname": "signoff_instructions",
+   "fieldtype": "Small Text",
+   "label": "What To Verify"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "certificate_section",
+   "fieldtype": "Section Break",
+   "label": "Certificate"
+  },
+  {
+   "default": "0",
+   "fieldname": "issues_certificate",
+   "fieldtype": "Check",
+   "label": "Issue a Certificate"
+  },
+  {
+   "depends_on": "issues_certificate",
+   "description": "How long the certificate stays valid. 0 means it never expires.",
+   "fieldname": "certificate_valid_months",
+   "fieldtype": "Int",
+   "label": "Valid For (Months)"
+  },
+  {
+   "fieldname": "column_break_certificate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "issues_certificate",
+   "fieldname": "certificate_print_format",
+   "fieldtype": "Link",
+   "label": "Print Format",
+   "options": "Print Format"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "authoring_section",
+   "fieldtype": "Section Break",
+   "label": "Authoring"
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Link",
+   "label": "Author",
+   "options": "User"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_authoring",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "published_by",
+   "fieldtype": "Link",
+   "label": "Published By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "published_on",
+   "fieldtype": "Datetime",
+   "label": "Published On",
+   "read_only": 1
+  }
+ ],
+ "links": [
+  {
+   "link_doctype": "Training Course Version",
+   "link_fieldname": "course"
+  },
+  {
+   "link_doctype": "Training Assignment",
+   "link_fieldname": "course"
+  }
+ ],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Course",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "course_title,status,weight",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title",
+ "track_changes": 1
+}

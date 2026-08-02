@@ -1,0 +1,288 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "lesson_title",
+  "course_version",
+  "course",
+  "column_break_head",
+  "chapter_key",
+  "lesson_key",
+  "idx_in_chapter",
+  "estimated_minutes",
+  "summary_section",
+  "summary",
+  "content_section",
+  "blocks",
+  "quiz_section",
+  "has_quiz",
+  "quiz_questions_to_ask",
+  "quiz_pass_score",
+  "column_break_quiz",
+  "quiz_shuffle_questions",
+  "quiz_shuffle_options",
+  "quiz_questions",
+  "engagement_section",
+  "allow_questions",
+  "transcript",
+  "published_section",
+  "published_content_json",
+  "answer_key_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-LSN-.######",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "lesson_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Lesson Title",
+   "reqd": 1
+  },
+  {
+   "description": "The version this lesson belongs to. A lesson is never shared between versions — cloning a version clones its lessons, keeping their keys.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "course_version.course",
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Which chapter of the version this sits under. Matched against the chapter's stable key, not its position.",
+   "fieldname": "chapter_key",
+   "fieldtype": "Data",
+   "label": "Chapter Key"
+  },
+  {
+   "description": "Stable identifier, copied verbatim when a version is cloned. This is what lets a minor edit keep a learner exactly where they were rather than resetting them to lesson one.",
+   "fieldname": "lesson_key",
+   "fieldtype": "Data",
+   "label": "Lesson Key",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Order within the chapter.",
+   "fieldname": "idx_in_chapter",
+   "fieldtype": "Int",
+   "label": "Order"
+  },
+  {
+   "description": "Roughly how long this lesson takes. Summed into the course estimate at publish.",
+   "fieldname": "estimated_minutes",
+   "fieldtype": "Int",
+   "label": "Estimated Minutes"
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "summary",
+   "fieldtype": "Small Text",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "content_section",
+   "fieldtype": "Section Break",
+   "label": "Content"
+  },
+  {
+   "description": "The lesson, block by block, in the order a learner meets them.",
+   "fieldname": "blocks",
+   "fieldtype": "Table",
+   "label": "Blocks",
+   "options": "Training Content Block"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "quiz_section",
+   "fieldtype": "Section Break",
+   "label": "Quiz"
+  },
+  {
+   "default": "0",
+   "fieldname": "has_quiz",
+   "fieldtype": "Check",
+   "label": "This Lesson Has a Quiz"
+  },
+  {
+   "default": "0",
+   "depends_on": "has_quiz",
+   "description": "Draw this many questions at random from the pool below. Leave at 0 to ask all of them.",
+   "fieldname": "quiz_questions_to_ask",
+   "fieldtype": "Int",
+   "label": "Questions To Ask"
+  },
+  {
+   "depends_on": "has_quiz",
+   "description": "Score needed to pass this lesson's quiz. Leave at 0 to use the course setting.",
+   "fieldname": "quiz_pass_score",
+   "fieldtype": "Percent",
+   "label": "Passing Score"
+  },
+  {
+   "fieldname": "column_break_quiz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "depends_on": "has_quiz",
+   "description": "Ask the questions in a different order for each learner.",
+   "fieldname": "quiz_shuffle_questions",
+   "fieldtype": "Check",
+   "label": "Shuffle Questions"
+  },
+  {
+   "default": "1",
+   "depends_on": "has_quiz",
+   "description": "Shuffle the answer options too, so \"it's the third one\" cannot be passed around.",
+   "fieldname": "quiz_shuffle_options",
+   "fieldtype": "Check",
+   "label": "Shuffle Options"
+  },
+  {
+   "depends_on": "has_quiz",
+   "fieldname": "quiz_questions",
+   "fieldtype": "Table",
+   "label": "Question Pool",
+   "options": "Training Quiz Question"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "engagement_section",
+   "fieldtype": "Section Break",
+   "label": "Engagement"
+  },
+  {
+   "default": "1",
+   "description": "Let learners ask the author a question from this lesson. Answers can be made visible to everyone who takes it afterwards.",
+   "fieldname": "allow_questions",
+   "fieldtype": "Check",
+   "label": "Allow Learner Questions"
+  },
+  {
+   "description": "Paste the lesson's script or the video's transcript. Used to draft quiz questions. A transcript with timings (WebVTT) additionally enables checkpoint-timestamp suggestions — without timings the model would have to invent them.",
+   "fieldname": "transcript",
+   "fieldtype": "Long Text",
+   "label": "Transcript"
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:false",
+   "fieldname": "published_section",
+   "fieldtype": "Section Break",
+   "label": "Published Payload"
+  },
+  {
+   "description": "The exact payload the player renders, built at publish with every correct answer stripped out. Machine-written; editing it by hand does nothing useful.",
+   "fieldname": "published_content_json",
+   "fieldtype": "Long Text",
+   "label": "Published Content (JSON)",
+   "read_only": 1
+  },
+  {
+   "description": "The answer key for this lesson as published. Held at permission level 1 so it is not readable by the roles that take the course, and it is never included in any learner-facing response.",
+   "fieldname": "answer_key_json",
+   "fieldtype": "Long Text",
+   "label": "Answer Key (JSON)",
+   "permlevel": 1,
+   "read_only": 1
+  }
+ ],
+ "links": [
+  {
+   "link_doctype": "Training Checkpoint",
+   "link_fieldname": "lesson"
+  }
+ ],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Lesson",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "Training Manager"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "lesson_title,course",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "lesson_title",
+ "track_changes": 1
+}

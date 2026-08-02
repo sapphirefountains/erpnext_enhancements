@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "chapter_key",
+  "chapter_title",
+  "description"
+ ],
+ "fields": [
+  {
+   "description": "Stable identifier, generated once and copied verbatim when a version is cloned. Lessons point back at this rather than at a row number, so reordering chapters never orphans a lesson.",
+   "fieldname": "chapter_key",
+   "fieldtype": "Data",
+   "label": "Chapter Key",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 4,
+   "fieldname": "chapter_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Chapter",
+   "reqd": 1
+  },
+  {
+   "columns": 6,
+   "description": "Optional — a line of context shown above the chapter's lessons.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Description"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Chapter",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

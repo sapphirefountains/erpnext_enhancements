@@ -1,0 +1,247 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "course",
+  "course_title",
+  "status",
+  "column_break_head",
+  "learner_type",
+  "user",
+  "employee",
+  "customer",
+  "dates_section",
+  "assigned_on",
+  "due_date",
+  "column_break_dates",
+  "assigned_by",
+  "assignment_source",
+  "source_rule",
+  "outcome_section",
+  "required_version",
+  "column_break_outcome",
+  "last_reminder_on",
+  "escalated_on",
+  "waiver_section",
+  "waiver_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-ASG-.######",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "course.course_title",
+   "fieldname": "course_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "read_only": 1
+  },
+  {
+   "default": "Not Started",
+   "description": "Driven by the learner's progress, not typed — except Waived and Cancelled, which a Training Manager sets deliberately.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Not Started\nIn Progress\nAwaiting Sign-off\nCompleted\nOverdue\nWaived\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Employee",
+   "fieldname": "learner_type",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Learner Type",
+   "options": "Employee\nWebsite User",
+   "reqd": 1
+  },
+  {
+   "description": "The learner. This is the canonical identity throughout the module — a customer contact has one of these just as an employee does, so the runtime never has to branch on who is taking the course.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.learner_type==\"Employee\"",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "depends_on": "eval:doc.learner_type==\"Website User\"",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "dates_section",
+   "fieldtype": "Section Break",
+   "label": "Dates"
+  },
+  {
+   "default": "Today",
+   "fieldname": "assigned_on",
+   "fieldtype": "Date",
+   "label": "Assigned On",
+   "reqd": 1
+  },
+  {
+   "description": "When it must be finished. Computed from the course or the matching rule when the assignment is raised automatically.",
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Due Date"
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "assigned_by",
+   "fieldtype": "Link",
+   "label": "Assigned By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "default": "Manual",
+   "description": "How this assignment came about. Recertification and Version Retake rows are raised by the system and are worth being able to filter apart from anything a person did.",
+   "fieldname": "assignment_source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "Manual\nAuto Rule\nSelf Enrolled\nRecertification\nVersion Retake",
+   "read_only": 1
+  },
+  {
+   "description": "Which assignment rule matched, for tracing why somebody was given this.",
+   "fieldname": "source_rule",
+   "fieldtype": "Data",
+   "label": "Matched Rule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "Outcome"
+  },
+  {
+   "description": "Pin the learner to a specific version. Normally blank, meaning whatever is live — set only when a retake must be against the exact version that changed.",
+   "fieldname": "required_version",
+   "fieldtype": "Link",
+   "label": "Required Version",
+   "options": "Training Course Version"
+  },
+  {
+   "fieldname": "column_break_outcome",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_reminder_on",
+   "fieldtype": "Date",
+   "label": "Last Reminder",
+   "read_only": 1
+  },
+  {
+   "fieldname": "escalated_on",
+   "fieldtype": "Date",
+   "label": "Escalated On",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:[\"Waived\",\"Cancelled\"].includes(doc.status)",
+   "fieldname": "waiver_section",
+   "fieldtype": "Section Break",
+   "label": "Waiver"
+  },
+  {
+   "description": "Why this person does not have to take it. Required — an unexplained waiver on a compliance course is the thing an auditor asks about.",
+   "fieldname": "waiver_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Assignment",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "course,user,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title",
+ "track_changes": 1
+}
