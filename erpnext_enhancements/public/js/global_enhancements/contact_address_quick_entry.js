@@ -377,12 +377,66 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				clone_meta_field("Address", "address_type"),
 				{ fieldtype: "Column Break" },
 				clone_meta_field("Address", "address_title"),
+				// Coordinates last, collapsed: needed only when the address text
+				// cannot locate the site (new construction, a lot number), which
+				// is rare — but this dialog is the main creation path, so leaving
+				// them out would mean creating such a site here and then having to
+				// open the full form to place it.
+				{
+					fieldtype: "Section Break",
+					label: __("Coordinates"),
+					collapsible: 1,
+					description: __(
+						"Only needed when the address above cannot locate the site. Every map prefers a point entered here over the address text, and it is kept when the address is edited."
+					),
+				},
+				clone_meta_field("Address", "custom_latitude", {
+					read_only: 0,
+					onchange: () => this.ee_coordinates_edited(),
+				}),
+				{ fieldtype: "Column Break" },
+				clone_meta_field("Address", "custom_longitude", {
+					read_only: 0,
+					onchange: () => this.ee_coordinates_edited(),
+				}),
 			];
+		}
+
+		/** A hand edit makes the point the user's, so it must survive from here on. */
+		ee_coordinates_edited() {
+			const places =
+				window.erpnext_enhancements && erpnext_enhancements.address_autocomplete;
+			if (!places) return;
+			const point = places.usable_point(
+				this.dialog.get_value("custom_latitude"),
+				this.dialog.get_value("custom_longitude")
+			);
+			this.doc.custom_location_source = point ? "Manual" : "";
 		}
 
 		render_dialog() {
 			super.render_dialog();
 			this.ee_attach_address_autocomplete();
+			this.ee_guard_coordinate_paste();
+		}
+
+		/** Same pasted-pair guard the full form uses — see parse_point_paste. */
+		ee_guard_coordinate_paste() {
+			const places =
+				window.erpnext_enhancements && erpnext_enhancements.address_autocomplete;
+			if (!places || !places.bind_point_paste || !this.dialog) return;
+
+			["custom_latitude", "custom_longitude"].forEach((fieldname) => {
+				places.bind_point_paste(this.dialog.fields_dict[fieldname], (point) => {
+					this.doc.custom_latitude = point.lat;
+					this.doc.custom_longitude = point.lng;
+					this.doc.custom_location_source = "Manual";
+					["custom_latitude", "custom_longitude"].forEach((f) => {
+						const control = this.dialog.fields_dict[f];
+						if (control && control.set_input) control.set_input(this.doc[f]);
+					});
+				});
+			});
 		}
 
 		/** Google Places on the dialog's address_line1, same widget the full
@@ -400,12 +454,39 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				get_country: () => this.dialog.get_value("country"),
 				on_pick: (values, meta) => {
 					this.dialog.set_values(values);
-					// The dialog shows no field for these, so they ride on the doc
-					// itself — update_doc() copies dialog values over the same
-					// object and leaves keys it does not know about alone.
+					// The Place ID has no dialog field, so it rides on the doc —
+					// update_doc() copies dialog values over the same object and
+					// leaves keys it does not know about alone.
 					this.doc.custom_google_place_id = meta.place_id || "";
-					this.doc.custom_latitude = meta.latitude || 0;
-					this.doc.custom_longitude = meta.longitude || 0;
+
+					// set_input, not set_value: the latter routes through the
+					// control's own change path and would fire the onchange
+					// above, restamping this pick as a hand edit.
+					const write = (lat, lng, source) => {
+						this.doc.custom_location_source = source;
+						[["custom_latitude", lat], ["custom_longitude", lng]].forEach(
+							([field, value]) => {
+								const control = this.dialog.fields_dict[field];
+								this.doc[field] = value;
+								if (control && control.set_input) control.set_input(value);
+							}
+						);
+					};
+
+					const picked = places.usable_point(meta.latitude, meta.longitude);
+					if (picked) {
+						write(picked.lat, picked.lng, "Google");
+					} else if (!places.point_survives_text_edit(this.doc)) {
+						// A Place can resolve without a location. Any point on the
+						// doc belongs to the address being replaced — picking a
+						// second suggestion must not leave the first one's
+						// coordinates under the new text.
+						write(0, 0, "");
+					}
+					// No point from the pick but a Manual one on the doc: left
+					// alone on purpose. It was typed because the address cannot
+					// locate the site.
+
 					// What the pick actually claims, so a later hand edit can be
 					// detected on save (see ee_finalize_doc).
 					this.ee_picked_line1 = values.address_line1 || "";
@@ -425,14 +506,19 @@ frappe.provide("erpnext_enhancements.contacts_ux");
 				doc.address_title = doc.address_line1;
 			}
 
-			// The dialog has no visible place fields to watch for edits, so the
-			// check happens once, here: if line 1 no longer reads what the pick
-			// filled in, the coordinates belong to a different building and must
-			// not be saved alongside it.
+			// The dialog watches no component field for edits, so the check
+			// happens once, here: if line 1 no longer reads what the pick filled
+			// in, the Place ID describes an address that is no longer on the doc.
 			if (doc.custom_google_place_id && doc.address_line1 !== this.ee_picked_line1) {
 				doc.custom_google_place_id = "";
-				doc.custom_latitude = 0;
-				doc.custom_longitude = 0;
+				// The point goes with it only if Google derived it from that text.
+				// A typed point exists *because* the text cannot locate the site,
+				// so editing the text must not discard it.
+				if (doc.custom_location_source !== "Manual") {
+					doc.custom_latitude = 0;
+					doc.custom_longitude = 0;
+					doc.custom_location_source = "";
+				}
 			}
 		}
 	};

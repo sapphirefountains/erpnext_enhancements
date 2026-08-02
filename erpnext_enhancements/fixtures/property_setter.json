@@ -27,7 +27,7 @@
   "property": "field_order",
   "property_type": "Data",
   "row_name": null,
-  "value": "[\"address_details\", \"address_title\", \"custom_full_address\", \"address_type\", \"address_line1\", \"address_line2\", \"city\", \"county\", \"state\", \"country\", \"pincode\", \"column_break0\", \"custom_map_placeholder\", \"custom_google_place_id\", \"custom_latitude\", \"custom_longitude\", \"email_id\", \"phone\", \"fax\", \"linked_with\", \"is_your_company_address\", \"links\", \"custom_section_break_qcwmy\", \"tax_category\", \"is_primary_address\", \"is_shipping_address\", \"disabled\", \"custom_description\", \"custom_comments\", \"custom_comments_field\"]"
+  "value": "[\"address_details\", \"address_title\", \"custom_full_address\", \"address_type\", \"address_line1\", \"address_line2\", \"city\", \"county\", \"state\", \"country\", \"pincode\", \"column_break0\", \"custom_latitude\", \"custom_longitude\", \"custom_location_source\", \"custom_map_placeholder\", \"custom_google_place_id\", \"email_id\", \"phone\", \"fax\", \"linked_with\", \"is_your_company_address\", \"links\", \"custom_section_break_qcwmy\", \"tax_category\", \"is_primary_address\", \"is_shipping_address\", \"disabled\", \"custom_description\", \"custom_comments\", \"custom_comments_field\"]"
  },
  {
   "default_value": null,
