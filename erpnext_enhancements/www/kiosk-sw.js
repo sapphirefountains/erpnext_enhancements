@@ -57,6 +57,12 @@ const PRECACHE = [
   '/kiosk-manifest.json',
 ];
 
+// Exactly the paths above, for the fetch handler to test membership against.
+// This worker is registered at ROOT SCOPE — it sees every request on the origin,
+// including every other page's JavaScript — so what it chooses to answer has to
+// be an explicit list rather than a prefix.
+const PRECACHE_PATHS = new Set(PRECACHE);
+
 // The page requests these URLs with the same ?v= token (kiosk.html), so cache
 // keys line up; fetch matching uses ignoreSearch as a belt-and-braces anyway.
 function versioned(url) {
@@ -272,14 +278,32 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Our static assets: cache-first with background refresh.
-  if (url.pathname.startsWith('/assets/erpnext_enhancements/') ||
-      url.pathname === '/kiosk-manifest.json') {
+  // THE KIOSK'S OWN SHELL ONLY. Not "everything under /assets/erpnext_enhancements/".
+  //
+  // This worker is registered at root scope, so it sees every request on the
+  // origin. It used to answer any request under the app's asset root cache-first
+  // with `ignoreSearch: true`, and the comment argued that was safe because
+  // "the cache only ever holds this deploy's entries". It is not, and the hole is
+  // the lifecycle: this worker is only replaced when its own script URL changes,
+  // and that only happens when somebody opens /kiosk. Any browser that opened the
+  // kiosk once then kept serving THAT deploy's JavaScript to every other page in
+  // the app — desk scripts, portal pages, the training player — for as long as
+  // nobody went back to /kiosk.
+  //
+  // `ignoreSearch` turned the ?v= deploy token into decoration: a brand-new token
+  // matched the year-old entry. It was found with a training player four releases
+  // stale in a browser whose cache was named after a deploy from weeks earlier,
+  // and no amount of cache-busting on the page could have reached it.
+  //
+  // An offline kiosk needs its own shell available offline. It has no business
+  // answering for anything else, so anything not on the precache list is simply
+  // not handled here and goes to the network like a normal request.
+  if (PRECACHE_PATHS.has(url.pathname)) {
     event.respondWith((async () => {
-      // ignoreSearch: the cache only ever holds this deploy's entries (activate
-      // deleted the rest), so matching across ?v= variants can't serve a stale
-      // deploy — it just keeps page and worker tolerant of a brief skew while
-      // an update is mid-flight.
+      // ignoreSearch is right for THESE files and only these: the page and the
+      // worker can disagree by one ?v= token mid-update, and the shell must still
+      // resolve. `activate` drops every other cache, so the entries here belong
+      // to this worker's own deploy.
       const cached = await caches.match(req, { ignoreSearch: true });
       const network = fetch(req).then((res) => {
         if (res && res.ok) {

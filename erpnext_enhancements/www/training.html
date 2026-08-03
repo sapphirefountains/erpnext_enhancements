@@ -47,11 +47,18 @@
 
 {% block style %}
 <style>
-  .navbar, nav.navbar, .web-footer, footer, .footer,
+  /* Hide the website chrome. `footer` is deliberately qualified: player.js builds
+     the sticky action bar as <footer class="tr-bottom"> — the element holding
+     "Start the quiz", "Finish this lesson", the resume button and the gate
+     reasons — and a bare `footer { display: none !important }` hid it. The
+     button rendered, and no learner could ever see it or press it. Nothing
+     erred; the one control that advances a course was simply invisible.
+     `main` is qualified for the same reason: main.tr-view is the player's own. */
+  .navbar, nav.navbar, .web-footer, footer:not(.tr-bottom), .footer,
   .page-breadcrumbs, .breadcrumb-container,
   .page-header, .page-content-wrapper > .page-header { display: none !important; }
   body { background: var(--tr-bg, #f6f7f9); margin: 0; }
-  main, .main-section, #body, .page_content,
+  main:not(.tr-view), .main-section, #body, .page_content,
   .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
 </style>
 {% endblock %}

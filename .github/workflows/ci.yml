@@ -233,6 +233,13 @@ jobs:
       # there is nothing at runtime that could notice.
       - name: Training bootstrap wire (player reads what the API sends)
         run: python -m unittest erpnext_enhancements.tests.test_training_boot_wire -v
+      # The kiosk service worker is registered at ROOT scope, so what it answers
+      # for is every page's problem. It used to serve the whole app's assets
+      # cache-first with ignoreSearch, which froze JavaScript across the site for
+      # any browser that had ever opened /kiosk -- found with a training player
+      # four releases stale that no ?v= could reach.
+      - name: Kiosk service worker scope (must not answer for the app's assets)
+        run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)
