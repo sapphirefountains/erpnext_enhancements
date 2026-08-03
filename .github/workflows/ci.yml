@@ -73,6 +73,10 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
+      # Own step: installs its own frappe stub in setUpModule, so it must not
+      # share a process with the other bench-free suites.
+      - name: Administrator login alerts (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_security_alerts -v
       # Guards the "routes the truck to the wrong address, confidently" class of
       # bug: the supplier pick-up address fallback order, our own yard never
       # becoming a stop, and the PO -> Project union that either link alone drops.
