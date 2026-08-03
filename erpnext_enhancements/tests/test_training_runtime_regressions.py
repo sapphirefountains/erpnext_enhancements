@@ -488,3 +488,65 @@ class TestTheBeatQueueCannotStarve(unittest.TestCase):
         src = _video_js()
         self.assertIn("function noticeIfStuck()", src)
         self.assertIn("showNotice(", _fn_body(src, "function noticeIfStuck()"))
+
+
+class TestOneHungRequestCannotStopDelivery(unittest.TestCase):
+    """`fetch` has no default timeout, and the heartbeat holds a latch on it.
+
+    A socket an intermediary drops without a FIN leaves its promise pending
+    forever. The `flushing` latch is released only when that promise settles, so
+    one hung request meant every later beat queued itself and returned without
+    sending — for the life of the page. Driven in a harness during the audit:
+    exactly one beat was ever attempted, three piled up in sessionStorage, and
+    the coverage meter stayed null permanently.
+
+    That is indistinguishable, from the outside, from the learner walking away.
+    Both halves are fixed: the page transport gives every call a deadline, and the
+    player refuses to trust that it did.
+    """
+
+    PAGE = APP / "www/training.html"
+
+    def test_the_page_transport_gives_every_call_a_deadline(self):
+        src = self.PAGE.read_text(encoding="utf-8")
+        call = _fn_body(src, "function call(method, payload)")
+        self.assertIn("signal:", call, "fetch has no AbortSignal, so it can hang forever")
+        self.assertIn("CALL_TIMEOUT_MS", src)
+
+    def test_the_deadline_survives_a_browser_without_abortsignal_timeout(self):
+        """AbortSignal.timeout is 2022-era, and the population most likely to lose
+        a socket is exactly the one on older mobile Safari."""
+        body = _fn_body(self.PAGE.read_text(encoding="utf-8"), "function abortSignal()")
+        self.assertIn("AbortSignal.timeout", body)
+        self.assertIn("new AbortController()", body)
+        # Reachability, not presence. A mutation that replaced the capability
+        # guard with a bare `return undefined` left the constructor sitting there
+        # as dead code, and asserting the name appeared passed it happily.
+        self.assertIn("return controller.signal", body)
+        for line in body.splitlines():
+            if re.search(r"\breturn undefined\b", line):
+                self.assertIn(
+                    "AbortController",
+                    line,
+                    "abortSignal() returns undefined unconditionally, so the "
+                    "fallback below it can never run",
+                )
+
+    def test_the_player_does_not_rely_on_the_transport_behaving(self):
+        """TR.Video is handed its transport by the caller — the builder's preview
+        injects its own — so it cannot assume anybody set a deadline."""
+        flush = _fn_body(_video_js(), "function flush(reason)")
+        self.assertIn("FLUSH_STUCK_MS", flush, "a stranded latch is never released")
+        stale = flush.index("FLUSH_STUCK_MS")
+        latched = flush.index("flushing = true")
+        self.assertLess(
+            stale,
+            latched,
+            "the staleness check must run before the latch is retaken, or it "
+            "never runs at all",
+        )
+
+    def test_a_released_latch_is_reported_rather_than_silent(self):
+        flush = _fn_body(_video_js(), "function flush(reason)")
+        guard = flush[flush.index("FLUSH_STUCK_MS") : flush.index("flushing = true")]
+        self.assertIn("st.selfHealed++", guard, "a stranded latch heals silently")

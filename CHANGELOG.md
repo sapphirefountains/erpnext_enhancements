@@ -61,6 +61,20 @@ any more, only a rename.
   subscriber anywhere in the app, so it looked exactly like nobody watching. The
   learner is now told, and told that their progress is safe on the device.
 
+- **One hung request stopped delivery for the life of the page.** `fetch` has no
+  default timeout, and a socket an intermediary drops without a FIN leaves its
+  promise pending forever. The `flushing` latch is released only when that promise
+  settles, so every later beat queued itself and returned without sending. Driven
+  in a harness: exactly one beat attempted, three stacked in `sessionStorage`,
+  coverage `null` permanently — which is indistinguishable, from outside, from a
+  learner who walked away. It also matches the production state of the reported
+  attempt exactly: one `record_heartbeat`, ever.
+
+  The page transport now gives every call a 20s `AbortSignal` (with an
+  `AbortController` fallback for the older mobile Safari most likely to lose a
+  socket), and the player no longer trusts that it did — a latch held longer than
+  45s is treated as stranded, released, and counted in `self_healed`.
+
 ### Added
 
 - **`claim_mismatch`.** The player has always sent `claimed_seconds` — its own

@@ -90,6 +90,12 @@
   // one-off blip and well short of nagging.
   var STUCK_AFTER_FAILURES = 2;
 
+  // How long a drain may be in flight before the latch is considered stranded
+  // and a new flush is allowed past it. Longer than the transport's own 20s
+  // deadline, so a well-behaved transport always releases the latch itself and
+  // this only ever fires for one that does not.
+  var FLUSH_STUCK_MS = 45000;
+
   var MAX_SOURCE_RECOVERIES = 3;
   var CHANNEL_NAME = "training-video";
 
@@ -785,6 +791,7 @@
     }
 
     var flushing = false;
+    var flushStartedAt = 0;
     var retryTimer = null;
 
     // The queue's own heartbeat. Backs off so a server that is down is not
@@ -804,9 +811,23 @@
       var hasWork = st.pendingSeconds.length || queue.all().length;
       if (!hasWork && reason === "interval") return Promise.resolve(null);
       if (st.pendingSeconds.length) queue.push(buildPayload(reason));
-      if (flushing) return Promise.resolve(null);
+      // The latch must not be able to strand delivery. It is released only when
+      // the drain's promise settles, and a transport that never settles — a
+      // socket an intermediary drops without a FIN, which `fetch` will wait on
+      // forever — used to hold it true for the life of the page. Every later
+      // beat then queued itself and returned without sending, so the learner
+      // watched the whole lesson into a queue nothing would ever drain.
+      //
+      // Belt as well as braces: the page transport now sets an AbortSignal, but
+      // the player is handed its transport by the caller and cannot assume one.
+      if (flushing) {
+        if (nowMs() - flushStartedAt < FLUSH_STUCK_MS) return Promise.resolve(null);
+        if (window.console) console.warn("[TR.Video] a heartbeat never settled; releasing the latch");
+        st.selfHealed++;
+      }
 
       flushing = true;
+      flushStartedAt = nowMs();
       return drainQueue()
         .then(function (res) {
           flushing = false;
