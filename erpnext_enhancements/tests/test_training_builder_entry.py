@@ -405,5 +405,92 @@ class TestNoDraftControlsExplainThemselves(unittest.TestCase):
         self.assertIn('data-act="preview"', body)
 
 
+class TestChaptersCanBeManaged(unittest.TestCase):
+    """The builder could never create, rename or delete a chapter.
+
+    Every other half of this feature was already built: ``save_draft_version``
+    accepts a ``chapters`` array, ``_apply_chapters`` replaces the table in order
+    and refuses to orphan a lesson, ``TrainingCourseVersion._assign_chapter_keys``
+    mints the keys, and the outline groups lessons by chapter. The client simply
+    never assigned ``this.dirty.chapters`` — it was read in two places and written
+    in none. On a new course, whose first draft clones nothing, the chapter list
+    was permanently empty and every lesson sat under "Unfiled" with no way out.
+    """
+
+    def _author(self):
+        return (APP / "api/training_author.py").read_text(encoding="utf-8")
+
+    def test_it_is_reachable(self):
+        self.assertIn("this.manage_chapters()", _builder())
+
+    def test_it_writes_the_dirty_slot_the_save_reads(self):
+        """The whole bug: `dirty.chapters` was read by flush_save and remerge, and
+        assigned by nothing."""
+        body = _method(_builder(), "manage_chapters")
+        self.assertTrue(body, "manage_chapters not found")
+        self.assertIn("this.dirty.chapters =", body)
+        self.assertIn("this.schedule_save()", body)
+
+    def test_it_refuses_on_a_published_version(self):
+        self.assertIn("this.guard_editable()", _method(_builder(), "manage_chapters"))
+
+    def test_existing_keys_are_carried_through_untouched(self):
+        """`chapter_key` is what every lesson points at. Regenerating one silently
+        unfiles every lesson in that chapter."""
+        body = _method(_builder(), "manage_chapters")
+        self.assertIn("chapter_key: row.chapter_key", body)
+
+    def test_a_new_chapter_sends_no_key(self):
+        """The server mints it and returns it. A client-invented key is how a key
+        ends up disagreeing with the row it names."""
+        body = _method(_builder(), "manage_chapters")
+        push = body[body.index("rows.push(") :][:120]
+        self.assertNotIn("chapter_key", push)
+
+    def test_it_checks_for_orphaned_lessons_before_saving(self):
+        """The server refuses this too — but on the *next autosave*, seconds later,
+        with the dialog closed and the message attached to a save the author did
+        not knowingly trigger."""
+        body = _method(_builder(), "manage_chapters")
+        self.assertIn("this.chapters_in_use(", body)
+        helper = _method(_builder(), "chapters_in_use")
+        self.assertTrue(helper, "chapters_in_use not found")
+        self.assertIn("chapter_key", helper)
+
+    def test_reordering_is_not_drag_only(self):
+        """A drag handle cannot be operated from a keyboard, and reordering is the
+        main reason this dialog exists."""
+        body = _method(_builder(), "manage_chapters")
+        for act in ('data-act="up"', 'data-act="down"'):
+            self.assertIn(act, body)
+
+    def test_the_client_sends_only_fields_the_server_accepts(self):
+        """Cross-checked against CHAPTER_ALLOWED_FIELDS rather than assumed. A
+        field outside it is not saved — it comes back in `rejected`, which the
+        builder reports, but silently doing nothing is the failure mode this whole
+        module keeps finding."""
+        allowed = re.search(
+            r"CHAPTER_ALLOWED_FIELDS = frozenset\(\{([^}]*)\}\)", self._author()
+        )
+        self.assertIsNotNone(allowed, "CHAPTER_ALLOWED_FIELDS not found")
+        declared = set(re.findall(r'"(\w+)"', allowed.group(1)))
+
+        body = _method(_builder(), "manage_chapters")
+        rows = body[body.index("const rows =") : body.index("const dialog")]
+        # Not line-anchored. The anchored version missed a field appended to an
+        # existing line, which is exactly how a stray key gets added in practice.
+        sent = set(re.findall(r"(\w+)\s*:", rows))
+        # chapter_key is echoed back, not written — it is in CHAPTER_ECHOED_KEYS.
+        unknown = sorted(sent - declared - {"chapter_key"})
+        self.assertEqual(
+            unknown, [], f"the chapter dialog sends {unknown}, which the server will reject"
+        )
+
+    def test_every_allowed_field_that_matters_is_editable(self):
+        """`chapter_title` is required by the DocType — a dialog that cannot set it
+        can only create rows that fail to save."""
+        self.assertIn("chapter_title", _method(_builder(), "manage_chapters"))
+
+
 if __name__ == "__main__":
     unittest.main()

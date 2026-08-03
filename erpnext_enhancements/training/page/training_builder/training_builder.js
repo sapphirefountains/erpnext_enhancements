@@ -249,6 +249,7 @@ class TrainingBuilder {
 
 		this.page.set_secondary_action(__("Reload"), () => this.reload(), "refresh");
 		this.page.add_menu_item(__("Save now"), () => this.flush_save());
+		this.page.add_menu_item(__("Chapters…"), () => this.manage_chapters());
 		this.page.add_menu_item(__("New Draft Version"), () => this.new_draft_version());
 		this.page.add_menu_item(__("Submit for Review"), () => this.submit_for_review());
 		this.page.add_menu_item(__("Publish…"), () => this.publish());
@@ -3097,6 +3098,132 @@ class TrainingBuilder {
 			// Already reported in the pane above; marked handled so it is not also
 			// an unhandled rejection.
 			.catch(() => {});
+	}
+
+	// ----- chapters --------------------------------------------------------
+
+	// Chapters group the outline. The server has always accepted them —
+	// `save_draft_version` takes a `chapters` array, `_apply_chapters` replaces the
+	// table in order and refuses to orphan a lesson, and Training Course Version
+	// mints the keys on save — but nothing in the builder ever wrote
+	// `this.dirty.chapters`, so an author could file a lesson under a chapter and
+	// never create one. On a new course, whose first draft clones nothing, the list
+	// was permanently empty and every lesson sat under "Unfiled".
+	//
+	// A dialog rather than inline rail editing: creating and renaming chapters is
+	// occasional work, and putting rename affordances on every outline heading would
+	// crowd the one surface an author uses constantly.
+
+	manage_chapters() {
+		if (!this.guard_editable()) return;
+
+		// Worked on locally and only committed on Save, so Cancel really cancels.
+		// `chapter_key` is carried through untouched — it is what every lesson
+		// points at, and a regenerated one silently unfiles the lot.
+		const rows = (this.chapters || []).map((row) => ({
+			chapter_key: row.chapter_key,
+			chapter_title: row.chapter_title || "",
+			description: row.description || "",
+		}));
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Chapters"),
+			size: "large",
+			fields: [{ fieldname: "chapters_area", fieldtype: "HTML" }],
+			primary_action_label: __("Save"),
+			primary_action: () => {
+				const cleaned = rows.filter((row) => (row.chapter_title || "").trim());
+				const orphans = this.chapters_in_use(cleaned);
+				if (orphans.length) {
+					// The server refuses this too, but it refuses on the next autosave —
+					// several seconds later, with the dialog long closed and the message
+					// attached to a save the author did not knowingly trigger.
+					frappe.msgprint({
+						title: __("Those chapters still have lessons in them"),
+						indicator: "orange",
+						message: __(
+							"Move the lessons out of {0} first. A lesson whose chapter no longer exists vanishes from the outline, so this is refused rather than done quietly.",
+							[orphans.join(", ")]
+						),
+					});
+					return;
+				}
+				dialog.hide();
+				this.chapters = cleaned;
+				this.dirty.chapters = cleaned;
+				this.schedule_save();
+				this.render();
+			},
+		});
+
+		const $wrap = $(dialog.get_field("chapters_area").$wrapper).empty();
+		const paint = () => {
+			$wrap.empty();
+			if (!rows.length) {
+				$('<div class="tb-empty"></div>')
+					.text(__("No chapters yet. Lessons without one are shown under “Unfiled”."))
+					.appendTo($wrap);
+			}
+			rows.forEach((row, index) => {
+				const $row = $(`
+					<div class="tb-chapter-edit">
+						<input type="text" class="input-with-feedback form-control" data-act="title">
+						<div class="tb-chapter-edit-actions">
+							<button type="button" class="btn btn-xs" data-act="up" aria-label="${__("Move up")}">↑</button>
+							<button type="button" class="btn btn-xs" data-act="down" aria-label="${__("Move down")}">↓</button>
+							<button type="button" class="btn btn-xs" data-act="remove" aria-label="${__("Remove")}">✕</button>
+						</div>
+					</div>`).appendTo($wrap);
+				// .val(), not a value attribute: a title with a quote in it would
+				// otherwise truncate the markup.
+				$row.find('[data-act="title"]')
+					.val(row.chapter_title)
+					.attr("placeholder", __("Chapter title"))
+					.on("input", (event) => {
+						rows[index].chapter_title = event.target.value;
+					});
+				// Buttons rather than drag alone. Reordering is the whole point of
+				// this dialog and a drag-only control cannot be operated from a
+				// keyboard — the same reason the lesson rail has key reordering.
+				$row.find('[data-act="up"]').prop("disabled", index === 0).on("click", () => {
+					rows.splice(index - 1, 0, rows.splice(index, 1)[0]);
+					paint();
+				});
+				$row.find('[data-act="down"]').prop("disabled", index === rows.length - 1).on("click", () => {
+					rows.splice(index + 1, 0, rows.splice(index, 1)[0]);
+					paint();
+				});
+				$row.find('[data-act="remove"]').on("click", () => {
+					rows.splice(index, 1);
+					paint();
+				});
+			});
+			$(`<button type="button" class="btn btn-default btn-sm">+ ${__("Add chapter")}</button>`)
+				.on("click", () => {
+					// No chapter_key: the server mints it and hands it back in the
+					// save response, which apply_bootstrap adopts. Inventing one here
+					// is how a key ends up disagreeing with the row it names.
+					rows.push({ chapter_title: "", description: "" });
+					paint();
+					$wrap.find('[data-act="title"]').last().focus();
+				})
+				.appendTo($wrap);
+		};
+		paint();
+		dialog.show();
+	}
+
+	chapters_in_use(kept) {
+
+		const keys = new Set(kept.map((row) => row.chapter_key).filter(Boolean));
+		const titles = {};
+		(this.chapters || []).forEach((row) => (titles[row.chapter_key] = row.chapter_title));
+		const missing = new Set();
+		(this.lessons || []).forEach((lesson) => {
+			const key = lesson.chapter_key;
+			if (key && !keys.has(key)) missing.add(titles[key] || key);
+		});
+		return Array.from(missing);
 	}
 
 	// ----- version actions -------------------------------------------------
