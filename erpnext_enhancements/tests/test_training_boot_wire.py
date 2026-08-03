@@ -483,3 +483,97 @@ class TestTransportArguments(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRuntimeModulesMeet(unittest.TestCase):
+    """The joins between the four player files, and the shim that hid them.
+
+    Two of these were broken from Phase 2 and reached a learner untouched:
+
+    * ``blocks.js`` calls ``TR.Video.mount(el, block, ctx)``. ``video.js``
+      exported only the constructor, so the guard in blocks.js fired and every
+      Video block rendered *"The video player did not load. Please refresh the
+      page."* — on a player that had loaded perfectly well.
+    * ``player.js`` called ``TR.Quiz.mount(root, quizPayload, {submit, …})``.
+      ``quiz.js``'s signature is ``mount(root, ctx, transport)`` with the
+      questions at ``ctx.quiz``, so ``normalise(ctx.quiz)`` got ``undefined`` and
+      the quiz rendered with no questions, no attempt and a Submit that went
+      nowhere.
+
+    **The builder patched both at runtime.** Its own comment called the shims
+    "not a substitute for fixing them" — and then nothing fixed them, for four
+    releases, because the preview an author checks their work in was the one
+    place the breakage could not be seen. That is the part worth guarding: a
+    preview may not repair the runtime on its way past.
+    """
+
+    @staticmethod
+    def _js(name):
+        src = (JS_DIR / name).read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        return "\n".join(
+            line for line in src.splitlines() if not line.strip().startswith("//")
+        )
+
+    @staticmethod
+    def _builder():
+        path = APP / "training/page/training_builder/training_builder.js"
+        src = path.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        return "\n".join(
+            line for line in src.splitlines() if not line.strip().startswith("//")
+        )
+
+    def test_video_exports_the_entry_point_blocks_js_calls(self):
+        self.assertIn("TR.Video.mount(", self._js("blocks.js"))
+        self.assertIn("Video.mount = ", self._js("video.js"))
+
+    def test_video_mount_translates_the_block_shape(self):
+        """`duration_s` on the wire, `duration` in the spec — and coverage is a
+        fraction of it, so getting this wrong silently disables the gate."""
+        code = self._js("video.js")
+        body = code[code.index("Video.mount = ") :][:2200]
+        self.assertIn("block.duration_s", body)
+        self.assertIn("block_key", body)
+        self.assertIn("ctx.lessonKey", body)
+
+    def test_video_mount_uses_the_players_heartbeat(self):
+        """The player wraps the raw call to stamp the lesson key, merge progress
+        and refresh the gate. Going straight to the transport leaves the coverage
+        meter and the Finish button frozen while the video plays."""
+        code = self._js("video.js")
+        body = code[code.index("Video.mount = ") :][:2200]
+        self.assertIn("ctx.heartbeat", body)
+
+    def test_the_quiz_is_mounted_with_the_signature_quiz_js_documents(self):
+        player = self._js("player.js")
+        call = player[player.index("TR.Quiz.mount(") :][:1400]
+        self.assertIn("quiz: state.quiz", call)
+        self.assertIn("submitQuiz:", call)
+        # The old shape put the callbacks under different names in a third arg.
+        self.assertIn("onResult:", call)
+        self.assertIn("onExit:", call)
+
+    def test_quiz_reads_those_exact_names(self):
+        """Both halves asserted together, so renaming one side fails here rather
+        than rendering an empty quiz in front of a learner."""
+        quiz = self._js("quiz.js")
+        for name in ("ctx.quiz", "ctx.onResult", "ctx.onExit", "transport.submitQuiz"):
+            self.assertIn(name, quiz)
+
+    def test_the_builder_does_not_patch_the_runtime(self):
+        """The load-bearing one.
+
+        Any monkey-patch of a runtime module from the builder makes the preview
+        disagree with what a learner gets, and the preview is where an author
+        checks their work. Both bugs above survived four releases behind exactly
+        this.
+        """
+        builder = self._builder()
+        self.assertNotIn("install_runtime_shims", builder)
+        for forbidden in ("TR.Video.mount =", "TR.Quiz.mount =", "TR.Player ="):
+            self.assertNotIn(
+                forbidden,
+                builder,
+                f"the builder assigns {forbidden} — the preview must not repair the runtime",
+            )

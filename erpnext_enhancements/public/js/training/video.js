@@ -1203,5 +1203,67 @@
   Video.rle = rle;
   Video.MAX_PLAYBACK_RATE = MAX_PLAYBACK_RATE;
 
+  // The entry point blocks.js actually calls. Its absence is why every Video
+  // block rendered "The video player did not load. Please refresh the page." —
+  // blocks.js checks `typeof TR.Video.mount === "function"` and this file
+  // exported only the constructor, so the guard fired on a player that had loaded
+  // perfectly well.
+  //
+  // The builder's preview papered over it by patching a `mount` onto TR.Video at
+  // runtime, which is worse than the bug: the preview showed the author a working
+  // lesson while every learner got the failure notice. There is one definition
+  // now, and it lives with the constructor it builds.
+  //
+  // `(wrapper, block, ctx)` — a published block and the player's block context.
+  // Translating between those two shapes is the whole job.
+  Video.mount = function (wrapper, block, ctx) {
+    block = block || {};
+    ctx = ctx || {};
+    var transport = ctx.transport || {};
+
+    var video = new Video(
+      wrapper,
+      {
+        attempt: ctx.attempt,
+        lesson_key: ctx.lessonKey,
+        block_key: block.block_key,
+        // `duration_s` on the wire, `duration` in the spec. Coverage is a
+        // fraction of this, so a zero here silently disables the gate.
+        duration: block.duration_s,
+        poster: block.poster,
+        title: block.heading,
+        checkpoints_enabled: block.checkpoints_enabled,
+        min_coverage_percent: block.min_coverage,
+        settings: ctx.settings || {},
+      },
+      {
+        mediaUrl: transport.mediaUrl,
+        openCheckpoint: transport.openCheckpoint,
+        answerCheckpoint: transport.answerCheckpoint,
+        heartbeatBeacon: transport.heartbeatBeacon,
+        // `ctx.heartbeat`, not `transport.heartbeat`. The player wraps the raw
+        // call to stamp the lesson key, merge the response into its progress and
+        // refresh the gate — go straight to the transport and the coverage meter
+        // and the Finish button both stop updating while the video plays.
+        heartbeat:
+          typeof ctx.heartbeat === "function" ? ctx.heartbeat : transport.heartbeat,
+      }
+    );
+
+    // A <video> left running in a detached node keeps downloading, and a phone
+    // locking mid-lesson must not lose the seconds since the last beat.
+    if (typeof ctx.onTeardown === "function") {
+      ctx.onTeardown(function () {
+        video.destroy();
+      });
+    }
+    if (typeof ctx.onFlush === "function") {
+      ctx.onFlush(function (reason) {
+        video.flush(reason);
+      });
+    }
+    return video;
+  };
+
   TR.Video = Video;
 })();

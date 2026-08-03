@@ -997,35 +997,51 @@
 					// the callback below rather than the transport directly, so the
 					// lesson key and run number are stamped in exactly one place and
 					// a client-supplied score has nowhere to enter.
-					TR.Quiz.mount(main, state.quiz, {
-						transport: api,
-						attempt: state.attempt,
-						lesson: lesson,
-						lessonKey: state.lessonKey,
-						settings: b.settings || {},
-						t: t,
-						onTeardown: function (fn) {
-							teardowns.push(fn);
+					// quiz.js's signature is `mount(root, ctx, transport)` where the
+					// questions live at `ctx.quiz`. This used to pass the payload as
+					// `ctx` itself and put everything else in the third argument, so
+					// `normalise(ctx.quiz)` got undefined and the quiz rendered with
+					// no questions, no attempt and no lesson key — and Submit went
+					// nowhere, because quiz.js looks for `transport.submitQuiz`.
+					//
+					// The builder's preview patched the shapes together at runtime,
+					// which is why this only ever failed for learners.
+					TR.Quiz.mount(
+						main,
+						{
+							quiz: state.quiz,
+							attempt: state.attempt,
+							lessonKey: state.lessonKey,
+							onResult: function (result) {
+								state.result = result || {};
+								recordQuizRun(state.result);
+								go("results");
+							},
+							onExit: function () {
+								go("lesson");
+							},
 						},
-						submit: function (answers) {
-							// No `run`: submit_quiz takes (attempt, lesson_key,
-							// answers) and derives the run itself. A client-supplied
-							// run number was never a parameter and was dropped.
-							return call("submitQuiz", {
-								attempt: state.attempt,
-								lesson_key: state.lessonKey,
-								answers: answers,
-							});
-						},
-						onGraded: function (result) {
-							state.result = result || {};
-							recordQuizRun(state.result);
-							go("results");
-						},
-						onCancel: function () {
-							go("lesson");
-						},
-					});
+						{
+							// Submitting goes through here rather than the raw
+							// transport so the lesson key and attempt are stamped in
+							// exactly one place and a client-supplied score has
+							// nowhere to enter. No `run`: submit_quiz takes
+							// (attempt, lesson_key, answers) and derives it.
+							submitQuiz: function (answers) {
+								return call("submitQuiz", {
+									attempt: state.attempt,
+									lesson_key: state.lessonKey,
+									answers: answers,
+								});
+							},
+							startQuiz: function () {
+								return call("startQuiz", {
+									attempt: state.attempt,
+									lesson_key: state.lessonKey,
+								});
+							},
+						}
+					);
 				})
 				.catch(function (err) {
 					clear(main);
