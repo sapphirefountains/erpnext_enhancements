@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.227.1] - 2026-08-03
+
+### Fixed
+
+**The hourly Google Drive shadow sync aborted whenever its DB connection dropped, and left
+no evidence that it had.**
+
+The reported traceback was `MySQLdb.OperationalError: (2006, 'Server has gone away')` raised
+three times over — once from the sync, once from the `frappe.db.rollback()` meant to handle
+it, and once from RQ's own `rollback(chain=True)`. MariaDB was not, in fact, gone: it has been
+up continuously since 24 Jul with no restart and no crash, `max_allowed_packet` is 512 MB
+against a worst-case query of ~70 KB, and `wait_timeout` is 8 hours against a worst-case idle
+gap of about two minutes. None of the usual explanations apply. What is true is that a single
+connection died, and it died where it always dies: at the first query after a Drive walk.
+
+`run_shadow_sync` is the only job in this app that holds a DB connection open across minutes
+of uninterrupted Google API traffic — in production it walks 737 linked documents and takes
+~22 minutes per hourly run, and within one document the connection sits untouched for the
+whole tree walk. Roughly once a day the socket does not survive that. The same call site has
+produced both 2006 ("server has gone away") and 2013 ("lost connection during query"), which
+is the signature of the client's socket being severed rather than the server going anywhere.
+
+That is the trigger. **The defect is what happened next.** The per-document `except` exists so
+that one document's failure is logged and skipped without aborting the run — that promise is
+in the docstring. But its first act was `frappe.db.rollback()`, which issues SQL: on a dead
+connection it raised the identical error straight back out of the handler that was supposed to
+contain it. So a failure scoped to one customer killed the entire run, every hour, and every
+document after the failing one went unsynced. Worse, `frappe.log_error` needs the connection
+too, so it raised as well — which is why the Error Log contains **zero** rows for this, and
+the only trace anywhere on the box was an RQ stack in `worker.error.log`.
+
+The handler now recovers before it logs. A lost connection is identified by driver error code
+(2006/2013/2055 — stable across the two wordings) and answered with an explicit reconnect;
+anything else rolls back as before, with a reconnect as fallback if the rollback itself fails.
+Only then is the error logged, on a connection that works. If the reconnect cannot be made the
+run stops cleanly rather than raising, since there is nothing left to write a log with.
+
+The explicit reconnect is necessary because Frappe's own auto-reconnect does not exist:
+`frappe/database/mariadb/database.py` sets `conn.auto_reconnect = True`, but mysqlclient
+removed that feature, so the line is an inert attribute assignment on a Python object and a
+dead connection stays dead for the remainder of the job.
+
+Guarded by `tests/test_drive_sync_recovery.py` (bench-free, own CI step — it installs its own
+frappe stub). The suite asserts the contract rather than the mechanism: whatever one document
+does, the run reaches the last document and every failure is recorded. Reverting the handler
+makes it fail exactly as production did — the run stops at the failing document.
 ## [1.227.0] - 2026-08-03
 
 ### Added
