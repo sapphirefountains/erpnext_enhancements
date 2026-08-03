@@ -210,6 +210,7 @@ def grade_quiz(attempt, lesson_key, answers, run=None):
 	passed = bool(possible) and score >= pass_score
 
 	_record_quiz_run(doc, lesson_key, run, score)
+	_file_quiz_answers(doc, lesson_name, run, drawn, submitted, per_question)
 
 	return {
 		"score": score,
@@ -298,6 +299,7 @@ def grade_checkpoint(attempt, checkpoint_key, option_keys):
 	correct_now = sorted(_as_keys(option_keys)) == correct
 	attempts += 1
 	_record_checkpoint(doc, lesson_key, checkpoint_key, correct_now, attempts)
+	_file_checkpoint_answer(doc, lesson_name, checkpoint_key, entry, option_keys, correct_now, attempts)
 
 	return _checkpoint_result(
 		checkpoint_key, entry, correct_now, attempts, exhausted=attempts >= max_attempts
@@ -385,7 +387,17 @@ def evaluate_gates(attempt, lesson_key):
 				)
 
 	overall = flt(sum(coverages) / len(coverages), 2) if coverages else 0.0
-	return {"ok": not reasons, "reasons": reasons, "coverage": overall, "waived": waived}
+	# `gated` distinguishes "there was no video here" from "watched none of it" —
+	# both of which leave `coverage` at 0.0. Without it the completion record of a
+	# text-only course reads as though the learner sat through nothing, which is
+	# the same plausible-and-wrong failure as the score field.
+	return {
+		"ok": not reasons,
+		"reasons": reasons,
+		"coverage": overall,
+		"gated": len(gated_blocks),
+		"waived": waived,
+	}
 
 
 # --------------------------------------------------------------------- helpers
@@ -685,3 +697,127 @@ def _record_checkpoint(attempt, lesson_key, checkpoint_key, correct, attempts):
 	entry["correct"] = 1 if correct else cint(entry.get("correct"))
 	entry["at"] = str(now_datetime())
 	progress.save(name, data, force=True)
+
+
+# --------------------------------------------------------------- answer filing
+#
+# ``Training Attempt Question`` is a flat row per graded answer, and the reason it
+# exists is the analytics report: a question everybody misses usually means the
+# content is unclear, not that the learners are. That only works if the rows get
+# written, and for four phases they did not — the report queried a table nothing
+# filled, and answered every question with an empty set rather than an error.
+#
+# Filing happens here because this is the one place that holds both halves: the
+# drawn options (so the row can record *what the learner picked*, in words) and
+# the verdict. It must never cost a learner their submission, so a failure is
+# logged and swallowed — logged loudly, because a silent except is how the
+# missing rows went unnoticed to begin with.
+
+
+def _answer_in_words(entry_or_question, submitted):
+	"""What the learner picked, as the text they saw.
+
+	The option *keys* are stable across learners, so storing those would group
+	correctly — but the report's most useful column names the dominant distractor
+	("half the misses picked B"), and ``opt_3`` is not a sentence an author can act
+	on. Text is stored so the column reads.
+	"""
+	if (entry_or_question or {}).get("type") == "Short Answer":
+		if isinstance(submitted, list | tuple):
+			submitted = submitted[0] if submitted else ""
+		return str(submitted or "")[:500]
+
+	by_key = {
+		str(option.get("option_key")): (option.get("text") or "")
+		for option in (entry_or_question or {}).get("options") or []
+	}
+	# Sorted so the same pair of ticked options is one bucket in the report rather
+	# than two, whatever order the client happened to send them in.
+	picked = [by_key.get(str(key)) or str(key) for key in sorted(_as_keys(submitted))]
+	return " | ".join(text for text in picked if text)[:500]
+
+
+def _file_answer(row):
+	"""Insert one row. The caller has already decided it should exist."""
+	doc = frappe.get_doc(dict(row, doctype="Training Attempt Question"))
+	# The learner is typically a Website User with no DocPerm here at all — that is
+	# the design (see training/permissions.py), so filing is necessarily a
+	# server-side act. The controller still re-derives course/version/user from the
+	# attempt, so nothing filed here can land under the wrong name.
+	doc.insert(ignore_permissions=True)
+
+
+def _file_quiz_answers(attempt, lesson_name, run, drawn, submitted, per_question):
+	"""One row per question in a graded quiz run."""
+	try:
+		by_name = {question.get("question"): question for question in drawn or []}
+		# A retake is a new run and genuinely new data. A re-grade of the *same*
+		# run is not, and double-filing it would quietly weight one learner twice
+		# in every percentage the report prints.
+		already = set(
+			frappe.get_all(
+				"Training Attempt Question",
+				filters={"attempt": attempt.name, "lesson": lesson_name, "quiz_run": cint(run),
+				         "source": "Quiz"},
+				pluck="question",
+			)
+		)
+		for result in per_question or []:
+			name = result.get("question")
+			if not name or name in already:
+				continue
+			_file_answer(
+				{
+					"attempt": attempt.name,
+					"lesson": lesson_name,
+					"source": "Quiz",
+					"question": name,
+					"quiz_run": cint(run),
+					"question_text_snapshot": (result.get("text") or "")[:1000],
+					"given_answer": _answer_in_words(by_name.get(name), (submitted or {}).get(name)),
+					"is_correct": 1 if result.get("correct") else 0,
+					"points_awarded": flt(result.get("awarded")),
+					# time_taken_seconds is deliberately left unset: nothing measures
+					# per-question time yet, and dividing the run's duration by the
+					# question count would invent a number the report acts on. It
+					# guards on truthiness, so unset reads as "unknown", not "0s".
+				}
+			)
+	except Exception:
+		frappe.log_error(
+			f"Could not file quiz answers for attempt {getattr(attempt, 'name', attempt)} "
+			f"lesson {lesson_name} run {run}. The learner's submission was graded and saved; "
+			"only the per-question analytics rows are missing.",
+			"Training analytics",
+		)
+
+
+def _file_checkpoint_answer(attempt, lesson_name, checkpoint_key, entry, option_keys, correct, attempts):
+	"""One row per in-video checkpoint answer.
+
+	Every attempt at a checkpoint is filed, not just the final one. A checkpoint
+	answered wrong twice and right on the third go is exactly the signal the report
+	exists to surface, and keeping only the last answer would render it a pass.
+	``quiz_run`` carries the attempt number so the rows stay distinguishable.
+	"""
+	try:
+		_file_answer(
+			{
+				"attempt": attempt.name,
+				"lesson": lesson_name,
+				"source": "Checkpoint",
+				"checkpoint": entry.get("checkpoint"),
+				"quiz_run": cint(attempts),
+				"question_text_snapshot": (entry.get("question") or "")[:1000],
+				"given_answer": _answer_in_words(entry, option_keys),
+				"is_correct": 1 if correct else 0,
+				"points_awarded": 1.0 if (correct and cint(entry.get("scored"))) else 0.0,
+			}
+		)
+	except Exception:
+		frappe.log_error(
+			f"Could not file checkpoint {checkpoint_key} for attempt "
+			f"{getattr(attempt, 'name', attempt)}. The answer was graded and the learner's "
+			"progress saved; only the analytics row is missing.",
+			"Training analytics",
+		)

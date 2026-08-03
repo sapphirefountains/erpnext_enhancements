@@ -7,6 +7,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.218.0] - 2026-08-02
+
+### Fixed
+
+Follow-on from the first end-to-end run (see 1.217.0). Two more of the same family: code
+that reported a confident, plausible, wrong number rather than failing.
+
+- **Nothing ever wrote `Training Attempt Question`.** The doctype, its controller, its
+  permission hooks and the `training_question_analytics` Script Report that groups over it were
+  all built and correct. No row was ever inserted. The report did not error — it returned an
+  empty set, which on screen is indistinguishable from *"no problems found"*. That report exists
+  because a question everybody misses usually means the content is unclear rather than the
+  learners, and it could not have told anybody that.
+
+  Quiz and checkpoint answers are now filed from `training/grading.py`, the one place holding
+  both the drawn options and the verdict. Every checkpoint *attempt* is recorded, not just the
+  last one — a checkpoint failed twice and passed on the third go is precisely the signal the
+  report is for, and keeping only the final answer would render it a clean pass.
+
+  `given_answer` stores the option **text**, not the option key. Keys are stable across learners
+  so either would group correctly, but the report's most useful column names the dominant
+  distractor — *"half the misses picked B"* — and `opt_3` is not a sentence an author can act on.
+
+- **Every Training Completion recorded 0% video coverage.** `video_coverage_percent` was read
+  off the attempt and written onto the permanent record, and nothing populated it — on the
+  attempt or anywhere else. The **gate was never affected**: it computes coverage live from the
+  stored watch intervals, so nobody passed a course they should not have. But the completion is
+  the artefact you would produce in a dispute, and it understated everyone who took a course
+  with a video in it.
+
+  Coverage is now taken from the gate's own verdict rather than recomputed, so the number filed
+  on the permanent record is the number the learner was shown and graded on. `evaluate_gates`
+  gained a `gated` count so a course with **no** video writes nothing rather than a fabricated
+  `0` — otherwise a text-only course would read as though the learner sat through nothing, which
+  is the same bug wearing a different hat.
+
+- `quiz_runs`, `checkpoints_answered` and `checkpoints_correct` on Training Attempt were declared
+  and never written either; all three read a confident zero. Now derived from the progress blob
+  at completion, rather than incremented as things happen — a counter incremented on every
+  heartbeat drifts the first time a write is lost.
+
+- `verify_certificate` returns ISO date strings instead of `date` objects. Frappe's encoder
+  always handled these, so this was never broken over HTTP; but it is a public endpoint that
+  third parties and our own scripts consume, and one that survives a plain `json.dumps` is a
+  better contract.
+
+- Two bugs in the smoke harness itself: it asked for the Employee record of the *session* user
+  when naming a supervisor (Administrator has none), and it reported the completion step as a
+  **pass while printing `score 0.0`** for a learner who had just scored 100. The score is now
+  asserted, not merely printed. A smoke test that displays a wrong value without failing is
+  worth very little.
+
+### Added
+
+- Smoke-test steps covering the analytics rows and the attempt's summary counters, including a
+  check that `given_answer` holds readable text rather than an opaque option key.
+
+### Notes
+
+- Every assertion added here was mutation-tested — eleven deliberate reintroductions of these
+  bugs, each confirmed to fail the suite. One assertion **passed** a mutation and had to be
+  rewritten: it grepped the whole function for `update_modified=False`, and the explanatory
+  comment directly above the call contains that string, so deleting it from the code left the
+  test green. Reading the test would not have caught that.
+
+## [1.217.0] - 2026-08-02
+
+### Fixed
+
+The Training module was executed end to end for the first time. Four phases of review had found
+a lot; running it once found four more, and three of them were the kind that report a real,
+plausible, wrong answer rather than failing.
+
+- **The supervisor sign-off gate did not gate.** `finish_attempt` enforced every lesson gate and
+  never looked at `require_supervisor_signoff`, so a technician could be certified competent to
+  drain a basin having only answered questions about it. The Phase-4 contract was written
+  precisely to protect this class of safeguard and did not catch it, because those assertions
+  checked *source presence* rather than behaviour.
+
+  Now reported as an outstanding item like any other unmet gate, so the player tells the learner
+  what is left rather than erroring. Only a **submitted** sign-off recording *Competent* counts: a
+  draft is a request, and "Needs More Practice" is the supervisor explicitly declining. Matched on
+  the course rather than the version — somebody watched draining a basin last month has been
+  watched draining a basin, and a rewritten paragraph should send them back through the material,
+  not back in front of a supervisor.
+
+- **A learner who scored 100 got a certificate reading 0.** `_issue_completion` wrote `"score"`
+  where the field is `score_percent`, and `_doc_payload` discarded the unknown key **silently**.
+  Two more of the same: `"course_title"` where the field is `course_title_snapshot`, and a
+  `"customer"` on Training Attempt, which declares no such field.
+
+  `_doc_payload` now **logs** what it drops. The filter stays — an insert that dies in front of a
+  learner is worse than a missing value — but its docstring claimed the gap would "show up in the
+  record, where somebody will notice it", and for four phases nobody did. Defensive must not mean
+  silent, or the defence becomes the bug.
+
+- The completion now records **which** sign-off unlocked it, so it carries its own evidence.
+
+### Added
+
+- `tests/test_training_runtime_regressions.py`. The load-bearing test is static: it parses every
+  `_doc_payload(...)` call and cross-checks each field name against the DocType JSON. That would
+  have caught the score bug before it ever ran, without a bench, and it generalises to any field
+  added later. It immediately found two drops beyond the one that prompted it.
+
+- `training/smoke_test.py` — the end-to-end harness itself:
+  `bench --site <site> execute erpnext_enhancements.training.smoke_test.run`. Twelve steps through
+  the real code paths. It asserts gates by *trying to pass them and requiring a refusal*, walks the
+  live published payload for answer markers, and checks the public certificate verification leaks
+  no PII. Safe to re-run.
+
+### Notes
+
+- Every assertion added here was mutation-tested — the code deliberately broken to confirm the test
+  fails. Both the score typo and the removed sign-off gate were verified to fail before the fixes
+  were kept.
+
+- Worth recording plainly: reading found the ordering bugs, the answer-key leak and the wire
+  mismatches. It did not find any of these four. A gate that is simply absent, and a field name
+  that is quietly wrong, both look completely fine on the page.
+
 ## [1.216.0] - 2026-08-02
 
 ### Added
