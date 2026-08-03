@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.229.0] - 2026-08-03
+
+### Fixed
+
+Two causes behind "the quiz still isn't visible and the watched % isn't tracking", and the
+first one is not a training bug at all.
+
+- **The kiosk service worker was serving the whole app stale JavaScript.** `kiosk-sw.js` is
+  registered at **root scope**, and its fetch handler answered *any* request under
+  `/assets/erpnext_enhancements/` cache-first with `ignoreSearch: true`. Its comment argued
+  that was safe because "the cache only ever holds this deploy's entries" — but a service
+  worker is only replaced when its own script URL changes, and that only happens when
+  somebody opens `/kiosk`. So a browser that opened the kiosk once kept serving **that**
+  deploy's JavaScript to every other page in the app, indefinitely.
+
+  `ignoreSearch` reduced the `?v=` deploy token to decoration: a brand-new token matched a
+  months-old entry. Found in the wild with a training player four releases stale, in a
+  browser whose worker cache was named after a deploy from weeks earlier — and nothing the
+  page could do reached it, not a new `?v=`, not `cache: "reload"`, not a random query
+  string.
+
+  The worker now answers only for its own precached shell, matched against an explicit list
+  derived from `PRECACHE`. Anything else goes to the network like a normal request. This was
+  a site-wide staleness bug that happened to be found through training.
+
+- **The player's action bar was hidden by the page's own CSS.** `player.js` builds it as
+  `<footer class="tr-bottom">`, and the chrome-removal block listed a bare `footer` at
+  `display: none !important`. So the element holding **Start the quiz**, **Finish this
+  lesson**, the resume button and the gate reasons rendered correctly, with the right label,
+  at zero height — invisible to every learner since the page was written. `main` is now
+  qualified for the same reason: `main.tr-view` is the player's own.
+
+### Notes
+
+- Verified in a real browser after clearing the stale worker: the quiz mounts with all three
+  questions and nine options, and the video block loads its GCS signed URL with
+  `readyState: 4` at the full 90 seconds.
+
+- **Watch coverage is not confirmed.** Testing it through browser automation credits nothing,
+  because `creditBlocked()` correctly refuses to count a hidden tab and a CDP-driven tab
+  reports `visibilityState: "hidden"`. The anti-cheat worked; the test was invalid. The
+  reported symptom is fully explained by the stale JavaScript — with no `TR.Video.mount` the
+  block rendered "the video player did not load" and never instantiated a player, so no
+  sampler ever ran — but that is an explanation, not a measurement, and it needs a real
+  visible tab to confirm.
+
 ## [1.228.0] - 2026-08-03
 
 ### Fixed

@@ -387,3 +387,56 @@ class TestHostThemeReset(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheChromeRemovalSparesThePlayer(unittest.TestCase):
+    """The page hides the website chrome, and hid its own action bar with it.
+
+    ``player.js`` builds the sticky action bar as ``<footer class="tr-bottom">``.
+    The template's chrome-removal block listed a bare ``footer`` at
+    ``display: none !important`` — so the element holding **Start the quiz**,
+    **Finish this lesson**, the resume button and the gate reasons was invisible
+    to every learner, on every lesson, since the page was written.
+
+    Nothing errored. The button rendered, with the right label, at zero height.
+    The one control that advances a course simply could not be seen or pressed,
+    and the reported symptom was "the quiz isn't visible" — which it was, in the
+    DOM, all along.
+
+    ``main`` is qualified for the same reason: ``main.tr-view`` is the player's.
+    """
+
+    @staticmethod
+    def _template():
+        return TEMPLATE.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _chrome_block():
+        text = TEMPLATE.read_text(encoding="utf-8")
+        start = text.index("{% block style %}")
+        return text[start : text.index("{% endblock %}", start)]
+
+    def test_the_block_is_found(self):
+        """Guards the assertions below from passing on an empty slice."""
+        self.assertIn("display: none !important", self._chrome_block())
+
+    def test_the_footer_rule_spares_the_action_bar(self):
+        block = self._chrome_block()
+        self.assertIn("footer:not(.tr-bottom)", block)
+        # A bare `footer` anywhere in the hide list puts it straight back.
+        hide = block[: block.index("display: none !important")]
+        self.assertNotRegex(
+            hide,
+            r"(^|[\s,])footer\s*[,{]",
+            "a bare `footer` selector hides the player's own action bar",
+        )
+
+    def test_the_main_rule_spares_the_view(self):
+        self.assertIn("main:not(.tr-view)", self._chrome_block())
+
+    def test_the_player_still_builds_those_elements(self):
+        """Both halves asserted together, so renaming the element in player.js
+        fails here rather than silently re-hiding the bar."""
+        player = (JS_DIR / "player.js").read_text(encoding="utf-8")
+        self.assertIn('el("footer", "tr-bottom")', player)
+        self.assertIn('el("main", "tr-view")', player)
