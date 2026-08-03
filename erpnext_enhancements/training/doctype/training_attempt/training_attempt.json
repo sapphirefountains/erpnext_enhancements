@@ -1,0 +1,305 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "course",
+  "course_title",
+  "course_version",
+  "assignment",
+  "column_break_head",
+  "status",
+  "user",
+  "employee",
+  "timing_section",
+  "started_on",
+  "last_activity_on",
+  "completed_on",
+  "column_break_timing",
+  "score_percent",
+  "video_coverage_percent",
+  "engagement_section",
+  "checkpoints_answered",
+  "checkpoints_correct",
+  "quiz_runs",
+  "column_break_engagement",
+  "total_active_seconds",
+  "tab_hidden_seconds",
+  "seek_forward_events",
+  "integrity_section",
+  "shuffle_seed",
+  "integrity_flags",
+  "column_break_integrity",
+  "device_info",
+  "ip_address",
+  "progress_section",
+  "progress_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-ATT-.########",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "course.course_title",
+   "fieldname": "course_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "read_only": 1
+  },
+  {
+   "description": "The exact version being taken. Pinned when the attempt opens, so publishing a new version mid-course does not move the ground under somebody who is halfway through.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course Version",
+   "options": "Training Course Version"
+  },
+  {
+   "description": "The assignment this attempt answers, when there is one. Blank for a self-enrolled learner working through the optional library.",
+   "fieldname": "assignment",
+   "fieldtype": "Link",
+   "label": "Assignment",
+   "options": "Training Assignment"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "In Progress",
+   "description": "Abandoned means the learner stopped and never came back — the hourly sweep sets it once an attempt has been idle past the timeout, so a stale attempt does not block a fresh one forever.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "In Progress\nPassed\nFailed\nAbandoned",
+   "reqd": 1
+  },
+  {
+   "description": "The learner. Always taken from the logged-in session, never from anything the browser sends.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Derived from the user, not chosen. Blank for a customer contact, who has a login but no employee record.",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timing_section",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "fieldname": "started_on",
+   "fieldtype": "Datetime",
+   "label": "Started On"
+  },
+  {
+   "description": "Last time the player was heard from. This is what the idle sweep measures against.",
+   "fieldname": "last_activity_on",
+   "fieldtype": "Datetime",
+   "label": "Last Activity"
+  },
+  {
+   "fieldname": "completed_on",
+   "fieldtype": "Datetime",
+   "label": "Completed On"
+  },
+  {
+   "fieldname": "column_break_timing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Best quiz result across the runs in this attempt. Graded on the server against the stored answer key; anything the browser claims about a score is ignored.",
+   "fieldname": "score_percent",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Score",
+   "read_only": 1
+  },
+  {
+   "description": "How much of the required video was actually watched, measured from merged watched intervals rather than from how long the page was open.",
+   "fieldname": "video_coverage_percent",
+   "fieldtype": "Percent",
+   "label": "Video Coverage",
+   "read_only": 1
+  },
+  {
+   "fieldname": "engagement_section",
+   "fieldtype": "Section Break",
+   "label": "Engagement"
+  },
+  {
+   "fieldname": "checkpoints_answered",
+   "fieldtype": "Int",
+   "label": "Checkpoints Answered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "checkpoints_correct",
+   "fieldtype": "Int",
+   "label": "Checkpoints Correct",
+   "read_only": 1
+  },
+  {
+   "description": "How many times a quiz has been drawn and submitted in this attempt.",
+   "fieldname": "quiz_runs",
+   "fieldtype": "Int",
+   "label": "Quiz Runs",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_engagement",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Seconds credited to this attempt after the server's own clock check. Time claimed faster than real time is truncated, so this is always less than or equal to the wall clock.",
+   "fieldname": "total_active_seconds",
+   "fieldtype": "Int",
+   "label": "Active Seconds",
+   "read_only": 1
+  },
+  {
+   "description": "Seconds the training tab spent in the background. Watching in another window is not watching.",
+   "fieldname": "tab_hidden_seconds",
+   "fieldtype": "Int",
+   "label": "Tab Hidden Seconds",
+   "read_only": 1
+  },
+  {
+   "description": "How many times the learner jumped forwards in a video. High counts next to low coverage is the usual shape of somebody skimming.",
+   "fieldname": "seek_forward_events",
+   "fieldtype": "Int",
+   "label": "Forward Seeks",
+   "read_only": 1
+  },
+  {
+   "fieldname": "integrity_section",
+   "fieldtype": "Section Break",
+   "label": "Integrity"
+  },
+  {
+   "description": "Stamped once when the attempt opens and never changed. Question and option order are derived from it, so the same learner sees a stable shuffle on a page reload but two learners do not see the same paper.",
+   "fieldname": "shuffle_seed",
+   "fieldtype": "Data",
+   "label": "Shuffle Seed",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Anything the server noticed and refused to take at face value — claimed watch time that outran the clock, an answer to a checkpoint at a timestamp that was never reached. Kept for a human to read; nothing is failed automatically on it.",
+   "fieldname": "integrity_flags",
+   "fieldtype": "Small Text",
+   "label": "Integrity Flags",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_integrity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Browser and platform the attempt was taken on, for supporting a learner who reports the video will not play.",
+   "fieldname": "device_info",
+   "fieldtype": "Small Text",
+   "label": "Device"
+  },
+  {
+   "fieldname": "ip_address",
+   "fieldtype": "Data",
+   "label": "IP Address"
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:false",
+   "fieldname": "progress_section",
+   "fieldtype": "Section Break",
+   "label": "Progress"
+  },
+  {
+   "description": "The whole of the learner's position in the course — watched intervals, checkpoint answers, quiz runs — as one machine-written blob. Editing it by hand does nothing useful.",
+   "fieldname": "progress_json",
+   "fieldtype": "Long Text",
+   "label": "Progress (JSON)",
+   "read_only": 1
+  }
+ ],
+ "links": [
+  {
+   "link_doctype": "Training Attempt Question",
+   "link_fieldname": "attempt"
+  }
+ ],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Attempt",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "course,user,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title",
+ "track_changes": 1
+}

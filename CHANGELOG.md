@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.212.0] - 2026-08-02
+
+### Added
+
+- **Training Phase 2 — the learner player.** `/training` is a standalone mobile-first page (not a
+  desk page, because customers and field crew on phones both have to reach it), with watch
+  telemetry, in-video checkpoints and the quiz runtime. Ships behind the existing dormant
+  switches: `training_enabled` plus `portal_enabled`.
+
+  Three new DocTypes: **Training Attempt** (one row per learner per course-version run, with all
+  progress in a single `progress_json` blob), **Training Attempt Question** (one row per graded
+  response — top-level, not a child table, because it is written one row at a time and
+  per-question analytics is a `GROUP BY question` across every attempt), and **Training
+  Completion** (submittable; `cancel()` = revoked).
+
+  `training/progress.py` holds the watched-seconds arithmetic. Intervals are merged, clipped and
+  — past a cap — collapsed **smallest-gap-first**, because over-crediting a learner who genuinely
+  watched is the kinder error and dropping an interval is not. Writes are cache-first and
+  throttled: `frappe.db.set_value(..., update_modified=False)`, never `doc.save()`, since a full
+  save per heartbeat would write a Version row containing two copies of the blob per learner per
+  minute.
+
+  `training/grading.py` is the only module permitted to read an answer key. Shuffling is
+  deterministic from the attempt's seed, so re-opening the same run shows the same order — a
+  reshuffle mid-attempt reads as the app having lost your answers.
+
+### Fixed
+
+- **The player and the progress store did not speak the same heartbeat format.** The player emits
+  run-length-encoded `ranges` (compact for a phone that has been scrubbing), structured
+  `seeks: {forward, backward}` and a nested `discount.hidden`; `progress` reads `intervals`, an
+  integer `seeks` and a top-level `hidden`. Shipped as written, **coverage would have been zero
+  forever** — no video lesson completable, and nothing raising anywhere.
+
+  `api.training._normalise_beat` is now the single place that knows both shapes, and
+  `tests/test_training_heartbeat_wire.py` pins the translation *and* re-reads both sides' source,
+  so a rename on either side fails there rather than in production. Only forward seeks count
+  toward integrity; rewatching is exactly the behaviour the feature wants to encourage.
+
+### Notes
+
+- The `TR.Player(rootEl, boot, transport)` seam is in place and was the stated Phase-2 exit
+  criterion: the player never reads `window.TRAINING_BOOT` and never calls `fetch` itself, so
+  Phase 3's builder can inject a preview transport instead of forking the player.
+
+- Watch coverage still measures *time elapsed with the video playing and visible*, never
+  attention. The compliance artefact remains coverage **plus** checkpoint accuracy **plus** quiz
+  score.
+
+- Built by eight parallel agents against a fixed contract, then integrated by hand. Every suite
+  passed individually while the feature as a whole was broken — the wire mismatch above sat
+  exactly on the seam none of them owned, which is the failure mode this kind of build has.
+
 ## [1.211.0] - 2026-08-02
 
 ### Security

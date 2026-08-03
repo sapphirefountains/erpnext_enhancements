@@ -1,0 +1,506 @@
+/*
+ * Learner training player styles (/training — www/training.html + js/training/*.js).
+ *
+ * Website pages carry no desk data-theme attribute, so theming follows the kiosk
+ * and itinerary convention: a local --tr-* palette with a prefers-color-scheme
+ * dark block (see public/css/kiosk/kiosk.css). Semantic answer colours stay
+ * literal — "correct" must not shift with a palette edit.
+ *
+ * Mobile-first and deliberately narrow. A learner works through this on a phone
+ * on site, so: one column, 16px base (never smaller — a form the reader zooms is
+ * a form they skim), and every interactive target >= 44px. Only two breakpoints,
+ * because every extra one is another layout nobody tests:
+ *
+ *   >= 900px   the lesson outline moves out of the flow into a left rail
+ *   >= 1200px  the shell widens so the video gets the extra pixels
+ *
+ * The sticky bottom bar holds the one action that advances the lesson, and its
+ * padding-bottom carries env(safe-area-inset-bottom) so the button is not under
+ * the iOS home indicator. .tr-shell reserves matching space at the end of the
+ * column; without it the bar covers the last block of every lesson.
+ *
+ * Class contract with the player scripts (player.js owns the tree; blocks.js,
+ * video.js and quiz.js render into it):
+ *   .tr-shell > .tr-header, .tr-outline, .tr-main, .tr-bar
+ *   blocks    .tr-block with a .tr-block--{text,image,pdf,video,embed} modifier
+ *   video     .tr-video-wrap > .tr-video, plus .tr-coverage
+ *   checkpoint.tr-checkpoint (overlay) > .tr-checkpoint-card
+ *   quiz      .tr-quiz > .tr-quiz-question > .tr-options > .tr-option
+ * State classes are .is-active / .is-done / .is-locked / .is-selected /
+ * .is-correct / .is-wrong, so a state never collides with a block type.
+ */
+
+:root {
+	--tr-bg: #f6f7f9;
+	--tr-surface: #ffffff;
+	--tr-surface-alt: #f0f2f5;
+	--tr-text: #1f272e;
+	--tr-muted: #6c7680;
+	--tr-border: #e2e6ea;
+	--tr-accent: #00a0dd;
+	--tr-accent-soft: #e6f6fd;
+	--tr-accent-text: #ffffff;
+	--tr-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+	--tr-radius: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--tr-bg: #161a1f;
+		--tr-surface: #1f262e;
+		--tr-surface-alt: #262f38;
+		--tr-text: #e8ecef;
+		--tr-muted: #97a1ab;
+		--tr-border: #313a44;
+		--tr-accent: #29b6f6;
+		--tr-accent-soft: #103244;
+		--tr-accent-text: #06222f;
+		--tr-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+	}
+}
+
+.tr-shell {
+	max-width: 720px;
+	margin: 0 auto;
+	/* Bottom padding clears the sticky action bar (its own height plus the
+	   safe-area inset it already absorbs). */
+	padding: 0 12px calc(96px + env(safe-area-inset-bottom));
+	box-sizing: border-box;
+	color: var(--tr-text);
+	font-size: 16px;
+	line-height: 1.5;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.tr-boot,
+.tr-empty {
+	text-align: center;
+	color: var(--tr-muted);
+	padding: 48px 16px;
+}
+
+.tr-error {
+	text-align: center;
+	color: #e03636;
+	padding: 48px 16px;
+}
+
+/* ------------------------------------------------------------------ header */
+
+.tr-header {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	background: var(--tr-bg);
+	padding: 14px 4px 10px;
+}
+
+.tr-course-title {
+	font-size: 1.3rem;
+	font-weight: 700;
+	margin: 0;
+}
+
+.tr-course-sub {
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+	margin-top: 2px;
+}
+
+/* Course-level progress. The label is written by player.js and must say
+   "watched", never "attended" or "completed" — coverage measures time spent,
+   not attention (see training/README.md). */
+.tr-progress {
+	height: 8px;
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	overflow: hidden;
+	margin-top: 10px;
+}
+
+.tr-progress-fill {
+	height: 100%;
+	width: 0;
+	background: var(--tr-accent);
+	transition: width 240ms ease;
+}
+
+.tr-progress-label {
+	color: var(--tr-muted);
+	font-size: 0.8rem;
+	margin-top: 4px;
+}
+
+/* ----------------------------------------------------------------- outline */
+
+.tr-outline {
+	list-style: none;
+	margin: 0 0 16px;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.tr-outline-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 44px;
+	padding: 10px 12px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-outline-item.is-active {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+	font-weight: 650;
+}
+
+.tr-outline-item.is-locked {
+	color: var(--tr-muted);
+	cursor: not-allowed;
+}
+
+.tr-outline-mark {
+	flex: 0 0 auto;
+	width: 20px;
+	text-align: center;
+	color: var(--tr-muted);
+}
+
+.tr-outline-item.is-done .tr-outline-mark { color: #2e9e4f; }
+
+/* ------------------------------------------------------------------ blocks */
+
+.tr-lesson-title {
+	font-size: 1.15rem;
+	font-weight: 700;
+	margin: 8px 0 12px;
+}
+
+.tr-block {
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	box-shadow: var(--tr-shadow);
+	padding: 16px;
+	margin-bottom: 14px;
+	overflow-wrap: break-word;
+}
+
+.tr-block--video,
+.tr-block--embed { padding: 12px; }
+
+.tr-block h1, .tr-block h2, .tr-block h3 { line-height: 1.25; margin: 0 0 8px; }
+.tr-block p { margin: 0 0 10px; }
+.tr-block p:last-child { margin-bottom: 0; }
+.tr-block img { max-width: 100%; height: auto; border-radius: 8px; display: block; }
+
+/* PDFs and external embeds: a phone cannot usefully render a paged document in
+   an iframe, so the PDF block is a download/open card on small screens and the
+   embed keeps a 16/9 box. */
+.tr-block--pdf .tr-pdf-open {
+	display: inline-flex;
+	align-items: center;
+	min-height: 44px;
+	padding: 10px 16px;
+	border-radius: 10px;
+	background: var(--tr-accent-soft);
+	color: var(--tr-text);
+	text-decoration: none;
+	font-weight: 600;
+}
+
+.tr-video-wrap,
+.tr-embed-wrap {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	background: #000;
+	border-radius: 10px;
+	overflow: hidden;
+}
+
+.tr-video,
+.tr-embed-wrap iframe {
+	width: 100%;
+	height: 100%;
+	display: block;
+	border: 0;
+}
+
+/* Watch coverage for one video block. Label it "watched". */
+.tr-coverage {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	color: var(--tr-muted);
+	font-size: 0.82rem;
+}
+
+.tr-coverage-bar {
+	flex: 1 1 auto;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	overflow: hidden;
+}
+
+.tr-coverage-fill {
+	height: 100%;
+	width: 0;
+	background: var(--tr-accent);
+	transition: width 240ms ease;
+}
+
+/* An External Embed block cannot be coverage-gated (no timeupdate across an
+   origin) — the server waives the gate and the player says so here. */
+.tr-gate-waived {
+	color: var(--tr-muted);
+	font-size: 0.8rem;
+	margin-top: 6px;
+}
+
+/* -------------------------------------------------------------- checkpoint */
+
+/* The checkpoint overlay covers the video only, not the page: the learner must
+   answer before playback resumes, but must still be able to scroll back to the
+   material above it. */
+.tr-checkpoint {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 12px;
+	background: rgba(0, 0, 0, 0.72);
+}
+
+.tr-checkpoint-card {
+	width: 100%;
+	max-width: 460px;
+	max-height: 100%;
+	overflow-y: auto;
+	background: var(--tr-surface);
+	border-radius: var(--tr-radius);
+	padding: 16px;
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-checkpoint-card .tr-question { font-weight: 650; margin-bottom: 10px; }
+
+.tr-explanation {
+	margin-top: 10px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	font-size: 0.92rem;
+}
+
+/* -------------------------------------------------------------------- quiz */
+
+.tr-quiz-question {
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	padding: 16px;
+	margin-bottom: 12px;
+}
+
+.tr-question-index {
+	color: var(--tr-muted);
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.tr-question { margin: 4px 0 12px; font-weight: 650; }
+
+.tr-options {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tr-option {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 44px;
+	padding: 10px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-option.is-selected {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+}
+
+/* Graded state. Literal colours: these are meaning, not theme. */
+.tr-option.is-correct {
+	border-color: #2e9e4f;
+	background: rgba(46, 158, 79, 0.12);
+}
+
+.tr-option.is-wrong {
+	border-color: #e03636;
+	background: rgba(224, 54, 54, 0.12);
+}
+
+.tr-option[disabled] { cursor: default; opacity: 0.9; }
+
+.tr-quiz-result {
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	padding: 16px;
+	text-align: center;
+}
+
+.tr-score { font-size: 2rem; font-weight: 700; line-height: 1.1; }
+.tr-quiz-result.is-passed .tr-score { color: #2e9e4f; }
+.tr-quiz-result.is-wrong .tr-score { color: #e03636; }
+
+/* ---------------------------------------------------------------- controls */
+
+/* Sticky action bar: one primary action, always reachable with a thumb. */
+.tr-bar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: var(--tr-surface);
+	border-top: 1px solid var(--tr-border);
+	padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+}
+
+.tr-bar-status {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-btn {
+	flex: 0 0 auto;
+	min-height: 44px;
+	min-width: 44px;
+	padding: 10px 20px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-btn--primary {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+}
+
+.tr-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.tr-btn:active:not([disabled]) { filter: brightness(0.94); }
+
+/* Why the primary action is disabled — a locked "Complete" with no reason is a
+   support ticket. */
+.tr-gate-reasons {
+	margin: 0 0 12px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-toast {
+	position: fixed;
+	left: 50%;
+	transform: translateX(-50%);
+	bottom: calc(84px + env(safe-area-inset-bottom));
+	z-index: 40;
+	max-width: calc(100% - 32px);
+	padding: 10px 16px;
+	border-radius: 999px;
+	background: var(--tr-text);
+	color: var(--tr-bg);
+	font-size: 0.88rem;
+	box-shadow: var(--tr-shadow);
+}
+
+:focus-visible {
+	outline: 2px solid var(--tr-accent);
+	outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-progress-fill,
+	.tr-coverage-fill { transition: none; }
+}
+
+/* ------------------------------------------------------------- breakpoints */
+
+/* >= 900px: the outline leaves the flow and becomes a left rail. Below this it
+   stays a plain stacked list above the lesson — a rail on a phone is a drawer,
+   and a drawer is a whole interaction to build and test. */
+@media (min-width: 900px) {
+	.tr-shell {
+		max-width: 1000px;
+		display: grid;
+		grid-template-columns: 260px minmax(0, 1fr);
+		grid-template-areas:
+			"header header"
+			"outline main";
+		column-gap: 24px;
+		align-items: start;
+	}
+
+	.tr-header { grid-area: header; }
+	.tr-main { grid-area: main; }
+
+	.tr-outline {
+		grid-area: outline;
+		position: sticky;
+		top: 96px;
+		max-height: calc(100vh - 180px);
+		overflow-y: auto;
+	}
+}
+
+/* >= 1200px: nothing moves; the column simply widens so the video is bigger. */
+@media (min-width: 1200px) {
+	.tr-shell {
+		max-width: 1280px;
+		grid-template-columns: 300px minmax(0, 1fr);
+	}
+}

@@ -83,10 +83,46 @@ def assignment_query_conditions(user=None):
 	return _own_rows_condition("Training Assignment", _resolve(user))
 
 
+def attempt_query_conditions(user=None):
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Attempt", _resolve(user))
+
+
+def attempt_question_query_conditions(user=None):
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Attempt Question", _resolve(user))
+
+
+def completion_query_conditions(user=None):
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Completion", _resolve(user))
+
+
 # -------------------------------------------------------------------- has_permission
 
 
 def assignment_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def attempt_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def attempt_question_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def completion_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(user):
 		return True
 	return _own_row(doc, _resolve(user))

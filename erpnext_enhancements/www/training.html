@@ -1,0 +1,148 @@
+{#
+  Learner training player shell (served at /training; controller: training.py).
+
+  Chrome-free mobile page following the traveler itinerary shell (itinerary.html),
+  which follows the Time Kiosk shell WITHOUT the PWA/service-worker layer. Its
+  jobs, and only these:
+    * load the player styles (css/training/player.css) and the four player
+      scripts (js/training/{blocks,video,quiz,player}.js, in that order —
+      player.js composes the other three);
+    * hand the server-computed boot payload to the front-end as
+      window.TRAINING_BOOT / TRAINING_CSRF / TRAINING_BUILD;
+    * build the *fetch transport* and construct the player with it.
+
+  That last one is the seam, and it is deliberate. TR.Player takes
+  (rootEl, boot, transport) and knows nothing about window.TRAINING_BOOT or
+  about living in a www/ page, so the Phase-3 authoring preview can construct the
+  same player with an in-memory transport instead of forking it. Everything
+  page-specific — the endpoint names, the CSRF header, the session cookie — lives
+  in the script block below and nowhere else.
+
+  No frappe.call and no frappe.* globals anywhere in this page or in the player:
+  learners include customer Website Users with desk_access = 0, who never get the
+  desk bundle. Plain fetch() with an X-Frappe-CSRF-Token header.
+
+  Cache busting: raw /assets are served with a 1-year immutable Cache-Control, so
+  every mutable asset URL below carries ?v={{ deploy_version }} (see
+  training.py / utils/deploy.py::get_deploy_version).
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Training{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00a0dd">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="/assets/erpnext_enhancements/css/training/player.css?v={{ deploy_version }}">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the CSS below is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+{% block page_breadcrumbs %}{% endblock %}
+
+{% block style %}
+<style>
+  .navbar, nav.navbar, .web-footer, footer, .footer,
+  .page-breadcrumbs, .breadcrumb-container,
+  .page-header, .page-content-wrapper > .page-header { display: none !important; }
+  body { background: var(--tr-bg, #f6f7f9); margin: 0; }
+  main, .main-section, #body, .page_content,
+  .page-content-wrapper, .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+</style>
+{% endblock %}
+
+{# Mount point: player.js renders the whole learner UI into #training-root. #}
+{% block page_content %}
+<div id="training-root" class="tr-shell" aria-busy="true">
+  <div class="tr-boot">Loading training…</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  // Server-injected boot payload (learner, assignments, course + lesson outline,
+  // settings, csrf). The player never reads these globals — the bootstrap at the
+  // bottom of this block passes them in.
+  window.TRAINING_BOOT = {{ boot_json | safe }};
+  window.TRAINING_CSRF = "{{ csrf_token }}";
+  window.TRAINING_BUILD = "{{ deploy_version }}";
+</script>
+<script src="/assets/erpnext_enhancements/js/training/blocks.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/video.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/quiz.js?v={{ deploy_version }}"></script>
+<script src="/assets/erpnext_enhancements/js/training/player.js?v={{ deploy_version }}"></script>
+<script>
+(function () {
+	"use strict";
+
+	// The one place the learner runtime's endpoint names appear. If api/training.py
+	// renames a method, this map is the whole fix — the player only knows the
+	// transport's function names.
+	var METHOD = {
+		getLesson: "get_lesson",
+		heartbeat: "heartbeat",
+		openCheckpoint: "open_checkpoint",
+		answerCheckpoint: "answer_checkpoint",
+		startQuiz: "start_quiz",
+		submitQuiz: "submit_quiz",
+		completeLesson: "complete_lesson",
+		mediaUrl: "media_url"
+	};
+	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
+
+	// Every call is a POST: these all mutate progress or mint a signed URL, and a
+	// GET would put lesson/attempt keys in the query string and in the access log.
+	function call(method, payload) {
+		return fetch(PREFIX + method, {
+			method: "POST",
+			credentials: "same-origin",
+			headers: {
+				"Content-Type": "application/json",
+				"Accept": "application/json",
+				"X-Frappe-CSRF-Token": window.TRAINING_CSRF || ""
+			},
+			body: JSON.stringify(payload || {})
+		}).then(function (response) {
+			return response.text().then(function (body) {
+				var data = null;
+				try { data = body ? JSON.parse(body) : null; } catch (e) { data = null; }
+				if (!response.ok) {
+					// Frappe puts the frappe.throw message in _server_messages as a
+					// JSON-encoded list of JSON-encoded dicts. Unwrap far enough to
+					// show the learner something truthful; fall back to the status.
+					var message = "";
+					try {
+						var messages = JSON.parse((data && data._server_messages) || "[]");
+						message = JSON.parse(messages[0] || "{}").message || "";
+					} catch (e2) { message = ""; }
+					var error = new Error(message || (data && data.exc_type) || ("HTTP " + response.status));
+					error.status = response.status;
+					throw error;
+				}
+				// Whitelisted methods return their value under `message`; pass it
+				// through untouched so the transport adds no shape of its own.
+				return data ? data.message : null;
+			});
+		});
+	}
+
+	var transport = {};
+	Object.keys(METHOD).forEach(function (name) {
+		transport[name] = function (payload) { return call(METHOD[name], payload); };
+	});
+
+	var root = document.getElementById("training-root");
+	if (!window.TR || typeof window.TR.Player !== "function") {
+		root.setAttribute("aria-busy", "false");
+		root.innerHTML = '<div class="tr-error">Training could not start. Please reload the page.</div>';
+		return;
+	}
+	window.TR.player = new window.TR.Player(root, window.TRAINING_BOOT, transport);
+})();
+</script>
+{% endblock %}

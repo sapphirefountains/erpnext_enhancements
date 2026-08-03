@@ -1,0 +1,242 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "course",
+  "course_title_snapshot",
+  "course_version",
+  "version_number",
+  "content_hash",
+  "column_break_head",
+  "status",
+  "user",
+  "employee",
+  "customer",
+  "attempt",
+  "result_section",
+  "score_percent",
+  "video_coverage_percent",
+  "column_break_result",
+  "completed_on",
+  "expires_on",
+  "lifecycle_section",
+  "superseded_by_version",
+  "revoked_reason",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-CMP-.######",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "search_index": 1
+  },
+  {
+   "description": "The course title as it read on the day this was earned. Snapshotted, not fetched — a course renamed two years later must not silently rewrite what somebody was certified in.",
+   "fieldname": "course_title_snapshot",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "read_only": 1
+  },
+  {
+   "description": "The exact version that was passed. This is the anchor of the whole record — everything else about the content can be reconstructed from it.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "reqd": 1
+  },
+  {
+   "description": "Version number as published, kept alongside the link so the record still reads correctly if the version document is ever retired.",
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1
+  },
+  {
+   "description": "Fingerprint of the content as published. Proves which exact material this person passed, independently of anything that happens to the records afterwards.",
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Valid",
+   "description": "Superseded means the course changed materially since — the completion is real history, but it no longer proves the person knows the current material. Revoked is a deliberate withdrawal and always carries a reason.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Valid\nSuperseded\nExpired\nRevoked",
+   "read_only": 1
+  },
+  {
+   "description": "Who earned it. The canonical identity throughout the module — a customer contact has one of these just as an employee does.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "search_index": 1
+  },
+  {
+   "description": "Filled in from the user when the record is created, then left alone. Somebody who has since left the company still passed the course.",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "description": "For a customer contact, the account they belong to — this is how a client is shown who on their side has been trained.",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "description": "The attempt this came out of. Kept for the working detail behind the result; the numbers here are the record, not the ones still on the attempt.",
+   "fieldname": "attempt",
+   "fieldtype": "Link",
+   "label": "Attempt",
+   "options": "Training Attempt"
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "score_percent",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Score"
+  },
+  {
+   "description": "How much of the required video was watched, as measured at the time.",
+   "fieldname": "video_coverage_percent",
+   "fieldtype": "Percent",
+   "label": "Video Coverage"
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "completed_on",
+   "fieldtype": "Datetime",
+   "label": "Completed On"
+  },
+  {
+   "description": "When this stops counting and the course has to be taken again. Blank means it does not expire.",
+   "fieldname": "expires_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Expires On"
+  },
+  {
+   "fieldname": "lifecycle_section",
+   "fieldtype": "Section Break",
+   "label": "Lifecycle"
+  },
+  {
+   "description": "The version whose material change superseded this one, so it is answerable why somebody was asked to retake a course they had already passed.",
+   "fieldname": "superseded_by_version",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "Training Course Version",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.docstatus==2 || doc.status==\"Revoked\"",
+   "description": "Why this completion was withdrawn. Required when it is cancelled — a certification that quietly disappears is the thing an auditor asks about.",
+   "fieldname": "revoked_reason",
+   "fieldtype": "Small Text",
+   "label": "Revoked Because"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Training Completion",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Completion",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "course,user,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title_snapshot",
+ "track_changes": 1
+}

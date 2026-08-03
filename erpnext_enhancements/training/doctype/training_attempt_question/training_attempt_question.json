@@ -1,0 +1,201 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "attempt",
+  "course",
+  "course_version",
+  "lesson",
+  "column_break_head",
+  "user",
+  "source",
+  "question",
+  "checkpoint",
+  "quiz_run",
+  "asked_section",
+  "question_text_snapshot",
+  "given_answer",
+  "result_section",
+  "is_correct",
+  "points_awarded",
+  "column_break_result",
+  "answered_on",
+  "time_taken_seconds"
+ ],
+ "fields": [
+  {
+   "description": "The attempt this answer belongs to.",
+   "fieldname": "attempt",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Attempt",
+   "options": "Training Attempt",
+   "search_index": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "read_only": 1
+  },
+  {
+   "description": "Which version was being taken. Answers are only comparable within a version — a material change can rewrite the question underneath them.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lesson",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Lesson",
+   "options": "Training Lesson",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The learner, copied from the attempt so this table can be reported on without joining.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Whether this was asked by a lesson quiz or by a checkpoint partway through a video.",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Asked By",
+   "options": "Quiz\nCheckpoint"
+  },
+  {
+   "description": "The question from the pool, when this came from a quiz.",
+   "fieldname": "question",
+   "fieldtype": "Link",
+   "label": "Question",
+   "options": "Training Question",
+   "search_index": 1
+  },
+  {
+   "description": "The checkpoint, when this came from one. Per-checkpoint failure rates read off this field — a checkpoint most people miss usually means the video is unclear, not that the learners are.",
+   "fieldname": "checkpoint",
+   "fieldtype": "Link",
+   "label": "Checkpoint",
+   "options": "Training Checkpoint"
+  },
+  {
+   "description": "Which run of the lesson quiz this answer belongs to, counting from 1.",
+   "fieldname": "quiz_run",
+   "fieldtype": "Int",
+   "label": "Quiz Run"
+  },
+  {
+   "fieldname": "asked_section",
+   "fieldtype": "Section Break",
+   "label": "Asked"
+  },
+  {
+   "description": "The question as it read at the moment it was asked. Kept verbatim so a later edit to the question bank cannot change what an old answer appears to have been given to.",
+   "fieldname": "question_text_snapshot",
+   "fieldtype": "Small Text",
+   "label": "Question Asked"
+  },
+  {
+   "description": "What the learner picked, as option keys or typed text. Never the correct answer — that stays on the server.",
+   "fieldname": "given_answer",
+   "fieldtype": "Small Text",
+   "label": "Given Answer"
+  },
+  {
+   "fieldname": "result_section",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "default": "0",
+   "description": "Graded on the server against the published answer key. Nothing the browser sends about correctness is read.",
+   "fieldname": "is_correct",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Correct"
+  },
+  {
+   "fieldname": "points_awarded",
+   "fieldtype": "Float",
+   "label": "Points",
+   "precision": "2"
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "answered_on",
+   "fieldtype": "Datetime",
+   "label": "Answered On"
+  },
+  {
+   "description": "How long the learner spent on this one question. Useful for spotting a question everybody stalls on.",
+   "fieldname": "time_taken_seconds",
+   "fieldtype": "Int",
+   "label": "Seconds Taken"
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-01 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Attempt Question",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "attempt,question",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "question_text_snapshot",
+ "track_changes": 0
+}
