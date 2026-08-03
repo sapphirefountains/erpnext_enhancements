@@ -90,6 +90,7 @@ from erpnext_enhancements.crm_enhancements.fountain_move import (
 	INTAKE_FILE_FOLDER,
 	MAX_PREFERRED_SLOTS,
 	PREFERRED_MIN_LEAD_BUSINESS_DAYS,
+	PREFERRED_WEEKDAYS,
 	PREFERRED_WINDOWS,
 	PROPERTY_TYPES,
 	TURNSTILE_ACTION,
@@ -97,6 +98,7 @@ from erpnext_enhancements.crm_enhancements.fountain_move import (
 	is_valid_store_location,
 	max_preferred_date,
 	min_preferred_date,
+	preferred_weekdays_label,
 )
 from erpnext_enhancements.feature_flags import (
 	fountain_move_auto_convert_enabled,
@@ -668,7 +670,8 @@ def _normalize_preferred_slots(fields, today=None, drop_invalid=False):
 	select always carries a value even when its date was never touched. A date
 	must be ISO (the form's ``type=date`` sends that; a fallback text input or
 	hand-built POST may not), at least ``PREFERRED_MIN_LEAD_BUSINESS_DAYS``
-	business days out and inside the horizon. Valid pairs are re-assigned to
+	business days out, inside the horizon and on one of ``PREFERRED_WEEKDAYS``
+	— crews only move Mon-Wed. Valid pairs are re-assigned to
 	slots ``1..N`` in order with duplicates collapsed, so "only slot 3 filled"
 	still lands in ``preferred_date_1`` and staff can rely on slot 1 being the
 	first choice. Preference only: nothing reads or reserves real availability.
@@ -718,6 +721,19 @@ def _normalize_preferred_slots(fields, today=None, drop_invalid=False):
 					)
 				)
 			frappe.throw(_("Please pick preferred dates within the next six months."))
+
+		# Crews only move on PREFERRED_WEEKDAYS. The page and the browser-side
+		# check say so too, but neither is a control: type=date has no weekday
+		# constraint to hang an attribute off, so this is the only place the rule
+		# is actually enforced.
+		if chosen.weekday() not in PREFERRED_WEEKDAYS:
+			if drop_invalid:
+				continue
+			frappe.throw(
+				_("We only move fountains on {0}. Please pick one of those days.").format(
+					preferred_weekdays_label()
+				)
+			)
 
 		if (chosen, window) not in slots:
 			slots.append((chosen, window))

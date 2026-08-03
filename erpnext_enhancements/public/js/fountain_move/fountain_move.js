@@ -29,6 +29,12 @@
 	var MAX_EDGE = 1600;
 	var JPEG_QUALITY = 0.82;
 
+	// The days a move can be asked for, Monday-is-0 exactly as the server has
+	// them. The fallbacks matter only if the boot payload ever loses the keys —
+	// a stale rule here is still better than no rule, because the server throws.
+	var PREFERRED_WEEKDAYS = BOOT.preferred_weekdays || [0, 1, 2];
+	var PREFERRED_WEEKDAYS_LABEL = BOOT.preferred_weekdays_label || "Monday, Tuesday or Wednesday";
+
 	var state = {
 		sid: null,
 		verdict: null,
@@ -796,6 +802,41 @@
 		return payload;
 	}
 
+	/* The move-day rule, as a custom validity message on each preferred-date
+	   input. type=date enforces min/max and nothing else — there is no weekday
+	   attribute to hang this off — so it is applied by hand, and applied as
+	   *validity* rather than as a bespoke check so the existing
+	   optionalInvalid → hint → submit-gating path carries it unchanged.
+
+	   Every pass clears before it re-tests: a customer correcting Thursday to
+	   Wednesday must not stay stuck behind the message the Thursday earned. */
+	function enforcePreferredWeekdays() {
+		var inputs = form.querySelectorAll('input[name^="preferred_date_"]');
+		for (var i = 0; i < inputs.length; i++) {
+			var input = inputs[i];
+			if (!input.setCustomValidity) continue;
+			input.setCustomValidity("");
+			var day = weekdayOf(input.value);
+			if (day !== null && PREFERRED_WEEKDAYS.indexOf(day) === -1) {
+				input.setCustomValidity("We only move fountains on " + PREFERRED_WEEKDAYS_LABEL + ".");
+			}
+		}
+	}
+
+	/* Monday-is-0, matching the server; null for anything not a plain ISO date
+	   (an empty field, or the text-input fallback mid-typing).
+
+	   The "T00:00:00" is load-bearing: a bare "2026-08-13" is parsed as UTC,
+	   which in Mountain time is the evening BEFORE — every date would report
+	   the previous weekday and Thursdays would sail through as Wednesdays. */
+	function weekdayOf(value) {
+		var iso = (value || "").trim();
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+		var parsed = new Date(iso + "T00:00:00");
+		if (isNaN(parsed.getTime())) return null;
+		return (parsed.getDay() + 6) % 7;
+	}
+
 	function fieldIncomplete(field) {
 		if (field.type === "radio") {
 			return !form.querySelector('[name="' + field.name + '"]:checked');
@@ -819,6 +860,7 @@
 	}
 
 	function firstInvalidField() {
+		enforcePreferredWeekdays();
 		var required = form.querySelectorAll("[required]");
 		for (var i = 0; i < required.length; i++) {
 			required[i].removeAttribute("aria-invalid");
@@ -844,6 +886,7 @@
 	 * and a validity poll must never mutate accessibility state mid-correction.
 	 */
 	function requiredState() {
+		enforcePreferredWeekdays();
 		var required = form.querySelectorAll("[required]");
 		var result = { missing: false, invalid: null };
 		for (var i = 0; i < required.length; i++) {
@@ -890,6 +933,12 @@
 	/* For a field that HAS content but fails validity — "please fill in X"
 	   would point the customer at the wrong problem. */
 	function invalidMessage(field) {
+		// A rule we set ourselves (the move-day restriction) already carries the
+		// sentence that names it — the generic advice below would replace it
+		// with one that points at the wrong constraint.
+		if (field.validity && field.validity.customError && field.validationMessage) {
+			return field.validationMessage;
+		}
 		if (field.type === "email") return "Please enter a valid email address.";
 		if (field.name === "fountain_weight_lbs") {
 			return "Please enter the weight as a whole number of pounds, from 1 to 20,000.";

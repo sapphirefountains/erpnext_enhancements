@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.231.0] - 2026-08-03
+
+### Changed
+
+**The fountain-move form now only accepts Monday, Tuesday and Wednesday as preferred days.**
+Crews run moves at the start of the week; the form was happily collecting Thursdays, Fridays
+and weekends that staff then had to talk the customer back out of on the quote call.
+
+- `PREFERRED_WEEKDAYS = (0, 1, 2)` in `crm_enhancements/fountain_move/__init__.py` is the one
+  place the rule lives, with `preferred_weekdays_label()` rendering it as
+  "Monday, Tuesday or Wednesday". The server check, the page hint and the browser-side check
+  all read those two, so the sentence a customer is shown cannot drift from the rule that
+  refuses them.
+
+- Enforced in `intake._normalize_preferred_slots`, which is the **only** real control:
+  `type=date` has `min` and `max` but no weekday attribute, so there is no markup to lean on
+  and a hand-built POST or a browser that degraded the input to plain text arrives unfiltered.
+  The spam path keeps dropping bad slots instead of throwing, as every other slot rule does —
+  a new throw path there would hand bots a differentiated response.
+
+- Client-side the rule is applied as `setCustomValidity` on each preferred-date input rather
+  than as a bespoke check, so the existing "filled in but invalid" path — the submit-button
+  gate and the named hint under it — carries it with no special-casing. Dates are parsed as
+  `new Date(iso + "T00:00:00")`: a bare ISO string is parsed as **UTC**, which in Mountain time
+  is the evening before, and every date would have reported the previous weekday.
+
+- The lead-time floor (`min_preferred_date`, 3 business days) is unchanged and stays a lower
+  bound, not an offer — it can still land on a Thursday, which the weekday rule then refuses.
+
 ## [1.230.0] - 2026-08-03
 
 ### Fixed

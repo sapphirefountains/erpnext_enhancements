@@ -146,12 +146,27 @@ PROPERTY_TYPES = ("Residential", "Commercial")
 MAX_PREFERRED_SLOTS = 3
 PREFERRED_WINDOWS = ("Morning", "Afternoon")
 #: The earliest requestable date is this many BUSINESS days out (Mon-Fri; no
-#: holiday awareness — this is a courtesy floor, not a booking system). The
-#: chosen date itself may be any weekday incl. Saturday — that is staff's call.
+#: holiday awareness — this is a courtesy floor, not a booking system).
 PREFERRED_MIN_LEAD_BUSINESS_DAYS = 3
 #: And no further out than this. A date next spring is a conversation, not a
 #: form field, and an unbounded horizon invites junk.
 PREFERRED_HORIZON_DAYS = 180
+#: The only days a customer may ask for: crews run moves Monday to Wednesday and
+#: keep the rest of the week for installs and service. ``date.weekday()``
+#: numbering — Monday is 0. This is the single source of the rule: the server
+#: enforces it, the page hint and the browser-side check both read the label and
+#: the tuple below, so none of the three can drift.
+PREFERRED_WEEKDAYS = (0, 1, 2)
+
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def preferred_weekdays_label():
+	"""``"Monday, Tuesday or Wednesday"`` — for hints and error messages."""
+	names = [_WEEKDAY_NAMES[day] for day in PREFERRED_WEEKDAYS]
+	if len(names) == 1:
+		return names[0]
+	return "{0} or {1}".format(", ".join(names[:-1]), names[-1])
 
 
 def min_preferred_date(today=None):
