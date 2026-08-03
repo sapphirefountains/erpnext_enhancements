@@ -99,17 +99,105 @@ def get_drive_service():
 	Side effects:
 		Reads from the DB; opens a Google API client (``cache_discovery=False``).
 	"""
-	settings = frappe.get_single("Project Folder Google Drive Settings")
-	if not settings.service_account_json:
+	creds_info = get_service_account_info()
+	if not creds_info:
 		frappe.throw("Service Account JSON not configured in Project Folder Google Drive Settings")
 
+	settings = frappe.get_single("Project Folder Google Drive Settings")
 	try:
-		creds_info = json.loads(settings.service_account_json)
 		creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 		service = build("drive", "v3", credentials=creds, cache_discovery=False)
 		return service, settings.shared_drive_id
 	except Exception as e:
 		frappe.throw(f"Failed to initialize Google Drive service: {e!s}")
+
+
+def get_service_account_info():
+	"""The Drive service-account key, parsed, or ``None`` when not configured.
+
+	**Every reader of the key must come through here.** The field is a
+	``Password``, so plain attribute access (``settings.service_account_json``)
+	returns Frappe's asterisk placeholder rather than the key — a string that is
+	perfectly truthy and fails only later, inside ``json.loads``. Reading it
+	directly is therefore a bug that looks like working code.
+
+	It became a Password in v1.211.0 because it had been sitting in cleartext in
+	``tabSingles``, readable off the form by anyone who reached it as
+	Administrator — which, after the 2026-08-02 intrusion, stopped being
+	hypothetical. The encrypted fields on the same site showed asterisks in that
+	situation; this one did not.
+
+	Truthiness checks elsewhere ("is Drive configured at all") can keep using the
+	plain field: the placeholder is non-empty exactly when a key is stored.
+	"""
+	settings = frappe.get_cached_doc("Project Folder Google Drive Settings")
+	raw = settings.get_password("service_account_json", raise_exception=False)
+	if not raw:
+		return None
+	try:
+		return json.loads(raw)
+	except ValueError:
+		frappe.log_error(
+			"Project Folder Google Drive Settings > Service Account JSON is not valid JSON.",
+			"Google Drive",
+		)
+		return None
+
+
+@frappe.whitelist()
+def set_service_account_key(key_json):
+	"""Store the Drive key, after checking it is actually a usable one.
+
+	Needed because the field is a ``Password``: Frappe renders that as a
+	single-line masked input, which cannot take a 2 KB multi-line JSON by paste
+	without mangling it and then hides the damage behind asterisks.
+
+	Validation is the other half. A key wrong in a way nobody notices does not
+	fail here — it fails later, as folder provisioning that silently stops
+	working. Each check turns one of those into a sentence at paste time.
+	"""
+	frappe.only_for("System Manager")
+
+	raw = (key_json or "").strip()
+	if not raw:
+		frappe.throw("Paste the service account key first.")
+
+	try:
+		info = json.loads(raw)
+	except ValueError:
+		frappe.throw(
+			"That is not valid JSON. Paste the whole key file, including the opening and "
+			"closing braces — a partial paste is the usual cause."
+		)
+
+	if not isinstance(info, dict) or info.get("type") != "service_account":
+		frappe.throw("That JSON is not a service account key.")
+
+	missing = [f for f in ("project_id", "private_key", "client_email") if not info.get(f)]
+	if missing:
+		frappe.throw(
+			f"The key is missing: {', '.join(missing)}. That normally means the paste was cut short."
+		)
+
+	# A private key that lost its newlines is the classic single-line-paste
+	# casualty: it parses fine and fails only when something tries to sign with it.
+	if "BEGIN PRIVATE KEY" not in (info.get("private_key") or ""):
+		frappe.throw("The private_key in that file looks incomplete.")
+
+	try:
+		service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+	except Exception as exc:
+		frappe.throw(f"The key parsed but cannot be used: {str(exc)[:200]}")
+
+	settings = frappe.get_single("Project Folder Google Drive Settings")
+	settings.set("service_account_json", raw)
+	settings.save(ignore_permissions=True)
+	frappe.db.commit()
+	frappe.clear_document_cache(
+		"Project Folder Google Drive Settings", "Project Folder Google Drive Settings"
+	)
+
+	return {"ok": True, "client_email": info.get("client_email"), "project_id": info.get("project_id")}
 
 
 def create_folder(service, name, parent_id, shared_drive_id=None):

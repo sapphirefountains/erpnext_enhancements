@@ -154,6 +154,22 @@ jobs:
       # source when a bench checkout is present (skipped cleanly when not).
       - name: Training regressions (naming/link ordering, role profiles, answer keys)
         run: python -m unittest erpnext_enhancements.tests.test_training_regressions -v
+      # Phase 2. progress is the watched-seconds arithmetic that decides whether
+      # somebody passed; grading is the only module allowed to read an answer key,
+      # and its suite repeats the walk-the-payload-to-any-depth leak test that
+      # caught a real leak in Phase 1.
+      - name: Training progress (watched-interval merge, server-clock clamp)
+        run: python -m unittest erpnext_enhancements.tests.test_training_progress -v
+      - name: Training grading (server-side grading, answer-key isolation)
+        run: python -m unittest erpnext_enhancements.tests.test_training_grading -v
+      # The player and the progress store speak deliberately different shapes and
+      # only api.training._normalise_beat knows both. Drift there is SILENT AND
+      # TOTAL -- mismatched keys credit zero seconds, so no video lesson can ever
+      # be completed and nothing raises. That is not hypothetical: the two halves
+      # were first written against each other with `ranges` vs `intervals`,
+      # structured vs integer `seeks`, and a nested vs top-level `hidden`.
+      - name: Training heartbeat wire format (player <-> progress)
+        run: python -m unittest erpnext_enhancements.tests.test_training_heartbeat_wire -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

@@ -79,6 +79,11 @@ doctype_js = {
 	# without mangling it, and being masked it then hides the damage. Also carries
 	# the Test GCS Connection action.
 	"Training Settings": ["public/js/training/training_settings.js"],
+	# security: the Drive service-account key goes in through a dialog, not the
+	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a
+	# Password renders as a single-line masked input that mangles a multi-line key
+	# on paste.
+	"Project Folder Google Drive Settings": ["public/js/google_drive/drive_settings.js"],
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",
@@ -567,6 +572,11 @@ scheduler_events = {
 		"erpnext_enhancements.crm_enhancements.fountain_move.photos.sweep_unmirrored_photos",
 	],
 	"hourly": [
+		# training: drain Training Attempt progress still sitting in Redis from a
+		# session that ended without a final beacon (closed laptop, dead phone,
+		# killed tab). Bounds progress loss at one flush interval rather than a
+		# whole lesson.
+		"erpnext_enhancements.training.progress.flush_stale_attempts",
 		# QuickBooks Online sync jobs moved to staggered cron entries above to stop
 		# the three from racing on the Settings doc (TimestampMismatchError). See the
 		# "cron" section.
@@ -959,6 +969,9 @@ permission_query_conditions = {
 	# Version / Lesson / Question / Answer Option, so /api/resource refuses them
 	# outright and the answer key cannot leak through a careless future endpoint.
 	"Training Assignment": "erpnext_enhancements.training.permissions.assignment_query_conditions",
+	"Training Attempt": "erpnext_enhancements.training.permissions.attempt_query_conditions",
+	"Training Attempt Question": "erpnext_enhancements.training.permissions.attempt_question_query_conditions",
+	"Training Completion": "erpnext_enhancements.training.permissions.completion_query_conditions",
 }
 
 has_permission = {
@@ -966,11 +979,19 @@ has_permission = {
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",
 	"Training Assignment": "erpnext_enhancements.training.permissions.assignment_has_permission",
+	"Training Attempt": "erpnext_enhancements.training.permissions.attempt_has_permission",
+	"Training Attempt Question": "erpnext_enhancements.training.permissions.attempt_question_has_permission",
+	"Training Completion": "erpnext_enhancements.training.permissions.completion_has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [
+	# training: customers reach "how to operate your fountain" at /training -- the
+	# same mobile page the field crew uses, role-gated rather than duplicated into
+	# a second customer-only page. Added only now that the page actually exists; a
+	# dead menu item teaches people to ignore the menu.
+	{"title": "Training", "route": "/training", "role": "Training Learner"},
 	{"title": "Maintenance Records", "route": "/maintenance-records", "role": "Customer"},
 	{"title": "Pay Invoices", "route": "/pay", "role": "Customer"},
 ]

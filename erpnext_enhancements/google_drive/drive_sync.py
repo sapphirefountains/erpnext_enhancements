@@ -473,9 +473,11 @@ def test_connection():
 	checks = []
 	client_email = None
 
-	raw = settings.get("service_account_json") or ""
+	# Not settings.get(...): the field is a Password and returns a placeholder.
+	from erpnext_enhancements.google_drive.drive_utils import get_service_account_info
+
 	try:
-		client_email = json.loads(raw).get("client_email")
+		client_email = (get_service_account_info() or {}).get("client_email")
 		checks.append({"check": "Service Account JSON parses", "ok": bool(client_email),
 					"detail": client_email or "no client_email key"})
 	except Exception as e:

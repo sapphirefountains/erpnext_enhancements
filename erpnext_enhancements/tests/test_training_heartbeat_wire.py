@@ -1,0 +1,207 @@
+"""The heartbeat wire format, pinned on both sides.
+
+The player and the progress store use **deliberately different** shapes, and only
+``api.training._normalise_beat`` knows both:
+
+* the wire sends run-length-encoded ``[start, length]`` ranges, because a learner
+  who scrubs around produces many small pieces and a phone on cellular should not
+  send an ``[start, end]`` pair for each;
+* ``training.progress`` stores ``[start, end]`` intervals, because that is what
+  merges, clips and collapses cleanly.
+
+Getting the translation wrong is **silent and total**. Mismatched keys mean zero
+seconds are ever credited, so no video lesson can be completed and nothing
+raises — the feature simply never works. That is exactly what happened when these
+two halves were first written against each other: the player emitted ``ranges``,
+``seeks: {forward, backward}`` and a nested ``discount.hidden``, while progress
+read ``intervals``, an integer ``seeks`` and a top-level ``hidden``.
+
+So this suite asserts the translation *and* re-asserts the shape each side
+actually uses, so drift on either side fails here rather than in production.
+
+Run: python -m unittest erpnext_enhancements.tests.test_training_heartbeat_wire
+"""
+
+import re
+import sys
+import types
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+	sys.path.insert(0, str(REPO_ROOT))
+
+normalise = None
+
+VIDEO_JS = REPO_ROOT / "erpnext_enhancements/public/js/training/video.js"
+PROGRESS_PY = REPO_ROOT / "erpnext_enhancements/training/progress.py"
+
+
+def _install_frappe_stub():
+	frappe = types.ModuleType("frappe")
+	frappe.whitelist = lambda *a, **k: (lambda fn: fn)
+	frappe.session = types.SimpleNamespace(user="tester@example.com")
+	frappe.flags = types.SimpleNamespace()
+	frappe.throw = lambda msg, exc=None: (_ for _ in ()).throw(Exception(msg))
+	frappe.log_error = lambda *a, **k: None
+	frappe.get_traceback = lambda: ""
+	frappe.parse_json = lambda v: v
+	frappe.db = types.SimpleNamespace(
+		get_value=lambda *a, **k: None, get_single_value=lambda *a, **k: None,
+		set_value=lambda *a, **k: None, exists=lambda *a, **k: None, count=lambda *a, **k: 0,
+	)
+	frappe.get_all = lambda *a, **k: []
+	frappe.get_doc = lambda *a, **k: None
+	frappe.get_cached_doc = lambda *a, **k: None
+	frappe.only_for = lambda *a, **k: None
+	frappe.generate_hash = lambda length=10: "h" * length
+	frappe.cache = lambda: types.SimpleNamespace(
+		get_value=lambda *a, **k: None, set_value=lambda *a, **k: None, delete_value=lambda *a, **k: None
+	)
+	frappe.__dict__["_"] = lambda s: s
+
+	utils = types.ModuleType("frappe.utils")
+	utils.cint = lambda v: int(v or 0) if not isinstance(v, dict) else 0
+	utils.flt = lambda v: float(v or 0)
+	utils.now_datetime = lambda: "2026-08-02 12:00:00"
+	utils.nowdate = lambda: "2026-08-02"
+	utils.today = utils.nowdate
+	utils.add_days = lambda d, n: d
+	utils.getdate = lambda d=None: d
+	utils.sanitize_html = lambda s: s or ""
+	utils.escape_html = lambda s: s
+	utils.formatdate = lambda d, *a, **k: str(d)
+	frappe.utils = utils
+
+	model = types.ModuleType("frappe.model")
+	document = types.ModuleType("frappe.model.document")
+
+	class Document:
+		pass
+
+	document.Document = Document
+	model.document = document
+
+	sys.modules.update(
+		{
+			"frappe": frappe,
+			"frappe.utils": utils,
+			"frappe.model": model,
+			"frappe.model.document": document,
+		}
+	)
+
+
+def setUpModule():
+	global normalise
+	_install_frappe_stub()
+	from erpnext_enhancements.api.training import _normalise_beat
+
+	normalise = _normalise_beat
+
+
+class TestRangesBecomeIntervals(unittest.TestCase):
+	"""RLE ``[start, length]`` -> stored ``[start, end]``."""
+
+	def test_single_range(self):
+		out = normalise({"ranges": [[10, 5]]})
+		self.assertEqual(out["intervals"], [[10, 15]])
+
+	def test_several_ranges(self):
+		out = normalise({"ranges": [[0, 30], [95, 85]]})
+		self.assertEqual(out["intervals"], [[0, 30], [95, 180]])
+
+	def test_zero_length_range_is_dropped(self):
+		"""A zero-length run credits nothing; keeping it would add a degenerate
+		interval that merge logic then has to defend against."""
+		self.assertEqual(normalise({"ranges": [[10, 0]]})["intervals"], [])
+
+	def test_malformed_range_is_skipped_not_fatal(self):
+		out = normalise({"ranges": [[10, 5], "nonsense", [1, 2, 3], [20, 4]]})
+		self.assertEqual(out["intervals"], [[10, 15], [20, 24]])
+
+	def test_the_wire_key_does_not_survive(self):
+		"""progress reads `intervals`; leaving `ranges` behind invites somebody to
+		start reading the wrong one."""
+		self.assertNotIn("ranges", normalise({"ranges": [[1, 2]]}))
+
+	def test_an_explicit_intervals_key_wins(self):
+		"""Lets a caller (or a test) speak the internal shape directly."""
+		out = normalise({"ranges": [[0, 99]], "intervals": [[5, 6]]})
+		self.assertEqual(out["intervals"], [[5, 6]])
+
+	def test_no_ranges_key_is_left_alone(self):
+		self.assertNotIn("intervals", normalise({"lesson_key": "a"}))
+
+
+class TestCountersAreFlattened(unittest.TestCase):
+	def test_only_forward_seeks_are_counted(self):
+		"""Rewatching is legitimate. Counting backward seeks against a learner
+		would penalise exactly the behaviour the feature wants to encourage."""
+		out = normalise({"seeks": {"forward": 3, "backward": 9}})
+		self.assertEqual(out["seeks"], 3)
+
+	def test_missing_forward_reads_as_zero(self):
+		self.assertEqual(normalise({"seeks": {"backward": 4}})["seeks"], 0)
+
+	def test_an_integer_seeks_passes_through(self):
+		self.assertEqual(normalise({"seeks": 2})["seeks"], 2)
+
+	def test_hidden_is_lifted_out_of_discount(self):
+		out = normalise({"discount": {"hidden": 12, "blur": 3, "muted": 40}})
+		self.assertEqual(out["hidden"], 12)
+
+	def test_discount_does_not_survive(self):
+		self.assertNotIn("discount", normalise({"discount": {"hidden": 1}}))
+
+	def test_top_level_hidden_wins(self):
+		out = normalise({"hidden": 7, "discount": {"hidden": 99}})
+		self.assertEqual(out["hidden"], 7)
+
+
+class TestPassthrough(unittest.TestCase):
+	def test_identity_keys_are_untouched(self):
+		out = normalise({"lesson_key": "lk", "block_key": "bk", "duration": 600})
+		self.assertEqual(out["lesson_key"], "lk")
+		self.assertEqual(out["block_key"], "bk")
+		self.assertEqual(out["duration"], 600)
+
+	def test_input_is_not_mutated(self):
+		"""The caller pops identity keys off its own copy; mutating theirs would
+		couple two unrelated bits of cleanup."""
+		payload = {"ranges": [[1, 2]], "seeks": {"forward": 1}}
+		normalise(payload)
+		self.assertIn("ranges", payload)
+
+
+class TestBothSidesStillSpeakTheseShapes(unittest.TestCase):
+	"""Re-read the source either side of the translation.
+
+	If the player renames `ranges`, or progress starts reading something other
+	than `intervals`, the translation above becomes a no-op that silently credits
+	nothing. These catch that at the only moment it is cheap to catch.
+	"""
+
+	def test_player_still_emits_ranges_and_structured_counters(self):
+		src = VIDEO_JS.read_text(encoding="utf-8")
+		self.assertRegex(src, r"\branges\s*:", "player no longer emits `ranges`")
+		self.assertRegex(src, r"seeks\s*:\s*\{", "player no longer emits structured `seeks`")
+		self.assertRegex(src, r"\bdiscount\s*:", "player no longer emits `discount`")
+
+	def test_progress_still_reads_intervals_seeks_hidden(self):
+		src = PROGRESS_PY.read_text(encoding="utf-8")
+		for key in ("intervals", "seeks", "hidden", "duration", "lesson_key", "block_key"):
+			self.assertIn(
+				f'payload.get("{key}")', src, f"progress no longer reads payload[{key!r}]"
+			)
+
+	def test_progress_does_not_read_the_wire_keys(self):
+		"""If it started reading `ranges` directly the translation would double up."""
+		src = PROGRESS_PY.read_text(encoding="utf-8")
+		self.assertNotIn('payload.get("ranges")', src)
+		self.assertNotIn('payload.get("discount")', src)
+
+
+if __name__ == "__main__":
+	unittest.main()
