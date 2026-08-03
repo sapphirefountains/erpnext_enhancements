@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.214.0] - 2026-08-02
+
+### Added
+
+- **Training Phase 3 — the course builder and AI drafting.** This is the phase that delivers the
+  original brief: anyone with something to teach can build a course through the UI, without a
+  deploy and without going through one person. Everything before it was machinery underneath.
+
+  **The builder** (`/app/training-builder`, Training Author and above) is a three-pane desk page:
+  lesson outline, sortable block canvas, inspector. Autosave copies the visit wizard's
+  dirty-accumulator with its re-merge-on-failure path, so a save that fails does not discard what
+  the author typed while it was in flight. Reordering is drag **and keyboard** — drag-only is an
+  accessibility failure and this repo has been bitten by touch-drag before. Deleting a block is
+  soft for the session; a block with learner progress in a published version cannot be
+  hard-deleted at all, only retired.
+
+  **Checkpoint authoring** is a timeline strip with draggable pins: drop one at the current frame,
+  live-seek while dragging so you see where you land, and *Test this checkpoint* runs the real
+  learner overlay through `TR.Video` rather than a mock of it.
+
+  **Preview as learner** constructs the actual `TR.Player` with an injected preview transport.
+  That seam was the stated Phase-2 exit criterion and this is what it was for — the builder drives
+  the same player a learner gets, so a fix never has to be made twice.
+
+- **`api/training_ai.py`** — quiz-question drafting and checkpoint-timestamp suggestions through
+  the existing Vertex AI client, so token accounting stays uniform with the rest of the app.
+
+  The load-bearing behaviour is what it refuses to do. Drafting **never** stamps `ai_reviewed_by`:
+  a draft that arrives pre-reviewed walks straight past the `submit_for_review` gate, so only an
+  author accepting one may mark it reviewed. `suggest_checkpoints` **refuses** without a timed
+  transcript rather than letting a model invent timestamps — without timings it will invent them
+  confidently, and that single constraint is the whole integrity story for the feature. Model
+  output is parsed strictly: prose, markdown fences or a partial object yield zero suggestions and
+  a message, never a half-built question.
+
+- **`save_draft_version`** applies an explicit field allowlist and a **mandatory** optimistic lock.
+  Anything not allowlisted is reported back in `rejected` rather than dropped — a silent drop would
+  have autosave answer "saved" while the author's paragraph went nowhere, which is strictly worse
+  than refusing. The lock is mandatory unlike `maintenance_visit.save_visit`, because a caller with
+  no token never loaded the draft, and honouring that write is exactly the clobber it exists to stop.
+
+### Fixed
+
+- **A module-scope import in `api/training_author.py` broke a previously-passing suite.** Importing
+  the Training Settings controller at import time made the whole file unloadable to any bench-free
+  test that stubs `frappe` without also stubbing that module, and `test_training_grading` went from
+  green to an ImportError. Now imported lazily inside the one function that needs it, and swallowed
+  — a settings read is not worth denying an author their builder over; the AI panel just stays hidden.
+
+### Notes
+
+- Built by four parallel agents against `tests/test_training_phase3_contracts.py`, which was written
+  **before** the code and whose every assertion had been mutation-tested. All 20 contract assertions
+  now pass with **zero skips**. That is a real improvement on Phase 2, where four integration breaks
+  reached main; the one regression this time was caught by the existing suite rather than by reading.
+
+- Caveat worth stating plainly: the seam checks are presence and shape assertions, not proof of
+  behaviour. Nothing in Phases 2 or 3 has ever executed. One real course with one real video would
+  exercise more than every static check to date.
+
 ## [1.213.0] - 2026-08-02
 
 ### Added
