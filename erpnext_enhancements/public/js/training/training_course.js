@@ -103,17 +103,22 @@ function render_actions(frm, draft, is_manager) {
 		frm.add_custom_button(__("Retire Course"), () => retire(frm), __("Learners"));
 	}
 
-	// The builder is Phase 3. Showing a dead button would be worse than showing
-	// none, so say plainly that it is not here yet rather than failing on click.
-	frm.add_custom_button(__("Open Builder"), () =>
-		frappe.msgprint({
-			title: __("Not yet"),
-			indicator: "blue",
-			message: __(
-				"The drag-and-drop course builder arrives in a later release. For now, edit the draft version and its lessons directly — everything works, it is just less pretty."
-			),
-		})
-	);
+	// The builder shipped in Phase 3, but this button went on saying it had not
+	// for three releases — the placeholder outlived the thing it was standing in
+	// for. Anyone who trusted it never found the builder at all.
+	const $builder = frm.add_custom_button(__("Open Builder"), () => open_builder(frm));
+	// Primary only when nothing else already is: a manager looking at a draft has
+	// Publish highlighted, and two primary buttons side by side just make the
+	// author guess which one is the safe click.
+	if (draft && !is_manager) $builder.addClass("btn-primary");
+}
+
+function open_builder(frm) {
+	// `handle_route` reads `course` from the query string first and falls back to
+	// route_options, so this works whether the page is already mounted or is being
+	// opened cold.
+	frappe.route_options = { course: frm.doc.name };
+	frappe.set_route("training-builder");
 }
 
 function render_status_banner(frm, draft) {

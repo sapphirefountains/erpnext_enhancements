@@ -114,8 +114,28 @@ The Course form script is [`../public/js/training/training_course.js`](../public
 wired via `doctype_js`.
 
 Endpoints live in [`../api/training_author.py`](../api/README.md) (authoring,
-publishing, assignment) — the learner runtime (`api/training.py`) arrives in
-Phase 2.
+publishing, assignment), [`../api/training.py`](../api/README.md) (the learner
+runtime) and [`../api/training_ai.py`](../api/README.md) (quiz and checkpoint
+drafting). All four phases are built and merged.
+
+## Authoring a course
+
+Open a Training Course and press **Open Builder**, or go straight to
+`/app/training-builder?course=TRN-CRS-00001`.
+
+**The builder only ever edits an open draft.** Publishing turns the draft into the
+live version and leaves the course with none, so the next round of edits starts a
+new draft — press **New Draft Version**. A new draft copies the live content and
+keeps every lesson, block and checkpoint key, which is what lets a learner who is
+part-way through stay exactly where they are across a minor edit.
+
+Two consequences worth knowing before they surprise you:
+
+- A published version cannot be edited in place, by design. Learners are reading
+  it, and a completion records the `content_hash` of what was passed.
+- `change_type` is the full string — `Minor Edit (keep completions)` or
+  `Material Change (require retake)`. The parenthetical is part of the stored
+  value, not a label; `publish_version` rejects anything else.
 
 ## Video
 

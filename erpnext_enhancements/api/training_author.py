@@ -496,8 +496,9 @@ def _supersede_previous_completions(version):
     must not leave somebody with two overlapping rows.
     """
     if not frappe.db.exists("DocType", "Training Completion"):
-        # Completions arrive in Phase 2. Until then a material change simply
-        # republishes; there is nothing yet to supersede.
+        # Guarded rather than assumed: a site where the completion doctype has not
+        # migrated yet must still be able to publish. (This comment used to say
+        # completions "arrive in Phase 2" — they arrived three releases ago.)
         return 0
 
     previous = frappe.get_all(
