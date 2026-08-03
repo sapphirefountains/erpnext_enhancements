@@ -139,6 +139,12 @@ Two consequences worth knowing before they surprise you:
 
 ## Video
 
+**Putting a real video in a lesson:**
+[`docs/training-video-drive-runbook.md`](../../docs/training-video-drive-runbook.md).
+Read it before the first one — the Drive file has to be readable by the *service
+account* rather than by you, and registering the asset through the API instead of the
+Desk form is what makes the watch-coverage gate measure a real duration.
+
 Authors upload video to Google Drive; on publish it is copied into a private GCS
 bucket and served to the player as a short-lived signed URL.
 
