@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.222.0] - 2026-08-02
+
+### Added
+
+- **Chapters can be created, renamed, reordered and deleted from the builder** (⋯ → Chapters).
+  Closes the gap recorded in 1.219.0.
+
+  Every other half of this was already built and correct: `save_draft_version` accepts a
+  `chapters` array, `_apply_chapters` replaces the table in order and refuses to orphan a
+  lesson, `TrainingCourseVersion._assign_chapter_keys` mints the keys, and the outline already
+  groups lessons by chapter. The client simply never assigned `this.dirty.chapters` — it was
+  read in two places and written in none. On a new course, whose first draft clones nothing,
+  the chapter list was permanently empty and every lesson sat under "Unfiled" with no way out.
+
+  Three decisions worth recording:
+
+  - **Existing `chapter_key`s are carried through untouched, and a new chapter sends none.**
+    The key is what every lesson points at; regenerating one silently unfiles every lesson in
+    that chapter. New keys are minted server-side and adopted from the save response.
+  - **Reordering is buttons, not drag.** A drag handle cannot be operated from a keyboard, and
+    reordering is the main reason the dialog exists — the same reasoning as the lesson rail.
+  - **Deleting a chapter that still holds lessons is refused in the dialog**, not left to the
+    server. The server does refuse it, but on the *next autosave* — seconds later, with the
+    dialog closed, against a save the author did not knowingly trigger.
+
+### Notes
+
+- Mutation-tested; eight of eleven were caught first time. The two that were not were both
+  weaknesses in the *test*: one mutation was partial (a selector appears twice and only one was
+  changed) and one assertion was line-anchored, so a stray field appended to an existing line
+  slipped past. Both assertions were tightened.
+
 ## [1.221.0] - 2026-08-02
 
 ### Fixed

@@ -153,6 +153,43 @@
 	font-weight: 700;
 }
 
+/* --- Chapters dialog ---------------------------------------------------- */
+
+/* One row per chapter: the title input, then reorder and remove. Reordering is
+   the main reason this dialog exists, so the controls are buttons rather than a
+   drag handle — a drag-only control cannot be operated from a keyboard, and this
+   repo has been bitten by touch-drag before (see kanban_patches.js). */
+.tb-chapter-edit {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.tb-chapter-edit input[data-act="title"] {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tb-chapter-edit-actions {
+	display: flex;
+	flex: 0 0 auto;
+	gap: 4px;
+}
+
+/* Square, so the three sit as a neat cluster rather than sizing to their glyphs
+   — an up arrow and a cross are very different widths. */
+.tb-chapter-edit-actions .btn {
+	width: 30px;
+	padding-left: 0;
+	padding-right: 0;
+	text-align: center;
+}
+
+.tb-chapter-edit-actions .btn[disabled] {
+	opacity: 0.4;
+}
+
 /* --- Outline rail ------------------------------------------------------ */
 
 .tb-chapter {
