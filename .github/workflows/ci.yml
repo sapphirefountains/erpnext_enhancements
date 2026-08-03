@@ -170,6 +170,14 @@ jobs:
       # structured vs integer `seeks`, and a nested vs top-level `hidden`.
       - name: Training heartbeat wire format (player <-> progress)
         run: python -m unittest erpnext_enhancements.tests.test_training_heartbeat_wire -v
+      # The Phase 3 seams, specified before the code. Four integration breaks got
+      # through the Phase 2 fan-out build and every one was two correct halves
+      # with a wrong join, so Phase 3's joins are pinned up front instead.
+      # Phase-3 assertions SKIP until the files exist -- they are acceptance
+      # criteria, not decoration -- while the Phase 2 contracts they build on are
+      # enforced now so they cannot drift underneath the build.
+      - name: Training Phase 3 seam contracts
+        run: python -m unittest erpnext_enhancements.tests.test_training_phase3_contracts -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)
