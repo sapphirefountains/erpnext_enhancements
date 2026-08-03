@@ -1,0 +1,200 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "lesson",
+  "course",
+  "course_version",
+  "column_break_head",
+  "status",
+  "is_public",
+  "upvotes",
+  "question_section",
+  "user",
+  "asked_on",
+  "at_seconds",
+  "question",
+  "answer_section",
+  "answer",
+  "answered_by",
+  "answered_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-QNA-.######",
+   "print_hide": 1
+  },
+  {
+   "description": "Where the question was asked. This is what makes an answer findable by the next person who gets stuck in the same place.",
+   "fieldname": "lesson",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Lesson",
+   "options": "Training Lesson",
+   "search_index": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course"
+  },
+  {
+   "description": "Which version was on screen. An answer written against material that has since been rewritten is worth flagging rather than showing as current.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Open",
+   "description": "Derived from whether an answer has been written. Hidden is the one a person sets — it takes a thread out of the author's queue without deleting what somebody asked.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Open\nAnswered\nHidden",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Off by default. The author flips it once the answer is worth showing to everybody — questions arrive phrased personally and often with site or customer detail in them, so publishing is a decision, never the default.",
+   "fieldname": "is_public",
+   "fieldtype": "Check",
+   "label": "Show To Future Learners"
+  },
+  {
+   "description": "How many other learners said they had the same question. Ranks the author's queue by what is actually confusing people.",
+   "fieldname": "upvotes",
+   "fieldtype": "Int",
+   "label": "Upvotes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "question_section",
+   "fieldtype": "Section Break",
+   "label": "Question"
+  },
+  {
+   "description": "The learner. Named `user` to match Training Assignment / Attempt / Completion — training/permissions.py scopes every learner-owned row on a column of this exact name, so anything else silently loses row-level scoping.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Learner",
+   "options": "User",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "asked_on",
+   "fieldtype": "Datetime",
+   "label": "Asked On",
+   "read_only": 1
+  },
+  {
+   "description": "Position in the video the learner was at, in seconds. Blank for a question asked about the lesson as a whole.",
+   "fieldname": "at_seconds",
+   "fieldtype": "Int",
+   "label": "At (Seconds)"
+  },
+  {
+   "fieldname": "question",
+   "fieldtype": "Text",
+   "in_list_view": 1,
+   "label": "Question",
+   "reqd": 1
+  },
+  {
+   "fieldname": "answer_section",
+   "fieldtype": "Section Break",
+   "label": "Answer"
+  },
+  {
+   "fieldname": "answer",
+   "fieldtype": "Text Editor",
+   "label": "Answer"
+  },
+  {
+   "fieldname": "answered_by",
+   "fieldtype": "Link",
+   "label": "Answered By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "answered_on",
+   "fieldtype": "Datetime",
+   "label": "Answered On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Question Thread",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Author",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "lesson,user,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "question",
+ "track_changes": 1
+}

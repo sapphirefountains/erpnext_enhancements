@@ -1,0 +1,146 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:badge_name",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "badge_name",
+  "description",
+  "column_break_head",
+  "image",
+  "points",
+  "enabled",
+  "criteria_section",
+  "criteria_type",
+  "criteria_value",
+  "column_break_criteria",
+  "criteria_course",
+  "criteria_category"
+ ],
+ "fields": [
+  {
+   "description": "What it is called on the learner's profile — e.g. Water Chemistry Certified, Ten Courses Down.",
+   "fieldname": "badge_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Badge",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Shown under the badge. Say what somebody did to earn it, not what the badge is — the learner already knows they have it.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "Image"
+  },
+  {
+   "default": "0",
+   "description": "Added to the holder's total when the badge is awarded. The award copies this number, so re-pricing a badge later does not rewrite anybody's score.",
+   "fieldname": "points",
+   "fieldtype": "Int",
+   "label": "Points"
+  },
+  {
+   "default": "1",
+   "description": "Unticking stops the badge being awarded from here on. Awards already made stand — a badge somebody earned is not withdrawn because the scheme changed.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "criteria_section",
+   "fieldtype": "Section Break",
+   "label": "Criteria"
+  },
+  {
+   "default": "Course Completed",
+   "description": "What the evaluator checks. Each type reads exactly one of the fields beside it and ignores the rest, which is why switching type clears the ones that no longer apply.",
+   "fieldname": "criteria_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Awarded For",
+   "options": "Course Completed\nCategory Completed\nCourses Completed Count\nStreak Days\nPerfect Score\nFirst Completion",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:[\"Courses Completed Count\",\"Streak Days\"].includes(doc.criteria_type)",
+   "description": "The threshold, as a number — how many courses, or how many consecutive days.",
+   "fieldname": "criteria_value",
+   "fieldtype": "Data",
+   "label": "Threshold"
+  },
+  {
+   "fieldname": "column_break_criteria",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.criteria_type==\"Course Completed\"",
+   "fieldname": "criteria_course",
+   "fieldtype": "Link",
+   "label": "Course",
+   "options": "Training Course"
+  },
+  {
+   "depends_on": "eval:doc.criteria_type==\"Category Completed\"",
+   "fieldname": "criteria_category",
+   "fieldtype": "Link",
+   "label": "Category",
+   "options": "Training Category"
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Badge",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "badge_name,criteria_type",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "badge_name",
+ "track_changes": 1
+}

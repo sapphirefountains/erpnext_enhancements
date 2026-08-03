@@ -446,6 +446,30 @@ doc_events = {
 			"erpnext_enhancements.training.assignment.on_employee_update",
 		],
 	},
+	"Training Completion": {
+		# training: certificate issuance, badge awards and the "you passed" email ride the
+		# Completion submit rather than the endpoint, so a completion recorded by a manager
+		# by hand gets identical treatment to one a learner earned.
+		"on_submit": "erpnext_enhancements.training.certificates.after_completion",
+		# Revocation must expire the certificate AND re-open the assignment, or a revoked
+		# pass silently still reads as compliant -- which is the whole point of revoking.
+		"on_cancel": "erpnext_enhancements.training.certificates.on_revoke",
+	},
+	"Sapphire Maintenance Record": {
+		# training: WARN-ONLY certification check on the assigned technician. It NEVER
+		# throws -- by the time this runs a truck is usually already at the site, and
+		# blocking the visit form would mean the work happens with NO RECORD AT ALL, which
+		# is worse than the uncertified assignment it is flagging. Appends a comment plus an
+		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
+		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
+		# read as a gate.
+		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_technician",
+	},
+	"Task": {
+		# training: the same warn-only check when a task is assigned to somebody lacking a
+		# current certification for the task type. Never blocks.
+		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_assignee",
+	},
 	"User": {
 		# training: a Role Profile change rewrites a user's roles wholesale and can
 		# bring a role-targeted Required course into scope for someone the Employee
@@ -518,6 +542,14 @@ scheduler_events = {
 		# warning and the completion reports both read it. Must run BEFORE the
 		# escalation below, which only looks at rows already marked Overdue.
 		"erpnext_enhancements.training.tasks.refresh_overdue_status",
+		# training: expire completions past expires_on and raise the recertification
+		# assignment, so "does this tech hold a current cert" stays one indexed query rather
+		# than a date calculation at read time. Re-dates an existing open assignment rather
+		# than inserting a second, so it cannot collide with a material-change retake.
+		"erpnext_enhancements.training.certificates.expire_and_recertify",
+		# training: streaks decay at midnight; refresh the denormalised Training Learner
+		# Stat rows the leaderboards read.
+		"erpnext_enhancements.training.gamification.refresh_learner_stats",
 		# training: escalate assignments that have stayed overdue past the course's
 		# grace period to its escalation role. Gated in Training Settings; the
 		# learner is excluded from their own escalation email.
@@ -690,6 +722,13 @@ after_migrate = [
 	# never empty on a fresh site (an empty picker reads as a broken form).
 	# Insert-only — a category somebody renamed or deleted stays that way.
 	"erpnext_enhancements.training.setup.ensure_training_categories",
+	# training: the Training Certificate print format (idempotent upsert, so template
+	# edits deploy on the next migrate). MUST sit ABOVE ensure_chrome_pdf_generator,
+	# which is last on purpose and has to SEE this format to point it at the right
+	# backend -- registered after it, the certificate silently renders with the wrong one.
+	"erpnext_enhancements.training.setup_print_formats.ensure_training_print_formats",
+	# training: starter Training Badges. Insert-only and inert until gamification is on.
+	"erpnext_enhancements.training.gamification.ensure_training_badges",
 	# Point every Print Format at the chrome PDF backend. Must run on EVERY migrate, not
 	# once as a patch: standard formats re-sync from their app's JSON, so the setting is
 	# reverted by the same migrate that would have applied a patch. It also has to use
@@ -972,6 +1011,8 @@ permission_query_conditions = {
 	"Training Attempt": "erpnext_enhancements.training.permissions.attempt_query_conditions",
 	"Training Attempt Question": "erpnext_enhancements.training.permissions.attempt_question_query_conditions",
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_query_conditions",
+	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
+	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
 }
 
 has_permission = {
@@ -982,6 +1023,8 @@ has_permission = {
 	"Training Attempt": "erpnext_enhancements.training.permissions.attempt_has_permission",
 	"Training Attempt Question": "erpnext_enhancements.training.permissions.attempt_question_has_permission",
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_has_permission",
+	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
+	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]

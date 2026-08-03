@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.215.0] - 2026-08-02
+
+### Added
+
+- **Training Phase 4 — certificates, recertification, portal access, sign-off, Q&A and
+  gamification.** The last of the four phases; the module is now feature-complete.
+
+  Six DocTypes: **Training Certificate** (submittable, stores its *rendered* HTML so editing a
+  print format next year never rewrites a document somebody already holds — the same reasoning
+  as the e-sign snapshot), **Training Signoff**, **Training Question Thread**, and the
+  gamification trio **Badge / Badge Award / Learner Stat**.
+
+  **Certificates** are issued on `Training Completion.on_submit` rather than from the endpoint,
+  so a completion recorded by a manager by hand gets identical treatment to one a learner earned.
+  `on_cancel` expires the certificate *and* re-opens the assignment — a revoked pass that still
+  reads as compliant would defeat the point of revoking. Every step is independently wrapped: a
+  failed badge award must not roll back a completion somebody earned.
+
+  **The public verify route** (`/training_certificate?code=…`) returns only
+  `{valid, course_title, holder_initials, issued_on, expires_on, status}`. That link gets shared
+  with third parties, so a full name, an email or an employee id would turn proof-of-training into
+  disclosure. Controller filename is underscored, or Frappe would never import it.
+
+  **Recertification** expires completions past `expires_on` and raises the next assignment, so
+  "does this technician hold a current certification" stays one indexed query rather than a date
+  calculation at read time. It re-dates an existing open assignment rather than inserting a
+  second, so it cannot collide with a material-change retake.
+
+  **Supervisor sign-off** for the things a quiz cannot prove, **ask-the-author Q&A** whose answers
+  the author can publish to future learners, **gamification** with staff and customer leaderboards
+  kept strictly apart, and two **Script Reports** — completion matrix and per-question analytics.
+  The second is the quiet win: a question everybody misses usually means the *content* is unclear,
+  not the learners.
+
+- **The compliance check warns and never blocks.** `Sapphire Maintenance Record` and `Task`
+  validate now flag a technician without a current certification — as an orange message, a
+  timeline comment and a supervisor notification, never a refusal. By the time it fires a truck is
+  usually already at a site, and blocking the form would mean the visit happens with **no record
+  at all**, which is worse than the uncertified assignment it was flagging. Gated by
+  `warn_on_uncertified_dispatch`, and wrapped so a failure in the advisory can never break a save.
+  `tests/test_training_compliance.py` asserts `frappe.throw` appears nowhere in that module.
+
+### Fixed
+
+- **The Phase-4 doctypes named the learner column three different ways, and none of them was the
+  one that works.** They shipped `holder_user`, `learner_user` and `asked_by`; every consumer
+  module used `user`, and so does `Training Assignment` / `Attempt` / `Completion` — and
+  `training/permissions.py` scopes every learner-owned row on a column of exactly that name.
+  Renamed to `user` throughout. Left as built, the portal certificate page would have raised
+  `Unknown column` and row-level scoping would have silently applied to nothing.
+
+  This one was **my specification error, not the agents'** — the contract fixed the behavioural
+  seams but let the shared *data shape* be inferred, so four agents inferred four different things.
+
+- Restored `Training Assignment.completion` and added `Training Completion.signoff` /
+  `.certificate`. Phase 1 deferred these because a Link naming a non-existent DocType fails
+  `bench migrate`; those doctypes now exist. `test_training_phase4_contracts` generalises that
+  lesson into an assertion that **every** Link in every Training doctype names something this app
+  actually ships.
+
+### Notes
+
+- Registration order matters and is asserted:
+  `training.setup_print_formats.ensure_training_print_formats` sits **above**
+  `ensure_chrome_pdf_generator` in `after_migrate`, which is last on purpose and has to see the
+  certificate format to point it at the right PDF backend.
+
+- Contracts-first held up again. Phase 2 (no contracts) shipped four integration breaks to main;
+  Phase 3 shipped none; Phase 4 surfaced its mismatches *before* merge, and one agent found them
+  by reading its siblings rather than me finding them afterwards. Several of its reported
+  mismatches were stale — it had read the sibling files mid-flight — so each was re-verified
+  empirically rather than taken at face value.
+
+- **Nothing in Phases 2–4 has ever executed.** No course, no video asset, and the byte-range check
+  is written but unrun. Every defect across four phases was found by reading, which has worked
+  better than it should have. One real course would exercise more than every static check to date.
+
 ## [1.214.0] - 2026-08-02
 
 ### Added

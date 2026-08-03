@@ -22,6 +22,7 @@
   "assignment_source",
   "source_rule",
   "outcome_section",
+  "completion",
   "required_version",
   "column_break_outcome",
   "last_reminder_on",
@@ -154,6 +155,15 @@
    "fieldname": "outcome_section",
    "fieldtype": "Section Break",
    "label": "Outcome"
+  },
+  {
+   "description": "What closed this assignment. Deferred in Phase 1 because a Link naming a DocType the app does not ship fails bench migrate; restored in Phase 4 alongside the doctypes it points at. Without it an assignment has no route to its own outcome and nothing can report on either.",
+   "fieldname": "completion",
+   "fieldtype": "Link",
+   "label": "Completion",
+   "no_copy": 1,
+   "options": "Training Completion",
+   "read_only": 1
   },
   {
    "description": "Pin the learner to a specific version. Normally blank, meaning whatever is live — set only when a retake must be against the exact version that changed.",
