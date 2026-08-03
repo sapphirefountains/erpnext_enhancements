@@ -21,7 +21,8 @@
  *    chart/tree get correct width/height. Old tree state is torn down on each
  *    refresh to avoid detached-node leaks during SPA navigation.
  *  - Supports deep-linking to the Scope tab via the `#custom_scope` URL hash.
- *  - Hides the standard "View"/"View Tasks" button (CSS + API).
+ *  - Removes ERPNext's native "Gantt Chart" and "Kanban Board" items from the
+ *    "View" dropdown, leaving the group itself for our own buttons.
  */
 const EXTERNAL_PROJECT_TYPES = ["Service", "Events", "Build", "Design"];
 
@@ -255,31 +256,25 @@ frappe.ui.form.on("Project", {
 		});
 
 		// =========================================================================
-		// 5. HIDE STANDARD VIEW BUTTON
+		// 5. DROP ERPNEXT'S NATIVE "VIEW" ITEMS
 		// =========================================================================
-		const styleId = "hide-standard-view-btn-style";
-		if (!document.getElementById(styleId)) {
-			const styleEl = document.createElement("style");
-			styleEl.id = styleId;
-			styleEl.innerHTML = `
-                .inner-group-button[data-label="View"],
-                .custom-btn-group[data-label="View"],
-                .inner-group-button[data-label="View Tasks"],
-                .custom-btn-group[data-label="View Tasks"] {
-                    display: none !important;
-                }
-            `;
-			document.head.appendChild(styleEl);
-		}
-
-		setTimeout(() => {
-			if (frm.page && frm.page.clear_custom_button) {
-				try {
-					frm.page.clear_custom_button('View');
-				} catch (e) {
-					console.warn("Failed to clear standard 'View' button via API, CSS fallback active.", e);
-				}
-			}
-		}, 100);
+		// Gantt Chart and Kanban Board both route away to Task list views that the
+		// Schedule and Scope tabs replace, so they come out of the toolbar.
+		//
+		// Removed by label, NOT by hiding the "View" group. This used to inject a
+		// `display: none` on `.inner-group-button[data-label="View"]` — then
+		// v1.183.0 folded our own read-only buttons (Project Brief, Maintenance
+		// Contract, Drive Folder) into that same native group, and the rule took
+		// them down with it: the Project Brief button was in the DOM but invisible
+		// on every project. The style element also went into document.head and
+		// stayed there, so after one visit to a Project it hid the View group on
+		// every other doctype for the rest of the session.
+		//
+		// Frappe removes an inner group once its last item goes, so a project with
+		// none of our buttons still shows no empty dropdown. This runs after
+		// erpnext's project.js refresh (our doctype_js loads last), so both items
+		// exist by now; the calls are harmless no-ops if they don't.
+		frm.remove_custom_button(__("Gantt Chart"), __("View"));
+		frm.remove_custom_button(__("Kanban Board"), __("View"));
 	},
 });
