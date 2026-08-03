@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "service_account_json",
+  "set_service_account_key",
   "shared_drive_id",
   "folder_template_section",
   "project_folder_template",
@@ -19,11 +20,18 @@
  ],
  "fields": [
   {
-   "description": "The full JSON key of the Google Cloud service account used for ALL Drive automation (project/customer/opportunity folders, attachment sync, call-recording exports). The account's client_email must be added as a Content Manager on the Shared Drive(s) below. Use the Test Connection button after changing this.",
+   "description": "Set with the button below. Stored encrypted and never rendered back. Until v1.211.0 this was a Code field, which meant the private key sat in cleartext and could be read straight off this form by anyone who reached it as Administrator.",
    "fieldname": "service_account_json",
-   "fieldtype": "Code",
+   "fieldtype": "Password",
    "label": "Service Account JSON",
+   "read_only": 1,
    "reqd": 1
+  },
+  {
+   "description": "Opens a multi-line box to paste the key into. It is validated before it is stored, so a truncated paste is rejected here rather than surfacing later as a broken Drive sync.",
+   "fieldname": "set_service_account_key",
+   "fieldtype": "Button",
+   "label": "Set Service Account Key"
   },
   {
    "description": "The Shared Drive that holds the per-customer folders and the project folder trees (the ID is the part of the Shared Drive's URL after /folders/ or /drive/).",

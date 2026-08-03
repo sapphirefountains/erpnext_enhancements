@@ -79,6 +79,11 @@ doctype_js = {
 	# without mangling it, and being masked it then hides the damage. Also carries
 	# the Test GCS Connection action.
 	"Training Settings": ["public/js/training/training_settings.js"],
+	# security: the Drive service-account key goes in through a dialog, not the
+	# field. It is a Password (v1.211.0, was Code and therefore cleartext), and a
+	# Password renders as a single-line masked input that mangles a multi-line key
+	# on paste.
+	"Project Folder Google Drive Settings": ["public/js/google_drive/drive_settings.js"],
 	"Opportunity": [
 		"public/js/opportunity.js",
 		"public/js/crm_enhancements/opportunity.js",

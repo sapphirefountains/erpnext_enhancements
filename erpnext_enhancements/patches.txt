@@ -343,3 +343,13 @@ erpnext_enhancements.patches.seed_training_roles
 # that would regenerate their roles from it and wipe System Manager. Shared logic
 # in training/roles.py, also used by the Employee after_insert hook for new hires.
 erpnext_enhancements.patches.grant_training_learner_to_employees
+# v1.211.0 security: move the Drive service-account key out of cleartext.
+# service_account_json was a Code field, so a full-Drive-scope private key sat
+# verbatim in tabSingles and rendered back onto the form -- readable off the
+# screen by anyone who reached it as Administrator, which the 2026-08-02
+# intrusion made a live concern rather than a theoretical one. Changing the
+# fieldtype alone does NOT move the value: migrate would leave the cleartext in
+# place while the app started reading an asterisk placeholder, breaking Drive and
+# Calendar AND still exposing the secret. This patch relocates it into __Auth.
+# post_model_sync so the new fieldtype is already applied. Idempotent.
+erpnext_enhancements.patches.encrypt_drive_service_account_json

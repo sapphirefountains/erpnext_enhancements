@@ -28,14 +28,18 @@ DRIVE_SETTINGS_DOCTYPE = "Project Folder Google Drive Settings"
 def get_calendar_service():
 	"""Build an authenticated Google Calendar v3 service from the Drive service
 	account JSON. Raises via ``frappe.throw`` if not configured."""
-	settings = frappe.get_single(DRIVE_SETTINGS_DOCTYPE)
-	if not settings.service_account_json:
+	# Through the accessor, never the field: it is a Password, so plain attribute
+	# access returns an asterisk placeholder that is truthy and then fails inside
+	# json.loads. See drive_utils.get_service_account_info.
+	from erpnext_enhancements.google_drive.drive_utils import get_service_account_info
+
+	creds_info = get_service_account_info()
+	if not creds_info:
 		frappe.throw(
 			f"Service Account JSON is not configured in {DRIVE_SETTINGS_DOCTYPE}; "
 			"the Finance Calendar widget reuses it."
 		)
 	try:
-		creds_info = json.loads(settings.service_account_json)
 		creds = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 		return build("calendar", "v3", credentials=creds, cache_discovery=False)
 	except Exception as e:

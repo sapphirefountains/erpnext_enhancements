@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.211.0] - 2026-08-02
+
+### Security
+
+- **The Google Drive service-account key was stored in cleartext; it is now encrypted.**
+  `Project Folder Google Drive Settings.service_account_json` was a `Code` field, so a
+  full-Drive-scope private key sat verbatim in `tabSingles` **and was rendered back onto the
+  form**. Anyone who reached that page as Administrator could read it off the screen — no
+  database access, no server script, no decryption. Every other secret on the site (Stripe,
+  QuickBooks, MDM, Triton) is a `Password` field and shows asterisks in exactly that situation;
+  this one did not. After the 2026-08-02 intrusion, in which someone logged in as Administrator
+  ten times, that stopped being hypothetical.
+
+  Changing the fieldtype alone would have been worse than doing nothing: `bench migrate` would
+  leave the cleartext in `tabSingles` while the app started reading an asterisk placeholder — so
+  Drive **and** Calendar would break and the secret would still be exposed. The move is done by
+  `patches/encrypt_drive_service_account_json.py`, which relocates the value into `__Auth`,
+  verifies the column no longer holds it, and overwrites it directly if the save did not.
+
+  **Rotate the key regardless.** Encrypting it now does not un-expose what was readable before,
+  and nothing can tell us who read it.
+
+  All nine readers were audited. Four only test truthiness ("is Drive configured") and still work,
+  because the placeholder is non-empty exactly when a key is stored. The three that actually parse
+  the key — `drive_utils.get_drive_service`, `google_calendar.calendar_utils.get_calendar_service`
+  and the Drive health check — now go through a single `get_service_account_info()` accessor.
+  **Reading the field directly is now a bug that looks like working code:** it returns a truthy
+  placeholder and fails later inside `json.loads`, so the accessor's docstring says so and the
+  controller docstring repeats it.
+
+  Entry is via a **Set Service Account Key** dialog, the same pattern used for the Training media
+  key: a real multi-line box, with the paste validated (parses, is a service account, `private_key`
+  retains its BEGIN marker, and the credential actually constructs) before anything is stored.
+
 ## [1.210.0] - 2026-08-03
 
 ### Added
