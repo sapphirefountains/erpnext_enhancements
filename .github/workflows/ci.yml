@@ -118,6 +118,14 @@ jobs:
           erpnext_enhancements.tests.test_water_engine
           erpnext_enhancements.tests.test_water_design_issues
           erpnext_enhancements.tests.test_water_design_controller -v
+      # Own step: this suite installs its own frappe stub in setUpModule, so it
+      # must not share a process with the other stub-installing suites. It guards
+      # the hourly Drive shadow sync's survival when the DB connection drops
+      # mid-run -- the failure mode that leaves no trace anywhere, because the
+      # error handler's own rollback and log_error both need the connection it
+      # just lost.
+      - name: Drive shadow sync (survives a dropped DB connection)
+        run: python -m unittest erpnext_enhancements.tests.test_drive_sync_recovery -v
       # THREE separate steps, not one `unittest a b c`. Each installs its own
       # frappe stub in setUpModule, and running them in one process cross-talks:
       # the roles suite imports the real erpnext_enhancements.training.roles, and

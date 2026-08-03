@@ -52,6 +52,13 @@ SYNCED_DOCTYPES = {
 
 MAX_RETRY_ATTEMPTS = 3
 
+# Driver error codes meaning "this connection is dead", as opposed to "that query
+# was bad": 2006 server has gone away, 2013 lost connection during query, 2055
+# lost connection to server. The shadow sync meets these because it is the one
+# job here that holds a DB connection across minutes of uninterrupted Google API
+# traffic — see :func:`_recover_after_document_failure`.
+LOST_CONNECTION_ERRORS = (2006, 2013, 2055)
+
 
 def log_sync(action, status, reference_doctype=None, reference_name=None,
 			file_name=None, drive_file_id=None, drive_link=None, error=None,
@@ -214,13 +221,68 @@ def sync_shadow_attachments():
 	)
 
 
+def _is_lost_connection(exc):
+	"""True when ``exc`` is the DB connection dying rather than a rejected query.
+
+	Read off the driver's error code rather than the message: Frappe surfaces
+	MySQLdb's ``OperationalError`` unwrapped, and the code is stable across the
+	wordings ("Server has gone away" / "Lost connection to server during query")
+	that the same underlying event produces."""
+	args = getattr(exc, "args", None) or ()
+	return bool(args) and args[0] in LOST_CONNECTION_ERRORS
+
+
+def _reconnect_db():
+	"""Re-open the site DB connection after it was lost mid-run. True if usable.
+
+	Frappe *asks* for auto-reconnect (``conn.auto_reconnect = True`` in the
+	MariaDB driver's ``get_connection``), but mysqlclient dropped that feature —
+	the assignment is an inert attribute set on a Python object, so a dead
+	connection stays dead for the rest of the job unless we rebuild it here.
+	``close()`` is best-effort: closing an already-dead socket can itself raise,
+	and it leaves ``_conn`` populated when it does, which ``connect()`` then
+	overwrites anyway."""
+	try:
+		frappe.db.close()
+	except Exception:
+		pass
+	try:
+		frappe.db.connect()
+		return True
+	except Exception:
+		return False
+
+
+def _recover_after_document_failure(exc):
+	"""Put the DB back in a usable state after one document's sync failed, so the
+	run can carry on with the next document. False means the run must give up.
+
+	The lost-connection case is why this exists. ``frappe.db.rollback()`` issues
+	SQL, so calling it on a dead connection raises *the same error again* — out
+	of the ``except`` block that was meant to contain it. That is how a single
+	document's failure aborted the entire hourly run, and it took
+	``frappe.log_error`` down with it (which also needs the connection), so the
+	only evidence was an RQ traceback: nothing in the Error Log, nothing in the
+	Drive Sync Log."""
+	if _is_lost_connection(exc):
+		return _reconnect_db()
+	try:
+		frappe.db.rollback()
+	except Exception:
+		# Rollback failing for any other reason still leaves the session
+		# unusable; a fresh connection is the only way to continue.
+		return _reconnect_db()
+	return True
+
+
 def run_shadow_sync():
 	"""Background worker: for every linked document, walk its Drive folder
 	tree and create link-only shadow attachments for the files *and subfolders*
 	ERPNext doesn't have yet, and flag shadows whose Drive item vanished as Stale
 	(never deleting anything). One document's failure (e.g. its linked folder was
-	deleted) is logged and skipped — it never aborts the whole run, and a
-	commit-per-document keeps finished work durable if a later one fails."""
+	deleted, or the DB connection dropped during its Drive walk) is logged and
+	skipped — it never aborts the whole run, and a commit-per-document keeps
+	finished work durable if a later one fails."""
 	settings = _settings()
 	if not _sync_enabled(settings):
 		return
@@ -242,10 +304,14 @@ def run_shadow_sync():
 					service, doctype, row.name, row.get(folder_field), drive_id_cache
 				)
 				frappe.db.commit()
-			except Exception:
-				frappe.db.rollback()
+			except Exception as exc:
+				traceback = frappe.get_traceback()
+				# Recover *before* logging: frappe.log_error writes to the DB too,
+				# so on a dropped connection it would raise on its way out.
+				if not _recover_after_document_failure(exc):
+					return
 				frappe.log_error(
-					f"Shadow sync failed for {doctype} {row.name}\n{frappe.get_traceback()}",
+					f"Shadow sync failed for {doctype} {row.name}\n{traceback}",
 					"Drive Shadow Sync",
 				)
 
