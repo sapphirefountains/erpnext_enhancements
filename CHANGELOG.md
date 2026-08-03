@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.225.0] - 2026-08-03
+
+### Fixed
+
+**The lesson outline never showed progress.** `outlineRow` read `row.status`, `row.locked`
+and `row.lock_reason`; a toc row carries `{lesson_key, chapter_key, title, minutes, has_quiz,
+blocks}` and nothing else. All three were permanently `undefined`, so every lesson drew the
+"not started" circle and offered **Open** however much of it the learner had finished — from
+the course page there was no way to see where you were.
+
+Status is now derived from the attempt's own per-lesson progress map, and the button reads
+Open / Resume / Review accordingly.
+
+- **The attempt's progress never reached the course view.** `state.progress` was only ever
+  populated by `get_lesson`, and the outline lives on the course page, where no lesson has
+  been loaded. `adoptAttempt` now takes the `lessons` map off the attempt, which
+  `get_course` and `start_attempt` have both returned all along.
+
+- **Removed the lock UI.** `row.locked` being undefined is why nothing was ever locked, and
+  that is correct: the server recommends an order through `next_lesson_key` and deliberately
+  does not enforce one — the outline is meant to let a learner open any lesson. The branch
+  was UI for a feature that does not exist, and `.tr-outline-reason` went with it.
+
+### Added
+
+- The wire suite now checks **toc row** fields too, against the `toc.append({...})` in
+  `api/training_author.py` — the publisher, which is the only place that shape is written
+  down. `_public_toc` merely reloads `toc_json` and strips the internal docname, so comparing
+  the player against the runtime would have been comparing it to a `json.loads`.
+
+### Notes
+
+- Nothing was wrong with the quiz: it sits on the last lesson of *Using the Training Module*,
+  and the outline gave no sign of how far through the course you were. Two reports, one cause.
+
+- Mutation-tested; one assertion again passed its mutation by matching a mention rather than
+  the assignment — `if (attempt.lessons)` satisfied a check for `attempt.lessons` while the
+  body assigned `{}`. Tightened to the assignment.
+
 ## [1.224.0] - 2026-08-03
 
 ### Fixed

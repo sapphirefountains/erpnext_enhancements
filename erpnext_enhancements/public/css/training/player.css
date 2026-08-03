@@ -969,14 +969,6 @@
 	margin-top: 6px;
 }
 
-/* Why the row is locked. Always visible, full body size — "finish the earlier
-   lessons first" is the instruction that unblocks the learner, so it is the last
-   text on the page to shrink. Deliberately not the error colour: rendering it
-   red turns a working gate into a page that looks broken. */
-.tr-outline-reason {
-	margin: 6px 0 0;
-	color: var(--tr-muted);
-}
 
 .tr-outline-row > .tr-button {
 	flex: 0 0 auto;
