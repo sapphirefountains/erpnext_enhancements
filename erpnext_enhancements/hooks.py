@@ -1054,6 +1054,14 @@ portal_menu_items = [
 # NOTE: each module filename must equal its tool's name (FAC's custom_tools
 # plugin derives tool identifiers from the module path).
 assistant_tools = [
+	# training: two read-only tools. Compliance status answers "is my team current"
+	# and leads with the exceptions; learner record answers "can I send this person to
+	# that job" and distinguishes a current certification from one superseded by a
+	# material change to the course. Neither reports watch coverage on its own --
+	# coverage is time with a video playing, not attention, and alone it reads as
+	# proof of engagement that it cannot support.
+	"erpnext_enhancements.assistant_tools.training_compliance_status.TrainingComplianceStatus",
+	"erpnext_enhancements.assistant_tools.training_learner_record.TrainingLearnerRecord",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",

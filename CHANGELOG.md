@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.216.0] - 2026-08-02
+
+### Added
+
+- **Two read-only MCP tools for Training**, so the module is reachable from the assistant rather
+  than only from the desk.
+
+  `training_compliance_status` answers *"is my team current?"* and leads with the **exceptions** —
+  overdue first, then due-soon, then a per-course summary. A tool that answers "everybody is fine"
+  with two hundred rows gets ignored, so the full roster is the last thing it returns, not the first.
+
+  `training_learner_record` answers *"can I send this person to that job?"*. It takes an employee
+  docname, a user email or just a name, and separates **current** certifications from ones that
+  have lapsed *or been superseded* — a completion is pinned to the course version that was passed,
+  so a course that has materially changed since shows as superseded rather than quietly current.
+  An ambiguous name is refused rather than guessed: answering about the wrong technician is worse
+  than answering nothing.
+
+  **Neither tool reports watch coverage on its own.** Coverage measures time elapsed with a video
+  playing and visible, not attention. Beside a score it is context; alone it reads as proof of
+  engagement it cannot support, and an assistant is exactly the surface where that misreading would
+  spread. Both say so in their description and in the payload.
+
+### Notes
+
+- `frappe.utils` is stubbed narrowly by the assistant-tool contract test, so these import only
+  `date_diff` / `nowdate`. Importing anything more exotic fails at import time and takes the whole
+  tool registry down with it — a wider blast radius than the tool itself.
+
 ## [1.215.0] - 2026-08-02
 
 ### Added
