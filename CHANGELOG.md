@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.219.0] - 2026-08-02
+
+### Fixed
+
+The course builder was unusable, and an author hit both halves of it within a minute of
+opening it. Auditing the rest of the authoring path turned up 20 confirmed defects; this
+release fixes the ones between an author and a finished course.
+
+- **The Course form's "Open Builder" button said the builder did not exist yet.** It was a
+  Phase-2 placeholder that outlived the thing it stood in for by three releases — the builder
+  shipped in Phase 3. Anyone who believed the button never found the builder at all. It now
+  routes to `/app/training-builder` with the course.
+
+- **"This version is published and frozen" was shown when no version was loaded at all.**
+  `get_builder_bootstrap` returns the open draft and nothing else, so `version` is null
+  whenever a course has no draft — which is where *every* course sits the moment it is
+  published, because publishing consumes the draft. So the normal second edit of any course
+  produced a message describing a state that did not exist, sending the author off to find a
+  version switcher instead of telling them to raise a draft. Both branches now name the real
+  state and offer **New Draft Version** as the primary action.
+
+- **The builder could never publish.** `change_type` is a Select whose stored values carry a
+  parenthetical (`Minor Edit (keep completions)`); the builder's two dialogs offered the bare
+  `Minor Edit` / `Material Change`, which `publish_version` rejects outright. Creating a draft
+  failed the same way the moment an author picked a change type rather than leaving it blank.
+  The Course form had the full strings all along, which is exactly why this survived — the
+  same flow worked from the other entry point.
+
+- **Deleting the lesson you were looking at could poison the whole session.** The rail row
+  greyed out but the canvas kept painting the lesson and the inspector kept it editable, so
+  the obvious next action queued a patch against a name the autosave was about to delete. The
+  server 404s and rolls back the *entire* payload, the client re-merges the doomed patch, and
+  it retries every four seconds indefinitely — taking every other lesson's edits with it.
+  Reloading was the only escape and it discarded everything since the last good save.
+  `state.deleted` had been returned by the server from the first day and read by nobody.
+
+- **`flush_save()` returned a resolved promise while a save was still in flight** —
+  indistinguishable, to a caller, from "everything is stored". `publish()` chains off it, so
+  publishing within a few seconds of typing froze a version missing the author's last words,
+  and a published version cannot be edited. It now returns the in-flight chain, so the promise
+  means what every caller already assumed.
+
+- **A failed save silently abandoned whatever it was chained to.** Skipping the action is
+  right — going ahead would discard the edits — but the dialog had already closed and the only
+  thing on screen was an error about the *autosave*. Adding a lesson simply did nothing. The
+  abandoned action is now named in its own message.
+
+- **Preview failed 100% of the time.** `frappe.assets.extn()` works out an asset's type by
+  splitting the URL on `?` and taking the last segment, so `player.js?v=1.219.0` reports its
+  extension as `0` and matches neither the js nor the css branch — the file was silently never
+  loaded. Dropping the token is not the fix (raw `/assets` are served immutable for a year and
+  this repo has shipped that cache bug twice), so the player is loaded by hand, in order, with
+  the token intact. A load failure now says so instead of leaving a blank pane.
+
+- Smaller ones on the same path: **Publish** and **Submit for Review** did nothing at all from
+  the menu when no draft was loaded — no alert, no message, which reads as a broken button;
+  the **Preview** button was live with nothing to preview; the builder's own empty state told
+  the author to press a button named "Build" that does not exist; **Reload** discarded unsaved
+  edits without warning, one menu item below "Save now"; and a course opened by URL left its
+  name in `frappe.route_options`, which Frappe then applies as a filter to the next list view.
+
+### Changed
+
+- `training/README.md` documents the draft/publish cycle, which is the part that surprises
+  people: publishing consumes the draft, so the next edit starts a new one.
+
+### Notes
+
+- 17 mutations tested, all caught. Three assertions initially **passed** their mutation for the
+  same reason: the comment explaining a bug quotes the bug, so a source-text search cannot tell
+  prose from code. Comment-stripping is now the default for these checks — worth knowing, since
+  the same trap cost an assertion in 1.218.0.
+
+- Still open, and deliberately not in this release: the preview shims `TR.Video.mount` into
+  existence and re-shapes `TR.Quiz.mount`, which means the builder preview may work where the
+  real `/training` player does not. That is the learner runtime rather than the builder, it is
+  the same class as the heartbeat wire mismatch fixed in Phase 3, and it needs a browser to
+  confirm. Also open: the builder cannot create, rename or delete a **chapter** — the client
+  never assigns `dirty.chapters`, though the server accepts them. Lessons fall back to
+  "Unfiled" and work, so this is an absent feature rather than a broken one.
+
 ## [1.218.0] - 2026-08-02
 
 ### Fixed

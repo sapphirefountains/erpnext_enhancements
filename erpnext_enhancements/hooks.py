@@ -70,8 +70,9 @@ doctype_js = {
 	# training: the Course form's doors into the authoring flow — New Draft
 	# Version, Send For Review, Publish (Training Manager only, and it asks the
 	# Minor-Edit vs Material-Change question explicitly rather than defaulting it),
-	# Assign To and Retire. The drag-and-drop builder is a later release; this is
-	# what makes authoring usable before it lands.
+	# Assign To, Retire, and Open Builder. That last one stood as a "not yet"
+	# placeholder for three releases after the builder actually shipped, so anyone
+	# who trusted the button never found the builder — it now routes to the page.
 	"Training Course": ["public/js/training/training_course.js"],
 	# training: the GCS signing key goes in through a dialog, not the field. The
 	# field is a Password, which Frappe renders as a SINGLE-LINE masked input --

@@ -124,6 +124,17 @@ const TB_BLOCK_TYPES = [
 	"Divider",
 ];
 
+// The Training Course Version Select options, in full. These MUST match
+// `training_course_version.py`'s MINOR_EDIT / MATERIAL_CHANGE exactly: the parenthetical
+// is part of the stored value, not a label. Two dialogs here sent the bare
+// "Minor Edit" / "Material Change" instead, which `publish_version` rejects outright
+// (`if change_type not in (MINOR_EDIT, MATERIAL_CHANGE)`) — so publishing from the
+// builder could never succeed, and creating a draft failed the moment the author chose
+// a change type rather than leaving it blank. The Course form had them right all along,
+// which is why the bug survived: the same flow worked from the other entry point.
+const TB_MINOR_EDIT = "Minor Edit (keep completions)";
+const TB_MATERIAL_CHANGE = "Material Change (require retake)";
+
 const TB_AUTOSAVE_MS = 4000;
 
 // Two pins inside this many seconds read as one interruption to a learner and
@@ -291,8 +302,12 @@ class TrainingBuilder {
 
 	handle_route() {
 		let course = frappe.utils.get_url_arg("course");
-		if (!course && frappe.route_options && frappe.route_options.course) {
-			course = frappe.route_options.course;
+		if (frappe.route_options && frappe.route_options.course) {
+			// Cleared whichever branch wins. It used to be cleared only when the
+			// query string was absent, so arriving by URL left `course` sitting in
+			// route_options — and Frappe applies whatever is there as a filter on
+			// the NEXT list view the user opens.
+			course = course || frappe.route_options.course;
 			frappe.route_options = null;
 		}
 		if (course && (!this.course || this.course.name !== course)) {
@@ -303,6 +318,20 @@ class TrainingBuilder {
 	}
 
 	reload(select_lesson) {
+		// The Reload button used to throw away unsaved edits and pending checkpoint
+		// writes without a word. It is next to Save now in the same menu, and the
+		// two did opposite things with no warning between them.
+		if (this.has_dirty() && !this._reload_confirmed) {
+			frappe.confirm(
+				__("You have edits that have not been saved yet. Reloading discards them. Continue?"),
+				() => {
+					this._reload_confirmed = true;
+					this.reload(select_lesson);
+					this._reload_confirmed = false;
+				}
+			);
+			return;
+		}
 		const course = this.course && this.course.name;
 		const keep = select_lesson || this.lesson_name;
 		this.teardown_preview();
@@ -317,7 +346,7 @@ class TrainingBuilder {
 	render_course_picker() {
 		this.$topbar.find(".tb-topbar-title").text(__("Training Builder"));
 		this.$canvas.find(".tb-pane-body").html(
-			`<div class="tb-empty">${__("Open a Training Course and choose Build to edit its draft.")}<br>
+			`<div class="tb-empty">${__("Open a Training Course and press Open Builder to edit its draft.")}<br>
 			<a href="/app/training-course">${__("Open the course list")}</a></div>`
 		);
 		this.$outline.find(".tb-pane-body").empty();
@@ -574,10 +603,49 @@ class TrainingBuilder {
 
 	guard_editable() {
 		if (this.editable()) return true;
-		frappe.show_alert({
-			message: __("This version is published and frozen. Create a new draft version to edit it."),
-			indicator: "orange",
-		});
+
+		// Two quite different states land here, and for a while both got the same
+		// sentence: "This version is published and frozen."
+		//
+		// That sentence is a lie in the commoner of the two. `get_builder_bootstrap`
+		// loads the open draft and nothing else, so `this.version` is null whenever a
+		// course has no draft — which is where EVERY course sits the moment it is
+		// published, because publishing consumes the draft. An author coming back to
+		// make a second edit was told they were looking at a frozen version and to go
+		// find a different one, so they went looking for a version switcher. There
+		// isn't one; there was nothing loaded at all.
+		//
+		// Both branches now offer the way out rather than describing it, because the
+		// action ("New Draft Version") was only ever reachable from the page's ⋯ menu
+		// and from an empty state in a pane the author was not necessarily looking at.
+		const draft_action = {
+			label: __("New Draft Version"),
+			action: () => {
+				frappe.hide_msgprint();
+				this.new_draft_version();
+			},
+		};
+
+		if (this.version) {
+			frappe.msgprint({
+				title: __("Published version"),
+				indicator: "orange",
+				message: __(
+					"v{0} is published and frozen — learners are reading it right now, so it cannot be edited in place. A new draft copies it and keeps every lesson key, so anyone part-way through stays where they are.",
+					[this.version.version_number]
+				),
+				primary_action: draft_action,
+			});
+		} else {
+			frappe.msgprint({
+				title: __("No open draft"),
+				indicator: "orange",
+				message: __(
+					"This course has no draft to edit. Publishing turns the draft into the live version, so the next round of edits starts a new one — it copies the live content and keeps every lesson key, so learners part-way through stay where they are."
+				),
+				primary_action: draft_action,
+			});
+		}
 		return false;
 	}
 
@@ -609,6 +677,26 @@ class TrainingBuilder {
 		this._save_timer = setTimeout(() => this.flush_save(), TB_AUTOSAVE_MS);
 	}
 
+	save_then(label) {
+		// Actions that must not run against stale content chain off flush_save().
+		// When the save fails the chained call is correctly abandoned — but the
+		// dialog has already closed, and the only thing on screen is frappe's error
+		// about the *autosave*. Nothing connects that to the button the author
+		// pressed, so a lesson they just named simply never appears and there is no
+		// message saying why. Name the abandoned action in its own right.
+		return this.flush_save().catch((error) => {
+			frappe.msgprint({
+				title: __("{0} was not done", [label]),
+				indicator: "red",
+				message: __(
+					"Your unsaved edits could not be stored, so {0} was not attempted — going ahead would have thrown them away. Nothing has been lost: the edits are still here. Resolve the error above and try again.",
+					[label]
+				),
+			});
+			throw error;
+		});
+	}
+
 	flush_save() {
 		clearTimeout(this._save_timer);
 		this.pull_editors();
@@ -619,8 +707,16 @@ class TrainingBuilder {
 		if (this._saving) {
 			// A second flush while one is in flight would race the `modified`
 			// token. Let the in-flight one land; its .then re-schedules.
+			//
+			// What this used to return was `Promise.resolve()` — indistinguishable,
+			// to a caller, from "everything is saved". `publish()` chains straight
+			// off it, so pressing Publish within a few seconds of typing froze a
+			// version that was missing the last thing the author wrote, and a
+			// published version cannot be edited: the only fix is a new version.
+			// Returning the in-flight chain makes the promise mean what every
+			// caller already assumed it meant.
 			this._pending_flush = true;
-			return Promise.resolve();
+			return this._inflight || Promise.resolve();
 		}
 
 		const sent = this.dirty;
@@ -633,7 +729,7 @@ class TrainingBuilder {
 		this._saving = true;
 		this.paint_save_state("saving");
 
-		return frappe
+		this._inflight = frappe
 			.call({
 				method: "erpnext_enhancements.api.training_author.save_draft_version",
 				args: {
@@ -649,12 +745,22 @@ class TrainingBuilder {
 				// save is rejected against the old one.
 				if (state.modified) this.version.modified = state.modified;
 				if (state.chapters) this.chapters = state.chapters;
+				// Drop anything the server really deleted before the next patch can
+				// name it. `state.deleted` was returned from the first day and read
+				// by nobody.
+				if (state.deleted && state.deleted.length) {
+					this.forget_deleted(state.deleted);
+					this.render();
+				}
 				this._saved_at = new Date();
 				this.paint_save_state("saved");
 				this.report_rejected(state);
 				if (this._pending_flush) {
 					this._pending_flush = false;
-					this.flush_save();
+					// Chained, not fired and forgotten, so `_inflight` settles only
+					// once the whole queue has drained — that is what lets a caller
+					// waiting on flush_save() know its edits are really stored.
+					return this.flush_save().then(() => state);
 				}
 				return state;
 			})
@@ -671,6 +777,7 @@ class TrainingBuilder {
 				}
 				throw error;
 			});
+		return this._inflight;
 	}
 
 	remerge(sent) {
@@ -791,6 +898,7 @@ class TrainingBuilder {
 			.text(this.course ? this.course.course_title || this.course.name : __("Training Builder"));
 		this.paint_badge();
 		this.paint_save_state(this.has_dirty() ? "dirty" : this._saved_at ? "saved" : "");
+		this.paint_edit_affordances();
 
 		if (!this.version) {
 			this.render_no_draft();
@@ -799,6 +907,43 @@ class TrainingBuilder {
 		this.render_outline();
 		this.render_canvas();
 		this.render_inspector();
+	}
+
+	paint_edit_affordances() {
+		// The "+" that adds a lesson lives in the outline pane's HEAD, and
+		// `render_no_draft` only empties the pane BODY — so on a course with no
+		// draft the button sat there looking perfectly available, and clicking it
+		// was how most authors met the guard. Offering a control and then refusing
+		// it is worse than not offering it: disable it and say why on hover.
+		const editable = this.editable();
+		// Preview needs a lesson to render. With no draft (or a draft with no
+		// lessons yet) it opened a pane that could only ever be empty.
+		const previewable = !!(this.version && (this.lessons || []).length);
+		this.$canvas
+			.find('[data-act="preview"]')
+			.prop("disabled", !previewable)
+			.attr(
+				"title",
+				previewable
+					? __("Preview as learner")
+					: this.version
+						? __("Add a lesson first — there is nothing to preview yet.")
+						: __("This course has no open draft to preview.")
+			);
+
+		this.$outline
+			.find('[data-act="add-lesson"]')
+			.prop("disabled", !editable)
+			.attr(
+				"title",
+				editable
+					? __("Add a lesson")
+					: this.version
+						? __("v{0} is published. Create a new draft version to edit it.", [
+								this.version.version_number,
+							])
+						: __("This course has no open draft. Create one to start editing.")
+			);
 	}
 
 	paint_badge() {
@@ -943,7 +1088,7 @@ class TrainingBuilder {
 				//
 				// A lesson entry with no `name` is an insert; `temp_id` is how the
 				// real name is matched back out of `created_lessons`.
-				this.flush_save().then(() =>
+				this.save_then(__("Adding the lesson")).then(() =>
 					frappe
 						.call({
 							method: "erpnext_enhancements.api.training_author.save_draft_version",
@@ -970,7 +1115,10 @@ class TrainingBuilder {
 							// how the rail and the database drift apart.
 							this.reload(name);
 						})
-				);
+				)
+					// Already reported by save_then; marked handled so a failed save is
+					// not also an unhandled rejection in the console.
+					.catch(() => {});
 			},
 		});
 		dialog.show();
@@ -982,8 +1130,46 @@ class TrainingBuilder {
 		if (this.dirty.deleted_lessons.indexOf(lesson.name) === -1) {
 			this.dirty.deleted_lessons.push(lesson.name);
 		}
+		// Move off the lesson being deleted. Only the rail row used to change: the
+		// canvas kept painting its blocks and the inspector kept its Title/Summary
+		// enabled, so the obvious next action — tidy up the thing you are looking
+		// at — queued a patch against a lesson the next autosave was about to
+		// delete. The server then 404s on that name and rolls back the WHOLE
+		// payload, `remerge` puts the doomed patch straight back, and the retry
+		// loop repeats every four seconds for the rest of the session, taking
+		// every other lesson's edits down with it.
+		if (this.lesson_name === lesson.name) {
+			const survivor = (this.lessons || []).find(
+				(row) => row.name !== lesson.name && !this.removed_lessons[row.name]
+			);
+			this.lesson_name = survivor ? survivor.name : null;
+			this.block_key = null;
+			this.checkpoint_key = null;
+		}
 		this.schedule_save();
-		this.render_outline();
+		this.render();
+	}
+
+	forget_deleted(names) {
+		// A lesson the server has actually deleted must leave the client's world
+		// entirely. Leaving it in `this.lessons` let a later edit address a dead
+		// name, and left "Undo" offering to restore something that no longer
+		// exists — it un-greyed the row and did nothing else.
+		const gone = new Set(names || []);
+		if (!gone.size) return;
+		this.lessons = (this.lessons || []).filter((row) => !gone.has(row.name));
+		gone.forEach((name) => {
+			delete this.removed_lessons[name];
+			delete this.dirty.lessons[name];
+		});
+		this.dirty.deleted_lessons = (this.dirty.deleted_lessons || []).filter(
+			(name) => !gone.has(name)
+		);
+		if (gone.has(this.lesson_name)) {
+			this.lesson_name = this.lessons.length ? this.lessons[0].name : null;
+			this.block_key = null;
+			this.checkpoint_key = null;
+		}
 	}
 
 	restore_lesson(lesson) {
@@ -2171,7 +2357,7 @@ class TrainingBuilder {
 				// Reload rather than splice the row in: the server minted the
 				// key, the row name and the provenance stamps, and guessing any
 				// of them here is how the pool and the drawer drift apart.
-				this.flush_save().then(() => this.reload());
+				this.save_then(__("Reloading after the accepted draft")).then(() => this.reload()).catch(() => {});
 			});
 	}
 
@@ -2351,6 +2537,14 @@ class TrainingBuilder {
 			})
 			.catch(() => {
 				$root.html(`<div class="tb-denied">${__("The learner player did not load.")}</div>`);
+			})
+			.catch((error) => {
+				// Without this the pane just stayed blank forever: the promise
+				// rejected, nothing was listening, and the author had no way to tell
+				// a broken preview from a lesson that renders to nothing.
+				$root.html(
+					`<div class="tb-denied">${__("The learner player could not be loaded, so this preview is not available.")}<br>${frappe.utils.escape_html(String((error && error.message) || ""))}</div>`
+				);
 			});
 	}
 
@@ -2375,9 +2569,32 @@ class TrainingBuilder {
 	}
 
 	load_player() {
+		// Deliberately NOT frappe.require. `frappe.assets.extn()` works out an
+		// asset's type by splitting the URL on "?" and taking the LAST segment, so
+		// a cache-busted "/assets/.../player.js?v=1.218.0" reports its extension as
+		// "0" and matches neither the js branch nor the css branch. The file is
+		// then silently never loaded, `window.TR` never appears, and every Preview
+		// fails — 100% of the time, since the bust token is always present.
+		//
+		// Dropping the token is not the fix: raw /assets paths are served immutable
+		// for a year with no content hash (see public/README.md), so without it an
+		// edit never reaches a browser that already cached the old copy. This repo
+		// has shipped that bug twice. So load them by hand and keep the token.
+		//
+		// `async = false` on a dynamically inserted script preserves execution
+		// order between these scripts, which matters: player.js expects blocks,
+		// video and quiz to have registered themselves on window.TR first.
+		if (this._player_promise) return this._player_promise;
 		const version = (frappe.boot.versions && frappe.boot.versions.erpnext_enhancements) || "0";
-		const assets = TB_PLAYER_ASSETS.map((path) => path + "?v=" + encodeURIComponent(version));
-		return Promise.resolve(frappe.require(assets));
+		this._player_promise = Promise.all(
+			TB_PLAYER_ASSETS.map((path) => tb_load_asset(path + "?v=" + encodeURIComponent(version)))
+		).catch((error) => {
+			// Cleared so a retry can genuinely retry rather than replaying a
+			// rejected promise for the rest of the session.
+			this._player_promise = null;
+			throw error;
+		});
+		return this._player_promise;
 	}
 
 	// Compatibility shims for two joins between the Phase-2 files that do not
@@ -2835,8 +3052,18 @@ class TrainingBuilder {
 			.appendTo($shell);
 		const $root = $('<div class="tb-preview-root"></div>').appendTo($shell);
 
-		this.load_player().then(() => {
-			if (!window.TR || typeof window.TR.Video !== "function") return;
+		this.load_player()
+			.catch((error) => {
+				$root.html(
+					`<div class="tb-denied">${__("The learner player could not be loaded, so this checkpoint cannot be tested.")}<br>${frappe.utils.escape_html(String((error && error.message) || ""))}</div>`
+				);
+				throw error;
+			})
+			.then(() => {
+			if (!window.TR || typeof window.TR.Video !== "function") {
+				$root.html(`<div class="tb-denied">${__("The learner player did not load.")}</div>`);
+				return;
+			}
 			const transport = this.preview_transport(lesson);
 			// Only the checkpoint under test is offered, so the run-up cannot
 			// stumble into an earlier pin and answer a different question.
@@ -2866,7 +3093,10 @@ class TrainingBuilder {
 					/* nothing to play */
 				}
 			});
-		});
+			})
+			// Already reported in the pane above; marked handled so it is not also
+			// an unhandled rejection.
+			.catch(() => {});
 	}
 
 	// ----- version actions -------------------------------------------------
@@ -2880,7 +3110,7 @@ class TrainingBuilder {
 					fieldname: "change_type",
 					fieldtype: "Select",
 					label: __("Change type"),
-					options: ["", "Minor Edit", "Material Change"].join("\n"),
+					options: ["", TB_MINOR_EDIT, TB_MATERIAL_CHANGE].join("\n"),
 					description: __(
 						"A material change supersedes existing completions and raises retakes. It can be decided at publish time instead."
 					),
@@ -2901,8 +3131,11 @@ class TrainingBuilder {
 	}
 
 	submit_for_review() {
-		if (!this.version) return;
-		this.flush_save().then(() =>
+		// Not a bare `return`: from the ⋯ menu with no draft loaded this did
+		// nothing at all -- no alert, no message, no state change -- which reads as
+		// a broken button rather than as "there is nothing to send".
+		if (!this.version) return this.guard_editable();
+		this.save_then(__("Sending for review")).then(() =>
 			frappe
 				.call({
 					method: "erpnext_enhancements.api.training_author.submit_for_review",
@@ -2912,11 +3145,12 @@ class TrainingBuilder {
 					frappe.show_alert({ message: __("Sent for review."), indicator: "green" });
 					this.reload();
 				})
-		);
+		)
+			.catch(() => {});
 	}
 
 	publish() {
-		if (!this.version) return;
+		if (!this.version) return this.guard_editable();
 		if (!this.can_publish) {
 			frappe.msgprint(__("Only a Training Manager can publish a version."));
 			return;
@@ -2929,7 +3163,7 @@ class TrainingBuilder {
 					fieldtype: "Select",
 					label: __("Change type"),
 					reqd: 1,
-					options: ["Minor Edit", "Material Change"].join("\n"),
+					options: [TB_MINOR_EDIT, TB_MATERIAL_CHANGE].join("\n"),
 					description: __(
 						"Material Change supersedes every completion of the previous version and raises a retake for each. Minor Edit leaves them valid."
 					),
@@ -2939,7 +3173,7 @@ class TrainingBuilder {
 			primary_action_label: __("Publish"),
 			primary_action: (values) => {
 				dialog.hide();
-				this.flush_save().then(() =>
+				this.save_then(__("Publishing")).then(() =>
 					frappe
 						.call({
 							method: "erpnext_enhancements.api.training_author.publish_version",
@@ -2959,7 +3193,8 @@ class TrainingBuilder {
 							});
 							this.reload();
 						})
-				);
+				)
+					.catch(() => {});
 			},
 		});
 		dialog.show();
@@ -2967,6 +3202,26 @@ class TrainingBuilder {
 }
 
 // ----- small helpers -------------------------------------------------------
+
+function tb_load_asset(url) {
+	return new Promise((resolve, reject) => {
+		const is_css = url.split("?")[0].endsWith(".css");
+		const selector = is_css ? `link[data-tb-asset="${url}"]` : `script[data-tb-asset="${url}"]`;
+		if (document.querySelector(selector)) return resolve();
+		const el = document.createElement(is_css ? "link" : "script");
+		el.setAttribute("data-tb-asset", url);
+		if (is_css) {
+			el.rel = "stylesheet";
+			el.href = url;
+		} else {
+			el.async = false;
+			el.src = url;
+		}
+		el.onload = () => resolve();
+		el.onerror = () => reject(new Error(__("Could not load {0}", [url])));
+		document.head.appendChild(el);
+	});
+}
 
 function tb_mmss(seconds) {
 	const total = Math.max(0, Math.round(Number(seconds) || 0));
