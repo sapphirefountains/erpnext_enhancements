@@ -728,6 +728,13 @@ after_migrate = [
 	# at the app root) and a Print Format needs a real Module Def, so it lands in the
 	# catch-all. Idempotent + guarded like the others.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_enhancements_core_print_formats",
+	# enhancements_core: the three customer-facing sales formats — Quotation, Sales
+	# Order, Sales Invoice (WI-020). Same module and same reason as the Purchase Order
+	# format above; selling has no module of its own here either. These are what the
+	# customer receives from 2027-01-01, and before this they fell back to the stock
+	# unbranded `* Standard` formats. Like the certificate below, this MUST sit ABOVE
+	# ensure_chrome_pdf_generator so that function sees them.
+	"erpnext_enhancements.enhancements_core.setup_sales_print_formats.ensure_sales_print_formats",
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",

@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.240.0] - 2026-08-03
+
+### Added
+
+- **Customers now get a branded quote, order and invoice** (WI-020). There were no print
+  formats for Quotation, Sales Order or Sales Invoice at all — every sales document fell
+  back to the stock `* Standard` layout, which is unbranded and shows internal fields.
+  From 2027-01-01 these are what leaves the building, so this is a hard cutover gate.
+
+  Three Jinja formats — `Quotation - Sapphire`, `Sales Order - Sapphire`,
+  `Sales Invoice - Sapphire` — following the Purchase Order format shipped in v1.201.0
+  exactly: same `after_migrate` upsert, same print-safe CSS rules, same palette. Registered
+  **above** `ensure_chrome_pdf_generator` in the hook list, which is last on purpose and
+  has to see them to point them at the right PDF backend.
+
+  <the trap this design exists to avoid: a template with `custom_format = 1` gets **no**
+  letterhead injected — Frappe builds the `#header-html` block only for *standard* formats.
+  The Purchase Order format went to suppliers unbranded for a month on exactly that, so all
+  three render `letter_head` themselves and a test asserts it.>
+
+  Content decisions worth knowing: the quotation prints its **validity** prominently,
+  because a quote with no visible expiry is the one that comes back accepted at last
+  year's price. The invoice prints **Amount Due** as well as the total, since a
+  part-paid invoice showing only the grand total is the most common cause of a customer
+  paying twice. The **Stripe pay link renders only when one exists** — no placeholder
+  button, because an unusable "Pay now" is worse than none.
+
+- **The sales formats are compiled *and rendered* in CI**
+  (`tests/test_sales_print_formats.py`, 23 tests). A print format fails in the worst
+  available way: the deploy succeeds, nothing logs, and the defect is discovered by a
+  customer holding the PDF. So the suite renders all three against sample documents —
+  one item, ten items, no items, no taxes, and every optional field blank at once — and
+  checks the failure modes that are silent: the letterhead, `description` rendered as
+  markup while `item_name` stays escaped, no flexbox or grid (the PDF backend on this
+  host does not lay them out reliably), a table header that repeats across pages, and
+  every `fmt_money` carrying an explicit currency.
+
+  It also asserts the Quotation template never references `doc.project` — **Quotation has
+  no `project` column on this site**, and Jinja would render it blank rather than error.
+
 ## [1.239.1] - 2026-08-03
 
 ### Added

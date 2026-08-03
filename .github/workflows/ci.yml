@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip httpx pytest
+      - run: python -m pip install --upgrade pip httpx pytest jinja2
       - run: python -m unittest test_sync_time_kiosk.py -v
       - name: AI gate + assistant-tool contract + integrations health + device mgmt
         run: >-
@@ -77,6 +77,12 @@ jobs:
       # appears. v1.146.0 shipped exactly that across seven widgets.
       - name: Workspace structure (content <-> child rows, WI-018)
         run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
+      # The customer-facing sales formats. A print format fails in the worst way --
+      # the deploy succeeds, nothing logs, and the defect is found by a customer
+      # holding the PDF. This compiles AND renders all three against sample documents
+      # (1 item, 10 items, no items, no taxes, every optional field blank).
+      - name: Sales print formats (WI-020, bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
