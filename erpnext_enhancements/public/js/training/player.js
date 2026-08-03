@@ -161,15 +161,19 @@
 		// lose the seconds since the last beat.
 		var flushers = [];
 
-		var shell = el("div", "tr-shell");
+		// NO second .tr-shell here. The Jinja template already gives the mount
+		// point that class, and this used to build another one inside it — so
+		// .tr-shell's grid applied twice, nested, and at >= 900px the inner grid
+		// was laid out inside one 260px column of the outer one. The result was
+		// two narrow columns of one-word-per-line text, which is what the page
+		// actually looked like. These three are direct children of the mount.
 		var head = el("header", "tr-subhead");
 		var main = el("main", "tr-view");
 		var foot = el("footer", "tr-bottom");
-		shell.appendChild(head);
-		shell.appendChild(main);
-		shell.appendChild(foot);
 		clear(rootEl);
-		rootEl.appendChild(shell);
+		rootEl.appendChild(head);
+		rootEl.appendChild(main);
+		rootEl.appendChild(foot);
 		rootEl.removeAttribute("aria-busy");
 
 		// -------------------------------------------------------------- routing
@@ -232,9 +236,9 @@
 
 		function setBusy(on) {
 			state.busy = !!on;
-			shell.classList.toggle("is-busy", state.busy);
-			if (state.busy) shell.setAttribute("aria-busy", "true");
-			else shell.removeAttribute("aria-busy");
+			rootEl.classList.toggle("is-busy", state.busy);
+			if (state.busy) rootEl.setAttribute("aria-busy", "true");
+			else rootEl.removeAttribute("aria-busy");
 		}
 
 		function fail(node, err) {

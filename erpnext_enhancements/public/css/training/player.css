@@ -11,23 +11,46 @@
  * a form they skim), and every interactive target >= 44px. Only two breakpoints,
  * because every extra one is another layout nobody tests:
  *
- *   >= 900px   the lesson outline moves out of the flow into a left rail
- *   >= 1200px  the shell widens so the video gets the extra pixels
+ *   >= 900px    the column widens to 1000px
+ *   >= 1200px   the column widens to 1280px
  *
- * The sticky bottom bar holds the one action that advances the lesson, and its
- * padding-bottom carries env(safe-area-inset-bottom) so the button is not under
- * the iOS home indicator. .tr-shell reserves matching space at the end of the
- * column; without it the bar covers the last block of every lesson.
+ * CLASS CONTRACT WITH THE SCRIPTS — and read this before editing.
  *
- * Class contract with the player scripts (player.js owns the tree; blocks.js,
- * video.js and quiz.js render into it):
- *   .tr-shell > .tr-header, .tr-outline, .tr-main, .tr-bar
- *   blocks    .tr-block with a .tr-block--{text,image,pdf,video,embed} modifier
- *   video     .tr-video-wrap > .tr-video, plus .tr-coverage
- *   checkpoint.tr-checkpoint (overlay) > .tr-checkpoint-card
- *   quiz      .tr-quiz > .tr-quiz-question > .tr-options > .tr-option
- * State classes are .is-active / .is-done / .is-locked / .is-selected /
- * .is-correct / .is-wrong, so a state never collides with a block type.
+ * This file was once written against a vocabulary the scripts do not use. Of the
+ * 138 classes they emit, 130 had no rule here; of the 43 defined here, 35 were
+ * emitted by nothing. The stylesheet was describing an earlier design (.tr-header,
+ * .tr-main, .tr-bar, .tr-coverage, .tr-checkpoint, .tr-block--video) while the
+ * scripts had moved to another (.tr-subhead, .tr-view, .tr-bottom, .tr-video-meter,
+ * .tr-video-takeover, .tr-block-video). The page still looked styled, because the
+ * eight classes that did overlap included :root and .tr-shell — and that was worse
+ * than no styling, since .tr-shell was a grid and both the template and player.js
+ * put it on a different element, nesting the grid inside one 260px column of
+ * itself. Every text node wrapped one word per line.
+ *
+ * tests/test_training_player_css_contract.py now asserts, on every CI run, that
+ * every class the scripts render has a rule here and that no rule here styles an
+ * element nothing renders. Nothing at runtime catches this: an unstyled element is
+ * not an error, it just renders wrongly, and only a person looking at the page can
+ * tell. Keep that test passing and the two halves cannot drift again.
+ *
+ * The tree the scripts actually build:
+ *   #training-root.tr-shell            (the Jinja mount; player.js adds no wrapper)
+ *     > header.tr-subhead              view title, back, lesson meter
+ *     > main.tr-view                   the view body
+ *     > footer.tr-bottom               the one action that advances the lesson
+ *   blocks     .tr-block + .tr-block-{text,image,pdf,video,embed,callout,file}
+ *   video      .tr-video, .tr-video-meter*, .tr-video-takeover (checkpoint overlay)
+ *   quiz       .tr-quiz > .tr-q > .tr-q-options > .tr-opt, then .tr-review/.tr-rev
+ * State classes are .is-* so a state never collides with a block type.
+ *
+ * Two scripts also inject a small fallback stylesheet into <head> at mount
+ * (video.js's #tr-video-structural-css, quiz.js's ensureStyles). Those land AFTER
+ * this file and win equal-specificity ties, which is why several rules below are
+ * deliberately compounded (.tr-quiz .tr-opt rather than .tr-opt).
+ *
+ * The sticky bottom bar carries env(safe-area-inset-bottom) so the button is not
+ * under the iOS home indicator; .tr-shell reserves matching space at the end of
+ * the column, or the bar covers the last block of every lesson.
  */
 
 :root {
@@ -72,6 +95,8 @@
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* ------------------------------------------------------------------- basics */
+
 .tr-boot,
 .tr-empty {
 	text-align: center;
@@ -83,328 +108,6 @@
 	text-align: center;
 	color: #e03636;
 	padding: 48px 16px;
-}
-
-/* ------------------------------------------------------------------ header */
-
-.tr-header {
-	position: sticky;
-	top: 0;
-	z-index: 20;
-	background: var(--tr-bg);
-	padding: 14px 4px 10px;
-}
-
-.tr-course-title {
-	font-size: 1.3rem;
-	font-weight: 700;
-	margin: 0;
-}
-
-.tr-course-sub {
-	color: var(--tr-muted);
-	font-size: 0.9rem;
-	margin-top: 2px;
-}
-
-/* Course-level progress. The label is written by player.js and must say
-   "watched", never "attended" or "completed" — coverage measures time spent,
-   not attention (see training/README.md). */
-.tr-progress {
-	height: 8px;
-	border-radius: 999px;
-	background: var(--tr-surface-alt);
-	overflow: hidden;
-	margin-top: 10px;
-}
-
-.tr-progress-fill {
-	height: 100%;
-	width: 0;
-	background: var(--tr-accent);
-	transition: width 240ms ease;
-}
-
-.tr-progress-label {
-	color: var(--tr-muted);
-	font-size: 0.8rem;
-	margin-top: 4px;
-}
-
-/* ----------------------------------------------------------------- outline */
-
-.tr-outline {
-	list-style: none;
-	margin: 0 0 16px;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.tr-outline-item {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	width: 100%;
-	min-height: 44px;
-	padding: 10px 12px;
-	border: 1px solid var(--tr-border);
-	border-radius: 10px;
-	background: var(--tr-surface);
-	color: var(--tr-text);
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
-	touch-action: manipulation;
-}
-
-.tr-outline-item.is-active {
-	border-color: var(--tr-accent);
-	background: var(--tr-accent-soft);
-	font-weight: 650;
-}
-
-.tr-outline-item.is-locked {
-	color: var(--tr-muted);
-	cursor: not-allowed;
-}
-
-.tr-outline-mark {
-	flex: 0 0 auto;
-	width: 20px;
-	text-align: center;
-	color: var(--tr-muted);
-}
-
-.tr-outline-item.is-done .tr-outline-mark { color: #2e9e4f; }
-
-/* ------------------------------------------------------------------ blocks */
-
-.tr-lesson-title {
-	font-size: 1.15rem;
-	font-weight: 700;
-	margin: 8px 0 12px;
-}
-
-.tr-block {
-	background: var(--tr-surface);
-	border: 1px solid var(--tr-border);
-	border-radius: var(--tr-radius);
-	box-shadow: var(--tr-shadow);
-	padding: 16px;
-	margin-bottom: 14px;
-	overflow-wrap: break-word;
-}
-
-.tr-block--video,
-.tr-block--embed { padding: 12px; }
-
-.tr-block h1, .tr-block h2, .tr-block h3 { line-height: 1.25; margin: 0 0 8px; }
-.tr-block p { margin: 0 0 10px; }
-.tr-block p:last-child { margin-bottom: 0; }
-.tr-block img { max-width: 100%; height: auto; border-radius: 8px; display: block; }
-
-/* PDFs and external embeds: a phone cannot usefully render a paged document in
-   an iframe, so the PDF block is a download/open card on small screens and the
-   embed keeps a 16/9 box. */
-.tr-block--pdf .tr-pdf-open {
-	display: inline-flex;
-	align-items: center;
-	min-height: 44px;
-	padding: 10px 16px;
-	border-radius: 10px;
-	background: var(--tr-accent-soft);
-	color: var(--tr-text);
-	text-decoration: none;
-	font-weight: 600;
-}
-
-.tr-video-wrap,
-.tr-embed-wrap {
-	position: relative;
-	width: 100%;
-	aspect-ratio: 16 / 9;
-	background: #000;
-	border-radius: 10px;
-	overflow: hidden;
-}
-
-.tr-video,
-.tr-embed-wrap iframe {
-	width: 100%;
-	height: 100%;
-	display: block;
-	border: 0;
-}
-
-/* Watch coverage for one video block. Label it "watched". */
-.tr-coverage {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-top: 8px;
-	color: var(--tr-muted);
-	font-size: 0.82rem;
-}
-
-.tr-coverage-bar {
-	flex: 1 1 auto;
-	height: 6px;
-	border-radius: 999px;
-	background: var(--tr-surface-alt);
-	overflow: hidden;
-}
-
-.tr-coverage-fill {
-	height: 100%;
-	width: 0;
-	background: var(--tr-accent);
-	transition: width 240ms ease;
-}
-
-/* An External Embed block cannot be coverage-gated (no timeupdate across an
-   origin) — the server waives the gate and the player says so here. */
-.tr-gate-waived {
-	color: var(--tr-muted);
-	font-size: 0.8rem;
-	margin-top: 6px;
-}
-
-/* -------------------------------------------------------------- checkpoint */
-
-/* The checkpoint overlay covers the video only, not the page: the learner must
-   answer before playback resumes, but must still be able to scroll back to the
-   material above it. */
-.tr-checkpoint {
-	position: absolute;
-	inset: 0;
-	z-index: 5;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	padding: 12px;
-	background: rgba(0, 0, 0, 0.72);
-}
-
-.tr-checkpoint-card {
-	width: 100%;
-	max-width: 460px;
-	max-height: 100%;
-	overflow-y: auto;
-	background: var(--tr-surface);
-	border-radius: var(--tr-radius);
-	padding: 16px;
-	box-shadow: var(--tr-shadow);
-}
-
-.tr-checkpoint-card .tr-question { font-weight: 650; margin-bottom: 10px; }
-
-.tr-explanation {
-	margin-top: 10px;
-	padding: 10px 12px;
-	border-radius: 10px;
-	background: var(--tr-surface-alt);
-	font-size: 0.92rem;
-}
-
-/* -------------------------------------------------------------------- quiz */
-
-.tr-quiz-question {
-	background: var(--tr-surface);
-	border: 1px solid var(--tr-border);
-	border-radius: var(--tr-radius);
-	padding: 16px;
-	margin-bottom: 12px;
-}
-
-.tr-question-index {
-	color: var(--tr-muted);
-	font-size: 0.8rem;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-}
-
-.tr-question { margin: 4px 0 12px; font-weight: 650; }
-
-.tr-options {
-	list-style: none;
-	margin: 0;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-}
-
-.tr-option {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	width: 100%;
-	min-height: 44px;
-	padding: 10px 14px;
-	border: 1px solid var(--tr-border);
-	border-radius: 10px;
-	background: var(--tr-surface);
-	color: var(--tr-text);
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
-	touch-action: manipulation;
-}
-
-.tr-option.is-selected {
-	border-color: var(--tr-accent);
-	background: var(--tr-accent-soft);
-}
-
-/* Graded state. Literal colours: these are meaning, not theme. */
-.tr-option.is-correct {
-	border-color: #2e9e4f;
-	background: rgba(46, 158, 79, 0.12);
-}
-
-.tr-option.is-wrong {
-	border-color: #e03636;
-	background: rgba(224, 54, 54, 0.12);
-}
-
-.tr-option[disabled] { cursor: default; opacity: 0.9; }
-
-.tr-quiz-result {
-	background: var(--tr-surface);
-	border: 1px solid var(--tr-border);
-	border-radius: var(--tr-radius);
-	padding: 16px;
-	text-align: center;
-}
-
-.tr-score { font-size: 2rem; font-weight: 700; line-height: 1.1; }
-.tr-quiz-result.is-passed .tr-score { color: #2e9e4f; }
-.tr-quiz-result.is-wrong .tr-score { color: #e03636; }
-
-/* ---------------------------------------------------------------- controls */
-
-/* Sticky action bar: one primary action, always reachable with a thumb. */
-.tr-bar {
-	position: fixed;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	z-index: 30;
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	background: var(--tr-surface);
-	border-top: 1px solid var(--tr-border);
-	padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-}
-
-.tr-bar-status {
-	flex: 1 1 auto;
-	min-width: 0;
-	color: var(--tr-muted);
-	font-size: 0.85rem;
 }
 
 .tr-btn {
@@ -422,14 +125,6 @@
 	touch-action: manipulation;
 }
 
-.tr-btn--primary {
-	border-color: var(--tr-accent);
-	background: var(--tr-accent);
-	color: var(--tr-accent-text);
-}
-
-.tr-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-
 .tr-btn:active:not([disabled]) { filter: brightness(0.94); }
 
 /* Why the primary action is disabled — a locked "Complete" with no reason is a
@@ -443,64 +138,2245 @@
 	font-size: 0.85rem;
 }
 
-.tr-toast {
-	position: fixed;
-	left: 50%;
-	transform: translateX(-50%);
-	bottom: calc(84px + env(safe-area-inset-bottom));
-	z-index: 40;
-	max-width: calc(100% - 32px);
-	padding: 10px 16px;
-	border-radius: 999px;
-	background: var(--tr-text);
-	color: var(--tr-bg);
-	font-size: 0.88rem;
+/* --------------------------------------------------------------- block card */
+
+.tr-block {
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	box-shadow: var(--tr-shadow);
+	padding: 16px;
+	margin-bottom: 14px;
+	overflow-wrap: break-word;
+}
+
+.tr-block h1, .tr-block h2, .tr-block h3 { line-height: 1.25; margin: 0 0 8px; }
+.tr-block p { margin: 0 0 10px; }
+.tr-block p:last-child { margin-bottom: 0; }
+.tr-block img { max-width: 100%; height: auto; border-radius: 8px; display: block; }
+
+/* ------------------------------------------------------------------ outline */
+
+.tr-outline {
+	list-style: none;
+	margin: 0 0 16px;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+/* -------------------------------------------------------------- video media */
+
+.tr-video {
+	width: 100%;
+	height: auto;
+	display: block;
+	border: 0;
+	border-radius: 8px;
+	background: #000;
+}
+
+/* ------------------------------------------------------------------- shell */
+
+/*
+ * player.js appends exactly three direct children to the mount (.tr-shell):
+ *   <header class="tr-subhead">  view title, back button, lesson meter
+ *   <main class="tr-view">       the view body
+ *   <footer class="tr-bottom">   the action that advances the lesson
+ * go() clears all three on every view change, so each has to disappear when a
+ * view leaves it empty rather than leave a padded stripe behind.
+ *
+ * Out of scope here, styled in their own sections: the catalog cards and .tr-chip,
+ * the .tr-outline rows, the .tr-block column, and the .tr-result* review screen
+ * that renderResults() and quiz.js share. The .tr-button family is the controls
+ * section's; the only button rules below are placement and the 44px floor.
+ *
+ * NOTE for whoever owns .tr-shell: the @media (min-width: 900px) grid still in
+ * this file places .tr-header/.tr-main/.tr-outline, none of which player.js
+ * emits any more. Left as-is it auto-places the three children above into a
+ * 260px column — the two-narrow-columns bug described in player.js. Nothing in
+ * this section can fix that from the outside, and nothing here touches .tr-shell.
+ */
+
+.tr-subhead {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 14px 0 10px;
+	background: var(--tr-bg);
+}
+
+/* loading() clears the header and appends nothing, so during every fetch the
+   padding alone would push the spinner down by 24px. (Every rendered view does
+   give the header an h1.tr-title, so this only ever fires between views.) */
+.tr-subhead:empty {
+	display: none;
+}
+
+/* Lesson view only — renderLesson() adds .is-sticky after appending the meter,
+   so the title and progress stay on screen while the blocks scroll. The negative
+   side margins cover .tr-shell's 12px gutters; without them content scrolls
+   visibly through the gap on each side of the bar. */
+.tr-subhead.is-sticky {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	margin: 0 -12px;
+	padding: 12px 12px 10px;
+	border-bottom: 1px solid var(--tr-border);
+}
+
+/* Back button + title on one line (course and lesson views only). */
+.tr-subhead-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 44px;
+}
+
+.tr-subhead-row > .tr-button {
+	flex: 0 0 auto;
+	min-height: 44px;
+}
+
+.tr-subhead-row > .tr-title {
+	flex: 1 1 auto;
+	/* Without this a long lesson title refuses to shrink and widens the row. */
+	min-width: 0;
+}
+
+/* The quiz view appends its back button straight to the header with no row
+   wrapper; in the column it would otherwise stretch edge to edge. */
+.tr-subhead > .tr-button {
+	align-self: flex-start;
+	min-height: 44px;
+}
+
+/* One h1 per view: catalog, course, lesson, quiz, results and sign-off all use
+   this class, three of them as a direct child of the header column. */
+.tr-title {
+	margin: 0;
+	font-size: 1.3rem;
+	font-weight: 700;
+	line-height: 1.25;
+	overflow-wrap: break-word;
+}
+
+/* -------------------------------------------------------------------- view */
+
+.tr-view {
+	display: block;
+}
+
+/* go() calls main.focus() so a screen reader is told which view it landed on.
+   That focus is programmatic and must not paint a ring for a mouse user —
+   keyboard users still get the global :focus-visible outline. */
+.tr-view:focus:not(:focus-visible) {
+	outline: none;
+}
+
+/* openCourse() and openLesson() drop a bare recovery button into the view under
+   a .tr-error panel, outside any wrapper. Centred to sit under the centred
+   error rather than orphaned against the left edge. */
+.tr-view > .tr-button {
+	display: block;
+	margin: 0 auto;
+	min-height: 44px;
+}
+
+.tr-loading {
+	text-align: center;
+	color: var(--tr-muted);
+	padding: 48px 16px;
+}
+
+.tr-loading::before {
+	content: "";
+	display: block;
+	width: 22px;
+	height: 22px;
+	margin: 0 auto 12px;
+	border: 2px solid var(--tr-border);
+	border-top-color: var(--tr-accent);
+	border-radius: 50%;
+	animation: tr-spin 700ms linear infinite;
+}
+
+@keyframes tr-spin {
+	to { transform: rotate(360deg); }
+}
+
+.tr-course-summary,
+.tr-lesson-summary {
+	margin: 0 0 16px;
+	color: var(--tr-muted);
+	/* Prose keeps a readable measure once the column widens past 900px. */
+	max-width: 62ch;
+	overflow-wrap: break-word;
+}
+
+/* The lesson's block column. Spacing is deliberately NOT set here: .tr-block
+   carries its own margin-bottom, and a gap on top of it would double every
+   gutter. Flex only so that margin never collapses into the summary above. */
+.tr-blocks {
+	display: flex;
+	flex-direction: column;
+}
+
+/* -------------------------------------------------------------- bottom bar */
+
+/* Sticky, not fixed: it spans the column rather than the viewport and rides up
+   to the bottom of the screen while lesson content scrolls underneath.
+   .tr-shell already reserves ~96px at the end of the column so the bar settles
+   clear of the last block. The side margins cover the shell's 12px gutters.
+   Column layout because four of the six footers (course resume, refusal + OK,
+   results, sign-off) append their buttons straight to <footer> with no wrapper
+   and read as stacked full-width targets on a phone. */
+.tr-bottom {
+	position: sticky;
+	bottom: 0;
+	z-index: 30;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin: 16px -12px 0;
+	padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+	background: var(--tr-surface);
+	border-top: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius) var(--tr-radius) 0 0;
+}
+
+/* The catalog, the loading state, and a course with no open lesson all leave
+   the footer empty; an empty bar is a surface-coloured stripe pinned across the
+   bottom of the screen. */
+.tr-bottom:empty {
+	display: none;
+}
+
+/* Buttons appended straight to the footer: the resume button (course), OK
+   (refusal), Continue / Try again / Back (results), Back to your courses
+   (sign-off). Their appearance belongs to the controls rules — this is only the
+   touch floor, because on a phone this bar is the whole interaction. */
+.tr-bottom > .tr-button {
+	min-height: 44px;
+}
+
+/* role="status" aria-live="polite": either the gate reasons or the ready line. */
+.tr-bottom-status {
+	min-width: 0;
+	font-size: 0.9rem;
+	color: var(--tr-muted);
+}
+
+/* .tr-gate-reasons carries a bottom margin for use inside a view; in the bar and
+   in the refusal box the flex gap already provides it. The shared rule itself is
+   left alone. */
+.tr-bottom-status .tr-gate-reasons,
+.tr-refusal .tr-gate-reasons {
+	margin-bottom: 0;
+}
+
+/* finishLesson()'s catch renders the shared .tr-error panel into the footer,
+   where its full-page 48px padding becomes a 140px stripe with nothing in it.
+   Scoped to the bar only; the panel's own rule is untouched. */
+.tr-bottom > .tr-error {
+	padding: 4px 0;
+	text-align: left;
+}
+
+/* renderBottomBar() puts exactly one button here — quiz or finish, never both.
+   The row survives in case a second ever joins it. */
+.tr-bottom-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.tr-bottom-actions > * {
+	flex: 1 1 auto;
+	min-height: 44px;
+}
+
+/* Not a disabled look. player.js refuses to disable this button on purpose —
+   the local gate is only a guess and a dead button with no way to ask why is
+   how a learner ends up emailing support. A dashed underline hints that the
+   press may come back with a reason, and changes no fill or text contrast. */
+.tr-bottom-actions .tr-button.is-tentative {
+	text-decoration: underline dashed;
+	text-underline-offset: 3px;
+}
+
+/* setBusy() toggles .is-busy on the mount while completeLesson is in flight.
+   The bar is the only thing a learner can press during it, and a second tap
+   sends a second completion. */
+.is-busy .tr-bottom-actions,
+.is-busy .tr-bottom > .tr-button {
+	pointer-events: none;
+	opacity: 0.6;
+}
+
+/* ------------------------------------------------------------------- gates */
+
+/* Semantic, so literal — "ready" must not move with the palette. */
+.tr-gate-ok {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: #2e9e4f;
+	font-weight: 600;
+}
+
+.tr-gate-ok::before {
+	content: "✓";
+	font-weight: 700;
+}
+
+/* The server refused the finish: role="alert", replaces the whole bar, and
+   reads as a stop rather than as advice. Body size stays at 16px — the reasons
+   inside are instructions the learner has to act on. */
+.tr-refusal {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid #e03636;
+	border-radius: 10px;
+	background: rgba(224, 54, 54, 0.1);
+	color: var(--tr-text);
+}
+
+.tr-refusal > p {
+	margin: 0;
+	color: #e03636;
+	font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- sign-off */
+
+.tr-signoff {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 16px;
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
 	box-shadow: var(--tr-shadow);
 }
 
-:focus-visible {
-	outline: 2px solid var(--tr-accent);
-	outline-offset: 2px;
+.tr-signoff > p {
+	margin: 0;
+}
+
+/* Course-authored instructions: what the supervisor expects of the learner, so
+   it is lifted out of the surrounding paragraphs. */
+.tr-signoff-what {
+	padding: 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+}
+
+.tr-signoff-note {
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+}
+
+/* ------------------------------------------------------------------- meter */
+
+/* role="progressbar", built by meter(). Used in the lesson header and inside a
+   catalog card, so it carries no outer margin — the context spaces it, and the
+   header's flex gap already does. */
+.tr-meter {
+	box-sizing: border-box;
+	height: 8px;
+	/* A 1px edge because the track sits on --tr-bg in the header and on
+	   --tr-surface in a card, and --tr-surface-alt is near-invisible on the first. */
+	border: 1px solid var(--tr-border);
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	overflow: hidden;
+}
+
+/* Width is set inline by meter() and starts at 0 — never set it here. */
+.tr-meter-fill {
+	height: 100%;
+	border-radius: inherit;
+	background: var(--tr-accent);
+	transition: width 240ms ease;
+}
+
+/* --------------------------------------------------------------- utilities */
+
+/* Visible to a screen reader, not to the eye — the lock/done state of an outline
+   row and the correct/wrong mark on a result row are glyphs marked aria-hidden,
+   and this is the text that replaces them. */
+.tr-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.tr-progress-fill,
-	.tr-coverage-fill { transition: none; }
+	.tr-meter-fill { transition: none; }
+	/* The ring stays as a static "still working" mark. */
+	.tr-loading::before { animation: none; }
+}
+
+/* ------------------------------------------------------- block type + buttons */
+
+/* Block type modifiers. Most types want the card exactly as .tr-block gives it;
+   these three do not, because their content already carries its own edge. */
+.tr-block-video,
+.tr-block-embed { padding: 12px; }
+
+/* A full-bleed image reads better without the card's inner gutter fighting its
+   own rounded corners. */
+.tr-block-image { padding: 12px; }
+
+.tr-block-text,
+.tr-block-pdf,
+.tr-block-file { /* the default card is correct for these */ }
+
+/* player.js's button variants. The base .tr-button below already carries the
+   44px floor, the border and the type; these only change emphasis. */
+.tr-button-primary {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+}
+
+/* Back / secondary navigation. Quiet, but still a 44px target — "← All courses"
+   is pressed as often as anything else on the page. */
+.tr-button-quiet {
+	border-color: transparent;
+	background: transparent;
+	color: var(--tr-muted);
+	padding-left: 10px;
+	padding-right: 10px;
+}
+
+/* The resume action on the course view: it is the only thing a learner comes to
+   that screen to press, so it spans the column rather than sitting in a corner. */
+.tr-button-wide {
+	display: block;
+	width: 100%;
+	text-align: center;
 }
 
 /* ------------------------------------------------------------- breakpoints */
 
-/* >= 900px: the outline leaves the flow and becomes a left rail. Below this it
-   stays a plain stacked list above the lesson — a rail on a phone is a drawer,
-   and a drawer is a whole interaction to build and test. */
+/* Nothing in the shell moves at 900px except the action bar; the column simply
+   widens (owned by .tr-shell). Stacked, the bar eats a third of a laptop screen,
+   so the status and the action sit side by side once there is room. */
 @media (min-width: 900px) {
-	.tr-shell {
-		max-width: 1000px;
-		display: grid;
-		grid-template-columns: 260px minmax(0, 1fr);
-		grid-template-areas:
-			"header header"
-			"outline main";
-		column-gap: 24px;
-		align-items: start;
+	.tr-bottom {
+		flex-direction: row;
+		align-items: center;
+		justify-content: flex-end;
 	}
 
-	.tr-header { grid-area: header; }
-	.tr-main { grid-area: main; }
+	.tr-bottom-status {
+		flex: 1 1 auto;
+	}
 
-	.tr-outline {
-		grid-area: outline;
-		position: sticky;
-		top: 96px;
-		max-height: calc(100vh - 180px);
-		overflow-y: auto;
+	.tr-bottom-actions {
+		flex: 0 0 auto;
+	}
+
+	/* The refusal box and its OK button become one row; the reasons take the
+	   slack so the button stays a button. */
+	.tr-bottom > .tr-refusal {
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 }
 
-/* >= 1200px: nothing moves; the column simply widens so the video is bigger. */
-@media (min-width: 1200px) {
-	.tr-shell {
-		max-width: 1280px;
-		grid-template-columns: 300px minmax(0, 1fr);
+/* ------------------------------------------------------------------ catalog */
+
+/* The course grid. One column on a phone; two from 900px — the only widths this
+   file knows about. */
+.tr-cards {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 14px;
+	margin: 4px 0 16px;
+}
+
+@media (min-width: 900px) {
+	.tr-cards {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px;
 	}
+}
+
+.tr-card {
+	display: flex;
+	flex-direction: column;
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	box-shadow: var(--tr-shadow);
+	/* Clips the cover to the card's rounded top corners. */
+	overflow: hidden;
+}
+
+.tr-card-cover {
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	height: auto;
+	aspect-ratio: 16 / 9;
+	object-fit: cover;
+	/* Holds the box open while a lazy cover loads, so the grid does not reflow
+	   under the reader's thumb. */
+	background: var(--tr-surface-alt);
+}
+
+.tr-card-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 16px;
+	/* Fills the card so .tr-card-actions can be pushed to the bottom: side by
+	   side at 900px, neighbouring cards carry unequal summaries and their
+	   buttons would otherwise land at different heights. */
+	flex: 1 1 auto;
+}
+
+.tr-card-title {
+	margin: 0;
+	font-size: 1.15rem;
+	font-weight: 700;
+	line-height: 1.25;
+	overflow-wrap: break-word;
+}
+
+.tr-card-summary {
+	margin: 0;
+	color: var(--tr-muted);
+	overflow-wrap: break-word;
+}
+
+.tr-card-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+/* The shared meter() helper: this card's progress bar and, with a different
+   label, the lesson subhead. (It is the renamed .tr-progress.) player.js puts
+   role=progressbar and aria-valuenow on the wrapper, so the bar itself carries
+   no text and the fill is written as an inline width. No transition: the fill
+   is set once when the view renders and is never updated in place — animating
+   it would only animate from 0 on first paint. */
+.tr-meter {
+	height: 8px;
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	overflow: hidden;
+}
+
+.tr-meter-fill {
+	height: 100%;
+	width: 0;
+	background: var(--tr-accent);
+}
+
+/* Reads out the meter immediately above it, so it is pulled back against the
+   body's 10px gap rather than floating between the two. */
+.tr-card-progress {
+	margin: -4px 0 0;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-card-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin-top: auto;
+	padding-top: 6px;
+}
+
+/* Start / Resume / Review — full width when it is alone, sharing the row with
+   the awaiting-sign-off chip when there is one. Two-class specificity so this
+   layout beats whatever flex the shared .tr-button rule sets; 44px restated
+   because this is the only tap target on the card. */
+.tr-card-actions .tr-button {
+	flex: 1 1 auto;
+	min-height: 44px;
+}
+
+/* Status pills: weight, due date, minutes, and the outline's per-lesson meta.
+   Non-interactive, so the 44px rule does not apply — they must not read as
+   tappable. */
+.tr-chip {
+	display: inline-flex;
+	align-items: center;
+	padding: 4px 10px;
+	border: 1px solid var(--tr-border);
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.tr-chip-required {
+	background: var(--tr-accent-soft);
+	border-color: var(--tr-accent);
+	color: var(--tr-text);
+}
+
+/* Optional and pending both mean "no pressure": lighter than Required without
+   spending a second colour on the distinction. */
+.tr-chip-optional,
+.tr-chip-pending {
+	border-style: dashed;
+}
+
+/* A date more than a week out is information, not a warning — full contrast, no
+   colour. */
+.tr-chip-due {
+	color: var(--tr-text);
+}
+
+.tr-chip-due-soon {
+	background: var(--tr-accent-soft);
+	border-color: var(--tr-accent);
+	color: var(--tr-text);
+}
+
+/* Literal, like .tr-error: an overdue required course is a compliance failure
+   and must not change meaning when someone edits the palette. */
+.tr-chip-overdue {
+	background: rgba(224, 54, 54, 0.12);
+	border-color: #e03636;
+	color: #e03636;
+	font-weight: 700;
+}
+
+/* quiz.js's ensureStyles() appends a <style id="tr-quiz-styles"> to
+   document.head the first time a quiz mounts, and never removes it. It declares
+   a bare `.tr-chip` for its own pass/fail pills — display:inline-block,
+   padding:.125rem .625rem, font-size:.8125rem — which outranks the rule above on
+   source order alone, so from the first quiz onwards every catalog and outline
+   chip silently changes shape. Only the three properties it sets need restating,
+   at container specificity where they survive it; colour and border it never
+   touches. These are the only three places player.js calls chip(). */
+.tr-card-chips .tr-chip,
+.tr-card-actions .tr-chip,
+.tr-outline-meta .tr-chip {
+	display: inline-flex;
+	align-items: center;
+	padding: 4px 10px;
+	font-size: 0.85rem;
+}
+
+/* "Waiting for your supervisor" is a sentence, not a label — let it wrap rather
+   than push the button off the card. */
+.tr-card-actions .tr-chip {
+	flex: 0 1 auto;
+	white-space: normal;
+}
+
+/* ------------------------------------------------------------ outline rows */
+
+/* The only state text a screen reader gets for an outline row and for a graded
+   question: both mark their glyph aria-hidden and put the real word ("Locked",
+   "In progress", "Correct") in one of these. Defined here because player.js
+   emits it in exactly these two components and nowhere else. Not display:none —
+   that would take it out of the accessibility tree, which is the entire point of
+   the span. */
+.tr-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* A chapter heading, rendered as a bare <li> in the same <ol> as the lessons,
+   so it has to opt out of the row treatment entirely. */
+.tr-outline-chapter {
+	margin: 14px 0 2px;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.tr-outline-chapter:first-child {
+	margin-top: 0;
+}
+
+.tr-outline-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	width: 100%;
+	min-height: 44px;
+	padding: 10px 12px;
+	box-sizing: border-box;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+}
+
+/* Status marker (🔒 ✓ ◐ ○). Decoration only — the row is a plain <li>, the tap
+   target is the Open/Review button at its end, and player.js marks this
+   aria-hidden with a .tr-sr-only sibling carrying the word. Note that the
+   glyph is the *whole* of the done / in-progress / not-started distinction:
+   outlineRow() stamps no class for those three, so there is no is-done or
+   is-active hook to colour and none is written here. line-height matches the
+   title so it sits on the first line of the text rather than centring on a row
+   that a lock reason has made three lines tall. */
+.tr-outline-glyph {
+	flex: 0 0 20px;
+	text-align: center;
+	line-height: 1.5;
+	color: var(--tr-muted);
+}
+
+.tr-outline-text {
+	/* min-width:0 lets a long lesson title wrap instead of stretching the row
+	   and shoving the button out of the card. */
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tr-outline-title {
+	display: block;
+	font-weight: 600;
+	overflow-wrap: break-word;
+}
+
+.tr-outline-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+/* Why the row is locked. Always visible, full body size — "finish the earlier
+   lessons first" is the instruction that unblocks the learner, so it is the last
+   text on the page to shrink. Deliberately not the error colour: rendering it
+   red turns a working gate into a page that looks broken. */
+.tr-outline-reason {
+	margin: 6px 0 0;
+	color: var(--tr-muted);
+}
+
+.tr-outline-row > .tr-button {
+	flex: 0 0 auto;
+	align-self: center;
+	min-height: 44px;
+}
+
+/* The one state outlineRow() actually stamps. Recessed, and with no button
+   inside it there is nothing here to press. */
+.tr-outline-row.is-locked {
+	background: var(--tr-surface-alt);
+	color: var(--tr-muted);
+}
+
+/* ---------------------------------------------------------------- results */
+
+/* The pass/fail panel. quiz.js's own review screen is div.tr-quiz.tr-result and
+   can be rendered into the same <main>, so :not(.tr-quiz) keeps the two screens
+   from wearing each other's layout — text-align:center would otherwise centre
+   the entire quiz review. It matters for a second reason: the .tr-quiz rule in
+   quiz.js's injected stylesheet rebinds --tr-bg and --tr-accent on that element,
+   so any of our rules landing on it would read a different palette. */
+.tr-result:not(.tr-quiz) {
+	background: var(--tr-surface);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	box-shadow: var(--tr-shadow);
+	padding: 20px 16px;
+	margin: 4px 0 16px;
+	text-align: center;
+}
+
+/* Literal: the verdict must not move with the theme. Same specificity as the
+   rule above and deliberately after it. */
+.tr-result.is-passed {
+	border-color: #2e9e4f;
+	background: rgba(46, 158, 79, 0.08);
+}
+
+.tr-result.is-failed {
+	border-color: #e03636;
+	background: rgba(224, 54, 54, 0.08);
+}
+
+.tr-result-score {
+	font-size: 2.4rem;
+	font-weight: 700;
+	line-height: 1.1;
+}
+
+.tr-result.is-passed .tr-result-score { color: #2e9e4f; }
+.tr-result.is-failed .tr-result-score { color: #e03636; }
+
+.tr-result-line {
+	margin: 10px 0 0;
+}
+
+/* The first line is the verdict sentence; anything after it is the attempts
+   count. Stepped back with colour only — "1 attempt left" decides whether they
+   keep going and is not something to shrink. */
+.tr-result-line + .tr-result-line {
+	color: var(--tr-muted);
+}
+
+.tr-result-questions {
+	list-style: none;
+	margin: 0 0 16px;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* One graded question. The glyph is positioned rather than laid out because
+   player.js appends the mark, a screen-reader label and up to two <p> as flat
+   siblings with no wrapper — as a flex row they would all share one line. The
+   left padding clears the glyph. */
+.tr-result-question {
+	position: relative;
+	padding: 14px 16px 14px 42px;
+	border: 1px solid var(--tr-border);
+	border-left-width: 4px;
+	border-radius: 10px;
+	background: var(--tr-surface);
+}
+
+.tr-result-glyph {
+	position: absolute;
+	left: 16px;
+	top: 14px;
+	font-weight: 700;
+	line-height: 1.5; /* sits on the first line of .tr-result-text */
+}
+
+/* The ✓ / ✗ carries the verdict on its own — the colour and the thick edge are
+   reinforcement, not the only signal. */
+.tr-result-question.is-correct { border-left-color: #2e9e4f; }
+.tr-result-question.is-correct .tr-result-glyph { color: #2e9e4f; }
+.tr-result-question.is-wrong { border-left-color: #e03636; }
+.tr-result-question.is-wrong .tr-result-glyph { color: #e03636; }
+
+.tr-result-text {
+	margin: 0;
+	overflow-wrap: break-word;
+}
+
+/* Only ever what the server sent back. Set as an aside under the question so it
+   never reads as "the right answer was…" — that text is not in this payload.
+   Full body size: this is the one place a wrong answer gets explained. */
+.tr-result-explanation {
+	margin: 8px 0 0;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-muted);
+	overflow-wrap: break-word;
+}
+
+/* Nothing in these three components animates — every state change here comes
+   from a full re-render by player.js — so there is no prefers-reduced-motion
+   block to pair with them. Add one alongside any transition introduced later. */
+
+/* ------------------------------------------------------------ block parts */
+
+/* Inner pieces of a content block, all of them built by blocks.js `card()`:
+   section.tr-block.tr-block-{type} > [h3.tr-block-heading] + div.tr-block-body,
+   with an optional p.tr-block-caption appended last by `finish()`.
+
+   NOTE for whoever owns the `.tr-block` base rule: the live type modifiers are
+   single-dash — tr-block-richtext, -callout, -image, -pdf, -video, -embed,
+   -file, -divider, -unknown. The `.tr-block--video, .tr-block--embed` rule in
+   the blocks section is double-dashed and matches nothing. Same for
+   `.tr-block--pdf .tr-pdf-open`; the PDF action is `.tr-doc-open` now.
+
+   Two-class selectors below are deliberate: the generic `.tr-block h3` /
+   `.tr-block p` rules in that base section would otherwise out-specify these.
+   These type-modifier rules must also stay *after* the `.tr-block` base rule —
+   they are single-class and win only on order. */
+
+.tr-block > .tr-block-heading {
+	font-size: 1.05rem;
+	font-weight: 700;
+	line-height: 1.3;
+	margin: 0 0 10px;
+}
+
+.tr-block-body > *:last-child { margin-bottom: 0; }
+
+/* Rich Text and Callout HTML is author-written and injected verbatim, so it can
+   contain anything. Keep wide content scrolling inside the card rather than
+   pushing the whole page sideways on a phone. */
+.tr-block-body pre,
+.tr-block-body table {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+}
+
+.tr-block-body ul,
+.tr-block-body ol { padding-left: 22px; margin: 0 0 10px; }
+
+.tr-block > .tr-block-caption {
+	margin: 10px 0 0;
+	color: var(--tr-muted);
+	font-size: 0.88rem;
+	line-height: 1.4;
+}
+
+/* A Callout carries role="note" and is the author saying "read this bit". It is
+   the same card as Rich Text otherwise, so the rail is the only thing that sets
+   it apart — without this rule the block type is invisible to the learner. */
+.tr-block-callout {
+	border-left: 4px solid var(--tr-accent);
+	background: var(--tr-accent-soft);
+}
+
+/* An advisory line inside a block ("this is played by another site…"). */
+.tr-block .tr-block-note {
+	margin: 12px 0 0;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+	line-height: 1.45;
+}
+
+/* In an unknown/failed block, and in an embed with no URL, the note is the
+   first thing in its parent so it has nothing to sit under. */
+.tr-block .tr-block-note:first-child { margin-top: 0; }
+
+/* The "warn" tone means something the learner expected is missing (image, PDF,
+   file, video player). Literal red, matching .tr-error — it is a failure state,
+   not a themed accent. Text stays --tr-text so the message itself keeps full
+   contrast in both schemes; the colour is carried by the rail and the tint. */
+.tr-block .tr-block-note-warn {
+	border-left: 3px solid #e03636;
+	border-radius: 0 10px 10px 0;
+	background: rgba(224, 54, 54, 0.1);
+	color: var(--tr-text);
+}
+
+/* A Divider block is a rule, not a card: undo the surface the shared
+   .tr-block rule gives it. */
+.tr-block-divider {
+	background: none;
+	border: 0;
+	box-shadow: none;
+	padding: 0;
+	margin: 20px 0;
+}
+
+.tr-divider {
+	border: 0;
+	height: 1px;
+	background: var(--tr-border);
+	margin: 0;
+}
+
+/* A block type this app version cannot render, or one whose renderer threw.
+   Dashed and flat so it reads as a gap in the lesson rather than as content. */
+.tr-block-unknown {
+	border-style: dashed;
+	box-shadow: none;
+	background: var(--tr-surface-alt);
+}
+
+/* Rich Text, Image, PDF, Video, External Embed and Downloadable File get no
+   modifier rule of their own on purpose — the card is `.tr-block` and the parts
+   below carry everything else. The classes exist as hooks, not oversights. */
+
+/* ------------------------------------------------------------------- image */
+
+/* The image is wrapped in a real <button> so it is keyboard- and
+   screen-reader-reachable; strip the button chrome but keep the hit area. */
+.tr-image-tap {
+	display: block;
+	width: 100%;
+	min-height: 44px;
+	padding: 0;
+	border: 0;
+	background: none;
+	border-radius: 8px;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+/* blocks.js attaches the click handler and the aria-label together, only once
+   the signed URL resolves. Until then — and forever, if it never resolves — the
+   button is inert, so key the zoom cursor off the label rather than promising a
+   lightbox that will not open. */
+.tr-image-tap[aria-label] { cursor: zoom-in; }
+
+.tr-image {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	/* Centre a picture narrower than the column instead of stranding it left. */
+	margin: 0 auto;
+	border-radius: 8px;
+}
+
+/* ---------------------------------------------------------------- lightbox */
+
+/* Full-screen image overlay. Appended to <body>, not into .tr-shell, so it
+   inherits none of the shell's type or palette and every colour here is stated
+   outright. Above the sticky bar (z-index 30) and the toast (40) — it is modal,
+   nothing may show through or be tapped past it. Any click anywhere dismisses
+   it, hence zoom-out, which the image inherits. */
+.tr-lightbox {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	/* Clips an image that overflows before max-height applies, and stops a
+	   scroll gesture on the overlay chaining to the page behind it. */
+	overflow: hidden;
+	overscroll-behavior: contain;
+	/* Top padding clears both the notch and the close button parked in it. */
+	padding: calc(env(safe-area-inset-top) + 60px) 16px calc(16px + env(safe-area-inset-bottom));
+	background: rgba(0, 0, 0, 0.92);
+	cursor: zoom-out;
+	animation: tr-lightbox-in 120ms ease-out;
+}
+
+/* The overlay is a tabindex="-1" dialog container that blocks.js focuses on
+   open so Escape reaches it. It is not a control, and the global :focus-visible
+   rule would otherwise ring the entire scrim in accent blue. */
+.tr-lightbox:focus,
+.tr-lightbox:focus-visible { outline: none; }
+
+@keyframes tr-lightbox-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+.tr-lightbox-image {
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	display: block;
+	object-fit: contain;
+	border-radius: 8px;
+}
+
+/* Literal white on the literal black scrim: this control sits over arbitrary
+   photography, not over a themed surface, so it must not follow the palette.
+   48px square keeps it a glove-sized target, and the top offset carries the
+   safe-area inset so it never lands under a notch or a status bar. */
+.tr-lightbox-close {
+	position: absolute;
+	top: calc(env(safe-area-inset-top) + 8px);
+	right: 8px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 48px;
+	min-height: 48px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.16);
+	color: #ffffff;
+	font-size: 28px;
+	line-height: 1;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tr-lightbox-close:active { background: rgba(255, 255, 255, 0.3); }
+
+/* --------------------------------------------------------------- documents */
+
+/* Holds the actions of a PDF block. Only the open link today; it stays a flex
+   row so a second action does not need a layout rewrite. */
+.tr-doc-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+/* Styled on the link itself, not as `.tr-doc-row .tr-doc-open`: the PDF block
+   puts it in a row, the Downloadable File block appends it straight to the
+   block body with no wrapper, and both must look the same. Full width on a
+   phone; the cap stops a lone "Download" stretching across a desktop column,
+   and sits above the widest phone card so it never bites on mobile. */
+.tr-doc-open {
+	display: flex;
+	width: 100%;
+	max-width: 360px;
+	justify-content: center;
+	text-decoration: none;
+}
+
+/* Countdown / "tick the box" line. It is an aria-live region whose text
+   changes every second, so reserve a line to stop the card twitching. */
+.tr-doc-status {
+	min-height: 1.4em;
+	margin: 0 0 12px;
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+}
+
+/* There is no per-page PDF telemetry, so this checkbox IS the gate — it has to
+   be impossible to miss and easy to hit with a gloved thumb. Full-width, 2px
+   border, 56px of target. The <label> is the target; the box itself is 24px. */
+.tr-doc-ack {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 56px;
+	padding: 12px 14px;
+	border: 2px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+	font-weight: 600;
+	line-height: 1.35;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.tr-doc-ack input[type="checkbox"] {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	margin: 0;
+	accent-color: var(--tr-accent);
+	cursor: inherit;
+}
+
+/* Locked until the dwell timer elapses. Dimmed, not hidden: the learner needs
+   to see what they are working towards. :has is an enhancement — without it
+   the row simply stays at full strength, which is not a broken state. */
+.tr-doc-ack:has(input:disabled) {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+/* Acknowledged. Green matches .tr-outline-item.is-done for "this is settled",
+   and stays literal for the same reason: it is meaning, not theme. The tick is
+   one-way, so blocks.js re-disables the box on change — this rule sits after
+   the locked rule at equal specificity precisely to win that overlap back, for
+   the cursor as well as the dimming. */
+.tr-doc-ack:has(input:checked) {
+	opacity: 1;
+	cursor: default;
+	border-color: #2e9e4f;
+	background: rgba(46, 158, 79, 0.12);
+}
+
+.tr-doc-ack:has(input:checked) input[type="checkbox"] { accent-color: #2e9e4f; }
+
+/* ----------------------------------------------------------------- buttons */
+
+/* Shared vocabulary: blocks.js only ever puts `.tr-button .tr-button-secondary`
+   on the <a class="tr-doc-open">, but player.js puts `.tr-button` on real
+   <button>s with -primary / -quiet / -wide modifiers. This base rule serves
+   both — if the controls section also defines it, keep one copy, not two. The
+   text-decoration and appearance resets are what let an <a> wear it. */
+.tr-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-height: 44px;
+	min-width: 44px;
+	padding: 11px 18px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	font-weight: 600;
+	text-align: center;
+	text-decoration: none;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tr-button:active:not([disabled]):not([aria-disabled="true"]) { filter: brightness(0.94); }
+
+/* An <a> waiting on a signed URL has no href yet, so it is not even focusable:
+   aria-disabled is the only signal there is. pointer-events keeps a tap from
+   starting the dwell timer for a document that will never open. */
+.tr-button[disabled],
+.tr-button[aria-disabled="true"] {
+	opacity: 0.5;
+	cursor: not-allowed;
+	pointer-events: none;
+}
+
+/* Secondary: tinted rather than solid, so it stays quieter than the accent-
+   filled primary in the sticky bar while still reading as the thing to press. */
+.tr-button-secondary {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+	color: var(--tr-text);
+}
+
+/* ------------------------------------------------------------------- embed */
+
+/* Third-party iframe. No wrapper element is rendered, so the frame carries its
+   own 16:9 box. Black backing so a slow-loading player does not flash the page
+   background through the frame, matching the video surface. */
+.tr-embed-frame {
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 0;
+	border-radius: 10px;
+	background: #000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-lightbox { animation: none; }
+}
+
+/* ------------------------------------------------------------------- video */
+
+/*
+ * video.js injects a small structural stylesheet (#tr-video-structural-css) at
+ * runtime: the scrim's position and z-index are anti-skip machinery, so they
+ * travel with the code that depends on them. That <style> is appended to <head>
+ * AFTER this file, so on equal specificity IT wins. Every rule below that has to
+ * REPLACE one of its declarations is therefore qualified with .tr-video (the
+ * wrapper class, added by the Video constructor); rules that only add properties
+ * are left unqualified. Do not "tidy" those qualifiers away — the affected
+ * declarations silently revert.
+ *
+ * Wrapper tree, in DOM order:
+ *   .tr-video > .tr-video-el
+ *             > .tr-video-scrim    (checkpoint question, hidden)
+ *             > .tr-video-takeover (other-tab notice, hidden)
+ *             > .tr-video-notice   (transient status line, hidden)
+ *             > .tr-video-meter    (watch coverage)
+ * The meter is the last flow child and sits under the picture; scrim, takeover
+ * and notice are absolutely positioned against the wrapper. self.requestFullscreen
+ * fullscreens the WRAPPER, never the <video>, precisely so the overlay survives —
+ * nothing in this section may use position: fixed, which is viewport-relative and
+ * would be left behind by the fullscreen element.
+ *
+ * The class contract in this file's own header (.tr-video-wrap > .tr-video, plus
+ * .tr-coverage and .tr-checkpoint) is the early-phase vocabulary; video.js emits
+ * none of those names, so nothing here targets them.
+ *
+ * Scrim and notice keep the structural sheet's opaque black backgrounds on
+ * purpose. They sit over the PICTURE, not over a surface, so they must not
+ * follow the palette — a --tr-surface scrim in light mode is a white sheet over
+ * a video, which reads as a broken frame rather than an overlay.
+ */
+
+.tr-video-el {
+	max-width: 100%;
+	/* Letterbox, never crop: coverage is graded against what was actually shown.
+	   The bars are the media's own black, not a themed surface. */
+	background: #000;
+	object-fit: contain;
+	/* A portrait clip at height:auto is nearly two viewports tall on a phone,
+	   which pushes the meter — and the lesson's own controls — off screen. */
+	max-height: 70vh;
+}
+
+/* ...except in fullscreen, where that cap would defeat the point of it. Kept as
+   two rules, not one list: an unsupported selector invalidates a whole list. */
+.tr-video:fullscreen .tr-video-el {
+	max-height: none;
+}
+
+.tr-video:-webkit-full-screen .tr-video-el {
+	max-height: none;
+}
+
+/* ------------------------------------------------------------- video meter */
+
+/* The meter is the last child of a black wrapper, so it needs its own opaque
+   background and an explicit colour: the structural fallback (rgba(0,0,0,.06)
+   over #000, inheriting the block's dark --tr-text) is invisible in light mode.
+   Wraps rather than crushes the track when the label runs long. */
+.tr-video .tr-video-meter {
+	flex-wrap: wrap;
+	background: var(--tr-surface);
+	color: var(--tr-muted);
+	border-top: 1px solid var(--tr-border);
+	padding: 8px 10px;
+	font-size: 0.85rem;
+}
+
+.tr-video .tr-video-meter-track {
+	height: 6px;
+	min-width: 96px;
+	background: var(--tr-surface-alt);
+	border-radius: 999px;
+	overflow: hidden;
+}
+
+/* The fill's width is set inline by video.js from the SERVER's coverage figure.
+   Never set a width here, and never key anything off the local estimate. */
+.tr-video .tr-video-meter-fill {
+	background: var(--tr-accent);
+	border-radius: 999px;
+	transition: width 240ms ease;
+}
+
+.tr-video-meter-label {
+	/* Shrinkable, not fixed: "Watched 61% of 80% needed" is the longest string
+	   the label ever holds and it must wrap on a 320px phone rather than push
+	   itself out of the meter. */
+	flex: 0 1 auto;
+	/* Tabular figures: the percentage is rewritten on every heartbeat and
+	   proportional digits make the whole line twitch as it climbs. */
+	font-variant-numeric: tabular-nums;
+}
+
+/* Gate cleared. The class lands on the WRAPPER, so it reaches both parts. */
+.tr-video-gate-met .tr-video-meter-fill {
+	background: #2e9e4f;
+}
+
+.tr-video-gate-met .tr-video-meter-label {
+	color: var(--tr-text);
+	font-weight: 600;
+}
+
+/* Not colour alone: the only other cue that the gate is met is a bar that
+   happens to be longer, which is no cue at all. */
+.tr-video-gate-met .tr-video-meter-label::after {
+	content: " ✓";
+	color: #2e9e4f;
+	font-weight: 700;
+}
+
+/* ------------------------------------------------------------ video notice */
+
+.tr-video .tr-video-notice {
+	box-sizing: border-box;
+	max-width: min(80%, 32rem);
+	border-radius: 10px;
+	font-size: 0.9rem;
+	line-height: 1.35;
+	box-shadow: var(--tr-shadow);
+	/* role="status" and never a target. It sits above the scrim (z-index 30 vs
+	   20) directly over the panel, so without this it eats taps meant for the
+	   Answer button — which is exactly when it is on screen ("Choose an answer
+	   first."). */
+	pointer-events: none;
+	animation: tr-video-notice-in 160ms ease-out;
+}
+
+/* Toggled via [hidden], so display:none -> block restarts this on every notice.
+   The end state must keep the structural translateX(-50%) centering. */
+@keyframes tr-video-notice-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 6px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
+}
+
+/* -------------------------------------------------------- video checkpoint */
+
+/* Positioned against the WRAPPER, never the viewport — see the section header.
+   The position/inset/z-index are restated from video.js's structural sheet so
+   this file is readable on its own and the two cannot quietly disagree. */
+.tr-video .tr-video-scrim,
+.tr-video .tr-video-takeover {
+	position: absolute;
+	inset: 0;
+	z-index: 20;
+	/* Centring is done by the panel's auto margins instead of align-items:center,
+	   which in a scrolling flex box puts the TOP of an over-tall panel above the
+	   scroll origin where it can never be reached. The panel routinely IS taller
+	   than the box: the scrim is only as tall as the video it covers. */
+	align-items: flex-start;
+	/* Landscape fullscreen on a notched phone lays the cutout over the panel. */
+	padding: 16px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left));
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
+.tr-video-panel {
+	/* The structural sheet gives this width:100%; without border-box its own
+	   padding and border push the card wider than the scrim that contains it. */
+	box-sizing: border-box;
+	/* Pairs with align-items:flex-start above — centres when it fits, scrolls
+	   from the top when it does not. */
+	margin: auto;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	box-shadow: var(--tr-shadow);
+	padding: 16px;
+	text-align: left;
+}
+
+/* The takeover panel's heading, body and button carry no classes of their own
+   (only the button is classed, .tr-video-btn); in the checkpoint panel every
+   element is classed, so these element selectors stay scoped to the takeover. */
+.tr-video-takeover .tr-video-panel {
+	text-align: center;
+}
+
+.tr-video-takeover .tr-video-panel h4 {
+	font-size: 1.05rem;
+	font-weight: 700;
+	line-height: 1.3;
+	margin: 0 0 8px;
+}
+
+/* Also the only gap above the Take over button — it is a bare child of the
+   panel, not wrapped in .tr-video-actions. */
+.tr-video-takeover .tr-video-panel p {
+	margin: 0 0 14px;
+	color: var(--tr-muted);
+}
+
+.tr-video-question {
+	font-size: 1.05rem;
+	font-weight: 700;
+	line-height: 1.3;
+	margin: 0 0 4px;
+}
+
+.tr-video-options {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* The <li> is the visible row but the <label> inside it is the real hit target,
+   so the label carries the padding and stretches to fill: a bordered row with a
+   smaller clickable area inside it is a row that ignores half its taps. The
+   structural sheet sets padding:6px 0 and align-items:flex-start here. */
+.tr-video .tr-video-option {
+	align-items: stretch;
+	padding: 0;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+}
+
+.tr-video-option-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	/* 22px of padding plus a 20px control: 44px even for a one-word option. */
+	min-height: 44px;
+	padding: 11px 14px;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-video-option-label input {
+	flex: 0 0 auto;
+	width: 20px;
+	height: 20px;
+	margin: 0;
+	accent-color: var(--tr-accent);
+}
+
+/* The option text is an unclassed <span> and a flex item, so it needs its own
+   min-width:0 — the one on the label only lets the label shrink. Author-entered
+   answers include part numbers and URLs, which have no break opportunity. */
+.tr-video-option-label > span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+/* Keyboard focus lands on the input inside (the global :focus-visible rule draws
+   the ring on it); lift the whole row so the caret is findable at arm's length. */
+.tr-video-option:focus-within {
+	border-color: var(--tr-accent);
+}
+
+/* video.js renders native radios/checkboxes and never toggles a class on an
+   option — not while the question is open, and not after grading either: the
+   answered panel is re-rendered from scratch with a verdict and the option list
+   is gone. So the selected look must come from the control's own state, and
+   there are deliberately NO .is-selected/.is-correct/.is-wrong rules here; they
+   would be dead CSS for a DOM this file never sees. Where :has() is
+   unsupported, the checked native control remains the cue. */
+.tr-video-option:has(input:checked) {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+}
+
+.tr-video-hint {
+	margin: 8px 0 0;
+	color: var(--tr-muted);
+	font-size: 0.9rem;
+}
+
+.tr-video-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin-top: 14px;
+}
+
+.tr-video-btn {
+	flex: 0 0 auto;
+	min-height: 44px;
+	min-width: 44px;
+	padding: 10px 20px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-video-btn-primary {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+}
+
+/* Skip is deliberately quiet, but still a full 44px target: it is the escape
+   hatch someone reaches for one-handed, on site, in gloves. */
+.tr-video-btn-link {
+	padding: 10px 12px;
+	border-color: transparent;
+	background: none;
+	color: var(--tr-muted);
+	font-weight: 500;
+	text-decoration: underline;
+}
+
+/* Set while the answer is in flight, and cleared again if it fails to save. */
+.tr-video-btn[disabled] {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.tr-video-btn:active:not([disabled]) {
+	filter: brightness(0.94);
+}
+
+/* All three outcomes — "Correct", "Not quite", "Here is the answer" — are
+   rendered with this one class and no state class of any kind, so the wording is
+   the only signal available and colouring the element would be a lie on two of
+   the three. Neutral on purpose; do not add .is-correct here expecting video.js
+   to set it. */
+.tr-video-verdict {
+	font-size: 1.15rem;
+	font-weight: 700;
+	line-height: 1.25;
+	margin: 0 0 8px;
+}
+
+.tr-video-explanation {
+	margin: 0;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	font-size: 0.95rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-video .tr-video-meter-fill {
+		transition: none;
+	}
+
+	.tr-video .tr-video-notice {
+		animation: none;
+	}
+}
+
+/* -------------------------------------------------------------------- quiz */
+
+/* quiz.js ships a self-contained fallback stylesheet (its `ensureStyles`) and
+   appends it to <head> at mount, so it always lands after this file's <link>
+   and wins every equal-specificity tie. That shapes the whole section:
+
+     1. It declares its own palette *on .tr-quiz* — including two names that
+        collide with ours, --tr-bg and --tr-accent, which in dark mode paint a
+        near-white sticky header behind light text. The block below re-points
+        every variable the fallback reads, so the rules it wins render in the
+        house palette anyway. That is what lets this section leave .tr-btn
+        alone: the fallback's `.tr-btn` beats the controls section's, but with
+        --tr-line/--tr-bg/--tr-fg re-pointed it does so in our colours.
+        Both blocks, and only these, can be deleted with the fallback sheet.
+     2. Rules here are scoped one class deeper than the fallback's, and where
+        the fallback is itself nested (.tr-opt.is-on .tr-opt-mark, .tr-ring,
+        .tr-rev-head) the real parent is named too. */
+:root .tr-quiz {
+	/* Keep in step with :root — a var cannot reference the name it shadows. */
+	--tr-bg: #f6f7f9;
+	--tr-accent: #00a0dd;
+	/* The fallback's private names; safe to alias, nothing else reads them. */
+	--tr-fg: var(--tr-text);
+	--tr-muted-c: var(--tr-muted);
+	--tr-line: var(--tr-border);
+	--tr-ok: #2e9e4f;
+	--tr-bad: #e03636;
+	/* The fallback centres the quiz in 52rem of its own; inside .tr-view that
+	   just makes it narrower than every other block in the column. */
+	max-width: none;
+	margin: 0;
+	color: var(--tr-text);
+	font-size: 16px;
+	line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root .tr-quiz {
+		--tr-bg: #161a1f;
+		--tr-accent: #29b6f6;
+	}
+}
+
+.tr-quiz,
+.tr-quiz * { box-sizing: border-box; }
+
+/* `hidden` is how quiz.js pages one question at a time and how it shows and
+   hides Back/Next/the error line. .tr-btn belongs to another section and could
+   reasonably become inline-flex there, which would silently unhide Back on
+   every desktop quiz — so the guard is not optional. */
+.tr-quiz [hidden] { display: none !important; }
+
+/* Safe to pin: player.js drops .is-sticky from .tr-subhead when it enters the
+   quiz view and never re-adds it, so nothing else is holding the top of the
+   viewport here. z-index only has to clear the question cards below it. */
+.tr-quiz .tr-quiz-head {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--tr-bg);
+	padding: 8px 0 10px;
+}
+
+.tr-quiz .tr-quiz-meta {
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+.tr-quiz .tr-quiz-dots {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	margin-top: 6px;
+}
+
+/* The visible dot is 10px; the button around it is a 44px-tall target with the
+   mark drawn by ::after, so the hit area is the affordance and the dot is only
+   the picture. Narrower than it is tall on purpose — the strip is horizontal,
+   and 44px-wide dots wrap a ten-question quiz onto three rows. border,
+   background and box-shadow are zeroed because the fallback draws its dot on
+   the button itself, which at this size is a 44px ring around nothing. */
+.tr-quiz .tr-quiz-dots .tr-dot {
+	position: relative;
+	flex: 0 0 auto;
+	width: 32px;
+	height: 44px;
+	padding: 0;
+	border: 0;
+	background: none;
+	box-shadow: none;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.tr-quiz .tr-quiz-dots .tr-dot::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 10px;
+	height: 10px;
+	margin: -5px 0 0 -5px;
+	border: 1px solid var(--tr-border);
+	border-radius: 50%;
+	background: var(--tr-surface);
+}
+
+.tr-quiz .tr-quiz-dots .tr-dot.is-done::after {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+}
+
+/* "Where I am" is a ring, not a fill, because the current question is usually
+   also an unanswered one — the two states have to be readable together. */
+.tr-quiz .tr-quiz-dots .tr-dot.is-current::after {
+	width: 14px;
+	height: 14px;
+	margin: -7px 0 0 -7px;
+	border-color: var(--tr-accent);
+	box-shadow: 0 0 0 3px var(--tr-accent-soft);
+}
+
+.tr-quiz .tr-quiz-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.tr-quiz .tr-quiz-empty {
+	margin: 0;
+	padding: 40px 16px;
+	color: var(--tr-muted);
+	text-align: center;
+}
+
+/* Submit failed and the attempt was NOT spent — the learner can press again.
+   Literal red: this is a failure state, not an accent. Also rendered on the
+   result screen, where Try again can fail the same way. */
+.tr-quiz .tr-quiz-error {
+	margin: 10px 0;
+	padding: 10px 12px;
+	border: 1px solid rgba(224, 54, 54, 0.4);
+	border-radius: 10px;
+	background: rgba(224, 54, 54, 0.1);
+	color: #e03636;
+	font-size: 0.92rem;
+}
+
+/* ----------------------------------------------------------- quiz question */
+
+/* [data-qid] is on every card and is here for weight, not for matching: the
+   fallback's `.tr-quiz.is-paged .tr-q { border-top: 0 }` ties with a plain
+   three-class selector and, landing later, would strip the card's top border
+   on exactly the phone widths that page. */
+.tr-quiz .tr-quiz-list .tr-q[data-qid] {
+	padding: 16px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+/* Below 720px quiz.js shows one card at a time and marks the wrap .is-paged;
+   above it every card is on screen, so the one a dot jumped to has to be
+   findable. Marking it while paged would be noise — it is the only card. */
+.tr-quiz:not(.is-paged) .tr-quiz-list .tr-q.is-current {
+	border-color: var(--tr-accent);
+}
+
+.tr-quiz .tr-q-num {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--tr-muted);
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* Only rendered when a question is worth more than one point, so it should
+   read as a badge rather than as part of the "QUESTION 3" label. */
+.tr-quiz .tr-q-points {
+	margin-left: auto;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.tr-quiz .tr-q-text {
+	margin: 8px 0 12px;
+	font-size: 1.05rem;
+	font-weight: 650;
+	overflow-wrap: break-word;
+}
+
+/* Authored Text Editor HTML: it arrives with its own <p>s and may carry an
+   image, so both need house margins and the media cap. */
+.tr-quiz .tr-q-text p { margin: 0 0 8px; }
+.tr-quiz .tr-q-text p:last-child { margin-bottom: 0; }
+.tr-quiz .tr-q-text img { max-width: 100%; height: auto; border-radius: 8px; }
+
+.tr-quiz .tr-q-hint {
+	margin-bottom: 8px;
+	color: var(--tr-muted);
+	font-size: 0.85rem;
+}
+
+/* Carries .tr-q-hint as well, so it only has to overrule the colour: an
+   authoring fault the learner cannot do anything about (the question drew with
+   no options). Literal red — it means broken, not "emphasis". */
+.tr-quiz .tr-q-broken { color: #e03636; }
+
+/* ------------------------------------------------------------ quiz options */
+
+.tr-quiz .tr-q-options {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* The whole row is the control — the <div> carries role=radio/checkbox and
+   tabindex, there is no real input to click. Hence the full-width hit area,
+   and the select guard so a firm tap on a phone does not start a text
+   selection instead of answering. quiz.js applies exactly one state class
+   here, .is-on; it never grades an option in place (the graded view is a fresh
+   render of .tr-rev cards), so there is deliberately no correct/wrong rule. */
+.tr-quiz .tr-q-options .tr-opt {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	min-height: 44px;
+	padding: 11px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+	transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+@media (hover: hover) {
+	.tr-quiz .tr-q-options .tr-opt:hover { border-color: var(--tr-muted); }
+}
+
+/* Picked, not yet graded. Accent and weight only — nothing green, nothing with
+   a tick, because "I chose this" must not be readable as "and it was right". */
+.tr-quiz .tr-q-options .tr-opt.is-on {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent-soft);
+	font-weight: 600;
+}
+
+/* The radio/checkbox glyph. Square for multi-select, round for single,
+   matching what the role already tells a screen reader. */
+.tr-quiz .tr-q-options .tr-opt-mark {
+	flex: 0 0 auto;
+	width: 22px;
+	height: 22px;
+	/* Nudged onto the cap-height of the first line of the label. */
+	margin-top: 1px;
+	border: 2px solid var(--tr-border);
+	border-radius: 50%;
+	background: var(--tr-surface);
+}
+
+.tr-quiz .tr-q-options .tr-opt[role="checkbox"] .tr-opt-mark { border-radius: 6px; }
+
+/* The mark span has no children, so the filled centre is an inset shadow. */
+.tr-quiz .tr-q-options .tr-opt.is-on .tr-opt-mark {
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+	box-shadow: inset 0 0 0 3px var(--tr-surface);
+}
+
+.tr-quiz .tr-opt-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-wrap: break-word;
+}
+
+/* Short Answer input. 16px exactly and never less: iOS Safari zooms the page on
+   focus for anything smaller and does not zoom back out. */
+.tr-quiz .tr-input {
+	width: 100%;
+	min-height: 44px;
+	padding: 10px 14px;
+	border: 1px solid var(--tr-border);
+	border-radius: 10px;
+	background: var(--tr-surface);
+	color: var(--tr-text);
+	font: inherit;
+	font-size: 16px;
+}
+
+.tr-quiz .tr-input::placeholder { color: var(--tr-muted); }
+
+/* --------------------------------------------------------- quiz action bar */
+
+/* Sticky rather than fixed: it belongs to the quiz, and the quiz is the one
+   view where player.js leaves .tr-bottom empty, so nothing of its own is
+   already sitting there. The safe-area inset keeps Submit clear of the iOS
+   home indicator. */
+.tr-quiz .tr-quiz-foot {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 16px;
+	padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+	border-top: 1px solid var(--tr-border);
+	background: var(--tr-bg);
+}
+
+/* "Submitting…" is wider than "Submit"; let the bar wrap rather than let the
+   label squeeze the button under its 44px floor. */
+.tr-quiz .tr-quiz-foot .tr-btn { flex: 0 0 auto; }
+
+/* margin-left is zeroed here and re-applied only in the quiz footer: the
+   fallback sets `margin-left:auto` on every .tr-btn-primary, which throws the
+   modal's and the result screen's buttons to the far edge. */
+.tr-quiz .tr-btn-primary {
+	margin-left: 0;
+	border-color: var(--tr-accent);
+	background: var(--tr-accent);
+	color: var(--tr-accent-text);
+}
+
+.tr-quiz .tr-btn-ghost {
+	border-color: transparent;
+	background: transparent;
+	color: var(--tr-muted);
+}
+
+/* Submit latches while the request is in flight and quiz.js marks it aria-busy.
+   A button that still looks pressable during a slow upload gets pressed again,
+   and a double submit costs the learner an attempt only a manager can restore. */
+.tr-quiz .tr-btn[aria-busy="true"] { opacity: 0.7; cursor: progress; }
+
+/* Submit sits hard right, away from Back/Next — spending an attempt should not
+   be under the thumb that was tapping Next a second ago. */
+.tr-quiz .tr-quiz-foot .tr-btn-primary { margin-left: auto; }
+
+/* -------------------------------------------------------------- quiz modal */
+
+/* Confirm dialog for submitting with questions unanswered. quiz.js appends it
+   inside .tr-quiz, so it has to clear the player's own layers (bottom bar 30,
+   toast 40) from in there, or the learner confirms against a control they
+   cannot see. */
+.tr-quiz .tr-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 50;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	background: rgba(0, 0, 0, 0.55);
+}
+
+.tr-quiz .tr-modal-box {
+	width: 100%;
+	max-width: 420px;
+	max-height: 100%;
+	overflow-y: auto;
+	padding: 20px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-quiz .tr-modal-title {
+	margin: 0 0 8px;
+	font-size: 1.1rem;
+	font-weight: 700;
+}
+
+.tr-quiz .tr-modal-text {
+	margin: 0 0 16px;
+	color: var(--tr-muted);
+}
+
+/* Both buttons grow instead of shrinking: two 44px targets side by side do not
+   fit a 320px screen at their natural width, and wrapping beats cramping. */
+.tr-quiz .tr-modal-row {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.tr-quiz .tr-modal-row .tr-btn { flex: 1 1 auto; }
+
+/* ------------------------------------------------------------- quiz result */
+
+/* player.js renders a summary card of its own under the same .tr-result name,
+   so everything here is compounded with .tr-quiz — quiz.js's graded view is
+   .tr-quiz.tr-result and only that element should pick these up. */
+.tr-quiz.tr-result { padding-top: 4px; }
+
+.tr-quiz .tr-result-head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 16px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+	box-shadow: var(--tr-shadow);
+}
+
+.tr-quiz .tr-ring {
+	position: relative;
+	flex: 0 0 auto;
+	width: 96px;
+	height: 96px;
+}
+
+/* quiz.js draws the arc with stroke-dashoffset from 3 o'clock; the rotation
+   starts it at the top. */
+.tr-quiz .tr-ring svg {
+	width: 100%;
+	height: 100%;
+	transform: rotate(-90deg);
+}
+
+.tr-quiz .tr-ring circle {
+	fill: none;
+	stroke-width: 8;
+	stroke-linecap: round;
+}
+
+.tr-quiz .tr-ring .tr-ring-bg { stroke: var(--tr-border); }
+
+/* Pass/fail is meaning, so the stroke stays literal. The ring always carries
+   one of the two classes, so is-pass need not be the default. */
+.tr-quiz .tr-ring.is-pass .tr-ring-fg { stroke: #2e9e4f; }
+.tr-quiz .tr-ring.is-fail .tr-ring-fg { stroke: #e03636; }
+
+.tr-quiz .tr-ring-label {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 1.25rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.tr-quiz .tr-result-side {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+/* align-self keeps the chip the width of its own text inside the column. */
+.tr-quiz .tr-chip {
+	display: inline-block;
+	align-self: flex-start;
+	padding: 3px 10px;
+	border-radius: 999px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+	font-size: 0.85rem;
+	font-weight: 700;
+}
+
+.tr-quiz .tr-chip.is-pass {
+	background: rgba(46, 158, 79, 0.14);
+	color: #2e9e4f;
+}
+
+.tr-quiz .tr-chip.is-fail {
+	background: rgba(224, 54, 54, 0.14);
+	color: #e03636;
+}
+
+.tr-quiz .tr-muted {
+	color: var(--tr-muted);
+	font-size: 0.88rem;
+}
+
+/* Free text the server chose to send back with the grade. The colour is stated
+   because the fallback renders it muted, which on this surface is thin. */
+.tr-quiz .tr-result-note {
+	margin: 12px 0 0;
+	padding: 12px 14px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+}
+
+.tr-quiz .tr-result-h {
+	margin: 20px 0 10px;
+	color: var(--tr-muted);
+	font-size: 1rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* Nothing here is urgent and both buttons matter equally, so the result footer
+   gives back the sticky treatment it inherits from .tr-quiz-foot. Compounded
+   rather than nested so it does not depend on source order — the element
+   carries both classes. */
+.tr-quiz .tr-quiz-foot.tr-result-foot {
+	position: static;
+	margin-top: 20px;
+	border-top: 0;
+	background: none;
+}
+
+.tr-quiz .tr-quiz-foot.tr-result-foot .tr-btn { flex: 1 1 auto; }
+.tr-quiz .tr-quiz-foot.tr-result-foot .tr-btn-primary { margin-left: 0; }
+
+/* ------------------------------------------------------------- quiz review */
+
+.tr-quiz .tr-review {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tr-quiz .tr-rev {
+	padding: 14px 16px;
+	border: 1px solid var(--tr-border);
+	border-radius: var(--tr-radius);
+	background: var(--tr-surface);
+}
+
+.tr-quiz .tr-rev-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	color: var(--tr-muted);
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.tr-quiz .tr-rev-num { font-weight: 700; }
+
+/* Sized down and de-tracked: it sits inside the uppercase header row and must
+   not inherit that letter-spacing. margin-left is zeroed because the fallback
+   spaces the chip by margin and this row spaces by gap. */
+.tr-quiz .tr-chip-sm {
+	margin-left: 0;
+	padding: 1px 8px;
+	font-size: 0.75rem;
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+/* "3/5". Tabular figures so the column does not jitter down the review list. */
+.tr-quiz .tr-rev-pts {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.tr-quiz .tr-rev-text {
+	margin: 8px 0 0;
+	color: var(--tr-text);
+	font-weight: 650;
+	overflow-wrap: break-word;
+}
+
+.tr-quiz .tr-rev-text p { margin: 0 0 6px; }
+.tr-quiz .tr-rev-text p:last-child { margin-bottom: 0; }
+.tr-quiz .tr-rev-text img { max-width: 100%; height: auto; border-radius: 8px; }
+
+/* What this learner picked. Neutral — the chip in the header already carries
+   the verdict, and colouring the answer too says it twice. Also rendered with
+   .tr-muted for "Not answered", so it is declared after that utility and keeps
+   its own size while taking the muted colour. */
+.tr-quiz .tr-rev-mine {
+	margin-top: 8px;
+	font-size: 0.95rem;
+}
+
+/* Only rendered when the server chose to reveal the key, so it is information
+   rather than a scold: a quiet marginal rule. The colour is stated because the
+   fallback paints this line green, which reads as "you got it right". */
+.tr-quiz .tr-rev-key {
+	margin-top: 4px;
+	padding-left: 10px;
+	border-left: 2px solid var(--tr-border);
+	color: var(--tr-text);
+	font-size: 0.95rem;
+}
+
+.tr-quiz .tr-rev-why {
+	margin-top: 10px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--tr-surface-alt);
+	color: var(--tr-text);
+	font-size: 0.95rem;
+}
+
+.tr-quiz .tr-rev-why p { margin: 0 0 6px; }
+.tr-quiz .tr-rev-why p:last-child { margin-bottom: 0; }
+.tr-quiz .tr-rev-why img { max-width: 100%; height: auto; border-radius: 8px; }
+
+/* ------------------------------------------------------------- quiz motion */
+
+@media (prefers-reduced-motion: reduce) {
+	.tr-quiz .tr-q-options .tr-opt { transition: none; }
+
+	/* goTo() passes behavior:"smooth" explicitly, which wins over this property;
+	   it is set anyway for the engines that treat the preference as a veto on
+	   scripted smooth scrolling. */
+	.tr-quiz,
+	.tr-quiz * { scroll-behavior: auto; }
+}
+
+/* ------------------------------------------------------------- breakpoints */
+
+/* The column simply widens. There is no left rail: the lesson outline is an <ol>
+   that player.js renders INSIDE .tr-view, not as a sibling of it, so the grid
+   this file used to declare here (grid-template-areas "outline main") placed
+   three children that no longer exist and auto-placed the real ones into a
+   260px column. That was the bug, not a missing feature. */
+@media (min-width: 900px) {
+	.tr-shell { max-width: 1000px; }
+}
+
+@media (min-width: 1200px) {
+	.tr-shell { max-width: 1280px; }
 }
