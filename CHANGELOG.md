@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.210.0] - 2026-08-03
+
+### Added
+
+- **Email alerts on every `Administrator` authentication, success or failure.** On 2026-08-02 an
+  automated scanner logged into production as `Administrator` with a working password and planted
+  a cryptominer dropper plus two safe_exec escape scripts. Nothing alerted. It surfaced two days
+  later only because the failed payload was hooked to `User` → Before Save and was crashing every
+  User save with `ImportError: __import__ not found` — the sandbox rejecting the dropper's first
+  line. The payload never ran, but the detection gap is the part worth fixing.
+
+  `Administrator` is the one account ERPNext's own 2FA can never cover:
+  `frappe.twofactor.two_factor_is_enabled_for_` returns `False` for it unconditionally, before it
+  looks at any role. Enabling 2FA site-wide does not touch it, so the account with the most power
+  is the one with the least protection. Once it is reduced to break-glass use, every login is
+  either a planned emergency or an intrusion, and both deserve an email.
+
+  Hooked to `Activity Log` `after_insert` rather than `on_session_creation`, because Frappe writes
+  an authentication row for **failed** attempts too and one code path then covers both. The
+  failures are the early warning — the August break was preceded by roughly thirty failed probes,
+  hours ahead of the payload. Failure emails are throttled to one per 15 minutes (that scanner
+  sent ~30 in 24 seconds); successes are never throttled.
+
+  Recipients come from `admin_alert_recipients` in **site_config.json**, deliberately not from a
+  DocType: an attacker holding `Administrator` can disable a Notification record or a Server
+  Script from the Desk in seconds but cannot edit site_config without shell access. Point it at an
+  address hosted elsewhere, so an alert about this mail server does not have to travel through it.
+  Falls back to enabled System Managers when unset, and logs when there is nobody to tell.
+
+  Delivery is enqueued after commit and the whole hook is wrapped in try/except. This runs inside
+  the login request: an exception here would turn monitoring into an outage, locking everyone out
+  of the account used to fix outages.
+
+  **Known gap:** API-key auth (`Authorization: token <key>:<secret>`) creates no Activity Log row
+  and no session, so it cannot alert from here. Catching it needs a `before_request` check on the
+  hot path — deliberately out of scope. Rotating or clearing `Administrator`'s API key closes that
+  gap more cheaply than watching for it.
+
 ## [1.209.3] - 2026-08-02
 
 ### Fixed

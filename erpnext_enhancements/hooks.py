@@ -401,6 +401,14 @@ doc_events = {
 		# cheap bail-out for files not attached to a Drive-linked document)
 		"after_insert": "erpnext_enhancements.google_drive.drive_sync.on_file_attached",
 	},
+	"Activity Log": {
+		# Email on every Administrator authentication, success or failure. Frappe's
+		# 2FA exempts Administrator unconditionally, so watching it is the only
+		# control left on that account (security_alerts.py). Hooked here rather
+		# than on_session_creation because this row is written for failed attempts
+		# too, and the failures are the early warning.
+		"after_insert": "erpnext_enhancements.security_alerts.notify_administrator_login",
+	},
 	"Contact": {
 		# custom_account <-> Customer link two-way sync also runs before naming:
 		# core Contact.autoname reads links[0], so an insert carrying only the
