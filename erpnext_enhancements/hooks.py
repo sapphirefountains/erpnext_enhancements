@@ -535,6 +535,15 @@ scheduler_events = {
 		# digest per learner covering every course they owe, not one per assignment.
 		# Gated by Training Settings -> Send Notifications.
 		"15 7 * * *": ["erpnext_enhancements.training.tasks.send_due_reminders"],
+		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
+		# though it only emails on the 1st and the 16th. The job also owns the
+		# saved date window on the "Brian's Closed Won" Report Builder report, and
+		# running every day is what repairs that window after a missed tick or a
+		# send that died half-way; gate it to "0 7 1,16 * *" and a bad day leaves
+		# the desk report showing the wrong period for up to sixteen days.
+		# Frappe's own dynamic date filters cannot express a semi-monthly period
+		# and are inert on Report Builder reports anyway — see the module docstring.
+		"0 7 * * *": ["erpnext_enhancements.crm_enhancements.pay_period_reports.run_pay_period_cycle"],
 	},
 	"daily": [
 		# training: move assignments past their due date into Overdue. A separate

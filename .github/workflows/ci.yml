@@ -257,6 +257,13 @@ jobs:
       # four releases stale that no ?v= could reach.
       - name: Kiosk service worker scope (must not answer for the app's assets)
         run: python -m unittest erpnext_enhancements.tests.test_kiosk_service_worker -v
+      # Semi-monthly commission periods. Every failure mode here is a *plausible*
+      # statement -- right shape, wrong rows -- which nothing downstream can
+      # notice: a boundary day in neither period (the live report was dropping
+      # deals closed on a 1st or a 16th), the closed period and the running one
+      # swapped, or a second statement for a period already paid.
+      - name: Pay-period commission report (window math, send-once, restore)
+        run: python -m unittest erpnext_enhancements.tests.test_pay_period_reports -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

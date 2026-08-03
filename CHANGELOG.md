@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.232.0] - 2026-08-03
+
+### Added
+
+**The commission report now keeps its own dates and goes out on the pay periods it
+already claimed to.** "Brian Commissions Report" has told its recipients since the day
+it was written that reports arriving on the 16th cover the 1st–15th and reports arriving
+on the 1st cover the 16th–end of the previous month. Nothing implemented that. The
+underlying `Brian's Closed Won` report is a Report Builder report whose saved filters
+carried a hand-retyped `custom_date_closed_won > 2026-07-16`, and the email went out
+weekly on Mondays — so the window only moved when somebody remembered to move it, and
+the send day matched neither half of the promise.
+
+- `crm_enhancements/pay_period_reports.py` owns the window and the send, on a **daily**
+  `0 7 * * *` cron. `pay_period_bounds` / `previous_pay_period` are generic semi-monthly
+  date arithmetic (1st–15th, 16th–last day of month) that WI-017's payroll hours export
+  should reuse rather than re-derive.
+
+- **None of the three native routes work, and each is worth recording because each looks
+  like it should.** `Auto Email Report`'s dynamic date filters — `from_date_field`,
+  `to_date_field`, `dynamic_date_period` — are applied only when the report type is *not*
+  Report Builder; `get_report_content` guards them with
+  `if self.report_type != "Report Builder"`, so setting them here does nothing at all.
+  `Auto Email Report.filters` are **appended** to the report's saved filters by
+  `Report.run_standard_report`, never substituted, so the email cannot override or widen
+  a date baked into the report. And `frequency` offers only Daily / Weekdays / Weekly /
+  Monthly, with `dynamic_date_period` only Daily…Yearly — no vocabulary in the doctype
+  can express "twice a month, on the 1st and the 16th".
+
+- So the window is written into the report's saved `json`, which is also what makes the
+  desk view correct: opening the report shows the pay period **in progress**. The email
+  needs the period that just *closed*, and a Report Builder report holds exactly one
+  filter set, so the send borrows the window for the length of one `get_report_content()`
+  call and the running window is re-applied immediately afterwards — on every path,
+  including a send that raised. The cron is daily rather than `1,16` for that same
+  reason: a missed tick or a half-dead send self-heals the next morning instead of
+  leaving the desk report on a stale period for up to sixteen days.
+
+- Rendering deliberately goes through the existing Auto Email Report doc, so recipients
+  keep getting exactly the email they get today — same letterhead table, same
+  description, same recipient list, editable in the desk without a code change — only
+  with the right rows in it. The subject now carries the period, because the doc name
+  alone is identical every time and two statements were otherwise indistinguishable in
+  an inbox.
+
+### Fixed
+
+**Deals closed on the 1st or the 16th were falling into neither pay period.** The window
+was a `>` against the period's first day, which excludes the boundary. `CRM-OPP-2026-00108`
+($500, closed won 2026-07-16) is absent from the live report for exactly this reason. The
+window is now `between`, inclusive at both ends, and a test walks all 365 days of a year
+asserting every date lands in exactly one period with no gap or overlap between
+consecutive ones.
+
+### Changed
+
+- The Weekly/Monday schedule on "Brian Commissions Report" is **disabled** by
+  `patches/switch_commission_report_to_pay_periods.py`. That is what takes Frappe's
+  `send_weekly` off the doc — left enabled, billing would receive both the weekly mail
+  and the new pay-period one. The doc itself is still in active use for its recipients,
+  description and rendering; disabled is the off switch here, not a deletion marker, and
+  the patch and both READMEs say so. The same patch applies the running window at migrate
+  so the report is correct as the deploy finishes rather than at the next 07:00 tick.
+
+- Rewriting the window replaces **only** the date rows, leaving the owner and Closed Won
+  filters as found, and writes with `update_modified=False` — a scheduled window move is
+  not a person editing the report, and bumping `modified` would hand a
+  `TimestampMismatchError` to anyone who had it open. An unchanged window does not write
+  at all, so the daily no-op tick is a single `get_value`.
+
+- Re-runs are guarded by a `DefaultValue` key holding the last period actually emailed:
+  running the job by hand cannot produce a second statement for a period already paid,
+  and a period whose send failed is retried on the next tick rather than skipped.
+
 ## [1.231.1] - 2026-08-03
 
 ### Fixed

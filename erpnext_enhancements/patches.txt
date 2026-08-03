@@ -353,3 +353,12 @@ erpnext_enhancements.patches.grant_training_learner_to_employees
 # Calendar AND still exposing the secret. This patch relocates it into __Auth.
 # post_model_sync so the new fieldtype is already applied. Idempotent.
 erpnext_enhancements.patches.encrypt_drive_service_account_json
+# v1.232.0 crm: put the commission report on semi-monthly pay periods. Disables
+# the Weekly/Monday "Brian Commissions Report" so Frappe's send_weekly stops
+# firing a doc the new pay_period_reports job now drives on the 1st and 16th --
+# leaving it enabled sends billing two statements. The doc stays (recipients,
+# description, rendering); disabled is the OFF switch, not a deletion marker.
+# Also replaces the hand-typed `custom_date_closed_won > <date>` window on
+# "Brian's Closed Won" so the report is right at migrate rather than at the next
+# 07:00 tick -- and inclusive, which the `>` was not.
+erpnext_enhancements.patches.switch_commission_report_to_pay_periods

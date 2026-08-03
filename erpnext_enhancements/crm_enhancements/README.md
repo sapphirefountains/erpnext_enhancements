@@ -9,9 +9,59 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | `api.py` | Opportunity→Project conversion + tag sync | `enqueue_project_creation` (whitelisted), `create_project_from_opportunity_background` (provisions the Drive tree via `google_drive.drive_utils`), `sync_opportunity_tags`, `sync_opportunity_tags_for_existing` (whitelisted) | `sync_opportunity_tags` → `Opportunity` `before_save` |
 | `doctype/accounts_lead`, `accounts_opportunity`, `accounts_project`, `lead_source`, `opportunity_contributor`, `value_stream`, `value_streams` | CRM child tables / masters ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
 | `doctype/sales_activity_settings/…py` | Single: global `inactivity_threshold` (days) — fallback reminder window for `script_migrations.customer.customer_inactivity_reminder` (ported v0.8.0) | `SalesActivitySettings` (pass) | synced on migrate |
+| `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
 | `page/sales_pipeline/*` | TV-friendly realtime funnel board (`/app/sales-pipeline`, v1.2.0) | `get_pipeline_data`, `check_permission` (whitelisted); `stamp_stage_change`, `publish_pipeline_update` | hooks → `Opportunity` `before_save` / `on_update`; see below |
 
 Related client-side code lives in `public/js/crm_enhancements/` (`opportunity.js`, `opportunity_list.js`, `opportunity_kanban_totals.js`, `opportunity_migrated_scripts.js`, `fountain_move_request*.js`, `fountain_move_invite.js`) — see the [public README](../public/README.md#crm-enhancements).
+
+## Commission report pay periods (`pay_period_reports.py`, v1.232.0)
+
+Commission runs on semi-monthly pay periods — **1st–15th** and **16th–end of
+month** — and the "Brian Commissions Report" Auto Email Report has described
+that rule in its own body text since it was written. Nothing implemented it:
+`Brian's Closed Won` is a Report Builder report whose saved filters held a
+hand-retyped `custom_date_closed_won > <date>`, and the email went weekly on
+Mondays.
+
+**Why this is a job and not configuration.** All three native routes are closed:
+
+- `Auto Email Report`'s dynamic date filters (`from_date_field` / `to_date_field`
+  / `dynamic_date_period`) are applied **only when the report type is not Report
+  Builder** — `get_report_content` guards them with
+  `if self.report_type != "Report Builder"`. They are inert here.
+- `Auto Email Report.filters` are **appended** to the report's saved filters, not
+  substituted (`Report.run_standard_report`), so the email can never override or
+  widen a date already baked into the report.
+- `frequency` offers only Daily / Weekdays / Weekly / Monthly. Nothing in that
+  vocabulary means "the 1st and the 16th".
+
+So the window lives in the report's saved `json`, which is also what makes the
+desk view right: opening the report shows **the period currently in progress**.
+
+**The borrow/restore dance.** The email needs the *finished* period while the
+desk view wants the *running* one, and a Report Builder report holds one filter
+set. The send briefly points the report at the closed period, renders through
+the Auto Email Report doc, and `run_pay_period_cycle` re-applies the running
+window immediately afterwards — on every path, including a send that raised.
+The cron is **daily** rather than `1,16` for the same reason: a missed tick or a
+dead send self-heals next morning instead of stranding the desk report for up to
+sixteen days.
+
+**The Auto Email Report doc is deliberately left disabled.** That is what stops
+Frappe's `send_weekly` from also firing it; the doc still owns the recipient
+list (editable in the desk, no code change), the description and the rendering,
+and this module drives it. Do not delete it.
+
+Two behaviours worth knowing: the window is `between`, **inclusive at both ends**
+— the `>` it replaced silently dropped deals closed *on* a boundary day, which
+is how a $500 opportunity dated 2026-07-16 ended up in neither period — and only
+the date rows are rewritten, so an owner/status filter changed in the desk
+survives the next tick. Re-runs are guarded by a `DefaultValue` key holding the
+last period actually emailed, so re-running the job by hand cannot produce a
+second statement for a period already paid.
+
+Ad hoc run: `bench --site <site> execute
+erpnext_enhancements.crm_enhancements.pay_period_reports.run_pay_period_cycle`.
 
 ## Fountain Move intake (`fountain_move/`, v1.160.0)
 
