@@ -3,11 +3,14 @@
 The player and the progress store use **deliberately different** shapes, and only
 ``api.training._normalise_beat`` knows both:
 
-* the wire sends run-length-encoded ``[start, length]`` ranges, because a learner
-  who scrubs around produces many small pieces and a phone on cellular should not
-  send an ``[start, end]`` pair for each;
-* ``training.progress`` stores ``[start, end]`` intervals, because that is what
-  merges, clips and collapses cleanly.
+* the wire sends run-length-encoded ranges under the key ``ranges``;
+* ``training.progress`` stores the same runs under the key ``intervals``.
+
+Both are half-open ``[start, end]``. ``_normalise_beat`` used to read the wire's
+second element as a *length* — and this file used to assert that it should, which
+is precisely why the disagreement survived. Restating one side's assumption is not
+a contract test. :class:`TestTheWireShapeMatchesTheProducer` checks the server
+against ``rle()``, the function that actually produces the numbers.
 
 Getting the translation wrong is **silent and total**. Mismatched keys mean zero
 seconds are ever credited, so no video lesson can be completed and nothing
@@ -22,6 +25,7 @@ actually uses, so drift on either side fails here rather than in production.
 Run: python -m unittest erpnext_enhancements.tests.test_training_heartbeat_wire
 """
 
+import ast
 import re
 import sys
 import types
@@ -36,6 +40,26 @@ normalise = None
 
 VIDEO_JS = REPO_ROOT / "erpnext_enhancements/public/js/training/video.js"
 PROGRESS_PY = REPO_ROOT / "erpnext_enhancements/training/progress.py"
+
+
+def _rle_body():
+	"""The source of ``rle()`` alone, so assertions cannot wander into its callers.
+
+	Brace-matched rather than regex-bounded: ``rle`` contains nested blocks, and a
+	non-greedy match to the first ``}`` stops inside the ``for`` loop — which would
+	quietly hide the very last ``out.push`` from every check below.
+	"""
+	src = VIDEO_JS.read_text(encoding="utf-8")
+	start = src.index("function rle(")
+	depth = 0
+	for i in range(src.index("{", start), len(src)):
+		if src[i] == "{":
+			depth += 1
+		elif src[i] == "}":
+			depth -= 1
+			if depth == 0:
+				return src[start : i + 1]
+	raise AssertionError("rle() has unbalanced braces")
 
 
 def _install_frappe_stub():
@@ -102,23 +126,47 @@ def setUpModule():
 
 
 class TestRangesBecomeIntervals(unittest.TestCase):
-	"""RLE ``[start, length]`` -> stored ``[start, end]``."""
+	"""Wire ``[start, end]`` -> stored ``[start, end]``. A rename, not a maths.
+
+	It used to be a maths, and it was wrong: the second element was read as a
+	*length*. The tests below said so too, which is why nobody noticed — they
+	restated the server's assumption instead of checking it against the client
+	that produces the values. See :class:`TestTheWireShapeMatchesTheProducer`.
+	"""
 
 	def test_single_range(self):
-		out = normalise({"ranges": [[10, 5]]})
+		out = normalise({"ranges": [[10, 15]]})
 		self.assertEqual(out["intervals"], [[10, 15]])
 
 	def test_several_ranges(self):
-		out = normalise({"ranges": [[0, 30], [95, 85]]})
+		out = normalise({"ranges": [[0, 30], [95, 180]]})
 		self.assertEqual(out["intervals"], [[0, 30], [95, 180]])
 
-	def test_zero_length_range_is_dropped(self):
-		"""A zero-length run credits nothing; keeping it would add a degenerate
+	def test_a_run_that_does_not_start_at_zero(self):
+		"""The case that broke production, kept as its own test.
+
+		A run starting at 0 reads the same either way — end and length coincide —
+		so every learner who played from the beginning looked fine, and the defect
+		only appeared on the first beat after a pause. Fifteen seconds from 17 is
+		``[17, 32]``. Read as a length it became ``[17, 49]``: thirty-two seconds,
+		nearly all of them never watched.
+		"""
+		out = normalise({"ranges": [[17, 32]]})
+		self.assertEqual(out["intervals"], [[17, 32]])
+		start, end = out["intervals"][0]
+		self.assertEqual(end - start, 15, "credited seconds must equal seconds watched")
+
+	def test_empty_range_is_dropped(self):
+		"""A zero-width run credits nothing; keeping it would add a degenerate
 		interval that merge logic then has to defend against."""
-		self.assertEqual(normalise({"ranges": [[10, 0]]})["intervals"], [])
+		self.assertEqual(normalise({"ranges": [[10, 10]]})["intervals"], [])
+
+	def test_inverted_range_is_dropped_not_repaired(self):
+		"""``end < start`` is a client bug. Swapping it would invent seconds."""
+		self.assertEqual(normalise({"ranges": [[30, 10]]})["intervals"], [])
 
 	def test_malformed_range_is_skipped_not_fatal(self):
-		out = normalise({"ranges": [[10, 5], "nonsense", [1, 2, 3], [20, 4]]})
+		out = normalise({"ranges": [[10, 15], "nonsense", [1, 2, 3], [20, 24]]})
 		self.assertEqual(out["intervals"], [[10, 15], [20, 24]])
 
 	def test_the_wire_key_does_not_survive(self):
@@ -175,12 +223,106 @@ class TestPassthrough(unittest.TestCase):
 		self.assertIn("ranges", payload)
 
 
+class TestTheWireShapeMatchesTheProducer(unittest.TestCase):
+	"""Check the translation against ``rle()``, not against its own docstring.
+
+	This is the test that was missing, and its absence cost a release. The suite
+	above pinned ``[start, length]`` and the class below asserted the player still
+	emits a key *named* ``ranges`` — so both halves were checked and neither was
+	checked against the other. The server was free to disagree with the client
+	about what the numbers meant, and did, and nothing failed.
+
+	``rle()`` is JavaScript, so it cannot be called from here. What it can do is
+	state its own contract, which it does in a worked example directly above the
+	code::
+
+	    // [3,4,5,9,10] -> [[3,6],[9,11]] - half-open, matching progress_json's `iv`
+
+	That example is machine-checked three ways below: that it exists at all, that
+	it is arithmetically consistent with half-open ``[start, end]`` (so it cannot
+	go stale while still passing), that the emitting line really pushes an end
+	rather than a length, and that ``_normalise_beat`` credits exactly the seconds
+	it names — no more, which is the failure that shipped.
+	"""
+
+	@staticmethod
+	def _worked_example():
+		"""``(input_seconds, emitted_pairs)`` from rle()'s comment."""
+		src = VIDEO_JS.read_text(encoding="utf-8")
+		match = re.search(r"//\s*(\[[\d,\s]+\])\s*->\s*(\[\[.*?\]\])", src)
+		if not match:
+			return None, None
+		return ast.literal_eval(match.group(1)), ast.literal_eval(match.group(2))
+
+	def test_the_example_is_actually_found(self):
+		"""Guard first. A scanner that matches nothing passes everything, which is
+		how three earlier assertions in this module came to be worthless."""
+		seconds, pairs = self._worked_example()
+		self.assertIsNotNone(seconds, "rle()'s worked example is gone; the tests below are blind")
+		self.assertTrue(seconds and pairs)
+
+	def test_the_example_is_consistent_with_half_open_start_end(self):
+		"""The comment cannot drift away from the code it documents."""
+		seconds, pairs = self._worked_example()
+		covered = []
+		for start, end in pairs:
+			covered.extend(range(start, end))
+		self.assertEqual(
+			covered,
+			list(seconds),
+			f"rle()'s example {seconds} -> {pairs} does not read as half-open "
+			f"[start, end]; if the player's format really changed, this file and "
+			f"_normalise_beat both have to change with it",
+		)
+
+	def test_every_emitting_line_pushes_an_end_not_a_length(self):
+		"""Belt and braces: the comment could be right and the code wrong.
+
+		*Every* push, not any push. ``rle()`` closes a run in two places — one when
+		it hits a gap, one for the final run — and asserting that the pattern
+		merely appears somewhere let a mutation change the second site and still
+		pass. Presence is not coverage; that mistake has now been made in three
+		separate suites in this module.
+		"""
+		body = _rle_body()
+		pushes = re.findall(r"out\.push\(\[([^\]]*)\]\)", body)
+		self.assertGreaterEqual(len(pushes), 2, "rle() no longer closes runs the way this reads")
+		for args in pushes:
+			self.assertEqual(
+				args.replace(" ", ""),
+				"start,prev+1",
+				f"rle() emits `[{args}]`; if that is a length rather than an end, "
+				f"_normalise_beat has to stop reading an end",
+			)
+
+	def test_normalise_credits_exactly_the_seconds_the_player_named(self):
+		"""The whole contract, end to end, in one assertion.
+
+		Not ``>=``: over-crediting is the bug that shipped. ``[[17, 32]]`` — fifteen
+		seconds — was banked as thirty-two, and after four beats the intervals had
+		swallowed a 90-second video whole.
+		"""
+		seconds, pairs = self._worked_example()
+		intervals = normalise({"ranges": [list(p) for p in pairs]})["intervals"]
+		credited = []
+		for start, end in intervals:
+			credited.extend(range(start, end))
+		self.assertEqual(sorted(credited), sorted(seconds))
+		self.assertEqual(
+			len(credited), len(seconds), "credited seconds must equal watched seconds"
+		)
+
+
 class TestBothSidesStillSpeakTheseShapes(unittest.TestCase):
 	"""Re-read the source either side of the translation.
 
 	If the player renames `ranges`, or progress starts reading something other
 	than `intervals`, the translation above becomes a no-op that silently credits
 	nothing. These catch that at the only moment it is cheap to catch.
+
+	Names only. Checking that the two sides agree on what the values *mean* is
+	:class:`TestTheWireShapeMatchesTheProducer`, and the distinction is the entire
+	lesson of v1.236.0 — these assertions all passed while coverage was wrong.
 	"""
 
 	def test_player_still_emits_ranges_and_structured_counters(self):

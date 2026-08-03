@@ -579,6 +579,94 @@ class TestRecordHeartbeat(unittest.TestCase):
 		STATE["columns"].discard("integrity_flags")
 		self.assertEqual(self._beat([[0, 600]])["credited"], 18)
 
+
+class TestClaimMismatch(unittest.TestCase):
+	"""The player's own second-count, checked against what the server derived.
+
+	``claimed_seconds`` is computed by the player from its bitmap, independently
+	of how it encodes the ranges — so the two numbers only diverge when the two
+	sides disagree about the *format*. They did, for the whole of v1.235.0: the
+	wire's ``[start, end]`` was decoded as ``[start, length]``, every beat after a
+	learner's first pause banked roughly double, and this figure was in the
+	payload the entire time, unread.
+
+	This is the ninth-wire-mismatch alarm. It flags rather than trims — see the
+	note in ``record_heartbeat``.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def _beat(self, intervals, **extra):
+		payload = {"lesson_key": "L1", "block_key": "B1", "duration": 600, "intervals": intervals}
+		payload.update(extra)
+		return progress.record_heartbeat("ATT-0001", payload)
+
+	def test_an_honest_beat_raises_nothing(self):
+		result = self._beat([[0, 10]], claimed_seconds=10)
+		self.assertNotIn("claim_mismatch", result["flags"])
+		self.assertEqual(result["credited"], 10)
+
+	def test_the_exact_v1_235_0_defect_is_caught(self):
+		"""``[[17, 32]]`` is fifteen seconds. Decoded as a length it is thirty-two."""
+		result = self._beat([[17, 49]], claimed_seconds=15)
+		self.assertIn("claim_mismatch", result["flags"])
+
+	def test_the_mismatch_names_both_numbers_for_an_auditor(self):
+		"""Read the mismatch line itself, not the whole field.
+
+		``integrity_flags`` is one shared buffer, and this beat also trips
+		``over_claim`` — whose message quotes the very same 32. Asserting the
+		numbers appear *somewhere* passed a mutation that deleted them from the
+		line under test, which is the same mistake three other suites in this
+		module have made.
+		"""
+		self._beat([[17, 49]], claimed_seconds=15)
+		lines = [
+			line
+			for line in STATE["rows"]["ATT-0001"]["integrity_flags"].splitlines()
+			if "player claimed" in line
+		]
+		self.assertEqual(len(lines), 1, "expected exactly one claim-mismatch line")
+		self.assertIn("15", lines[0])
+		self.assertIn("32", lines[0])
+		self.assertIn("L1/B1", lines[0])
+
+	def test_it_flags_but_does_not_reduce_the_credit(self):
+		"""Compaction and adjacency merging over-credit on purpose; trimming here
+		would fight those decisions silently. The flag is the deliverable.
+
+		The server-clock clamp must not fire, or both paths recompute ``candidate``
+		and the assertion cannot see whether this branch trimmed anything. That
+		needs an earlier beat *and then* time: with no ``beat_at`` in the meta yet,
+		``_elapsed_seconds`` falls back to a single heartbeat interval however far
+		the clock is wound on, so advancing before the first beat buys nothing.
+		"""
+		self._beat([[0, 5]], claimed_seconds=5)
+		_advance(120)
+		flagged = self._beat([[17, 49]], claimed_seconds=15)
+		self.assertIn("claim_mismatch", flagged["flags"])
+		self.assertNotIn("over_claim", flagged["flags"], "the clamp fired; this test proves nothing")
+		self.assertEqual(flagged["credited"], 32)
+		self.assertEqual(
+			progress.load("ATT-0001")["lessons"]["L1"]["blocks"]["B1"]["iv"], [[0, 5], [17, 49]]
+		)
+
+	def test_adjacency_merging_is_not_mistaken_for_a_mismatch(self):
+		"""Two runs a second apart become one interval, which legitimately gains a
+		second nobody claimed. A guard that fired on that would cry wolf on every
+		learner who scrubbed."""
+		result = self._beat([[0, 5], [6, 10]], claimed_seconds=9)
+		self.assertNotIn("claim_mismatch", result["flags"])
+
+	def test_a_beat_without_the_key_is_not_flagged(self):
+		"""An older player, or the smoke harness, simply does not send it."""
+		self.assertNotIn("claim_mismatch", self._beat([[0, 10]])["flags"])
+
+	def test_a_zero_claim_is_not_flagged(self):
+		"""``claimed_seconds: 0`` is absence, not an assertion that nothing counts."""
+		self.assertNotIn("claim_mismatch", self._beat([[0, 10]], claimed_seconds=0)["flags"])
+
 	def test_seeks_and_hidden_accumulate(self):
 		self._beat([[0, 10]], seeks=3, hidden=12)
 		_advance(15)
@@ -644,6 +732,85 @@ class TestRecordHeartbeat(unittest.TestCase):
 		self._beat([[i * 10, i * 10 + 2] for i in range(40)])
 		stored = progress.load("ATT-0001")["lessons"]["L1"]["blocks"]["B1"]["iv"]
 		self.assertLessEqual(len(stored), 5)
+
+
+class TestAReplayedBurstIsNotStarved(unittest.TestCase):
+	"""The queue drain — the whole reason ``video.js`` keeps beats in sessionStorage.
+
+	A learner in a lift keeps watching while the beats stack up, then the tab
+	sends the backlog in one drain, back to back. Every one of those requests used
+	to reset the clamp's window to *now*, so the second arrived a fraction of a
+	second after the first, ``int(0.2 * 1.25)`` allowed zero seconds, and the rest
+	of the backlog was discarded — while ``_flag`` wrote an over-claim note
+	against a learner who had done nothing wrong.
+
+	The window now advances by what each beat actually spent, so a burst shares
+	one budget.
+	"""
+
+	def setUp(self):
+		_reset_state()
+
+	def _beat(self, intervals, **extra):
+		payload = {"lesson_key": "L1", "block_key": "B1", "duration": 600, "intervals": intervals}
+		payload.update(extra)
+		return progress.record_heartbeat("ATT-0001", payload)
+
+	def test_the_second_beat_of_a_drain_still_credits(self):
+		self._beat([[0, 10]])          # opens the window
+		_advance(60)                   # sixty seconds offline, four beats' worth
+		first = self._beat([[10, 25]])  # the backlog, replayed back to back
+		second = self._beat([[25, 40]])
+		third = self._beat([[40, 55]])
+		self.assertEqual(first["credited"], 15)
+		self.assertEqual(second["credited"], 15, "the second beat of a drain was starved")
+		self.assertEqual(third["credited"], 15, "the third beat of a drain was starved")
+
+	def test_a_replayed_burst_is_not_flagged_as_cheating(self):
+		"""Checked on the returned list *and* the persisted field.
+
+		The two carry different strings — the token ``over_claim`` only ever
+		appears in the reply, while the field gets prose — so asserting the token
+		is absent from the text would have passed no matter what happened.
+		"""
+		self._beat([[0, 10]])
+		_advance(60)
+		second = self._beat([[10, 25]])
+		third = self._beat([[25, 40]])
+		self.assertEqual(second["flags"], [])
+		self.assertEqual(third["flags"], [])
+		self.assertFalse((STATE["rows"]["ATT-0001"].get("integrity_flags") or "").strip())
+
+	def test_the_control_a_real_over_claim_still_flags_here(self):
+		"""Guards the test above: it must fail because nothing was flagged, not
+		because flagging stopped working in this fixture."""
+		self._beat([[0, 10]])
+		_advance(5)
+		result = self._beat([[10, 600]])
+		self.assertIn("over_claim", result["flags"])
+		self.assertTrue((STATE["rows"]["ATT-0001"].get("integrity_flags") or "").strip())
+
+	def test_the_burst_still_cannot_exceed_the_time_that_passed(self):
+		"""Shared, not unlimited. Sixty seconds buys seventy-five, and no more."""
+		self._beat([[0, 10]])
+		_advance(60)
+		credited = sum(self._beat([[i * 100, i * 100 + 100]])["credited"] for i in range(1, 6))
+		self.assertLessEqual(credited, int(60 * progress.MAX_CLAIM_RATE))
+
+	def test_the_window_never_advances_past_now(self):
+		"""Otherwise a beat could spend time that has not happened yet, and the
+		next one would arrive with a negative gap."""
+		self._beat([[0, 10]])
+		_advance(600)
+		self._beat([[10, 600]])  # credits a lot, spending far less than 600s
+		self.assertLessEqual(progress._meta("ATT-0001")["beat_at"], progress.now_datetime())
+
+	def test_an_honest_steady_stream_is_unchanged(self):
+		"""The common case must not shift: 15s of watching every 15s."""
+		self._beat([[0, 15]])
+		for i in range(1, 5):
+			_advance(15)
+			self.assertEqual(self._beat([[i * 15, i * 15 + 15]])["credited"], 15)
 
 
 class TestElapsedFallbacks(unittest.TestCase):

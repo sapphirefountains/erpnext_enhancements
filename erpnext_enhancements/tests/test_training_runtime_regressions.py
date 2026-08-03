@@ -345,3 +345,146 @@ class TestSignoffMatchesTheCourseNotTheVersion(unittest.TestCase):
             "the gate is exercised before the prior sign-off is checked, so a "
             "re-run reports a failure that has not happened",
         )
+
+
+VIDEO_JS = APP / "public/js/training/video.js"
+
+
+def _video_js():
+    return VIDEO_JS.read_text(encoding="utf-8")
+
+
+def _fn_body(src, signature):
+    """A JavaScript function's source, brace-matched from its signature."""
+    start = src.index(signature)
+    depth = 0
+    for i in range(src.index("{", start), len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start : i + 1]
+    raise AssertionError(f"unbalanced braces after {signature!r}")
+
+
+class TestCreditCannotLatchOffForever(unittest.TestCase):
+    """Every flag that stops watch credit must have a way back on.
+
+    The player's sampler is guarded by a row of booleans — ``seeking``,
+    ``stalled``, ``blurredSince``, ``onScreen`` — each set by one DOM event and
+    cleared by a *different* one. That is fine until the clearing event does not
+    arrive, which browsers arrange in more ways than is comfortable: an aborted
+    seek fires no ``seeked``, ``stalled`` fires at an idle paused video and is
+    only cleared by ``playing``, a window that never regains focus never fires
+    ``focus``, and an IntersectionObserver stops reporting when the element goes
+    into native fullscreen.
+
+    Any one of them latching means the learner watches the rest of the lesson for
+    no credit and is told nothing at all — the meter simply stops. Four
+    independent routes to one indistinguishable symptom, which is why this is
+    checked structurally rather than case by case.
+    """
+
+    # (flag, the value that means "credit may flow again")
+    LATCHES = (
+        ("st.seeking", "false"),
+        ("st.stalled", "false"),
+        ("st.blurredSince", "0"),
+        ("st.onScreen", "true"),
+    )
+
+    def test_the_watchdog_exists_and_runs_before_the_guards(self):
+        body = _fn_body(_video_js(), "function tick()")
+        heal = body.find("st.selfHealed")
+        guard = body.find("if (video.paused || video.ended || st.seeking")
+        self.assertNotEqual(heal, -1, "the credit watchdog is gone")
+        self.assertNotEqual(guard, -1, "the sampler's guard row moved; re-read this test")
+        self.assertLess(
+            heal,
+            guard,
+            "the watchdog runs after the guard it is meant to unstick, so a "
+            "latched st.seeking returns before anything can clear it",
+        )
+
+    def test_every_latch_is_cleared_by_the_watchdog(self):
+        """Checked as *condition plus assignment*, not as a mention.
+
+        Asserting the flag's name appears in the watchdog passed a mutation that
+        changed ``if (st.stalled)`` to ``if (false)`` — the name was still right
+        there on the assignment line below, doing nothing. Presence is not
+        behaviour; this module has now learned that four times.
+        """
+        body = _fn_body(_video_js(), "function tick()")
+        watchdog = body[body.index("Unstick the latches") : body.index("if (video.paused ||")]
+        for latch, healed in self.LATCHES:
+            self.assertRegex(
+                watchdog,
+                r"if \([^)]*" + re.escape(latch),
+                f"{latch} is never tested by the watchdog, so whatever the lines "
+                f"below it say, a latched {latch} is never noticed",
+            )
+            self.assertRegex(
+                watchdog,
+                re.escape(latch) + r"\s*=\s*" + re.escape(healed),
+                f"the watchdog tests {latch} but never sets it back to {healed}",
+            )
+
+    def test_the_watchdog_only_fires_while_media_is_actually_advancing(self):
+        """Otherwise it would clear a genuine seek's guard and hand out credit for
+        a scrub — the one thing this whole file exists to prevent."""
+        body = _fn_body(_video_js(), "function tick()")
+        watchdog = body[body.index("Unstick the latches") : body.index("if (video.paused ||")]
+        self.assertIn("dtMedia > 0", watchdog)
+        self.assertIn("!video.paused", watchdog)
+
+
+class TestTheBeatQueueCannotStarve(unittest.TestCase):
+    """One refused beat must not hold up every beat behind it.
+
+    ``drainQueue`` sends oldest-first. With a single ``.catch`` on the whole
+    chain, the first rejection skipped every later beat *and* left the refused
+    payload at the head of the queue, so the next drain failed on it again. A
+    beat the server would never accept — a stale attempt, a lesson key from a
+    republished version — stopped delivery permanently, and the only outward sign
+    was a coverage meter that had quietly stopped moving.
+    """
+
+    def test_failures_are_handled_per_beat_not_per_drain(self):
+        body = _fn_body(_video_js(), "function drainQueue()")
+        self.assertIn("queue.fail(", body, "a refused beat is no longer counted or requeued")
+        # The rejection handler must sit on the per-beat promise. As the second
+        # argument to .then, or a .catch, INSIDE the reduce -- not trailing the
+        # whole chain, which is what shipped.
+        self.assertIn("function (err)", body)
+        self.assertLess(
+            body.index("queue.fail("),
+            body.rindex("}, Promise.resolve())"),
+            "the failure handler is outside the reduce, so it still aborts the "
+            "whole drain on the first refusal",
+        )
+
+    def test_a_refused_beat_goes_to_the_back_and_is_eventually_abandoned(self):
+        body = _fn_body(_video_js(), "fail: function (clientId)")
+        self.assertIn("MAX_BEAT_ATTEMPTS", body, "a poison beat is retried forever")
+        self.assertIn("kept.push(retry)", body, "a refused beat stays at the head of the queue")
+
+    def test_something_retries_when_playback_is_not_driving_the_queue(self):
+        src = _video_js()
+        self.assertIn("function scheduleRetry()", src)
+        # Called from BOTH arms of the flush: a drain that resolved with beats
+        # still queued, and one that threw. Only wiring the success path leaves
+        # the queue stranded in exactly the case it exists for.
+        flush = _fn_body(src, "function flush(reason)")
+        self.assertEqual(
+            flush.count("scheduleRetry()"),
+            2,
+            "scheduleRetry is not called from both the resolve and the reject arm",
+        )
+
+    def test_a_stalled_queue_is_visible_to_the_learner(self):
+        """`emit("offline")` had no subscriber anywhere in the app, so a queue
+        that could not drain was indistinguishable from nobody watching."""
+        src = _video_js()
+        self.assertIn("function noticeIfStuck()", src)
+        self.assertIn("showNotice(", _fn_body(src, "function noticeIfStuck()"))

@@ -47,6 +47,7 @@ closed tab left behind.
 """
 
 import json
+from datetime import timedelta
 
 import frappe
 from frappe.utils import cint, flt, now_datetime
@@ -362,6 +363,29 @@ def record_heartbeat(attempt_name, payload):
 	candidate = merge_intervals(existing, claimed, duration, cap)
 	gained = _covered_seconds(candidate) - _covered_seconds(existing)
 
+	# The player counts the integer seconds it is claiming and sends the total in
+	# `claimed_seconds`, arrived at independently of how it encodes the ranges. So
+	# the two numbers are a check on each other, and when they diverge the
+	# encoding is being misread. That is not hypothetical: for the whole of
+	# v1.235.0 the wire's `[start, end]` pairs were decoded as `[start, length]`,
+	# every beat after a learner's first pause banked roughly double, and this
+	# exact figure was sitting in the payload the whole time, unread.
+	#
+	# Flagged, not trimmed. Compaction (`_collapse_smallest_gaps`) legitimately
+	# over-credits by a second or two when the interval cap is hit, and adjacency
+	# merging closes a one-second gap per join by design — trimming here would
+	# fight decisions this module makes on purpose, and quietly. An auditor
+	# reading `integrity_flags` should see that coverage was inflated and by how
+	# much; a learner should not lose seconds to a heuristic.
+	stated = cint(payload.get("claimed_seconds"))
+	if stated and gained > stated + len(claimed) * ADJACENCY_SECONDS:
+		flags.append("claim_mismatch")
+		_flag(
+			attempt_name,
+			f"{lesson_key}/{block_key}: player claimed {stated}s, the server derived "
+			f"{gained}s from its ranges. The two sides disagree about the wire format.",
+		)
+
 	allowed = clamp_new_seconds(gained, _elapsed_seconds(attempt_name))
 	if allowed < gained:
 		candidate = merge_intervals(existing, _trim_to_budget(existing, claimed, allowed), duration, cap)
@@ -384,7 +408,9 @@ def record_heartbeat(attempt_name, payload):
 	if lesson.get("status") != "done":
 		lesson["status"] = "in_progress"
 
-	_touch_beat(attempt_name)
+	# Spend only what was credited. See :func:`_touch_beat` — resetting the window
+	# to now here is what starved every replayed beat after the first.
+	_touch_beat(attempt_name, spent_seconds=gained / MAX_CLAIM_RATE)
 	save(attempt_name, data)
 
 	return {"coverage": round(block["cov"] * 100.0, 2), "credited": int(gained), "flags": flags}
@@ -577,9 +603,38 @@ def _seconds_since(stamp):
 		return None
 
 
-def _touch_beat(attempt_name):
+def _touch_beat(attempt_name, spent_seconds=None):
+	"""Move the clamp's window forward.
+
+	``spent_seconds`` is how much wall time this beat's credit *paid for*
+	(``credited / MAX_CLAIM_RATE``). The window advances by that much rather than
+	jumping to now, so a burst of beats arriving together shares one budget
+	instead of the first one swallowing it whole.
+
+	That mattered on the path the queue exists for. A learner whose phone drops
+	signal keeps watching; ``video.js`` stacks the beats in ``sessionStorage`` and
+	replays them in one drain when the connection returns. Every one of those
+	requests used to reset the window to now, so beat two arrived a few hundred
+	milliseconds later, ``int(0.2 * 1.25)`` allowed **zero** seconds, and the
+	whole backlog was thrown away — *and* flagged as over-claiming, which puts an
+	integrity note on the record of somebody who did nothing but ride a lift.
+
+	Never past ``now``: credit is drawn from time that has actually elapsed. The
+	unspent remainder does accumulate, and that is deliberate — the alternative,
+	forfeiting it per request, is what caused the bug. It is also no weaker than
+	before in any way that matters: a paused video sends no beats at all, so an
+	idle window already grows without limit, bounded only by the idle ceiling in
+	:func:`_elapsed_seconds`. This changes who benefits from that, not whether it
+	exists.
+	"""
 	meta = _meta(attempt_name)
-	meta["beat_at"] = now_datetime()
+	now = now_datetime()
+	previous = meta.get("beat_at")
+	if spent_seconds is None or not previous:
+		meta["beat_at"] = now
+	else:
+		advanced = previous + timedelta(seconds=max(0.0, flt(spent_seconds)))
+		meta["beat_at"] = advanced if advanced < now else now
 	_meta_set(attempt_name, meta)
 
 

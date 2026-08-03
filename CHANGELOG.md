@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.236.0] - 2026-08-03
+
+### Fixed
+
+**Watch coverage inflated after the first pause, then froze at 100%.** The wire's
+run-length ranges are half-open `[start, end]` — `rle()` in `video.js` has said so
+in a worked example since it was written. `_normalise_beat` read the second element
+as a *length*.
+
+The two agree on exactly one shape: a run starting at second 0. So a learner who
+played from the beginning was credited correctly, every time, and the very first
+run that did not start at zero — the first beat after a pause — was inflated.
+Verified against production: `[[17, 32]]` means fifteen seconds and was banked as
+thirty-two. Three beats later the intervals had swallowed a 90-second video whole,
+coverage pinned at 100%, and every beat after that gained nothing.
+
+Nothing raised, because an interval is an interval. There is no translation here
+any more, only a rename.
+
+- **A refused heartbeat blocked every heartbeat behind it, forever.** `drainQueue`
+  sends oldest-first and had a single `.catch` on the whole chain, so the first
+  rejection skipped every later beat *and* left the refused payload at the head of
+  the queue to fail again on the next drain. One beat the server would never accept
+  — a stale attempt, a lesson key from a republished version — stopped delivery for
+  the life of the tab. Failures are now handled per beat; a refused beat moves to
+  the back and is abandoned after eight tries.
+
+- **Nothing ever retried a stranded queue.** Beats built while a drain was in
+  flight were not in that drain's snapshot, and the only thing that started a drain
+  was another beat's worth of credited playback. Pausing right after a flush left
+  them there indefinitely. There is now a backing-off retry timer.
+
+- **A replayed backlog was thrown away and the learner flagged for it.** Every
+  heartbeat reset the clamp's window to *now*, so the second beat of a drain
+  arrived a fraction of a second after the first, `int(0.2 × 1.25)` allowed zero
+  seconds, and the rest of the backlog was discarded — with an over-claim note
+  written against somebody who had done nothing but ride a lift. That is precisely
+  the path the offline queue exists for. The window now advances by what each beat
+  actually spent, so a burst shares one budget.
+
+- **Four separate ways for watch credit to latch off permanently.** `seeking`,
+  `stalled`, `blurredSince` and `onScreen` are each set by one DOM event and
+  cleared by a different one — and browsers decline to fire the second one more
+  often than is comfortable: an aborted seek fires no `seeked`, `stalled` fires at
+  an idle paused video, a window may never regain focus, an IntersectionObserver
+  goes quiet in native fullscreen. Any one of them meant the learner watched the
+  rest of the lesson for nothing and was told nothing. Media time advancing on a
+  playing element now clears them, which gives away no credit: a real seek still
+  fails the two-clock allowance check, which is the actual anti-skip machinery.
+
+- **A queue that could not drain was invisible.** `emit("offline")` had no
+  subscriber anywhere in the app, so it looked exactly like nobody watching. The
+  learner is now told, and told that their progress is safe on the device.
+
+### Added
+
+- **`claim_mismatch`.** The player has always sent `claimed_seconds` — its own
+  count of the seconds in a beat, arrived at independently of how it encodes the
+  ranges — and the server has never read it. Those two numbers are a check on each
+  other, and they were a factor of two apart for the whole of v1.235.0. The server
+  now compares them and flags a disagreement for the auditor. It flags rather than
+  trims: compaction and adjacency merging over-credit on purpose, and trimming here
+  would fight those decisions quietly.
+
+- `self_healed` on the beat, counting the latches the watchdog had to clear. Zero
+  on a healthy browser; anything else names a player bug that would otherwise
+  present as "the meter stopped" and be indistinguishable from a learner who walked
+  away.
+
+### Notes
+
+- `tests/test_training_heartbeat_wire.py` pinned `[start, length]` and separately
+  asserted the player still emitted a key *named* `ranges`. Both halves were
+  checked and neither was checked against the other, so the server was free to
+  disagree with the client about what the numbers meant. It now derives the
+  expected shape from `rle()`'s own worked example, and fails if that example drifts
+  from the code above it.
+
+- The mutation harness had a trap worth recording: swapping `if depth == 0` for
+  `if depth >= 0` is the same byte length, so the restored file kept its size and
+  mtime-second and CPython served the **mutated** bytecode from `__pycache__` on the
+  next run. It reported a failure that no longer existed. Mutation runs now use
+  `-B`, and one suite per process — `test_training_progress` and
+  `test_training_heartbeat_wire` each install their own `frappe` stub and cannot
+  share one.
+
 ## [1.235.0] - 2026-08-03
 
 ### Fixed
