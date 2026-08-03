@@ -6,6 +6,12 @@
  * dark block (see public/css/kiosk/kiosk.css). Semantic answer colours stay
  * literal — "correct" must not shift with a palette edit.
  *
+ * The palette alone is not enough. Frappe's website stylesheet declares explicit
+ * colours on h1-h6, a, strong, label and body, and an inherited colour loses to an
+ * explicit one — so those elements never received --tr-text at all. See the "reset
+ * against the host" section below; it is not cosmetic tidying, it is the reason
+ * the page was readable at all.
+ *
  * Mobile-first and deliberately narrow. A learner works through this on a phone
  * on site, so: one column, 16px base (never smaller — a form the reader zooms is
  * a form they skim), and every interactive target >= 44px. Only two breakpoints,
@@ -93,6 +99,83 @@
 	font-size: 16px;
 	line-height: 1.5;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* -------------------------------------------------- reset against the host */
+
+/*
+ * This page is rendered INSIDE Frappe's website stylesheet, and that stylesheet
+ * sets explicit colours on the element types we use most:
+ *
+ *     h1,h2,h3,h4,h5,h6 { color: #171717 }      a { color: #171717 }
+ *     body              { color: #525252 }      strong { color: #383838 }
+ *     label             { color: #777 }         button { color: var(--text-color) }
+ *
+ * `.tr-shell` sets `color: var(--tr-text)`, but an inherited value loses to any
+ * explicit declaration no matter how specific the inheriting selector is. So every
+ * one of those elements escaped our palette and kept a near-black light-theme
+ * colour — which on our dark surface rendered "Your training" as a black heading on
+ * a black background, invisible until you selected the text. The muted paragraph
+ * beside it was legible only because `.tr-empty` happens to declare a colour.
+ *
+ * Nothing about this is theme-detection: our dark palette was applying correctly.
+ * Inheritance simply never reached the elements that mattered. So state the colour
+ * on them rather than relying on the cascade to carry it down.
+ *
+ * Scoped to `.tr-shell` so it cannot leak into the surrounding site chrome.
+ */
+
+.tr-shell h1,
+.tr-shell h2,
+.tr-shell h3,
+.tr-shell h4,
+.tr-shell h5,
+.tr-shell h6,
+.tr-shell p,
+.tr-shell li,
+.tr-shell dt,
+.tr-shell dd,
+.tr-shell strong,
+.tr-shell b,
+.tr-shell label,
+.tr-shell figcaption,
+.tr-shell small {
+	color: var(--tr-text);
+}
+
+/* Headings also inherit a 500 weight and a 0.5rem bottom margin from the host.
+   Ours set their own weight; the margin is reset here so a heading never carries
+   spacing the component did not ask for. */
+.tr-shell h1,
+.tr-shell h2,
+.tr-shell h3,
+.tr-shell h4,
+.tr-shell h5,
+.tr-shell h6 {
+	margin-top: 0;
+}
+
+/* Links keep the accent rather than the host's #06c, which does not sit in this
+   palette and is close to unreadable on the dark surface. */
+.tr-shell a {
+	color: var(--tr-accent);
+	text-decoration: underline;
+}
+
+/* Buttons inherit `color: var(--text-color)` from the host, a desk variable that
+   is not defined on a website page — so it resolves to nothing and the label
+   falls back to the UA default. Every button class here sets its own colour; this
+   is the backstop for any that is added later without one. */
+.tr-shell button {
+	color: inherit;
+	font-family: inherit;
+}
+
+/* The host paints the page body white and its own text mid-grey. The template's
+   inline block already sets the background from --tr-bg; this makes sure any text
+   that ends up a direct child of the shell is ours too. */
+.tr-shell {
+	color: var(--tr-text);
 }
 
 /* ------------------------------------------------------------------- basics */
