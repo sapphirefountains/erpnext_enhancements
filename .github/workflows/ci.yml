@@ -211,6 +211,13 @@ jobs:
       # reads of the desk JS, which never runs in CI and has no bench here.
       - name: Training builder entry path (routing, guards, change_type)
         run: python -m unittest erpnext_enhancements.tests.test_training_builder_entry -v
+      # Does the learner page's stylesheet style the page the scripts build? It
+      # did not: 130 of the 138 classes the player emits had no rule, because the
+      # CSS was written against an earlier vocabulary and never followed the
+      # rewrite. Nothing catches that at runtime -- an unstyled element is not an
+      # error, it just renders wrongly -- so it took a person opening the page.
+      - name: Training player CSS contract (every rendered class has a rule)
+        run: python -m unittest erpnext_enhancements.tests.test_training_player_css_contract -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

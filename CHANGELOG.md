@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.220.0] - 2026-08-02
+
+### Fixed
+
+**The learner page at `/training` was essentially unstyled, and had been since Phase 2.**
+Opening it showed a near-invisible heading and two narrow columns of one-word-per-line text.
+
+- **The stylesheet and the player scripts were written against different class vocabularies.**
+  Of the 138 `tr-*` classes the four scripts emit, **130 had no rule anywhere in
+  `player.css`**; of the 43 the stylesheet defined, 35 were emitted by nothing. `player.css`
+  described the Phase-2a design (`.tr-header`, `.tr-main`, `.tr-bar`, `.tr-coverage`,
+  `.tr-checkpoint`, `.tr-block--video`) while the scripts had moved on through video,
+  checkpoints and quiz (`.tr-subhead`, `.tr-view`, `.tr-bottom`, `.tr-video-meter`,
+  `.tr-video-takeover`, `.tr-block-video` — one dash, not two). Two thirds of the file's rule
+  blocks styled elements that no longer existed.
+
+- **`.tr-shell` was on two nested elements.** The Jinja template puts it on the mount point
+  and `player.js` built another one inside it, so at >= 900px the grid applied twice —
+  the inner grid laid out inside a single 260px column of the outer one. That is what turned
+  every sentence into a column of single words. `player.js` no longer adds a wrapper.
+
+  The page still *looked* styled, which is why this survived: the eight classes that did
+  overlap included `:root`, so the palette applied and the background was correctly dark.
+  Partial application was worse than none.
+
+- **The >= 900px layout declared a left rail that cannot exist.** It placed
+  `.tr-outline` as a grid sibling of the main column, but `player.js` renders the outline as
+  an `<ol>` *inside* the view. The column now simply widens at each breakpoint, matching the
+  DOM the scripts actually build.
+
+- Written fresh: the page chrome, catalog cards, lesson outline, content blocks, image
+  lightbox, PDF acknowledgement row, video meter and checkpoint overlay, and the whole quiz
+  and review screen — against the real DOM, mobile-first, every target >= 44px, and with the
+  checkpoint overlay positioned against the video *wrapper* so it survives fullscreen.
+
+### Added
+
+- `tests/test_training_player_css_contract.py`, wired into CI. It asserts that every class
+  the scripts render has a rule, and that no rule styles an element nothing renders. Both
+  directions matter: the dead half is the tell that the two have drifted.
+
+### Notes
+
+- Mutation-tested. One assertion initially **missed** its mutation — a new `chip()` tone
+  added in JS with no rule in CSS passed cleanly, because the tone list was hardcoded in the
+  test. Tones are now read out of the call sites, so the list cannot go stale. That is the
+  third time in three releases a hardcoded or comment-polluted assertion has been caught only
+  by deliberately breaking the code.
+
+- Worth stating plainly: this was found by a person opening the page, not by any test, and it
+  had been true since Phase 2. Everything verified on the learner side until now was
+  **server-side** — the 17/17 smoke test drives the Python endpoints and never loads the page.
+  The builder's "Preview as learner" would have shown it, and that never worked either (fixed
+  in 1.219.0). Video playback, watch telemetry and HTTP-206 range serving remain unverified in
+  a browser.
+
 ## [1.219.0] - 2026-08-02
 
 ### Fixed
