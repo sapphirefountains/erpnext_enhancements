@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"fh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"fh_sc_purchase_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_sc_sales_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_sc_payment_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_sc_journal_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_sc_bank_reconciliation_tool\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_sc_document_intake\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"fh_head_rp\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Period End</b></span>\",\"col\":12}},{\"id\":\"fh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_card_period_end\",\"type\":\"card\",\"data\":{\"card_name\":\"Period End\",\"col\":4}}]",
+ "content": "[{\"id\":\"fh_head_sc\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"fh_sc_purchase_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":4}},{\"id\":\"fh_sc_sales_invoice\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":4}},{\"id\":\"fh_sc_payment_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":4}},{\"id\":\"fh_sc_journal_entry\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":4}},{\"id\":\"fh_sc_bank_reconciliation_tool\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Reconciliation Tool\",\"col\":4}},{\"id\":\"fh_sc_document_intake\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Document Intake\",\"col\":4}},{\"id\":\"fh_sc_invoices_without_project\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Invoices without Project\",\"col\":4}},{\"id\":\"fh_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"fh_head_rp\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports &amp; Period End</b></span>\",\"col\":12}},{\"id\":\"fh_card_reports\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"fh_card_period_end\",\"type\":\"card\",\"data\":{\"card_name\":\"Period End\",\"col\":4}}]",
  "creation": "2026-08-03 12:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -107,7 +107,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-08-03 22:00:00.000000",
+ "modified": "2026-08-04 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounting Intake",
  "name": "Finance Hub",
@@ -129,30 +129,6 @@
  "sequence_id": 0.0,
  "shortcuts": [
   {
-   "doc_view": "List",
-   "label": "Purchase Invoice",
-   "link_to": "Purchase Invoice",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Sales Invoice",
-   "link_to": "Sales Invoice",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Payment Entry",
-   "link_to": "Payment Entry",
-   "type": "DocType"
-  },
-  {
-   "doc_view": "List",
-   "label": "Journal Entry",
-   "link_to": "Journal Entry",
-   "type": "DocType"
-  },
-  {
    "label": "Bank Reconciliation Tool",
    "link_to": "Bank Reconciliation Tool",
    "type": "DocType"
@@ -163,6 +139,38 @@
    "label": "Document Intake",
    "link_to": "Document Intake",
    "stats_filter": "{\"status\":\"Needs Review\"}",
+   "type": "DocType"
+  },
+  {
+   "color": "Orange",
+   "doc_view": "List",
+   "label": "Invoices without Project",
+   "link_to": "Sales Invoice",
+   "stats_filter": "{\"project\":[\"is\",\"not set\"],\"docstatus\":[\"!=\",2]}",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Journal Entry",
+   "link_to": "Journal Entry",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Payment Entry",
+   "link_to": "Payment Entry",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Purchase Invoice",
+   "link_to": "Purchase Invoice",
+   "type": "DocType"
+  },
+  {
+   "doc_view": "List",
+   "label": "Sales Invoice",
+   "link_to": "Sales Invoice",
    "type": "DocType"
   }
  ],

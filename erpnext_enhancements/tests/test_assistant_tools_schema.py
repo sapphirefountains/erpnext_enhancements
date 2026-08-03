@@ -216,7 +216,7 @@ class TestAssistantToolsContract(unittest.TestCase):
         # `return True`. An unclassified *read* tool is therefore gated as a
         # write: with ai_write_gating_enabled on it records an AI Pending Action
         # and returns the anti-fabrication envelope instead of an answer.
-        # That shipped for both training tools (v1.216.0 -> v1.238.1). Every
+        # That shipped for both training tools (v1.216.0 -> v1.239.1). Every
         # registered tool must land in exactly one set.
         from erpnext_enhancements.assistant_tools._gate import APP_MUTATING, EXPLICIT_READONLY
 

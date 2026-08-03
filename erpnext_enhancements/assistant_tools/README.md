@@ -83,9 +83,12 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `log_time`, dashboard `update_*`, …) until a follow-on batch. The write
   *gate* itself (`_gate.py`/`gating_api.py`) writes AI Pending Action / AI
   Action Log rows but never business documents.
-- **Mutation/risk annotations (v1.71.0).** Each *mutating* tool sets
-  `self.annotations = annotations_for(self.name)` (from `_gate.py`) in its
-  `__init__`. `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
+- **Mutation/risk annotations (v1.71.0; extended to read tools in v1.239.1).**
+  **Every** tool sets `self.annotations = annotations_for(self.name)` (from
+  `_gate.py`) in its `__init__` — mutating and read-only alike. Until v1.239.1
+  only the mutating tools did, which left fourteen read tools advertising
+  nothing and the client guessing.
+  `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
   / `destructiveHint`, plus an `x-ee-mutation` / `x-ee-risk` band) from the
   gate's classification sets, and FAC forwards a tool's `annotations` verbatim
   in `tools/list`. This lets an MCP **client** (e.g. Triton) read a tool's
@@ -150,7 +153,7 @@ as `read_write`, which matches neither its write branch nor its read branch, so
 control reaches the fail-closed `return True`. **An unclassified read tool is
 gated as a write**: with `ai_write_gating_enabled` on it records an AI Pending
 Action and returns the anti-fabrication envelope instead of answering. That is
-what happened to both training tools between v1.216.0 and v1.238.1. The
+what happened to both training tools between v1.216.0 and v1.239.1. The
 annotations are the other half: FAC forwards them verbatim in `tools/list`, and
 without them an MCP client (Triton) guesses mutation from the tool's verb —
 which is how the device tools were mis-read as read-only before v1.71.0.
