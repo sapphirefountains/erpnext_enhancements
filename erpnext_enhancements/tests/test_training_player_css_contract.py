@@ -304,5 +304,86 @@ class TestNoDeadStylesheet(unittest.TestCase):
         )
 
 
+class TestHostThemeReset(unittest.TestCase):
+    """The page renders inside Frappe's website stylesheet, which colours our tags.
+
+    ``frappe/dist/css/website.bundle.*.css`` declares, among others::
+
+        h1,h2,h3,h4,h5,h6 { color: #171717 }
+        a                 { color: #171717 }
+        body              { color: #525252 }
+        strong            { color: #383838 }
+
+    ``.tr-shell`` sets ``color: var(--tr-text)``, but **an inherited value loses to
+    any explicit declaration**, however specific the inheriting selector is. So the
+    elements the host colours never received our palette: "Your training" rendered
+    as a near-black ``<h1>`` on our dark surface and was invisible until selected.
+    The paragraph beside it was legible only because ``.tr-empty`` declares a colour
+    of its own.
+
+    This is not theme detection and the dark palette was applying correctly — the
+    cascade simply never carried it to those tags. The rules below look like
+    redundant boilerplate, which is exactly why they need a test: the obvious
+    "cleanup" is to delete them.
+    """
+
+    # Every tag Frappe's website bundle gives an explicit colour to.
+    HOST_COLOURED = ("h1", "h2", "h3", "p", "strong", "label", "a")
+
+    @staticmethod
+    def _colour_rules():
+        """``{selector: colour-value}`` for every rule that declares a colour.
+
+        Parsed rather than substring-searched. The first version of these
+        assertions checked ``".tr-shell a" in css`` and passed happily against
+        ``.tr-shell a-GONE`` — three of its four mutations survived. A selector is
+        a token, so compare tokens.
+        """
+        rules = {}
+        for selectors, body in re.findall(
+            r"([^{}]+)\{([^{}]*)\}", _css_without_comments()
+        ):
+            match = re.search(r"(?<![-\w])color\s*:\s*([^;}]+)", body)
+            if not match:
+                continue
+            for selector in selectors.split(","):
+                rules[selector.strip()] = match.group(1).strip()
+        return rules
+
+    def test_the_reset_exists(self):
+        self.assertIn("reset against the host", _css())
+
+    def test_every_host_coloured_tag_is_reclaimed(self):
+        rules = self._colour_rules()
+        missing = [
+            tag for tag in self.HOST_COLOURED if f".tr-shell {tag}" not in rules
+        ]
+        self.assertEqual(
+            missing,
+            [],
+            f"the host stylesheet colours {missing} explicitly and no rule here "
+            f"gives .tr-shell {missing} a colour of its own",
+        )
+
+    def test_the_reset_uses_the_palette(self):
+        """Reclaiming with a literal would fix one scheme and break the other."""
+        rules = self._colour_rules()
+        for tag in self.HOST_COLOURED:
+            value = rules.get(f".tr-shell {tag}", "")
+            self.assertIn(
+                "var(--tr-",
+                value,
+                f".tr-shell {tag} is coloured {value!r}, not from the palette",
+            )
+
+    def test_it_is_scoped_to_the_player(self):
+        """Unscoped tag rules would repaint the surrounding site chrome."""
+        code = _css_without_comments()
+        for line in code.splitlines():
+            stripped = line.strip().rstrip(",")
+            if re.fullmatch(r"(h[1-6]|p|a|strong|b|label|small|li)", stripped):
+                self.fail(f"bare tag selector {stripped!r} leaks outside .tr-shell")
+
+
 if __name__ == "__main__":
     unittest.main()

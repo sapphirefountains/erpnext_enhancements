@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.221.0] - 2026-08-02
+
+### Fixed
+
+**"Your training" was a black heading on a black background.** The layout fixes in 1.220.0
+landed correctly — one column, cards, sane spacing — but the page was still barely readable,
+because the palette was never reaching the elements that needed it.
+
+Frappe's website stylesheet, which this page renders inside, declares explicit colours on the
+tags we use most:
+
+```
+h1,h2,h3,h4,h5,h6 { color: #171717 }      a      { color: #171717 }
+body              { color: #525252 }      strong { color: #383838 }
+label             { color: #777 }
+```
+
+`.tr-shell` sets `color: var(--tr-text)`, and **an inherited value loses to any explicit
+declaration**, however specific the inheriting selector is. So every one of those tags kept a
+near-black light-theme colour on our dark surface. The heading was invisible until you selected
+the text; the paragraph beside it was legible only because `.tr-empty` happens to declare a
+colour of its own.
+
+Worth being precise about the diagnosis, because the obvious one is wrong: this was **not** a
+theme-detection problem. The dark palette was matching and applying exactly as intended. The
+cascade simply never carried it to the tags the host had already coloured.
+
+Added a scoped reset that states the colour on those tags rather than trusting inheritance —
+headings, paragraphs, list items, `strong`, `label`, `figcaption`, `small`, links (accent, not
+the host's `#06c`, which is close to unreadable on the dark surface) and buttons. Scoped under
+`.tr-shell` so it cannot repaint the surrounding site chrome.
+
+### Notes
+
+- Four assertions guard the reset, because it looks like redundant boilerplate and the obvious
+  future "cleanup" is to delete it.
+
+- Mutation-tested, and the first version of those assertions **survived three of its four
+  mutations** — it substring-searched the stylesheet, so `.tr-shell a-GONE` still satisfied a
+  check for `.tr-shell a`. They now parse the rules and compare selectors as tokens. That is the
+  fourth release running where an assertion passed its mutation and had to be rewritten; every
+  one was a string search standing in for a structural check.
+
 ## [1.220.0] - 2026-08-02
 
 ### Fixed
