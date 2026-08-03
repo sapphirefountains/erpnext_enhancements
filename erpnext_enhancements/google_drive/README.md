@@ -9,7 +9,7 @@ Google Drive integration for the ERPNext customizations: per-project/customer fo
 | File | Purpose | Key functions | Wiring |
 |---|---|---|---|
 | `drive_utils.py` | Google Drive v3 API wrappers + folder provisioning | `get_drive_service`, `create_folder`, `find_folder`, `rename_folder`, `create_project_subfolders`, `provision_project_folders`, `provision_project_folder_for_opportunity`, `provision_customer_folder`, `provision_opportunity_folder`, `enqueue_opportunity_folder`, `enqueue_customer_folder` | called by `crm_enhancements.api` background worker; Opportunity/Customer `after_insert` |
-| `drive_sync.py` | Two-way attachment sync (ERPNext↔Drive) | `on_file_attached`, `upload_attachment_to_drive`, `sync_shadow_attachments` (hourly, recursive), `retry_failed_syncs`, `test_connection`/`backfill_drive_links` (whitelisted) | `File` `after_insert`; hourly + daily scheduler |
+| `drive_sync.py` | Two-way attachment sync (ERPNext↔Drive) + linked-folder reconciliation | `on_file_attached`, `upload_attachment_to_drive`, `sync_shadow_attachments` (hourly, recursive), `reconcile_drive_links`/`run_drive_link_reconcile` (daily), `retry_failed_syncs`, `test_connection`/`backfill_drive_links`/`check_drive_links` (whitelisted) | `File` `after_insert`; hourly + daily scheduler |
 | `drive_link_manager.py` | System-Manager bulk folder-linking backend (scan → review → apply) | `scan_drive_links`, `get_candidates`, `set_decision`, `bulk_decision`, `search_folders`, `apply_links` (whitelisted, System-Manager-only) | Desk page `/app/drive-link-manager` |
 | `drive_match.py` | Pure fuzzy matcher (no frappe) ranking folders to records | `normalize`, `similarity`, `tier_for_score`, `best_matches` | used by `drive_link_manager`; unit-tested in `tests/test_drive_match.py` |
 | `doctype/project_folder_google_drive_settings/*` | Single settings doctype — `service_account_json`, `shared_drive_id` | `ProjectFolderGoogleDriveSettings` | — |
@@ -29,6 +29,20 @@ Google Drive integration for the ERPNext customizations: per-project/customer fo
 - **Resilience** — `create_folder` retries up to 5× with exponential backoff on HTTP 403/429; `find_folder` retries once after 2s; single quotes in folder names are escaped to avoid Drive query-syntax errors.
 
 > `custom_drive_folder_id` is a hidden Custom Field on Project managed by the app fixtures ([`../fixtures/custom_field.json`](../fixtures/custom_field.json)), synced on migrate.
+
+## Linked-folder reconciliation
+
+A Drive folder id outlives the folder. Delete one in Drive, or move it out of the Shared Drive, and the id stays on the record — so the **Open Drive Folder** button hands the user a bare Google 404 that reads like ERPNext is broken. The shadow sync noticed some of these (it logs `Stale`) but only for documents it happened to walk, and it never told the record.
+
+- **`reconcile_drive_links`** (daily) probes every `custom_drive_folder_id` on Project / Customer / Opportunity with `drive_utils.get_folder_meta` and stamps the hidden Check field **`custom_drive_folder_missing`** on the ones that are gone. *Trashed counts as gone* — a folder in the Shared Drive trash still resolves for the API but is not a place to send a person.
+- **Both directions.** A folder restored from the trash or re-shared with the service account clears its own flag on the next run, and its old `Stale` log rows are marked `Skipped` so a later disappearance logs a fresh one (`_flag_missing_drive_item` dedupes on the Drive id and would otherwise stay silent forever).
+- **Gated on the service account being configured, not on attachment sync.** The button exists whether or not the shadow sync is enabled, so its links need checking either way.
+- **Run it now** with *Check Drive Links* on Project Folder Google Drive Settings; results land in the Drive Sync Log under action `Reconcile Link`.
+- The hourly shadow sync now stamps the same flag when it finds a linked root folder missing, so common cases are caught within the hour rather than the day.
+
+The button reads the flag off the loaded document — no Drive round-trip per click — and when it is set, renders as **Drive Folder Missing**, explaining what happened and pointing at the Drive Link Manager instead of opening Google.
+
+> Guarded by [`tests/test_drive_link_reconcile.py`](../tests/test_drive_link_reconcile.py) (bench-free, own CI step — it installs its own `frappe` stub).
 
 ## Drive Link Manager (`/app/drive-link-manager`)
 

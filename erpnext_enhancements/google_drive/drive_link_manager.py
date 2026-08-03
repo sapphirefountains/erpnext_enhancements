@@ -30,7 +30,11 @@ import frappe
 from frappe.utils import cint
 
 from erpnext_enhancements.google_drive import drive_match
-from erpnext_enhancements.google_drive.drive_sync import SYNCED_DOCTYPES, log_sync
+from erpnext_enhancements.google_drive.drive_sync import (
+	SYNCED_DOCTYPES,
+	log_sync,
+	set_folder_missing,
+)
 from erpnext_enhancements.google_drive.drive_utils import (
 	get_drive_service,
 	provision_customer_folder,
@@ -581,6 +585,10 @@ def _set_record_folder(doctype, name, folder_id):
 	if not frappe.db.exists(doctype, name):
 		frappe.throw(f"{doctype} {name} no longer exists")
 	frappe.db.set_value(doctype, name, field, folder_id, update_modified=False)
+	# Re-linking is the cure for a dead folder, so it has to clear the diagnosis.
+	# Otherwise the record points at a live folder while the button still says
+	# "Drive Folder Missing" until the next daily reconcile.
+	set_folder_missing(doctype, name, 0)
 
 
 def _provision_for(doctype, name):
@@ -598,6 +606,7 @@ def _provision_for(doctype, name):
 		)
 		if folder_id:
 			frappe.db.set_value("Project", name, field, folder_id, update_modified=False)
+			set_folder_missing("Project", name, 0)
 			log_sync(
 				"Provision Folder", "Success",
 				reference_doctype="Project", reference_name=name,

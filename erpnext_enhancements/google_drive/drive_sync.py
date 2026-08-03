@@ -18,6 +18,12 @@ backfill below), this module keeps attachments and Drive files in step:
 * **Deletions never propagate** in either direction: a shadow whose Drive
   file disappeared is flagged ``Stale`` in the Drive Sync Log, nothing is
   deleted automatically.
+* **Link reconciliation** — a daily job (:func:`reconcile_drive_links`) probes
+  every record's ``custom_drive_folder_id`` and stamps
+  ``custom_drive_folder_missing`` on the ones whose folder is gone, so the
+  "Open Drive Folder" button can stop sending people to a Google 404. Runs
+  whether or not attachment sync is on, and clears itself when a folder comes
+  back.
 
 Every action writes a ``Drive Sync Log`` row; Failed rows carry a retry
 payload that :func:`retry_failed_syncs` (daily) re-enqueues up to 3 attempts.
@@ -41,6 +47,7 @@ from googleapiclient.errors import HttpError
 from erpnext_enhancements.google_drive.drive_utils import (
 	find_folder,
 	get_drive_service,
+	get_folder_meta,
 )
 
 # Doctypes with a linked-folder field, in sync scope.
@@ -377,28 +384,34 @@ def _walk_drive_folder(service, folder_id, drive_id, rel_path, depth, visited, i
 			)
 
 
-def _flag_missing_drive_item(doctype, docname, drive_file_id, file_name, message):
+def _flag_missing_drive_item(doctype, docname, drive_file_id, file_name, message,
+			action="Shadow Attachment"):
 	"""Record a single ``Stale`` Drive Sync Log row for a Drive item that can no
 	longer be reached (a linked root folder, or a shadow's target). Idempotent —
 	keyed on the Drive id, so the hourly job doesn't spam duplicate rows."""
 	if frappe.db.exists("Drive Sync Log", {
-		"action": "Shadow Attachment",
+		"action": action,
 		"status": "Stale",
 		"drive_file_id": drive_file_id,
 	}):
 		return
 	log_sync(
-		"Shadow Attachment", "Stale",
+		action, "Stale",
 		reference_doctype=doctype, reference_name=docname,
 		file_name=file_name, drive_file_id=drive_file_id, error=message,
 	)
 
 
+def _flag_missing_root_folder(doctype, docname, folder_id):
+	"""The linked root folder itself is unreachable: log it once *and* stamp the
+	record, so the "Open Drive Folder" button stops offering a link into a Google
+	404. The hourly walk gets here first for documents it syncs; the daily
+	:func:`run_drive_link_reconcile` covers the rest."""
+	_flag_missing_drive_item(doctype, docname, folder_id, None, FOLDER_GONE_MSG)
+	set_folder_missing(doctype, docname, 1)
+
+
 def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
-	missing_msg = (
-		"The linked Drive folder no longer exists or is not shared with the "
-		"service account."
-	)
 	# Resolve the Shared Drive id once per root folder. A 404 here means the
 	# linked folder itself was deleted or moved out of the service account's
 	# reach — flag it once and bail for this document rather than letting the
@@ -408,7 +421,7 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 			drive_id_cache[folder_id] = _drive_id_of(service, folder_id)
 		except HttpError as exc:
 			if exc.resp.status == 404:
-				_flag_missing_drive_item(doctype, docname, folder_id, None, missing_msg)
+				_flag_missing_root_folder(doctype, docname, folder_id)
 				return
 			raise
 	drive_id = drive_id_cache[folder_id]
@@ -419,7 +432,7 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 		_walk_drive_folder(service, folder_id, drive_id, "", 0, set(), items)
 	except HttpError as exc:
 		if exc.resp.status == 404:
-			_flag_missing_drive_item(doctype, docname, folder_id, None, missing_msg)
+			_flag_missing_root_folder(doctype, docname, folder_id)
 			return
 		raise
 
@@ -492,6 +505,170 @@ def _sync_folder_shadows(service, doctype, docname, folder_id, drive_id_cache):
 			doctype, docname, shadow_row.custom_drive_file_id, shadow_row.file_name,
 			"The Drive file behind this shadow attachment was moved or deleted.",
 		)
+
+
+# ------------------------------------------------------------------ link reconciliation
+
+# Check field stamped on the record when its linked folder can no longer be
+# reached. Deliberately separate from ``custom_drive_folder_id``: the id is kept
+# so a restored folder can be recognised, and so the Drive Link Manager can still
+# show what the record used to point at.
+MISSING_FLAG_FIELD = "custom_drive_folder_missing"
+
+FOLDER_GONE_MSG = (
+	"The linked Drive folder no longer exists or is not shared with the "
+	"service account."
+)
+FOLDER_TRASHED_MSG = "The linked Drive folder is in the Drive trash."
+
+
+def _drive_configured(settings=None):
+	"""Whether Drive is set up at all. Deliberately *not* ``_sync_enabled``: the
+	"Open Drive Folder" button works whether or not attachment sync is on, so its
+	links need reconciling either way. Truthiness on the raw Password field is
+	safe — the placeholder is non-empty exactly when a key is stored."""
+	settings = settings or _settings()
+	return bool(settings.get("service_account_json"))
+
+
+def reconcile_drive_links():
+	"""Daily scheduler entry: hand the linked-folder probe to a long worker.
+
+	782 linked records at a Drive round-trip each will not fit a 300s worker, and
+	this is the same shape of walk as the shadow sync — so it gets the same
+	treatment."""
+	if not _drive_configured():
+		return
+	frappe.enqueue(
+		"erpnext_enhancements.google_drive.drive_sync.run_drive_link_reconcile",
+		queue="long",
+		timeout=3600,
+	)
+
+
+def _probe_folder(service, folder_id, shared_drive_id):
+	"""``(gone, reason)`` for one linked folder id.
+
+	Trashed counts as gone. A folder in the Shared Drive trash still resolves for
+	the API, but it is not a place a user can be sent — and "can I send someone
+	here" is the only question the button needs answered."""
+	meta = get_folder_meta(service, folder_id, shared_drive_id)
+	if meta is None:
+		return True, FOLDER_GONE_MSG
+	if meta.get("trashed"):
+		return True, FOLDER_TRASHED_MSG
+	return False, None
+
+
+def set_folder_missing(doctype, docname, missing):
+	"""Set the record's missing-folder flag; True when it actually changed.
+
+	Column-guarded: scheduler jobs run during ERPNext's own test bootstrap, before
+	this app's custom fields exist."""
+	if not frappe.db.has_column(doctype, MISSING_FLAG_FIELD):
+		return False
+	current = cint(frappe.db.get_value(doctype, docname, MISSING_FLAG_FIELD))
+	if current == cint(missing):
+		return False
+	frappe.db.set_value(
+		doctype, docname, MISSING_FLAG_FIELD, cint(missing), update_modified=False
+	)
+	return True
+
+
+def _clear_stale_log_rows(drive_file_id):
+	"""Mark a Drive id's ``Stale`` rows consumed once the folder is reachable
+	again, so a later disappearance logs a fresh one — ``_flag_missing_drive_item``
+	dedupes on the id and would otherwise stay silent forever. ``Skipped`` is the
+	same "this row has been dealt with" status :func:`retry_failed_syncs` uses."""
+	for name in frappe.get_all(
+		"Drive Sync Log",
+		filters={"status": "Stale", "drive_file_id": drive_file_id},
+		pluck="name",
+	):
+		frappe.db.set_value("Drive Sync Log", name, "status", "Skipped", update_modified=False)
+
+
+def run_drive_link_reconcile():
+	"""Background worker: probe every record's linked Drive folder and record on
+	the record itself whether it is still there.
+
+	The shadow sync already noticed dead folders, but only for documents it
+	happened to walk, and only ever wrote the fact to the Drive Sync Log — nothing
+	put it back on the record. So the "Open Drive Folder" button kept offering a
+	link to a folder Google answers 404 for, with no way for the form to know
+	(PRJ-00706, PRJ-00695, CRM-OPP-2026-00113). This closes that loop: the flag
+	lives on the record, so the button reads it for free instead of paying a Drive
+	round-trip per click.
+
+	Both directions are applied. A folder restored from the Shared Drive trash, or
+	re-shared with the service account, clears its own flag on the next run.
+
+	Failure containment follows the shadow sync's contract: one record's failure is
+	logged and skipped, never fatal to the run, and the DB is put back into a
+	usable state *before* anything is written — see
+	:func:`_recover_after_document_failure`.
+	"""
+	settings = _settings()
+	if not _drive_configured(settings):
+		return
+	try:
+		service, shared_drive_id = get_drive_service()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Drive Link Reconcile (service)")
+		return
+
+	checked = newly_missing = restored = 0
+	for doctype, folder_field in SYNCED_DOCTYPES.items():
+		if not frappe.db.has_column(doctype, folder_field):
+			continue
+		for row in frappe.get_all(
+			doctype, filters={folder_field: ["is", "set"]}, fields=["name", folder_field]
+		):
+			folder_id = row.get(folder_field)
+			try:
+				gone, reason = _probe_folder(service, folder_id, shared_drive_id)
+				if gone:
+					if set_folder_missing(doctype, row.name, 1):
+						newly_missing += 1
+					_flag_missing_drive_item(
+						doctype, row.name, folder_id, None, reason, action="Reconcile Link"
+					)
+					frappe.db.commit()
+				elif set_folder_missing(doctype, row.name, 0):
+					_clear_stale_log_rows(folder_id)
+					restored += 1
+					frappe.db.commit()
+				checked += 1
+			except Exception as exc:
+				traceback = frappe.get_traceback()
+				# Recover *before* logging: frappe.log_error writes to the DB too,
+				# so on a dropped connection it would raise on its way out.
+				if not _recover_after_document_failure(exc):
+					return
+				frappe.log_error(
+					f"Drive link reconcile failed for {doctype} {row.name}\n{traceback}",
+					"Drive Link Reconcile",
+				)
+
+	log_sync(
+		"Reconcile Link", "Success",
+		file_name=f"Checked {checked} — {newly_missing} newly missing, {restored} restored",
+	)
+
+
+@frappe.whitelist()
+def check_drive_links():
+	"""Settings-form button: run the linked-folder reconciliation now instead of
+	waiting for the daily pass — the point of finding a dead link is usually that
+	someone is looking at it right now."""
+	frappe.only_for("System Manager")
+	frappe.enqueue(
+		"erpnext_enhancements.google_drive.drive_sync.run_drive_link_reconcile",
+		queue="long",
+		timeout=3600,
+	)
+	return {"status": "queued"}
 
 
 # ------------------------------------------------------------------ retries
