@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.234.0] - 2026-08-03
+
+### Fixed
+
+- **The smoke test reported a security regression that had not happened.** Its sign-off step
+  calls `finish_attempt` before recording a sign-off and expects a refusal — which is only
+  true the first time it runs. A sign-off is matched on the **course**, not the course
+  version, so the previous run's `Competent` sign-off is still valid, the gate correctly
+  opens, and the assertion failed.
+
+  That matching is deliberate: somebody who was watched draining a basin last month has been
+  watched draining a basin, and a reworded paragraph should send them back through the
+  material rather than back in front of a supervisor. The step now detects a prior sign-off
+  and skips with the reason and the record's name.
+
+  A harness that cries wolf on a re-run is worse than one that skips a step, because the next
+  person either stops trusting it or "fixes" a gate that was working.
+
+### Added
+
+- Assertions pinning that `_signoff_outstanding` scopes to the course and **not** the version
+  — the decision a later reader is most likely to "tighten" while believing they are
+  hardening it — and that the harness skips rather than fails.
+
+### Notes
+
+- Verified against production after the 1.233.0 deploy: `after_migrate` completes (all five
+  starter badges seeded with the criteria the awarder evaluates), no errors in three hours,
+  and the server-side end-to-end passes 16 of 17 with the one skip above. In the browser the
+  action bar is visible, the outline lists all three lessons, the quiz mounts with three
+  questions and nine options, no answer markers reach the client, and the video block reports
+  "Watch more of the video — 0% of 80% so far." — the coverage gate wired to the real
+  threshold and refusing completion.
+
+- Three of this change's own mutations initially missed, each for a different reason worth
+  recording: one patched the wrong occurrence of `"course": doc.course,` (the same literal
+  appears in `_issue_completion`), so the assertion under test was never exercised; one
+  checked that a message existed rather than that it was reachable; and one compared position
+  against the wrong occurrence of the word "skipped". A mutation that does not hit the code
+  under test proves nothing, and reads exactly like a passing one.
+
 ## [1.233.0] - 2026-08-03
 
 ### Added

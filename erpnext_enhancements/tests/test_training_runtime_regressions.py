@@ -291,3 +291,57 @@ class TestCoverageReachesTheRecord(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSignoffMatchesTheCourseNotTheVersion(unittest.TestCase):
+    """A sign-off follows the learner and the course, not the content revision.
+
+    Somebody watched draining a basin last month has been watched draining a
+    basin. A reworded paragraph should send them back through the material, not
+    back in front of a supervisor — so `_signoff_outstanding` matches on
+    ``course``, deliberately, and not on ``course_version``.
+
+    Pinned here because it is the kind of decision a later reader "tightens" into
+    a version match while believing they are hardening it, and because it is what
+    makes the smoke test's sign-off step unrepeatable: the previous run's sign-off
+    stays valid, the gate correctly opens, and the harness used to report that as
+    a security regression that had not happened.
+    """
+
+    def test_the_lookup_is_scoped_to_the_course(self):
+        body = _fn("_signoff_outstanding")
+        self.assertIn('"course": doc.course', body)
+
+    def test_it_is_not_scoped_to_the_version(self):
+        body = _fn("_signoff_outstanding")
+        self.assertNotIn("course_version", body)
+
+    def test_the_harness_says_so_rather_than_failing(self):
+        """The smoke test must skip with a reason when a prior sign-off exists,
+        not report a gate failure."""
+        harness = (APP / "training/smoke_test.py").read_text(encoding="utf-8")
+        start = harness.index("def signoff_gate_holds()")
+        body = harness[start : harness.index("_step(", start)]
+        self.assertIn("Training Signoff", body)
+        # Reachability, not presence. Checking only that the word "skipped"
+        # appears passed a mutation that replaced the guard with `if False:` —
+        # the message stayed in the file and could never be shown, which is the
+        # same complete-and-unreachable shape this module keeps finding.
+        self.assertIn("if prior:", body)
+        guard = body.index("if prior:")
+        # The distinctive message, not the word "skipped" — that also appears in
+        # the "course does not require sign-off" branch 900 characters earlier,
+        # so the ordering check compared against the wrong one and failed on
+        # correct code.
+        self.assertIn("already signs this learner off", body)
+        self.assertLess(
+            guard,
+            body.index("already signs this learner off"),
+            "the skip message is unreachable",
+        )
+        self.assertLess(
+            guard,
+            body.index("finish_attempt"),
+            "the gate is exercised before the prior sign-off is checked, so a "
+            "re-run reports a failure that has not happened",
+        )
