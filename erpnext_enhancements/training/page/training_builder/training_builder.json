@@ -1,0 +1,24 @@
+{
+ "content": "",
+ "creation": "2026-08-01 12:00:00.000000",
+ "doctype": "Page",
+ "module": "Training",
+ "name": "training-builder",
+ "owner": "Administrator",
+ "page_name": "training-builder",
+ "public": 0,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Training Author"
+  },
+  {
+   "role": "Training Manager"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Training Builder"
+}

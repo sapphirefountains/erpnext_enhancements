@@ -1,0 +1,944 @@
+/*
+ * Training Builder (/app/training-builder) — the authoring surface for a
+ * Training Course Version.
+ *
+ * Why this is a page .css file and not a bundle: Frappe's `getpage` reads
+ * `<page_name>.css` off disk and ships it inline with the page payload, so a
+ * deploy reaches every device immediately. A raw /assets path would be served
+ * immutable for a year with no content hash — the "fixed on desktop, phones
+ * still broken" bug this repo has already paid for once.
+ *
+ * Ownership of names: every class here is prefixed `tb-`, and this file is the
+ * registry. training_builder.js must use these names verbatim. A class the JS
+ * invents and the CSS does not know about fails *silently* — an unstyled div
+ * looks like a layout bug rather than a missing join, which is exactly the
+ * failure mode Phase 3 is meant to stop making.
+ *
+ * Theme: structural colour comes from Frappe CSS variables so Frappe Light and
+ * Timeless Night both work. Only semantic accents are literal (house
+ * convention) — the AI-drafts tint and the unreviewed-checkpoint amber — each
+ * with a [data-theme="dark"] correction, because those two flip contrast.
+ *
+ * Layout contract: 280px outline rail / flexible block canvas / 340px
+ * inspector. Under 1100px the inspector becomes a slide-over sheet; under
+ * 800px the outline collapses behind a dropdown, because authors do review
+ * courses on a tablet standing on site.
+ */
+
+/* --- Shell ------------------------------------------------------------- */
+
+.tb-shell {
+	display: grid;
+	grid-template-columns: 280px minmax(0, 1fr) 340px;
+	gap: 12px;
+	/* Desk navbar + page head. Panes scroll internally, the page does not. */
+	height: calc(100vh - 130px);
+	min-height: 420px;
+	color: var(--text-color);
+}
+
+.tb-outline,
+.tb-canvas,
+.tb-inspector {
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.tb-pane-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--fg-color);
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--heading-color);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	flex: 0 0 auto;
+}
+
+.tb-pane-body {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+	padding: 10px 12px;
+}
+
+.tb-muted {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.tb-empty,
+.tb-denied {
+	text-align: center;
+	color: var(--text-muted);
+	font-size: 14px;
+	padding: 36px 14px;
+	line-height: 1.5;
+}
+
+/* --- Top bar: title, draft state, autosave indicator ------------------- */
+
+.tb-topbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	padding: 4px 0 10px;
+}
+
+.tb-topbar-title {
+	font-size: 15px;
+	font-weight: 700;
+	color: var(--heading-color);
+	margin-right: auto;
+	min-width: 0;
+}
+
+.tb-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	border: 1px solid var(--border-color);
+	border-radius: 12px;
+	padding: 1px 9px;
+	font-size: 11px;
+	font-weight: 600;
+	white-space: nowrap;
+	color: var(--text-muted);
+}
+
+.tb-badge.is-draft {
+	border-color: var(--primary, #2490ef);
+	color: var(--primary, #2490ef);
+}
+
+.tb-badge.is-published {
+	border-color: #15803d;
+	color: #15803d;
+}
+
+/*
+ * Autosave state. `is-conflict` is the optimistic-lock rejection and must not
+ * read as a soft warning: the author is looking at stale content and anything
+ * they type next is lost. It is the only state that stays put until dismissed.
+ */
+.tb-save-state {
+	font-size: 12px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.tb-save-state.is-saving,
+.tb-save-state.is-dirty {
+	color: var(--text-muted);
+}
+
+.tb-save-state.is-saved {
+	color: #15803d;
+}
+
+.tb-save-state.is-conflict {
+	color: #b91c1c;
+	font-weight: 700;
+}
+
+/* --- Outline rail ------------------------------------------------------ */
+
+.tb-chapter {
+	margin-bottom: 12px;
+}
+
+.tb-chapter-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	padding: 4px 2px;
+}
+
+.tb-chapter-count {
+	margin-left: auto;
+	font-weight: 500;
+}
+
+.tb-lesson-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.tb-lesson {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 7px 8px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	cursor: pointer;
+	color: var(--text-color);
+	line-height: 1.3;
+}
+
+.tb-lesson:hover {
+	background: var(--bg-color);
+}
+
+.tb-lesson.is-selected {
+	background: var(--bg-color);
+	border-color: var(--primary, #2490ef);
+	box-shadow: inset 3px 0 0 var(--primary, #2490ef);
+}
+
+.tb-lesson-title {
+	font-size: 13px;
+	font-weight: 600;
+	min-width: 0;
+}
+
+.tb-lesson-meta {
+	display: block;
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-top: 2px;
+}
+
+.tb-lesson.is-removed .tb-lesson-title {
+	text-decoration: line-through;
+	color: var(--text-muted);
+}
+
+/* --- Sortable cards: drag handles, drag + drop states ------------------ */
+
+/*
+ * `touch-action: none` belongs on the HANDLE ONLY. Put it on the card and a
+ * tablet can no longer scroll the pane by dragging over a card — which is most
+ * of the pane. Pointer-drag needs it on whatever the gesture starts on.
+ */
+.tb-drag-handle {
+	flex: 0 0 auto;
+	width: 22px;
+	min-height: 22px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 5px;
+	color: var(--text-light, var(--text-muted));
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+	font-size: 14px;
+	line-height: 1;
+}
+
+.tb-drag-handle:active {
+	cursor: grabbing;
+	background: var(--control-bg);
+}
+
+.tb-lesson.is-dragging,
+.tb-block.is-dragging {
+	opacity: 0.45;
+}
+
+/* Insertion line. Drawn on the target card so no placeholder node is needed. */
+.tb-drop-before,
+.tb-drop-after {
+	position: relative;
+}
+
+.tb-drop-before::before,
+.tb-drop-after::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: var(--primary, #2490ef);
+	border-radius: 2px;
+}
+
+.tb-drop-before::before {
+	top: -3px;
+}
+
+.tb-drop-after::after {
+	bottom: -3px;
+}
+
+/* --- Block canvas ------------------------------------------------------ */
+
+.tb-block-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.tb-block {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	padding: 10px 12px;
+	color: var(--text-color);
+}
+
+.tb-block:hover {
+	border-color: var(--text-light, var(--border-color));
+}
+
+.tb-block.is-selected {
+	border-color: var(--primary, #2490ef);
+	box-shadow: inset 3px 0 0 var(--primary, #2490ef);
+}
+
+.tb-block-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.tb-block-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+
+.tb-block-type {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	padding: 0 7px;
+	white-space: nowrap;
+}
+
+.tb-block-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--heading-color);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tb-block-body {
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--text-color);
+	max-height: 180px;
+	overflow: hidden;
+}
+
+.tb-block-body img,
+.tb-block-body video {
+	max-width: 100%;
+	border-radius: 6px;
+}
+
+.tb-block-actions {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.tb-icon-btn {
+	min-width: 30px;
+	min-height: 30px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 1;
+}
+
+.tb-icon-btn:hover {
+	background: var(--control-bg);
+	color: var(--text-color);
+	border-color: var(--border-color);
+}
+
+/*
+ * "Start preview here." Testing checkpoint 4 must not cost six minutes of
+ * video, so every block carries one. Faint until hover so a canvas of twenty
+ * blocks is not twenty buttons shouting.
+ */
+.tb-preview-here {
+	opacity: 0.45;
+}
+
+.tb-block:hover .tb-preview-here,
+.tb-preview-here:focus-visible {
+	opacity: 1;
+}
+
+.tb-add-block {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 10px 0 4px;
+}
+
+.tb-add-block button {
+	border: 1px dashed var(--border-color);
+	border-radius: 8px;
+	background: none;
+	color: var(--text-muted);
+	font-size: 12px;
+	min-height: 34px;
+	padding: 0 12px;
+	cursor: pointer;
+}
+
+.tb-add-block button:hover {
+	border-style: solid;
+	border-color: var(--primary, #2490ef);
+	color: var(--primary, #2490ef);
+}
+
+/*
+ * Soft delete. The row is not gone until the draft is saved, so it collapses
+ * to a single Undo line rather than vanishing — an author who mis-taps on a
+ * tablet gets the block back, and the payload's `deleted_lessons` /removed
+ * block list stays the single source of what is actually being dropped.
+ */
+.tb-block.is-removed,
+.tb-lesson.is-removed {
+	border-style: dashed;
+	background: var(--bg-color);
+	opacity: 0.7;
+}
+
+.tb-block.is-removed .tb-block-body,
+.tb-block.is-removed .tb-block-top,
+.tb-block.is-removed .tb-drag-handle {
+	display: none;
+}
+
+.tb-removed-note {
+	display: none;
+	align-items: center;
+	gap: 10px;
+	font-size: 12px;
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.tb-block.is-removed .tb-removed-note,
+.tb-lesson.is-removed .tb-removed-note {
+	display: flex;
+}
+
+.tb-undo {
+	border: none;
+	background: none;
+	padding: 0;
+	color: var(--primary, #2490ef);
+	font-size: 12px;
+	font-weight: 600;
+	font-style: normal;
+	cursor: pointer;
+}
+
+/* --- Checkpoint timeline strip ---------------------------------------- */
+
+.tb-timeline {
+	position: relative;
+	height: 52px;
+	margin: 10px 0 4px;
+	padding: 0 10px;
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	background: var(--bg-color);
+	user-select: none;
+}
+
+.tb-timeline-track {
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	top: 26px;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--control-bg);
+}
+
+.tb-timeline-scale {
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	top: 36px;
+	height: 14px;
+	font-size: 10px;
+	color: var(--text-muted);
+}
+
+.tb-timeline-tick {
+	position: absolute;
+	transform: translateX(-50%);
+	white-space: nowrap;
+}
+
+/* The preview playhead, so "start preview here" has somewhere to land. */
+.tb-timeline-cursor {
+	position: absolute;
+	top: 16px;
+	width: 2px;
+	height: 26px;
+	background: var(--text-color);
+	opacity: 0.5;
+	transform: translateX(-50%);
+	pointer-events: none;
+}
+
+.tb-timeline-pin {
+	position: absolute;
+	top: 20px;
+	width: 16px;
+	height: 16px;
+	margin-left: -8px;
+	border-radius: 50%;
+	border: 2px solid var(--fg-color);
+	background: var(--primary, #2490ef);
+	cursor: grab;
+	touch-action: none;
+}
+
+/*
+ * A 16px dot is an unhittable target with a finger. The ::before widens the
+ * hit area to 34px without moving the dot, so pins stay legible when several
+ * cluster inside a few seconds of each other.
+ */
+.tb-timeline-pin::before {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 34px;
+	height: 34px;
+	transform: translate(-50%, -50%);
+}
+
+.tb-timeline-pin:active {
+	cursor: grabbing;
+}
+
+.tb-timeline-pin.is-active {
+	box-shadow: 0 0 0 3px rgba(36, 144, 239, 0.35);
+	z-index: 2;
+}
+
+/* Amber = AI-drafted, not yet accepted by a human. Literal by convention. */
+.tb-timeline-pin.is-unreviewed {
+	background: #d97706;
+}
+
+.tb-timeline-pin.is-dragging {
+	z-index: 3;
+}
+
+.tb-timeline-time {
+	position: absolute;
+	top: -2px;
+	transform: translateX(-50%);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+[data-theme="dark"] .tb-timeline-pin.is-unreviewed {
+	background: #f59e0b;
+}
+
+[data-theme="dark"] .tb-timeline-pin.is-active {
+	box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.4);
+}
+
+/* --- Inspector --------------------------------------------------------- */
+
+.tb-section {
+	border-bottom: 1px solid var(--border-color);
+	padding-bottom: 12px;
+	margin-bottom: 12px;
+}
+
+.tb-section:last-child {
+	border-bottom: none;
+}
+
+.tb-section-head {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-muted);
+	margin-bottom: 8px;
+}
+
+.tb-field {
+	margin-bottom: 10px;
+}
+
+.tb-field > label {
+	display: block;
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-bottom: 3px;
+}
+
+.tb-input,
+.tb-select,
+.tb-textarea {
+	width: 100%;
+	background: var(--control-bg);
+	color: var(--text-color);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	padding: 7px 9px;
+	font-size: 13px;
+}
+
+.tb-textarea {
+	min-height: 90px;
+	resize: vertical;
+	line-height: 1.45;
+}
+
+.tb-input:focus,
+.tb-select:focus,
+.tb-textarea:focus {
+	outline: 2px solid var(--primary, #2490ef);
+	outline-offset: -1px;
+}
+
+.tb-check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	margin-bottom: 8px;
+	cursor: pointer;
+}
+
+.tb-hint {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-top: 3px;
+	line-height: 1.4;
+}
+
+.tb-warn {
+	background: var(--bg-yellow, #fef3c7);
+	color: var(--text-on-yellow, #7a5b00);
+	border-radius: 6px;
+	padding: 7px 10px;
+	font-size: 12px;
+	line-height: 1.4;
+	margin: 8px 0;
+}
+
+/* --- AI drafts drawer -------------------------------------------------- */
+
+/*
+ * Tinted so nothing in it can be mistaken for saved content: everything here
+ * is a suggestion that exists only in the browser until the author accepts it.
+ * The tint is literal (a semantic accent) with a dark correction, because a
+ * Frappe variable would follow the theme and lose the distinction.
+ */
+.tb-ai-drawer {
+	background: rgba(124, 58, 237, 0.06);
+	border: 1px solid rgba(124, 58, 237, 0.28);
+	border-radius: 10px;
+	padding: 10px 12px;
+	margin: 12px 0;
+	display: none;
+}
+
+.tb-ai-drawer.is-open {
+	display: block;
+}
+
+.tb-ai-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #6d28d9;
+	margin-bottom: 8px;
+}
+
+.tb-ai-head .tb-ai-close {
+	margin-left: auto;
+}
+
+.tb-ai-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tb-ai-card {
+	background: var(--fg-color);
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	padding: 9px 11px;
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.tb-ai-card.is-accepted {
+	opacity: 0.55;
+	border-style: dashed;
+}
+
+.tb-ai-question {
+	font-weight: 600;
+	color: var(--heading-color);
+}
+
+.tb-ai-options {
+	list-style: none;
+	margin: 6px 0 0;
+	padding: 0;
+	font-size: 12px;
+	color: var(--text-color);
+}
+
+.tb-ai-options li {
+	padding: 1px 0 1px 16px;
+	position: relative;
+}
+
+.tb-ai-options li.is-correct::before {
+	content: "✓";
+	position: absolute;
+	left: 0;
+	color: #15803d;
+	font-weight: 700;
+}
+
+/*
+ * The grounding quote is the whole reason a suggestion is reviewable at all —
+ * it is the sentence the question came from, so an author can check the claim
+ * without rereading the lesson. Never collapse it behind a toggle.
+ */
+.tb-ai-quote {
+	margin-top: 6px;
+	padding-left: 9px;
+	border-left: 3px solid rgba(124, 58, 237, 0.4);
+	font-size: 12px;
+	font-style: italic;
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+
+.tb-ai-card.is-ungrounded {
+	border-color: #d97706;
+}
+
+.tb-ai-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.tb-ai-empty,
+.tb-ai-busy {
+	font-size: 12px;
+	color: var(--text-muted);
+	padding: 10px 2px;
+}
+
+[data-theme="dark"] .tb-ai-drawer {
+	background: rgba(167, 139, 250, 0.12);
+	border-color: rgba(167, 139, 250, 0.35);
+}
+
+[data-theme="dark"] .tb-ai-head {
+	color: #c4b5fd;
+}
+
+[data-theme="dark"] .tb-ai-quote {
+	border-left-color: rgba(167, 139, 250, 0.5);
+}
+
+/* --- Preview as learner ------------------------------------------------ */
+
+/*
+ * The preview hosts the REAL player (TR.Player) with an injected transport, so
+ * this must impose layout only — no typography or colour that would make the
+ * preview a lie about what the learner sees.
+ */
+.tb-preview-shell {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	gap: 8px;
+}
+
+.tb-preview-banner {
+	flex: 0 0 auto;
+	background: var(--bg-color);
+	border: 1px dashed var(--border-color);
+	border-radius: 8px;
+	padding: 7px 11px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.tb-preview-root {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	background: var(--fg-color);
+	border-radius: 8px;
+}
+
+/* --- Slide-over sheets + scrim (small screens) ------------------------- */
+
+.tb-scrim {
+	display: none;
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.35);
+	z-index: 1030;
+}
+
+.tb-scrim.is-open {
+	display: block;
+}
+
+/* Toggles exist in the DOM at every width; the media queries reveal them. */
+.tb-outline-toggle,
+.tb-inspector-toggle {
+	display: none;
+	align-items: center;
+	gap: 6px;
+	min-height: 34px;
+	padding: 0 12px;
+	border: 1px solid var(--border-color);
+	border-radius: 8px;
+	background: var(--control-bg);
+	color: var(--text-color);
+	font-size: 13px;
+	cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+	.tb-shell {
+		grid-template-columns: 280px minmax(0, 1fr);
+	}
+
+	.tb-inspector-toggle {
+		display: inline-flex;
+	}
+
+	.tb-inspector {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: min(360px, 92vw);
+		border-radius: 0;
+		border-right: none;
+		z-index: 1031;
+		transform: translateX(100%);
+		transition: transform 0.2s ease;
+		box-shadow: var(--shadow-lg, -4px 0 16px rgba(0, 0, 0, 0.18));
+	}
+
+	.tb-inspector.is-open {
+		transform: translateX(0);
+	}
+}
+
+@media (max-width: 800px) {
+	.tb-shell {
+		grid-template-columns: minmax(0, 1fr);
+		height: calc(100vh - 110px);
+	}
+
+	.tb-outline-toggle {
+		display: inline-flex;
+	}
+
+	/* Outline becomes a dropdown anchored under the top bar, not a sheet —
+	   an author jumping between lessons wants it back out of the way fast. */
+	.tb-outline {
+		display: none;
+		position: absolute;
+		left: 8px;
+		right: 8px;
+		top: 52px;
+		max-height: min(60vh, 460px);
+		z-index: 1032;
+		box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.22));
+	}
+
+	.tb-outline.is-open {
+		display: flex;
+	}
+
+	.tb-topbar {
+		position: relative;
+	}
+
+	/* Fingers, not a mouse: the two draggable affordances grow. */
+	.tb-drag-handle {
+		width: 34px;
+		min-height: 34px;
+	}
+
+	.tb-timeline {
+		height: 60px;
+	}
+
+	.tb-timeline-pin {
+		width: 20px;
+		height: 20px;
+		margin-left: -10px;
+		top: 18px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tb-inspector {
+		transition: none;
+	}
+}

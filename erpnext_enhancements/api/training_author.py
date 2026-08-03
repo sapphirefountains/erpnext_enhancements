@@ -28,6 +28,22 @@ know why:
 * **Assignment fan-out is enqueued above 25 targets.** Below that it is faster to
   do it inline than to explain to the author why nothing appeared to happen.
 
+The builder surface at the bottom of this file (:func:`get_builder_bootstrap`,
+:func:`save_draft_version`, :func:`reorder_lessons`) backs the Training Builder
+desk page, and it is autosave — which changes what a mistake costs. Two rules
+carry that weight and neither is negotiable:
+
+* **Every writable field is on an explicit allowlist, and everything else is
+  reported back.** A field the builder sends that the server does not accept is
+  not applied; if it were also not *reported*, autosave would answer "saved" while
+  the author's paragraph went nowhere, and they would only find out on reload.
+  Silently dropping a write is strictly worse than refusing one.
+* **Every write carries the ``modified`` the caller loaded.** Two builder tabs on
+  one draft otherwise overwrite each other with no trace. Unlike
+  ``api/maintenance_visit.save_visit``, the token here is *mandatory*: a caller
+  with no token never loaded the draft, and honouring that write is exactly the
+  clobber the lock exists to stop.
+
 Indentation is 4 spaces, matching the majority of ``api/``.
 """
 
@@ -42,6 +58,10 @@ from erpnext_enhancements.training.doctype.training_course_version.training_cour
     MATERIAL_CHANGE,
     MINOR_EDIT,
 )
+# NB: `is_enabled` is imported lazily inside get_builder_bootstrap, NOT here.
+# Importing a doctype controller at module scope makes this file unloadable to any
+# bench-free suite that stubs `frappe` without also stubbing that module — it broke
+# tests/test_training_grading.py, which had passed until this import was added.
 
 # Above this many people, fan the assignment out to a background job. Below it,
 # the wait is shorter than the round trip of telling the user to come back later.
@@ -51,6 +71,24 @@ AUTHOR_ROLES = ("Training Author", "Training Manager", "System Manager")
 
 
 # --------------------------------------------------------------------- guards
+
+
+def _ai_enabled():
+    """Whether AI drafting is switched on, imported lazily and never fatal.
+
+    Lazy because a module-scope import of a doctype controller makes this whole
+    file unloadable to a bench-free suite that stubs ``frappe`` but not that
+    module. Swallowing the failure because a settings read is not worth denying an
+    author their builder over — the AI panel simply stays hidden.
+    """
+    try:
+        from erpnext_enhancements.training.doctype.training_settings.training_settings import (
+            is_enabled,
+        )
+
+        return is_enabled("ai_assist_enabled")
+    except Exception:
+        return False
 
 
 def _require_author():
@@ -709,3 +747,634 @@ def _probe_drive_video(drive_file_id):
         "web_view_link": meta.get("webViewLink"),
         "duration_seconds": duration_ms // 1000 if duration_ms else 0,
     }
+
+
+# --------------------------------------------------------------------- builder
+#
+# Everything below backs the Training Builder desk page
+# (`training/page/training_builder`). See the note in the module docstring on why
+# the allowlist and the `modified` lock are the two load-bearing pieces.
+
+
+# Fields the builder may write, by scope. Anything sent that is not named here —
+# and not in the matching *_ECHOED set below — is refused and reported in the
+# response's `rejected` list. Adding a field to the builder UI therefore means
+# adding it here too, and forgetting shows up as a visible warning on the first
+# autosave rather than as work missing after a reload.
+LESSON_ALLOWED_FIELDS = frozenset(
+    {
+        "lesson_title",
+        "chapter_key",
+        "idx_in_chapter",
+        "estimated_minutes",
+        "summary",
+        "transcript",
+        "allow_questions",
+        "has_quiz",
+        "quiz_questions_to_ask",
+        "quiz_pass_score",
+        "quiz_shuffle_questions",
+        "quiz_shuffle_options",
+    }
+)
+BLOCK_ALLOWED_FIELDS = frozenset(
+    {
+        "block_type",
+        "heading",
+        "content",
+        "image",
+        "file",
+        "video_asset",
+        "embed_url",
+        "poster_image",
+        "caption",
+        "required_for_completion",
+        "min_coverage_percent",
+        "checkpoints_enabled",
+    }
+)
+QUIZ_ROW_ALLOWED_FIELDS = frozenset({"question", "points", "is_required"})
+CHAPTER_ALLOWED_FIELDS = frozenset({"chapter_title", "description"})
+VERSION_ALLOWED_FIELDS = frozenset({"change_type", "release_notes"})
+
+# Keys the bootstrap emits that are structure or server-owned mirrors. The builder
+# is expected to echo them back untouched, so they are skipped in silence — they
+# are not author work being dropped. Note what is deliberately NOT here:
+# `checkpoints`, and the Training Question body fields. Those look writable in the
+# payload and are not, so they are reported.
+LESSON_ECHOED_KEYS = frozenset(
+    {"name", "temp_id", "doctype", "modified", "blocks", "quiz", "lesson_key", "course", "course_version"}
+)
+BLOCK_ECHOED_KEYS = frozenset({"name", "idx", "doctype", "block_key", "video_duration_seconds"})
+CHAPTER_ECHOED_KEYS = frozenset({"name", "idx", "doctype", "chapter_key"})
+QUIZ_ECHOED_KEYS = frozenset({"name", "idx", "doctype", "question_preview"})
+VERSION_ECHOED_KEYS = frozenset(
+    {"name", "doctype", "modified", "docstatus", "version_number", "submitted_for_review"}
+)
+
+# Why a refused field was refused. Generic is fine for a typo; these four are the
+# ones an author could reasonably believe the builder owns, and a bare "not
+# allowed" would send them looking for a bug that is not there.
+REFUSAL_REASON = {
+    "checkpoints": "Checkpoints are not saved by autosave — accept an AI suggestion, or use the "
+    "Training Checkpoint form.",
+    "lesson_key": "Stable key. Regenerating it would strand every learner currently mid-course.",
+    "block_key": "Stable key. Regenerating it would reset watch progress on this block.",
+    "question_text": "Question wording is edited on the Training Question form, not here — the "
+    "builder's autosave only manages which questions are in the pool.",
+    "options": "Answer options are edited on the Training Question form, not here.",
+    "published_content_json": "Machine-written at publish.",
+    "answer_key_json": "Machine-written at publish.",
+}
+_DEFAULT_REFUSAL = "Not writable through the builder."
+
+# Cap on the video picker. A site with thousands of assets should search rather
+# than ship the lot into every bootstrap.
+VIDEO_ASSET_LIMIT = 500
+
+
+def _refusal(scope, target, field):
+    return {
+        "scope": scope,
+        "target": target or "",
+        "field": field,
+        "reason": _(REFUSAL_REASON.get(field, _DEFAULT_REFUSAL)),
+    }
+
+
+def _check_version_not_stale(version, modified):
+    """Optimistic lock on the draft version.
+
+    The version is the token for the *whole* builder document, not just its own
+    row: :func:`save_draft_version` always saves it, so its ``modified`` advances
+    even on a save that only touched lessons (which are separate documents and
+    would otherwise leave the token unchanged and the lock useless).
+    """
+    if not modified:
+        frappe.throw(
+            _("This save arrived without the version stamp it was loaded with, so it cannot be checked "
+              "against what is stored. Reload the builder.")
+        )
+    if str(version.modified) != str(modified):
+        frappe.throw(
+            _("{0} was changed elsewhere — another tab, or the desk form — since you loaded it. Reload "
+              "the builder to continue; saving now would overwrite that change.").format(version.name),
+            title=_("Draft Out of Date"),
+        )
+
+
+# ---------------------------------------------------------------- bootstrap
+
+
+@frappe.whitelist()
+def get_builder_bootstrap(course):
+    """Everything the builder needs to render a course in one round trip.
+
+    Loads the **open draft** (``docstatus 0``) only. When a course has none this
+    returns ``version: null`` rather than creating one, because a draft is a real
+    record with a version number attached to it: opening the builder to look at a
+    published course must not silently start a new version in the author's name.
+    The client offers "New Draft Version" instead.
+
+    This is the one place in the module that hands ``is_correct`` to a browser. It
+    is gated on **write** permission on the course, which is the difference
+    between an author editing an answer key and a learner reading one.
+    """
+    _require_author()
+    if not frappe.has_permission("Training Course", "write", doc=course):
+        frappe.throw(_("You are not allowed to edit {0}.").format(course), frappe.PermissionError)
+
+    course_doc = frappe.get_doc("Training Course", course)
+
+    version = None
+    chapters = []
+    lessons = []
+    draft_name = frappe.db.exists("Training Course Version", {"course": course, "docstatus": 0})
+    if draft_name:
+        draft = frappe.get_doc("Training Course Version", draft_name)
+        version = {
+            "name": draft.name,
+            "version_number": cint(draft.version_number),
+            "docstatus": cint(draft.docstatus),
+            "modified": str(draft.modified),
+            "change_type": draft.change_type or "",
+            "release_notes": draft.release_notes or "",
+            "submitted_for_review": cint(draft.submitted_for_review),
+        }
+        chapters = [
+            {
+                "chapter_key": row.chapter_key,
+                "chapter_title": row.chapter_title,
+                "description": row.description or "",
+                "idx": cint(row.idx),
+            }
+            for row in draft.chapters or []
+        ]
+        lessons = _builder_lessons(draft.name)
+
+    return {
+        "course": {
+            "name": course_doc.name,
+            "course_title": course_doc.course_title,
+            "slug": course_doc.slug or "",
+            "status": course_doc.status,
+            "weight": course_doc.weight,
+            "category": course_doc.category or "",
+            "current_version": course_doc.current_version or "",
+            "passing_score": cint(course_doc.passing_score),
+            "max_attempts": cint(course_doc.max_attempts),
+            "min_video_coverage": cint(course_doc.min_video_coverage),
+            "require_checkpoints_answered": cint(course_doc.require_checkpoints_answered),
+        },
+        "version": version,
+        "chapters": chapters,
+        "lessons": lessons,
+        "categories": frappe.get_all(
+            "Training Category", fields=["name", "category_name"], order_by="category_name asc"
+        ),
+        "video_assets": _builder_video_assets(),
+        # Whether this user may publish *at all*, not whether this draft is ready.
+        # Readiness (a draft exists, it has lessons, its AI questions are reviewed)
+        # is decided by publish_version, which is the only thing that can decide it
+        # correctly at the moment the button is pressed.
+        "can_publish": bool({"Training Manager", "System Manager"} & set(frappe.get_roles())),
+        "ai_enabled": _ai_enabled(),
+    }
+
+
+def _builder_video_assets():
+    """The video picker. ``has_transcript`` rides along because it is what decides
+    whether ``training_ai.suggest_checkpoints`` will refuse — the builder can grey
+    the action out instead of letting the author discover the refusal."""
+    rows = frappe.get_all(
+        "Training Video Asset",
+        fields=["name", "title", "duration_seconds", "status", "transcript_source"],
+        order_by="title asc",
+        limit=VIDEO_ASSET_LIMIT,
+    )
+    return [
+        {
+            "name": row.name,
+            "title": row.title,
+            "duration_seconds": cint(row.duration_seconds),
+            "status": row.status,
+            "has_transcript": row.transcript_source in ("Author Pasted", "Uploaded VTT"),
+        }
+        for row in rows
+    ]
+
+
+def _builder_lessons(course_version):
+    """Every lesson of a draft, with its blocks, quiz pool and checkpoints.
+
+    Ordered the same way ``_materialize_lessons`` orders them at publish, so the
+    outline an author is looking at is the outline that will ship.
+    """
+    names = frappe.get_all(
+        "Training Lesson",
+        filters={"course_version": course_version},
+        pluck="name",
+        order_by="chapter_key asc, idx_in_chapter asc, creation asc",
+    )
+    if not names:
+        return []
+
+    docs = [frappe.get_doc("Training Lesson", name) for name in names]
+    question_names = sorted(
+        {row.question for doc in docs for row in doc.quiz_questions or [] if row.question}
+    )
+    questions = _builder_questions(question_names)
+    checkpoints = _builder_checkpoints(names)
+
+    return [_builder_lesson(doc, questions, checkpoints.get(doc.name, [])) for doc in docs]
+
+
+def _builder_lesson(lesson, questions, checkpoints):
+    return {
+        "name": lesson.name,
+        "lesson_key": lesson.lesson_key,
+        "chapter_key": lesson.chapter_key or "",
+        "lesson_title": lesson.lesson_title,
+        "summary": lesson.summary or "",
+        "idx_in_chapter": cint(lesson.idx_in_chapter),
+        "estimated_minutes": cint(lesson.estimated_minutes),
+        "allow_questions": cint(lesson.allow_questions),
+        "has_quiz": cint(lesson.has_quiz),
+        "quiz_questions_to_ask": cint(lesson.quiz_questions_to_ask),
+        "quiz_pass_score": cint(lesson.quiz_pass_score),
+        "quiz_shuffle_questions": cint(lesson.quiz_shuffle_questions),
+        "quiz_shuffle_options": cint(lesson.quiz_shuffle_options),
+        # Raw, not sanitized. The author is editing the source; sanitization
+        # happens on the way out, in _split_lesson at publish.
+        "transcript": lesson.transcript or "",
+        "blocks": [
+            {
+                "block_key": block.block_key,
+                "block_type": block.block_type,
+                "heading": block.heading or "",
+                "content": block.content or "",
+                "image": block.image or "",
+                "file": block.file or "",
+                "video_asset": block.video_asset or "",
+                "video_duration_seconds": cint(block.video_duration_seconds),
+                "embed_url": block.embed_url or "",
+                "poster_image": block.poster_image or "",
+                "caption": block.caption or "",
+                "required_for_completion": cint(block.required_for_completion),
+                "min_coverage_percent": cint(block.min_coverage_percent),
+                "checkpoints_enabled": cint(block.checkpoints_enabled),
+            }
+            for block in lesson.blocks or []
+        ],
+        "quiz": [
+            dict(
+                questions.get(row.question) or {"name": row.question},
+                points=cint(row.points),
+                is_required=cint(row.is_required),
+            )
+            for row in lesson.quiz_questions or []
+        ],
+        "checkpoints": checkpoints,
+    }
+
+
+def _builder_questions(names):
+    """Question bodies, keyed by name, answers included — see the note on
+    :func:`get_builder_bootstrap` about why that is safe here and nowhere else."""
+    if not names:
+        return {}
+    options = _options_by_parent("Training Question", names)
+    return {
+        row.name: {
+            "name": row.name,
+            "question": row.name,
+            "question_text": row.question_text or "",
+            "question_type": row.question_type,
+            "explanation": row.explanation or "",
+            "correct_text_answers": row.correct_text_answers or "",
+            "difficulty": row.difficulty or "",
+            "ai_generated": cint(row.ai_generated),
+            "ai_reviewed_by": row.ai_reviewed_by or "",
+            "ai_model": row.ai_model or "",
+            "ai_source": row.ai_source or "",
+            "options": options.get(row.name, []),
+        }
+        for row in frappe.get_all(
+            "Training Question",
+            filters={"name": ["in", names]},
+            fields=["name", "question_text", "question_type", "explanation", "correct_text_answers",
+                    "difficulty", "ai_generated", "ai_reviewed_by", "ai_model", "ai_source"],
+        )
+    }
+
+
+def _builder_checkpoints(lesson_names):
+    rows = frappe.get_all(
+        "Training Checkpoint",
+        filters={"lesson": ["in", lesson_names]},
+        fields=["name", "lesson", "checkpoint_key", "block_key", "at_seconds", "question_type",
+                "question_text", "explanation", "pause_video", "allow_skip", "max_attempts",
+                "rewind_seconds_on_wrong", "counts_toward_score", "ai_generated", "ai_reviewed_by"],
+        order_by="at_seconds asc",
+    )
+    if not rows:
+        return {}
+
+    options = _options_by_parent("Training Checkpoint", [row.name for row in rows])
+    by_lesson = {}
+    for row in rows:
+        by_lesson.setdefault(row.lesson, []).append(
+            {
+                "name": row.name,
+                "checkpoint_key": row.checkpoint_key,
+                "block_key": row.block_key,
+                "at_seconds": cint(row.at_seconds),
+                "question_type": row.question_type,
+                "question_text": row.question_text or "",
+                "explanation": row.explanation or "",
+                "pause_video": cint(row.pause_video),
+                "allow_skip": cint(row.allow_skip),
+                "max_attempts": cint(row.max_attempts),
+                "rewind_seconds_on_wrong": cint(row.rewind_seconds_on_wrong),
+                "counts_toward_score": cint(row.counts_toward_score),
+                "ai_generated": cint(row.ai_generated),
+                "ai_reviewed_by": row.ai_reviewed_by or "",
+                "options": options.get(row.name, []),
+            }
+        )
+    return by_lesson
+
+
+def _options_by_parent(parenttype, parents):
+    if not parents:
+        return {}
+    out = {}
+    for row in frappe.get_all(
+        "Training Answer Option",
+        filters={"parent": ["in", parents], "parenttype": parenttype},
+        fields=["parent", "option_key", "option_text", "is_correct", "explanation"],
+        order_by="parent asc, idx asc",
+    ):
+        out.setdefault(row.parent, []).append(
+            {
+                "option_key": row.option_key or "",
+                "option_text": row.option_text or "",
+                "is_correct": cint(row.is_correct),
+                "explanation": row.explanation or "",
+            }
+        )
+    return out
+
+
+# ------------------------------------------------------------------- autosave
+
+
+@frappe.whitelist()
+def save_draft_version(course_version, payload, modified=None):
+    """Apply a builder patch to an open draft and return a fresh lock token.
+
+    Args:
+        course_version: the draft. Refused unless ``docstatus == 0``.
+        payload: ``{"version": {...}, "chapters": [...], "deleted_lessons": [...],
+            "lessons": [{"name": ..., <allowlisted fields>, "blocks": [...],
+            "quiz": [...]}]}``. A lesson with no ``name`` is **created**; pass a
+            ``temp_id`` and read the real name back out of ``created_lessons``.
+            ``blocks`` and ``quiz`` replace their tables wholesale in the given
+            order — which is how reordering is expressed — so a block's
+            ``block_key`` must be sent back with it. Never regenerate one: it is
+            what watch progress is stored against.
+        modified: the version ``modified`` the client loaded. Mandatory.
+
+    Returns:
+        dict: ``modified`` (the new token — the client must adopt it or its next
+        save is rejected), ``saved`` lesson names, ``created_lessons``,
+        ``deleted``, the post-save ``chapters`` (server-generated keys land here),
+        and ``rejected`` — every field that was **not** applied, with a reason.
+        ``rejected`` is not an error; it is the difference between autosave losing
+        work quietly and the builder being able to say so.
+
+    Lesson validation runs in full (``lesson.save()``), so a half-built block —
+    an Image block with nothing attached — fails the save loudly. That is on
+    purpose: the alternative is letting an unrenderable lesson reach publish. The
+    builder's accumulator re-merges and retries on failure, same as the visit
+    wizard's.
+    """
+    _require_author()
+    doc = _draft(course_version)
+    _check_version_not_stale(doc, modified)
+
+    payload = frappe.parse_json(payload) or {}
+    rejected = []
+
+    for field, value in (payload.get("version") or {}).items():
+        if field in VERSION_ALLOWED_FIELDS:
+            doc.set(field, value)
+        elif field not in VERSION_ECHOED_KEYS:
+            rejected.append(_refusal("version", doc.name, field))
+
+    # Deletions first: a chapter can only be checked for orphans once the lessons
+    # that were going to be removed are actually gone.
+    deleted = _delete_lessons(doc, payload.get("deleted_lessons") or [])
+
+    if "chapters" in payload:
+        _apply_chapters(doc, payload.get("chapters") or [], rejected)
+
+    # Saved before the lessons, not after. Training Lesson._validate_chapter reads
+    # the version's chapter keys *from the database*, so a lesson moved into a
+    # chapter created in this same payload would be rejected if the version were
+    # still unsaved. This save is also unconditional — it is what advances the
+    # lock token on a payload that only touched lessons.
+    doc.save(ignore_permissions=True)
+
+    saved = []
+    created = []
+    for patch in payload.get("lessons") or []:
+        lesson, is_new = _load_or_new_lesson(doc, patch)
+        _apply_lesson(lesson, patch, rejected)
+        lesson.save(ignore_permissions=True)
+        saved.append(lesson.name)
+        if is_new:
+            created.append({"temp_id": patch.get("temp_id") or "", "name": lesson.name})
+
+    return {
+        "modified": str(doc.modified),
+        "saved": saved,
+        "created_lessons": created,
+        "deleted": deleted,
+        "chapters": [
+            {"chapter_key": row.chapter_key, "chapter_title": row.chapter_title, "idx": cint(row.idx)}
+            for row in doc.chapters or []
+        ],
+        "rejected": rejected,
+    }
+
+
+def _delete_lessons(version, names):
+    deleted = []
+    for name in names:
+        if not name:
+            continue
+        owner_version = frappe.db.get_value("Training Lesson", name, "course_version")
+        if owner_version is None:
+            # Already gone. A retried autosave must not fail on its own success.
+            continue
+        if owner_version != version.name:
+            frappe.throw(_("{0} does not belong to {1}.").format(name, version.name))
+        # on_trash cascades the lesson's checkpoints — they are top-level docs and
+        # nothing else would.
+        frappe.delete_doc("Training Lesson", name, ignore_permissions=True)
+        deleted.append(name)
+    return deleted
+
+
+def _apply_chapters(version, rows, rejected):
+    """Replace the chapter table in the given order, keeping every key.
+
+    Refuses to drop a chapter that lessons still point at. Frappe would let it
+    through and the lessons would simply stop appearing in the outline, with the
+    author given no clue why.
+    """
+    incoming = {(row.get("chapter_key") or "").strip() for row in rows}
+    in_use = {
+        key
+        for key in frappe.get_all(
+            "Training Lesson", filters={"course_version": version.name}, pluck="chapter_key"
+        )
+        if key
+    }
+    orphaned = sorted(in_use - incoming)
+    if orphaned:
+        titles = {row.chapter_key: row.chapter_title for row in version.chapters or []}
+        frappe.throw(
+            _("Move or delete the lessons in {0} before removing it — a lesson whose chapter is gone "
+              "disappears from the outline.").format(
+                ", ".join(titles.get(key) or key for key in orphaned)
+            )
+        )
+
+    version.set("chapters", [])
+    for row in rows:
+        values = {}
+        for field, value in row.items():
+            if field in CHAPTER_ALLOWED_FIELDS:
+                values[field] = value
+            elif field not in CHAPTER_ECHOED_KEYS:
+                rejected.append(_refusal("chapter", row.get("chapter_key"), field))
+        # Blank on a new chapter; TrainingCourseVersion._assign_chapter_keys fills
+        # it in on save and the response hands the generated key back.
+        values["chapter_key"] = (row.get("chapter_key") or "").strip()
+        version.append("chapters", values)
+
+
+def _load_or_new_lesson(version, patch):
+    name = (patch.get("name") or "").strip()
+    if not name:
+        lesson = frappe.new_doc("Training Lesson")
+        lesson.course_version = version.name
+        return lesson, True
+
+    lesson = frappe.get_doc("Training Lesson", name)
+    if lesson.course_version != version.name:
+        frappe.throw(_("{0} does not belong to {1}.").format(name, version.name))
+    return lesson, False
+
+
+def _apply_lesson(lesson, patch, rejected):
+    # The patch's own name, not lesson.name — a new_doc already carries a throwaway
+    # "new-training-lesson-…" the client has never seen and could not match up.
+    target = (patch.get("name") or "").strip() or patch.get("temp_id") or ""
+    for field, value in patch.items():
+        if field in LESSON_ALLOWED_FIELDS:
+            lesson.set(field, value)
+        elif field not in LESSON_ECHOED_KEYS:
+            rejected.append(_refusal("lesson", target, field))
+
+    if "blocks" in patch:
+        _apply_blocks(lesson, patch.get("blocks") or [], rejected)
+    if "quiz" in patch:
+        _apply_quiz(lesson, patch.get("quiz") or [], rejected)
+
+
+def _apply_blocks(lesson, rows, rejected):
+    """Replace the block table in the given order.
+
+    ``block_key`` is carried across from the payload, never regenerated. The
+    lesson controller only mints one when it is blank or duplicated, so a new
+    block gets a key and an existing one keeps the key its watch intervals and
+    checkpoints are filed under.
+    """
+    lesson.set("blocks", [])
+    for row in rows:
+        values = {}
+        for field, value in row.items():
+            if field in BLOCK_ALLOWED_FIELDS:
+                values[field] = value
+            elif field not in BLOCK_ECHOED_KEYS:
+                rejected.append(_refusal("block", row.get("block_key"), field))
+        values["block_key"] = (row.get("block_key") or "").strip()
+        lesson.append("blocks", values)
+
+
+def _apply_quiz(lesson, rows, rejected):
+    """Replace the quiz pool in the given order.
+
+    Pool membership only. A Training Question is a shared, reusable document —
+    it can sit in another course's pool — so editing its wording from here would
+    silently rewrite a question somewhere else. Body fields arriving in a row are
+    therefore refused and reported rather than dropped.
+    """
+    lesson.set("quiz_questions", [])
+    for row in rows:
+        values = {}
+        for field, value in row.items():
+            if field in QUIZ_ROW_ALLOWED_FIELDS:
+                values[field] = value
+            elif field not in QUIZ_ECHOED_KEYS:
+                rejected.append(_refusal("quiz", row.get("question") or row.get("name"), field))
+        if not values.get("question"):
+            frappe.throw(
+                _("A quiz row on {0} names no question.").format(lesson.lesson_title or lesson.name)
+            )
+        lesson.append("quiz_questions", values)
+
+
+@frappe.whitelist()
+def reorder_lessons(course_version, order):
+    """Re-number lessons from a drag-and-drop, in the order given.
+
+    ``idx_in_chapter`` is renumbered per chapter, reading each lesson's *current*
+    ``chapter_key`` — so a lesson dragged into another chapter by a save that ran
+    first lands in the right sequence there.
+
+    Written with ``db.set_value`` and ``update_modified=False`` on purpose. This is
+    position, not content: it must not churn the lessons' timestamps, and it must
+    not be able to fail on an unrelated half-finished block elsewhere in the
+    course. ``_draft`` has already refused a published version, which is the guard
+    ``db.set_value`` would otherwise bypass.
+
+    Lessons missing from ``order`` keep the position they had; send the whole list.
+    """
+    _require_author()
+    doc = _draft(course_version)
+
+    order = frappe.parse_json(order) if isinstance(order, str) else (order or [])
+    owned = {
+        row.name: row.chapter_key or ""
+        for row in frappe.get_all(
+            "Training Lesson", filters={"course_version": doc.name}, fields=["name", "chapter_key"]
+        )
+    }
+    unknown = [name for name in order if name not in owned]
+    if unknown:
+        frappe.throw(
+            _("These are not lessons of {0}: {1}.").format(doc.name, ", ".join(unknown[:5]))
+        )
+
+    counters = {}
+    for name in order:
+        chapter_key = owned[name]
+        counters[chapter_key] = counters.get(chapter_key, 0) + 1
+        frappe.db.set_value(
+            "Training Lesson", name, "idx_in_chapter", counters[chapter_key], update_modified=False
+        )
+    return {"ok": True}

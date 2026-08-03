@@ -210,13 +210,37 @@ class TestAiDraftsCannotReachAPublishedCourse(unittest.TestCase):
 
     @phase3
     def test_drafting_never_marks_its_own_output_reviewed(self):
-        """A draft that arrives pre-reviewed defeats the entire gate."""
+        """A draft that arrives pre-reviewed defeats the entire gate.
+
+        Scoped to the *drafting* functions specifically. ``accept_ai_suggestions``
+        legitimately stamps ``ai_reviewed_by`` — that call **is** the human
+        review, and it is the only thing entitled to. An earlier version of this
+        assertion scanned the whole module and would therefore have failed the
+        correct implementation, which is its own kind of useless.
+        """
         src = _read(AI_API)
-        self.assertNotRegex(
-            src,
-            r"ai_reviewed_by[\"']?\s*[:=]\s*[\"']?frappe\.session\.user",
-            "the drafting endpoint must not set ai_reviewed_by; only an author accepting one may",
-        )
+        for fn in ("draft_quiz_questions", "suggest_checkpoints"):
+            if f"def {fn}" not in src:
+                continue
+            start = src.index(f"def {fn}")
+            nxt = src.find("\ndef ", start + 1)
+            body = src[start : nxt if nxt != -1 else len(src)]
+            self.assertNotIn(
+                "ai_reviewed_by",
+                body,
+                f"{fn} must not touch ai_reviewed_by; only an author accepting a draft may",
+            )
+
+    @phase3
+    def test_accepting_a_draft_does_record_the_reviewer(self):
+        """The other half. A disputed result has to trace to a named human, not
+        to a model."""
+        src = _read(AI_API)
+        self.assertIn("def accept_ai_suggestions", src)
+        start = src.index("def accept_ai_suggestions")
+        nxt = src.find("\ndef ", start + 1)
+        body = src[start : nxt if nxt != -1 else len(src)]
+        self.assertIn("ai_reviewed_by", body)
 
     @phase3
     def test_checkpoint_suggestions_require_a_timed_transcript(self):
