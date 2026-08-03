@@ -1135,9 +1135,14 @@ def finish_attempt(attempt):
         return {"passed": doc.status != "Failed", "attempt": doc.name, "status": doc.status,
                 "outstanding": [], "completion": _completion_for(doc)}
 
-    outstanding, scores = [], []
+    outstanding, scores, coverages = [], [], []
     for lesson in _version_lessons(doc.course_version):
         verdict = grading.evaluate_gates(doc, lesson.lesson_key) or {}
+        # Taken from the gate rather than recomputed, so the number filed on the
+        # permanent record is the same one the learner was shown and graded on.
+        # Only lessons that actually had a gated video contribute -- see `gated`.
+        if verdict.get("gated"):
+            coverages.append(flt(verdict.get("coverage")))
         if not verdict.get("ok"):
             outstanding.append(
                 {
@@ -1174,7 +1179,15 @@ def finish_attempt(attempt):
     # A course with no quiz anywhere is passed on its gates alone; recording it as
     # 0% would make every transcript of a video-only course look like a failure.
     score = round(statistics.mean(scores), 1) if scores else 100.0
-    completion = _issue_completion(doc, score)
+    # None, not 0, when the course had nothing to watch: the field is written only
+    # when it means something. Nothing populated it at all until the module was
+    # first executed, so every completion recorded 0% coverage -- including for a
+    # learner who had watched every second of a safety video. The gate itself was
+    # never affected (it computes from the stored intervals), but the completion is
+    # the artefact you would produce in a dispute, and it was understating people.
+    coverage = round(statistics.mean(coverages), 2) if coverages else None
+    completion = _issue_completion(doc, score, coverage)
+    _refresh_attempt_summary(doc, coverage)
 
     # Filtered through the meta for the same reason as `_doc_payload`: db_set
     # writes the columns it is given, so a field this file assumes and the
@@ -1247,7 +1260,62 @@ def _competent_signoff(doc):
         "name",
     )
 
-def _issue_completion(doc, score):
+def _refresh_attempt_summary(doc, coverage=None):
+    """Write the attempt's denormalised counters from the progress blob.
+
+    ``quiz_runs``, ``checkpoints_answered``, ``checkpoints_correct`` and
+    ``video_coverage_percent`` are declared on Training Attempt and, until the
+    module was first run end to end, nothing ever wrote any of them. Every attempt
+    in the system read zero on all four -- not missing, which somebody would have
+    queried, but a confident zero.
+
+    They are a cache of ``progress_json``, so they are derived here rather than
+    incremented as things happen: a counter that is added to on every heartbeat
+    drifts the first time a write is lost, and this one is cheap enough to just
+    recompute. Deliberately *not* called from the heartbeat path -- that is a write
+    in a loop, which is the whole reason progress lives in a single blob.
+
+    Never allowed to break a completion. The attempt is already passed and the
+    record already written by the time this runs; failing here would take a course
+    away from somebody who finished it, to fix a reporting column.
+    """
+    try:
+        data = progress.load(doc.name) or {}
+        runs = answered = correct = 0
+        for lesson in (data.get("lessons") or {}).values():
+            if not isinstance(lesson, dict):
+                continue
+            runs += cint((lesson.get("quiz") or {}).get("runs"))
+            for state in (lesson.get("checkpoints") or {}).values():
+                if not isinstance(state, dict):
+                    continue
+                if cint(state.get("attempts")):
+                    answered += 1
+                if cint(state.get("correct")):
+                    correct += 1
+
+        values = {
+            "quiz_runs": runs,
+            "checkpoints_answered": answered,
+            "checkpoints_correct": correct,
+        }
+        if coverage is not None:
+            values["video_coverage_percent"] = flt(coverage)
+        # update_modified=False for the same reason as every other write on this
+        # path: these are counters, not edits, and churning `modified` on the
+        # attempt would show up as somebody having touched the record.
+        payload = {k: v for k, v in values.items() if doc.meta.has_field(k)}
+        for field, value in payload.items():
+            frappe.db.set_value("Training Attempt", doc.name, field, value, update_modified=False)
+    except Exception:
+        frappe.log_error(
+            f"Could not refresh the summary counters on Training Attempt {doc.name}. "
+            "The completion itself was written; only the denormalised columns are stale.",
+            "Training attempt summary",
+        )
+
+
+def _issue_completion(doc, score, coverage=None):
     """Create and submit the Training Completion for a passed attempt.
 
     Submitted immediately: the completion *is* the compliance artefact, and a
@@ -1296,11 +1364,12 @@ def _issue_completion(doc, score):
                 # payload filter discarded the typo silently, which is how a learner
                 # who scored 100 got a certificate reading 0.
                 "score_percent": score,
-                "video_coverage_percent": flt(getattr(doc, "video_coverage_percent", 0)),
                 "completed_on": now_datetime(),
             },
         )
     )
+    if coverage is not None and completion.meta.has_field("video_coverage_percent"):
+        completion.video_coverage_percent = coverage
     completion.insert(ignore_permissions=True)
     completion.submit()
     return completion.name

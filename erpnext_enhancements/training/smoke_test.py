@@ -33,6 +33,7 @@ The assertions that matter most, in order:
 import json
 
 import frappe
+from frappe.utils import cint, flt
 
 COURSE = "TRN-CRS-00001"
 MARKERS = ("is_correct", "correct_text_answers")
@@ -208,6 +209,7 @@ def run(course=COURSE):
             answers[qname] = correct
         result = training.submit_quiz(state["attempt"], key, answers)
         state["quiz_result"] = result
+        state["quiz_score"] = result.get("score") if isinstance(result, dict) else None
         score = result.get("score") if isinstance(result, dict) else None
         if score is None:
             raise Exception(f"submit_quiz returned no score ({result})")
@@ -247,7 +249,15 @@ def run(course=COURSE):
     def record_signoff():
         from erpnext_enhancements.training import signoff as signoff_module
 
-        supervisor = frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "name")
+        # A sign-off has to name the supervisor making it, and it may not be the
+        # learner. The first run of this script asked for the Employee of the
+        # session user -- Administrator, which has no Employee record -- and so
+        # named nobody. That is a bug in this script, not in the sign-off rule.
+        supervisor = frappe.db.get_value(
+            "Employee", {"status": "Active", "user_id": ["!=", state["user"]]}, "name"
+        ) or frappe.db.get_value("Employee", {"status": "Active"}, "name")
+        if not supervisor:
+            raise Exception("no active Employee on this site to act as the supervisor")
         doc = frappe.get_doc(
             {
                 "doctype": "Training Signoff",
@@ -284,6 +294,17 @@ def run(course=COURSE):
             raise Exception("completion is not pinned to the version that was taken")
         if not completion.content_hash:
             raise Exception("completion has no content_hash — nothing proves what was passed")
+        # Asserted, not just printed. The first run of this script reported this
+        # step as a PASS while the line it printed said "score 0.0" for a learner
+        # who had just scored 100 -- the number was on screen the whole time and
+        # nothing was checking it. A smoke test that prints a wrong value without
+        # failing is worth very little.
+        expected = flt(state.get("quiz_score"))
+        if expected and flt(completion.score_percent) != expected:
+            raise Exception(
+                f"completion records score {completion.score_percent}, "
+                f"but the quiz was scored {expected}"
+            )
         state["completion"] = completion.name
         return f"{completion.name}, score {completion.score_percent}, expires {completion.expires_on}"
 
@@ -334,6 +355,43 @@ def run(course=COURSE):
         return f"verified valid, payload keys {sorted(result)}"
 
     _step("public verification leaks no PII", verify_leaks_nothing, critical=False)
+
+    # ------------------------------------------------------------- analytics
+    def analytics_rows_exist():
+        """The per-question report reads Training Attempt Question. Nothing wrote
+        it, so the report answered every question with an empty set rather than an
+        error -- which reads exactly like "no problems found"."""
+        rows = frappe.get_all(
+            "Training Attempt Question",
+            filters={"attempt": state["attempt"]},
+            fields=["question", "source", "is_correct", "given_answer", "question_text_snapshot"],
+        )
+        if not rows:
+            raise Exception("no Training Attempt Question rows — the analytics report has no data")
+        blank = [r for r in rows if not (r.given_answer or "").strip()]
+        if blank:
+            raise Exception(f"{len(blank)} row(s) recorded no given_answer")
+        # The report names the dominant distractor by grouping on this text, so an
+        # opaque option key here would make its most useful column unreadable.
+        keyish = [r for r in rows if (r.given_answer or "").startswith("opt_")]
+        if keyish:
+            raise Exception("given_answer holds option keys, not the text the learner saw")
+        return f"{len(rows)} answer row(s) filed"
+
+    _step("per-question analytics rows were written", analytics_rows_exist, critical=False)
+
+    def summary_counters():
+        row = frappe.db.get_value(
+            "Training Attempt",
+            state["attempt"],
+            ["quiz_runs", "checkpoints_answered", "checkpoints_correct"],
+            as_dict=True,
+        )
+        if not cint(row.quiz_runs):
+            raise Exception("quiz_runs is 0 after a quiz was taken and passed")
+        return f"quiz_runs {row.quiz_runs}, checkpoints {row.checkpoints_correct}/{row.checkpoints_answered}"
+
+    _step("attempt summary counters are populated", summary_counters, critical=False)
 
     # ---------------------------------------------------------- assignment closed
     def assignment_closed():

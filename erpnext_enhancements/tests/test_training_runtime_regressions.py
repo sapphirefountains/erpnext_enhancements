@@ -32,6 +32,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 RUNTIME = APP / "api/training.py"
+GRADING = APP / "training/grading.py"
 DOCTYPES = APP / "training/doctype"
 
 
@@ -47,6 +48,17 @@ def _fields(doctype):
     names = {f["fieldname"] for f in data["fields"]}
     # Frappe supplies these on every doc; they are legitimate to write.
     return names | {"doctype", "name", "owner", "docstatus", "amended_from", "naming_series"}
+
+
+def _grading():
+    return GRADING.read_text(encoding="utf-8")
+
+
+def _gfn(name):
+    src = _grading()
+    start = src.index(f"def {name}")
+    nxt = src.find("\ndef ", start + 1)
+    return src[start : nxt if nxt != -1 else len(src)]
 
 
 def _fn(name):
@@ -175,6 +187,106 @@ class TestDroppedPayloadKeysAreLoud(unittest.TestCase):
 
     def test_the_filter_still_exists(self):
         self.assertIn("has_field", _fn("_doc_payload"))
+
+
+class TestAnswersAreFiledForAnalytics(unittest.TestCase):
+    """A report reading a table nothing writes.
+
+    ``Training Attempt Question`` was fully built — doctype, controller,
+    permission hooks, and a Script Report that groups over it to name the question
+    everybody misses. Nothing ever inserted a row. The report did not error; it
+    returned an empty set, which on screen is indistinguishable from "no problems
+    found".
+    """
+
+    def test_quiz_answers_are_filed(self):
+        self.assertIn("_file_quiz_answers", _gfn("grade_quiz"))
+
+    def test_checkpoint_answers_are_filed(self):
+        self.assertIn("_file_checkpoint_answer", _gfn("grade_checkpoint"))
+
+    def test_the_filed_rows_name_real_fields(self):
+        """Same class of bug as the score typo, so checked the same way."""
+        declared = _fields("Training Attempt Question")
+        written = set()
+        for fn in ("_file_quiz_answers", "_file_checkpoint_answer"):
+            written |= set(re.findall(r'"(\w+)":', _gfn(fn)))
+        # Filter keys of the filters dict, not the payload.
+        written -= {"lesson_key", "coverage", "reasons", "ok", "gated", "waived"}
+        unknown = sorted(k for k in written if k not in declared)
+        self.assertEqual(unknown, [], f"answer filing writes {unknown} which the doctype lacks")
+
+    def test_filing_never_costs_a_learner_their_submission(self):
+        for fn in ("_file_quiz_answers", "_file_checkpoint_answer"):
+            body = _gfn(fn)
+            self.assertIn("except Exception", body, f"{fn} may not propagate")
+            # Swallowed, but never quietly — that is exactly how the missing rows
+            # went unnoticed for four phases.
+            self.assertIn("log_error", body, f"{fn} swallows failures silently")
+
+    def test_a_regrade_of_the_same_run_is_not_filed_twice(self):
+        """Double-filing would weight one learner twice in every percentage the
+        report prints."""
+        self.assertIn("pluck=\"question\"", _gfn("_file_quiz_answers"))
+
+    def test_the_answer_is_stored_as_text_not_an_option_key(self):
+        """The report's most useful column names the dominant distractor by
+        grouping on this value. Option keys group correctly but read as 'opt_3'."""
+        body = _gfn("_answer_in_words")
+        self.assertIn("option_key", body)
+        self.assertIn("text", body)
+
+
+class TestCoverageReachesTheRecord(unittest.TestCase):
+    """Every completion recorded 0% video coverage.
+
+    ``video_coverage_percent`` was read off the attempt and written onto the
+    permanent Training Completion, and nothing ever populated it. The gate was
+    never affected — it computes from the stored intervals — but the completion is
+    the artefact you would produce in a dispute, and it understated everybody.
+    """
+
+    def test_the_gate_reports_whether_anything_was_gated(self):
+        """0.0 coverage means 'watched nothing' and 'there was no video' alike;
+        without this the record of a text-only course reads as a failure."""
+        self.assertIn('"gated"', _gfn("evaluate_gates"))
+
+    def test_completion_takes_coverage_from_the_gate(self):
+        body = _fn("finish_attempt")
+        self.assertIn('verdict.get("gated")', body)
+        self.assertIn("_issue_completion(doc, score, coverage)", body)
+
+    def test_no_video_writes_no_coverage_rather_than_zero(self):
+        self.assertIn("if coverages else None", _fn("finish_attempt"))
+
+    def test_the_stale_attempt_field_is_no_longer_the_source(self):
+        """The bug itself: `flt(getattr(doc, "video_coverage_percent", 0))`."""
+        self.assertNotIn(
+            'getattr(doc, "video_coverage_percent"', _fn("_issue_completion")
+        )
+
+    def test_the_summary_counters_are_written(self):
+        self.assertIn("_refresh_attempt_summary", _fn("finish_attempt"))
+        body = _fn("_refresh_attempt_summary")
+        for field in ("quiz_runs", "checkpoints_answered", "checkpoints_correct"):
+            self.assertIn(field, body)
+
+    def test_the_counters_never_break_a_completion(self):
+        body = _fn("_refresh_attempt_summary")
+        self.assertIn("except Exception", body)
+        self.assertIn("log_error", body)
+
+    def test_the_counters_do_not_churn_modified(self):
+        """Matched on the call, not on the text.
+
+        The first version of this asserted the string appeared anywhere in the
+        function — and the comment immediately above the call says
+        ``update_modified=False`` too, so deleting it from the code left the test
+        green. Mutation testing caught that; reading it would not have.
+        """
+        call = re.search(r"set_value\([^)]*\)", _fn("_refresh_attempt_summary"), re.S)
+        self.assertIsNotNone(call, "no set_value call to check")
+        self.assertIn("update_modified=False", call.group(0))
 
 
 if __name__ == "__main__":

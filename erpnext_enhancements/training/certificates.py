@@ -278,8 +278,13 @@ def verify_certificate(code):
 	answer["valid"] = status == VALID and cint(row.docstatus) == 1
 	answer["course_title"] = row.course_title
 	answer["holder_initials"] = _initials(row.holder_name)
-	answer["issued_on"] = row.issued_on
-	answer["expires_on"] = row.expires_on
+	# ISO strings, not date objects. Frappe's own encoder copes with dates, so this
+	# was never broken over HTTP -- but this is a public endpoint that third parties
+	# and our own scripts consume, and one that survives a plain ``json.dumps`` is a
+	# meaningfully better contract than one that only works through the response
+	# layer. `_effective_status` above still compares the real dates.
+	answer["issued_on"] = str(row.issued_on) if row.issued_on else None
+	answer["expires_on"] = str(row.expires_on) if row.expires_on else None
 	return answer
 
 
