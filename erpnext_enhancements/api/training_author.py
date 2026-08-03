@@ -49,6 +49,7 @@ Indentation is 4 spaces, matching the majority of ``api/``.
 
 import hashlib
 import json
+import re
 
 import frappe
 from frappe import _
@@ -713,6 +714,49 @@ def waive_assignment(assignment, reason):
 # ---------------------------------------------------------------------- media
 
 
+def drive_file_id_from(value):
+    """A Drive file id out of whatever the author pasted.
+
+    Authors copy from the address bar, and the runbook lists three ways that goes
+    wrong — a folder URL, a shared-drive URL, and a shortcut. The first two are
+    detectable here, and saying so beats a `404 File not found` an hour later:
+    Drive answers 404 rather than 403 for anything the service account cannot
+    reach, so every one of those mistakes produces the same unhelpful error.
+
+    A bare id is returned untouched, so this is safe to put in front of callers
+    that already pass one.
+    """
+    text = (value or "").strip()
+    if not text:
+        frappe.throw(_("Paste the Drive link or the file id."))
+
+    if "/folders/" in text:
+        frappe.throw(
+            _("That is a folder link, not a video. Open the video itself and copy the "
+              "address from there — a folder id fails later with 'file not found', which "
+              "does not point at the real problem.")
+        )
+
+    for pattern in (r"/file/d/([A-Za-z0-9_-]{10,})", r"/d/([A-Za-z0-9_-]{10,})",
+                    r"[?&]id=([A-Za-z0-9_-]{10,})"):
+        found = re.search(pattern, text)
+        if found:
+            text = found.group(1)
+            break
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{10,}", text):
+        frappe.throw(_("That does not look like a Drive file id or link: {0}").format(value))
+
+    # Shared-drive ids begin 0A and are much shorter than a file id. Pasted by
+    # somebody who copied the drive's own address rather than the file's.
+    if text.startswith("0A"):
+        frappe.throw(
+            _("That is the id of a shared drive, not of a file in it. Open the video and "
+              "copy the address from the video's own page.")
+        )
+    return text
+
+
 @frappe.whitelist()
 def register_video_asset(drive_file_id, title=None):
     """Register a Drive video, probing its real duration.
@@ -723,8 +767,7 @@ def register_video_asset(drive_file_id, title=None):
     hidden, so the builder can say so.
     """
     _require_author()
-    if not (drive_file_id or "").strip():
-        frappe.throw(_("A Drive file id is required."))
+    drive_file_id = drive_file_id_from(drive_file_id)
 
     existing = frappe.db.exists("Training Video Asset", {"drive_file_id": drive_file_id})
     if existing:
@@ -754,6 +797,41 @@ def register_video_asset(drive_file_id, title=None):
             alert=True,
         )
     return {"video_asset": doc.name, "created": True, "duration_probed": bool(probe.get("duration_seconds"))}
+
+
+@frappe.whitelist()
+def retry_video_copy(video_asset):
+    """Re-run the Drive to GCS copy for one asset, and say what happened.
+
+    A failed copy used to be a dead end: the asset sat on ``status = Error`` with
+    a traceback nobody sees, the video block rendered nothing, and the only way
+    back was to republish the whole version. Most failures are transient or are
+    fixed outside the app — the usual one is that the file was never shared with
+    the service account, and once it is, nothing re-triggers the copy.
+
+    Run inline rather than queued. The author pressed a button and is waiting for
+    an answer, and the alternative is a spinner that resolves into silence.
+    """
+    _require_author()
+    from erpnext_enhancements.training import gcs_media
+
+    asset = frappe.get_doc("Training Video Asset", video_asset)
+    if not (asset.drive_file_id or "").strip():
+        frappe.throw(_("This asset has no Drive file to copy from."))
+
+    # Cleared first so a success does not leave last time's traceback sitting
+    # under a green status, which reads as "it failed and then lied about it".
+    asset.db_set({"last_error": "", "status": "Draft"}, update_modified=False)
+
+    result = gcs_media.copy_from_drive(video_asset) or {}
+    asset.reload()
+    return {
+        "ok": bool(result.get("ok")),
+        "reason": result.get("reason") or "",
+        "status": asset.status,
+        "copied": bool((asset.gcs_object or "").strip()),
+        "last_error": ((asset.last_error or "").strip().splitlines() or [""])[-1][:300],
+    }
 
 
 def _probe_drive_video(drive_file_id):
@@ -990,7 +1068,8 @@ def _builder_video_assets():
     the action out instead of letting the author discover the refusal."""
     rows = frappe.get_all(
         "Training Video Asset",
-        fields=["name", "title", "duration_seconds", "status", "transcript_source"],
+        fields=["name", "title", "duration_seconds", "duration_source", "status",
+                "transcript_source", "gcs_object", "drive_file_id", "last_error"],
         order_by="title asc",
         limit=VIDEO_ASSET_LIMIT,
     )
@@ -999,7 +1078,16 @@ def _builder_video_assets():
             "name": row.name,
             "title": row.title,
             "duration_seconds": cint(row.duration_seconds),
+            # `duration_source` decides whether the coverage gate applies at all —
+            # `Manual` waives it rather than dividing by a number nobody checked.
+            # The builder has to be able to say that out loud.
+            "duration_source": row.duration_source or "Manual",
             "status": row.status,
+            "copied": bool((row.gcs_object or "").strip()),
+            "drive_file_id": row.drive_file_id or "",
+            # The tail only: `last_error` is a full traceback, and the useful part
+            # is the exception on the last line.
+            "last_error": ((row.last_error or "").strip().splitlines() or [""])[-1][:300],
             "has_transcript": row.transcript_source in ("Author Pasted", "Uploaded VTT"),
         }
         for row in rows
