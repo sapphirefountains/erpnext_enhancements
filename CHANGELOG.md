@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.230.0] - 2026-08-03
+
+### Fixed
+
+**`bench migrate` died on every deploy, taking the build with it.**
+
+```
+Executing `after_migrate` hooks...
+AttributeError: module 'erpnext_enhancements.training.gamification'
+                has no attribute 'ensure_training_badges'
+```
+
+The hook was registered in Phase 4 and the function was never written. Nothing caught it,
+because a hook path is only a string until Frappe resolves it — and `after_migrate` is the
+**last** thing a migrate does, so the first thing to find out was the deploy, after every
+schema change had already been applied.
+
+- `ensure_training_badges` now exists, in `training/setup.py` beside the starter categories
+  rather than in `gamification.py`, which is the runtime awarding logic. Insert-only and
+  idempotent like the categories, guarded on the Training Badge doctype existing (Phase 4 may
+  not have migrated on a given site), and never fatal — badges are decoration, a deploy is not.
+
+- Five starter badges, and every `criteria_type` is one `_badge_is_earned` actually evaluates.
+  That is not a detail: an unknown criterion awards nothing, deliberately, so a badge whose
+  rule the module cannot answer would sit in the list forever being quietly unearnable. The
+  two link-based criteria are deliberately not seeded — they need a course or category that
+  may not exist on a fresh site.
+
+### Added
+
+- `tests/test_hook_targets_resolve.py`, in CI. It resolves **every** dotted path in `hooks.py`
+  statically — parsing the target module's AST rather than importing it, so it needs no bench
+  and runs on every push. A hook naming a missing function is not a subtle bug; it is a typo
+  that only a full migrate could surface, and it should cost seconds in CI rather than a
+  failed build. The sweep found no others.
+
+- Assertions that every seeded badge's criterion is both evaluated by the awarder and a valid
+  option on the DocType's own Select.
+
+### Notes
+
+- Six mutations, all caught, including reintroducing the exact string that broke the deploy.
+
+- Two of the test's own guards were wrong first time and both would have made it silently
+  useless: it treated `erpnext_enhancements.bundle.js` (an asset filename) as a module, and
+  it located `after_migrate` by the first mention of the word — which is in the module
+  docstring 650 lines above the list — and read an empty list from it. A guard that matches
+  nothing passes everything.
+
 ## [1.229.0] - 2026-08-03
 
 ### Fixed

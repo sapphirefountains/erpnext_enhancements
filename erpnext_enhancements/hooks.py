@@ -729,7 +729,10 @@ after_migrate = [
 	# backend -- registered after it, the certificate silently renders with the wrong one.
 	"erpnext_enhancements.training.setup_print_formats.ensure_training_print_formats",
 	# training: starter Training Badges. Insert-only and inert until gamification is on.
-	"erpnext_enhancements.training.gamification.ensure_training_badges",
+	# Lives in `setup` beside the starter categories, not in `gamification`, which is
+	# the runtime awarding logic. This pointed at gamification and the function was
+	# never written there, so every migrate since Phase 4 died on AttributeError.
+	"erpnext_enhancements.training.setup.ensure_training_badges",
 	# Point every Print Format at the chrome PDF backend. Must run on EVERY migrate, not
 	# once as a patch: standard formats re-sync from their app's JSON, so the setting is
 	# reverted by the same migrate that would have applied a patch. It also has to use
