@@ -370,12 +370,18 @@
 				settings: b.settings || {},
 				t: t,
 				blockProgress: blockProgress,
-				heartbeat: function (payload) {
-					var body = payload || {};
+				heartbeat: function (beat) {
+					var body = beat || {};
 					// Never taken from the caller: the server derives the learner
 					// from the session, and the attempt from the lesson it is on.
 					body.lesson_key = state.lessonKey;
-					return call("heartbeat", body).then(function (response) {
+					// The endpoint is `heartbeat(attempt, payload)`, so the beat has
+					// to travel UNDER `payload` — not spread across the top level.
+					// Spread, Frappe bound `attempt` and left `payload` at its
+					// default of None, the server recorded an empty beat, and watch
+					// coverage sat at 0% forever. Nothing errored: an empty beat is
+					// a perfectly valid beat that happens to credit nothing.
+					return call("heartbeat", { attempt: state.attempt, payload: body }).then(function (response) {
 						mergeHeartbeat(body.block_key, response);
 						renderBottomBar();
 						return response || {};

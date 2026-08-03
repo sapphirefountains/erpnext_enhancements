@@ -151,6 +151,34 @@
 		transport[name] = function (payload) { return call(METHOD[name], payload); };
 	});
 
+	// The last beat on pagehide, and the one place fetch will not do: the page is
+	// going away, and an in-flight fetch goes with it. sendBeacon is the only
+	// transport the browser promises to finish.
+	//
+	// It must be SYNCHRONOUS and return a boolean, because video.js drops a beat
+	// from its retry queue on a truthy return. The generic wrapper above returns a
+	// Promise, which is always truthy — so every queued beat was dropped as
+	// "delivered" whether or not it ever left the machine.
+	//
+	// sendBeacon cannot set headers, so the CSRF token travels in the body. The
+	// beat itself goes under `payload`, matching `heartbeat(attempt, payload)`.
+	transport.heartbeatBeacon = function (beat) {
+		if (!navigator.sendBeacon || !beat) return false;
+		try {
+			var body = new Blob(
+				[JSON.stringify({
+					attempt: beat.attempt,
+					payload: beat,
+					csrf_token: window.TRAINING_CSRF || ""
+				})],
+				{ type: "application/json" }
+			);
+			return navigator.sendBeacon(PREFIX + METHOD.heartbeatBeacon, body);
+		} catch (e) {
+			return false;
+		}
+	};
+
 	var root = document.getElementById("training-root");
 	if (!window.TR || typeof window.TR.Player !== "function") {
 		root.setAttribute("aria-busy", "false");
