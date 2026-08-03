@@ -535,7 +535,9 @@ def test_connection():
 	from googleapiclient.http import MediaIoBaseUpload
 
 	probe = f"training/_probe/{frappe.generate_hash(length=12)}.txt"
-	payload = b"training media probe"
+	# Long enough to ask for a byte range out of the middle. The Range check below
+	# is the whole reason this is not a five-byte payload.
+	payload = b"training media probe " * 8
 
 	try:
 		storage.objects().insert(
@@ -548,11 +550,27 @@ def test_connection():
 
 	url = generate_signed_url(probe, expires_in=120)
 	fetched = False
+	ranged = None
 	try:
 		import requests
 
 		response = requests.get(url, timeout=20)
 		fetched = response.status_code == 200 and response.content == payload
+
+		# THE RANGE CHECK. Seeking in a <video> is a byte-range request, and the
+		# entire watch-coverage model assumes the server honours it: if a seek
+		# returns 200 with the whole file instead of 206 with a slice, the player
+		# still *works* but the numbers it reports are wrong rather than absent —
+		# which is the worst failure mode this feature has. Verified here so it is
+		# answered without anybody having to author a course first.
+		if fetched:
+			probe_range = requests.get(url, headers={"Range": "bytes=10-19"}, timeout=20)
+			ranged = {
+				"status": probe_range.status_code,
+				"content_range": probe_range.headers.get("Content-Range"),
+				"accept_ranges": probe_range.headers.get("Accept-Ranges"),
+				"ok": probe_range.status_code == 206 and probe_range.content == payload[10:20],
+			}
 	except Exception:
 		fetched = False
 	finally:
@@ -571,4 +589,26 @@ def test_connection():
 			"message": _("Upload and signing worked, but fetching the signed URL did not. "
 						 "Check that the service account has objectAdmin on the bucket."),
 		}
-	return {"ok": True, "message": _("Bucket, key, signing and playback all check out.")}
+
+	# A failed Range check is reported but does NOT fail the test: everything
+	# except video seeking still works, and telling an operator "connection
+	# failed" when the connection is fine would send them looking in the wrong
+	# place. It is surfaced loudly instead, because it silently corrupts coverage
+	# rather than breaking anything visibly.
+	if ranged and not ranged.get("ok"):
+		return {
+			"ok": True,
+			"range_ok": False,
+			"message": _(
+				"Bucket, key and signing all work — but the byte-range check did NOT pass "
+				"(got HTTP {0}, Content-Range {1}). Seeking in a video is a range request, and "
+				"watch coverage assumes it is honoured. Until this passes, treat any coverage "
+				"figure as unreliable rather than merely missing."
+			).format(ranged.get("status"), ranged.get("content_range") or _("absent")),
+		}
+
+	return {
+		"ok": True,
+		"range_ok": bool(ranged and ranged.get("ok")),
+		"message": _("Bucket, key, signing, playback and byte-range seeking all check out."),
+	}

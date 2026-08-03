@@ -203,5 +203,55 @@ class TestBothSidesStillSpeakTheseShapes(unittest.TestCase):
 		self.assertNotIn('payload.get("discount")', src)
 
 
+class TestTransportMapPointsAtRealEndpoints(unittest.TestCase):
+	"""Every transport method must name an endpoint that actually exists.
+
+	The player only knows the transport's *function names*; ``www/training.html``
+	maps those to whitelisted methods. A wrong name there is a 404 at runtime and
+	nothing catches it earlier, because both halves are individually valid.
+
+	Three were wrong on the first Phase-2 build: ``start_quiz`` and ``media_url``
+	did not exist (the endpoints are ``get_quiz`` and ``get_media_url``), and
+	``heartbeatBeacon`` was called by video.js but absent from the map entirely,
+	so the pagehide flush would have thrown on ``undefined``. Phase 3's authoring
+	preview implements this same set, so the list has to be right.
+	"""
+
+	HTML = REPO_ROOT / "erpnext_enhancements/www/training.html"
+	API = REPO_ROOT / "erpnext_enhancements/api/training.py"
+	JS_DIR = REPO_ROOT / "erpnext_enhancements/public/js/training"
+
+	def _method_map(self):
+		html = self.HTML.read_text(encoding="utf-8")
+		start = html.index("var METHOD = {")
+		block = html[start : html.index("};", start)]
+		return dict(re.findall(r'(\w+)\s*:\s*"(\w+)"', block))
+
+	def _whitelisted(self):
+		api = self.API.read_text(encoding="utf-8")
+		return set(re.findall(r"@frappe\.whitelist\(\)\s*\ndef\s+(\w+)", api))
+
+	def _transport_calls(self):
+		used = set()
+		for path in self.JS_DIR.glob("*.js"):
+			used |= set(re.findall(r"transport\.(\w+)", path.read_text(encoding="utf-8")))
+		return used
+
+	def test_the_map_parses(self):
+		"""Guards every other assertion here — an empty map would make them all
+		vacuously true."""
+		self.assertGreater(len(self._method_map()), 4)
+		self.assertGreater(len(self._whitelisted()), 4)
+
+	def test_every_mapped_method_exists(self):
+		whitelisted = self._whitelisted()
+		broken = {k: v for k, v in self._method_map().items() if v not in whitelisted}
+		self.assertEqual(broken, {}, f"transport methods naming no such endpoint: {broken}")
+
+	def test_every_transport_call_is_mapped(self):
+		missing = sorted(self._transport_calls() - set(self._method_map()))
+		self.assertEqual(missing, [], f"player calls transport.{missing} with no map entry")
+
+
 if __name__ == "__main__":
 	unittest.main()

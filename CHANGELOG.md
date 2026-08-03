@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.213.0] - 2026-08-02
+
+### Added
+
+- **The byte-range check, in Test GCS Connection.** Seeking in a `<video>` is an HTTP Range
+  request, and the entire watch-coverage model assumes the server honours it. If a seek returns
+  `200` with the whole file instead of `206` with a slice, the player still *works* — it just
+  reports numbers that are wrong rather than absent, which is the worst failure mode this feature
+  has. The probe now fetches `bytes=10-19` from its own signed URL and checks for a 206 with the
+  right slice, so the question is answered without anybody authoring a course first.
+
+  A failed range check **does not fail the connection test**: everything except seeking still
+  works, and reporting "connection failed" when the connection is fine sends an operator looking
+  in the wrong place. It is reported loudly on its own terms instead.
+
+- **An executable contract for the Phase 3 seams, written before the code.**
+  `tests/test_training_phase3_contracts.py` pins the joins Phase 3 has to satisfy: the preview
+  transport implementing every method the player calls, the autosave field allowlist and its
+  optimistic lock, the AI drafting endpoint stamping the fields the review gate reads (and never
+  marking its own output reviewed), the checkpoint-suggestion transcript requirement, and the
+  builder page's role gate.
+
+  Phase-3 assertions skip until those files exist — they are acceptance criteria, not decoration,
+  and `test_phase3_is_actually_built` exists so a skipped suite is never mistaken for a passing
+  one. The Phase 2 contracts they build on are enforced now so they cannot drift underneath the
+  build.
+
+  **Why this file exists:** four integration breaks got through the Phase 2 fan-out build, and
+  every one was two correct halves with a wrong join — `ranges` vs `intervals`, an object vs an
+  integer `seeks`, a nested vs top-level `hidden`, and three transport methods naming endpoints
+  that do not exist. None was a hard bug; each was a name nobody owned. Every assertion here was
+  mutation-tested — deliberately broken to confirm it fails — because a contract test that cannot
+  fail is worse than none.
+
+## [1.212.1] - 2026-08-02
+
+### Fixed
+
+- **Three of the player's transport methods pointed at endpoints that do not exist.** The player
+  knows only the transport's *function names*; `www/training.html` maps those to whitelisted
+  methods. `startQuiz` named `start_quiz` and `mediaUrl` named `media_url` — the endpoints are
+  `get_quiz` and `get_media_url` — so the quiz would never load and no video URL would ever
+  resolve. `heartbeatBeacon` was called by `video.js` but absent from the map entirely, so the
+  `pagehide` flush would have thrown on `undefined` and silently lost the final beat of every
+  session.
+
+  Nothing caught this because both halves are individually valid: the endpoints exist, the player
+  is correct, and only the map between them was wrong. Same class as the heartbeat wire mismatch
+  in 1.212.0, and the same cause — parallel work with an unowned seam.
+
+  `tests/test_training_heartbeat_wire.py` now cross-reads the map against
+  `@frappe.whitelist()` definitions and against every `transport.*` call in the player, so a
+  rename on either side fails there. Verified the new assertions do fail against the original
+  typo rather than merely passing against the fix.
+
 ## [1.212.0] - 2026-08-02
 
 ### Added
