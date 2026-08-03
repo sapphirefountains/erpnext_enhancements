@@ -1914,6 +1914,139 @@ class TrainingBuilder {
 		}
 	}
 
+	// What is actually wrong with this video, in the place the author is looking.
+	//
+	// A failed copy used to be invisible here: the asset carried `status = Error`
+	// and a traceback, and the builder said only "This video asset is Error" — so a
+	// broken video and one that simply had not finished copying looked identical,
+	// and neither said what to do. The commonest cause is the most fixable: the
+	// file was never shared with the service account that does the copying.
+	render_asset_state($section, lesson, block) {
+		const asset = this.video_asset(block);
+		if (!asset) return;
+
+		if (asset.status === "Error") {
+			const $box = $('<div class="tb-warn"></div>').appendTo($section);
+			$("<div></div>")
+				.text(__("The copy from Drive failed, so this video will not play for a learner."))
+				.appendTo($box);
+			if (asset.last_error) {
+				// Drive answers 404 rather than 403 for a file the service account
+				// cannot see, so "File not found" almost always means "not shared".
+				// Saying that here saves the hour it took to work out the first time.
+				const notFound = /404|not found/i.test(asset.last_error);
+				$("<div></div>")
+					.text(
+						notFound
+							? __("Drive says the file was not found. That usually means it is not shared with the service account rather than missing — check sharing on the file or the shared drive it lives in.")
+							: asset.last_error
+					)
+					.appendTo($box);
+			}
+			$(`<button type="button" class="btn btn-xs">${__("Retry the copy")}</button>`)
+				.appendTo($box)
+				.on("click", (event) => this.retry_video_copy(asset, $(event.currentTarget)));
+			return;
+		}
+
+		if (!asset.copied) {
+			$('<div class="tb-muted"></div>')
+				.text(
+					__("Not copied into the bucket yet. Publishing queues the copy; a learner sees nothing here until it finishes.")
+				)
+				.appendTo($section);
+		}
+
+		// The quiet one, and the one that matters most. `Manual` means the length
+		// was typed rather than read from Drive, and evaluate_gates WAIVES the
+		// coverage gate in that case rather than scoring against a guess. An author
+		// who thinks they set an 80% gate deserves to know it is not being applied.
+		if (asset.duration_source !== "Probed") {
+			$('<div class="tb-warn"></div>')
+				.text(
+					__("This video's length was entered by hand, not read from Drive, so the watch-coverage gate is waived for it. Re-add it from Drive to have the real length probed.")
+				)
+				.appendTo($section);
+		}
+	}
+
+	retry_video_copy(asset, $button) {
+		$button.prop("disabled", true).text(__("Copying…"));
+		frappe
+			.call({
+				method: "erpnext_enhancements.api.training_author.retry_video_copy",
+				args: { video_asset: asset.name },
+			})
+			.then((r) => {
+				const result = (r && r.message) || {};
+				if (result.ok) {
+					frappe.show_alert({ message: __("Copied. The video is ready."), indicator: "green" });
+					this.reload();
+					return;
+				}
+				$button.prop("disabled", false).text(__("Retry the copy"));
+				frappe.msgprint({
+					title: __("Still failing"),
+					indicator: "red",
+					message: result.last_error || result.reason || __("The copy did not succeed."),
+				});
+			})
+			.catch(() => $button.prop("disabled", false).text(__("Retry the copy")));
+	}
+
+	register_drive_video(lesson, block) {
+		if (!this.guard_editable()) return;
+		const dialog = new frappe.ui.Dialog({
+			title: __("Add a video from Drive"),
+			fields: [
+				{
+					fieldname: "drive_file_id",
+					fieldtype: "Data",
+					label: __("Drive link or file id"),
+					reqd: 1,
+					description: __(
+						"Paste the address of the video itself. A folder link or the shared drive's own link will not work, and both fail later with an unhelpful 'file not found'."
+					),
+				},
+				{ fieldname: "title", fieldtype: "Data", label: __("Title"),
+				  description: __("Optional — Drive's own name is used when this is blank.") },
+			],
+			primary_action_label: __("Register"),
+			primary_action: (values) => {
+				dialog.hide();
+				frappe
+					.call({
+						method: "erpnext_enhancements.api.training_author.register_video_asset",
+						args: { drive_file_id: values.drive_file_id, title: values.title || null },
+						freeze: true,
+						freeze_message: __("Reading the video from Drive…"),
+					})
+					.then((r) => {
+						const result = (r && r.message) || {};
+						if (!result.video_asset) return;
+						this.set_block_field(lesson, block, "video_asset", result.video_asset);
+						// `duration_probed` is the honest signal and the only one worth
+						// interrupting for: a false means the service account could not
+						// read the file, the length is a placeholder, and the coverage
+						// gate will be waived rather than enforced.
+						if (result.duration_probed) {
+							frappe.show_alert({ message: __("Registered, and its length was read from Drive."), indicator: "green" });
+						} else {
+							frappe.msgprint({
+								title: __("Registered, but Drive could not be read"),
+								indicator: "orange",
+								message: __(
+									"The video is linked, but its length could not be read from Drive — which usually means the file is not shared with the service account that copies it. Until that is fixed the video will not play for a learner and the watch-coverage gate is waived."
+								),
+							});
+						}
+						this.reload();
+					});
+			},
+		});
+		dialog.show();
+	}
+
 	render_video_controls($section, lesson, block) {
 		const $picker = $('<div class="tb-field"></div>').appendTo($section);
 		$("<label></label>").text(__("Video asset")).appendTo($picker);
@@ -1935,17 +2068,23 @@ class TrainingBuilder {
 		control.set_value(block.video_asset || "");
 		control.$input && control.$input.prop("disabled", !this.editable());
 
+		// The Link picker only chooses an ALREADY registered asset, so until this
+		// existed there was no way to register one from the builder at all — the
+		// author was told to go and do it, with no door. The Desk form is the
+		// wrong door anyway: it lets a duration be typed and still labelled
+		// "Probed", which is the one combination that makes the coverage gate
+		// divide by a number nobody checked.
+		const $add = $(`<button type="button" class="tb-icon-btn">${__("Add from Drive…")}</button>`)
+			.appendTo($section)
+			.on("click", () => this.register_drive_video(lesson, block));
+		$add.prop("disabled", !this.editable());
+
 		const $upload = $(`<button type="button" class="tb-icon-btn">${__("Upload video")}</button>`)
 			.appendTo($section)
 			.on("click", () => this.upload_video(lesson, block));
 		$upload.prop("disabled", !this.editable());
 
-		const asset = this.video_asset(block);
-		if (asset && asset.status && asset.status !== "Available") {
-			$('<div class="tb-warn"></div>')
-				.text(__("This video asset is {0}. The preview and the learner both need it Available.", [asset.status]))
-				.appendTo($section);
-		}
+		this.render_asset_state($section, lesson, block);
 
 		if (this.ai_enabled) {
 			// `has_transcript` rides along on the video asset for exactly this:

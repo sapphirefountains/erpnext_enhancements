@@ -26,6 +26,7 @@ its feature is a *text* problem — exactly what a text assertion is good at.
 Run: python -m unittest erpnext_enhancements.tests.test_training_builder_entry
 """
 
+import ast
 import json
 import re
 import unittest
@@ -494,3 +495,126 @@ class TestChaptersCanBeManaged(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVideoCanBeAuthored(unittest.TestCase):
+    """The two gaps that made a video impossible to add and impossible to debug.
+
+    The builder's only video control was a Link to an **already registered**
+    Training Video Asset, so there was no way to register one from the builder at
+    all — the author was told to go and do it, with no door. The Desk form is the
+    wrong door anyway: it lets a duration be typed while `duration_source` still
+    reads `Probed`, and that is the one combination that makes `evaluate_gates`
+    score the coverage gate against a number nobody checked. Registering through
+    `register_video_asset` probes the real length and says so.
+
+    And a failed copy was invisible. The asset carried `status = Error` and a
+    traceback; the builder said only "This video asset is Error", so a broken
+    video and one that had simply not finished copying looked identical.
+    """
+
+    def _author(self):
+        return (APP / "api/training_author.py").read_text(encoding="utf-8")
+
+    def test_the_builder_can_register_a_video(self):
+        """Asserts the button is WIRED, not merely that the method exists.
+
+        Checking for the name alone passed a mutation that unhooked the click
+        handler and left `register_drive_video` sitting there complete and
+        unreachable — the same shape as the `finishCourse` miss.
+        """
+        code = _builder()
+        self.assertIn("training_author.register_video_asset", code)
+        self.assertIn("this.register_drive_video(", _method(code, "render_video_controls"))
+
+    def test_it_reports_whether_the_length_was_really_probed(self):
+        """`duration_probed: false` means the service account could not read the
+        file — the length is a placeholder and the gate will be waived. Saying
+        "registered" and nothing else would hide exactly that."""
+        body = _method(_builder(), "register_drive_video")
+        self.assertIn("duration_probed", body)
+
+    def test_a_failed_copy_is_shown_with_a_way_out(self):
+        body = _method(_builder(), "render_asset_state")
+        self.assertTrue(body, "render_asset_state not found")
+        self.assertIn("last_error", body)
+        self.assertIn("retry_video_copy", body)
+
+    def test_the_404_is_translated(self):
+        """Drive answers 404 rather than 403 for a file the service account cannot
+        see, so the raw error points away from the actual cause.
+
+        Asserts the *explanation*, not the digits. Checking for "404" alone passed
+        a mutation that disabled the branch, because the regex that detects it
+        still contained the number.
+        """
+        body = _method(_builder(), "render_asset_state")
+        self.assertIn("not shared", body)
+        self.assertIn("service account", body)
+        # The detector has to be computed AND used as the condition. Asserting the
+        # explanation alone passed a mutation that replaced the condition with
+        # `false`: the sentence was still in the file and could never be shown,
+        # which is the same "complete and unreachable" shape as the finishCourse
+        # miss and the register-from-Drive one.
+        self.assertGreaterEqual(
+            body.count("notFound"), 2, "the 404 detector is computed but never used"
+        )
+
+    def test_an_unverified_duration_is_called_out(self):
+        """The quiet one: a `Manual` duration means the coverage gate is waived,
+        and an author who thinks they set an 80% gate should know it is not being
+        applied."""
+        body = _method(_builder(), "render_asset_state")
+        self.assertIn("duration_source", body)
+
+    def test_the_state_panel_is_rendered(self):
+        self.assertIn("this.render_asset_state(", _method(_builder(), "render_video_controls"))
+
+    def test_the_retry_endpoint_exists_and_is_gated(self):
+        source = self._author()
+        self.assertIn("def retry_video_copy(", source)
+        start = source.index("def retry_video_copy(")
+        body = source[start : source.index("\ndef ", start + 5)]
+        self.assertIn("_require_author()", body)
+        self.assertIn("copy_from_drive", body)
+
+    def test_the_picker_carries_what_the_panel_needs(self):
+        """Cross-checked against what the server actually RETURNS.
+
+        The first version searched the function body, so a field still named in
+        the ``fields=[...]`` it selects from the database satisfied the check even
+        after it had been dropped from the returned dict. Two mutations survived
+        exactly that way. The keys of the returned literal are the contract; the
+        SQL column list is not.
+        """
+        tree = ast.parse(self._author())
+        sent = set()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.FunctionDef) and node.name == "_builder_video_assets"):
+                continue
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Dict):
+                    sent |= {
+                        key.value
+                        for key in inner.keys
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    }
+        self.assertTrue(sent, "could not parse what _builder_video_assets returns")
+        for field in ("duration_source", "last_error", "copied"):
+            self.assertIn(field, sent, f"_builder_video_assets does not return {field}")
+
+    def test_a_pasted_folder_or_drive_link_is_refused(self):
+        """Three ways to copy the wrong id, and all three fail identically an hour
+        later with 'file not found'. Two are detectable up front."""
+        source = self._author()
+        self.assertIn("def drive_file_id_from(", source)
+        start = source.index("def drive_file_id_from(")
+        body = source[start : source.index("\ndef ", start + 5)]
+        self.assertIn("/folders/", body)
+        self.assertIn('startswith("0A")', body)
+
+    def test_register_accepts_a_pasted_url(self):
+        source = self._author()
+        start = source.index("def register_video_asset(")
+        body = source[start : source.index("\ndef ", start + 5)]
+        self.assertIn("drive_file_id_from(", body)

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.227.0] - 2026-08-03
+
+### Added
+
+The two gaps that made a training video impossible to add from the builder and impossible to
+debug once added.
+
+- **"Add from Drive…" in the video block.** The only control was a Link to an *already
+  registered* Training Video Asset, so there was no way to register one from the builder at
+  all — `upload_video` even told the author to go and register one, with no door to walk
+  through. The Desk form was the wrong door anyway: it lets a duration be typed while
+  `duration_source` still reads `Probed`, which is the one combination that makes
+  `evaluate_gates` score the coverage gate against a number nobody checked.
+
+  The dialog reports `duration_probed` honestly. A `false` is not a detail — it means the
+  service account could not read the file, the length is a placeholder, and the coverage gate
+  will be waived rather than enforced. It says so.
+
+- **A pasted Drive link is accepted, and the two wrong ones are refused up front.**
+  `drive_file_id_from` takes a bare id, a `/file/d/…` link or an `?id=` link, and rejects a
+  folder link and a shared-drive id by name. All three mistakes otherwise surface an hour
+  later as `404 File not found`, which points nowhere near the cause — Drive answers 404
+  rather than 403 for anything the service account cannot reach.
+
+- **A failed copy is now visible, explained and retryable.** The asset carried
+  `status = Error` and a full traceback, and the builder said only "This video asset is
+  Error" — so a broken video and one that had simply not finished copying looked identical,
+  and neither said what to do. The block now shows which of the three states it is in, and
+  translates the commonest failure: a Drive 404 almost always means the file is not shared
+  with the service account rather than missing. **Retry the copy** runs it inline and
+  reports what happened, so fixing sharing no longer requires republishing the whole version.
+
+- The **unverified-duration** case is called out where the author is looking. A `Manual`
+  duration means `evaluate_gates` waives the coverage gate entirely; an author who believes
+  they set an 80% gate should not have to read the source to discover it is not applied.
+
+### Notes
+
+- Mutation-tested: 17 mutations, all caught, but **six of them were missed on the first pass
+  and every one exposed a weak assertion rather than a weak fix.** Three checked a function's
+  whole body where a field still named in the SQL `fields=[...]` satisfied a check for
+  something dropped from the returned dict — the returned literal is the contract, the column
+  list is not, and the test now parses it. Two more were the "complete and unreachable" shape
+  that has now appeared four times in this module: `register_drive_video` still defined with
+  its button unwired, and the 404 explanation still in the file behind a condition replaced
+  by `false`.
+
 ## [1.226.0] - 2026-08-03
 
 ### Fixed
