@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.238.0] - 2026-08-03
+
+### Changed
+
+- **The accountant no longer holds `Workspace Manager`** (WI-018, part two). This is the
+  one change that makes the rest of WI-018 possible, and on its own it changes nothing
+  she can do with a document.
+
+  `get_workspaces()` opens with `has_access = "Workspace Manager" in frappe.get_roles()`,
+  and when that is true it **drops the query filters entirely** — role restrictions on a
+  Workspace, `is_hidden`, and blocked modules are all bypassed. While she held the role we
+  could restrict the Finance Hub by role, hide the six empty hubs and block twenty
+  modules, and she would still have seen all 61 workspaces. Every lever in the work item
+  was inert.
+
+  It also meant WI-018's original acceptance criterion — `COUNT(*) FROM tabBlock Module
+  WHERE parent=<accountant> > 0` — **could pass with her sidebar completely unchanged**.
+  It measured that a row had been inserted, not that anything had happened. Replaced in
+  the work item with an assertion that `has_access` is false, checked first.
+
+  <what she actually loses: editing workspace layouts in the Desk. Nothing else.
+  `Workspace Manager` and `block_modules` are read only by the desk's workspace and
+  desktop-icon code; `frappe/permissions.py` never consults either, so read/write on every
+  document is untouched. She can still create a private workspace of her own, because
+  `Desk User` — auto-granted to every System User — holds create on Workspace.>
+
+  Deliberately shipped alone, on its own release, because it is the one change in WI-018
+  that will feel like something was taken away. Undoing it is a re-tick in the Desk and
+  takes seconds. Six other holders are untouched (Administrator, the CEO, the sys-admin,
+  the purchasing agent, the external CPA, and the Triton service account); trimming those
+  is a WI-011 amendment, not this work item.
+
+  <mechanism note: written with `frappe.db.delete` so an 89-role User is not re-validated
+  to remove one row, which means the document cache must be cleared by hand.
+  `frappe.clear_cache(user=...)` does **not** reach it — that clears `user:<email>*` keys
+  while the User doc is cached separately under `document_cache::User::<email>` for an
+  hour, and `get_workspaces()` reads roles from `get_cached_doc`. Without the explicit
+  `clear_document_cache` the change looks like it silently did nothing.>
+
 ## [1.237.0] - 2026-08-03
 
 ### Added
