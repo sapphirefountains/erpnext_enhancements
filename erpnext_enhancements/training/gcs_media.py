@@ -455,8 +455,11 @@ def _describe(exc):
 			{
 				400: _("400 Bad Request"),
 				401: _("401 Unauthorized — the stored key was rejected."),
-				403: _("403 Forbidden — the service account lacks objectAdmin on this bucket, "
-					   "or the IAM binding has not propagated yet (it can take a minute)."),
+				403: _("403 Forbidden — grant the service account "
+					   "roles/storage.objectAdmin **on this bucket** (Bucket → Permissions → "
+					   "Grant access), or wait a minute for an existing binding to "
+					   "propagate. A project-level grant works too; a grant on a different "
+					   "bucket does not."),
 				404: _("404 Not Found — no bucket of that name exists in this project. "
 					   "Check GCS Video Bucket is the *bucket* name, not the service account."),
 			}.get(status, _("HTTP {0}").format(status))
@@ -525,8 +528,18 @@ def test_connection():
 	# Check the bucket resolves before trying to write to it. Without this, a
 	# wrong name surfaces as a generic upload failure and the operator is left
 	# guessing between "bucket missing", "no permission" and "no network".
+	#
+	# `objects().list`, NOT `buckets().get`. They distinguish the same three cases,
+	# but `buckets().get` needs `storage.buckets.get`, which **`objectAdmin` does
+	# not grant** — so this pre-flight failed 403 on a service account configured
+	# exactly as this module documents, and then `_describe` advised granting the
+	# very role that was already there. An operator following our own error message
+	# would have changed nothing and seen the identical failure.
+	#
+	# A connection test must exercise what the app needs and nothing more. This
+	# module only ever creates, reads and deletes objects.
 	try:
-		storage.buckets().get(bucket=bucket).execute()
+		storage.objects().list(bucket=bucket, maxResults=1).execute()
 	except Exception as exc:
 		return {"ok": False, "message": _("Cannot reach the bucket {0}. {1}").format(bucket, _describe(exc))}
 

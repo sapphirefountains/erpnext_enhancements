@@ -2660,7 +2660,6 @@ class TrainingBuilder {
 					$root.html(`<div class="tb-denied">${__("The learner player did not load.")}</div>`);
 					return;
 				}
-				this.install_runtime_shims();
 				const boot = this.preview_boot(lesson);
 				const transport = this.preview_transport(lesson);
 				this.preview = new window.TR.Player($root[0], boot, transport);
@@ -2737,73 +2736,21 @@ class TrainingBuilder {
 		return this._player_promise;
 	}
 
-	// Compatibility shims for two joins between the Phase-2 files that do not
-	// currently meet. Both are feature-detected, so each becomes inert the moment
-	// the underlying file is fixed — nothing here overrides working code.
+	// There were compatibility shims here. They patched `TR.Video.mount` into
+	// existence and re-shaped `TR.Quiz.mount`'s arguments, and their own comment
+	// conceded they were "not a substitute for fixing them" in the runtime.
 	//
-	//  * blocks.js calls `TR.Video.mount(el, block, ctx)`; video.js exports only
-	//    the constructor, so every Video block renders "the video player did not
-	//    load".
-	//  * player.js calls `TR.Quiz.mount(root, quizPayload, {submit, onGraded, …})`;
-	//    quiz.js expects `(root, {quiz, attempt, lessonKey, onResult, onExit},
-	//    {submitQuiz, startQuiz})`, so the quiz renders empty and Submit does
-	//    nothing.
+	// Nothing was ever fixed, and the shims are why nobody noticed: the preview
+	// showed the author a working lesson while every learner got "the video player
+	// did not load" and a quiz with no questions in it. A preview that repairs the
+	// runtime on its way past is worse than no preview at all, because it removes
+	// the one place the break would have been seen.
 	//
-	// Both are reported in the handover. Shimming them here is what makes the
-	// preview show the author a working lesson instead of the runtime's bugs; it
-	// is not a substitute for fixing them.
-	install_runtime_shims() {
-		const TR = window.TR || {};
-		if (TR.Video && typeof TR.Video.mount !== "function") {
-			TR.Video.mount = (wrapper, block, ctx) => {
-				const video = new TR.Video(
-					wrapper,
-					{
-						attempt: (ctx && ctx.attempt) || "preview",
-						lesson_key: ctx && ctx.lessonKey,
-						block_key: block.block_key,
-						duration: block.duration_s,
-						poster: block.poster,
-						title: block.heading,
-						checkpoints_enabled: block.checkpoints_enabled,
-						min_coverage_percent: block.min_coverage,
-						settings: (ctx && ctx.settings) || {},
-					},
-					(ctx && ctx.transport) || {}
-				);
-				this.preview_video = video;
-				if (ctx && typeof ctx.onTeardown === "function") ctx.onTeardown(() => video.destroy());
-				return video;
-			};
-		}
+	// Both are fixed at source now. `Video.mount` lives in video.js beside the
+	// constructor it builds, and player.js calls `TR.Quiz.mount` with the
+	// signature quiz.js documents. This preview drives exactly what a learner gets,
+	// which is the only thing that makes it worth having.
 
-		if (TR.Quiz && typeof TR.Quiz.mount === "function" && !TR.Quiz.__tbAdapted) {
-			const original = TR.Quiz.mount;
-			TR.Quiz.__tbAdapted = true;
-			TR.Quiz.mount = function (root, ctx, options) {
-				const looksBare = ctx && !ctx.quiz && (ctx.questions || ctx.items);
-				if (!looksBare) return original.call(this, root, ctx, options);
-				return original.call(
-					this,
-					root,
-					{
-						quiz: ctx,
-						attempt: options && options.attempt,
-						lessonKey: options && options.lessonKey,
-						onResult: options && options.onGraded,
-						onExit: options && options.onCancel,
-					},
-					{
-						submitQuiz: options && options.submit,
-						startQuiz:
-							options && options.transport && options.transport.startQuiz
-								? (args) => options.transport.startQuiz(args)
-								: null,
-					}
-				);
-			};
-		}
-	}
 
 	preview_boot(lesson) {
 		return {

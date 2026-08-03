@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.228.0] - 2026-08-03
+
+### Fixed
+
+**Every video block showed "The video player did not load", and every quiz rendered empty.**
+Both since Phase 2. Both hidden by the builder.
+
+- **`TR.Video.mount` did not exist.** `blocks.js` calls it and guards on
+  `typeof TR.Video.mount === "function"`; `video.js` exported only the constructor. So the
+  guard fired — on a player that had loaded perfectly well — and told the learner to refresh
+  a page that was never going to help. `Video.mount` now lives in `video.js` beside the
+  constructor it builds, translating the published block shape (`duration_s`, `min_coverage`)
+  into the spec the constructor wants (`duration`, `min_coverage_percent`).
+
+  It routes the heartbeat through the player's wrapper rather than the raw transport, because
+  that wrapper is what stamps the lesson key, merges the response into progress and refreshes
+  the gate — going direct leaves the coverage meter and the Finish button frozen while the
+  video plays.
+
+- **The quiz was mounted with the wrong signature.** `quiz.js` is
+  `mount(root, ctx, transport)` with the questions at `ctx.quiz` and submission at
+  `transport.submitQuiz`; `player.js` passed the payload *as* `ctx` and everything else in the
+  third argument. `normalise(ctx.quiz)` therefore got `undefined`: no questions, no attempt,
+  no lesson key, and a Submit that went nowhere.
+
+### Changed
+
+- **Removed the builder's runtime shims.** They patched `TR.Video.mount` into existence and
+  re-shaped `TR.Quiz.mount`'s arguments, and their own comment conceded they were "not a
+  substitute for fixing them". Nothing then fixed them — for four releases — precisely because
+  the preview an author checks their work in was the one place the breakage could not be seen.
+
+  A preview that repairs the runtime on its way past is worse than no preview: it removes the
+  only place the break would have been noticed. The preview now drives exactly what a learner
+  gets, which is the only thing that makes it worth having.
+
+- **The GCS connection test asked for a permission the module never uses.** It pre-flighted
+  with `buckets().get()`, which needs `storage.buckets.get` — and **`roles/storage.objectAdmin`
+  does not grant it**. So a service account configured exactly as this module documents failed
+  the test with a 403, and the error then advised granting objectAdmin: the role it already
+  had. Following our own message would have changed nothing.
+
+  The pre-flight now lists one object instead, which distinguishes the same three cases
+  (wrong bucket, missing binding, no network) inside the permissions the app actually needs.
+  The 403 message names `roles/storage.objectAdmin` **on the bucket**, and says a
+  project-level grant works while a grant on a different bucket does not.
+
+### Notes
+
+- This was predicted in PR #690 and written down at the time: *"the preview shims
+  `TR.Video.mount` into existence… if `/training` has the same mismatch, the preview works and
+  the real player doesn't."* It did. Four releases passed between recording that and a learner
+  hitting it, which is the argument for fixing a known seam rather than noting it.
+
+- The load-bearing new assertion is not about either bug: it is that **the builder may not
+  assign `TR.Video.mount`, `TR.Quiz.mount` or `TR.Player`** at all. Six mutations, all caught
+  first time.
+
 ## [1.227.1] - 2026-08-03
 
 ### Fixed
