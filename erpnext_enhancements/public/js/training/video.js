@@ -714,6 +714,13 @@
       return Promise.resolve(
         transport.openCheckpoint({
           attempt: spec.attempt,
+          // `at` is REQUIRED and was not being sent, so every call raised a
+          // TypeError before it reached the endpoint. It is the playhead: the
+          // server returns the next unanswered checkpoint at or before this
+          // position, and refuses one whose timestamp the stored watch intervals
+          // do not cover. Sending 0 would arm nothing; omitting it armed nothing
+          // either, but noisily.
+          at: Math.round(flt(video.currentTime)),
           lesson_key: spec.lesson_key,
           block_key: spec.block_key,
         })
@@ -854,10 +861,14 @@
         return;
       }
       Promise.resolve(
+        // No lesson_key or block_key: answer_checkpoint takes
+        // (attempt, checkpoint_key, option_keys, response_ms) and resolves the
+        // lesson and block from the checkpoint itself -- deliberately, so a caller
+        // cannot answer one checkpoint while claiming to be in another block.
+        // Frappe dropped the extra kwargs, so they were never more than source
+        // claiming the server did something it does not.
         transport.answerCheckpoint({
           attempt: spec.attempt,
-          lesson_key: spec.lesson_key,
-          block_key: spec.block_key,
           checkpoint_key: cp.checkpoint_key,
           option_keys: optionKeys,
         })
@@ -943,9 +954,10 @@
       if (spec.src) return Promise.resolve({ url: spec.src });
       if (typeof transport.mediaUrl !== "function") return Promise.resolve(null);
       return Promise.resolve(
+        // get_media_url is (attempt, block_key). The block already identifies its
+        // lesson.
         transport.mediaUrl({
           attempt: spec.attempt,
-          lesson_key: spec.lesson_key,
           block_key: spec.block_key,
         })
       ).then(function (res) {
