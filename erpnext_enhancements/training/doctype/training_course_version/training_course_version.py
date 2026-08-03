@@ -67,6 +67,7 @@ class TrainingCourseVersion(Document):
 	def before_submit(self):
 		self._require_change_type()
 		self._require_content()
+		self._require_materialized_content()
 
 	def on_submit(self):
 		self.db_set(
@@ -133,6 +134,38 @@ class TrainingCourseVersion(Document):
 	def _require_content(self):
 		if not frappe.db.exists("Training Lesson", {"course_version": self.name}):
 			frappe.throw(_("This version has no lessons yet, so there is nothing for a learner to do."))
+
+	def _require_materialized_content(self):
+		"""Refuse a submit that has not been through ``publish_version``.
+
+		Publishing is not the same act as submitting, and almost everything it
+		means happens outside this controller. ``api/training_author.py``'s
+		``publish_version`` writes each lesson's answer-free payload and its
+		separate answer key, the table of contents, the totals and the content
+		hash, and only then calls ``submit()``. ``on_submit`` here just stamps the
+		timestamps and makes the version live.
+
+		So pressing **Submit** on this form produced a version that looked
+		published and was hollow: an empty outline, lessons that render nothing,
+		and — worst — a quiz that cannot be graded at all, because
+		``grading.answer_key()`` throws when the key is missing. It also became the
+		course's live version, replacing a good one. That happened on the first
+		real course somebody published, and nothing anywhere complained.
+
+		Checked against the materialised fields rather than a flag, so the
+		invariant holds however the submit is triggered — including from a script
+		or a bulk action that never touches the API.
+		"""
+		toc = frappe.parse_json(self.toc_json or "[]") or []
+		if toc and (self.content_hash or "").strip():
+			return
+		frappe.throw(
+			_("Use the Publish action rather than Submit. Submitting this form freezes the version "
+			  "without building any of what a learner reads: the lesson content, the answer key that "
+			  "grades the quiz, and the table of contents are all written by Publish. A version "
+			  "submitted this way looks published and is empty."),
+			title=_("Not published yet"),
+		)
 
 	def _become_the_live_version(self):
 		"""Exactly one submitted version per course is live. Demote the incumbent

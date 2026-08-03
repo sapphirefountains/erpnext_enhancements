@@ -23,6 +23,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_publish
 """
 
 import json
+import pathlib
 import sys
 import types
 import unittest
@@ -389,3 +390,112 @@ class TestAnswerKeyIsUsable(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestPublishingIsNotTheSameAsSubmitting(unittest.TestCase):
+	"""Static guards on the two things a Desk **Submit** silently skipped.
+
+	Publishing and submitting are different acts, and almost everything publishing
+	means happens outside the DocType controller. ``publish_version`` writes each
+	lesson's answer-free payload and its separate answer key, the table of
+	contents, the totals and the content hash, and only then calls ``submit()``.
+	``on_submit`` merely stamps the timestamps and makes the version live.
+
+	So pressing Submit on the version form froze a version that *looked* published
+	and was hollow — empty outline, lessons that render nothing, and a quiz that
+	could not be graded at all because ``grading.answer_key()`` throws when the
+	key is missing. It also replaced a perfectly good live version. That is
+	exactly what happened to the first real course, and nothing complained.
+
+	Static rather than behavioural: these two live in different modules, and the
+	point is that the *pair* stays consistent.
+	"""
+
+	@staticmethod
+	def _controller():
+		path = (
+			pathlib.Path(__file__).resolve().parents[1]
+			/ "training/doctype/training_course_version/training_course_version.py"
+		)
+		return path.read_text(encoding="utf-8")
+
+	@staticmethod
+	def _author():
+		path = pathlib.Path(__file__).resolve().parents[1] / "api/training_author.py"
+		return path.read_text(encoding="utf-8")
+
+	def test_before_submit_refuses_unmaterialized_content(self):
+		source = self._controller()
+		self.assertIn("_require_materialized_content", source)
+		start = source.index("def before_submit")
+		end = source.index("\n\tdef ", start + 5)
+		self.assertIn("_require_materialized_content", source[start:end])
+
+	def test_the_guard_checks_what_publish_writes(self):
+		"""Checked on the materialised fields, not a flag, so the invariant holds
+		however the submit is triggered — a script or a bulk action included."""
+		source = self._controller()
+		start = source.index("def _require_materialized_content")
+		body = source[start : source.index("\n\tdef ", start + 5)]
+		self.assertIn("toc_json", body)
+		self.assertIn("content_hash", body)
+
+	def test_publish_still_satisfies_its_own_guard(self):
+		"""`publish_version` must set both fields *before* calling submit(), or the
+		guard would lock out the only correct way to publish."""
+		source = self._author()
+		start = source.index("def publish_version")
+		body = source[start : source.index("\ndef ", start + 5)]
+		toc = body.index("doc.toc_json")
+		digest = body.index("doc.content_hash")
+		submit = body.index("doc.submit()")
+		self.assertLess(toc, submit, "toc_json is set after submit()")
+		self.assertLess(digest, submit, "content_hash is set after submit()")
+
+
+class TestVideoCopyIsActuallyTriggered(unittest.TestCase):
+	"""`copy_from_drive` was written in Phase 2b and called from nowhere.
+
+	So `gcs_object` stayed empty on every asset ever registered, and
+	`get_media_url` answered `not_available` for every video block: the player
+	rendered an empty frame and the coverage gate had nothing to measure. The
+	whole video pipeline was one call short of working, and the only symptom was
+	a video that did not appear.
+	"""
+
+	@staticmethod
+	def _sources():
+		root = pathlib.Path(__file__).resolve().parents[1]
+		return {
+			p.name: p.read_text(encoding="utf-8")
+			for p in list(root.rglob("*.py"))
+			if "tests" not in p.parts
+		}
+
+	def test_copy_from_drive_has_a_caller(self):
+		callers = [
+			name
+			for name, src in self._sources().items()
+			if "copy_from_drive" in src and name != "gcs_media.py"
+		]
+		self.assertTrue(callers, "gcs_media.copy_from_drive is never called from anywhere")
+
+	def test_publish_queues_the_copy(self):
+		source = (
+			pathlib.Path(__file__).resolve().parents[1] / "api/training_author.py"
+		).read_text(encoding="utf-8")
+		start = source.index("def publish_version")
+		body = source[start : source.index("\ndef ", start + 5)]
+		self.assertIn("_queue_video_copies", body)
+
+	def test_the_copy_is_backgrounded_and_non_fatal(self):
+		"""A 300 MB copy inside the publish request would time out the author's
+		browser, and a publish that succeeded except for the video must not roll
+		back the text lessons that are live and correct."""
+		source = (
+			pathlib.Path(__file__).resolve().parents[1] / "api/training_author.py"
+		).read_text(encoding="utf-8")
+		start = source.index("def _queue_video_copies")
+		body = source[start : source.index("\ndef ", start + 5)]
+		self.assertIn("frappe.enqueue", body)
+		self.assertIn("enqueue_after_commit=True", body)

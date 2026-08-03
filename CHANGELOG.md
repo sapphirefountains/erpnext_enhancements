@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.226.0] - 2026-08-03
+
+### Fixed
+
+**Submitting a Training Course Version from the Desk form published a hollow version.**
+
+Publishing and submitting are different acts, and almost everything publishing means happens
+outside the DocType controller. `publish_version` writes each lesson's answer-free payload and
+its separate answer key, the table of contents, the totals and the content hash — and only then
+calls `submit()`. The controller's `on_submit` merely stamps the timestamps and makes the
+version live.
+
+So pressing **Submit** froze a version that looked published and was empty: no table of
+contents (the course outline rendered nothing at all), lessons whose published payload was zero
+bytes, `content_hash` null — and, worst, **no answer key**, so the quiz could not be graded at
+all, because `grading.answer_key()` throws when the key is missing. It also replaced a
+perfectly good live version.
+
+`before_submit` now refuses it and points at the Publish action. The check is against the
+materialised fields rather than a flag, so the invariant holds however the submit is triggered —
+a script or a bulk action included. `_require_content` only ever checked that lessons *existed*,
+which a hollow version passes.
+
+**Nothing ever called `gcs_media.copy_from_drive`.** Written in Phase 2b, complete, and invoked
+from nowhere — so `gcs_object` stayed empty on every asset ever registered and `get_media_url`
+answered `not_available` for every video block. The player rendered an empty frame and the
+coverage gate had nothing to measure. The entire video pipeline was one call short of working,
+and the only symptom was a video that did not appear.
+
+Publishing now queues the copy for every video the version uses. Backgrounded (a 300 MB copy
+inside the publish request would time out the author's browser), idempotent (a republish does
+not re-upload gigabytes), and non-fatal (a publish that succeeded except for the video must not
+roll back text lessons that are live and correct).
+
+### Notes
+
+- Both were found by taking the first real course rather than by any test. That is now seven of
+  the eight defects in this module found that way.
+
+- Mutation-tested. One mutation is worth naming: moving `toc_json`/`content_hash` to *after*
+  `doc.submit()` in `publish_version` is caught, because it would lock the new guard against the
+  only correct way to publish.
+
 ## [1.225.0] - 2026-08-03
 
 ### Fixed

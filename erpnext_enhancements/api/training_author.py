@@ -294,6 +294,8 @@ def publish_version(course_version, change_type, release_notes=None):
     course = frappe.get_doc("Training Course", doc.course)
     course.refresh_status()
 
+    _queue_video_copies(doc.name)
+
     if cint(course.auto_assign) and course.weight == "Required":
         frappe.enqueue(
             "erpnext_enhancements.training.assignment.sync_course",
@@ -308,6 +310,45 @@ def publish_version(course_version, change_type, release_notes=None):
         "change_type": change_type,
         "superseded_completions": superseded,
     }
+
+
+def _queue_video_copies(course_version):
+    """Copy every video this version uses into the bucket, in the background.
+
+    `gcs_media.copy_from_drive` was written in Phase 2b, does exactly this, and
+    was **called from nowhere**. So `gcs_object` stayed empty on every asset ever
+    registered, and `get_media_url` answered `not_available` for every video
+    block — the player rendered an empty frame and the coverage gate had nothing
+    to measure. The whole video pipeline was one call short of working.
+
+    Enqueued rather than run inline: a 300 MB copy inside the publish request
+    would time out the author's browser, and the copy is idempotent, so an asset
+    that already has an object is skipped and a republish does not re-upload
+    gigabytes.
+
+    Deliberately not fatal. A publish that succeeded except for the video must
+    not roll back — the text lessons are live and correct, and the asset carries
+    its own `last_error` for anyone looking.
+    """
+    assets = {
+        row.video_asset
+        for row in frappe.get_all(
+            "Training Content Block",
+            filters={"parenttype": "Training Lesson", "video_asset": ["is", "set"]},
+            fields=["video_asset", "parent"],
+        )
+        if frappe.db.get_value("Training Lesson", row.parent, "course_version") == course_version
+    }
+    if not assets:
+        return
+    for asset in sorted(assets):
+        frappe.enqueue(
+            "erpnext_enhancements.training.gcs_media.copy_from_drive",
+            queue="long",
+            timeout=1800,
+            enqueue_after_commit=True,
+            video_asset=asset,
+        )
 
 
 def _materialize_lessons(course_version):
