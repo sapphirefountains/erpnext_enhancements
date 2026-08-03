@@ -150,7 +150,7 @@ as `read_write`, which matches neither its write branch nor its read branch, so
 control reaches the fail-closed `return True`. **An unclassified read tool is
 gated as a write**: with `ai_write_gating_enabled` on it records an AI Pending
 Action and returns the anti-fabrication envelope instead of answering. That is
-what happened to both training tools between v1.216.0 and v1.236.1. The
+what happened to both training tools between v1.216.0 and v1.238.1. The
 annotations are the other half: FAC forwards them verbatim in `tools/list`, and
 without them an MCP client (Triton) guesses mutation from the tool's verb —
 which is how the device tools were mis-read as read-only before v1.71.0.
