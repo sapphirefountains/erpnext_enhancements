@@ -20,8 +20,29 @@ from frappe.utils import cint
 class TrainingSettings(Document):
 	def validate(self):
 		self._reject_absurd_runtime_values()
+		self._reject_misnamed_bucket()
 
 	# ------------------------------------------------------------------ helpers
+
+	def _reject_misnamed_bucket(self):
+		"""Catch a service account pasted into the bucket field, at save time.
+
+		The runbook prints the bucket name and the service account email as
+		adjacent Terraform outputs, so grabbing the wrong one is easy — and it
+		happened on the first real setup. Left uncaught, the only symptom is a 404
+		from a Test GCS Connection several steps later, which reads as "the whole
+		integration is broken" rather than "one field is wrong".
+		"""
+		bucket = (self.gcs_bucket or "").strip()
+		if not bucket:
+			return
+		self.gcs_bucket = bucket
+
+		from erpnext_enhancements.training.gcs_media import _bucket_name_complaint
+
+		complaint = _bucket_name_complaint(bucket)
+		if complaint:
+			frappe.throw(complaint)
 
 	def _reject_absurd_runtime_values(self):
 		"""These four feed arithmetic in the player and the progress merge. A zero

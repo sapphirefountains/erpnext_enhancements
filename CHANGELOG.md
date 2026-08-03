@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.209.3] - 2026-08-02
+
+### Fixed
+
+Both found by running **Test GCS Connection** on the real setup, where it returned a dialog
+reading `Upload failed:` with nothing after the colon.
+
+- **A failure with no message is worse than no failure report at all.** The diagnostic used
+  `str(exc)` alone, and several exceptions reachable here carry no message — a bare
+  `TimeoutError()` is the obvious one — so the operator got a colon and empty space. `_describe()`
+  now always reports the exception class, adds the message when there is one, and translates the
+  HTTP status out of a googleapiclient error into the thing it actually implies: **404** no such
+  bucket, **403** the service account lacks objectAdmin or the IAM binding has not propagated,
+  **401** the stored key was rejected. The full traceback goes to the Error Log, which the old
+  path never wrote to either — so nothing about the failure survived anywhere.
+
+  `test_connection` also now checks the bucket resolves *before* attempting an upload, so a wrong
+  name reports itself as a wrong name rather than as a generic write failure.
+
+- **A service account pasted into the bucket field is now rejected on save.** The runbook prints
+  `training_media_bucket` and `training_media_service_account` as adjacent Terraform outputs, and
+  on the first real setup the service account went into **GCS Video Bucket**. Nothing validated
+  it, so the only symptom was a 404 several steps later — which reads as "the integration is
+  broken" rather than "one field is wrong". `Training Settings.validate` now refuses a value
+  containing `@`, ending in `.iam.gserviceaccount.com`, or beginning `sa-`, and says which field
+  the value belongs in. The same check runs in `test_connection` for anything already stored.
+
+### Notes
+
+- No schema change and nothing to migrate; a site with the wrong bucket name simply gets a clear
+  error on the next save of Training Settings instead of a silent 404.
+
 ## [1.209.2] - 2026-08-02
 
 ### Fixed

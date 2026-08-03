@@ -433,6 +433,70 @@ def set_service_account_key(key_json):
 # ---------------------------------------------------------------- diagnostics
 
 
+def _describe(exc):
+	"""A human-readable account of an exception, and never an empty string.
+
+	``str(exc)`` alone is not enough. Several of the exceptions this module can
+	raise carry no message at all — a bare ``TimeoutError()`` is the obvious one —
+	and the result was a dialog reading "Upload failed:" with nothing after the
+	colon, which tells an operator strictly less than saying nothing would have.
+	So: the class name always, the message when there is one, and the HTTP status
+	dug out of a googleapiclient error, since that is the single most diagnostic
+	fact available (404 wrong bucket, 403 missing IAM, 401 bad key).
+
+	The full traceback goes to the Error Log, because the dialog should stay
+	short and somebody will want the detail afterwards.
+	"""
+	parts = [type(exc).__name__]
+
+	status = getattr(getattr(exc, "resp", None), "status", None)
+	if status:
+		parts.append(
+			{
+				400: _("400 Bad Request"),
+				401: _("401 Unauthorized — the stored key was rejected."),
+				403: _("403 Forbidden — the service account lacks objectAdmin on this bucket, "
+					   "or the IAM binding has not propagated yet (it can take a minute)."),
+				404: _("404 Not Found — no bucket of that name exists in this project. "
+					   "Check GCS Video Bucket is the *bucket* name, not the service account."),
+			}.get(status, _("HTTP {0}").format(status))
+		)
+
+	message = (str(exc) or "").strip()
+	if message:
+		parts.append(message[:300])
+	elif not status:
+		parts.append(_("The error carried no message; see the Error Log for the traceback."))
+
+	try:
+		frappe.log_error(
+			f"{type(exc).__name__}: {message or '(no message)'}\n\n{frappe.get_traceback()}",
+			"Training media",
+		)
+	except Exception:
+		pass
+
+	return " ".join(parts)
+
+
+def _bucket_name_complaint(bucket):
+	"""Reject a value that is obviously not a bucket name, and say why.
+
+	The runbook prints the bucket and the service account as adjacent Terraform
+	outputs, so copying the wrong one is a genuinely easy mistake — and it did
+	happen. Without this the only symptom is a 404 several steps later.
+	"""
+	if "@" in bucket or bucket.endswith(".iam.gserviceaccount.com"):
+		return _("{0} is a service account, not a bucket. Put the bucket name in GCS Video Bucket "
+				 "and the key itself in Set Service Account Key.").format(bucket)
+	if bucket.startswith("sa-"):
+		return _("{0} looks like a service account name. The bucket from the Terraform output is "
+				 "the one starting 'sf-'.").format(bucket)
+	if not 3 <= len(bucket) <= 222 or bucket.strip() != bucket:
+		return _("{0} is not a valid bucket name.").format(bucket)
+	return ""
+
+
 @frappe.whitelist()
 def test_connection():
 	"""Write a probe object, sign it, fetch it, delete it.
@@ -443,14 +507,28 @@ def test_connection():
 	"""
 	frappe.only_for(("System Manager", "Training Manager"))
 
-	if not _bucket():
+	bucket = _bucket()
+	if not bucket:
 		return {"ok": False, "message": _("No bucket is set in Training Settings.")}
+
+	misnamed = _bucket_name_complaint(bucket)
+	if misnamed:
+		return {"ok": False, "message": misnamed}
+
 	if _credentials() is None:
 		return {"ok": False, "message": _("No usable service account key is stored in Training Settings.")}
 
 	storage = _storage_service()
 	if storage is None:
 		return {"ok": False, "message": _("Could not build a storage client from the stored key.")}
+
+	# Check the bucket resolves before trying to write to it. Without this, a
+	# wrong name surfaces as a generic upload failure and the operator is left
+	# guessing between "bucket missing", "no permission" and "no network".
+	try:
+		storage.buckets().get(bucket=bucket).execute()
+	except Exception as exc:
+		return {"ok": False, "message": _("Cannot reach the bucket {0}. {1}").format(bucket, _describe(exc))}
 
 	import io
 
@@ -461,12 +539,12 @@ def test_connection():
 
 	try:
 		storage.objects().insert(
-			bucket=_bucket(),
+			bucket=bucket,
 			name=probe,
 			media_body=MediaIoBaseUpload(io.BytesIO(payload), mimetype="text/plain"),
 		).execute()
 	except Exception as exc:
-		return {"ok": False, "message": _("Upload failed: {0}").format(str(exc)[:300])}
+		return {"ok": False, "message": _("Upload failed. {0}").format(_describe(exc))}
 
 	url = generate_signed_url(probe, expires_in=120)
 	fetched = False
