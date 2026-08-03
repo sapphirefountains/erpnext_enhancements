@@ -218,6 +218,13 @@ jobs:
       # error, it just renders wrongly -- so it took a person opening the page.
       - name: Training player CSS contract (every rendered class has a rule)
         run: python -m unittest erpnext_enhancements.tests.test_training_player_css_contract -v
+      # Does the player read the keys the server sends? It did not: the bootstrap
+      # returns `assigned`/`library` and the player read `courses`/`catalog`, so
+      # /training told every learner nothing was assigned to them, always. A
+      # missing key in JS is undefined, and `undefined || []` renders perfectly --
+      # there is nothing at runtime that could notice.
+      - name: Training bootstrap wire (player reads what the API sends)
+        run: python -m unittest erpnext_enhancements.tests.test_training_boot_wire -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

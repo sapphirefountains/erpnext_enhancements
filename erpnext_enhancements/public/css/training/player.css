@@ -611,6 +611,18 @@
 	.tr-loading::before { animation: none; }
 }
 
+/* Divides assigned work from the optional library on the catalog. The two are
+   separate server-side and must stay visually separate: a due course buried among
+   things nobody has to do is the same as not showing it. */
+.tr-section-title {
+	margin: 24px 0 12px;
+	font-size: 1rem;
+	font-weight: 700;
+	color: var(--tr-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
 /* ------------------------------------------------------- block type + buttons */
 
 /* Block type modifiers. Most types want the card exactly as .tr-block gives it;

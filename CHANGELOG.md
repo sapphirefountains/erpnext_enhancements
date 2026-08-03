@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.223.0] - 2026-08-03
+
+### Fixed
+
+**`/training` told every learner "Nothing is assigned to you right now" — always, however
+much was assigned to them.** Not an error and not a blank page: a confident, reassuring,
+wrong sentence.
+
+- `get_learner_bootstrap` returns `assigned` and `library`. The player read
+  `b.courses || (b.catalog && b.catalog.courses) || []`. **Neither key has ever existed.**
+  A missing key in JavaScript is `undefined`, `undefined || []` is an empty list, and an
+  empty list renders as a perfectly good empty state — so nothing at runtime could notice.
+
+- **The optional library was never rendered at all.** The server has separated `assigned`
+  from `library` since Phase 2; the player knew about neither, so self-enrolment courses
+  were invisible. They are now shown under their own heading, still separate: a due course
+  displayed among things nobody has to do is close to not showing it.
+
+- Two more of the same in the course card. It read `progress_percent` and `status` where
+  the server sends `percent_complete` and `assignment_status`, so **the progress bar never
+  drew and the action always said "Start"**, even half way through a course. Both failed in
+  the direction that looks like a design choice rather than a bug.
+
+- A third, harmless but misleading: `course.estimated_minutes || course.minutes`. The first
+  term is the DocType's field name, not the card's; the fallback made it work while reading
+  as though the server might send either. Removed.
+
+### Added
+
+- `tests/test_training_boot_wire.py`, in CI. It parses the dict literals
+  `get_learner_bootstrap` and `_course_card` actually return and checks every key the player
+  reads against them — in both directions, so a rename on the *server* side fails too.
+  It also cross-checks the template's transport map against the `@frappe.whitelist()`
+  definitions.
+
+### Notes
+
+- This is the **fourth** wire mismatch in this module: the heartbeat (`ranges` vs
+  `intervals`), the builder's `change_type` (a truncated Select value), the stylesheet (an
+  entirely different class vocabulary), and now the bootstrap. They share one shape — two
+  halves written against different assumptions, each perfectly correct read on its own, with
+  no runtime signal when they disagree.
+
+  Every one was found by a person looking at the product, never by a test, and every one is
+  cheap to catch statically once you know to look. The four contract suites now in CI
+  (`heartbeat_wire`, `builder_entry`, `player_css_contract`, `boot_wire`) exist to make that
+  the last time each is found the hard way.
+
+- Seven mutations tested, all caught — including two applied to `api/training.py` rather than
+  the client, to confirm the check fails from either side of the seam.
+
 ## [1.222.0] - 2026-08-02
 
 ### Added
