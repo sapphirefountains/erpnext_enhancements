@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.231.1] - 2026-08-03
+
+### Fixed
+
+**The Project Brief button is back on the Project form.** It was in the DOM and fully wired
+up the whole time — clicking it would have worked — but a stylesheet made it invisible, so
+the feature has been unreachable since the day it shipped.
+
+`project_form_script.js` did not want ERPNext's native **Gantt Chart** and **Kanban Board**
+entries on the toolbar (the Schedule and Scope tabs replace both), and it removed them the
+blunt way: injecting `display: none` on `.inner-group-button[data-label="View"]`, which is
+the *whole dropdown*, not those two items. That was harmless while the group held nothing
+else. Then v1.183.0 consolidated the seven-button Project toolbar by folding our own
+read-only buttons into ERPNext's existing dropdowns — and **View** is precisely where
+Project Brief, the **Maintenance Contract** view branch and the **Drive Folder** button went.
+All three went dark in the same release that grouped them, and nothing raised: a hidden
+button is not an error.
+
+- Both unwanted entries now come off by label, via `frm.remove_custom_button(__("Gantt
+  Chart"), __("View"))` and the same for Kanban Board. Frappe's `remove_inner_button` drops
+  an inner group once its last item is gone, so a project carrying none of our buttons still
+  shows no empty dropdown — the original intent, without the collateral damage.
+- Also removed a `setTimeout` calling `frm.page.clear_custom_button('View')`. There is no
+  such method on `frappe.ui.Page` (it is `clear_inner_toolbar`), and the call sat behind an
+  `if (frm.page.clear_custom_button)` guard, so it had never run and never warned. The CSS
+  was doing all of the work, and the comment claiming an "API + CSS fallback" was fiction.
+- The style element went into `document.head` under a one-time id guard and was never
+  removed, so the damage outlived the form: after a single visit to a Project, any **View**
+  group on any other doctype stayed hidden for the rest of the session.
+- The stylesheet also targeted `data-label="View Tasks"`, aimed at a legacy Client Script
+  button ("Project - Add View Tasks Button", disabled on site). Nothing in the app renders
+  that group any more; the selector went with the rest.
+
+### Changed
+
+- `tests/test_project_toolbar.py` gains a guard that no script under `public/js` may hide a
+  toolbar group by selecting `.inner-group-button[data-label=…]` / `.custom-btn-group[data-label=…]`
+  — unwanted buttons come off one label at a time. It reads sources with comments stripped,
+  so the comment above the fix can name the selector it replaced.
+- **That suite now actually runs in CI.** It shipped with v1.183.0 asserting the very
+  grouping that this release repairs, and was never added to a workflow step, so it ran
+  nowhere — the failure mode `CLAUDE.md` warns about, this time by omission rather than by
+  the unittest/pytest split. It is a `python -m unittest` step in `ci.yml` now.
+
 ## [1.231.0] - 2026-08-03
 
 ### Changed

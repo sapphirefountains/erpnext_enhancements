@@ -112,6 +112,17 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_kpi_metrics
           erpnext_enhancements.tests.test_custom_html_blocks -v
+      # Pure filesystem, like test_doctype_modules: it reads the desk JS rather
+      # than running it, because there is no JS runner here and the Project
+      # toolbar is assembled by five scripts that cannot see each other.
+      #
+      # This suite shipped with v1.183.0 and was never added to any step, so it
+      # ran NOWHERE -- the exact failure mode CLAUDE.md warns about -- and the
+      # regression it existed to catch shipped anyway: project_form_script.js was
+      # hiding the whole "View" dropdown, so the Project Brief button that same
+      # release folded into it was invisible on every project for a week.
+      - name: Project toolbar grouping (bench-free, source-level)
+        run: python -m unittest erpnext_enhancements.tests.test_project_toolbar -v
       - name: Water engineering (pure engine + design issues + controller helpers)
         run: >-
           python -m unittest

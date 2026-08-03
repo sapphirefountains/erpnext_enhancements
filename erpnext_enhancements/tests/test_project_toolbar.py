@@ -31,6 +31,17 @@ def _read(relative_path):
 	return (JS_ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def _without_comments(source):
+	"""Drop block comments and whole-line ``//`` comments.
+
+	So a rule about what the code may do is not tripped by prose explaining it --
+	the comment above the fix names the selector it replaced. Whole-line only:
+	stripping from a mid-line ``//`` would eat the rest of any line holding a URL.
+	"""
+	source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+	return "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("//"))
+
+
 def _button_calls(source, label):
 	"""Return each ``add_custom_button`` call for ``label``, argument list included.
 
@@ -92,6 +103,28 @@ class TestProjectToolbarGrouping(unittest.TestCase):
 		self.assertRegex(body, r"Project:\s*\"View\"")
 		self.assertRegex(body, r"Customer:\s*null")
 		self.assertRegex(body, r"Opportunity:\s*null")
+
+	def test_no_script_hides_a_toolbar_group_wholesale(self):
+		"""Unwanted buttons come off one label at a time, never by hiding the group.
+
+		``project_form_script.js`` used to inject ``display: none`` on
+		``.inner-group-button[data-label="View"]`` to drop ERPNext's Gantt Chart and
+		Kanban Board. When the buttons above were folded into that same native group
+		they went invisible with it -- present in the DOM, wired up, and unreachable.
+		``frm.remove_custom_button(label, group)`` is the tool: Frappe drops the group
+		itself once its last item goes, so nothing is left hanging empty either.
+
+		The style element also went into ``document.head`` and stayed, so one visit to
+		a Project hid that group on every other doctype for the rest of the session --
+		which is why this scans all of ``public/js`` rather than the Project scripts.
+		"""
+		for path in sorted(JS_ROOT.rglob("*.js")):
+			with self.subTest(script=str(path.relative_to(JS_ROOT))):
+				self.assertNotRegex(
+					_without_comments(path.read_text(encoding="utf-8")),
+					r"(?:inner-group-button|custom-btn-group)\[data-label=",
+					"hide the button (frm.remove_custom_button), not the whole group",
+				)
 
 	def test_merge_tool_groups_only_on_project(self):
 		"""The global merge button stays top-level on every other doctype.
