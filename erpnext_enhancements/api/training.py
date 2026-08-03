@@ -325,7 +325,17 @@ def _percent_complete(attempt_name, total_lessons):
 
 
 def _doc_payload(doctype, values):
-    """Drop keys the target doctype does not actually declare.
+    """Drop keys the target doctype does not actually declare, and SAY SO.
+
+    The silent version of this shipped a certificate reading ``score 0`` for a
+    learner who scored 100. ``"score"`` was written where the field is
+    ``score_percent``; the filter quietly discarded it and everything downstream
+    reported a real, wrong number rather than failing. Nobody noticed until the
+    module was executed for the first time.
+
+    So a dropped key is now logged. The filter still exists — an insert that dies
+    with a traceback in front of a learner is worse than a missing value — but
+    "defensive" must not mean "silent", or the defence becomes the bug.
 
     Training Attempt and Training Completion are defined elsewhere in this phase.
     Filtering through the meta means a field renamed there costs a missing value
@@ -334,7 +344,18 @@ def _doc_payload(doctype, values):
     """
     meta = frappe.get_meta(doctype)
     payload = {"doctype": doctype}
-    payload.update({key: value for key, value in values.items() if meta.has_field(key)})
+    dropped = []
+    for key, value in values.items():
+        if meta.has_field(key):
+            payload[key] = value
+        else:
+            dropped.append(key)
+    if dropped:
+        frappe.log_error(
+            f"{doctype} has no field(s) {sorted(dropped)} — those values were discarded. "
+            "This is almost always a typo in the caller, not a schema that has moved.",
+            "Training payload",
+        )
     return payload
 
 
@@ -632,7 +653,10 @@ def start_attempt(course):
             {
                 "user": user,
                 "employee": profile.employee,
-                "customer": profile.customer,
+                # No `customer` here: Training Attempt does not declare one, and the
+                # write was being discarded. The learner's customer is derivable from
+                # the user, and Training Completion carries it where it is actually
+                # needed for reporting.
                 "course": course,
                 "course_title": doc.course_title,
                 "course_version": version,
@@ -1126,6 +1150,24 @@ def finish_attempt(attempt):
         if best is not None:
             scores.append(flt(best))
 
+    # A course that demands hands-on verification does not complete on a quiz.
+    # This check was missing entirely until the module was first executed: the
+    # lesson gates were enforced, the sign-off was not, and a technician could be
+    # certified as competent to drain a basin having only answered questions about
+    # it. Deliberately reported as `outstanding` rather than thrown, like every
+    # other unmet gate, so the player shows the learner what is left.
+    if _signoff_outstanding(doc):
+        outstanding.append(
+            {
+                "lesson_key": None,
+                "title": _("Supervisor sign-off"),
+                "reasons": [
+                    _("A supervisor still has to confirm you can do this in practice. "
+                      "Ask them to record a sign-off once they have watched you.")
+                ],
+            }
+        )
+
     if outstanding:
         return {"passed": False, "attempt": doc.name, "status": doc.status, "outstanding": outstanding}
 
@@ -1143,7 +1185,8 @@ def finish_attempt(attempt):
             key: value
             for key, value in {
                 "status": _status_option("Training Attempt", "status", ["Passed", "Completed"]),
-                "score": score,
+                # score_percent, not "score" -- see _doc_payload.
+                "score_percent": score,
                 "completed_on": now_datetime(),
             }.items()
             if doc.meta.has_field(key)
@@ -1160,6 +1203,49 @@ def finish_attempt(attempt):
         "completion": completion,
     }
 
+
+
+def _signoff_outstanding(doc):
+    """True when the course wants a supervisor sign-off and does not have one.
+
+    "Has one" means a **submitted** Training Signoff recording *Competent* for
+    this learner on this course. A draft is a request, not a verification, and
+    "Needs More Practice" is the supervisor explicitly declining.
+
+    Matched on the course rather than the course version on purpose: somebody who
+    was watched draining a basin last month has been watched draining a basin. A
+    material change to the *content* supersedes their completion and sends them
+    back through the material, which is the right lever — re-observing them
+    physically because a paragraph was rewritten is not.
+
+    Returns False when the doctype is absent, so a site that has not migrated
+    Phase 4 can still finish a course rather than being unable to complete
+    anything at all.
+    """
+    if not cint(frappe.db.get_value("Training Course", doc.course, "require_supervisor_signoff")):
+        return False
+    if not frappe.db.exists("DocType", "Training Signoff"):
+        frappe.log_error(
+            f"{doc.course} requires a supervisor sign-off but Training Signoff is not migrated "
+            "on this site; the requirement cannot be enforced.",
+            "Training sign-off",
+        )
+        return False
+    return not frappe.db.exists(
+        "Training Signoff",
+        {"course": doc.course, "user": doc.user, "outcome": "Competent", "docstatus": 1},
+    )
+
+
+def _competent_signoff(doc):
+    """The submitted Competent sign-off backing this completion, if any."""
+    if not frappe.db.exists("DocType", "Training Signoff"):
+        return None
+    return frappe.db.get_value(
+        "Training Signoff",
+        {"course": doc.course, "user": doc.user, "outcome": "Competent", "docstatus": 1},
+        "name",
+    )
 
 def _issue_completion(doc, score):
     """Create and submit the Training Completion for a passed attempt.
@@ -1193,14 +1279,24 @@ def _issue_completion(doc, score):
                 "employee": getattr(doc, "employee", None) or "",
                 "customer": getattr(doc, "customer", None) or "",
                 "course": doc.course,
-                "course_title": frappe.db.get_value("Training Course", doc.course, "course_title"),
+                # course_title_SNAPSHOT: the point of the field is that it survives the
+                # course being renamed, so it is written here rather than fetched live.
+                "course_title_snapshot": frappe.db.get_value(
+                    "Training Course", doc.course, "course_title"
+                ),
                 "course_version": doc.course_version,
                 "version_number": cint(version.get("version_number")),
                 "content_hash": version.get("content_hash") or "",
                 "attempt": doc.name,
-                "assignment": getattr(doc, "assignment", None) or "",
+                # The sign-off that unlocked this, so the completion carries its own
+                # evidence rather than requiring a second lookup to prove it was met.
+                "signoff": _competent_signoff(doc) or "",
                 "status": _status_option("Training Completion", "status", ["Valid"]),
-                "score": score,
+                # score_percent, not "score" -- the field is score_percent and the
+                # payload filter discarded the typo silently, which is how a learner
+                # who scored 100 got a certificate reading 0.
+                "score_percent": score,
+                "video_coverage_percent": flt(getattr(doc, "video_coverage_percent", 0)),
                 "completed_on": now_datetime(),
             },
         )

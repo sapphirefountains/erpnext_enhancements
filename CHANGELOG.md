@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.217.0] - 2026-08-02
+
+### Fixed
+
+The Training module was executed end to end for the first time. Four phases of review had found
+a lot; running it once found four more, and three of them were the kind that report a real,
+plausible, wrong answer rather than failing.
+
+- **The supervisor sign-off gate did not gate.** `finish_attempt` enforced every lesson gate and
+  never looked at `require_supervisor_signoff`, so a technician could be certified competent to
+  drain a basin having only answered questions about it. The Phase-4 contract was written
+  precisely to protect this class of safeguard and did not catch it, because those assertions
+  checked *source presence* rather than behaviour.
+
+  Now reported as an outstanding item like any other unmet gate, so the player tells the learner
+  what is left rather than erroring. Only a **submitted** sign-off recording *Competent* counts: a
+  draft is a request, and "Needs More Practice" is the supervisor explicitly declining. Matched on
+  the course rather than the version — somebody watched draining a basin last month has been
+  watched draining a basin, and a rewritten paragraph should send them back through the material,
+  not back in front of a supervisor.
+
+- **A learner who scored 100 got a certificate reading 0.** `_issue_completion` wrote `"score"`
+  where the field is `score_percent`, and `_doc_payload` discarded the unknown key **silently**.
+  Two more of the same: `"course_title"` where the field is `course_title_snapshot`, and a
+  `"customer"` on Training Attempt, which declares no such field.
+
+  `_doc_payload` now **logs** what it drops. The filter stays — an insert that dies in front of a
+  learner is worse than a missing value — but its docstring claimed the gap would "show up in the
+  record, where somebody will notice it", and for four phases nobody did. Defensive must not mean
+  silent, or the defence becomes the bug.
+
+- The completion now records **which** sign-off unlocked it, so it carries its own evidence.
+
+### Added
+
+- `tests/test_training_runtime_regressions.py`. The load-bearing test is static: it parses every
+  `_doc_payload(...)` call and cross-checks each field name against the DocType JSON. That would
+  have caught the score bug before it ever ran, without a bench, and it generalises to any field
+  added later. It immediately found two drops beyond the one that prompted it.
+
+- `training/smoke_test.py` — the end-to-end harness itself:
+  `bench --site <site> execute erpnext_enhancements.training.smoke_test.run`. Twelve steps through
+  the real code paths. It asserts gates by *trying to pass them and requiring a refusal*, walks the
+  live published payload for answer markers, and checks the public certificate verification leaks
+  no PII. Safe to re-run.
+
+### Notes
+
+- Every assertion added here was mutation-tested — the code deliberately broken to confirm the test
+  fails. Both the score typo and the removed sign-off gate were verified to fail before the fixes
+  were kept.
+
+- Worth recording plainly: reading found the ordering bugs, the answer-key leak and the wire
+  mismatches. It did not find any of these four. A gate that is simply absent, and a field name
+  that is quietly wrong, both look completely fine on the page.
+
 ## [1.216.0] - 2026-08-02
 
 ### Added
