@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.239.0] - 2026-08-03
+
+### Added
+
+- **A missing Project on a Sales Invoice is now something you can see** (WI-008). Job
+  profitability needs every revenue dollar tagged to a job, and until now nothing linked
+  the two: `project` sat inside the form where a blank field is invisible, and no code
+  associated invoices with projects at all.
+
+  Two changes, no code. `project` becomes a **column on the Sales Invoice list**, so a
+  blank cell is noticed in passing. And an **"Invoices without Project" tile** joins the
+  Finance Hub built in v1.237.0, opening the list filtered to `project is not set` and
+  not cancelled.
+
+  The tile deliberately replaces the "saved List View filter" the work item called for.
+  A saved filter lives in one person's browser, belongs to one user, and vanishes when
+  they are on holiday or leave. As a workspace tile it is version-controlled, sits on the
+  page the accountant already works from, and outlives whoever set it up.
+
+  <deliberately not built: a submit-time validation that warns when a customer has an
+  active project and `project` is empty. That stays a documented Phase-2 option, to be
+  built only if the December parallel run shows persistent misses — writing it now would
+  be assuming people will get it wrong.>
+
+### Changed
+
+- **The order-to-cash chain is documented per value stream** (WI-007), which is most of
+  what that work item actually was: `Selling Settings.so_required` and `dn_required` were
+  already `No` on production, and both **must stay that way** — the maintenance module
+  drafts Sales Invoices with no Sales Order behind them, and January's opening-AR invoices
+  have no order either. Setting them to `Yes` would block both.
+
+  So "a Sales Order is required for Build work" is a *procedure*, not a system rule, and
+  the SOP says so plainly rather than implying enforcement that does not exist. What
+  catches a miss is the UAT sample during the parallel run and the weekly review of the
+  new tile.
+
+  Production is a clean slate for this — **0 Sales Orders and 0 Delivery Notes have ever
+  been created** — so there is no legacy chain to reconcile, only a habit to establish.
+
+  SOP: `docs/migration/wi007-o2c-chain.md`
+
 ## [1.238.0] - 2026-08-03
 
 ### Changed
