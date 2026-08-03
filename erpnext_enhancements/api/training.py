@@ -776,19 +776,27 @@ def heartbeat(attempt, payload=None):
 
 
 def _normalise_beat(data):
-    """Translate the player's wire format into the shape ``progress`` stores.
+    """Rename the player's ``ranges`` to the ``intervals`` ``progress`` stores.
 
-    **These two formats are deliberately different, and this is the only place
-    that knows both.** The wire uses run-length-encoded ``[start, length]``
-    ranges because a learner who scrubs around produces a lot of small pieces and
-    a phone on cellular should not send ``[start, end]`` pairs for all of them.
-    ``progress`` stores ``[start, end]`` intervals because that is what merges,
-    clips and collapses cleanly.
+    **Both sides speak half-open ``[start, end]``.** They always did. This
+    function used to read the second element as a *length* and store
+    ``[start, start + length]``, on the strength of a docstring that claimed the
+    wire was ``[start, length]`` for bandwidth reasons — a rationale that was
+    never true either, since the two shapes are the same size on the wire.
 
-    Getting this wrong is silent and total: mismatched keys mean zero seconds are
-    ever credited, so no video lesson can be completed and nothing anywhere
-    raises. ``tests/test_training_heartbeat_wire.py`` pins the translation for
-    exactly that reason.
+    That misreading was invisible for exactly one reason: ``rle()`` emits its
+    first run starting at second 0 for anybody who plays from the beginning, and
+    when ``start`` is 0 the end and the length are the same number. The very
+    first run that did *not* start at zero — which is to say the first beat after
+    a learner pauses and resumes — was inflated. ``[[17, 32]]`` means fifteen
+    seconds; it was stored as ``[17, 49]``, thirty-two. Three beats later the
+    intervals had swallowed the rest of the video, coverage pinned at 100%, every
+    later beat gained nothing and the meter froze. Nothing raised, because an
+    interval is an interval.
+
+    So there is no translation here any more, only a rename, and
+    ``tests/test_training_heartbeat_wire.py`` now derives the expected shape from
+    ``rle()``'s own worked example rather than restating the assumption made here.
 
     Also flattens the two counters the player reports structurally:
 
@@ -806,9 +814,13 @@ def _normalise_beat(data):
         for pair in ranges or []:
             if not isinstance(pair, (list, tuple)) or len(pair) != 2:
                 continue
-            start, length = cint(pair[0]), cint(pair[1])
-            if length > 0:
-                intervals.append([start, start + length])
+            start, end = cint(pair[0]), cint(pair[1])
+            # Half-open, so end == start is empty and end < start is a client
+            # bug. Both are dropped rather than repaired: a degenerate interval
+            # credits nothing anyway, and inventing seconds to fix one would be
+            # the same class of mistake this function just spent a release on.
+            if end > start:
+                intervals.append([start, end])
         out["intervals"] = intervals
     out.pop("ranges", None)
 

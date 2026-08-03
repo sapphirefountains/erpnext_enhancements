@@ -74,6 +74,28 @@
   var ON_SCREEN_RATIO = 0.5;
   var CHECKPOINT_TOLERANCE = 0.75;
   var MAX_QUEUED_BEATS = 60;
+
+  // How many times one beat may be refused before it is abandoned. Generous
+  // enough to ride out an outage, finite so a beat the server will NEVER accept
+  // cannot sit at the head of the queue forever holding up everything behind it.
+  var MAX_BEAT_ATTEMPTS = 8;
+
+  // The queue drains on credited playback; this is what drains it when there is
+  // none — a paused tab, or a backlog left over from an outage. Backs off to a
+  // minute so a server that is down is not hammered by every open lesson.
+  var RETRY_BASE_MS = 4000;
+  var RETRY_MAX_MS = 60000;
+
+  // Consecutive delivery failures before the learner is told. Two is past a
+  // one-off blip and well short of nagging.
+  var STUCK_AFTER_FAILURES = 2;
+
+  // How long a drain may be in flight before the latch is considered stranded
+  // and a new flush is allowed past it. Longer than the transport's own 20s
+  // deadline, so a well-behaved transport always releases the latch itself and
+  // this only ever fires for one that does not.
+  var FLUSH_STUCK_MS = 45000;
+
   var MAX_SOURCE_RECOVERIES = 3;
   var CHANNEL_NAME = "training-video";
 
@@ -268,6 +290,39 @@
           })
         );
       },
+      // A beat the server refused. Counted, moved to the BACK of the queue, and
+      // abandoned after MAX_BEAT_ATTEMPTS.
+      //
+      // It used to stay at the head. `drainQueue` sends oldest-first and the
+      // whole chain rejected on the first failure, so a single beat the server
+      // would never accept — a stale attempt, a lesson key from a version that
+      // has since been republished — blocked every newer beat behind it, on
+      // every drain, for the life of the tab. The learner kept watching into a
+      // queue that could not empty, and the only outward sign was a meter that
+      // had quietly stopped moving.
+      //
+      // Returns whether the beat was given up on, so the caller can say so.
+      fail: function (clientId) {
+        var list = read();
+        var abandoned = false;
+        var kept = [];
+        var retry = null;
+        list.forEach(function (p) {
+          if (p.client_id !== clientId) {
+            kept.push(p);
+            return;
+          }
+          p.attempts = cint(p.attempts) + 1;
+          if (p.attempts >= MAX_BEAT_ATTEMPTS) {
+            abandoned = true;
+          } else {
+            retry = p;
+          }
+        });
+        if (retry) kept.push(retry);
+        write(kept);
+        return abandoned;
+      },
       all: function () {
         return read();
       },
@@ -397,6 +452,9 @@
       stalled: false,
       ratedToasted: false,
       recoveries: 0,
+      selfHealed: 0, // latches cleared by the watchdog in tick(); reported on the beat
+      deliveryFailures: 0,
+      offlineToasted: false,
       armed: null, // { checkpoint_key, at_seconds, ... }
       scrimOpen: false,
       yielded: false,
@@ -543,6 +601,40 @@
       st.lastWall = wall;
       st.lastMedia = media;
 
+      // Unstick the latches, BEFORE anything reads them.
+      //
+      // `seeking`, `stalled`, `blurredSince` and `onScreen` are each set by one
+      // event and cleared by a different one, and every one of them stops credit
+      // dead. If the clearing event never arrives — an aborted seek that fires no
+      // `seeked`, a `stalled` the browser fires at an idle paused video, a window
+      // that never re-focuses, an IntersectionObserver that goes quiet when the
+      // element enters native fullscreen — the learner watches the rest of the
+      // lesson for nothing and is told nothing. Four separate ways to produce the
+      // same silent freeze, which is three too many to keep guessing between.
+      //
+      // Media time advancing on a playing element is proof the latch is lying, so
+      // that is what clears it. This gives away no credit: a real seek still
+      // fails the two-clock allowance check below, which is the actual anti-skip
+      // machinery — these flags were only ever belt to its braces.
+      if (!video.paused && !video.ended && dtMedia > 0 && dtWall > 0 && dtWall <= MAX_TICK_SECONDS) {
+        if (st.seeking) {
+          st.seeking = false;
+          st.selfHealed++;
+        }
+        if (st.stalled) {
+          st.stalled = false;
+          st.selfHealed++;
+        }
+        if (st.blurredSince && document.hasFocus && document.hasFocus()) {
+          st.blurredSince = 0;
+          st.selfHealed++;
+        }
+        if (!st.onScreen && document.fullscreenElement && wrapper.contains(document.fullscreenElement)) {
+          st.onScreen = true;
+          st.selfHealed++;
+        }
+      }
+
       if (video.paused || video.ended || st.seeking || st.scrimOpen || st.yielded) return;
 
       // The sampler itself went away (throttled background tab, sleeping phone).
@@ -611,6 +703,11 @@
           stalled: Math.round(st.discount.stalled),
           gap: Math.round(st.discount.gap),
         },
+        // How many times the watchdog in tick() had to clear a latch that should
+        // have cleared itself. Zero on a healthy browser; anything else names a
+        // player bug that would otherwise present as "the meter stopped" and be
+        // impossible to tell apart from a learner who walked away.
+        self_healed: cint(st.selfHealed),
         reason: reason,
         seq: ++st.seq,
       };
@@ -622,6 +719,7 @@
       st.seeksForward = 0;
       st.seeksBackward = 0;
       st.discount = { hidden: 0, blur: 0, offscreen: 0, muted: 0, stalled: 0, gap: 0 };
+      st.selfHealed = 0;
       st.lastBeatWall = nowMs();
       return payload;
     }
@@ -646,38 +744,104 @@
       if (!pending.length) return Promise.resolve(null);
 
       var last = null;
+      var failures = 0;
       return pending
         .reduce(function (chain, payload) {
           return chain.then(function () {
-            return Promise.resolve(transport.heartbeat(payload)).then(function (res) {
-              queue.drop(payload.client_id);
-              last = res;
-            });
+            return Promise.resolve(transport.heartbeat(payload)).then(
+              function (res) {
+                queue.drop(payload.client_id);
+                st.deliveryFailures = 0;
+                last = res;
+              },
+              function (err) {
+                // Caught PER BEAT. Attaching one `.catch` to the whole chain
+                // meant the first refusal skipped every beat behind it, and the
+                // refused payload stayed at the head of the queue to do it again
+                // on the next drain — a permanent, silent stop.
+                failures++;
+                st.deliveryFailures++;
+                var abandoned = queue.fail(payload.client_id);
+                if (window.console) {
+                  console.warn("[TR.Video] beat " + (abandoned ? "abandoned" : "deferred"), err);
+                }
+                if (abandoned) emit("beat-abandoned", { seq: payload.seq, error: err });
+              }
+            );
           });
         }, Promise.resolve())
         .then(function () {
+          if (failures) noticeIfStuck();
           return last;
         });
     }
 
+    // Somebody has to say so. `emit("offline")` had no subscriber anywhere in the
+    // app, so a queue that could not drain looked exactly like a lesson nobody
+    // was watching — and the learner's own coverage meter is the thing that stops
+    // moving. Better a line of text than a number they will argue about later.
+    function noticeIfStuck() {
+      if (st.offlineToasted || st.deliveryFailures < STUCK_AFTER_FAILURES) return;
+      st.offlineToasted = true;
+      showNotice(
+        "Your progress is not reaching the server right now. Keep watching — it is " +
+          "saved on this device and will catch up.",
+        8000
+      );
+    }
+
     var flushing = false;
+    var flushStartedAt = 0;
+    var retryTimer = null;
+
+    // The queue's own heartbeat. Backs off so a server that is down is not
+    // hammered by every open lesson, and stops as soon as the queue is empty.
+    function scheduleRetry() {
+      if (retryTimer || st.destroyed) return;
+      if (!queue.all().length) return;
+      var delay = Math.min(RETRY_BASE_MS * Math.pow(2, Math.min(st.deliveryFailures, 5)), RETRY_MAX_MS);
+      retryTimer = setTimeout(function () {
+        retryTimer = null;
+        flush("retry");
+      }, delay);
+    }
 
     function flush(reason) {
       if (st.destroyed && reason !== "destroy") return Promise.resolve(null);
       var hasWork = st.pendingSeconds.length || queue.all().length;
       if (!hasWork && reason === "interval") return Promise.resolve(null);
       if (st.pendingSeconds.length) queue.push(buildPayload(reason));
-      if (flushing) return Promise.resolve(null);
+      // The latch must not be able to strand delivery. It is released only when
+      // the drain's promise settles, and a transport that never settles — a
+      // socket an intermediary drops without a FIN, which `fetch` will wait on
+      // forever — used to hold it true for the life of the page. Every later
+      // beat then queued itself and returned without sending, so the learner
+      // watched the whole lesson into a queue nothing would ever drain.
+      //
+      // Belt as well as braces: the page transport now sets an AbortSignal, but
+      // the player is handed its transport by the caller and cannot assume one.
+      if (flushing) {
+        if (nowMs() - flushStartedAt < FLUSH_STUCK_MS) return Promise.resolve(null);
+        if (window.console) console.warn("[TR.Video] a heartbeat never settled; releasing the latch");
+        st.selfHealed++;
+      }
 
       flushing = true;
+      flushStartedAt = nowMs();
       return drainQueue()
         .then(function (res) {
           flushing = false;
           applyBeatResult(res);
+          // Beats built while that drain was in flight are in the queue but were
+          // not in its snapshot, and the only thing that ever started a drain was
+          // another beat's worth of credited playback. A learner who paused right
+          // after a flush left them there indefinitely. Retry until it is empty.
+          scheduleRetry();
           return res;
         })
         .catch(function (err) {
           flushing = false;
+          scheduleRetry();
           // Left in the queue on purpose — the next beat replays it. Nothing is
           // said to the learner: an offline blip that self-heals is not news.
           if (window.console) console.warn("[TR.Video] heartbeat deferred", err);
@@ -1180,6 +1344,7 @@
       flush("destroy");
       st.destroyed = true;
       if (ticker) clearInterval(ticker);
+      if (retryTimer) clearTimeout(retryTimer);
       if (noticeTimer) clearTimeout(noticeTimer);
       if (observer) observer.disconnect();
       lock.destroy();

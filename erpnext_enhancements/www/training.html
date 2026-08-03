@@ -112,10 +112,32 @@
 
 	// Every call is a POST: these all mutate progress or mint a signed URL, and a
 	// GET would put lesson/attempt keys in the query string and in the access log.
+	// fetch has NO default timeout, and a socket dropped by an intermediary
+	// without a FIN leaves its promise pending forever. That is not academic: the
+	// player's heartbeat holds a `flushing` latch that is released only when this
+	// promise settles, so one hung request stops every later beat for the life of
+	// the page — the learner keeps watching and their coverage meter never moves
+	// again. Twenty seconds is far longer than any of these calls should take and
+	// far shorter than a lesson.
+	var CALL_TIMEOUT_MS = 20000;
+
+	function abortSignal() {
+		// AbortSignal.timeout is 2022-era; the fallback covers older iOS Safari,
+		// which is exactly the population most likely to lose a socket.
+		if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+			return AbortSignal.timeout(CALL_TIMEOUT_MS);
+		}
+		if (typeof AbortController === "undefined") return undefined;
+		var controller = new AbortController();
+		setTimeout(function () { controller.abort(); }, CALL_TIMEOUT_MS);
+		return controller.signal;
+	}
+
 	function call(method, payload) {
 		return fetch(PREFIX + method, {
 			method: "POST",
 			credentials: "same-origin",
+			signal: abortSignal(),
 			headers: {
 				"Content-Type": "application/json",
 				"Accept": "application/json",
