@@ -25,7 +25,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Action",
-   "options": "Provision Folder\nUpload to Drive\nShadow Attachment\nRecording Export\nBackfill",
+   "options": "Provision Folder\nUpload to Drive\nShadow Attachment\nRecording Export\nBackfill\nReconcile Link",
    "reqd": 1
   },
   {

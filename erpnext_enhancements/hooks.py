@@ -598,6 +598,9 @@ scheduler_events = {
 		"erpnext_enhancements.ai_governance.tasks.purge_old_action_logs",
 		# Re-enqueue Failed Drive Sync Log rows (uploads / recording exports)
 		"erpnext_enhancements.google_drive.drive_sync.retry_failed_syncs",
+		# Probe every linked Drive folder and stamp the records whose folder is
+		# gone, so the "Open Drive Folder" button stops opening a Google 404
+		"erpnext_enhancements.google_drive.drive_sync.reconcile_drive_links",
 		# device_management (MDM/EMM): warranty lead-time + stale-attestation nudges
 		"erpnext_enhancements.device_management.tasks.send_device_warranty_reminders",
 		"erpnext_enhancements.device_management.tasks.nudge_stale_device_attestations",

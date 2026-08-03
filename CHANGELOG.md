@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.233.0] - 2026-08-03
+
+### Added
+
+**A Drive folder id outlives the folder, and nothing here ever noticed.** Clicking
+**Open Drive Folder** on PRJ-00706 opened a bare Google 404. The stored id
+(`1pG6Usz7YoSX_W8ch_A1-E3WA2alNzMZC`) was fine, the link shape was fine, the service
+account was fine — the folder had simply been deleted in Drive, and `custom_drive_folder_id`
+went on pointing at it. Verified against production: of 243 distinct Project/Opportunity
+folder ids, three are gone (PRJ-00706, PRJ-00695, CRM-OPP-2026-00113), and Google answers
+404 for them to everyone, service account included. Everything else resolves, so this was
+never a broken-link-builder bug — the links are correct, some of their targets stopped
+existing.
+
+The shadow sync already *knew* about some of these. `_sync_folder_shadows` flags an
+unreachable root folder as `Stale` in the Drive Sync Log — 13 such rows sat there from
+2026-07-24 — but only for documents that hourly walk happened to reach, and it only ever
+wrote to the log. The record was never told, so the form had no way to know, and the
+button had nothing to read.
+
+- **`reconcile_drive_links` (daily)** probes every `custom_drive_folder_id` on Project /
+  Customer / Opportunity via the existing `drive_utils.get_folder_meta` — which already
+  returned `None` on a 404, it had just never been pointed at this — and stamps the new
+  hidden Check field `custom_drive_folder_missing` on the ones that are gone. **Trashed
+  counts as gone**: a folder in the Shared Drive trash still resolves for the API but is
+  not a place you can send a person, and "can I send someone here" is the only question
+  the button needs answered.
+- **The flag lives on the record, not in the log.** That is the whole point — the button
+  reads it off the loaded document for free. Probing Drive on click would put a network
+  round-trip in front of every folder open.
+- **Both directions.** A folder restored from the trash, or re-shared with the service
+  account, clears its own flag on the next run. Its old `Stale` rows are then marked
+  `Skipped`, because `_flag_missing_drive_item` dedupes on the Drive id — leaving them
+  would silence the *next* disappearance of that folder permanently.
+- **Gated on the service account being configured, not on `attachment_sync_enabled`.**
+  The button is there whether or not the shadow sync is on, so its links need checking
+  either way.
+- **`Check Drive Links`** on Project Folder Google Drive Settings runs it on demand; the
+  point of finding a dead link is usually that somebody is looking at one right now.
+  Results land in the Drive Sync Log under the new `Reconcile Link` action.
+- The hourly shadow sync now stamps the same flag when it finds a linked root folder
+  missing, so the common cases are caught within the hour instead of the day.
+
+Failure containment copies the shadow sync's hard-won contract rather than reinventing it:
+this walk also holds a DB connection across minutes of uninterrupted Google traffic, so one
+record's failure goes through `_recover_after_document_failure` — recover *before* logging,
+because `frappe.log_error` needs the connection too.
+
+### Changed
+
+**The Open Drive Folder button stops offering a link it knows is dead.** When
+`custom_drive_folder_missing` is set it renders as **Drive Folder Missing** and explains
+what happened — the folder id, that Google would answer 404, and where to fix it (Drive
+Link Manager, or restore from the Shared Drive trash and re-run the check). It stays a
+button rather than disappearing: the link being dead is information the person wants, and
+silently hiding the control just sends them hunting for something that used to be there.
+
+Guarded by `tests/test_drive_link_reconcile.py` (bench-free, own CI step — it installs its
+own `frappe` stub in `setUpModule`, so it must not share a process with the other
+stub-installing suites).
+
 ## [1.232.0] - 2026-08-03
 
 ### Added

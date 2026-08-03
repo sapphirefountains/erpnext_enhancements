@@ -137,6 +137,12 @@ jobs:
       # just lost.
       - name: Drive shadow sync (survives a dropped DB connection)
         run: python -m unittest erpnext_enhancements.tests.test_drive_sync_recovery -v
+      # Own step for the same reason -- its own frappe stub in setUpModule. Guards
+      # the linked-folder reconciliation: a deleted Drive folder must end up
+      # flagged ON THE RECORD, or the Open Drive Folder button keeps handing
+      # people a Google 404 (PRJ-00706).
+      - name: Drive link reconciliation (dead folders are flagged on the record)
+        run: python -m unittest erpnext_enhancements.tests.test_drive_link_reconcile -v
       # THREE separate steps, not one `unittest a b c`. Each installs its own
       # frappe stub in setUpModule, and running them in one process cross-talks:
       # the roles suite imports the real erpnext_enhancements.training.roles, and
