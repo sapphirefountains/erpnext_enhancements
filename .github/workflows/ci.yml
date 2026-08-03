@@ -71,6 +71,12 @@ jobs:
           erpnext_enhancements.tests.test_drive_match -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Guards the silent workspace failure mode: `content` (the layout) and the
+      # child tables (the data) are joined by label and nothing keeps them in sync,
+      # so a block with no row renders an empty div and a row with no block never
+      # appears. v1.146.0 shipped exactly that across seven widgets.
+      - name: Workspace structure (content <-> child rows, WI-018)
+        run: python -m unittest erpnext_enhancements.tests.test_workspaces -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
       # Own step: installs its own frappe stub in setUpModule, so it must not

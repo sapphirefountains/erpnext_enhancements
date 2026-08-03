@@ -1,7 +1,7 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\":\"pe_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pe_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Dashboard\",\"col\":4}},{\"id\":\"pe_sc_master\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"pe_sc_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"pe_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pe_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Projects, Contracts &amp; Process</b></span>\",\"col\":12}},{\"id\":\"pe_card_projects\",\"type\":\"card\",\"data\":{\"card_name\":\"Projects\",\"col\":4}},{\"id\":\"pe_card_contracts\",\"type\":\"card\",\"data\":{\"card_name\":\"Contracts\",\"col\":4}},{\"id\":\"pe_card_process\",\"type\":\"card\",\"data\":{\"card_name\":\"Process and Settings\",\"col\":4}}]",
+ "content": "[{\"id\":\"pe_sc_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Your Shortcuts</b></span>\",\"col\":12}},{\"id\":\"pe_sc_dash\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Projects Dashboard\",\"col\":4}},{\"id\":\"pe_sc_master\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Master Project\",\"col\":4}},{\"id\":\"pe_sc_contract\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Project Contract\",\"col\":4}},{\"id\":\"pe_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"pe_cards_head\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Projects, Contracts &amp; Process</b></span>\",\"col\":12}},{\"id\":\"pe_card_projects\",\"type\":\"card\",\"data\":{\"card_name\":\"Projects\",\"col\":4}},{\"id\":\"pe_card_contracts\",\"type\":\"card\",\"data\":{\"card_name\":\"Contracts\",\"col\":4}},{\"id\":\"pe_card_process\",\"type\":\"card\",\"data\":{\"card_name\":\"Process and Settings\",\"col\":4}}]",
  "creation": "2026-06-15 00:00:00.000000",
  "doctype": "Workspace",
  "for_user": "",
@@ -25,10 +25,10 @@
    "is_query_report": 0,
    "label": "Master Project",
    "link_count": 0,
+   "link_to": "Master Project",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Master Project"
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -36,10 +36,10 @@
    "is_query_report": 0,
    "label": "Project",
    "link_count": 0,
+   "link_to": "Project",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Project"
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -55,10 +55,10 @@
    "is_query_report": 0,
    "label": "Project Contract",
    "link_count": 0,
+   "link_to": "Project Contract",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Project Contract"
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -66,10 +66,10 @@
    "is_query_report": 0,
    "label": "Contract Template",
    "link_count": 0,
+   "link_to": "Contract Template",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Contract Template"
+   "type": "Link"
   },
   {
    "hidden": 0,
@@ -85,10 +85,10 @@
    "is_query_report": 0,
    "label": "Process Step Template",
    "link_count": 0,
+   "link_to": "Process Step Template",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Process Step Template"
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -96,13 +96,13 @@
    "is_query_report": 0,
    "label": "Project Dashboard Settings",
    "link_count": 0,
+   "link_to": "Project Dashboard Settings",
    "link_type": "DocType",
    "onboard": 0,
-   "type": "Link",
-   "link_to": "Project Dashboard Settings"
+   "type": "Link"
   }
  ],
- "modified": "2026-07-17 12:00:00.000000",
+ "modified": "2026-08-03 22:00:00.000000",
  "modified_by": "Administrator",
  "module": "Project Enhancements",
  "name": "Project Enhancements",

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.237.0] - 2026-08-03
+
+### Added
+
+- **The Finance Hub is now a place you can actually work from** (WI-018, part one).
+  It has existed since February as an empty shell — `content = "[]"`, no shortcuts, no
+  links — sitting at the top of everyone's sidebar rendering a blank page. It now
+  carries the accountant's six daily entry points (Purchase Invoice, Sales Invoice,
+  Payment Entry, Journal Entry, Bank Reconciliation Tool, Document Intake) and two
+  cards: the five reports she actually runs, and the period-end set.
+
+  It **curates the existing workspace rather than adding an `Accounting` one**, which
+  matters more than it sounds: production already carries *Finance Hub*, *Finance
+  Dashboard*, *Invoicing* and *Financial Reports*, and a work item whose whole premise
+  is minimal UI should not answer four finance-named surfaces with a fifth. The
+  deciding detail is that **Finance Hub already has a `Desktop Icon`** — the desk's left
+  rail is built from those, and nothing on the `bench migrate` path creates one, so a
+  brand-new workspace could have shipped perfectly and been unreachable.
+
+  Hosted in the **Accounting Intake** module deliberately. `Workspace.__init__` raises
+  `PermissionError` when a workspace's module is not in the viewer's `allow_modules`,
+  and that list is built from DocType *read* permissions — so the module choice decides
+  whether the page exists for her at all. Accounting Intake is the app module with the
+  most doctypes readable by the accounting roles, which leaves the most margin.
+
+  Restricted to `Accounts Manager` / `Accounts User` / `System Manager`, matching the
+  sibling Finance Dashboard. <what this takes away: about thirteen users stop seeing a
+  workspace that renders a blank page for them today.>
+
+  This is the additive half. It removes nothing from the accountant and is meant to be
+  the thing she is walked through — that session is what produces the task inventory
+  and sign-off WI-018 requires before anything is hidden.
+
+### Fixed
+
+- **Two workspaces carried a shortcut that has never once rendered**, both the same
+  defect class as v1.146.0. On *Project Enhancements* the layout block asked for
+  `Project Dashboard` while the row was named `Projects Dashboard` — a singular/plural
+  typo, so the page drew an empty column *and* swallowed the real shortcut. On
+  *KPI Dashboards*, `KPI Target` and `KPI Snapshot` existed as rows with no layout block
+  at all, so they sat in config and appeared nowhere.
+
+  A workspace stores its layout (`content`) and its data (the child tables) separately
+  and joins them by label; disagreeing either way fails silently, in a way no diff
+  review or smoke test catches. `tests/test_workspaces.py` now checks both directions
+  across all 33 workspace JSONs, plus `link_count` on every card, and runs in CI. It
+  found both of these on its first run.
+
 ## [1.236.0] - 2026-08-03
 
 ### Fixed
