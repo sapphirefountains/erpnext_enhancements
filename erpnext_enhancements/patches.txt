@@ -362,3 +362,10 @@ erpnext_enhancements.patches.encrypt_drive_service_account_json
 # "Brian's Closed Won" so the report is right at migrate rather than at the next
 # 07:00 tick -- and inclusive, which the `>` was not.
 erpnext_enhancements.patches.switch_commission_report_to_pay_periods
+# v1.238.0 WI-018 part two: take "Workspace Manager" off the accountant. The role
+# short-circuits get_workspaces() -- it drops the query filters entirely, bypassing
+# workspace role restrictions, is_hidden AND blocked modules -- so while she holds
+# it, every visibility lever in WI-018 is inert and the work item's original
+# acceptance criterion could pass with her sidebar unchanged. Not a permission: she
+# keeps every document she can reach today, and loses only desk layout editing.
+erpnext_enhancements.patches.remove_accountant_workspace_manager
