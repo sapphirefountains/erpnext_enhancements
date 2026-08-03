@@ -202,6 +202,12 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_training_phase4_contracts -v
       - name: Training certificates (issuance, snapshot, verify PII, recertification)
         run: python -m unittest erpnext_enhancements.tests.test_training_certificates -v
+      # Every dotted path in hooks.py must name something that exists. Frappe
+      # resolves after_migrate at the very END of `bench migrate`, so a typo there
+      # fails the deploy after every schema change has already been applied -- the
+      # most expensive possible moment to find one. It cost a production build.
+      - name: Hook targets resolve (no dangling hooks.py paths)
+        run: python -m unittest erpnext_enhancements.tests.test_hook_targets_resolve -v
       - name: Training compliance (warn-only, never blocks a save)
         run: python -m unittest erpnext_enhancements.tests.test_training_compliance -v
       # Regressions from the FIRST REAL EXECUTION of the module. Four phases of
