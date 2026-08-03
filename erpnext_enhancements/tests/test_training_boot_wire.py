@@ -577,3 +577,88 @@ class TestRuntimeModulesMeet(unittest.TestCase):
                 builder,
                 f"the builder assigns {forbidden} — the preview must not repair the runtime",
             )
+
+
+class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
+    """The beat has to travel under ``payload``, and nothing else does.
+
+    ``heartbeat(attempt, payload=None)`` is the only runtime endpoint that takes a
+    nested body. Every other one takes explicit arguments, so the player's habit
+    of spreading a dict across the top level is right everywhere except here — and
+    here it was silently catastrophic: Frappe bound ``attempt``, left ``payload``
+    at its default of ``None``, and the server recorded an empty beat.
+
+    **Nothing errored.** An empty beat is a perfectly valid beat that credits
+    nothing, so watch coverage sat at 0% forever, the gate never opened, and the
+    meter never moved. It survived from Phase 2 to a learner watching a video and
+    asking why the number was not changing.
+
+    The earlier transport-argument scanner could not see this: it only inspects
+    call sites written as object literals, and ``transport.heartbeat(payload)``
+    passes a variable. This class checks the *adapter* instead, which is where the
+    shaping actually happens.
+    """
+
+    @staticmethod
+    def _player():
+        src = PLAYER.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        return "\n".join(
+            line for line in src.splitlines() if not line.strip().startswith("//")
+        )
+
+    @staticmethod
+    def _template():
+        return (APP / "www/training.html").read_text(encoding="utf-8")
+
+    def test_the_endpoint_still_takes_a_nested_payload(self):
+        """If the server is ever flattened, this whole class is wrong and should
+        fail loudly rather than enforce a stale shape."""
+        sigs = _whitelisted_signatures()
+        self.assertIn("payload", sigs["heartbeat"][0])
+
+    def test_the_adapter_nests_the_beat(self):
+        code = self._player()
+        start = code.index("heartbeat: function")
+        body = code[start : start + 700]
+        self.assertIn("payload:", body, "the beat is not sent under `payload`")
+        self.assertIn("attempt:", body, "the attempt is not sent alongside it")
+
+    def test_the_adapter_does_not_spread_the_beat(self):
+        """The bug itself: `call("heartbeat", body)` with the beat as the body."""
+        code = self._player()
+        start = code.index("heartbeat: function")
+        body = code[start : start + 700]
+        self.assertNotIn('call("heartbeat", body)', body)
+
+    def test_the_beacon_is_synchronous_and_returns_a_boolean(self):
+        """video.js drops a beat from its retry queue on a truthy return. The
+        generic transport wrapper returns a Promise — always truthy — so every
+        queued beat was dropped as delivered whether or not it ever left."""
+        template = self._template()
+        self.assertIn("transport.heartbeatBeacon = function", template)
+        start = template.index("transport.heartbeatBeacon = function")
+        body = template[start : start + 900]
+        # The RETURN path, not a mention. `navigator.sendBeacon` also appears in
+        # the capability guard on the first line, so asserting presence passed a
+        # mutation that swapped the actual send for a fetch — which returns a
+        # Promise and puts the always-truthy bug straight back.
+        self.assertIn("return navigator.sendBeacon(", body)
+        self.assertIn("return false", body)
+
+    def test_the_beacon_uses_the_same_nested_shape(self):
+        template = self._template()
+        start = template.index("transport.heartbeatBeacon = function")
+        body = template[start : start + 900]
+        self.assertIn("payload: beat", body)
+        self.assertIn("attempt: beat.attempt", body)
+
+    def test_the_beacon_carries_csrf_in_the_body(self):
+        """sendBeacon cannot set headers, so the token has to travel in the body.
+        Deliberately `csrf_token` and never a key named `sid` — Frappe's auth pops
+        that one and reports a session expiry that did not happen."""
+        template = self._template()
+        start = template.index("transport.heartbeatBeacon = function")
+        body = template[start : start + 900]
+        self.assertIn("csrf_token", body)
+        self.assertNotIn("sid", body)

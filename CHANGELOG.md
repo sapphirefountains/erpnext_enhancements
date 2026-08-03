@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.235.0] - 2026-08-03
+
+### Fixed
+
+**Watch coverage never moved, because every heartbeat since Phase 2 was a no-op.**
+
+`heartbeat(attempt, payload=None)` is the only runtime endpoint that takes a nested body.
+The player spread the beat across the top level instead — which is right for every other
+endpoint, and here meant Frappe bound `attempt`, left `payload` at its default of `None`,
+and the server recorded an **empty beat**.
+
+Nothing errored. An empty beat is a perfectly valid beat that credits nothing. So coverage
+stayed at 0%, the gate never opened, and the meter never moved — through every deploy since
+the telemetry was written. The beat now travels under `payload`, where the endpoint expects
+it.
+
+- **The pagehide flush discarded beats it never sent.** `video.js` drops a beat from its
+  retry queue on a truthy return from `heartbeatBeacon`, because `navigator.sendBeacon`
+  returns a boolean. The generic transport wrapper returned a **Promise** — always truthy —
+  so every queued beat was dropped as delivered whether or not it left the machine. That is
+  the exact path meant to protect a learner whose phone locks mid-video.
+
+  `heartbeatBeacon` is now a real `sendBeacon` returning its own boolean, with the CSRF token
+  in the body (it cannot set headers) and the beat under `payload` like the normal path.
+  Deliberately `csrf_token` and never a key named `sid` — Frappe's auth pops that one and
+  reports a session expiry that did not happen.
+
+### Added
+
+- Assertions on the heartbeat's *shape*, checked against the endpoint's real signature so a
+  future flattening of the server fails here rather than silently zeroing coverage again.
+
+### Notes
+
+- The earlier transport-argument scanner could not have caught this: it only inspects call
+  sites written as object literals, and `transport.heartbeat(payload)` passes a variable. The
+  new assertions check the **adapter**, which is where the shaping actually happens.
+
+- This is the seventh wire mismatch in this module and the last of the ones a learner could
+  hit. The Python was correct at every one of them.
+
+- One mutation initially survived: swapping the beacon's send for a fetch, because
+  `navigator.sendBeacon` still appeared in the capability guard on the line above. Presence
+  is not a return path — the same lesson, for the sixth time in this module's history.
+
 ## [1.234.0] - 2026-08-03
 
 ### Fixed
