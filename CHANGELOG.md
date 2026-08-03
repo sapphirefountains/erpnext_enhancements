@@ -43,6 +43,17 @@ Both since Phase 2. Both hidden by the builder.
   only place the break would have been noticed. The preview now drives exactly what a learner
   gets, which is the only thing that makes it worth having.
 
+- **The GCS connection test asked for a permission the module never uses.** It pre-flighted
+  with `buckets().get()`, which needs `storage.buckets.get` — and **`roles/storage.objectAdmin`
+  does not grant it**. So a service account configured exactly as this module documents failed
+  the test with a 403, and the error then advised granting objectAdmin: the role it already
+  had. Following our own message would have changed nothing.
+
+  The pre-flight now lists one object instead, which distinguishes the same three cases
+  (wrong bucket, missing binding, no network) inside the permissions the app actually needs.
+  The 403 message names `roles/storage.objectAdmin` **on the bucket**, and says a
+  project-level grant works while a grant on a different bucket does not.
+
 ### Notes
 
 - This was predicted in PR #690 and written down at the time: *"the preview shims

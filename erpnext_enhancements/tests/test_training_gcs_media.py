@@ -25,6 +25,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_training_gcs_media
 
 import datetime
 import hashlib
+import pathlib
 import sys
 import types
 import unittest
@@ -468,3 +469,61 @@ class TestErrorDescriptionIsNeverEmpty(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestConnectionTestNeedsOnlyWhatTheAppNeeds(unittest.TestCase):
+	"""The pre-flight must not demand a permission the module never uses.
+
+	``test_connection`` used to probe with ``buckets().get()``, which requires
+	``storage.buckets.get`` — and **``roles/storage.objectAdmin`` does not grant
+	it**. So a service account configured exactly as this module documents failed
+	the connection test with a 403, and ``_describe`` then advised granting
+	objectAdmin: the role it already had. Following our own error message would
+	have changed nothing.
+
+	The module only ever creates, reads and deletes objects. A connection test
+	that asks for more turns a working configuration into a failing one.
+	"""
+
+	@staticmethod
+	def _source():
+		return (
+			pathlib.Path(__file__).resolve().parents[1] / "training/gcs_media.py"
+		).read_text(encoding="utf-8")
+
+	@staticmethod
+	def _func(name):
+		"""One top-level function's source, safe at end-of-file.
+
+		`source.index("
+def ", start)` raises when the function is the last in the
+		file — which `test_connection` is — so the first version of these tests
+		errored rather than asserting anything.
+		"""
+		source = TestConnectionTestNeedsOnlyWhatTheAppNeeds._source()
+		start = source.index(f"def {name}(")
+		nxt = source.find("\ndef ", start + 5)
+		return source[start : nxt if nxt != -1 else len(source)]
+
+	def test_the_preflight_does_not_call_buckets_get(self):
+		self.assertNotIn("buckets().get(", self._func("test_connection"))
+
+	def test_the_preflight_still_distinguishes_the_three_cases(self):
+		"""A wrong name, a missing binding and no network must stay tellable
+		apart — that is why a pre-flight exists at all."""
+		body = self._func("test_connection")
+		self.assertIn("objects().list(", body)
+		self.assertIn("_describe(exc)", body)
+
+	def test_the_403_names_a_role_that_would_actually_help(self):
+		body = self._func("_describe")
+		self.assertIn("roles/storage.objectAdmin", body)
+		self.assertIn("on this bucket", body)
+
+	def test_nothing_else_reaches_for_bucket_metadata(self):
+		"""The whole module should stay inside object permissions."""
+		source = self._source()
+		code = "\n".join(
+			line for line in source.splitlines() if not line.strip().startswith("#")
+		)
+		self.assertNotIn("buckets().get(", code)
