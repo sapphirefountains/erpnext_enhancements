@@ -71,6 +71,14 @@ jobs:
           erpnext_enhancements.tests.test_drive_match -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # hooks.py is one big dict literal, and Python resolves a repeated key by keeping
+      # the LAST and silently discarding the earlier value -- no error, no warning, the
+      # hooks just never fire. Two duplicated doc_events keys cost six live handlers
+      # (recurring task generation, project date sync, next-visit dates) and nobody
+      # noticed, because the symptom is absence. ruff flags it as F601 but that job is
+      # advisory here, so it does not fail a PR. This does.
+      - name: hooks.py integrity (no duplicate keys or handlers)
+        run: python -m unittest erpnext_enhancements.tests.test_hooks_integrity -v
       # Guards the silent workspace failure mode: `content` (the layout) and the
       # child tables (the data) are joined by label and nothing keeps them in sync,
       # so a block with no row renders an empty div and a row with no block never

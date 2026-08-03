@@ -280,6 +280,9 @@ doc_events = {
 			"erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
 		],
 		"on_trash": "erpnext_enhancements.script_migrations.task.sync_project_dates_from_tasks",
+		# training: warn-only certification check when a task is assigned to somebody
+		# lacking a current certification for the task type. Never blocks.
+		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_assignee",
 	},
 	"Project": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
@@ -323,6 +326,14 @@ doc_events = {
 	},
 	"Sapphire Maintenance Record": {
 		"on_submit": "erpnext_enhancements.api.maintenance_scheduling.update_next_visit_dates",
+		# training: WARN-ONLY certification check on the assigned technician. It NEVER
+		# throws -- by the time this runs a truck is usually already at the site, and
+		# blocking the visit form would mean the work happens with NO RECORD AT ALL, which
+		# is worse than the uncertified assignment it is flagging. Appends a comment plus an
+		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
+		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
+		# read as a gate.
+		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_technician",
 	},
 	"Project Contract": {
 		# When a Maintenance Services Agreement is Signed, draft the operational
@@ -455,21 +466,6 @@ doc_events = {
 		# Revocation must expire the certificate AND re-open the assignment, or a revoked
 		# pass silently still reads as compliant -- which is the whole point of revoking.
 		"on_cancel": "erpnext_enhancements.training.certificates.on_revoke",
-	},
-	"Sapphire Maintenance Record": {
-		# training: WARN-ONLY certification check on the assigned technician. It NEVER
-		# throws -- by the time this runs a truck is usually already at the site, and
-		# blocking the visit form would mean the work happens with NO RECORD AT ALL, which
-		# is worse than the uncertified assignment it is flagging. Appends a comment plus an
-		# orange msgprint and notifies the supervisor. Gated by Training Settings ->
-		# warn_on_uncertified_dispatch. On validate, not before_submit: before_submit would
-		# read as a gate.
-		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_technician",
-	},
-	"Task": {
-		# training: the same warn-only check when a task is assigned to somebody lacking a
-		# current certification for the task type. Never blocks.
-		"validate": "erpnext_enhancements.training.compliance.warn_uncertified_assignee",
 	},
 	"User": {
 		# training: a Role Profile change rewrites a user's roles wholesale and can

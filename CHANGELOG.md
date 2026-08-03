@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.240.1] - 2026-08-03
+
+### Fixed
+
+- **Six `doc_events` handlers were silently dead in production.** `hooks.py` is one large
+  dict literal, and Python resolves a repeated key by keeping the **last** one and
+  discarding everything under the earlier — no error, no warning at import, nothing at
+  runtime. Two doctypes were registered twice, so the first block of each was thrown away:
+
+  | Doctype | Lost |
+  |---|---|
+  | `Task` | elapsed-time calculation (`before_save`) · Google Calendar sync (`after_insert`) · **recurring-task generation**, project-dashboard realtime updates and **project date sync** (`on_update`) · project date sync (`on_trash`) |
+  | `Sapphire Maintenance Record` | **next-visit-date update** (`on_submit`) |
+
+  Both overriding blocks are the Training module's compliance hooks, so this arrived with
+  that module. The symptom is absence — recurring tasks quietly stop generating, project
+  dates quietly stop moving — which is why it went unnoticed and why anyone chasing it
+  would have been looking at the wrong code entirely.
+
+  Fixed by folding the training `validate` hooks into the existing blocks, keeping their
+  explanatory comments. All seven Task handlers and both maintenance handlers now
+  register; verified by walking the parsed hook tree, not by eye.
+
+### Added
+
+- **A CI guard so it cannot recur** (`tests/test_hooks_integrity.py`). Reads `hooks.py`
+  with `ast` — importing it would pull in `frappe` — and fails on a duplicate key in
+  **any** dict literal, a handler registered twice for one event, a repeated entry in a
+  hook list such as `after_migrate`, or a handler that is not a dotted path into this app.
+  It also names the six lost handlers explicitly as a regression guard.
+
+  <why a test and not the linter: ruff already reports this as `F601`, but the lint job is
+  `continue-on-error` on this repo because of a pre-existing backlog, so it cannot fail a
+  PR. Verified the guard actually catches the defect by re-introducing it — three of the
+  six tests fail, from three different angles — rather than assuming it would.>
+
 ## [1.240.0] - 2026-08-03
 
 ### Added
