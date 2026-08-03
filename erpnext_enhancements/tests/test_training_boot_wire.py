@@ -187,6 +187,82 @@ class TestCourseCardFields(unittest.TestCase):
         self.assertNotIn("status", reads)
 
 
+class TestOutlineRowFields(unittest.TestCase):
+    """The lesson outline read three fields the server does not put on a toc row.
+
+    ``_public_toc`` yields ``{lesson_key, chapter_key, title, minutes, has_quiz,
+    blocks}``. ``outlineRow`` read ``row.status``, ``row.locked`` and
+    ``row.lock_reason``. All three were always ``undefined``, so every lesson drew
+    the "not started" circle and offered "Open" no matter how much of it the
+    learner had done — there was no way to see progress from the course page.
+
+    ``row.locked`` being undefined is also why nothing was ever locked, which is
+    correct: the server recommends an order via ``next_lesson_key`` and does not
+    enforce one. That branch was UI for a feature that does not exist.
+    """
+
+    def _toc_keys(self):
+        """Read from the *publisher*, not the runtime.
+
+        ``_public_toc`` just reloads `toc_json` and strips the internal docname, so
+        the shape is only ever written down in `api/training_author.py`, in the
+        `toc.append({...})` that runs at publish. That is the one place to compare
+        against — chasing it through the runtime would compare the player to a
+        `json.loads`.
+        """
+        author = (APP / "api/training_author.py").read_text(encoding="utf-8")
+        tree = ast.parse(author)
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and getattr(node.func, "attr", "") == "append"
+                and getattr(node.func.value, "id", "") == "toc"
+            ):
+                continue
+            if node.args and isinstance(node.args[0], ast.Dict):
+                keys = {
+                    k.value
+                    for k in node.args[0].keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                }
+                # `lesson` is the internal docname and _public_toc strips it before
+                # the row ever reaches a browser.
+                return keys - {"lesson"}
+        return set()
+
+    def _row_reads(self):
+        body = _js_body(_player_code(), "function outlineRow(")
+        return set(re.findall(r"\brow\.([a-z_]+)", body))
+
+    def test_the_toc_shape_is_found(self):
+        self.assertIn("lesson_key", self._toc_keys())
+        self.assertIn("has_quiz", self._toc_keys())
+
+    def test_every_field_the_row_reads_is_sent(self):
+        unknown = sorted(self._row_reads() - self._toc_keys())
+        self.assertEqual(
+            unknown, [], f"outlineRow reads {unknown}, which a toc row does not carry"
+        )
+
+    def test_status_is_derived_not_expected_on_the_row(self):
+        code = _player_code()
+        self.assertIn("function lessonStatus(", code)
+        self.assertIn("lessonStatus(row.lesson_key)", _js_body(code, "function outlineRow("))
+
+    def test_the_attempt_progress_reaches_the_outline(self):
+        """`state.progress` was only ever filled by get_lesson, so on the course
+        page — which is where the outline lives — it was empty.
+
+        Asserts the assignment, not the mention: checking for `attempt.lessons`
+        anywhere in the function passed a mutation that kept the `if` guard and
+        assigned `{}` instead.
+        """
+        self.assertIn(
+            "state.progress.lessons = attempt.lessons",
+            _js_body(_player_code(), "function adoptAttempt("),
+        )
+
+
 class TestTransportNamesExist(unittest.TestCase):
     """The other half of the same contract, kept here so both are checked together.
 

@@ -661,6 +661,14 @@
 			}
 			state.attempt = attempt.attempt || state.attempt;
 			if (attempt.status) state.status = attempt.status;
+			// The attempt carries the per-lesson progress map, and the course view
+			// needs it: without this `state.progress` is only ever populated by
+			// get_lesson, so the outline had nothing to read and every lesson showed
+			// as not started even after it was finished.
+			if (attempt.lessons) {
+				state.progress = state.progress || {};
+				state.progress.lessons = attempt.lessons;
+			}
 			if (attempt.next_lesson_key && !state.lessonKey) {
 				state.lessonKey = attempt.next_lesson_key;
 			}
@@ -725,9 +733,29 @@
 			return key;
 		}
 
+		// A toc row is {lesson_key, chapter_key, title, minutes, has_quiz, blocks} —
+		// and nothing else. It carries no status, so this derives one from the
+		// attempt's own progress map. It used to read `row.status` and `row.locked`
+		// straight off the row: both were always undefined, so every lesson showed
+		// the "not started" circle and offered "Open" even after it had been
+		// finished, and the learner had no way to see how far through they were.
+		//
+		// There is no locking. `_next_lesson_key` recommends an order; it does not
+		// enforce one, and the outline deliberately lets a learner open any lesson.
+		// The old `row.locked` branch was UI for a feature the server does not have.
+		function lessonStatus(lessonKey) {
+			var progress = lessonProgress(lessonKey);
+			if (progress.status === "done") return "done";
+			// Anything recorded at all — a block watched, a quiz attempted — means
+			// they have been in here.
+			if (progress.blocks || progress.quiz || progress.checkpoints) return "in_progress";
+			return "not_started";
+		}
+
 		function outlineRow(row, index) {
-			var item = el("li", "tr-outline-row" + (row.locked ? " is-locked" : ""));
-			var glyph = row.locked ? "🔒" : row.status === "done" ? "✓" : row.status === "in_progress" ? "◐" : "○";
+			var status = lessonStatus(row.lesson_key);
+			var item = el("li", "tr-outline-row is-" + status.replace("_", "-"));
+			var glyph = status === "done" ? "✓" : status === "in_progress" ? "◐" : "○";
 			var mark = el("span", "tr-outline-glyph", glyph);
 			mark.setAttribute("aria-hidden", "true");
 			item.appendChild(mark);
@@ -738,27 +766,21 @@
 			);
 			var meta = el("div", "tr-outline-meta");
 			meta.appendChild(el("span", "tr-sr-only",
-				row.locked ? t("Locked") : row.status === "done" ? t("Finished") :
-					row.status === "in_progress" ? t("In progress") : t("Not started")));
+				status === "done" ? t("Finished")
+					: status === "in_progress" ? t("In progress")
+						: t("Not started")));
 			if (row.minutes) meta.appendChild(chip(fmt(t("{0} min"), [row.minutes])));
 			if (row.has_quiz) meta.appendChild(chip(t("Quiz")));
 			text.appendChild(meta);
 
-			// The reason is inline and always visible. A greyed-out row with the
-			// explanation hidden behind a tooltip is unreadable on a phone and is
-			// the difference between "finish lesson 2 first" and "this is broken".
-			if (row.locked) {
-				text.appendChild(el("p", "tr-outline-reason", row.lock_reason || t("Finish the earlier lessons first.")));
-			}
 			item.appendChild(text);
 
-			if (!row.locked) {
-				item.appendChild(
-					button(row.status === "done" ? t("Review") : t("Open"), "tr-button tr-button-quiet", function () {
+			item.appendChild(
+				button(status === "done" ? t("Review") : status === "in_progress" ? t("Resume") : t("Open"),
+					"tr-button tr-button-quiet", function () {
 						openLesson(row.lesson_key);
 					})
-				);
-			}
+			);
 			return item;
 		}
 
