@@ -18,6 +18,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _STATUSES = ["Queued", "Running", "Completed", "Failed"]
 
@@ -58,6 +59,7 @@ class QuickbooksSyncStatus(BaseTool):
 		self.category = "Accounting"
 		self.source_app = "erpnext_enhancements"
 		self.requires_permission = "QuickBooks Sync Log"
+		self.annotations = annotations_for(self.name)
 		self.inputSchema = {
 			"type": "object",
 			"properties": {

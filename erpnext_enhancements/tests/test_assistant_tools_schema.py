@@ -208,6 +208,52 @@ class TestAssistantToolsContract(unittest.TestCase):
                 f"{path}: annotations.x-ee-risk must be low/medium/high",
             )
 
+    def test_every_registered_tool_is_classified(self):
+        # _gate.is_mutating() checks EXPLICIT_MUTATING/APP_MUTATING, then
+        # EXPLICIT_READONLY, then FAC's tool category -- and FAC seeds every
+        # external tool as category "read_write", which matches neither the
+        # write branch nor the read branch, so control reaches the fail-closed
+        # `return True`. An unclassified *read* tool is therefore gated as a
+        # write: with ai_write_gating_enabled on it records an AI Pending Action
+        # and returns the anti-fabrication envelope instead of an answer.
+        # That shipped for both training tools (v1.216.0 -> v1.236.1). Every
+        # registered tool must land in exactly one set.
+        from erpnext_enhancements.assistant_tools._gate import APP_MUTATING, EXPLICIT_READONLY
+
+        unclassified = [
+            tool.name for *_rest, tool in self.tools
+            if tool.name not in APP_MUTATING and tool.name not in EXPLICIT_READONLY
+        ]
+        self.assertFalse(
+            unclassified,
+            f"tools missing from _gate classification (a read tool here is gated as a "
+            f"write and cannot answer): {unclassified}",
+        )
+        both = [
+            tool.name for *_rest, tool in self.tools
+            if tool.name in APP_MUTATING and tool.name in EXPLICIT_READONLY
+        ]
+        self.assertFalse(both, f"tools in both _gate sets: {both}")
+
+    def test_readonly_tools_advertise_readonly_annotation(self):
+        # The mutating half of this is enforced above; without the read half a
+        # read-only tool ships no annotations at all and Triton's MCP client
+        # falls back to guessing mutation from the tool's verb -- which is
+        # exactly what mis-read the device tools before v1.71.0. Guessing that
+        # happens to be right is not a contract.
+        from erpnext_enhancements.assistant_tools._gate import EXPLICIT_READONLY
+
+        for path, _module_name, _cls, tool in self.tools:
+            if tool.name not in EXPLICIT_READONLY:
+                continue
+            ann = getattr(tool, "annotations", None)
+            self.assertIsInstance(ann, dict, f"{path}: read-only tool must set .annotations")
+            self.assertIs(ann.get("readOnlyHint"), True, f"{path}: annotations.readOnlyHint must be True")
+            self.assertIs(
+                ann.get("x-ee-mutation"), False,
+                f"{path}: annotations must mark x-ee-mutation False",
+            )
+
     def test_annotations_well_formed(self):
         # Any tool that sets annotations must use a JSON-serialisable dict with a
         # boolean readOnlyHint and a valid risk band (FAC forwards it verbatim).
