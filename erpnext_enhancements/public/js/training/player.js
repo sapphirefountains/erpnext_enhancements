@@ -35,17 +35,21 @@
 //
 // ── transport ────────────────────────────────────────────────────────────────
 // Every method returns a Promise.
-//   getLesson({course, lesson_key})   → {attempt, course, outline, lesson,
+//   getCourse({course})               → {course, gates, version, chapters, toc,
+//                                       assignment, attempt}
+//   startAttempt({course})            → {attempt, status, next_lesson_key, ...}
+//   getLesson({attempt, lesson_key})  → {attempt, lesson,
 //                                        progress, resume, status}
 //                                       lesson_key omitted ⇒ the server picks
 //                                       the resume lesson.
 //   heartbeat(payload)                → {coverage, credited, flags}
 //   openCheckpoint({lesson_key, block_key, at})   → next unanswered checkpoint
 //   answerCheckpoint({...})           → {correct, explanation, ...}
-//   startQuiz({lesson_key})           → {run, questions, pass_score, attempts_left}
-//   submitQuiz({lesson_key, run, answers}) → {score, passed, per_question}
-//   completeLesson({lesson_key})      → {ok, reasons, next_lesson_key, status}
-//   mediaUrl({lesson_key, block_key}) → a URL string
+//   startQuiz({attempt, lesson_key})  → {run, questions, pass_score, attempts_left}
+//   submitQuiz({attempt, lesson_key, answers}) → {score, passed, per_question}
+//   completeLesson({attempt, lesson_key}) → {ok, coverage, next_lesson_key}
+//   mediaUrl({attempt, block_key})     → {url, embed_url, reason, poster, ...}
+//                                       (unwrapped to a string for blocks.js)
 //
 // ── boot ─────────────────────────────────────────────────────────────────────
 //   {courses: [...], settings: {...}, resume: {...}, view: "catalog",
@@ -377,13 +381,34 @@
 						return response || {};
 					});
 				},
+				// blocks.js and video.js both want a URL STRING here. get_media_url
+				// returns {url, embed_url, reason, poster, duration_seconds, ...}, so
+				// this has to unwrap it — handing the object straight back set
+				// img.src to "[object Object]". It also sent `lesson_key`, which is
+				// not a parameter, and omitted `attempt`, which is required.
 				mediaUrl: function (block) {
 					return call("mediaUrl", {
-						lesson_key: state.lessonKey,
+						attempt: state.attempt,
 						block_key: block.block_key,
-					}).catch(function () {
-						return "";
-					});
+					})
+						.then(function (media) {
+							if (!media) return "";
+							if (typeof media === "string") return media;
+							// `reason` is the server explaining why there is no URL —
+							// an unverified duration, a retired asset. Worth saying out
+							// loud rather than rendering an empty block.
+							if (!media.url && !media.embed_url && media.reason) {
+								console.warn("training: no media for " + block.block_key + " — " + media.reason);
+							}
+							return media.url || media.embed_url || "";
+						})
+						.catch(function (err) {
+							// Swallowed so one dead asset cannot take the lesson down,
+							// but never silently: a blank video block with nothing in
+							// the console is undebuggable.
+							console.error("training: media lookup failed for " + block.block_key, err);
+							return "";
+						});
 				},
 				requestGateRefresh: renderBottomBar,
 				onTeardown: function (fn) {
@@ -487,7 +512,7 @@
 			}
 
 			var body = el("div", "tr-card-body");
-			body.appendChild(el("h2", "tr-card-title", course.title || course.course_title || course.course));
+			body.appendChild(el("h2", "tr-card-title", course.title || course.course));
 
 			var chips = el("div", "tr-card-chips");
 			chips.appendChild(chip(course.weight === "Required" ? t("Required") : t("Optional"),
@@ -524,7 +549,10 @@
 						: t("Start");
 			action.appendChild(
 				button(verb, "tr-button tr-button-primary", function () {
-					openCourse(course.course || course.name);
+					// `course`, not `name` — the card's own identifier field. The
+					// `|| course.name` fallback was dead and read as though the
+					// server might send either.
+					openCourse(course.course);
 				})
 			);
 			body.appendChild(action);
@@ -563,29 +591,79 @@
 				});
 		}
 
+		// Two calls, not one, because that is the API that exists.
+		//
+		// This used to be a single `getLesson({course, lesson_key})` that was
+		// expected to open the course, mint an attempt and return the lesson all at
+		// once. No such endpoint was ever written. The real runtime keeps the attempt
+		// explicit: `get_course` describes the course and hands back the learner's
+		// open attempt if they have one, `start_attempt` mints one if they do not,
+		// and every call after that carries `attempt`. The old shape 500'd on the
+		// first click of any course, because `attempt` is a required argument and it
+		// was sending `course` instead.
 		function load(courseName, lessonKey) {
 			setBusy(true);
-			return call("getLesson", { course: courseName, lesson_key: lessonKey || null })
+			return call("getCourse", { course: courseName })
 				.then(function (payload) {
 					payload = payload || {};
-					state.attempt = payload.attempt || state.attempt;
 					state.course = payload.course || state.course;
-					state.courseName = (payload.course && payload.course.name) || courseName;
-					state.outline = payload.outline || [];
-					state.progress = payload.progress || { lessons: {} };
-					state.resume = payload.resume || state.resume;
-					state.status = payload.status || state.status;
-					if (payload.lesson) {
-						state.lesson = payload.lesson;
-						state.lessonKey = payload.lesson.lesson_key;
+					state.courseName = (payload.course && payload.course.course) || courseName;
+					state.outline = payload.toc || [];
+					state.chapters = payload.chapters || [];
+					state.gates = payload.gates || {};
+					state.assignment = payload.assignment || null;
+					state.version = payload.version || null;
+					return payload.attempt || null;
+				})
+				.then(function (attempt) {
+					// An attempt is only started when the learner is actually going
+					// into a lesson. Opening a course to look at its outline must not
+					// mint one — that would mark the assignment In Progress for
+					// somebody who only glanced at it.
+					if (attempt) return attempt;
+					if (!lessonKey && !state.lessonKey) return null;
+					return call("startAttempt", { course: courseName });
+				})
+				.then(function (attempt) {
+					adoptAttempt(attempt);
+					var wanted = lessonKey || state.lessonKey;
+					if (!state.attempt || !wanted) {
+						setBusy(false);
+						return {};
 					}
-					setBusy(false);
-					return payload;
+					return call("getLesson", { attempt: state.attempt, lesson_key: wanted })
+						.then(function (payload) {
+							payload = payload || {};
+							adoptAttempt(payload.attempt);
+							state.progress = payload.progress || { lessons: {} };
+							state.nextCheckpoints = payload.next_checkpoints || {};
+							if (payload.lesson) {
+								state.lesson = payload.lesson;
+								state.lessonKey = payload.lesson.lesson_key || wanted;
+							}
+							setBusy(false);
+							return payload;
+						});
 				})
 				.catch(function (err) {
 					setBusy(false);
 					throw err;
 				});
+		}
+
+		// `attempt` arrives either as the _attempt_state dict or, from get_lesson, as
+		// the bare name. Normalise once so nothing downstream has to care which.
+		function adoptAttempt(attempt) {
+			if (!attempt) return;
+			if (typeof attempt === "string") {
+				state.attempt = attempt;
+				return;
+			}
+			state.attempt = attempt.attempt || state.attempt;
+			if (attempt.status) state.status = attempt.status;
+			if (attempt.next_lesson_key && !state.lessonKey) {
+				state.lessonKey = attempt.next_lesson_key;
+			}
 		}
 
 		function renderCourse() {
@@ -772,10 +850,57 @@
 			foot.appendChild(actions);
 		}
 
+		// The course-level counterpart of finishLesson. Separated because the two
+		// refuse for different reasons: a lesson refuses on its own gates, a course
+		// refuses because some OTHER lesson is unfinished, and telling a learner
+		// "this lesson is not finished" when it is would send them looking in the
+		// wrong place.
+		function finishCourse() {
+			setBusy(true);
+			call("finishAttempt", { attempt: state.attempt })
+				.then(function (result) {
+					setBusy(false);
+					result = result || {};
+					if (result.status) state.status = result.status;
+
+					// Not thrown, deliberately: the server reports what is left
+					// rather than erroring, so the learner can be sent back to it.
+					var outstanding = result.outstanding || [];
+					if (!result.passed) {
+						state.outstanding = outstanding;
+						go("course");
+						if (outstanding.length) {
+							showRefusal(
+								outstanding.map(function (row) {
+									var why = (row.reasons || []).join(" ");
+									return row.title ? row.title + ": " + why : why;
+								})
+							);
+						}
+						return;
+					}
+
+					state.completion = result.completion || null;
+					state.result = {
+						passed: true,
+						score: result.score,
+						completion: result.completion,
+					};
+					// A course that wants hands-on verification is passed but not
+					// finished — the sign-off view says who has to watch them.
+					go(state.status === "Awaiting Sign-off" ? "signoff" : "results");
+				})
+				.catch(function (err) {
+					setBusy(false);
+					clear(foot);
+					fail(foot, err);
+				});
+		}
+
 		function finishLesson() {
 			setBusy(true);
 			flush();
-			call("completeLesson", { lesson_key: state.lessonKey })
+			call("completeLesson", { attempt: state.attempt, lesson_key: state.lessonKey })
 				.then(function (result) {
 					setBusy(false);
 					result = result || {};
@@ -783,16 +908,19 @@
 						showRefusal(result.reasons || [t("This lesson is not finished yet.")]);
 						return;
 					}
-					if (result.status) state.status = result.status;
-					if (result.status === "Awaiting Sign-off") {
-						go("signoff");
-						return;
-					}
 					if (result.next_lesson_key) {
 						openLesson(result.next_lesson_key);
 						return;
 					}
-					openCourse(state.courseName);
+					// Last lesson done, so the COURSE has to be finished — and
+					// nothing ever did this. `finish_attempt` is what checks every
+					// gate across the whole course, writes the Training Completion,
+					// issues the certificate and closes the assignment. Without it a
+					// learner could complete every lesson and simply be returned to
+					// the course page, with no record that they had passed anything.
+					// `finishAttempt` was mapped in the transport from the first day
+					// and called from nowhere.
+					finishCourse();
 				})
 				.catch(function (err) {
 					setBusy(false);
@@ -835,7 +963,7 @@
 			pending.setAttribute("role", "status");
 			main.appendChild(pending);
 
-			call("startQuiz", { lesson_key: state.lessonKey })
+			call("startQuiz", { attempt: state.attempt, lesson_key: state.lessonKey })
 				.then(function (payload) {
 					clear(main);
 					state.quiz = payload || {};
@@ -858,9 +986,12 @@
 							teardowns.push(fn);
 						},
 						submit: function (answers) {
+							// No `run`: submit_quiz takes (attempt, lesson_key,
+							// answers) and derives the run itself. A client-supplied
+							// run number was never a parameter and was dropped.
 							return call("submitQuiz", {
+								attempt: state.attempt,
 								lesson_key: state.lessonKey,
-								run: state.quiz.run,
 								answers: answers,
 							});
 						},

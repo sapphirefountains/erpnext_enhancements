@@ -34,7 +34,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "erpnext_enhancements"
 RUNTIME = APP / "api/training.py"
-PLAYER = APP / "public/js/training/player.js"
+JS_DIR = APP / "public/js/training"
+PLAYER = JS_DIR / "player.js"
 
 # Keys the page's own bootstrap adds on the client side — options passed by
 # www/training.html or defaulted by the player, not fields the server sends.
@@ -53,6 +54,27 @@ def _player_code():
     return "\n".join(
         line for line in src.splitlines() if not line.strip().startswith("//")
     )
+
+
+def _js_body(code, declaration):
+    """The full body of a JS function, by brace matching.
+
+    Not "everything up to the next `function `" — which is what the first version
+    did, and it is wrong the moment a function contains a callback. `finishLesson`
+    opens with `.then(function (result) {`, so that slice ended four lines in and
+    an assertion about the rest of the body failed against perfectly correct code.
+    """
+    start = code.index(declaration)
+    open_brace = code.index("{", start)
+    depth = 0
+    for end in range(open_brace, len(code)):
+        if code[end] == "{":
+            depth += 1
+        elif code[end] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[start : end + 1]
+    return code[start:]
 
 
 def _returned_keys(function_name):
@@ -132,13 +154,15 @@ class TestCourseCardFields(unittest.TestCase):
 
     # Fields the card is known to use, mapped to nothing — we assert every
     # `course.<x>` read resolves against the server's card shape.
-    ALLOWED_EXTRA = {"course_title"}  # tolerated fallback in the title expression
+    # Nothing. Every dead fallback found here was removed rather than
+    # tolerated: `course_title`, `name` and `estimated_minutes` were all
+    # unreachable second terms that made the source claim the server might
+    # send a field it never sends.
+    ALLOWED_EXTRA = set()
 
     def _card_reads(self):
-        code = _player_code()
-        start = code.index("function courseCard(")
-        end = code.index("function ", start + 10)
-        return set(re.findall(r"\bcourse\.([a-z_]+)", code[start:end]))
+        body = _js_body(_player_code(), "function courseCard(")
+        return set(re.findall(r"\bcourse\.([a-z_]+)", body))
 
     def test_the_extractor_finds_reads(self):
         self.assertGreater(len(self._card_reads()), 5)
@@ -186,6 +210,199 @@ class TestTransportNamesExist(unittest.TestCase):
         self.assertEqual(
             missing, [], f"the transport maps {missing}, which api/training.py does not expose"
         )
+
+
+def _whitelisted_signatures():
+    """``{endpoint: (all_params, required_params)}`` for every whitelisted method.
+
+    Read from the source because there is no bench in CI. Frappe drops kwargs a
+    function does not declare, so an *extra* key is only misleading — but a
+    *missing* required one is a 500 before the endpoint body ever runs.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        whitelisted = any(
+            getattr(getattr(dec, "func", dec), "attr", "") == "whitelist"
+            for dec in node.decorator_list
+        )
+        if not whitelisted:
+            continue
+        params = [a.arg for a in node.args.args]
+        n_default = len(node.args.defaults)
+        required = params[: len(params) - n_default] if n_default else list(params)
+        out[node.name] = (set(params), set(required))
+    return out
+
+
+def _transport_map():
+    """``{transportName: endpoint}`` from www/training.html."""
+    template = (APP / "www/training.html").read_text(encoding="utf-8")
+    block = template[template.index("var METHOD = {") : template.index("var PREFIX")]
+    return dict(re.findall(r'(\w+):\s*"(\w+)"', block))
+
+
+def _call_payloads():
+    """Every transport call site and the object-literal keys it passes.
+
+    Matches both shapes the runtime uses: ``call("name", { ... })`` inside
+    player.js, and ``transport.name({ ... })`` inside video.js and quiz.js.
+    """
+    sites = []
+    for path in sorted(JS_DIR.glob("*.js")):
+        src = path.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        code = "\n".join(
+            line for line in src.splitlines() if not line.strip().startswith("//")
+        )
+        for name in _transport_map():
+            pattern = rf'transport\.{name}\(\s*\{{|call\("{name}",\s*\{{'
+            for match in re.finditer(pattern, code):
+                start = code.index("{", match.start())
+                depth, end = 0, start
+                for end in range(start, len(code)):
+                    if code[end] == "{":
+                        depth += 1
+                    elif code[end] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                keys = set(re.findall(r"[{,]\s*([A-Za-z_]\w*)\s*:", code[start : end + 1]))
+                sites.append((path.name, name, keys))
+    return sites
+
+
+class TestTransportArguments(unittest.TestCase):
+    """Every transport call must satisfy its endpoint's signature.
+
+    The bug this exists for: the player called
+    ``getLesson({course, lesson_key})`` while the endpoint is
+    ``get_lesson(attempt, lesson_key)``. Frappe filtered out the unknown
+    ``course``, found no ``attempt``, and raised ``TypeError: get_lesson() missing
+    1 required positional argument`` — a 500 on the first click of any course.
+
+    The player's own header comment documented the API it was written against,
+    and that API was never built: it assumed the server tracked the current
+    attempt in session, so the client only ever sent ``lesson_key``. Four calls
+    were wrong the same way, plus ``open_checkpoint`` missing its required ``at``.
+    """
+
+    def test_the_scan_finds_call_sites(self):
+        """Both call shapes, in every file that uses one.
+
+        The first version of this only required "more than five sites and a
+        getLesson", and passed while the scanner was silently blind to half the
+        runtime: a stray control character had eaten the `transport.` branch of
+        the pattern, so only player.js's `call("name", {...})` sites were seen and
+        video.js was never scanned at all. Mutation testing caught it; this guard
+        did not. Naming the files is what makes the guard actually guard.
+        """
+        sites = _call_payloads()
+        self.assertGreater(len(sites), 8, "the call-site scanner found almost nothing")
+        seen = {filename for filename, _, _ in sites}
+        for expected in ("player.js", "video.js"):
+            self.assertIn(expected, seen, f"no transport calls found in {expected}")
+        names = {name for _, name, _ in sites}
+        self.assertIn("getLesson", names)  # call("name", {...}) shape
+        self.assertIn("openCheckpoint", names)  # transport.name({...}) shape
+
+    def test_the_signature_scan_works(self):
+        sigs = _whitelisted_signatures()
+        self.assertIn("get_lesson", sigs)
+        self.assertIn("attempt", sigs["get_lesson"][1])
+
+    def test_no_call_omits_a_required_argument(self):
+        sigs = _whitelisted_signatures()
+        methods = _transport_map()
+        problems = []
+        for filename, name, keys in _call_payloads():
+            endpoint = methods.get(name)
+            if endpoint not in sigs:
+                continue
+            missing = sorted(sigs[endpoint][1] - keys)
+            if missing:
+                problems.append(f"{filename}: {name} -> {endpoint}() missing {missing}")
+        self.assertEqual(
+            problems,
+            [],
+            "transport calls that will 500 before the endpoint runs:\n  "
+            + "\n  ".join(problems),
+        )
+
+    def test_no_call_passes_an_argument_the_endpoint_does_not_declare(self):
+        """Not fatal — Frappe drops unknown kwargs — but every one is a sentence
+        of the source claiming something the server does not do. Three were
+        found this way, including a ``lesson_key`` on ``get_media_url``."""
+        sigs = _whitelisted_signatures()
+        methods = _transport_map()
+        problems = []
+        for filename, name, keys in _call_payloads():
+            endpoint = methods.get(name)
+            if endpoint not in sigs:
+                continue
+            extra = sorted(keys - sigs[endpoint][0])
+            if extra:
+                problems.append(f"{filename}: {name} -> {endpoint}() has no {extra}")
+        self.assertEqual(problems, [], "\n  ".join(problems))
+
+    def test_every_mapped_method_is_actually_called(self):
+        """A mapped method nobody calls is a feature that silently does not exist.
+
+        ``finishAttempt`` was mapped from the first day and called from nowhere —
+        so a learner could complete every lesson in a course and it would simply
+        never finish. No Training Completion, no certificate, and the assignment
+        left open. Nothing errored; the player just returned them to the course
+        page looking done.
+        """
+        called = set()
+        for path in sorted(JS_DIR.glob("*.js")):
+            src = path.read_text(encoding="utf-8")
+            src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+            code = "\n".join(
+                line for line in src.splitlines() if not line.strip().startswith("//")
+            )
+            for name in _transport_map():
+                if re.search(rf'\btransport\.{name}\b|call\("{name}"', code):
+                    called.add(name)
+        # get_my_transcript is a built endpoint with no view in front of it yet.
+        # Listed rather than tolerated silently, so it stays visible as missing.
+        unbuilt = {"getTranscript"}
+        never = sorted(set(_transport_map()) - called - unbuilt)
+        self.assertEqual(
+            never, [], f"mapped but never called from anywhere: {never}"
+        )
+
+    def test_the_course_is_actually_finished(self):
+        """Named separately because of what it costs: without this there is no
+        completion record and no certificate, however much the learner did.
+
+        Asserts the **wiring**, not just that a `finishCourse` function exists.
+        Checking only for the call left a mutation green that unhooked it from
+        `finishLesson` — the function sat there, complete and unreachable, which
+        is exactly the original bug in a slightly different costume.
+        """
+        code = _player_code()
+        self.assertIn('call("finishAttempt"', code)
+        self.assertIn("function finishCourse()", code, "finishCourse is not defined")
+        self.assertIn(
+            "finishCourse()",
+            _js_body(code, "function finishLesson()"),
+            "finishLesson never reaches finishCourse, so the last lesson ends nowhere",
+        )
+
+    def test_the_attempt_is_threaded_through(self):
+        """Every runtime endpoint except the two entry points is scoped to an
+        attempt. That is the session model, and the player has to carry it."""
+        sigs = _whitelisted_signatures()
+        methods = _transport_map()
+        for filename, name, keys in _call_payloads():
+            endpoint = methods.get(name)
+            if endpoint in sigs and "attempt" in sigs[endpoint][1]:
+                self.assertIn(
+                    "attempt", keys, f"{filename}: {name} does not send an attempt"
+                )
 
 
 if __name__ == "__main__":

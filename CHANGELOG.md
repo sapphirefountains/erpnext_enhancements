@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.224.0] - 2026-08-03
+
+### Fixed
+
+Opening a course 500'd: `get_lesson() missing 1 required positional argument: 'attempt'`.
+
+**`player.js` was written against an API that was never built.** Its own header comment
+documented the contract it assumed — `getLesson({course, lesson_key})`,
+`startQuiz({lesson_key})`, `completeLesson({lesson_key})` — a design where the server tracks
+the learner's current attempt in session. The real runtime keeps the attempt explicit and
+requires it on every call. Every one of those was wrong the same way.
+
+- **The course flow now matches the API that exists.** `get_course` describes the course and
+  returns the learner's open attempt if they have one; `start_attempt` mints one if not, and
+  only when they actually enter a lesson — opening a course to read its outline must not mark
+  the assignment In Progress for somebody who only glanced at it. Every later call carries the
+  attempt.
+
+- **Nothing ever called `finish_attempt`.** It was mapped in the transport on day one and
+  called from nowhere, so completing the last lesson simply returned the learner to the course
+  page. **No Training Completion, no certificate, and the assignment left open** — after doing
+  all of the work. Wired to the end of the last lesson, with the sign-off view when a course
+  demands hands-on verification.
+
+- `open_checkpoint` was called without its required `at`, so **every in-video checkpoint
+  raised a TypeError** before reaching the endpoint. It is the playhead position.
+
+- `get_media_url` returns `{url, embed_url, reason, poster, duration_seconds, …}`; `blocks.js`
+  expects a URL **string**. The adapter now unwraps it — previously `img.src` would have been
+  set to `[object Object]` — and a `reason` from the server reaches the console instead of
+  vanishing into a bare `.catch` that returned `""`.
+
+- Four dead reads removed rather than tolerated: `course.name`, `course.course_title`,
+  `course.estimated_minutes`, and `lesson_key`/`block_key` passed to endpoints that declare
+  neither. All were unreachable second terms or dropped kwargs, and every one made the source
+  claim the server might send something it never sends.
+
+### Added
+
+- The wire suite now checks **transport arguments**, not just names: every call site is parsed
+  and compared against the endpoint's real signature, in both directions. It also asserts every
+  mapped transport method is called from somewhere — which is what surfaced `finishAttempt`.
+
+### Notes
+
+- **This is the fifth wire mismatch in this module**, and the fourth found by a person using
+  the product rather than by a test. The Python has been correct at every one of them.
+
+- Mutation-tested throughout, and the mutations earned their keep three times over. They caught
+  a **stray control character in the test's own regex** that had silently blinded it to
+  `video.js` entirely — the "does the scan work" guard passed anyway, because it only asked for
+  "more than five call sites". They caught an assertion that verified `finishCourse` existed
+  while a mutation had unhooked it from `finishLesson`, leaving it complete and unreachable.
+  And replacing a naive `index("function ", …)` slice with real brace matching immediately
+  exposed a dead field read the old slice had been hiding.
+
 ## [1.223.0] - 2026-08-03
 
 ### Fixed
