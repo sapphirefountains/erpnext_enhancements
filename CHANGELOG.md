@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.239.1] - 2026-08-03
 
+### Added
+
+- **The CPA's Utah sales-tax guidance is on the record** (WI-036 / OD-2), reproduced
+  verbatim in `docs/migration/wi036-utah-tax-guidance.md`. OD-2 named the CPA's written
+  confirmation as the go-live sign-off gate, so what he actually said belongs in the repo
+  rather than in an inbox. **Docs only** — nothing configured, and production still has
+  0 Tax Rules and 0 Tax Categories.
+
+  <what it settles: the default flips to **taxable unless specifically exempt**, and
+  exemption turns out to be a property of the *customer* — resale, exempt organization,
+  contractual — each evidenced by a certificate. That maps onto native Tax Category on
+  Customer driving a Tax Rule: set once, survives staff turnover. He also asked for a
+  QuickBooks-style per-invoice checkbox.>
+
+  <what it does NOT settle, and it is the big one: the guidance never mentions
+  **real-property improvement**, which is the premise the whole chart was designed
+  around. `COA_DESIGN.md` §6 treats Build as improvement to real property — Sapphire
+  consumes the materials, pays tax on purchase, does not charge the customer — and from
+  that derives `2136 Use Tax Payable` and `60920 Sales & Use Tax Expense`. Read literally
+  the guidance points the other way: a Build customer is an end-user, not a reseller and
+  not exempt, so Build would charge tax. Those are opposite tax positions, and the plan is
+  explicit that neither it nor anyone executing it is the tax authority. Recorded as
+  blocking rather than resolved by assumption.>
+
+  Also recorded: an **exemption-certificate gap**. The guidance recommends gathering a
+  certificate twice, and nothing in the plan stores one — a claimed exemption with no
+  certificate on file is an undefended position, and certificates expire with nothing
+  today to notice. WI-036 covers rates and templates and is silent on evidence.
+
 ### Fixed
 
 **Both training tools were gated as writes, so with AI write gating on they
