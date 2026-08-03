@@ -17,6 +17,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, require_doc_read, strip_meta
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 # Document Intake.status values, in workflow order.
 _STATUSES = [
@@ -89,6 +90,7 @@ class DocumentIntakeQueue(BaseTool):
 		self.category = "Accounting"
 		self.source_app = "erpnext_enhancements"
 		self.requires_permission = "Document Intake"
+		self.annotations = annotations_for(self.name)
 		self.inputSchema = {
 			"type": "object",
 			"properties": {

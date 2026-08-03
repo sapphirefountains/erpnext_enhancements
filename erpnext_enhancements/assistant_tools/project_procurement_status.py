@@ -10,6 +10,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 
 class ProjectProcurementStatus(BaseTool):
@@ -38,6 +39,7 @@ class ProjectProcurementStatus(BaseTool):
         self.category = "Project Management"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Purchase Order"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

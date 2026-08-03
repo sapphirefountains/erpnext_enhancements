@@ -17,6 +17,8 @@ import frappe
 from frappe import _
 from frappe_assistant_core.core.base_tool import BaseTool
 
+from erpnext_enhancements.assistant_tools._gate import annotations_for
+
 
 class CheckAiPendingAction(BaseTool):
     def __init__(self):
@@ -35,6 +37,7 @@ class CheckAiPendingAction(BaseTool):
         self.category = "AI Governance"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "AI Pending Action"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

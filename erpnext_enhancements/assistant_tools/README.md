@@ -83,17 +83,22 @@ For the same reason, do **not** add `frappe_assistant_core` to
   `log_time`, dashboard `update_*`, …) until a follow-on batch. The write
   *gate* itself (`_gate.py`/`gating_api.py`) writes AI Pending Action / AI
   Action Log rows but never business documents.
-- **Mutation/risk annotations (v1.71.0).** Each *mutating* tool sets
-  `self.annotations = annotations_for(self.name)` (from `_gate.py`) in its
-  `__init__`. `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
+- **Mutation/risk annotations (v1.71.0; extended to read tools in v1.239.1).**
+  **Every** tool sets `self.annotations = annotations_for(self.name)` (from
+  `_gate.py`) in its `__init__` — mutating and read-only alike. Until v1.239.1
+  only the mutating tools did, which left fourteen read tools advertising
+  nothing and the client guessing.
+  `annotations_for` derives MCP **ToolAnnotations** (`readOnlyHint`
   / `destructiveHint`, plus an `x-ee-mutation` / `x-ee-risk` band) from the
   gate's classification sets, and FAC forwards a tool's `annotations` verbatim
   in `tools/list`. This lets an MCP **client** (e.g. Triton) read a tool's
   mutation/risk from the catalog instead of guessing from its verb — closing a
   safety gap where the oddly-named device tools (`remote_wipe_device`,
   `run_device_script`, …) were guessed read-only and skipped the client's
-  confirmation step. `_gate.py` stays the single source of truth; a contract
-  test enforces that every `APP_MUTATING` tool advertises the metadata.
+  confirmation step. `_gate.py` stays the single source of truth; contract tests
+  enforce that every registered tool is classified there and that both the
+  mutating and the read-only half advertise the matching metadata (see
+  "Classification is mandatory" below).
 - Permission model: list queries go through `frappe.get_list` (role + user
   permissions enforced); anything that reaches raw SQL or `frappe.get_all`
   inside a reused function is gated first with an explicit
@@ -106,8 +111,13 @@ For the same reason, do **not** add `frappe_assistant_core` to
 
 ## Tools
 
+Listed in `hooks.py` order. Every tool here must also appear in exactly one
+`_gate.py` classification set — see "Classification is mandatory" below.
+
 | Tool | Area | Wraps |
 |---|---|---|
+| `training_compliance_status` | Training | perm-enforced Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone |
+| `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names |
 | `maintenance_day_board` | Maintenance | `api/maintenance_board.py::get_day_board_data` |
 | `maintenance_contract_status` | Maintenance | fresh perm-enforced queries on Sapphire Maintenance Contract |
 | `maintenance_visit_history` | Maintenance | perm-enforced queries + `_chemistry_trends` |
@@ -122,6 +132,31 @@ For the same reason, do **not** add `frappe_assistant_core` to
 | `quickbooks_sync_status` | Accounting | QBO connection state + failed-run count + recent QuickBooks Sync Log rows; pass `sync_log` for one run's summary |
 | `document_intake_queue` | Accounting | Accounting Document Intake review queue — counts by status, needs-attention backlog, one doc's lines + matches (companion to Triton's `sfo_extract_document`) |
 | `closed_won_handoff_status` | Sales | Closed-Won Opportunities with no project yet (hand-off backlog, oldest first); pass `opportunity` for its hand-off step state |
+| `water_calc` | Water Engineering | stateless `water_engineering.engine` dispatch — one hydraulic calc returned with its formula, steps, citations, warnings and A/B/C options |
+| `water_design_status` | Water Engineering | a Water Feature Design's rollups, completion %, `next_inputs_needed`, typed issues, readiness gates and calc audit trail; lists designs when `design` is omitted |
+| `save_water_design` | Water Engineering | **write (gated)** — creates/updates a Water Feature Design (child tables replaced wholesale), then recomputes |
+| `control_panel_status` | Water Engineering | a Control Panel Design's power/nameplate, UI screens, I/O points, interlock checklist and lighting/solenoid rollups |
+
+## Classification is mandatory
+
+Every tool in the hook must appear in exactly one `_gate.py` set —
+`EXPLICIT_READONLY` or `APP_MUTATING` — and must set
+`self.annotations = annotations_for(self.name)` in `__init__`. Both are enforced
+by `tests/test_assistant_tools_schema.py`
+(`test_every_registered_tool_is_classified`,
+`test_readonly_tools_advertise_readonly_annotation`,
+`test_mutating_tools_advertise_mutation_annotations`).
+
+Neither is cosmetic. `is_mutating()` consults the classification sets first and
+then falls back to the tool's FAC category — and FAC seeds every external tool
+as `read_write`, which matches neither its write branch nor its read branch, so
+control reaches the fail-closed `return True`. **An unclassified read tool is
+gated as a write**: with `ai_write_gating_enabled` on it records an AI Pending
+Action and returns the anti-fabrication envelope instead of answering. That is
+what happened to both training tools between v1.216.0 and v1.239.1. The
+annotations are the other half: FAC forwards them verbatim in `tools/list`, and
+without them an MCP client (Triton) guesses mutation from the tool's verb —
+which is how the device tools were mis-read as read-only before v1.71.0.
 
 ## Deployment notes
 
@@ -132,4 +167,6 @@ For the same reason, do **not** add `frappe_assistant_core` to
   are skipped entirely.
 - On first migrate FAC creates one `FAC Tool Configuration` row per tool
   (enabled, category `read_write`); optionally flip them to `read_only` in the
-  FAC admin UI — they are all read-only in implementation regardless.
+  FAC admin UI. Do **not** rely on that flip for gating — `read_write` is the
+  category that makes `is_mutating()` fail closed, so classification in
+  `_gate.py` is what actually decides, and it is enforced by the contract tests.

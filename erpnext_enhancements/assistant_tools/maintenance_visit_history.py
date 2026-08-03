@@ -10,6 +10,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, project_title_map, strip_meta
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _LIST_FIELDS = [
     "name", "project", "serial_no", "visit_label", "technician",
@@ -46,6 +47,7 @@ class MaintenanceVisitHistory(BaseTool):
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Sapphire Maintenance Record"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

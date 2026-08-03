@@ -25,6 +25,7 @@ from frappe.utils import date_diff, nowdate
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 # Statuses that still represent work outstanding, mirroring
 # training/doctype/training_assignment/training_assignment.py.
@@ -48,6 +49,7 @@ class TrainingComplianceStatus(BaseTool):
         self.category = "Training"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Training Assignment"
+        self.annotations = annotations_for(self.name)
         self.default_config = {"max_rows": 500}
         self.inputSchema = {
             "type": "object",
