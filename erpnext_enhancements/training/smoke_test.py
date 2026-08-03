@@ -235,6 +235,28 @@ def run(course=COURSE):
     def signoff_gate_holds():
         if not frappe.db.get_value("Training Course", course, "require_supervisor_signoff"):
             return "course does not require sign-off; skipped"
+
+        # A sign-off is matched on the COURSE, not the version — somebody watched
+        # draining a basin last month has been watched draining a basin, and a
+        # reworded paragraph should send them back through the material rather
+        # than back in front of a supervisor. That is deliberate, and it makes
+        # this particular step unrepeatable: the previous run's sign-off is still
+        # valid, so the gate correctly opens and this assertion would report a
+        # security regression that has not happened.
+        #
+        # Saying so is the whole point. A harness that cries wolf on every re-run
+        # is worse than one that skips a step, because the next person either
+        # stops trusting it or "fixes" a gate that was working.
+        prior = frappe.db.exists(
+            "Training Signoff",
+            {"course": course, "user": state["user"], "outcome": "Competent", "docstatus": 1},
+        )
+        if prior:
+            return (
+                f"skipped — {prior} already signs this learner off for this course, so the "
+                f"gate legitimately opens. Cancel it to exercise this step again."
+            )
+
         try:
             training.finish_attempt(state["attempt"])
         except Exception as exc:
