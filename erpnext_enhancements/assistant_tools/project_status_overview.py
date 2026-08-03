@@ -11,6 +11,7 @@ from frappe import _
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _PROJECT_FIELDS = [
     "name", "project_name", "status", "is_active", "project_type",
@@ -41,6 +42,7 @@ class ProjectStatusOverview(BaseTool):
         self.category = "Project Management"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Project"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

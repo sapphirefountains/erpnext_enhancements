@@ -24,6 +24,8 @@ import frappe
 from frappe.utils import date_diff, nowdate
 from frappe_assistant_core.core.base_tool import BaseTool
 
+from erpnext_enhancements.assistant_tools._gate import annotations_for
+
 OPEN_STATUSES = ("Not Started", "In Progress", "Awaiting Sign-off", "Overdue")
 
 
@@ -44,6 +46,7 @@ class TrainingLearnerRecord(BaseTool):
         self.category = "Training"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Training Assignment"
+        self.annotations = annotations_for(self.name)
         self.default_config = {}
         self.inputSchema = {
             "type": "object",

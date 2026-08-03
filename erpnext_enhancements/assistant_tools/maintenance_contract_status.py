@@ -11,6 +11,7 @@ from frappe.utils import add_days, date_diff, nowdate
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, project_title_map
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 
 class MaintenanceContractStatus(BaseTool):
@@ -30,6 +31,7 @@ class MaintenanceContractStatus(BaseTool):
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Sapphire Maintenance Contract"
+        self.annotations = annotations_for(self.name)
         self.default_config = {"max_contracts": 200}
         self.inputSchema = {
             "type": "object",

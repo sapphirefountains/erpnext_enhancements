@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.239.1] - 2026-08-03
+
+### Fixed
+
+**Both training tools were gated as writes, so with AI write gating on they
+returned a confirmation card instead of an answer.** `training_compliance_status`
+and `training_learner_record` shipped in v1.216.0 without being added to either
+classification set in `assistant_tools/_gate.py`.
+
+That is not a missing label, it is a functional failure. `is_mutating()` checks
+`EXPLICIT_MUTATING`/`APP_MUTATING`, then `EXPLICIT_READONLY`, then the tool's FAC
+category — and FAC seeds every external tool as category `read_write`, which
+matches neither the write branch nor the read branch. Control reaches the
+fail-closed `return True`. The fallback is correct in principle (a wrongly gated
+read is friction, a wrongly executed write is damage), but it means an
+unclassified *read* tool records an AI Pending Action and hands the model the
+anti-fabrication envelope — "this has NOT run, a human must confirm it in the
+desk" — for a question that only ever read. Asking whether the team was current
+on its training produced a confirmation prompt nobody could meaningfully approve.
+
+Both names are now in `EXPLICIT_READONLY`.
+
+**Twelve more read-only tools advertised no MCP annotations at all.** Only the
+v1.71.0 device batch and the water tools set `self.annotations`; every read tool
+older than that shipped without them, so `tools/list` said nothing about their
+mutation state and an MCP client (Triton) fell back to guessing from the tool's
+verb. The guess happened to be right for all twelve — but guessing that happens
+to be right is not a contract, and it is the same mechanism that mis-read
+`remote_wipe_device` as read-only before v1.71.0. All fourteen read-only tools
+now call `annotations_for(self.name)`.
+
+### Added
+
+- Two contract tests in `tests/test_assistant_tools_schema.py` that make this
+  class of defect unrepeatable: `test_every_registered_tool_is_classified`
+  (every hook-registered tool lands in exactly one `_gate.py` set) and
+  `test_readonly_tools_advertise_readonly_annotation` (the read-only mirror of
+  the existing mutating-tool assertion). Both were confirmed to fail against the
+  pre-fix code before being kept.
+- A "Classification is mandatory" section in `assistant_tools/README.md`
+  explaining the fail-closed path, plus the six tool rows the table had been
+  missing since v1.90.0 (`training_compliance_status`, `training_learner_record`,
+  `water_calc`, `water_design_status`, `save_water_design`,
+  `control_panel_status`).
 ## [1.239.0] - 2026-08-03
 
 ### Added

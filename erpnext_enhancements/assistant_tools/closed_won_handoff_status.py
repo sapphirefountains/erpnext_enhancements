@@ -19,6 +19,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _WON_STATUS = "Closed Won"
 
@@ -44,6 +45,7 @@ class ClosedWonHandoffStatus(BaseTool):
 		self.category = "Sales"
 		self.source_app = "erpnext_enhancements"
 		self.requires_permission = "Opportunity"
+		self.annotations = annotations_for(self.name)
 		self.inputSchema = {
 			"type": "object",
 			"properties": {

@@ -70,6 +70,13 @@ EXPLICIT_READONLY = {
     "water_calc",
     "water_design_status",
     "control_panel_status",
+    # training: both read-only. Omitting them here was not merely a missing
+    # annotation -- is_mutating() would fall past every branch to the fail-closed
+    # default, so with ai_write_gating_enabled on, two reads returned a
+    # confirmation card instead of an answer. test_every_registered_tool_is_
+    # classified now makes that unrepeatable.
+    "training_compliance_status",
+    "training_learner_record",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

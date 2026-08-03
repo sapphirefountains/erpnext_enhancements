@@ -9,6 +9,8 @@ from typing import Any
 import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
+from erpnext_enhancements.assistant_tools._gate import annotations_for
+
 
 class MaintenanceDayBoard(BaseTool):
     def __init__(self):
@@ -27,6 +29,7 @@ class MaintenanceDayBoard(BaseTool):
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Sapphire Maintenance Record"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {"type": "object", "properties": {}, "required": []}
 
     def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:

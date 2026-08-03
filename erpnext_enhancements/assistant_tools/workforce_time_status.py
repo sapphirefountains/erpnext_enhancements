@@ -15,6 +15,7 @@ from frappe.utils import add_days, get_datetime, now_datetime, nowdate, time_dif
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import clamp_limit, project_title_map
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 _INTERVAL_FIELDS = [
     "name", "employee", "project", "task", "status", "time_category",
@@ -57,6 +58,7 @@ class WorkforceTimeStatus(BaseTool):
         self.category = "Time Tracking"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Job Interval"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {

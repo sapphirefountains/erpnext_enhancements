@@ -10,6 +10,7 @@ import frappe
 from frappe_assistant_core.core.base_tool import BaseTool
 
 from erpnext_enhancements.assistant_tools._common import require_doc_read
+from erpnext_enhancements.assistant_tools._gate import annotations_for
 
 
 class MaintenanceSiteBriefing(BaseTool):
@@ -31,6 +32,7 @@ class MaintenanceSiteBriefing(BaseTool):
         self.category = "Maintenance Operations"
         self.source_app = "erpnext_enhancements"
         self.requires_permission = "Sapphire Maintenance Record"
+        self.annotations = annotations_for(self.name)
         self.inputSchema = {
             "type": "object",
             "properties": {
