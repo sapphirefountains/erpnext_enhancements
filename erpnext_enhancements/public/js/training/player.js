@@ -437,18 +437,42 @@
 
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
-			var courses = b.courses || (b.catalog && b.catalog.courses) || [];
-			if (!courses.length) {
+
+			// `assigned` and `library`, which is what get_learner_bootstrap actually
+			// returns. This read `b.courses` and `b.catalog.courses` -- neither of
+			// which the server has ever sent -- so the page reported "nothing is
+			// assigned to you" to every learner, always, however much was assigned.
+			// The server separates the two deliberately: assigned work is owed, the
+			// library is optional, and merging them buries a due course among
+			// things nobody has to do.
+			var assigned = b.assigned || [];
+			var library = b.library || [];
+
+			if (!assigned.length && !library.length) {
 				main.appendChild(
 					el("p", "tr-empty", t("Nothing is assigned to you right now, and nothing is overdue."))
 				);
 				return;
 			}
-			var grid = el("div", "tr-cards");
-			courses.forEach(function (course) {
-				grid.appendChild(courseCard(course));
-			});
-			main.appendChild(grid);
+
+			if (assigned.length) {
+				var grid = el("div", "tr-cards");
+				assigned.forEach(function (course) {
+					grid.appendChild(courseCard(course));
+				});
+				main.appendChild(grid);
+			} else {
+				main.appendChild(el("p", "tr-empty", t("Nothing is assigned to you right now.")));
+			}
+
+			if (library.length) {
+				main.appendChild(el("h2", "tr-section-title", t("Available to you")));
+				var shelf = el("div", "tr-cards");
+				library.forEach(function (course) {
+					shelf.appendChild(courseCard(course));
+				});
+				main.appendChild(shelf);
+			}
 		}
 
 		function courseCard(course) {
@@ -470,26 +494,32 @@
 				course.weight === "Required" ? "required" : "optional"));
 			var due = dueChip(course);
 			if (due) chips.appendChild(due);
-			var minutes = course.estimated_minutes || course.minutes;
+			// `minutes`, not `estimated_minutes` — that is the DocType's field name,
+			// not the card's. The fallback made it work while reading as though the
+			// server might send either.
+			var minutes = course.minutes;
 			if (minutes) chips.appendChild(chip(fmt(t("{0} min"), [minutes])));
 			body.appendChild(chips);
 
 			if (course.summary) body.appendChild(el("p", "tr-card-summary", course.summary));
 
-			var progress = pct(course.progress_percent);
+			// percent_complete and assignment_status are the server's names. Reading
+			// `progress_percent` and `status` meant the bar never appeared and the
+			// action always read "Start", even mid-course.
+			var progress = pct(course.percent_complete);
 			if (progress > 0) {
 				body.appendChild(meter(progress, t("Course progress")));
 				body.appendChild(el("p", "tr-card-progress", fmt(t("{0}% done"), [progress])));
 			}
 
 			var action = el("div", "tr-card-actions");
-			if (course.status === "Awaiting Sign-off") {
+			if (course.assignment_status === "Awaiting Sign-off") {
 				action.appendChild(chip(t("Waiting for your supervisor"), "pending"));
 			}
 			var verb =
-				course.status === "Completed"
+				course.assignment_status === "Completed"
 					? t("Review")
-					: progress > 0 || course.status === "In Progress"
+					: progress > 0 || course.assignment_status === "In Progress"
 						? t("Resume")
 						: t("Start");
 			action.appendChild(
