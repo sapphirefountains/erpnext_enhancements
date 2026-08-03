@@ -184,6 +184,18 @@ jobs:
       # a timed transcript rather than letting a model invent timestamps.
       - name: Training AI drafting (strict parsing, review gate, transcript gate)
         run: python -m unittest erpnext_enhancements.tests.test_training_ai -v
+      # Phase 4 seams. The load-bearing one is compliance: it fires on a maintenance
+      # visit or task assignment, by which point a truck is usually already at a
+      # site, so a hard block there means the work happens with NO RECORD AT ALL --
+      # worse than the uncertified assignment it was flagging. The suite asserts
+      # frappe.throw appears nowhere in that module and that an exception inside the
+      # check cannot propagate.
+      - name: Training Phase 4 seam contracts
+        run: python -m unittest erpnext_enhancements.tests.test_training_phase4_contracts -v
+      - name: Training certificates (issuance, snapshot, verify PII, recertification)
+        run: python -m unittest erpnext_enhancements.tests.test_training_certificates -v
+      - name: Training compliance (warn-only, never blocks a save)
+        run: python -m unittest erpnext_enhancements.tests.test_training_compliance -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)

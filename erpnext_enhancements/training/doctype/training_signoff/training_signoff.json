@@ -1,0 +1,201 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "course",
+  "course_version",
+  "attempt",
+  "column_break_head",
+  "user",
+  "employee",
+  "signoff_section",
+  "supervisor",
+  "supervisor_user",
+  "column_break_signoff",
+  "signed_on",
+  "outcome",
+  "evidence_section",
+  "competency_notes",
+  "signature_image",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-SGN-.######",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course",
+   "reqd": 1
+  },
+  {
+   "description": "Which version the learner was signed off against. A material change afterwards is exactly the case where the sign-off has to be done again.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version"
+  },
+  {
+   "description": "The attempt this follows, when there was one. A practical sign-off can stand alone — some things are only ever proved by watching somebody do them.",
+   "fieldname": "attempt",
+   "fieldtype": "Link",
+   "label": "Attempt",
+   "options": "Training Attempt"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The learner. Named `user` to match Training Assignment / Attempt / Completion — training/permissions.py scopes every learner-owned row on a column of this exact name, so anything else silently loses row-level scoping.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Learner",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "signoff_section",
+   "fieldtype": "Section Break",
+   "label": "Sign-off"
+  },
+  {
+   "description": "Who is attesting. Named as an Employee rather than a User because this is a statement made in a role — the person's login may change or go away, the attestation does not.",
+   "fieldname": "supervisor",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Supervisor",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "description": "Derived from the supervisor's Employee record, not typed — this is what the submit-time check compares against the session user.",
+   "fieldname": "supervisor_user",
+   "fieldtype": "Link",
+   "label": "Supervisor User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_signoff",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "signed_on",
+   "fieldtype": "Datetime",
+   "label": "Signed On",
+   "read_only": 1
+  },
+  {
+   "default": "Competent",
+   "description": "Needs More Practice is a real, useful outcome, not a failure to record one — it is how a supervisor says \"come back to me\" without the learner losing their attempt.",
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Outcome",
+   "options": "Competent\nNeeds More Practice",
+   "reqd": 1
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "description": "What was actually observed, against the course's What To Verify. Required when the outcome is Needs More Practice — an unexplained \"not yet\" gives the learner nothing to work on.",
+   "fieldname": "competency_notes",
+   "fieldtype": "Text",
+   "label": "Competency Notes"
+  },
+  {
+   "description": "Optional. A drawn or photographed signature, for the customers who ask for one on a handover pack.",
+   "fieldname": "signature_image",
+   "fieldtype": "Attach Image",
+   "label": "Signature"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Training Signoff",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Signoff",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "course,user,supervisor",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "user",
+ "track_changes": 1
+}

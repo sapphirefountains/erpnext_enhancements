@@ -1,0 +1,182 @@
+{#
+  Certificate viewer and public verification (served at /training_certificate;
+  controller: training_certificate.py — note the underscore, a hyphenated
+  controller is never imported by frappe).
+
+  Three states, chosen by the controller:
+    * "verify"      — ?code=…  the public check. Rendered for GUESTS too, so it
+                      must show initials and dates and nothing else. Everything
+                      it prints comes from certificates.verify_certificate(),
+                      which is where the PII boundary is actually enforced.
+    * "certificate" — ?certificate=TRN-CERT-…  the holder's own document. The
+                      body is the HTML STORED ON THE CERTIFICATE AT ISSUE, never
+                      a fresh render: editing a print format next year must not
+                      change a document somebody already holds.
+    * "list"        — signed in, no arguments. Their certificates.
+
+  Standard website chrome on purpose — this is a document and a form, not an app
+  shell, and the print styles below drop the chrome when it goes to paper.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Certificate{% endblock %}
+
+{% block style %}
+<style>
+	.tc-wrap { max-width: 780px; margin: 0 auto; padding: 24px 16px 64px; }
+	.tc-wrap h1 { margin-bottom: 4px; font-size: 1.6rem; }
+	.tc-muted { color: var(--text-muted, #6c7680); }
+	.tc-panel {
+		border: 1px solid var(--border-color, #e2e6ea);
+		border-radius: 8px;
+		padding: 18px 20px;
+		margin: 18px 0;
+	}
+	.tc-panel--valid { border-left: 4px solid #2e7d32; }
+	.tc-panel--invalid { border-left: 4px solid #b3261e; }
+	.tc-verdict { font-size: 1.15rem; font-weight: 600; margin-bottom: 10px; }
+	.tc-facts { width: 100%; border-collapse: collapse; }
+	.tc-facts th {
+		text-align: left;
+		font-weight: normal;
+		color: var(--text-muted, #6c7680);
+		padding: 4px 12px 4px 0;
+		white-space: nowrap;
+		vertical-align: top;
+	}
+	.tc-facts td { padding: 4px 0; vertical-align: top; }
+	.tc-code-input {
+		font-family: monospace;
+		letter-spacing: 2px;
+		text-transform: uppercase;
+		padding: 8px 10px;
+		border: 1px solid var(--border-color, #e2e6ea);
+		border-radius: 6px;
+		min-width: 260px;
+	}
+	.tc-doc { border: 1px solid var(--border-color, #e2e6ea); border-radius: 8px; padding: 8px; overflow-x: auto; }
+	.tc-list { width: 100%; border-collapse: collapse; }
+	.tc-list th, .tc-list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-color, #e2e6ea); }
+	@media print {
+		.navbar, .web-footer, footer, .tc-noprint { display: none !important; }
+		.tc-doc { border: 0; padding: 0; }
+		.tc-wrap { max-width: none; padding: 0; }
+	}
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="tc-wrap">
+
+{%- if mode == "verify" %}
+
+	<h1>Certificate verification</h1>
+
+	{%- if throttled %}
+	<div class="tc-panel tc-panel--invalid">
+		<div class="tc-verdict">Too many checks from this address</div>
+		<p class="tc-muted">Wait a few minutes and try the code again.</p>
+	</div>
+	{%- elif result and result.valid %}
+	<div class="tc-panel tc-panel--valid">
+		<div class="tc-verdict">Valid certificate</div>
+		{#- Initials only, deliberately. This page is public and the link is shared
+		    with third parties; a full name here would turn a proof of training into
+		    a disclosure. -#}
+		<table class="tc-facts">
+			<tr><th>Course</th><td>{{ (result.course_title or "—") | e }}</td></tr>
+			<tr><th>Held by</th><td>{{ (result.holder_initials or "—") | e }}</td></tr>
+			<tr><th>Issued</th><td>{{ frappe.utils.formatdate(result.issued_on) if result.issued_on else "—" }}</td></tr>
+			<tr><th>Valid until</th><td>{{ frappe.utils.formatdate(result.expires_on) if result.expires_on else "Does not expire" }}</td></tr>
+		</table>
+	</div>
+	{%- elif result and result.status %}
+	<div class="tc-panel tc-panel--invalid">
+		<div class="tc-verdict">
+			{%- if result.status == "Expired" %}This certificate has expired
+			{%- elif result.status == "Revoked" %}This certificate has been withdrawn
+			{%- else %}This certificate is not valid{% endif -%}
+		</div>
+		<table class="tc-facts">
+			<tr><th>Course</th><td>{{ (result.course_title or "—") | e }}</td></tr>
+			<tr><th>Held by</th><td>{{ (result.holder_initials or "—") | e }}</td></tr>
+			<tr><th>Issued</th><td>{{ frappe.utils.formatdate(result.issued_on) if result.issued_on else "—" }}</td></tr>
+			<tr><th>Expired</th><td>{{ frappe.utils.formatdate(result.expires_on) if result.expires_on else "—" }}</td></tr>
+		</table>
+		<p class="tc-muted">Contact Sapphire Fountains if you were given this as current.</p>
+	</div>
+	{%- else %}
+	<div class="tc-panel tc-panel--invalid">
+		<div class="tc-verdict">No certificate with that code</div>
+		<p class="tc-muted">Check the code as printed — letters only, in groups of four.</p>
+	</div>
+	{%- endif %}
+
+{%- elif mode == "certificate" %}
+
+	{%- if certificate %}
+	<div class="tc-noprint">
+		<h1>{{ (certificate.course_title or "Certificate") | e }}</h1>
+		<p class="tc-muted">
+			Certificate {{ certificate.name | e }} &middot;
+			{{ certificate.status | e }}{% if certificate.expires_on %} until {{ frappe.utils.formatdate(certificate.expires_on) }}{% endif %}
+		</p>
+		<p><button type="button" class="btn btn-primary btn-sm" onclick="window.print()">Print</button></p>
+	</div>
+
+	{#- The stored snapshot, rendered as-is. NOT re-rendered from the print format:
+	    what the holder was given must not change because a template was edited. -#}
+	<div class="tc-doc">{{ (certificate.certificate_html or "") | safe }}</div>
+	{%- else %}
+	<h1>Certificate not found</h1>
+	<p class="tc-muted">It may have been withdrawn, or it belongs to someone else.</p>
+	<p><a href="/training_certificate">Your certificates</a></p>
+	{%- endif %}
+
+{%- else %}
+
+	<h1>Your certificates</h1>
+	{%- if certificates %}
+	<table class="tc-list">
+		<thead>
+			<tr><th>Course</th><th>Issued</th><th>Valid until</th><th>Status</th></tr>
+		</thead>
+		<tbody>
+		{%- for row in certificates %}
+			<tr>
+				<td><a href="/training_certificate?certificate={{ row.name | urlencode }}">{{ (row.course_title or row.name) | e }}</a></td>
+				<td>{{ frappe.utils.formatdate(row.issued_on) if row.issued_on else "—" }}</td>
+				<td>{{ frappe.utils.formatdate(row.expires_on) if row.expires_on else "Does not expire" }}</td>
+				<td>{{ row.status | e }}</td>
+			</tr>
+		{%- endfor %}
+		</tbody>
+	</table>
+	{%- else %}
+	<p class="tc-muted">You do not have any certificates yet. Courses that issue one say so before you start.</p>
+	{%- endif %}
+
+{%- endif %}
+
+{#- The lookup form, one copy, rendered for every state except a certificate being
+    read or printed. Written inline rather than as a Jinja macro on purpose: a macro
+    declared at the root of a template that {% extends %} another is not reliably in
+    scope inside the blocks, and the failure mode is an empty form rather than an
+    error. -#}
+{%- if mode != "certificate" %}
+<div class="tc-panel tc-noprint">
+	<div class="tc-verdict">Check a certificate</div>
+	<p class="tc-muted">Anyone can verify a Sapphire Fountains training certificate with the code printed on it.</p>
+	{#- GET on purpose: the result is shareable and bookmarkable, and there is nothing
+	    to protect with a CSRF token — the endpoint behind it discloses nothing beyond
+	    initials and is rate-limited. -#}
+	<form method="get" action="/training_certificate">
+		<input class="tc-code-input" type="text" name="code" value="{{ (submitted_code or '') | e }}"
+			placeholder="ABCD-EFGH-JKMN-PQRS" autocomplete="off" spellcheck="false">
+		<button type="submit" class="btn btn-secondary btn-sm">Verify</button>
+	</form>
+</div>
+{%- endif %}
+
+</div>
+{% endblock %}

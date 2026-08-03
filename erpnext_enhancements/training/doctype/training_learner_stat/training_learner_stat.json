@@ -1,0 +1,148 @@
+{
+ "actions": [],
+ "autoname": "field:user",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "employee",
+  "learner_type",
+  "column_break_head",
+  "total_points",
+  "badges_earned",
+  "courses_completed",
+  "streak_section",
+  "current_streak_days",
+  "longest_streak_days",
+  "column_break_streak",
+  "last_activity_date",
+  "last_completion_date"
+ ],
+ "fields": [
+  {
+   "description": "One row per learner — this is the primary key, which is what makes the row a safe upsert target from a background job.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "default": "Employee",
+   "description": "What separates the two leaderboards. A customer taking a handover course must never be ranked against the crew, nor the crew against them — this is the column that guarantees it, so it is derived on every save rather than typed.",
+   "fieldname": "learner_type",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Learner Type",
+   "options": "Employee\nWebsite User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Sum of the points on this learner's badge awards. Denormalised on purpose — a leaderboard that aggregates awards and completions on every page load is a table scan per viewer.",
+   "fieldname": "total_points",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Points"
+  },
+  {
+   "fieldname": "badges_earned",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Badges"
+  },
+  {
+   "fieldname": "courses_completed",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Courses Completed"
+  },
+  {
+   "fieldname": "streak_section",
+   "fieldtype": "Section Break",
+   "label": "Streak"
+  },
+  {
+   "description": "Consecutive days with training activity. Falls back to zero when a day is missed, which is why the longest is kept separately.",
+   "fieldname": "current_streak_days",
+   "fieldtype": "Int",
+   "label": "Current Streak"
+  },
+  {
+   "description": "The high-water mark. Never decreases — a streak somebody actually achieved is not taken away from them because they missed a Tuesday.",
+   "fieldname": "longest_streak_days",
+   "fieldtype": "Int",
+   "label": "Longest Streak"
+  },
+  {
+   "fieldname": "column_break_streak",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Any training activity — a lesson watched counts, not only a course finished. This is what the streak is computed from.",
+   "fieldname": "last_activity_date",
+   "fieldtype": "Date",
+   "label": "Last Activity"
+  },
+  {
+   "fieldname": "last_completion_date",
+   "fieldtype": "Date",
+   "label": "Last Completion"
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Learner Stat",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "user,learner_type",
+ "sort_field": "total_points",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "user",
+ "track_changes": 0
+}

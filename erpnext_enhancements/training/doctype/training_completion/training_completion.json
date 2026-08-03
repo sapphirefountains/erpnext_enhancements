@@ -17,6 +17,7 @@
   "employee",
   "customer",
   "attempt",
+  "signoff",
   "result_section",
   "score_percent",
   "video_coverage_percent",
@@ -24,6 +25,7 @@
   "completed_on",
   "expires_on",
   "lifecycle_section",
+  "certificate",
   "superseded_by_version",
   "revoked_reason",
   "amended_from"
@@ -125,6 +127,13 @@
    "options": "Training Attempt"
   },
   {
+   "description": "The supervisor's attestation, for courses that require one. Deferred in Phase 1 because a Link naming a DocType the app does not ship fails bench migrate; restored in Phase 4 with the doctype it points at.",
+   "fieldname": "signoff",
+   "fieldtype": "Link",
+   "label": "Sign-off",
+   "options": "Training Signoff"
+  },
+  {
    "fieldname": "result_section",
    "fieldtype": "Section Break",
    "label": "Result"
@@ -161,6 +170,16 @@
    "fieldname": "lifecycle_section",
    "fieldtype": "Section Break",
    "label": "Lifecycle"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "The certificate issued off this completion, if the course issues one. Written back by training/certificates.py after on_submit has created it — hence allow_on_submit, since the completion is submitted by the time the certificate exists.",
+   "fieldname": "certificate",
+   "fieldtype": "Link",
+   "label": "Certificate",
+   "no_copy": 1,
+   "options": "Training Certificate",
+   "read_only": 1
   },
   {
    "description": "The version whose material change superseded this one, so it is answerable why somebody was asked to retake a course they had already passed.",

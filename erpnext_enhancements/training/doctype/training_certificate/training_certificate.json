@@ -1,0 +1,244 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "completion",
+  "course",
+  "course_title",
+  "course_version",
+  "version_number",
+  "column_break_head",
+  "status",
+  "holder_name",
+  "user",
+  "employee",
+  "customer",
+  "validity_section",
+  "issued_on",
+  "expires_on",
+  "score_percent",
+  "column_break_validity",
+  "verification_code",
+  "print_format",
+  "render_section",
+  "certificate_html",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "TRN-CERT-.YYYY.-.#####",
+   "print_hide": 1
+  },
+  {
+   "description": "The completion this certifies. One certificate per completion — a second one for the same pass would be two documents making the same claim with different numbers on them.",
+   "fieldname": "completion",
+   "fieldtype": "Link",
+   "label": "Completion",
+   "options": "Training Completion",
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "course",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Course",
+   "options": "Training Course"
+  },
+  {
+   "description": "The title as it read on the day this was issued. Snapshotted, never fetched — a course renamed later must not rewrite a certificate somebody is holding.",
+   "fieldname": "course_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Course Title",
+   "read_only": 1
+  },
+  {
+   "description": "The exact version that was passed, carried over from the completion. Provenance for the print format, and the anchor a re-issue would be rebuilt from.",
+   "fieldname": "course_version",
+   "fieldtype": "Link",
+   "label": "Course Version",
+   "options": "Training Course Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "version_number",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Valid",
+   "description": "Derived from the expiry date and from cancellation — never typed. Revoked is what a cancelled certificate becomes, and it stays visible so the withdrawal is answerable.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Valid\nExpired\nRevoked",
+   "read_only": 1
+  },
+  {
+   "description": "The name as printed. Snapshotted for the same reason the title is: people change their names, and the document already in circulation does not.",
+   "fieldname": "holder_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Holder",
+   "read_only": 1
+  },
+  {
+   "description": "The learner. Named `user` to match Training Assignment / Attempt / Completion — training/permissions.py scopes every learner-owned row on a column of this exact name, so anything else silently loses row-level scoping.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "Learner",
+   "options": "User",
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "description": "For a customer contact, the account they belong to — this is how a client is shown who on their side is certified.",
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "validity_section",
+   "fieldtype": "Section Break",
+   "label": "Validity"
+  },
+  {
+   "fieldname": "issued_on",
+   "fieldtype": "Date",
+   "label": "Issued On",
+   "reqd": 1
+  },
+  {
+   "description": "Blank means it never expires. Computed from the course's certificate_valid_months at issue and then left alone — shortening the course setting later must not retroactively expire a certificate.",
+   "fieldname": "expires_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Expires On"
+  },
+  {
+   "fieldname": "score_percent",
+   "fieldtype": "Percent",
+   "label": "Score",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_validity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What the public verification page is looked up by. Deliberately not the document name: names are guessable in sequence, so a serial number on a printed certificate would let anybody enumerate everyone else's.",
+   "fieldname": "verification_code",
+   "fieldtype": "Data",
+   "label": "Verification Code",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "Which format produced the HTML below. Recorded for provenance only — changing it does not re-render an issued certificate.",
+   "fieldname": "print_format",
+   "fieldtype": "Link",
+   "label": "Print Format",
+   "options": "Print Format"
+  },
+  {
+   "fieldname": "render_section",
+   "fieldtype": "Section Break",
+   "label": "Rendered Document"
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "The certificate as it was rendered at issue, stored rather than regenerated. Editing the print format next year must never rewrite a document somebody already holds — the same reason the e-sign lifecycle does not use frappe.attach_print. Writable after submit only so the issuing code may render on either side of submit().",
+   "fieldname": "certificate_html",
+   "fieldtype": "Long Text",
+   "label": "Certificate HTML",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Training Certificate",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Certificate",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "course,user,status",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "course_title",
+ "track_changes": 1
+}

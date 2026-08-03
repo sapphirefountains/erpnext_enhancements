@@ -101,6 +101,24 @@ def completion_query_conditions(user=None):
 	return _own_rows_condition("Training Completion", _resolve(user))
 
 
+def certificate_query_conditions(user=None):
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Certificate", _resolve(user))
+
+
+def signoff_query_conditions(user=None):
+	"""A sign-off is scoped to the learner it is about.
+
+	The supervisor reaches it through the direct-reports arm of
+	``_own_rows_condition`` — which is exactly what makes the sign-off queue a
+	plain filtered list view rather than a bespoke endpoint.
+	"""
+	if _is_unscoped(user):
+		return ""
+	return _own_rows_condition("Training Signoff", _resolve(user))
+
+
 # -------------------------------------------------------------------- has_permission
 
 
@@ -124,5 +142,22 @@ def attempt_question_has_permission(doc, ptype=None, user=None):
 
 def completion_has_permission(doc, ptype=None, user=None):
 	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def certificate_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	return _own_row(doc, _resolve(user))
+
+
+def signoff_has_permission(doc, ptype=None, user=None):
+	if _is_unscoped(user):
+		return True
+	# The supervisor named on the sign-off can always see it, even when the
+	# learner is not one of their Employee.reports_to (a Named Supervisor or a
+	# stand-in Training Manager) — otherwise they cannot action their own queue.
+	if doc.get("supervisor_user") == _resolve(user):
 		return True
 	return _own_row(doc, _resolve(user))

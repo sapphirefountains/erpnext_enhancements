@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-02 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "badge",
+  "user",
+  "employee",
+  "column_break_head",
+  "awarded_on",
+  "points",
+  "source_completion"
+ ],
+ "fields": [
+  {
+   "fieldname": "badge",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Badge",
+   "options": "Training Badge",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Who holds it. Keyed on User like everything else in the module — a customer contact earns badges the same way an employee does, they just never appear on the same leaderboard.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "awarded_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Awarded On",
+   "read_only": 1
+  },
+  {
+   "description": "Copied from the badge at award time. Re-pricing a badge next year must not rewrite scores already earned.",
+   "fieldname": "points",
+   "fieldtype": "Int",
+   "label": "Points",
+   "read_only": 1
+  },
+  {
+   "description": "The completion that triggered it, when one did. Blank for the badges that come out of an aggregate — a streak or a course count is not caused by any single pass.",
+   "fieldname": "source_completion",
+   "fieldtype": "Link",
+   "label": "Source Completion",
+   "options": "Training Completion"
+  }
+ ],
+ "links": [],
+ "modified": "2026-08-02 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Training",
+ "name": "Training Badge Award",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Training Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Training Learner"
+  }
+ ],
+ "search_fields": "badge,user",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "badge",
+ "track_changes": 1
+}
