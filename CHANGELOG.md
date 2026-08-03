@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.212.1] - 2026-08-02
+
+### Fixed
+
+- **Three of the player's transport methods pointed at endpoints that do not exist.** The player
+  knows only the transport's *function names*; `www/training.html` maps those to whitelisted
+  methods. `startQuiz` named `start_quiz` and `mediaUrl` named `media_url` — the endpoints are
+  `get_quiz` and `get_media_url` — so the quiz would never load and no video URL would ever
+  resolve. `heartbeatBeacon` was called by `video.js` but absent from the map entirely, so the
+  `pagehide` flush would have thrown on `undefined` and silently lost the final beat of every
+  session.
+
+  Nothing caught this because both halves are individually valid: the endpoints exist, the player
+  is correct, and only the map between them was wrong. Same class as the heartbeat wire mismatch
+  in 1.212.0, and the same cause — parallel work with an unowned seam.
+
+  `tests/test_training_heartbeat_wire.py` now cross-reads the map against
+  `@frappe.whitelist()` definitions and against every `transport.*` call in the player, so a
+  rename on either side fails there. Verified the new assertions do fail against the original
+  typo rather than merely passing against the fix.
+
 ## [1.212.0] - 2026-08-02
 
 ### Added

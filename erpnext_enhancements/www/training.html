@@ -88,10 +88,18 @@
 		heartbeat: "heartbeat",
 		openCheckpoint: "open_checkpoint",
 		answerCheckpoint: "answer_checkpoint",
-		startQuiz: "start_quiz",
+		startQuiz: "get_quiz",
 		submitQuiz: "submit_quiz",
 		completeLesson: "complete_lesson",
-		mediaUrl: "media_url"
+		mediaUrl: "get_media_url",
+		// video.js flushes the last beat through navigator.sendBeacon on pagehide,
+		// which cannot set headers -- so that path posts the CSRF token in the body
+		// instead. Same endpoint; different delivery.
+		heartbeatBeacon: "heartbeat",
+		startAttempt: "start_attempt",
+		finishAttempt: "finish_attempt",
+		getCourse: "get_course",
+		getTranscript: "get_my_transcript"
 	};
 	var PREFIX = "/api/method/erpnext_enhancements.api.training.";
 
