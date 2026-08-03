@@ -24,10 +24,12 @@ import frappe
 
 from erpnext_enhancements.crm_enhancements.fountain_move import (
 	HONEYPOT_FIELD_NAME,
+	PREFERRED_WEEKDAYS,
 	get_contact_phone,
 	get_store_locations,
 	max_preferred_date,
 	min_preferred_date,
+	preferred_weekdays_label,
 )
 from erpnext_enhancements.crm_enhancements.fountain_move.invites import resolve_invite
 from erpnext_enhancements.feature_flags import fountain_move_public_form_enabled
@@ -57,6 +59,9 @@ def get_context(context):
 	# drifts a day, and the server re-validates at submit anyway.
 	context.min_preferred_date = min_preferred_date().isoformat()
 	context.max_preferred_date = max_preferred_date().isoformat()
+	# The Mon-Wed rule, in words, for the hint under the date fields. Derived
+	# from the same tuple the server validates against.
+	context.preferred_weekdays_label = preferred_weekdays_label()
 
 	invite = resolve_invite(frappe.form_dict.get("ref"))
 
@@ -86,6 +91,11 @@ def get_context(context):
 		"max_photo_mb": _max_photo_mb(),
 		"locations": get_store_locations(),
 		"honeypot_field": HONEYPOT_FIELD_NAME,
+		# A date input has min/max but no weekday constraint, so the Mon-Wed
+		# rule has to be checked in JS. Monday-is-0 numbering, as Python has it:
+		# the client converts from its own Sunday-is-0 convention.
+		"preferred_weekdays": list(PREFERRED_WEEKDAYS),
+		"preferred_weekdays_label": preferred_weekdays_label(),
 		"contact_phone": get_contact_phone(),
 		"terms_url": "/terms-of-use",
 		"privacy_url": "/privacy-policy",

@@ -810,8 +810,9 @@ def test_guest_has_no_docperm_on_the_request():
 
 
 def test_min_preferred_date_counts_business_days():
-	"""Mon-Fri only for the LEAD-TIME floor; the chosen date itself may be a
-	Saturday — that's staff's call during the quote."""
+	"""Mon-Fri counts the LEAD-TIME floor. Which days may actually be requested
+	is a separate rule (PREFERRED_WEEKDAYS), so the floor itself can land on a
+	day nobody can pick — it is a lower bound, not an offer."""
 	from datetime import date
 
 	from erpnext_enhancements.crm_enhancements.fountain_move import min_preferred_date
@@ -905,6 +906,44 @@ def test_preferred_slots_reject_bad_input():
 		)
 
 
+def test_preferred_slots_reject_days_we_do_not_move_on():
+	"""Crews move Mon-Wed only. A ``type=date`` input cannot express that, so the
+	server is the only place the rule is enforced — a hand-built POST or a
+	browser that degraded the input to plain text arrives here unfiltered."""
+	import pytest as _pytest
+	from datetime import date
+
+	from erpnext_enhancements.crm_enhancements.fountain_move import intake
+
+	today = date(2026, 7, 22)  # Wednesday; floor = Monday the 27th
+
+	# Thursday, Friday, Saturday, Sunday — all comfortably past the floor and
+	# inside the horizon, and all refused.
+	for iso in ("2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02"):
+		with _pytest.raises(Exception):
+			intake._normalize_preferred_slots(_slot_fields(preferred_date_1=iso), today=today)
+
+	# Monday, Tuesday, Wednesday all pass, one per slot, order preserved.
+	fields = _slot_fields(
+		preferred_date_1="2026-07-27",
+		preferred_date_2="2026-07-28",
+		preferred_date_3="2026-07-29",
+	)
+	intake._normalize_preferred_slots(fields, today=today)
+	assert fields["preferred_date_1"] == "2026-07-27"
+	assert fields["preferred_date_2"] == "2026-07-28"
+	assert fields["preferred_date_3"] == "2026-07-29"
+
+
+def test_preferred_weekdays_label_reads_as_a_sentence():
+	"""The page hint, the browser-side message and the server error all render
+	this one string, so it has to stay grammatical if the tuple ever changes."""
+	from erpnext_enhancements.crm_enhancements import fountain_move
+
+	assert fountain_move.PREFERRED_WEEKDAYS == (0, 1, 2)
+	assert fountain_move.preferred_weekdays_label() == "Monday, Tuesday or Wednesday"
+
+
 def test_spam_path_drops_invalid_slots_instead_of_throwing():
 	"""A spam-classified submission must still reach ``insert`` — the uniform
 	fake-ok response and the Spam row's telemetry depend on it. New optional
@@ -924,6 +963,12 @@ def test_spam_path_drops_invalid_slots_instead_of_throwing():
 	# The one valid slot survives (its junk window blanked), the rest vanish.
 	assert fields["preferred_date_1"] == "2026-07-28"
 	assert fields["preferred_window_1"] == ""
+	assert fields["preferred_date_2"] is None
+
+	# Same for a perfectly formed, in-range date that lands on a Thursday.
+	fields = _slot_fields(preferred_date_1="2026-07-30", preferred_date_2="2026-07-28")
+	intake._normalize_preferred_slots(fields, today=today, drop_invalid=True)
+	assert fields["preferred_date_1"] == "2026-07-28"
 	assert fields["preferred_date_2"] is None
 
 

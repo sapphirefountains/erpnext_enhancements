@@ -202,7 +202,9 @@
 		<section class="fm-section">
 			<h2>{{ _("When works best?") }}</h2>
 			<p class="fm-hint">
-				{{ _("Optional — give us up to three days that suit you, and we'll aim for them. We'll confirm the actual date and time with your quote.") }}
+				{# The weekday rule leads: it decides which days are worth opening the
+				   picker for, and type=date cannot grey out the other four. #}
+				{{ _("We move fountains on {0} only. Optional — give us up to three of those days that suit you, and we'll aim for them. We'll confirm the actual date and time with your quote.").format(preferred_weekdays_label) }}
 			</p>
 
 			{%- for slot in [
