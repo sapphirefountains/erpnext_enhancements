@@ -7,9 +7,11 @@
  "field_order": [
   "month",
   "channel",
+  "value_stream",
   "column_break_spend",
   "amount",
-  "notes"
+  "notes",
+  "source_note"
  ],
  "fields": [
   {
@@ -45,6 +47,21 @@
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
+  },
+  {
+   "description": "Optional. The value stream this spend was intended to drive, where that is genuinely known. Leave blank when a channel serves several — the Value Stream Performance dashboard reports unallocated spend as its own line rather than dividing it arbitrarily, because a made-up split is worse than an honest gap.",
+   "fieldname": "value_stream",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Value Stream",
+   "options": "Value Streams"
+  },
+  {
+   "description": "Stamped by the bulk importer so a bad import can be found and undone. Blank for hand-entered rows.",
+   "fieldname": "source_note",
+   "fieldtype": "Data",
+   "label": "Import Batch",
+   "read_only": 1
   }
  ],
  "links": [],

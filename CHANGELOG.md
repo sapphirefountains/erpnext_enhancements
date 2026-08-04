@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.243.0] - 2026-08-04
+
+WP-4: the marketing spend baseline and the per-value-stream dashboard — plus four
+marketing KPIs that turned out to be measuring a column nothing has written to
+since erpnext v15.
+
+### Added
+
+- **Marketing spend import (WP-4).** `Marketing Spend` held **zero rows**, so
+  there was no budget baseline and no denominator for any cost-per-lead figure.
+  The new importer (Marketing Spend Rollup → **Import Spend**) takes CSV with
+  loosely-matched headings, **previews before writing**, and **upserts**: a
+  month/channel pair is unique by the doctype's own autoname, so re-importing a
+  corrected export would collide on every row through frappe's Data Import. That
+  collision is the reason this is bespoke rather than stock.
+
+  Channel spellings are canonicalised — "Google Ads", "google ads", "Google
+  AdWords" and "AdWords" are one line item to a marketer and four to a `GROUP BY`
+  — and **every rename is reported**, because a wrong alias silently merges two
+  budgets. An unknown channel passes through unchanged; an unknown channel is a
+  new channel, not an error.
+
+  An unreadable amount is **refused, not zeroed**. Deliberately not
+  `frappe.utils.flt`, which coerces "n/a" to 0.0: a silent zero in the denominator
+  of every cost-per-lead figure is indistinguishable from a month where nothing
+  was spent.
+
+- **Marketing Spend Rollup report.** Two shapes for two questions: a
+  channel-per-column grid by month (what did we spend, and is a channel being
+  quietly switched off), and a per-channel view with totals, monthly average,
+  cost per lead and cost per opportunity. The cost columns stay blank where
+  attribution has produced no denominator rather than printing a division by zero
+  with a currency symbol on it.
+
+- **Value Stream Performance report.** Spend, opportunities, won, lost, win rate,
+  revenue, average deal and cost per opportunity, per value stream. **No required
+  parameters** — it is opened live in a standing weekly meeting, and a report that
+  greets you with an empty filter bar wastes the first ninety seconds of it every
+  week. Four queries total: the `Value Stream` child table carries ~1,460 rows
+  across three parent doctypes, so a per-stream subquery re-scans it every time.
+
+  Three things it is explicit about rather than leaving to be discovered in a
+  meeting: columns do not sum to the company total (an opportunity tagged with two
+  streams counts once toward each); win rate is won / (won + lost), because
+  including open deals makes every rate look terrible and move whenever somebody
+  adds a lead; and revenue falls back to the quoted amount where no Project is
+  linked, reporting how many rows it did that for.
+
+- **`Marketing Spend.value_stream`** — optional, and **never apportioned**. A
+  channel serving several streams stays blank and appears as an Unallocated line.
+  A made-up split is worse than an honest gap, because it looks like data. When
+  most spend is unallocated the dashboard says so.
+
+- **Channel breakdown on `Marketing Web Snapshot`** via the new `Marketing Web
+  Channel` child table. The GA4 pull has been fetching
+  `sessionDefaultChannelGroup` all along and discarding it every night — this is
+  retained data, not a new API call, so it costs no extra quota. GA4's own
+  grouping is stored verbatim so the numbers reconcile against the GA4 UI.
+
+- **Data-source failure alerting.** GSC had failed on **40 of 40** nightly pulls
+  since the dataset began, with the only trace being a `pull_error` field nobody
+  opens. A Notification Log now goes to System Managers when a source starts
+  failing **and** when it recovers — on transitions only, because a nightly "still
+  broken" alert gets muted within a week and then hides the next real outage.
+
+### Fixed
+
+- **Four marketing KPIs were measuring a dead column.** `Lead.source` and
+  `Opportunity.source` lost their DocField when erpnext v15 renamed them to
+  `utm_source`. frappe never drops columns, so `has_column("Opportunity", "source")`
+  returned True, the queries ran without error, and four plausible numbers came
+  back — from a frozen pre-2023 snapshot that nothing has written to since:
+
+  | KPI | Was measuring | Consequence |
+  |---|---|---|
+  | Unsourced Leads (30d) | `coalesce(source,'')=''` | every new Lead scored unsourced forever |
+  | Unsourced Opportunities | same | could only ever rise |
+  | Sourced Pipeline Value | `coalesce(source,'')<>''` | could only ever fall |
+  | Sourced Wins (30d) | same | same |
+
+  All four now read `custom_lead_source`, and treat the `Unknown (pre-Aug 2026)`
+  bucket as **not** sourced — it is a recorded gap, not a channel, and counting it
+  as attributed would launder the exact hole WP-1 exists to expose.
+
+  A test parses the AST of `snapshots.py` — string constants only, so the
+  explanatory comment does not trip it — and fails if any query references that
+  column again.
+
+### Notes
+
+The value-stream dashboard will render thin until two things happen: marketing
+spend is actually loaded, and WP-1's website capture script goes live so
+attribution has a denominator. Both are stated in the reports themselves with
+live numbers rather than left to be inferred from an empty chart.
+
+The GSC 403 is still not fixable from this repository — it needs Search Console
+access granted to the GA4 service account, and the property form to match
+(`sc-domain:` cannot be queried as a URL prefix).
+
 ## [1.242.0] - 2026-08-04
 
 WP-5 account data hygiene and WP-7 pipeline reconciliation, plus the requested

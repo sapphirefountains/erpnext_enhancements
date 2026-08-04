@@ -15,7 +15,9 @@
   "active_users_30",
   "organic_clicks_30",
   "organic_impressions_30",
-  "pull_error"
+  "pull_error",
+  "channels_section",
+  "channels"
  ],
  "fields": [
   {
@@ -88,6 +90,18 @@
    "fieldtype": "Small Text",
    "label": "Pull Error",
    "read_only": 1
+  },
+  {
+   "fieldname": "channels_section",
+   "fieldtype": "Section Break",
+   "label": "Acquisition Channels"
+  },
+  {
+   "description": "GA4 sessionDefaultChannelGroup breakdown. The pull always fetched this; until v1.243.0 nothing stored it, so it was discarded every night.",
+   "fieldname": "channels",
+   "fieldtype": "Table",
+   "label": "Channels",
+   "options": "Marketing Web Channel"
   }
  ],
  "links": [],

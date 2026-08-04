@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "creation": "2026-08-04 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "channel",
+  "sessions",
+  "share_pct"
+ ],
+ "fields": [
+  {
+   "description": "GA4's sessionDefaultChannelGroup: Organic Search, Paid Search, Direct, Referral, Organic Social and so on. GA4's own grouping is used rather than a local taxonomy so the numbers reconcile against the GA4 UI when somebody checks.",
+   "fieldname": "channel",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Channel",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sessions",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Sessions (30d)"
+  },
+  {
+   "description": "Share of the snapshot's total sessions. Stored rather than computed at read time so a report over historical snapshots does not have to re-derive it per row.",
+   "fieldname": "share_pct",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "% of Sessions"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "KPI Dashboards",
+ "name": "Marketing Web Channel",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}
