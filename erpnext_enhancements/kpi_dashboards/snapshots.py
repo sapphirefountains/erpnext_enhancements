@@ -24,6 +24,7 @@ import frappe
 from frappe.utils import add_days, add_months, cint, flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.kpi_dashboards import metrics
+from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
 
 DEFAULT_RETENTION_DAYS = 120
 
@@ -690,20 +691,58 @@ def _marketing_metrics():
 	total = flt(_scalar("select count(*) from `tabLead` where creation >= %(d)s", {"d": d90}))
 	converted = flt(_scalar("select count(*) from `tabLead` where status='Converted' and creation >= %(d)s", {"d": d90}))
 	add("lead_conversion_90", "Lead Conversion (90d)", (converted / total * 100.0) if total else None, "%", "Lead", metrics.HIGHER)
+	# NOTE: reads custom_lead_source, NOT `source`.
+	#
+	# This counted `coalesce(source,'')=''` until v1.243.0 — against a column with
+	# no DocField behind it since erpnext v15 renamed the field to `utm_source`.
+	# frappe never drops columns, so the query ran happily and returned a number;
+	# it just was not this number. Nothing writes `source`, so every newly created
+	# Lead scored as unsourced forever while the KPI looked plausible. The same
+	# dead column is what the August marketing review's "45% of opportunities have
+	# no source" was measured against.
+	#
+	# custom_lead_source is the field the app actually populates (see
+	# crm_enhancements/attribution.py). The "Unknown (pre-Aug 2026)" bucket counts
+	# as unsourced on purpose: it is a recorded gap, not a channel.
 	add(
 		"leads_unsourced",
 		"Unsourced Leads (30d)",
-		_scalar("select count(*) from `tabLead` where creation >= %(d)s and coalesce(source,'')=''", {"d": d30}),
+		_scalar(
+			"""select count(*) from `tabLead`
+			   where creation >= %(d)s
+			     and (coalesce(custom_lead_source,'') = '' or custom_lead_source = %(unknown)s)""",
+			{"d": d30, "unknown": UNKNOWN_LEAD_SOURCE},
+		),
 		"count",
 		"Lead",
 		metrics.LOWER,
 	)
-	# Source attribution lives on Opportunity.source (stock Lead Source link).
-	if frappe.db.has_column("Opportunity", "source"):
+	# Source attribution lives on custom_lead_source, NOT on `source`.
+	#
+	# All three of these read `coalesce(source,'')` until v1.243.0 — the column
+	# erpnext v15 orphaned when it renamed the field to `utm_source`. frappe never
+	# drops columns, so `has_column("Opportunity", "source")` returned True, the
+	# queries ran, and three plausible-looking numbers came back. They were
+	# measuring pre-2023 data that nothing has written to since: "Sourced
+	# Pipeline" could only ever fall, and "Unsourced Opportunities" could only
+	# ever rise, regardless of what anybody did about attribution.
+	#
+	# `sourced` counts a real channel only — the "Unknown (pre-Aug 2026)" bucket
+	# from patches.backfill_unknown_lead_source is a recorded gap, not a source,
+	# and counting it as attributed would launder the exact hole WP-1 exists to
+	# expose.
+	if frappe.db.has_column("Opportunity", "custom_lead_source"):
+		sourced = "coalesce(custom_lead_source,'') not in ('', %(unknown)s)"
+		unsourced = "coalesce(custom_lead_source,'') in ('', %(unknown)s)"
+		unknown = {"unknown": UNKNOWN_LEAD_SOURCE}
+
 		add(
 			"marketing_pipeline",
 			"Sourced Pipeline Value",
-			_scalar(f"select sum(opportunity_amount) from `tabOpportunity` where {open_filter} and coalesce(source,'')<>''"),
+			_scalar(
+				f"select sum(opportunity_amount) from `tabOpportunity` where {open_filter} and {sourced}",
+				unknown,
+			),
 			"USD",
 			"Opportunity",
 			metrics.HIGHER,
@@ -713,8 +752,8 @@ def _marketing_metrics():
 			"marketing_won_30",
 			"Sourced Wins (30d)",
 			_scalar(
-				f"select count(*) from `tabOpportunity` where status='Closed Won' and coalesce(source,'')<>'' and {closed_col} >= %(d)s",
-				{"d": d30},
+				f"select count(*) from `tabOpportunity` where status='Closed Won' and {sourced} and {closed_col} >= %(d)s",
+				dict(unknown, d=d30),
 			),
 			"count",
 			"Opportunity",
@@ -723,7 +762,10 @@ def _marketing_metrics():
 		add(
 			"opportunities_unsourced",
 			"Unsourced Opportunities",
-			_scalar(f"select count(*) from `tabOpportunity` where {open_filter} and coalesce(source,'')=''"),
+			_scalar(
+				f"select count(*) from `tabOpportunity` where {open_filter} and {unsourced}",
+				unknown,
+			),
 			"count",
 			"Opportunity",
 			metrics.LOWER,
@@ -1360,6 +1402,7 @@ def snapshot_marketing_web():
 	sessions = users = clicks = impressions = None
 	ga4_ok = gsc_ok = False
 	errors = []
+	channels = []
 	try:
 		from erpnext_enhancements.api.analytics import get_ga4_data
 
@@ -1370,6 +1413,11 @@ def snapshot_marketing_web():
 			tl = ga.get("traffic_timeline") or {}
 			sessions = _sum_dataset(tl, "session")
 			users = _sum_dataset(tl, "active user")
+			# The channel breakdown has been fetched by get_ga4_data all along
+			# (the sessionDefaultChannelGroup dimension) and thrown away every
+			# night because nothing stored it. WP-4 keeps it: site totals answer
+			# "is traffic up", and the money question is "up from where".
+			channels = _channel_rows(ga.get("acquisition_channels"), sessions)
 			ga4_ok = True
 	except Exception:
 		errors.append("GA4 exception")
@@ -1406,7 +1454,126 @@ def snapshot_marketing_web():
 	doc.ga4_ok = 1 if ga4_ok else 0
 	doc.gsc_ok = 1 if gsc_ok else 0
 	doc.pull_error = ("; ".join(errors))[:300] or None
+	for row in channels:
+		doc.append("channels", row)
 	doc.insert(ignore_permissions=True)
+
+	# Surface a broken source instead of parking the reason in a field nobody
+	# opens. This is not hypothetical: GSC had failed on 40 of 40 nightly pulls
+	# since the dataset began on 2026-06-26 — HTTP 403, organic clicks and
+	# impressions zero for the entire history — and the only trace was pull_error.
+	_alert_on_source_change(ga4_ok, gsc_ok, errors)
+
+
+def _channel_rows(acquisition, total_sessions):
+	"""Turn get_ga4_data's chart-shaped acquisition payload into child rows.
+
+	The payload is ``{"labels": [...], "datasets": [{"values": [...]}]}`` because
+	it was built to feed a chart. Guarded on every access — a shape change
+	upstream must not take the whole nightly batch down for a breakdown that is
+	a nice-to-have next to the totals.
+	"""
+	try:
+		labels = (acquisition or {}).get("labels") or []
+		datasets = (acquisition or {}).get("datasets") or []
+		values = (datasets[0] or {}).get("values") if datasets else []
+	except Exception:
+		return []
+
+	total = flt(total_sessions) or sum(cint(v) for v in (values or []))
+	rows = []
+	for index, label in enumerate(labels):
+		if index >= len(values or []):
+			break
+		sessions = cint(values[index])
+		rows.append({
+			"channel": str(label)[:140],
+			"sessions": sessions,
+			"share_pct": (sessions / total * 100.0) if total else 0,
+		})
+	return rows
+
+
+#: Cache key holding the last reported (ga4_ok, gsc_ok) pair. Redis rather than a
+#: field, because this is notification bookkeeping and not part of the record.
+_SOURCE_STATE_KEY = "kpi:marketing_web:source_state"
+
+
+def _alert_on_source_change(ga4_ok, gsc_ok, errors):
+	"""Notify when a data source starts failing, and again when it recovers.
+
+	**On transitions only.** A nightly email saying "GSC is still broken" is
+	unsubscribed from within a week and then the next real outage is invisible —
+	which is roughly how a 40-day failure went unremarked. One message when it
+	breaks, one when it comes back.
+
+	Never raises: this runs at the head of the nightly batch, and a notification
+	problem must not cost the snapshot.
+	"""
+	try:
+		current = {"ga4": bool(ga4_ok), "gsc": bool(gsc_ok)}
+		previous = frappe.cache().get_value(_SOURCE_STATE_KEY) or {}
+
+		transitions = []
+		for source in ("ga4", "gsc"):
+			was = previous.get(source)
+			now = current[source]
+			if was is None:
+				# First run since a restart. Report a source that is DOWN — an
+				# unknown previous state is not a reason to stay quiet about a
+				# broken one — but stay silent about a healthy one.
+				if not now:
+					transitions.append((source, "failing"))
+			elif was != now:
+				transitions.append((source, "recovered" if now else "failing"))
+
+		frappe.cache().set_value(_SOURCE_STATE_KEY, current)
+
+		if not transitions:
+			return
+
+		for source, state in transitions:
+			label = source.upper()
+			if state == "failing":
+				subject = _("Marketing data source {0} is failing").format(label)
+				message = _(
+					"The nightly marketing web pull could not read {0}.<br><br>"
+					"<b>Reported error:</b> {1}<br><br>"
+					"Until this is fixed, every figure derived from {0} is stale or zero — "
+					"and a zero looks like a real number on a dashboard."
+				).format(label, frappe.utils.escape_html("; ".join(errors) or _("no detail")))
+			else:
+				subject = _("Marketing data source {0} is working again").format(label)
+				message = _("The nightly marketing web pull read {0} successfully.").format(label)
+
+			_notify_managers(subject, message)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "KPI marketing web — source alert")
+
+
+def _notify_managers(subject, message):
+	"""Raise a desk Notification Log for System Managers.
+
+	A Notification Log rather than an email: it lands in the bell menu of people
+	who are already in the desk, needs no outbound mail configuration to work, and
+	cannot be silently filtered into a folder nobody reads.
+	"""
+	recipients = frappe.get_all(
+		"Has Role",
+		filters={"role": "System Manager", "parenttype": "User"},
+		pluck="parent",
+		limit=20,
+	)
+	for user in set(recipients):
+		if user in ("Administrator", "Guest"):
+			continue
+		frappe.get_doc({
+			"doctype": "Notification Log",
+			"for_user": user,
+			"type": "Alert",
+			"subject": subject,
+			"email_content": message,
+		}).insert(ignore_permissions=True)
 
 
 def scheduled_kpi_run():

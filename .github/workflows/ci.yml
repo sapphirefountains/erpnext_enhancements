@@ -331,6 +331,14 @@ jobs:
       # declarative rule parks every synced customer in manual review.
       - name: Account hygiene + reconciliation (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_account_hygiene.py -q
+      # Marketing spend import + value-stream dashboard. Own step (own frappe stub).
+      # Guards the normalisation path (an unreadable amount must be REFUSED, not
+      # coerced to 0 by frappe's flt — a silent zero in the denominator of every
+      # cost-per-lead figure), and that no marketing KPI reads `Opportunity.source`
+      # / `Lead.source` again: erpnext v15 orphaned those columns, frappe never
+      # drops columns, so the queries ran and returned plausible numbers for years.
+      - name: Marketing spend + value stream dashboard (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_marketing_spend.py -q
       # Guards the Gantt widget read API's security contract: client-supplied
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)

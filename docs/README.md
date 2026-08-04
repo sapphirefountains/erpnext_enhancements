@@ -23,6 +23,7 @@ anything.
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
 | [field-photos-and-payroll-runbook.md](field-photos-and-payroll-runbook.md) | The job-photo capture gate, where photos are routed, and the Shaw & Nielsen payroll workbook |
+| [marketing-spend-runbook.md](marketing-spend-runbook.md) | Loading marketing spend, the value-stream dashboard, and the four KPIs that were measuring a dead column |
 | [industry-type-proposal.md](industry-type-proposal.md) | Proposed keep/merge/retire list for the 89 Industry Type values, from live usage counts. A proposal — nothing executed |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |

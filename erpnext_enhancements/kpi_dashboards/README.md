@@ -63,3 +63,43 @@ python -m unittest erpnext_enhancements.tests.test_kpi_metrics -v
 One per department, plus the module workspace: `executive_dashboard`, `finance_dashboard`,
 `sales_dashboard`, `marketing_dashboard`, `operations_dashboard`, `production_dashboard`,
 `design_dashboard`, `product_dashboard`, `hr_dashboard`, `kpi_dashboards`.
+
+
+## Marketing spend and value-stream reporting (WP-4, v1.243.0)
+
+`marketing_spend_import.py` + the **Marketing Spend Rollup** and **Value Stream
+Performance** reports. Operational notes are in
+[`docs/marketing-spend-runbook.md`](../../docs/marketing-spend-runbook.md).
+
+`Marketing Spend` held **zero rows**, so there was no budget baseline and no
+denominator for any cost-per-lead figure. The importer upserts (a month/channel
+pair is unique by the doctype's autoname, so re-importing a corrected export
+would otherwise collide on every row), canonicalises channel spellings against
+`CHANNEL_ALIASES` and **reports every rename** rather than applying it silently.
+An unreadable amount is refused rather than coerced to 0 — note it does not use
+`frappe.utils.flt`, which would turn "n/a" into a silent zero in the denominator.
+
+`Marketing Spend.value_stream` is optional and **never apportioned**: a channel
+serving several streams stays blank and shows as Unallocated on the dashboard.
+
+**Value Stream Performance takes no required parameters** — it is opened live in a
+standing weekly meeting — and runs in four queries total, because the
+`Value Stream` child table carries ~1,460 rows across three parent doctypes and a
+per-stream subquery re-scans it every time.
+
+### Four KPIs were measuring a dead column
+
+`Lead.source` / `Opportunity.source` lost their DocField when erpnext v15 renamed
+them to `utm_source`. frappe never drops columns, so "Unsourced Leads",
+"Unsourced Opportunities", "Sourced Pipeline Value" and "Sourced Wins (30d)" all
+ran without error against a frozen pre-2023 snapshot. Fixed to read
+`custom_lead_source`; the `Unknown (pre-Aug 2026)` bucket counts as unsourced,
+because it is a recorded gap rather than a channel. A test parses the AST of
+`snapshots.py` and fails if any query references the dead column again.
+
+### Data source failures are now announced
+
+GSC had failed on 40 of 40 nightly pulls with the only trace being `pull_error`.
+`_alert_on_source_change` raises a Notification Log to System Managers when a
+source starts failing **and** when it recovers — on transitions only, because a
+nightly "still broken" alert gets muted and then hides the next real outage.
