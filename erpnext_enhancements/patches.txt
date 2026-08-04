@@ -394,3 +394,15 @@ erpnext_enhancements.patches.backfill_unknown_lead_source
 # whereas a missing one is flagged in the export report. Never overwrites an
 # existing value, so it is idempotent across re-runs.
 erpnext_enhancements.patches.seed_payroll_employee_numbers
+# v1.242.0 WP-5: finish the customer_type migration. This site extended erpnext's
+# stock customer_type with "Commercial"/"Residential" -- the axis the industry rule
+# keys on -- but 364 rows were left on the legacy "Company" value. They are the
+# signature of an un-migrated import rather than a classification anyone made:
+# 100% of them are missing BOTH industry and customer_group, where Commercial is
+# 70%/67%. Scoped to that FULL signature, not to customer_type alone, so a genuine
+# "Company" carrying real data is never touched -- it stays put and surfaces in the
+# Account Data Quality report for a human. Every affected id is written to the
+# Error Log under "Legacy Company retype" BEFORE the update, because Company and
+# Commercial are indistinguishable afterwards and without that list the change is
+# one-way. Idempotent (the filter excludes anything already retyped).
+erpnext_enhancements.patches.retype_legacy_company_customers
