@@ -313,6 +313,15 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_lead_attribution.py -q
       - name: Fountain move intake (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_fountain_move.py -q
+      # Field systems (WP-2/3/8). Its own step because it installs a frappe stub in
+      # sys.modules — sharing a process with another stub-installing suite is how
+      # they cross-talk. Guards two things that fail expensively and quietly: a
+      # PENDING photo upload must keep counting as "captured" (or a technician on a
+      # site with no signal cannot clock out), and the payroll workbook's 14 columns
+      # must stay in position (the provider's import maps by position, so a
+      # reordered column lands somebody's hours in the Bonus field).
+      - name: Field photo gate + payroll export (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_field_systems.py -q
       # Guards the Gantt widget read API's security contract: client-supplied
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)

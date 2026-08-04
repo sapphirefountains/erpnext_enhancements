@@ -369,3 +369,28 @@ erpnext_enhancements.patches.switch_commission_report_to_pay_periods
 # acceptance criterion could pass with her sidebar unchanged. Not a permission: she
 # keeps every document she can reach today, and loses only desk layout editing.
 erpnext_enhancements.patches.remove_accountant_workspace_manager
+# v1.241.0 WP-1 attribution: make the attribution hole visible instead of blank.
+# The August marketing review's "45% of opportunities have no source" was measured
+# against `tabOpportunity.source` -- a column that still physically exists but has
+# had NO DocField behind it since erpnext v15 renamed the field to `utm_source`.
+# Nothing reads or writes it. Live coverage was not 55%, it was ~0: 809 of 815
+# opportunities carried no custom_lead_source at all. Seeds the Lead Source
+# "Unknown (pre-Aug 2026)" and stamps it on sourceless Leads/Opportunities created
+# BEFORE 2026-08-01 -- deliberately not on later ones, because a sourceless record
+# created after capture went in is a live process failure that the gate and the
+# Attribution Gaps report exist to surface. Direct UPDATE, not save(): re-saving
+# ~1,000 documents would fire every CRM hook this app installs for a metadata-only
+# change, inside a migration. Idempotent (filtered to blank values).
+erpnext_enhancements.patches.backfill_unknown_lead_source
+# v1.241.0 WP-8 payroll: transcribe the payroll provider's employee numbers onto
+# Employee.employee_number. The Shaw & Nielsen workbook keys every row on THEIR
+# number (22, 7, 17, ...), which is not the ERPNext employee id and was null for
+# all 15 active employees -- without it the export produces a file with a blank
+# first column that the provider cannot import. Read directly off the submitted
+# 2026-07-16..07-31 file, along with the salaried/hourly flag and the three
+# healthcare stipends; nothing is inferred from a name or a pay rate. Matching is
+# strict and AMBIGUITY IS A REFUSAL: two employees matching one entry means
+# neither is touched, because a payroll number on the wrong person is invisible
+# whereas a missing one is flagged in the export report. Never overwrites an
+# existing value, so it is idempotent across re-runs.
+erpnext_enhancements.patches.seed_payroll_employee_numbers

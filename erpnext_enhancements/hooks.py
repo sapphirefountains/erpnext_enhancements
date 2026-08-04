@@ -394,8 +394,30 @@ doc_events = {
 			"erpnext_enhancements.po_approval.stamp_approval",
 		],
 	},
+	# Lead attribution. Lead had no doc_events block at all before v1.241.0.
+	# Both handlers are inert unless the attribution Custom Fields exist on the
+	# bench (they check frappe.db.has_column), which is what keeps them safe
+	# during erpnext's own test bootstrap.
+	"Lead": {
+		"validate": [
+			# Stamp custom_attribution_captured_on the first time any UTM value
+			# lands. Set once — a later edit never restates the acquisition date.
+			"erpnext_enhancements.crm_enhancements.attribution.stamp_capture_time",
+			# The source gate. NEW records only, and gated twice in Settings
+			# (lead_attribution_enabled + require_lead_source_on_lead) so it can
+			# be switched off from the UI without a deploy.
+			"erpnext_enhancements.crm_enhancements.attribution.enforce_source",
+		],
+	},
 	"Opportunity": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
+		"validate": [
+			# First-touch inheritance from the originating Lead (or Customer, for
+			# the fountain-move path, which creates Customer-party opportunities
+			# on purpose). Fills blanks only — never overwrites.
+			"erpnext_enhancements.crm_enhancements.attribution.propagate_to_opportunity",
+			"erpnext_enhancements.crm_enhancements.attribution.enforce_source",
+		],
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
@@ -408,6 +430,15 @@ doc_events = {
 			"erpnext_enhancements.sync_contact.sync_from_main_doc",
 			"erpnext_enhancements.crm_enhancements.project_prompt.prompt_create_project_on_won",
 			"erpnext_enhancements.crm_enhancements.page.sales_pipeline.sales_pipeline.publish_pipeline_update",
+			# Push attribution forward onto the Customer. The Lead -> Customer
+			# link only exists when erpnext built the Customer from the Lead;
+			# Customer-first deals (fountain-move, and every manually created
+			# account) need this direction or the Customer — which is what the
+			# value-stream dashboards group by — stays unattributed. Writes with
+			# db.set_value, NOT save(): re-entering every Customer hook (Drive
+			# provisioning, contact sync) for a metadata-only copy is both slow
+			# and a real source of side effects.
+			"erpnext_enhancements.crm_enhancements.attribution.backfill_opportunity_to_customer",
 		],
 		# Drive folder per Customer-party opportunity (settings opt-in)
 		"after_insert": "erpnext_enhancements.google_drive.drive_utils.enqueue_opportunity_folder",
@@ -486,6 +517,10 @@ doc_events = {
 		"on_trash": "erpnext_enhancements.sync_contact.cleanup_directory_exclusions",
 	},
 	"Customer": {
+		# Inherit attribution from the Lead erpnext built this Customer from
+		# (Customer.lead_name is the reliable back-link; custom_opportunities is
+		# a child table populated after insert, so it is empty at validate time).
+		"validate": "erpnext_enhancements.crm_enhancements.attribution.propagate_to_customer",
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		# Drive folder per customer (Project Folder Google Drive Settings opt-in)

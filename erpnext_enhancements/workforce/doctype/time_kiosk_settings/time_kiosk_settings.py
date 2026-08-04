@@ -26,6 +26,13 @@ DEFAULTS = {
 	"max_batch_size": 50,
 	"keep_wake_lock": 0,
 	"retention_days": 90,
+	# Job photo capture gate (v1.241.0). Off by default — the app's staged-rollout
+	# convention, and a gate that arrives switched on without warning is how a
+	# field rollout gets rejected on day one.
+	"require_job_photos": 0,
+	"min_photos_per_interval": 1,
+	"allow_photo_skip": 1,
+	"require_skip_reason": 1,
 }
 
 

@@ -34,6 +34,15 @@
   var BOOT = window.KIOSK_BOOT || {};
   var CSRF = window.KIOSK_CSRF || BOOT.csrf_token || '';
   var SETTINGS = BOOT.settings || {};
+  // Job photo capture gate config (WP-2). A UX hint ONLY — the server re-reads
+  // Time Kiosk Settings inside log_time on every call and is what actually
+  // decides, so a device serving a stale cached bundle cannot talk its way past
+  // the requirement. See workforce/photo_gate.py.
+  var PHOTO_GATE = BOOT.photo_gate || {};
+  // localStorage key for photos captured while offline. The bytes stay in this
+  // queue until they upload; the SERVER-side row is registered separately and
+  // immediately, so the gate is satisfied the moment the shutter fires.
+  var PHOTO_QUEUE_KEY = 'tk_photo_queue_v1';
   // Per-deploy cache-bust token (kiosk.py::get_deploy_version, injected by
   // kiosk.html). Versions the service-worker registration so every deploy
   // rotates the SW cache automatically.
@@ -43,6 +52,7 @@
     status: null,            // 'Open' | 'Paused' | 'Idle'
     currentInterval: null,
     attachments: [],
+    photoCount: 0,           // photos captured for the ACTIVE interval, incl. ones still queued offline
     isSwitching: false,
     loading: false,
     maintenance: null,       // { project, ctx } — get_maintenance_context for the active job
@@ -472,10 +482,18 @@
       app.currentInterval = message;
       app.attachments = message.attachments || [];
       app.isSwitching = false;
+      // Trust the server's count when it sends one, but never let it DROP a
+      // photo this device knows it took: an offline capture is real even though
+      // the server has not heard about it yet, and lowering the count here would
+      // re-block a technician who has already done the right thing.
+      if (typeof message.photo_count === 'number') {
+        app.photoCount = Math.max(message.photo_count, app.photoCount || 0);
+      }
     } else {
       app.status = 'Idle';
       app.currentInterval = null;
       app.attachments = [];
+      app.photoCount = 0;
     }
     renderState();
   }
@@ -730,8 +748,160 @@
       .catch(function () { toast('Upload failed.', 'red'); });
   }
 
+  // -- Job photos (WP-2 capture gate) --------------------------------------
+  //
+  // The ordering here is the entire design. A photo is REGISTERED on the server
+  // the instant it is taken, carrying only a device-minted id; the bytes are
+  // queued and uploaded whenever the connection allows. So:
+  //
+  //   * the capture gate is satisfied immediately, offline or not;
+  //   * a technician on a site with no signal can still clock out;
+  //   * nothing is lost — the queue survives a page reload and drains later.
+  //
+  // Registration failing while offline is fine too: the entry stays queued and
+  // registration is retried on the next drain, so the only cost of no signal is
+  // that the gate falls back to the skip-reason path.
+
+  function photoQueue() {
+    try { return JSON.parse(localStorage.getItem(PHOTO_QUEUE_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+
+  function savePhotoQueue(queue) {
+    try { localStorage.setItem(PHOTO_QUEUE_KEY, JSON.stringify(queue)); }
+    catch (e) { /* storage may be full or blocked; the photo is still on the camera roll */ }
+  }
+
+  function mintCaptureId() {
+    // Not crypto — it only has to be unique per device. Date+random is plenty,
+    // and crypto.randomUUID is missing on some of the older Android handsets in
+    // the field, which is exactly the population this feature exists for.
+    return 'cap-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function capturePhoto(file) {
+    var ci = app.currentInterval || {};
+    if (!ci.name) { toast('Clock in before taking photos.', 'orange'); return; }
+
+    var uid = mintCaptureId();
+    var entry = { uid: uid, interval: ci.name, at: new Date().toISOString(), registered: false };
+
+    // Count it locally FIRST, so the gate prompt reflects reality even if every
+    // network call below fails.
+    app.photoCount = (app.photoCount || 0) + 1;
+    var queue = photoQueue();
+    queue.push(entry);
+    savePhotoQueue(queue);
+
+    registerPhoto(entry).then(function () {
+      return uploadCapturedPhoto(file, entry);
+    }).catch(function () {
+      toast('Photo saved on this device — it will upload when you have signal.', 'orange', 5000);
+    });
+  }
+
+  function registerPhoto(entry) {
+    return api('erpnext_enhancements.api.time_kiosk.record_job_photo', {
+      job_interval: entry.interval,
+      client_uid: entry.uid,
+      captured_on: entry.at,
+    }).then(function () {
+      entry.registered = true;
+      savePhotoQueue(photoQueue().map(function (q) {
+        return q.uid === entry.uid ? entry : q;
+      }));
+    });
+  }
+
+  function uploadCapturedPhoto(file, entry) {
+    var fd = new FormData();
+    fd.append('file', file, file.name || (entry.uid + '.jpg'));
+    // Private: these are photographs of the inside of customers' property, and a
+    // public file URL is unauthenticated and effectively permanent.
+    fd.append('is_private', '1');
+    fd.append('doctype', 'Job Interval');
+    fd.append('docname', entry.interval);
+    fd.append('folder', 'Home/Attachments');
+
+    return fetch('/api/method/upload_file', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Frappe-CSRF-Token': CSRF },
+      body: fd,
+    }).then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!(data && data.message && data.message.name)) throw new Error('upload failed');
+        return api('erpnext_enhancements.api.time_kiosk.record_job_photo', {
+          job_interval: entry.interval,
+          client_uid: entry.uid,
+          file_name: data.message.name,
+        });
+      })
+      .then(function () {
+        savePhotoQueue(photoQueue().filter(function (q) { return q.uid !== entry.uid; }));
+        toast('Photo saved.', 'green');
+      });
+  }
+
+  function flushPhotoQueue() {
+    var queue = photoQueue();
+    if (!queue.length || !navigator.onLine) return;
+    // Only re-registration is retried here. The BYTES cannot be replayed from
+    // localStorage (a queued File object does not survive a reload), so a
+    // capture whose upload was interrupted stays visible as "Pending" on the Job
+    // Interval and in the Job Photo Compliance report rather than silently
+    // vanishing. That honesty is the point: a pending row says a photo exists
+    // somewhere, which is true.
+    queue.filter(function (q) { return !q.registered; }).forEach(function (entry) {
+      registerPhoto(entry).catch(function () { /* still offline; try again later */ });
+    });
+  }
+
+  // -- The capture gate prompt ---------------------------------------------
+
+  function photoGateSatisfied() {
+    if (!PHOTO_GATE.require_job_photos) return true;
+    var needed = PHOTO_GATE.min_photos_per_interval || 1;
+    return (app.photoCount || 0) >= needed;
+  }
+
+  /**
+   * Run `cb` only once the photo requirement is met or explicitly skipped.
+   *
+   * `cb` receives the skip reason (or null). The server enforces the same rule
+   * independently — this only saves the technician a round trip and a rejection.
+   */
+  function withPhotoGate(verb, cb) {
+    if (photoGateSatisfied()) { cb(null); return; }
+
+    var needed = PHOTO_GATE.min_photos_per_interval || 1;
+    var have = app.photoCount || 0;
+
+    if (!PHOTO_GATE.allow_photo_skip) {
+      toast('Take ' + (needed - have) + ' more photo(s) before you ' + verb + '.', 'red', 6000);
+      return;
+    }
+
+    var message = 'No photo of this job yet. Press OK to go back and take one, or Cancel to ' +
+      verb + ' without a photo.';
+    if (window.confirm(message)) return;
+
+    var reason = null;
+    if (PHOTO_GATE.require_skip_reason) {
+      reason = window.prompt('Why are you skipping the photo? (for example: customer declined, ' +
+        'nothing visible to photograph, camera not working)');
+      if (reason === null) return;             // changed their mind — do nothing
+      reason = (reason || '').trim();
+      if (!reason) {
+        toast('A reason is needed to finish without a photo.', 'orange', 5000);
+        return;
+      }
+    }
+    cb(reason);
+  }
+
   // -- Actions -------------------------------------------------------------
-  function handleAction(action) {
+  function handleAction(action, skipReason) {
     var project = el.project.value;
     var task = el.task.value;
     var description = el.note.value;
@@ -746,11 +916,15 @@
     api('erpnext_enhancements.api.time_kiosk.log_time', {
       project: project, task: task, action: action,
       description: description, time_category: category,
+      // Only consulted by Switch and Stop. Null on every other action.
+      skip_reason: skipReason || null,
     }).then(function (r) {
       if (r && r.status === 'success') {
         toast(r.message, 'green');
         el.note.value = '';
         el.activity.value = '';
+        // A new interval starts with no photos of its own.
+        if (action === 'Start' || action === 'Switch') app.photoCount = 0;
         if (action === 'Start') maybeConsent();
         return fetchStatus();
       }
@@ -962,10 +1136,12 @@
 
     el.clockOut.addEventListener('click', function () {
       warnIfMaintenancePending('clock out', function () {
-        promptIfNoAttachments(
-          'No attachments added. Press OK to go back and add them, or Cancel to clock out anyway.',
-          function () { handleAction('Stop'); }
-        );
+        withPhotoGate('clock out', function (skipReason) {
+          promptIfNoAttachments(
+            'No attachments added. Press OK to go back and add them, or Cancel to clock out anyway.',
+            function () { handleAction('Stop', skipReason); }
+          );
+        });
       });
     });
 
@@ -980,11 +1156,18 @@
         // the same project keeps the visit going.
         var ci = app.currentInterval || {};
         var newProject = el.project.value;
-        if (newProject && ci.project && newProject !== ci.project) {
-          warnIfMaintenancePending('switch projects', function () { handleAction('Switch'); });
-        } else {
-          handleAction('Switch');
-        }
+        // Photo gate first, then the maintenance warning: both can refuse, and
+        // asking for a skip reason only to then be blocked on maintenance would
+        // be the more annoying order.
+        withPhotoGate('switch projects', function (skipReason) {
+          if (newProject && ci.project && newProject !== ci.project) {
+            warnIfMaintenancePending('switch projects', function () {
+              handleAction('Switch', skipReason);
+            });
+          } else {
+            handleAction('Switch', skipReason);
+          }
+        });
       }
     });
 
@@ -998,10 +1181,18 @@
       Array.prototype.slice.call(this.files).forEach(uploadFile);
       this.value = '';
     });
+    // The camera goes through capturePhoto, NOT uploadFile: a camera capture is
+    // the thing the gate counts, and it has to be registered on the server before
+    // (and independently of) its bytes finishing an upload. The paperclip button
+    // above keeps the plain attachment path — a PDF of a delivery note is not a
+    // job photo and should not satisfy a photo requirement.
     $('tk-camera-input').addEventListener('change', function () {
-      Array.prototype.slice.call(this.files).forEach(uploadFile);
+      Array.prototype.slice.call(this.files).forEach(capturePhoto);
       this.value = '';
     });
+
+    // Drain the offline registration queue whenever the device comes back.
+    window.addEventListener('online', flushPhotoQueue);
   }
 
   // -- Init ----------------------------------------------------------------

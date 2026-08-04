@@ -158,3 +158,95 @@ silently empty the board.
 
 - `sync_opportunity_tags` is one of several `Opportunity` `before_save` handlers; the others are Python ports in [`script_migrations/opportunity.py`](../script_migrations/README.md).
 - Converting an Opportunity to a Project provisions a Drive folder tree, but that's **non-fatal** and lives in the [Google Drive module](../google_drive/README.md) — the Project is created even if Drive fails.
+
+
+## Lead attribution (WP-1, v1.241.0)
+
+`attribution.py` + `web_lead.py`. The problem it addresses, measured on 2026-08-04: of 815
+Opportunities, **814 had no `utm_source` and 809 had no `custom_lead_source`**. The
+"45% missing" figure from the marketing review was measured against `tabOpportunity.source`
+— a column that still physically exists but has had **no DocField behind it since erpnext
+v15 renamed the field to `utm_source`**. Nothing reads or writes it. Live coverage was not
+55%; it was approximately zero.
+
+### The schema decision
+
+erpnext v16 ships `utm_source` / `utm_medium` / `utm_campaign` / `utm_content` on Lead and
+Opportunity. We deliberately do **not** write real campaign data into them:
+
+1. **`utm_source` is load-bearing elsewhere.** `Lead.before_insert` mints a stray second
+   Contact unless `utm_source == "Existing Customer"` and `customer` is set — the
+   suppression the fountain-move conversion depends on (see above). Writing a campaign name
+   there would silently start duplicating Contacts.
+2. **`utm_medium` and `utm_campaign` are Links.** Raw capture must accept whatever string is
+   in the URL; a Link either rejects it or spawns junk taxonomy rows.
+
+So raw values live in our own `custom_utm_*` **Data** fields in a collapsed "Attribution"
+section on Lead, Opportunity **and** Customer, and `custom_lead_source` (Link → `Lead
+Source`) stays the single human-facing channel. The accepted cost is that we own the mapping
+from a raw source/medium pair to a Lead Source value — `attribution.derive_lead_source`,
+deliberately small, and consulted only to fill a **blank**.
+
+Fields we ship that erpnext has no equivalent for: `custom_utm_term`, `custom_gclid`,
+`custom_landing_page`, `custom_first_referrer`, `custom_attribution_captured_on`.
+
+### First touch wins
+
+`attribution._fill_blanks` is the **only** function that writes attribution onto a document,
+so there is exactly one place to audit the rule. Propagation runs on `validate`:
+Lead → Opportunity, Lead → Customer, and Opportunity → Customer (the last via `db.set_value`
+in `on_update`, because re-saving the Customer would re-enter Drive provisioning and contact
+sync for a metadata-only copy).
+
+### The source gate is a hook, not `reqd`
+
+`reqd = 1` would break every API-created record and retroactively invalidate the backlog.
+`attribution.enforce_source` runs on `validate`, applies to **new records only**, exempts
+bulk contexts (import/migrate/patch/install/test), and is gated by
+`require_lead_source_on_lead` / `require_lead_source_on_opportunity` in ERPNext Enhancements
+Settings so it can be switched off from the UI in seconds. Historical blanks were bucketed to
+`Unknown (pre-Aug 2026)` by `patches.backfill_unknown_lead_source` — a value that stays
+visibly a gap rather than being laundered into a real channel. The **Attribution Gaps**
+report separates that historical debt from live process failures.
+
+### The website ingress
+
+`web_lead.submit_web_lead` is a machine-to-machine POST endpoint gated by a Bearer shared
+secret (`web_lead_shared_secret`, fails closed when unset), rate limited, with a field
+allowlist rather than a payload splat.
+
+**The public site is WordPress on WP Engine behind Cloudflare** — a different host from
+ERPNext. The capture script that reads `utm_*`/`gclid`/referrer and forwards them lives on
+the WordPress side and is **not in this repo**; only the ERPNext half is. The full payload
+contract is in [`docs/attribution-runbook.md`](../../docs/attribution-runbook.md).
+
+
+## `Value Stream` vs `Value Streams` — investigated, not changed
+
+Two doctypes with near-identical names sit in this module and it reads as cruft. It is not.
+Both are in daily use, and the names are simply **inverted from frappe convention**:
+
+| DocType | What it is | Rows (2026-08-04) |
+|---|---|---|
+| `Value Streams` (**plural**) | The **master list** — Design, Build, Service, Events, Delivery, Products | 6 |
+| `Value Stream` (**singular**) | The **child table** behind the `custom_value_stream` Table MultiSelect on Customer, Opportunity and Project | 1,460 |
+
+Normally the plural would be the child. Here it is the other way round, so every query
+against them reads backwards. That is the trap; write it down rather than "fixing" it.
+
+**Two genuinely dead fields were found:**
+
+1. `Value Stream` (child) declares **two** Link fields — `value_stream` *and* `value_streams`
+   — **both pointing at `Value Streams`**. A Table MultiSelect binds one `link_fieldname`, so
+   the spare is inert. Almost certainly a copy-paste artifact.
+2. `Value Streams` (master) declares `value_stream_link`, a **Link → `Value Stream`** — i.e.
+   the master pointing at the child table. You cannot link to a child doctype in frappe; the
+   field does nothing.
+
+**Recommendation (not executed — needs sign-off).** Keep both doctypes and both names.
+Renaming a child doctype with 1,460 rows referenced by three Table MultiSelect fields is a
+`bench migrate`-breaking operation for a cosmetic gain. Instead: confirm which Link field the
+MultiSelects actually bind to, then remove the unused one and `value_stream_link` — which is
+**two steps**, a fixture removal *and* a `frappe.delete_doc` patch, because removing a record
+from `fixtures/*.json` only stops managing it (see
+[`fixtures/README.md`](../fixtures/README.md)).

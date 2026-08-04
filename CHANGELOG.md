@@ -7,6 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.241.0] - 2026-08-04
+
+Marketing and field systems, from the 4 August leadership review: attribution capture
+(WP-1), the job-photo capture gate (WP-2), photo routing (WP-3) and the payroll hours
+export (WP-8). Everything ships **off by default** behind settings toggles.
+
+### Added
+
+- **Lead attribution pipeline (WP-1).** `crm_enhancements/attribution.py` captures raw
+  acquisition data in a collapsed "Attribution" section on Lead, Opportunity **and**
+  Customer, and propagates it first-touch across Lead → Opportunity → Customer. New fields:
+  `custom_utm_source/_medium/_campaign/_content/_term`, `custom_gclid`,
+  `custom_landing_page`, `custom_first_referrer`, `custom_attribution_captured_on`.
+
+  **Why these are our own fields and not erpnext's.** erpnext v16 already ships
+  `utm_source`/`utm_medium`/`utm_campaign`/`utm_content` on Lead and Opportunity, and we
+  deliberately do not write campaign data into them. `Lead.before_insert` mints a stray
+  second Contact unless `utm_source == "Existing Customer"` and `customer` is set — the
+  suppression the fountain-move conversion depends on — so a campaign name there would
+  silently start duplicating Contacts. And `utm_medium`/`utm_campaign` are **Links** into
+  taxonomies, while raw capture has to accept whatever arbitrary string is in a URL: a Link
+  either rejects the submission or spawns junk taxonomy rows. `custom_lead_source`
+  (Link → `Lead Source`) stays the single human-facing channel, because that is the list this
+  site actually populates (~696 Customers) while `UTM Source` is a near-identical parallel
+  list that is empty apart from the suppression sentinel.
+
+  `_fill_blanks` is the only function that writes attribution onto a document, so
+  "first touch wins" has exactly one implementation to audit.
+
+- **Website lead ingress (WP-1).** `crm_enhancements/web_lead.submit_web_lead` — a
+  machine-to-machine POST endpoint gated by a Bearer shared secret (constant-time, fails
+  closed when unset), rate limited, with a field allowlist rather than a payload splat.
+  Guest inserts require `ignore_permissions=True`, under which frappe's permlevel check
+  returns early, so `read_only` in a DocType JSON stops nothing and the allowlist is the
+  actual control. The full payload contract is in `docs/attribution-runbook.md`.
+
+  **The capture script is not in this repo.** The public site is WordPress on WP Engine
+  behind Cloudflare — a different host from ERPNext — so the browser-side snippet that reads
+  `utm_*`/`gclid`/referrer belongs there. Only the ERPNext half is here.
+
+- **Attribution Gaps report** (CRM Enhancements). Leads and Opportunities with no
+  acquisition channel, grouped by owner, separating *live* process failures (blank, only
+  possible after 2026-08-01) from the historical backfill bucket. Explicit roles.
+
+- **Job-photo capture gate (WP-2).** New `Job Interval Photo` child table plus `photos`,
+  `photo_status`, `photo_skip_reason` and `photos_pending_upload` on `Job Interval`; a
+  "Job Photo Capture" section in Time Kiosk Settings (`require_job_photos`,
+  `min_photos_per_interval`, `allow_photo_skip`, `require_skip_reason`); and enforcement in
+  `workforce/photo_gate.py`, called from `api.time_kiosk.log_time` for **Switch** and
+  **Stop**. Pause/Resume are not gated — pausing for lunch is not the end of a job, and
+  requiring a photo for it would train everybody to skip.
+
+  **A Pending upload counts as captured.** The photo row is written the instant the shutter
+  fires, keyed on a device-minted `client_uid`; the bytes follow whenever there is signal.
+  A technician on a site with no coverage can still clock out. This is deliberate: somebody
+  physically unable to leave a site because an upload is failing would destroy trust in the
+  system faster than the missing data justifies. `allow_photo_skip = 0` turns the gate into
+  a hard block with no escape hatch — **that remains an open people decision** and ships off.
+
+  Enforcement is server-side. The kiosk prompts too, but a field device is offline half the
+  day and serving a cached bundle of unknown age, so that prompt is a courtesy.
+
+- **Offline photo queue in the kiosk PWA.** Captures register with the server before their
+  bytes upload, survive a page reload in `localStorage`, and drain on the `online` event.
+  The camera button routes through `capturePhoto`, not the generic attachment upload — a PDF
+  of a delivery note is not a job photo and must not satisfy a photo requirement.
+
+- **Photo routing (WP-3).** `workforce/photo_routing.py` copies each photo onto the Project
+  and Task and tags it (`job-photo`, `cust:…`, `vs:…`, `shot:…`). It **does not call Google
+  Drive**: `google_drive/drive_sync.on_file_attached` already owns that end to end and is
+  already idempotent (it bails once `custom_drive_file_id` is set) with quota/auth failures
+  logged replayably. A second upload path would mean a second idempotency bug. Routing's job
+  is to ensure the File is attached to a document that *has* a folder — the Project normally,
+  falling back to the Customer when the Project has no folder or carries
+  `custom_drive_folder_missing`.
+
+- **Job Photo Library** and **Job Photo Compliance** reports (Workforce), and **Featured
+  Jobs** (Project Enhancements) with a new `Project.custom_feature_this_job` flag. The
+  library is the marketing browse view — filter by customer, project, value stream and date,
+  thumbnails inline, no knowledge of the field operation required. Featured Jobs sorts
+  upcoming work first so photography can be arranged *before* the crew leaves.
+
+- **Payroll hours export (WP-8).** `workforce/payroll_export.py` reproduces the Shaw &
+  Nielsen semi-monthly workbook (firm `SHAWA2530`, client `5813`) from Job Interval data —
+  header block, three-row stacked column header, 14 fixed-position columns, Totals row,
+  sheet name — transcribed from a real submitted file rather than inferred. Salaried
+  employees report a flat 86.67 hours (2080 / 24). Adds a `Payroll Hours Export` report with
+  a "Download Workbook" button (a Query Report's own Excel export cannot reproduce the
+  provider's header block) and `Employee.custom_payroll_classification` /
+  `custom_healthcare_stipend`.
+
+  **The overtime columns are emitted blank, and that is a refusal rather than an omission.**
+  The work package assumed rates were configured in ERPNext; they are not, and there is
+  nowhere for them to be — **`hrms` is not installed on this site** (no Salary Structure, no
+  salary slips, no payroll module, 0 Timesheets). `Qualified OT` is a federal tax figure, and
+  reimplementing FLSA premium arithmetic to save a payroll bureau a calculation they already
+  perform correctly is the worst trade available.
+
+### Changed
+
+- `api.time_kiosk.log_time` accepts `skip_reason`, consulted only by Switch and Stop. Both
+  gate **before** mutating the interval, so a refused close leaves the job open rather than
+  half-ended.
+- `get_current_status` returns `photo_count`; `get_kiosk_bootstrap` returns a `photo_gate`
+  block. The client only ever *raises* its local count from that number — an offline capture
+  the server has not heard about must not be un-counted by a status refresh.
+- `Lead` gains a `doc_events` block (it had none), and `Customer`/`Opportunity` gain
+  attribution handlers.
+
+### Fixed
+
+- Nothing. This release adds; the correction it carries is documentary — see below.
+
+### Notes
+
+Three findings from the pre-build survey that contradict the assumptions the work was
+scoped against, recorded here because they are the kind of thing that is expensive to
+rediscover:
+
+1. **`Opportunity.source` does not exist as a field.** The 370/815 "missing source" figure
+   reproduces exactly, but against a *dead column* — erpnext v15 renamed the field to
+   `utm_source` and frappe never drops columns. Live attribution coverage was ~0% (814/815
+   with no `utm_source`, 809/815 with no `custom_lead_source`), not 55%.
+2. **Google Search Console has never worked.** `Marketing Web Snapshot` has pulled nightly
+   since 2026-06-26: GA4 succeeded 40/40 days, GSC failed 40/40 with `HTTP 403`. Organic
+   clicks and impressions have been 0 for the entire history of the dataset. This is a
+   Google-side grant, not a code bug.
+3. **The time clock is unused.** 0 Job Intervals and 16 Time Kiosk Logs in production, so
+   WP-8 cannot be reconciled against a manual pay period yet, and the photo gate has never
+   met a real crew. Do not schedule a payroll cutover against this until a full period has
+   been clocked.
+
+`Value Stream` / `Value Streams` were investigated and **not** changed — findings and a
+recommendation are in `crm_enhancements/README.md`.
+Both are in daily use (the plural is the 6-row master, the singular is the 1,460-row child
+table); only two genuinely dead Link fields were found, and removing them needs sign-off.
+
 ## [1.240.1] - 2026-08-03
 
 ### Fixed
