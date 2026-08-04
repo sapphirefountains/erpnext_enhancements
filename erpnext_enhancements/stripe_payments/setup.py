@@ -8,6 +8,24 @@ Idempotently creates the back-reference custom fields the integration writes to
 Payment used when posting (Stripe for cards, ACH for bank debit), defaulting the
 Settings link fields to them on first run. Wired in hooks.py ``after_migrate``,
 mirroring ``accounting_intake.setup``.
+
+**These fields are `is_system_generated`, so they are NOT in `fixtures/`.** The
+fixture export filters on ``is_system_generated = 0``; this file is their only
+source of truth. Change a label or a position here, not in the UI, or the next
+migrate will put it back.
+
+``create_custom_fields`` defaults to ``update=True``, so editing a definition
+below re-applies to existing sites on the next migrate — which is how the Customer
+fields were moved into their own section in v1.242.0 rather than staying wherever
+they first landed.
+
+**Ordering dependency:** ``custom_stripe_section`` anchors on
+``custom_attribution_captured_on``, a fixture-managed field. That is safe because
+``sync_fixtures`` runs during migrate and this is an ``after_migrate`` hook, so the
+anchor always exists by the time this runs. If the attribution fields are ever
+removed, re-anchor this section rather than leaving it pointing at nothing — a
+Custom Field whose ``insert_after`` does not resolve is stranded at the bottom of
+the last tab, silently.
 """
 
 import frappe
@@ -19,11 +37,24 @@ def create_stripe_custom_fields():
 	create_custom_fields(
 		{
 			"Customer": [
+				# All five Customer fields live in their own collapsed section as of
+				# v1.242.0. They used to hang off `customer_primary_contact`, which
+				# dropped four read-only integration fields into the MIDDLE of the
+				# identity block — the first thing anyone sees when they open an
+				# account was a Stripe id nobody types. The section break is what
+				# moves them; the chain below just keeps them together.
+				{
+					"fieldname": "custom_stripe_section",
+					"label": "Stripe",
+					"fieldtype": "Section Break",
+					"insert_after": "custom_attribution_captured_on",
+					"collapsible": 1,
+				},
 				{
 					"fieldname": "custom_stripe_customer_id",
 					"label": "Stripe Customer ID",
 					"fieldtype": "Data",
-					"insert_after": "customer_primary_contact",
+					"insert_after": "custom_stripe_section",
 					"read_only": 1,
 					"no_copy": 1,
 					"print_hide": 1,
@@ -38,10 +69,15 @@ def create_stripe_custom_fields():
 					"print_hide": 1,
 				},
 				{
+					"fieldname": "custom_stripe_column_break",
+					"fieldtype": "Column Break",
+					"insert_after": "custom_stripe_default_payment_method",
+				},
+				{
 					"fieldname": "custom_stripe_payment_method_label",
 					"label": "Saved Method",
 					"fieldtype": "Data",
-					"insert_after": "custom_stripe_default_payment_method",
+					"insert_after": "custom_stripe_column_break",
 					"read_only": 1,
 					"no_copy": 1,
 					"print_hide": 1,

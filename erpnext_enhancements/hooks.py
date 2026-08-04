@@ -520,7 +520,16 @@ doc_events = {
 		# Inherit attribution from the Lead erpnext built this Customer from
 		# (Customer.lead_name is the reliable back-link; custom_opportunities is
 		# a child table populated after insert, so it is empty at validate time).
-		"validate": "erpnext_enhancements.crm_enhancements.attribution.propagate_to_customer",
+		"validate": [
+			"erpnext_enhancements.crm_enhancements.attribution.propagate_to_customer",
+			# WP-5: industry required on commercial accounts. NOT reqd/
+			# mandatory_depends_on, which are evaluated on every save by every
+			# caller -- QBO's mapping.py inserts Customers without
+			# ignore_mandatory, so a declarative rule would park every synced
+			# customer in manual review. This hook exempts background jobs, bulk
+			# contexts and callers that set flags.ignore_mandatory.
+			"erpnext_enhancements.crm_enhancements.data_quality.enforce_industry",
+		],
 		"before_save": "erpnext_enhancements.script_migrations.customer.set_last_activity",
 		"on_update": "erpnext_enhancements.sync_contact.sync_from_main_doc",
 		# Drive folder per customer (Project Folder Google Drive Settings opt-in)

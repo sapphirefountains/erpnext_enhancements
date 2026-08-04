@@ -137,7 +137,10 @@
   "lead_attribution_column_break",
   "web_lead_ingress_enabled",
   "web_lead_default_owner",
-  "web_lead_shared_secret"
+  "web_lead_shared_secret",
+  "account_hygiene_section",
+  "require_industry_on_commercial",
+  "require_industry_on_edit"
  ],
  "fields": [
   {
@@ -1026,6 +1029,26 @@
    "fieldname": "web_lead_shared_secret",
    "fieldtype": "Password",
    "label": "Website Ingress Shared Secret"
+  },
+  {
+   "fieldname": "account_hygiene_section",
+   "fieldtype": "Section Break",
+   "label": "Account Data Quality"
+  },
+  {
+   "default": "1",
+   "description": "Block a NEW Customer whose customer_type is Commercial / Company / Partnership from being saved with no industry. Residential and Individual accounts are never asked — a homeowner has no industry. Enforced by crm_enhancements/data_quality.enforce_industry rather than by reqd, because reqd is evaluated on every save by every caller and would park every QuickBooks-synced customer in manual review (QBO inserts without ignore_mandatory).",
+   "fieldname": "require_industry_on_commercial",
+   "fieldtype": "Check",
+   "label": "Require Industry on New Commercial Accounts"
+  },
+  {
+   "default": "0",
+   "depends_on": "require_industry_on_commercial",
+   "description": "Extend the rule to existing commercial accounts. Leave OFF until the backlog is cleared: 732 commercial customers have no industry today, and turning this on before backfilling them means editing a phone number on any of them fails with an error about a field the user never touched. Clear them with the Account Data Quality report, then switch this on to close the loop.",
+   "fieldname": "require_industry_on_edit",
+   "fieldtype": "Check",
+   "label": "...and on Edits to Existing Accounts"
   }
  ],
  "issingle": 1,

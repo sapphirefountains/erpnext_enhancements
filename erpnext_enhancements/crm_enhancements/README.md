@@ -250,3 +250,80 @@ MultiSelects actually bind to, then remove the unused one and `value_stream_link
 **two steps**, a fixture removal *and* a `frappe.delete_doc` patch, because removing a record
 from `fixtures/*.json` only stops managing it (see
 [`fixtures/README.md`](../fixtures/README.md)).
+
+
+## Account data hygiene (WP-5, v1.242.0)
+
+`data_quality.py` + the **Account Data Quality** report. The gaps it exists to
+close, measured 2026-08-04 across 1,621 Customers: **1,292 no industry, 1,160 no
+customer group, 1,118 no value stream.**
+
+### `customer_type` is the commercial/residential axis, and it was half-migrated
+
+This site extended erpnext's stock `customer_type` (Company / Individual /
+Partnership) with **Commercial** and **Residential**. Useful — the industry rule
+has a real field to key on. But 364 rows were left on the legacy `Company` value
+and are **100% missing both industry and customer group**, where Commercial is
+70%/67%. That is the signature of an un-migrated import, not a classification.
+`patches.retype_legacy_company_customers` moves them, scoped to that full
+signature so a genuine `Company` carrying real data is untouched, and logs every
+affected id to the Error Log first because the two values are indistinguishable
+afterwards.
+
+### Industry is required by a hook, NOT by `reqd`
+
+Asked for as "make industry required", and it is — but the declarative form takes
+the QuickBooks sync down. `reqd` and `mandatory_depends_on` are evaluated by
+`_validate_mandatory` on **every** save by **every** caller, and
+`quickbooks_online/core/mapping.py` inserts Customers with `ignore_permissions=True`
+but **not** `ignore_mandatory`. QBO payloads carry no industry, so a declarative
+rule would fail validation on every synced customer and park it in manual review —
+on the system that is the book of record until the January go-live.
+
+`data_quality.enforce_industry` runs on `validate` and can tell the cases apart:
+it honours `doc.flags.ignore_mandatory` (which `api/telephony.py` and
+`fountain_move/conversion.py` already set), exempts background jobs (`frappe.request`
+is None — a scheduled QBO poll is not a person who can be asked for a value),
+exempts bulk contexts, and skips residential accounts entirely.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `require_industry_on_commercial` | **on** | Block a NEW commercial account with no industry |
+| `require_industry_on_edit` | off | Also block edits — turn on **after** the 732-row backlog is cleared |
+
+### Assisted, never automatic
+
+`bulk_assign` / `assign_value_streams` apply a value **a human picked** to rows **a
+human selected**, skip rows that already carry a value rather than overwriting,
+and are role-gated to System Manager / Sales Manager. Nothing infers an industry
+from a company name — a wrong industry is invisible once written and every
+downstream report silently inherits it.
+
+The keep/merge/retire proposal for the 89 Industry Type values (47 in use) is
+[`docs/industry-type-proposal.md`](../../docs/industry-type-proposal.md). It is a
+proposal; nothing has been executed.
+
+## Pipeline reconciliation (WP-7, v1.242.0)
+
+`reconciliation.py` + the **Closed Won Reconciliation** report. 200 Opportunities
+are Closed Won with no linked Project; 199 of them are `opportunity_from =
+"Customer"` so `party_name` is a real Customer id, and 138 belong to a customer who
+already owns at least one Project.
+
+Candidates are ranked within a customer by date proximity (50), value proximity
+(30) and whether the project is already spoken for (20). Customer identity is a
+**precondition, not a score component** — a project for a different customer is not
+a weaker match, it is not a match.
+
+**Nothing links automatically, and that is the whole design.** A wrong link
+corrupts revenue attribution, which is the exact defect WP-1 was commissioned to
+fix, so an auto-linker would manufacture the problem the programme is trying to
+remove. `score_candidates` is read-only and every candidate carries its `reasons`
+so a reviewer can disagree on sight; `link_opportunity_to_project` writes exactly
+one link, refuses to overwrite an existing one, and guards both directions so two
+Projects cannot claim one Opportunity.
+
+**Named Account Targets** builds an outreach list from the same data, sorted by
+staleness rather than alphabetically. It has **no scale filter** — the
+event-planner scale taxonomy is undecided, and a filter built against a guessed
+field would quietly match nothing.

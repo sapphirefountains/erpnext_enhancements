@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.242.0] - 2026-08-04
+
+WP-5 account data hygiene and WP-7 pipeline reconciliation, plus the requested
+Customer form layout rework.
+
+### Added
+
+- **Account Data Quality report + assisted bulk assignment (WP-5).** Of 1,621
+  Customers, 1,292 have no industry, 1,160 no customer group and 1,118 no value
+  stream — so every downstream package (value-stream dashboards, territory-filtered
+  target lists) is reporting on a fraction of the book. The report is sorted by
+  project count then opportunity count, so the accounts actually worked for come
+  first; an alphabetical list would put six hundred dormant records ahead of the
+  fifty that matter and be abandoned on day two.
+
+  `bulk_assign` / `assign_value_streams` apply a value **a human picked** to rows
+  **a human selected**, skip rows that already carry a value rather than
+  overwriting, and are role-gated. Nothing infers an industry from a company name:
+  a wrong industry is invisible once written and every downstream report silently
+  inherits it.
+
+- **Industry required on commercial accounts (WP-5)** — via
+  `data_quality.enforce_industry`, **not** `reqd` / `mandatory_depends_on`.
+
+  This was asked for as "make industry required", and it is. The declarative form
+  would have taken the QuickBooks sync down: `_validate_mandatory` runs on every
+  save by every caller, and `quickbooks_online/core/mapping.py` inserts Customers
+  with `ignore_permissions=True` but **not** `ignore_mandatory`. QBO payloads carry
+  no industry, so a `reqd` flag would fail validation on every synced customer and
+  park it in manual review — on the system that is the book of record until the
+  1 January accounting go-live, and which is explicitly ring-fenced.
+
+  The hook can tell the cases apart: it honours `doc.flags.ignore_mandatory` (which
+  `api/telephony.py` and `fountain_move/conversion.py` already set, so neither
+  needed changing), exempts background jobs (`frappe.request is None` — a scheduled
+  poll is not a person who can be asked for a value), exempts bulk contexts, and
+  never asks a residential account for an industry. Two settings:
+  `require_industry_on_commercial` (**on**, new records) and
+  `require_industry_on_edit` (off — turn on once the 732-row backlog is cleared).
+
+- **Closed Won Reconciliation report + assisted linking (WP-7).** 200 Closed Won
+  Opportunities have no linked Project. 199 are `opportunity_from = "Customer"`, so
+  `party_name` is a real Customer id rather than a fuzzy name; 138 belong to a
+  customer who already owns a Project. Candidates are ranked within a customer by
+  date proximity (50), value proximity (30) and whether the project is already
+  spoken for (20) — customer identity is a **precondition, not a score component**.
+
+  **Nothing links automatically.** A wrong link corrupts revenue attribution, which
+  is the exact defect WP-1 exists to fix, so an auto-linker would manufacture the
+  problem the programme is trying to remove. Scoring is read-only, every candidate
+  carries its reasons so a reviewer can disagree on sight, and
+  `link_opportunity_to_project` writes one link at a time, refuses to overwrite,
+  and guards both directions so two Projects cannot claim one Opportunity.
+
+- **Named Account Targets report (WP-7)** — outreach list by industry, territory,
+  customer type, account status and value stream, sorted by staleness rather than
+  alphabetically. Deliberately has **no scale filter**: the event-planner scale
+  taxonomy is undecided, and a filter built against a guessed field would quietly
+  match nothing. The report states its own data-quality caveat with live numbers.
+
+- **`docs/industry-type-proposal.md`** — a keep/merge/retire proposal for the 89
+  Industry Type values. 42 have never been used on any Customer, Opportunity or
+  Lead (including a stray record literally named `mark`). The one that costs
+  reporting accuracy today: `Event Planner` (15) and `Event Planning` (18) are the
+  same thing spelled two ways, so event planners are currently the 5th *and* 8th
+  largest segments instead of the third largest at 33. **Proposal only — nothing
+  executed**, per the original instruction.
+
+### Changed
+
+- **Customer form layout.** `customer_type`, `territory`, `custom_parent_account`
+  and `custom_description` moved into the first section, with classification
+  (type / status / group / industry / value stream) in column one and relationship
+  and contact fields in column two.
+
+- **The five Stripe fields moved to their own collapsed section.** They were
+  anchored on `customer_primary_contact`, which dropped four read-only integration
+  fields into the middle of the identity block — the first thing anyone saw on
+  opening an account was a Stripe id nobody types. Changed in
+  `stripe_payments/setup.py`, which is their only source of truth: they are
+  `is_system_generated`, so the fixture export filters them out.
+
+- **The Attribution section no longer splits the Customer identity block.** v1.241.0
+  anchored it on `custom_lead_source`, which put a Section Break mid-section and cut
+  the first section in two. Re-anchored, and the whole Customer `field_order` is now
+  explicit about the attribution and Stripe fields so placement is deterministic
+  rather than depending on how `insert_after` and `field_order` resolve against each
+  other.
+
+### Fixed
+
+- `patches.retype_legacy_company_customers` finishes a half-done migration: this
+  site extended `customer_type` with Commercial/Residential, but 364 rows were left
+  on the legacy `Company` value. Those 364 are **100% missing both industry and
+  customer group** (Commercial is 70%/67%) — an un-migrated import, not a
+  classification. Scoped to that **full signature** rather than to `customer_type`
+  alone, so a genuine `Company` carrying real data is never touched. Every affected
+  id is logged to the Error Log **before** the update, because the two values are
+  indistinguishable afterwards and the change would otherwise be one-way.
+
+### Notes
+
+The `require_industry_on_edit` toggle should stay off until the 732 commercial
+customers with no industry have been cleared through the new report. Turning it on
+first means editing a phone number on any of them fails with a mandatory-field
+error about a field the user never touched.
+
+Order of operations for the Industry Type proposal, if approved: **merge first,
+then retire** (retiring a value a merge was about to fold in strands its records
+with a blank industry), and do both **before** enabling `require_industry_on_edit`.
+
 ## [1.241.0] - 2026-08-04
 
 Marketing and field systems, from the 4 August leadership review: attribution capture

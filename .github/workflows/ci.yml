@@ -322,6 +322,15 @@ jobs:
       # reordered column lands somebody's hours in the Bonus field).
       - name: Field photo gate + payroll export (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_field_systems.py -q
+      # Account hygiene + pipeline reconciliation. Own step (own frappe stub).
+      # The two invariants that cost the most if they break: nothing may bulk-link
+      # an Opportunity to a Project (a wrong link corrupts the revenue attribution
+      # WP-1 exists to fix), and Customer.industry must never be made mandatory by
+      # reqd/mandatory_depends_on — those are evaluated on every save by every
+      # caller, and QBO inserts Customers without ignore_mandatory, so a
+      # declarative rule parks every synced customer in manual review.
+      - name: Account hygiene + reconciliation (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_account_hygiene.py -q
       # Guards the Gantt widget read API's security contract: client-supplied
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)
