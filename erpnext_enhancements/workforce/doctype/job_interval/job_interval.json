@@ -24,7 +24,12 @@
   "latitude",
   "longitude",
   "description",
-  "maintenance_nudge_sent"
+  "maintenance_nudge_sent",
+  "photo_section",
+  "photos",
+  "photo_status",
+  "photo_skip_reason",
+  "photos_pending_upload"
  ],
  "fields": [
   {
@@ -147,6 +152,44 @@
    "hidden": 1,
    "label": "Maintenance Nudge Processed",
    "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "photo_section",
+   "fieldtype": "Section Break",
+   "label": "Job Photos"
+  },
+  {
+   "description": "Photographs of this job. Rows appear the moment the shutter fires on the device — the bytes may follow minutes or hours later over a better connection.",
+   "fieldname": "photos",
+   "fieldtype": "Table",
+   "label": "Photos",
+   "options": "Job Interval Photo"
+  },
+  {
+   "default": "Required",
+   "description": "Not Required = the capture gate was off when this interval closed. Required = open and not yet satisfied. Captured = at least the configured minimum number of photos exist (Pending uploads count). Skipped = closed with a recorded reason. Set by the server in workforce/photo_gate.py, never by the client.",
+   "fieldname": "photo_status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Photo Status",
+   "options": "Not Required\nRequired\nCaptured\nSkipped",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.photo_status=='Skipped'",
+   "description": "Why this job was closed without a photo. Whether this is mandatory is a Time Kiosk Settings toggle — an unexplained skip is a data point about the process, not necessarily a failure by the technician.",
+   "fieldname": "photo_skip_reason",
+   "fieldtype": "Small Text",
+   "label": "Skip Reason"
+  },
+  {
+   "default": "0",
+   "description": "At least one photo row is still Pending or Failed — captured on a device but not yet on this server. Drives the Job Photo Compliance report. Never blocks a clock-out: a technician physically unable to leave a site because an upload is failing would destroy trust in the system inside a week.",
+   "fieldname": "photos_pending_upload",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Photos Pending Upload",
    "read_only": 1
   }
  ],

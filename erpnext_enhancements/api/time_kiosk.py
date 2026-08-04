@@ -37,16 +37,31 @@ from datetime import datetime, timedelta
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
+from erpnext_enhancements.workforce import photo_gate
 
 # Roles allowed to view *anyone's* location history. Everyone else can only view
 # their own. Kept here (rather than in Settings) so it can't be widened from the UI.
 TIMELINE_MANAGER_ROLES = {"System Manager", "HR Manager"}
 
 @frappe.whitelist()
-def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None, time_category=None):
+def log_time(project=None, action=None, lat=None, lng=None, description=None, task=None,
+             time_category=None, skip_reason=None):
     """
     Logs time for the current employee.
     action: "Start", "Stop", "Pause", "Resume", "Switch"
+
+    ``skip_reason`` is only consulted by the two actions that END an interval
+    ("Switch" and "Stop"). When the job-photo capture gate is on
+    (``workforce/photo_gate.py``), those two actions throw unless the interval
+    carries the configured minimum number of photos or a skip reason is supplied.
+
+    The gate runs HERE, on the server, on purpose. The kiosk PWA prompts for a
+    photo too, but that prompt runs on a field device that is offline half the
+    day and serving a cached bundle of unknown age — client-side validation there
+    is a suggestion, not enforcement.
+
+    Pause/Resume are deliberately NOT gated: pausing for lunch is not the end of
+    a job, and demanding a photo for it would train everybody to skip.
     """
     if not action:
         frappe.throw(_("Action is required."))
@@ -120,11 +135,16 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         
         if active_interval:
             doc = frappe.get_doc("Job Interval", active_interval.name)
+            # Gate BEFORE any mutation: a throw here must leave the outgoing
+            # interval open, or a rejected switch would silently close the job
+            # the technician is still standing on.
+            photo_status = photo_gate.check(doc, skip_reason=skip_reason)
             if doc.status == "Paused" and doc.last_pause_time:
                 doc.end_time = doc.last_pause_time
             else:
                 doc.end_time = now_dt
             doc.status = "Completed"
+            photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
             doc.save(ignore_permissions=True)
             sync_interval_to_timesheet(doc)
 
@@ -151,11 +171,15 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
             frappe.throw(_("No active job found to stop."))
 
         doc = frappe.get_doc("Job Interval", active_interval.name)
+        # As with Switch: gate before mutating, so a refused clock-out leaves the
+        # interval open rather than half-closed.
+        photo_status = photo_gate.check(doc, skip_reason=skip_reason)
         if doc.status == "Paused" and doc.last_pause_time:
             doc.end_time = doc.last_pause_time
         else:
             doc.end_time = now_dt
         doc.status = "Completed"
+        photo_gate.stamp(doc, photo_status, skip_reason=skip_reason)
         doc.save(ignore_permissions=True)
 
         sync_interval_to_timesheet(doc)
@@ -327,6 +351,13 @@ def get_current_status():
             filters={"attached_to_doctype": "Job Interval", "attached_to_name": interval.get("name")},
             fields=["name", "file_name", "file_url"]
         )
+
+        # Photos that count toward the capture gate. Pending rows are included:
+        # the photo was taken, the bytes are still on the device. The client is
+        # told the number so it can prompt accurately, but it only ever raises
+        # its own count from this — an offline capture the server has not heard
+        # about yet must not be un-counted by a status refresh.
+        interval["photo_count"] = _gate_photo_count(interval.get("name"))
 
         # Merge interval data into result
         result.update(interval)
@@ -637,6 +668,200 @@ def link_attachment(file_name, project, task=None):
 
 
 # ---------------------------------------------------------------------------
+# Job photos (WP-2 capture gate / WP-3 routing)
+# ---------------------------------------------------------------------------
+
+def _gate_photo_count(job_interval):
+    """Photos on an interval that satisfy the capture gate, without loading it.
+
+    Returns 0 rather than raising on a bench where the child table has not been
+    created yet — a time clock nobody can read the status of is worse than a
+    missing number.
+    """
+    if not job_interval:
+        return 0
+    try:
+        if not frappe.db.table_exists("Job Interval Photo"):
+            return 0
+        return frappe.db.count("Job Interval Photo", {
+            "parent": job_interval,
+            "parenttype": "Job Interval",
+            "upload_status": ["in", list(photo_gate.CAPTURED_STATES)],
+        })
+    except Exception:
+        return 0
+
+
+@frappe.whitelist()
+def record_job_photo(job_interval=None, client_uid=None, file_name=None, caption=None,
+                     captured_on=None, lat=None, lng=None, upload_failed=None):
+    """Register or update one photo on a Job Interval.
+
+    Called by the kiosk PWA twice for the same photo in the normal offline case:
+
+    1. **At capture**, immediately, with only ``client_uid``. The row lands with
+       ``upload_status = "Pending"`` and the capture gate is satisfied from that
+       moment — before a single byte has moved. That is the whole point: crews
+       work sites with no signal, and the requirement is that the job was
+       photographed, not that an upload completed on schedule.
+    2. **After the upload succeeds**, with ``file_name`` (the File docname
+       frappe's upload endpoint returned). The same row flips to ``Uploaded``.
+
+    ``client_uid`` is minted on the DEVICE at capture time and is what makes this
+    idempotent: a queued upload that retries over a flaky link updates its row
+    instead of piling up duplicates. It is required for exactly that reason.
+
+    ``upload_failed`` marks a row Failed and bumps its attempt counter, mirroring
+    the ``sync_status`` / ``sync_attempts`` pattern already on Job Interval.
+
+    Permission model: the interval must belong to the session employee. A
+    manager cannot post photos as somebody else through this endpoint — same rule
+    as ``log_geolocation_batch``.
+    """
+    if not client_uid:
+        frappe.throw(_("A client capture id is required."))
+    client_uid = str(client_uid)[:140]
+
+    employee = _session_employee()
+    if not employee:
+        frappe.throw(_("No Employee record found for this user."), frappe.PermissionError)
+
+    doc = _resolve_own_interval(job_interval, employee)
+
+    row = None
+    for existing in (doc.get("photos") or []):
+        if existing.client_uid == client_uid:
+            row = existing
+            break
+    if row is None:
+        row = doc.append("photos", {"client_uid": client_uid})
+        row.captured_on = _parse_timestamp(captured_on)
+        if _valid_coords(lat, lng):
+            row.latitude = lat
+            row.longitude = lng
+
+    if caption:
+        row.caption = str(caption)[:140]
+
+    if cint(upload_failed):
+        row.upload_status = "Failed"
+        row.sync_attempts = cint(row.sync_attempts) + 1
+    elif file_name:
+        attached = _attach_photo_file(row, file_name, doc)
+        row.upload_status = "Uploaded" if attached else "Pending"
+    elif not row.upload_status:
+        row.upload_status = "Pending"
+
+    # Keep the roll-up flag honest on every write, not just at close: the Job
+    # Photo Compliance report reads it, and a stale flag there is worse than none.
+    if hasattr(doc, "photos_pending_upload"):
+        doc.photos_pending_upload = 1 if photo_gate.has_unsettled_uploads(doc) else 0
+
+    doc.save(ignore_permissions=True)
+
+    if row.upload_status == "Uploaded" and row.file_doc:
+        # WP-3: fan the File out to the Project and mirror it into the customer's
+        # Drive folder. Enqueued, never inline — Drive is a third-party API and a
+        # technician's clock-out must not wait on it.
+        frappe.enqueue(
+            "erpnext_enhancements.workforce.photo_routing.route_job_photo",
+            queue="long",
+            job_interval=doc.name,
+            file_name=row.file_doc,
+            enqueue_after_commit=True,
+        )
+
+    return {
+        "status": "success",
+        "job_interval": doc.name,
+        "client_uid": client_uid,
+        "upload_status": row.upload_status,
+        "photos_captured": photo_gate.photos_captured(doc),
+    }
+
+
+@frappe.whitelist()
+def get_pending_photo_uploads(job_interval=None):
+    """Client capture ids the server is still waiting on, for this employee.
+
+    Lets a reinstalled or reset PWA reconcile its local queue against reality
+    instead of re-uploading everything (or, worse, dropping photos it thinks it
+    already sent).
+    """
+    employee = _session_employee()
+    if not employee:
+        return {"pending": []}
+
+    filters = {"employee": employee}
+    if job_interval:
+        filters["name"] = job_interval
+
+    intervals = frappe.get_all("Job Interval", filters=filters, pluck="name", limit=200,
+                               order_by="creation desc")
+    if not intervals:
+        return {"pending": []}
+
+    rows = frappe.get_all(
+        "Job Interval Photo",
+        filters={"parent": ["in", intervals], "parenttype": "Job Interval",
+                 "upload_status": ["in", list(photo_gate.UNSETTLED_STATES)]},
+        fields=["parent as job_interval", "client_uid", "upload_status", "sync_attempts"],
+        limit=500,
+    )
+    return {"pending": rows}
+
+
+def _resolve_own_interval(job_interval, employee):
+    """The interval a photo belongs to: the named one, or the employee's active one."""
+    if job_interval:
+        doc = frappe.get_doc("Job Interval", job_interval)
+        if doc.employee != employee:
+            frappe.throw(_("You can only add photos to your own jobs."), frappe.PermissionError)
+        return doc
+
+    active = frappe.db.get_value(
+        "Job Interval", {"employee": employee, "status": ["in", ["Open", "Paused"]]}, "name"
+    )
+    if not active:
+        frappe.throw(_("No active job to attach a photo to."))
+    return frappe.get_doc("Job Interval", active)
+
+
+def _attach_photo_file(row, file_name, interval):
+    """Point ``row`` at an uploaded File, re-asserting privacy. Returns True on success.
+
+    ``is_private`` is re-asserted rather than trusted: these are photographs of
+    customers' property, and a public file URL is unauthenticated and effectively
+    permanent. Same reasoning as ``fountain_move/photos.py``.
+    """
+    try:
+        file_doc = frappe.get_doc("File", file_name)
+    except frappe.DoesNotExistError:
+        # The upload did not land. Leave the row Pending so the device retries
+        # rather than recording a photo that does not exist.
+        return False
+
+    if not cint(file_doc.is_private):
+        file_doc.is_private = 1
+        file_doc.save(ignore_permissions=True)
+
+    row.file_doc = file_doc.name
+    row.image = file_doc.file_url
+    if not row.captured_on:
+        row.captured_on = file_doc.creation
+
+    # Anchor the File to the interval so it is reachable from the job record even
+    # if the child row is later removed.
+    if not file_doc.attached_to_doctype:
+        frappe.db.set_value("File", file_doc.name, {
+            "attached_to_doctype": "Job Interval",
+            "attached_to_name": interval.name,
+        }, update_modified=False)
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Geolocation telemetry
 # ---------------------------------------------------------------------------
 
@@ -818,6 +1043,12 @@ def get_kiosk_bootstrap():
         "user": frappe.session.user,
         "status": get_current_status(),
         "settings": get_settings(),
+        # The photo gate's configuration, as an unambiguous block rather than
+        # leaving the client to pick four keys out of `settings`. A UX hint only:
+        # api.time_kiosk.log_time re-reads the settings server-side on every call
+        # and is what actually decides, so a device serving a stale cached bundle
+        # cannot talk its way past the requirement.
+        "photo_gate": photo_gate.bootstrap_payload(),
         "csrf_token": (frappe.session.data or {}).get("csrf_token"),
     }
 

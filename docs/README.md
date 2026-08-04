@@ -21,6 +21,8 @@ anything.
 | [FLEET_VEHICLE_MAINTENANCE.md](FLEET_VEHICLE_MAINTENANCE.md) | Fleet vehicle maintenance scheduling |
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
+| [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
+| [field-photos-and-payroll-runbook.md](field-photos-and-payroll-runbook.md) | The job-photo capture gate, where photos are routed, and the Shaw & Nielsen payroll workbook |
 | [opportunity-field-guide.md](opportunity-field-guide.md) | Field-by-field guide to the Opportunity form |
 | [pick-routing-map-po-details.md](pick-routing-map-po-details.md) | Spike: three ways to show PO item detail on the Pick Routing Map, and why the inline one wins |
 | [workspace-sidebars.md](workspace-sidebars.md) | The `Workspace Sidebar` records, and why Frappe's importable app-level directories may contain nothing but JSON |

@@ -129,7 +129,15 @@
   "contract_esign_text_section",
   "contract_esign_consent_text",
   "contract_esign_disclosure_text",
-  "contract_esign_notify_emails"
+  "contract_esign_notify_emails",
+  "lead_attribution_section",
+  "lead_attribution_enabled",
+  "require_lead_source_on_lead",
+  "require_lead_source_on_opportunity",
+  "lead_attribution_column_break",
+  "web_lead_ingress_enabled",
+  "web_lead_default_owner",
+  "web_lead_shared_secret"
  ],
  "fields": [
   {
@@ -963,6 +971,61 @@
    "fieldtype": "Table",
    "label": "Signature Notification Emails",
    "options": "Project Reminder Email"
+  },
+  {
+   "fieldname": "lead_attribution_section",
+   "fieldtype": "Section Break",
+   "label": "Lead Attribution"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the attribution pipeline (crm_enhancements/attribution.py): first-touch propagation of UTM values across Lead → Opportunity → Customer, the website ingress endpoint, and the Lead Source gate. Off by default. Turning it off stops enforcement immediately and leaves every value already captured intact.",
+   "fieldname": "lead_attribution_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Lead Attribution"
+  },
+  {
+   "default": "0",
+   "depends_on": "lead_attribution_enabled",
+   "description": "Block the save of a NEW Lead with no Lead Source. Existing Leads are never blocked — enforcing on every save would stop anyone editing the ~225 historical records until they were backfilled by hand. A source we can derive from captured UTM values is stamped automatically rather than throwing.",
+   "fieldname": "require_lead_source_on_lead",
+   "fieldtype": "Check",
+   "label": "Require Lead Source on New Leads"
+  },
+  {
+   "default": "0",
+   "depends_on": "lead_attribution_enabled",
+   "description": "Same rule for Opportunity. This is the one that matters for spend evaluation: as of 2026-08-04, 809 of 815 Opportunities carried no source at all. Switch OFF first if the sales team is blocked mid-day — that is what this toggle exists for.",
+   "fieldname": "require_lead_source_on_opportunity",
+   "fieldtype": "Check",
+   "label": "Require Lead Source on New Opportunities"
+  },
+  {
+   "fieldname": "lead_attribution_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "lead_attribution_enabled",
+   "description": "Accept POSTs from the WordPress marketing site at crm_enhancements.web_lead.submit_web_lead. While off the endpoint returns a generic refusal without touching the database. Requires the shared secret below — an unset secret authorises nobody.",
+   "fieldname": "web_lead_ingress_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Website Lead Ingress"
+  },
+  {
+   "depends_on": "web_lead_ingress_enabled",
+   "description": "Lead Owner assigned to website submissions. Deliberately not guessed: routing real enquiries to the wrong person is worse than leaving them unassigned, where the Attribution Gaps report surfaces them.",
+   "fieldname": "web_lead_default_owner",
+   "fieldtype": "Link",
+   "label": "Website Lead Owner",
+   "options": "User"
+  },
+  {
+   "depends_on": "web_lead_ingress_enabled",
+   "description": "Bearer token the WordPress side must send in the Authorization header. Compared in constant time and fails closed when unset. Rotate by changing it here and on the WordPress side together — there is no grace window.",
+   "fieldname": "web_lead_shared_secret",
+   "fieldtype": "Password",
+   "label": "Website Ingress Shared Secret"
   }
  ],
  "issingle": 1,

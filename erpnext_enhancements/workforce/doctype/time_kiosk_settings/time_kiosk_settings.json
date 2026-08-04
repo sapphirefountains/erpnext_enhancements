@@ -15,7 +15,13 @@
   "min_accuracy_m",
   "max_batch_size",
   "retention_section",
-  "retention_days"
+  "retention_days",
+  "photo_section",
+  "require_job_photos",
+  "min_photos_per_interval",
+  "column_break_photo",
+  "allow_photo_skip",
+  "require_skip_reason"
  ],
  "fields": [
   {
@@ -92,6 +98,46 @@
    "fieldname": "retention_days",
    "fieldtype": "Int",
    "label": "Retention (days)"
+  },
+  {
+   "fieldname": "photo_section",
+   "fieldtype": "Section Break",
+   "label": "Job Photo Capture"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the capture gate. ON: a technician cannot switch projects or clock out of an interval without either attaching a photo or recording a skip reason. Enforced SERVER-SIDE in api/time_kiosk.py — client-only validation on a field device is not enforcement, it is a suggestion. OFF (default): the photo table and the kiosk camera still work, nothing is required.",
+   "fieldname": "require_job_photos",
+   "fieldtype": "Check",
+   "label": "Require a Photo per Job"
+  },
+  {
+   "default": "1",
+   "depends_on": "require_job_photos",
+   "description": "How many photos satisfy the gate. Photos still queued on the device (upload status Pending) COUNT — the requirement is that the job was photographed, not that a cellular upload succeeded while the technician was standing in a mechanical room.",
+   "fieldname": "min_photos_per_interval",
+   "fieldtype": "Int",
+   "label": "Minimum Photos per Interval"
+  },
+  {
+   "fieldname": "column_break_photo",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "depends_on": "require_job_photos",
+   "description": "Let a technician close an interval with no photo by giving a reason. Turning this OFF makes the gate a hard block with no escape hatch: a genuine case (customer refused permission, camera broken, nothing visible to photograph) then has no way through except calling the office. Leave ON unless leadership has decided otherwise.",
+   "fieldname": "allow_photo_skip",
+   "fieldtype": "Check",
+   "label": "Allow Skipping"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval:doc.require_job_photos && doc.allow_photo_skip",
+   "description": "Require text with a skip. An unexplained skip is a data point about the process rather than a failure by the technician, but a blank one tells you nothing at all.",
+   "fieldname": "require_skip_reason",
+   "fieldtype": "Check",
+   "label": "Skip Reason is Mandatory"
   }
  ],
  "issingle": 1,

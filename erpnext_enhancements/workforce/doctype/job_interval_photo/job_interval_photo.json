@@ -1,0 +1,110 @@
+{
+ "actions": [],
+ "creation": "2026-08-04 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "client_uid",
+  "upload_status",
+  "column_break_photo_1",
+  "captured_on",
+  "sync_attempts",
+  "image_section",
+  "image",
+  "file_doc",
+  "caption",
+  "location_section",
+  "latitude",
+  "longitude"
+ ],
+ "fields": [
+  {
+   "description": "Identifier minted by the kiosk on the DEVICE at capture time, before any network call. It is what makes photo registration idempotent across an offline queue that retries: the same capture re-posted after a dropped connection updates its row instead of creating a second one.",
+   "fieldname": "client_uid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Client Capture ID",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "description": "Pending = captured on the device, bytes not yet on the server. Uploaded = the File exists here. Failed = the device gave up after repeated attempts. A Pending photo still SATISFIES the capture gate — the photo was taken, and stranding a technician on a site because an upload is failing is not a trade this rollout can afford.",
+   "fieldname": "upload_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Upload Status",
+   "options": "Pending\nUploaded\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_photo_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "When the photo was taken on the device, not when it reached the server. The two can be hours apart on a site with no signal.",
+   "fieldname": "captured_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Captured On"
+  },
+  {
+   "description": "Device-side upload attempts. Mirrors the sync_attempts counter already on Job Interval so the two retry loops read the same way.",
+   "fieldname": "sync_attempts",
+   "fieldtype": "Int",
+   "label": "Upload Attempts"
+  },
+  {
+   "fieldname": "image_section",
+   "fieldtype": "Section Break",
+   "label": "Image"
+  },
+  {
+   "description": "Blank until the bytes arrive. Attach Image rather than Attach so the grid renders a thumbnail — the whole point is that somebody can see the job without opening anything.",
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "label": "Photo"
+  },
+  {
+   "description": "The File document behind the image. Held explicitly so the Drive mirror and the Project fan-out have a stable handle even if file_url is later rewritten.",
+   "fieldname": "file_doc",
+   "fieldtype": "Link",
+   "label": "File",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "caption",
+   "fieldtype": "Data",
+   "label": "Caption"
+  },
+  {
+   "fieldname": "location_section",
+   "fieldtype": "Section Break",
+   "label": "Location"
+  },
+  {
+   "fieldname": "latitude",
+   "fieldtype": "Data",
+   "label": "Latitude"
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Data",
+   "label": "Longitude"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Workforce",
+ "name": "Job Interval Photo",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
