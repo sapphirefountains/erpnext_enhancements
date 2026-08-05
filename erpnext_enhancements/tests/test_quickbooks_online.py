@@ -1688,6 +1688,267 @@ def test_credit_memo_and_refund_receipt_are_in_the_entity_catalogue():
 		assert constants.ENTITY_DOCTYPE_MAP[entity] == "Journal Entry"
 
 
+# A miniature chart of accounts covering the three group-redirect cases: a group WITH
+# a "- General" ledger child, a group WITHOUT one, and a plain ledger.
+_CHART = {
+	"60300 - Research & Development - SF": {"is_group": 1},
+	"60301 - R&D - General - SF": {
+		"is_group": 0,
+		"parent_account": "60300 - Research & Development - SF",
+		"account_name": "R&D - General",
+	},
+	"61000 - General & Administrative - SF": {"is_group": 1},  # no "- General" child
+	"7010 - Office Supplies - SF": {"is_group": 0},
+	"30 - Amex - SF": {"is_group": 0},
+}
+
+
+def _chart_resolver(qbo_accounts=None, company=None, item_default=None, chart=None):
+	"""frappe.db.get_value over ``_CHART`` plus the QBO/Company/Item lookups mappers make."""
+	chart = chart if chart is not None else _CHART
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Account":
+			if isinstance(filters, str):
+				return (chart.get(filters) or {}).get(fieldname)
+			f = filters or {}
+			# The "- General" child lookup: a ledger under this parent whose name ends
+			# in the designated suffix.
+			for name, meta in chart.items():
+				if (
+					meta.get("parent_account") == f.get("parent_account")
+					and not meta.get("is_group")
+					and str(meta.get("account_name", "")).endswith("- General")
+				):
+					return name
+			return None
+		if doctype == "Company":
+			return (company or {}).get(fieldname)
+		if doctype == "Item Default":
+			return (item_default or {}).get(fieldname)
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Account":
+				return (qbo_accounts or {}).get(str(f.get("qbo_id")))
+			if f.get("qbo_entity_type") == "Item":
+				return "PUMP-1"
+		return None
+
+	return get_value
+
+
+def test_group_account_resolves_to_its_general_ledger_child(monkeypatch):
+	"""A QBO account mapped onto a GROUP account posts to its "- General" child.
+
+	QuickBooks permits posting to an account that also has sub-accounts; ERPNext
+	refuses to submit such a line. Without this redirect the next CDC sync would
+	rewrite a remapped Journal Entry line straight back onto the group parent.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db, "get_value", _chart_resolver(qbo_accounts={"77": "60300 - Research & Development - SF"})
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _resolve_account
+
+	assert _resolve_account(types.SimpleNamespace(company="SF"), "77") == "60301 - R&D - General - SF"
+
+
+def test_ledger_account_resolves_to_itself_unchanged(monkeypatch):
+	"""The redirect is a no-op for the ordinary case: a ledger account posts to itself."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _chart_resolver(qbo_accounts={"88": "7010 - Office Supplies - SF"}))
+	from erpnext_enhancements.quickbooks_online.core.mapping import _resolve_account
+
+	assert _resolve_account(types.SimpleNamespace(company="SF"), "88") == "7010 - Office Supplies - SF"
+
+
+def test_group_account_without_a_general_child_parks_the_transaction(monkeypatch):
+	"""A group with no "- General" child resolves to None, so the balance guard parks it.
+
+	The mapper deliberately does NOT create the child: inventing ledger structure
+	while transforming a payload is worse than parking for review.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		_chart_resolver(qbo_accounts={"99": "61000 - General & Administrative - SF", "30": "30 - Amex - SF"}),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	settings = types.SimpleNamespace(company="SF")
+	assert map_qbo_to_erpnext("Purchase", {"Id": "1", "AccountRef": {"value": "99"}}, settings)[1]["accounts"] == []
+
+	payload = {
+		"Id": "7",
+		"TxnDate": "2026-06-06",
+		"TotalAmt": "500.00",
+		"AccountRef": {"value": "30"},
+		"Line": [{"Amount": "500.00", "AccountBasedExpenseLineDetail": {"AccountRef": {"value": "99"}}}],
+	}
+	_doctype, values = map_qbo_to_erpnext("Purchase", payload, settings)
+
+	# The expense leg dropped out, so the entry is lopsided and routes to review.
+	assert [row["account"] for row in values["accounts"]] == ["30 - Amex - SF"]
+	assert any("unbalanced" in issue for issue in validate_mapped_values("Purchase", "Journal Entry", values, payload=payload))
+
+
+def test_native_journal_entry_lines_also_redirect_off_group_accounts(monkeypatch):
+	"""``_journal_accounts`` resolves through the redirect despite bypassing ``_resolve_account``.
+
+	It calls ``_linked_name`` directly (it has no Company-default fallback), which is
+	exactly how this path gets missed -- and it produced 52 of the 1,726 draft entries
+	that needed the group-account remap.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		_chart_resolver(qbo_accounts={"77": "60300 - Research & Development - SF", "88": "7010 - Office Supplies - SF"}),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_doctype, values = map_qbo_to_erpnext(
+		"JournalEntry",
+		{
+			"Id": "50",
+			"TxnDate": "2026-06-06",
+			"Line": [
+				{"Amount": 120.0, "JournalEntryLineDetail": {"AccountRef": {"value": "77"}, "PostingType": "Debit"}},
+				{"Amount": 120.0, "JournalEntryLineDetail": {"AccountRef": {"value": "88"}, "PostingType": "Credit"}},
+			],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert [row["account"] for row in values["accounts"]] == [
+		"60301 - R&D - General - SF",
+		"7010 - Office Supplies - SF",
+	]
+
+
+def test_item_default_accounts_redirect_off_group_accounts(monkeypatch):
+	"""An Item Default pointing at a group account redirects too, on both sides."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		_chart_resolver(
+			item_default={
+				"expense_account": "60300 - Research & Development - SF",
+				"income_account": "61000 - General & Administrative - SF",
+			}
+		),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _item_expense_account, _item_income_account
+
+	assert _item_expense_account("PUMP-1", "SF") == "60301 - R&D - General - SF"
+	# A group with no "- General" child yields None rather than sliding down to the
+	# Company default, which would book the amount somewhere nobody chose.
+	assert _item_income_account("PUMP-1", "SF") is None
+
+
+def test_purchase_items_do_not_bill_zero_quantity_lines(monkeypatch):
+	"""The buy side shares the sell side's qty/rate fix -- one function, no drift.
+
+	Latent rather than active: no cached Bill or PurchaseOrder payload carries a
+	``Qty: 0`` item line today. The point is that it cannot silently start to.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _item_resolver("PUMP-1"))
+	from erpnext_enhancements.quickbooks_online.core.mapping import _purchase_items
+
+	def buy_line(amount, **detail):
+		return {"Amount": amount, "ItemBasedExpenseLineDetail": dict({"ItemRef": {"value": "12"}}, **detail)}
+
+	items = _purchase_items(
+		{
+			"Line": [
+				buy_line(262.5, UnitPrice=262.5),  # Qty absent
+				buy_line(555.0, Qty=3, UnitPrice=185),  # both given
+				buy_line(500.0, Qty=2),  # quantity, no unit price
+				buy_line(0, Qty=0, UnitPrice=8000),  # worth nothing -> dropped
+			]
+		}
+	)
+
+	assert [round(item["qty"] * item["rate"], 2) for item in items] == [262.5, 555.0, 500.0]
+	assert items[2]["rate"] == 250  # not 500: the second-order double-multiply
+
+
+def test_purchase_order_line_with_quantity_but_no_unit_price(monkeypatch):
+	"""The one real PurchaseOrder line shape that hit the second-order bug.
+
+	Quantity 1 and no ``UnitPrice`` -- harmless only because the quantity is 1. At any
+	other quantity the old code billed ``Amount`` per unit.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		_chart_resolver(company={"default_currency": "USD"}, qbo_accounts={}),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"PurchaseOrder",
+		{
+			"Id": "31",
+			"TxnDate": "2026-06-06",
+			"DueDate": "2026-06-20",
+			"Line": [{"Amount": 1450.0, "ItemBasedExpenseLineDetail": {"ItemRef": {"value": "12"}, "Qty": 1}}],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Purchase Order"
+	assert (values["items"][0]["qty"], values["items"][0]["rate"]) == (1, 1450.0)
+	assert values["items"][0]["schedule_date"] == "2026-06-20"
+
+
+def test_group_account_remap_constants_reconcile_to_the_measured_population():
+	"""The WI-068 remap table still totals what was measured against production.
+
+	The script checks this at run time, but only on the site it is run against. Doing
+	it here means a typo in a line count or an amount fails CI instead of surfacing as
+	a confusing "population matches expected: False" halfway through a migration.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import group_account_remap as remap
+
+	lines = sum(row[3] for row in remap.NEW_LEDGER_CHILDREN) + sum(row[2] for row in remap.MERGE_INTO_EXISTING)
+	gross = sum(row[4] for row in remap.NEW_LEDGER_CHILDREN) + sum(row[3] for row in remap.MERGE_INTO_EXISTING)
+
+	# Measured against production 2026-08-04: 22 group accounts, 1,813 draft pre-2026
+	# lines, $724,230.37 gross, in 1,726 Journal Entries.
+	assert len(remap.NEW_LEDGER_CHILDREN) + len(remap.MERGE_INTO_EXISTING) == 22
+	assert lines == 1813
+	assert round(gross, 2) == 724230.37
+
+	child_numbers = [row[1] for row in remap.NEW_LEDGER_CHILDREN]
+	parent_numbers = [row[0] for row in remap.NEW_LEDGER_CHILDREN] + [row[0] for row in remap.MERGE_INTO_EXISTING]
+	assert len(set(child_numbers)) == len(child_numbers)  # no two parents claim one child
+	assert not set(child_numbers) & set(parent_numbers)  # and no child collides with a parent
+	# Every child name ends in the suffix _ledger_for_posting matches on, or the forward
+	# fix cannot find the account this script just created.
+	assert all(row[2].endswith(remap.GENERAL_SUFFIX) for row in remap.NEW_LEDGER_CHILDREN)
+
+
+def test_group_account_remap_suffix_matches_the_mapper_redirect():
+	"""The script and the mapper agree on what designates a "- General" ledger.
+
+	They are separate constants in separate modules by design (the mapper must not
+	import a one-off migration script), so nothing but this test stops them diverging
+	-- and if they diverge, every QBO transaction on an affected account silently
+	starts parking for manual review.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import group_account_remap as remap
+	from erpnext_enhancements.quickbooks_online.core import mapping
+
+	assert remap.GENERAL_SUFFIX == mapping.GENERAL_LEDGER_SUFFIX
+
+
 def test_sales_receipt_maps_to_sales_invoice(monkeypatch):
 	"""A QBO SalesReceipt is imported as a Sales Invoice with a receipt remark."""
 	frappe = install_frappe_stub()

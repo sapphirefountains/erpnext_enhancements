@@ -148,6 +148,20 @@ interruptions rather than restarting from scratch.
   hook, orphan top-level Drive folders; a separate remediation consolidates those.)*
 - **Inactive entities** import as **enabled** so historical transactions can post.
   Disable them in ERPNext after import if you don't want them selectable.
+- **QBO posts to group accounts; ERPNext cannot.** QuickBooks permits booking to an account
+  that also has sub-accounts, so ~1,813 imported Journal Entry lines landed on group
+  (parent) accounts and ERPNext refuses to submit them. Each affected parent gets one
+  `- General` **ledger child** (A/R and A/P instead merge into the real Debtors / Creditors
+  ledgers), leaving the parent's rollup identical. `mapping._ledger_for_posting` now
+  redirects every resolved group account to that child on import, so it does not recur —
+  and a parent with **no** `- General` child resolves to None, which parks the transaction
+  for review rather than inventing an account. See
+  [`WI-068`](../../work-items/WI-068-group-account-remap.md) and its
+  [runbook](../../docs/migration/wi068-group-account-remap-runbook.md).
+- **Pause the sync before submitting anything.** ERPNext cannot update a submitted
+  document, so once an imported draft is posted every later QBO edit to it becomes a sync
+  failure. This applies to both populations being unblocked — the Journal Entries above and
+  the Sales Invoices awaiting re-import — and is a single decision, not a per-batch one.
 
 ---
 

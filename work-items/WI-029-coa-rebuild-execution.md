@@ -34,5 +34,19 @@ Native **Chart of Accounts Importer**. Constraint honored: the importer requires
 ## Rollback
 Restore pre-run backup (this item runs inside the same freeze window as WI-028); or, before any opening entry posts, delete the imported chart and re-import a corrected CSV (repeatable while GL Entry count = 0).
 
+## Interaction with WI-068 (the `- General` accounts)
+[WI-068](WI-068-group-account-remap.md) creates **20 new ledger children** (`60301 R&D -
+General`, `53109 Rent Materials - General`, …) so that 1,813 draft pre-2026 Journal Entry
+lines can post at all. **They fall inside this item's scope** and it may fold, rename or
+renumber them like any other imported account — provided the balances they carry follow.
+Two constraints, though:
+
+- Whatever this rebuild leaves behind, **each affected parent must still have exactly one
+  postable `- General` ledger child**, or `mapping._ledger_for_posting` resolves to None and
+  the QBO sync starts parking transactions for manual review.
+- If this item runs **before** WI-068 is applied, WI-068's account numbers must be
+  re-derived against the new chart — they were confirmed free against the *current* one
+  (2026-08-04).
+
 ## Explicitly NOT in this work item
 Tax templates (WI-036), Mode of Payment accounts (WI-031), initial Stripe Payments Settings configuration (WI-005 / payments workstream — only the step-3b re-point of existing account fields to the new chart is in scope here), any posting.

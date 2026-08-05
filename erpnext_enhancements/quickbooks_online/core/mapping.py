@@ -2279,20 +2279,67 @@ def _txn_currency(payload, settings):
 	return currency, rate
 
 
+GENERAL_LEDGER_SUFFIX = "- General"
+
+
+def _ledger_for_posting(account):
+	"""Redirect a GROUP Account to the ``- General`` ledger child it posts through.
+
+	QuickBooks lets you post to an account that also has sub-accounts; ERPNext does
+	not -- it refuses to submit a Journal Entry whose line names a group account.
+	QBO genuinely booked money at the parent level and the source carries no
+	finer-grained truth to recover, so each affected parent gets one ledger child
+	named ``<parent> - General`` that means exactly "posted at this level in
+	QuickBooks", leaving the parent's rollup identical to the penny.
+
+	This redirect is what stops the data migration undoing itself. Those Journal
+	Entries import as DRAFTS and stay re-syncable indefinitely, so without it the
+	next CDC poll that touches one rewrites the line straight back to the group
+	parent -- silently reverting the remap. Every path where a QBO account reference
+	becomes a POSTING account goes through here (see ``_resolve_account``,
+	``_journal_accounts``, ``_item_expense_account``, ``_item_income_account``);
+	paths that merely test whether a QBO account is mapped, or that pick a PARENT for
+	a new account, deliberately do not -- a group is the right answer there.
+
+	Returns None when the parent has no ``- General`` child, which parks the
+	transaction via the existing balance guard. That is the intended failure: this
+	function never CREATES the child, because a mapper that writes to the chart of
+	accounts while transforming a payload would invent ledger structure mid-import.
+	A wrong-but-balanced entry posts and is never looked at again; a parked one gets
+	fixed.
+	"""
+	if not account:
+		return None
+	if not frappe.db.get_value("Account", account, "is_group"):
+		return account
+	return frappe.db.get_value(
+		"Account",
+		{
+			"parent_account": account,
+			"is_group": 0,
+			"account_name": ["like", f"%{GENERAL_LEDGER_SUFFIX}"],
+		},
+		"name",
+		order_by="name asc",
+	)
+
+
 def _resolve_account(settings, qbo_id, company_default_field: str | None = None):
-	"""Resolve a QBO account reference to an ERPNext Account name.
+	"""Resolve a QBO account reference to an ERPNext posting Account name.
 
 	Prefers the account the QBO id was mapped to; when the payload omits the ref
 	(QBO often leaves A/P implicit) an optional Company default field is used as a
 	fallback. Returns None when neither resolves -- the caller's balance guard
 	then routes the transaction to manual review.
+
+	Whichever of the two answers wins is then put through ``_ledger_for_posting``,
+	so a QBO account that maps onto a GROUP account resolves to its ``- General``
+	ledger child rather than to something ERPNext will refuse to submit.
 	"""
 	account = _linked_name("Account", "Account", qbo_id)
-	if account:
-		return account
-	if company_default_field:
-		return _company_value(settings, company_default_field)
-	return None
+	if not account and company_default_field:
+		account = _company_value(settings, company_default_field)
+	return _ledger_for_posting(account)
 
 
 def _undeposited_funds_account(settings):
@@ -2915,7 +2962,7 @@ def _sales_items(payload):
 		if not item_code:
 			continue
 		amount = _to_amount(line.get("Amount"))
-		qty, rate = _sales_line_qty_rate(detail, amount)
+		qty, rate = _line_qty_rate(detail, amount)
 		if qty is None:
 			continue
 		row = {
@@ -2932,8 +2979,14 @@ def _sales_items(payload):
 	return items
 
 
-def _sales_line_qty_rate(detail, amount):
-	"""Resolve a QBO sales line to the ``(qty, rate)`` ERPNext should bill, or ``(None, None)``.
+def _line_qty_rate(detail, amount):
+	"""Resolve a QBO line to the ``(qty, rate)`` ERPNext should bill, or ``(None, None)``.
+
+	Shared by ``_sales_items`` (SalesItemLineDetail -> Sales Invoice / Quotation) and
+	``_purchase_items`` (ItemBasedExpenseLineDetail -> Purchase Invoice / Purchase
+	Order). The two are deliberately ONE function: they were separate copies of the
+	same three lines, the sell side was fixed in v1.244.0 and the buy side was not,
+	and nothing would have caught them drifting again.
 
 	An absent ``Qty`` and a ``Qty`` of zero mean opposite things in QuickBooks, and
 	conflating them is what billed a fortune that was never invoiced. QBO omits Qty
@@ -2963,6 +3016,11 @@ def _sales_line_qty_rate(detail, amount):
 	``UnitPrice`` is read for None, not truthiness: QBO emits an explicit ``null`` on
 	lines it prices only at the Amount, and a legitimate UnitPrice of 0 must not be
 	mistaken for one of those.
+
+	On the buy side the bug was LATENT, not active: across every cached Bill (19
+	item-based lines) and PurchaseOrder (49) payload, none carries ``Qty: 0``. One
+	PurchaseOrder line does carry a quantity with no UnitPrice and so hit the
+	second-order bug -- harmless only because its quantity happened to be 1.
 	"""
 	qty = detail.get("Qty")
 	unit_price = detail.get("UnitPrice")
@@ -2991,6 +3049,13 @@ def _item_expense_account(item_code, company):
 	Returning None is a real answer: the caller must park the transaction rather
 	than book the amount somewhere plausible. A wrong-but-balanced journal entry
 	posts to the ledger and nobody looks at it again; a parked one gets fixed.
+
+	An Item Default (or a Company default) can name a GROUP account just as a QBO
+	account reference can, so the winner goes through ``_ledger_for_posting`` too.
+	The redirect is applied ONCE, to whichever account the fallback chain settled on:
+	an Item pointing at a group with no ``- General`` child parks the transaction
+	rather than quietly sliding down to the Company default, which would book the
+	amount somewhere nobody chose.
 	"""
 	if not item_code or not company:
 		return None
@@ -2999,7 +3064,7 @@ def _item_expense_account(item_code, company):
 		{"parent": item_code, "parenttype": "Item", "company": company},
 		"expense_account",
 	)
-	return account or frappe.db.get_value("Company", company, "default_expense_account")
+	return _ledger_for_posting(account or frappe.db.get_value("Company", company, "default_expense_account"))
 
 
 def _item_line_expense_account(detail, company):
@@ -3027,6 +3092,10 @@ def _item_income_account(item_code, company):
 	guard and parks for review, rather than booking revenue to a guessed account. (On
 	this dataset the fallback is the usual path -- no imported Item carries an income
 	account of its own.)
+
+	Goes through ``_ledger_for_posting`` for the same reason as
+	``_item_expense_account``: an Item Default can name a group account, and ERPNext
+	will not post to one.
 	"""
 	if not item_code or not company:
 		return None
@@ -3035,7 +3104,7 @@ def _item_income_account(item_code, company):
 		{"parent": item_code, "parenttype": "Item", "company": company},
 		"income_account",
 	)
-	return account or frappe.db.get_value("Company", company, "default_income_account")
+	return _ledger_for_posting(account or frappe.db.get_value("Company", company, "default_income_account"))
 
 
 def _item_line_income_account(detail, company):
@@ -3084,10 +3153,16 @@ def _purchase_item_ledger_lines(payload, company, *, is_credit=False):
 def _purchase_items(payload):
 	"""Build ERPNext purchase line items from QBO ItemBasedExpenseLineDetail lines.
 
-	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet. The expense
-	account is left to ERPNext, which fills it from the Item's defaults on save --
-	the Journal Entry path has no such step and resolves it via
-	``_item_expense_account``.
+	Feeds the Purchase Invoice (from a QBO Bill) and Purchase Order mappers. Skips
+	lines whose ItemRef isn't mapped to an ERPNext Item yet, and lines
+	``_line_qty_rate`` judges worthless. The expense account is left to ERPNext, which
+	fills it from the Item's defaults on save -- the Journal Entry path has no such
+	step and resolves it via ``_item_expense_account``.
+
+	Quantity and rate come from the same ``_line_qty_rate`` the sell side uses. This
+	path carried its own copy of the ``detail.get("Qty") or 1`` falsy-zero bug that
+	v1.244.0 removed from ``_sales_items``, and the copies are now one function so
+	they cannot drift apart again.
 	"""
 	items = []
 	for line in payload.get("Line", []) or []:
@@ -3096,12 +3171,16 @@ def _purchase_items(payload):
 		item_code = _linked_name("Item", "Item", item_ref.get("value"))
 		if not item_code:
 			continue
+		amount = _to_amount(line.get("Amount"))
+		qty, rate = _line_qty_rate(detail, amount)
+		if qty is None:
+			continue
 		row = {
 			"item_code": item_code,
 			"description": line.get("Description") or item_ref.get("name"),
-			"qty": detail.get("Qty") or 1,
-			"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
-			"amount": line.get("Amount") or 0,
+			"qty": qty,
+			"rate": rate,
+			"amount": amount,
 		}
 		cost_center = _line_cost_center(detail)
 		if cost_center:
@@ -3144,12 +3223,18 @@ def _journal_accounts(payload):
 	splits the amount into debit/credit columns based on QBO's PostingType. A line
 	posting to a Receivable/Payable control account also carries its QBO ``Entity``
 	through as the required Party.
+
+	Resolves through ``_ledger_for_posting`` like every other posting path. This one
+	is easy to miss because it calls ``_linked_name`` directly instead of
+	``_resolve_account`` (it has no Company-default fallback to offer), and missing it
+	would leave the native JournalEntry mapper -- 52 of the 1,726 draft entries that
+	needed the group-account remap -- free to rewrite lines back onto group parents.
 	"""
 	accounts = []
 	for line in payload.get("Line", []) or []:
 		detail = line.get("JournalEntryLineDetail") or {}
 		account_ref = detail.get("AccountRef") or {}
-		account = _linked_name("Account", "Account", account_ref.get("value"))
+		account = _ledger_for_posting(_linked_name("Account", "Account", account_ref.get("value")))
 		if not account:
 			continue
 		amount = _to_amount(line.get("Amount"))
