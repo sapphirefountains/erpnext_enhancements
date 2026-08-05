@@ -60,12 +60,14 @@ Native and sufficient throughout.
 
 ## Preconditions
 - v1.244.0 (qty) and v1.246.0 (tax + guard) both deployed to the target site.
-- `25010 - Sales Tax Agency Payable - SF` present, `is_group=0`, not disabled — **confirmed**
-  (2026-08-05), with `account_type` set to `Tax` by `patches/set_sales_tax_account_type.py`.
+- `25010 - Sales Tax Agency Payable - SF` present, `is_group=0`, not disabled, and already
+  `account_type = "Tax"` — set by hand on 2026-07-31, so
+  `patches/set_sales_tax_account_type.py` is a no-op here and exists for other sites.
   `sales_tax_account` does not yet exist in the production Singles table, so the
-  account-number fallback is the live path on first deploy — confirmed to resolve.
-- **Staging first, and validate each fix separately there** so you know which code did what.
-  Production gets a **single** resync once both are deployed.
+  account-number fallback is the live path on first deploy — confirmed to resolve
+  (2026-08-05).
+- **Staging validation is complete** (owner's confirmation, 2026-08-05); production gets a
+  **single** resync once the release is deployed.
 - **The QuickBooks sync must be paused before anything is submitted.** ERPNext cannot update
   a submitted document, so every later QBO edit to a posted one becomes a sync failure.
   Shared with [WI-068](WI-068-group-account-remap.md); it is one decision, not two.
@@ -90,6 +92,18 @@ resolves silently to a real-but-wrong account. On I100549, `TxnTaxCodeRef` 8 is
 `Sandy Utah - SF` — a different city, no error. Identity comes from **`TxnTaxCodeRef`**,
 amount from **`TotalTax`**. TaxRate is not imported by this integration at all, so a
 `TaxRateRef` lookup can only ever collide with an unrelated record sharing the number.
+
+### Discounts
+A QBO `DiscountLineDetail` is a **transaction-level** line carrying a *positive* `Amount`
+subtracted from the subtotal. It maps to ERPNext's header `discount_amount` with
+`apply_discount_on = "Net Total"` — the same order QuickBooks applies it, and verified
+exactly: `sum(item lines) − discount + TotalTax == TotalAmt`.
+
+Not spread across item rows: QBO records no per-line discount to spread, so allocating one
+figure over N lines would invent detail the source never had and reintroduce the per-row
+rounding drift the guard exists to catch. Not a negative Actual charge either — that would
+post a discount into a tax account. A percent-based discount uses the amount QuickBooks
+already resolved (33% of $150.00 recorded as $49.50) rather than recomputing it.
 
 ### Unmapped tax codes
 `TaxCode` is deliberately **not** in `CDC_ENTITIES` (QBO's CDC endpoint does not support it),
@@ -130,21 +144,23 @@ against every cached payload (2026-08-05) gives, after both fixes:
 
 | Outcome | Invoices | Amount |
 |---|---|---|
-| Reconcile exactly | **1,315** of 1,413 | — |
-| `DiscountLineDetail` not modelled | **36** | **$89,561.00** of discounts |
-| Rounding-order and other differences | **62** | largest I100853 −$304.37, I101039 +$258.31 |
+| Reconcile exactly | **1,371** of 1,413 | — |
+| Real differences, parked for inspection | **42** | I100853 −$304.37 · I101039 +$258.31 · I100936 −$187.50 · down to $0.30 |
 
-Across the full mapped population (including 2026), **120** of 1,556 park.
+Across the full mapped population (including 2026), **53** of 1,556 park.
 
-So the honest post-resync target is **1,315 / 1,413**, and the **discount gap ($89,561) is
-larger than the tax gap this release fixes ($58,162.96)**. Those 98 do not import silently
-wrong — `_sales_invoice_shortfall` **parks each one for manual review naming the cause**,
-which is the difference between a known 98 and an unknown 615.
+So the post-resync target is **1,371 / 1,413**. The 42 are genuine discrepancies, not
+rounding and not mapper gaps — they need per-invoice inspection, which
+`_sales_invoice_shortfall` is precisely what makes possible. That is the difference
+between a known 42 and an unknown 615.
 
-The 62 grew from 25 when the guard's rounding was corrected to match ERPNext's (round rate
-and qty first, then multiply, with half-to-even `flt`). Those extra 37 are invoices the
-naive form blessed while ERPNext would post a different total — see the 1.246.0 changelog
-and `_sales_invoice_shortfall`'s docstring. Discounts are scoped as
+Two business decisions closed this gap from 98 to 42 (2026-08-05):
+- **Discounts map to the header `discount_amount`** (`apply_discount_on = "Net Total"`),
+  clearing all 36 discount invoices — see Scope.
+- **A per-invoice rounding tolerance is accepted**: one cent per item row, floor two
+  cents. QuickBooks stores prices and quantities at more decimals than ERPNext keeps, so
+  those invoices genuinely cannot agree to the penny. The trade is that an error smaller
+  than a cent per line now imports silently. Discounts are scoped as
 follow-on work below.
 
 Also required:
@@ -170,20 +186,9 @@ Also required:
   its own entry.
 
 ## Explicitly NOT in this work item
-- **QBO discount lines (`DiscountLineDetail`).** 36 invoices, **$89,561.00** — measured, and
-  the single largest remaining fidelity gap. Needs a decision on whether an ERPNext discount
-  belongs on the item line (`discount_amount`) or as a negative Actual charge, which changes
-  what the GL sees. Deferred deliberately, not overlooked.
-- **The 62 other non-reconciling invoices.** Two distinct populations, and they need
-  different answers:
-  - **Precision-unrepresentable lines.** QBO stores unit prices and quantities at more
-    decimals than ERPNext keeps (`UnitPrice 2051.9872727` on I100352, `Qty 0.6666999` on
-    I101613). ERPNext rounds rate to 2 and qty to 3 before multiplying, so these invoices
-    *genuinely cannot* post QuickBooks' total — the difference is real, not a mapper bug,
-    and usually a cent. Deciding whether to accept a per-invoice tolerance is a business
-    call, and accepting one would weaken the binary criterion above.
-  - **Real differences** needing per-invoice inspection (largest: I100853 −$304.37,
-    I101039 +$258.31, I100936 −$187.50), which the shortfall guard now makes findable.
+- **Per-invoice inspection of the 42 that still do not reconcile.** They are real
+  differences, not mapper gaps — each parks with its computed-vs-QuickBooks figures, and
+  clearing them is accounting work rather than code.
 - **A per-jurisdiction tax liability breakdown.** Rejected above; QuickBooks does not keep
   one in its ledger either.
 - **Sales Taxes and Charges Templates**, tax rules, or item tax templates — nothing here

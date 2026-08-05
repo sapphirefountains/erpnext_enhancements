@@ -985,6 +985,31 @@ def _purchase_invoice_imbalance(erpnext_doctype: str, values: dict, payload: dic
 	)
 
 
+def _sales_rounding_tolerance(items) -> float:
+	"""How far a Sales Invoice may miss QuickBooks before it is worth parking.
+
+	Not a fudge factor: it is the arithmetic ceiling on unavoidable rounding. ERPNext
+	rounds every item row to two decimals, so each row can move the invoice total by up
+	to half a cent in either direction, and N rows can drift up to N/2 cents. QuickBooks
+	stores unit prices and quantities at more decimals than ERPNext keeps (``UnitPrice``
+	2051.9872727, ``Qty`` 0.6666999), so on those invoices the two systems genuinely
+	cannot agree to the penny -- there is no mapping that would fix it.
+
+	**One cent per item row, floor two cents.** Deliberately tighter than the drift bound
+	so it stays inside "a penny here or there": a 2-line invoice tolerates 2c and still
+	parks over the $22.98 differences seen in the data, while a 17-line invoice tolerates
+	17c, which is what its rounding can actually produce. Measured over the pre-2026
+	backlog this absorbs 19 invoices whose whole discrepancy is sub-10c rounding and
+	leaves every difference above $0.10 parked.
+
+	The trade is explicit: a genuine error smaller than a cent per line now imports
+	silently. That is accepted because at that size it is indistinguishable from the
+	rounding it sits beside, and a guard that cried wolf on 19 penny differences would
+	stop being read.
+	"""
+	return max(0.02, 0.01 * len(items or []))
+
+
 def _erpnext_item_precisions():
 	"""``(rate_precision, qty_precision)`` ERPNext rounds an item row to before multiplying.
 
@@ -1050,13 +1075,15 @@ def _sales_invoice_shortfall(erpnext_doctype: str, values: dict, payload: dict |
 		return None
 	qbo_total = flt(payload.get("TotalAmt"), 2)
 	rate_precision, qty_precision = _erpnext_item_precisions()
+	items = values.get("items") or []
 	mapped = sum(
 		flt(flt(row.get("rate"), rate_precision) * flt(row.get("qty"), qty_precision), 2)
-		for row in values.get("items") or []
+		for row in items
 	)
 	mapped += sum(flt(row.get("tax_amount"), 2) for row in values.get("taxes") or [])
+	mapped -= flt(values.get("discount_amount"), 2)
 	difference = flt(qbo_total - mapped, 2)
-	if difference == 0:
+	if abs(difference) <= _sales_rounding_tolerance(items):
 		return None
 	causes = _sales_invoice_shortfall_causes(payload, values)
 	if not causes:
@@ -1074,9 +1101,13 @@ def _sales_invoice_shortfall(erpnext_doctype: str, values: dict, payload: dict |
 def _sales_invoice_shortfall_causes(payload: dict, values: dict) -> list[str]:
 	"""Explain what a Sales Invoice mapping could not carry across from its QBO payload.
 
-	Three causes, each needing a different fix, so they read differently rather than
-	sharing one vague message. ``values`` is needed to tell "this invoice has no tax"
-	from "this invoice has tax we could not book anywhere".
+	Two causes, each needing a different fix, so they read differently rather than sharing
+	one vague message. ``values`` is needed to tell "this invoice has no tax" from "this
+	invoice has tax we could not book anywhere".
+
+	Discount lines used to be a third cause; they are now imported (``_sales_discount``),
+	so a discounted invoice that still fails to reconcile falls to the caller's catch-all
+	rather than being blamed on its discount.
 	"""
 	causes = []
 	unmapped_items = [
@@ -1100,15 +1131,6 @@ def _sales_invoice_shortfall_causes(payload: dict, values: dict) -> list[str]:
 			f"QuickBooks charged {total_tax:.2f} of sales tax that could not be booked: no "
 			"usable Sales Tax Account is configured on QuickBooks Online Settings (and the "
 			"default account number is missing, a group, or disabled)."
-		)
-	# Discount lines are not modelled at all -- naming them stops triage hunting for a
-	# missing item or a tax account that is fine.
-	discounts = [line for line in payload.get("Line") or [] if line.get("DiscountLineDetail") is not None]
-	if discounts:
-		total = sum(_to_amount(line.get("Amount")) for line in discounts)
-		causes.append(
-			f"{len(discounts)} QuickBooks discount line(s) totalling {total:.2f} are not "
-			"imported: the mapper does not model DiscountLineDetail."
 		)
 	return causes
 
@@ -1663,8 +1685,42 @@ def _map_sales_invoice(payload, settings):
 		# than leaving a stale tax row beside a fresh one -- apply_values rewrites child
 		# tables wholesale. Same reasoning as the Purchase Invoice ``taxes`` mapping.
 		"taxes": _sales_charges(payload, settings),
+		"discount_amount": _sales_discount(payload),
+		# QBO discounts the subtotal before tax, which is exactly what "Net Total" means
+		# here. Set unconditionally so it cannot be left on a stale "Grand Total" from a
+		# hand edit while a discount is being re-applied underneath it.
+		"apply_discount_on": "Net Total",
 		"remarks": f"Imported from QuickBooks Online Invoice {payload.get('DocNumber') or payload.get('Id')}",
 	}
+
+
+def _sales_discount(payload):
+	"""Total the QBO ``DiscountLineDetail`` lines into ERPNext's header discount amount.
+
+	QuickBooks models a discount as a **transaction-level** line: one entry in ``Line``
+	with ``DetailType: "DiscountLineDetail"`` and a POSITIVE ``Amount`` that is
+	SUBTRACTED from the subtotal. Verified across the affected invoices --
+	``sum(item lines) - discount + TotalTax == TotalAmt`` reproduces QuickBooks exactly,
+	including on percent-based discounts, where QBO has already resolved the percentage
+	to an amount (``I100725``: 33% of 150.00 recorded as 49.50).
+
+	It goes on the HEADER (``Sales Invoice.discount_amount`` with
+	``apply_discount_on = "Net Total"``), not spread across the item rows. The source has
+	no per-line discount to carry: allocating one transaction-level figure over N lines
+	would invent detail QuickBooks never recorded, and would reintroduce exactly the
+	per-row rounding drift ``_sales_invoice_shortfall`` exists to catch. Booking it as a
+	negative tax charge was the other option and is worse still -- it would post a
+	discount into a tax account.
+
+	Was the single largest remaining fidelity gap: 36 of the 1,413 pre-2026 invoices,
+	**$89,561.00**, more than the sales tax itself.
+	"""
+	total = sum(
+		flt(line.get("Amount"))
+		for line in payload.get("Line") or []
+		if line.get("DiscountLineDetail") is not None
+	)
+	return flt(total, 2)
 
 
 def _sales_charges(payload, settings):

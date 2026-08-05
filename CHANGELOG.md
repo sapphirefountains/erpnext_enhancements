@@ -54,7 +54,8 @@ empty taxes table.
   bug and the 1.244.0 quantity bug went unnoticed — it would have caught both on the first
   import, and it is worth more than either fix.**
 
-  It sums **`qty * rate`**, not the informational `amount` the mapper carries across —
+  It sums **`qty * rate`** less the discount, not the informational `amount` the mapper
+  carries across —
   ERPNext *recomputes* the line amount on save, so that product is the only number whose
   agreement with QuickBooks means anything. **The rounding order is the whole trick:**
   ERPNext's `round_floats_in` rounds `rate` to currency precision and `qty` to float
@@ -64,8 +65,29 @@ empty taxes table.
   `Qty 0.6666999`, which ERPNext stores as `0.667` and posts at **$54,527.25** against
   QuickBooks' **$54,502.72**, and the naive guard called it reconciled. Modelling the
   order correctly catches **37 more** wrong pre-2026 invoices (61 → 98).
-  `_sales_invoice_shortfall_causes` names which of three things went wrong: unimported
-  items, tax that could not be booked, or unmodelled discount lines.
+  It tolerates **one cent per item row, floor two cents** — not a fudge factor but the
+  arithmetic ceiling on unavoidable rounding, since ERPNext rounds every row to two
+  decimals and QuickBooks stores prices and quantities at more (`UnitPrice 2051.9872727`,
+  `Qty 0.6666999`). A 2-line invoice tolerates 2¢ and still parks over the $22.98
+  differences in the data; a 17-line invoice tolerates 17¢, which is what its rounding can
+  actually produce. The trade is explicit: an error smaller than a cent per line now
+  imports silently, accepted because at that size it is indistinguishable from the
+  rounding beside it, and a guard that cried wolf on 19 penny differences would stop being
+  read. `_sales_invoice_shortfall_causes` names which of two things went wrong: unimported
+  items, or tax that could not be booked.
+
+- **QBO discounts are imported.** A `DiscountLineDetail` is a **transaction-level** line
+  carrying a *positive* `Amount` subtracted from the subtotal — verified exactly across the
+  affected invoices: `sum(item lines) − discount + TotalTax == TotalAmt`. It maps to
+  ERPNext's header `discount_amount` with `apply_discount_on = "Net Total"`, which is the
+  same order QuickBooks applies it in. **36 of the 1,413 pre-2026 invoices carry one,
+  $89,561.00 in total — a bigger gap than the sales tax.**
+
+  On the header rather than spread across item rows: QBO records no per-line discount to
+  spread, so allocating one figure over N lines would invent detail the source never had
+  and reintroduce the per-row rounding drift the guard exists to catch. A percent-based
+  discount uses the amount QuickBooks already resolved (33% of $150.00 recorded as $49.50)
+  rather than recomputing it, so the two systems cannot disagree in the last cent.
 
 - **Tax legs for CreditMemo and RefundReceipt.** Both map to Journal Entries, which have no
   taxes child table, and both credit the tax-inclusive `TotalAmt` while debiting only the
@@ -76,26 +98,21 @@ empty taxes table.
   staging after the first full import.
 
 - **`patches/set_sales_tax_account_type.py`** sets `account_type = "Tax"` on the
-  destination account. The QBO Account import left it **blank**, and ERPNext keys the
-  taxes `account_head` picker and tax-report grouping off that field — a blank one is
-  invisible to an accountant correcting a parked invoice by hand. Fills a blank only; an
-  account somebody deliberately typed otherwise is logged and left alone. Runs on
-  `bench migrate`, i.e. before any resync, so the account is typed before the first tax row
-  is written.
+  destination account when it is blank. ERPNext keys the taxes `account_head` picker and
+  tax-report grouping off that field, so an account the QBO import created without one is
+  invisible to an accountant correcting a parked invoice by hand. On the Sapphire
+  Fountains production site this is **already a no-op** — `25010` was typed `Tax` by hand
+  on 2026-07-31, before this work — so the patch exists for staging, for any fresh site,
+  and for a re-pointed destination account. It fills a blank only; an account somebody
+  deliberately typed otherwise is logged and left alone. Runs on `bench migrate`, i.e.
+  before any resync.
 
 ### Known gaps
 
-- **QBO discount lines are still not imported, and they are now the largest gap.**
-  36 of the 1,413 pre-2026 invoices carry `DiscountLineDetail` totalling **$89,561.00** —
-  *more than the $58,162.96 of tax this release fixes*. Modelling them needs a decision on
-  whether an ERPNext discount belongs on the item line (`discount_amount`) or as a negative
-  Actual charge, which changes what the GL sees. Scoped in
-  [WI-067](work-items/WI-067-qbo-mapper-data-fidelity.md), not attempted here.
-- **62 further invoices** do not reconcile for other reasons — chiefly QBO unit prices and
-  quantities carrying more decimals than ERPNext stores (a `UnitPrice` of 2051.9872727 is
-  simply not representable at 2-dp rate, so that invoice genuinely cannot post
-  QuickBooks' total), plus real differences (largest: I100853 −$304.37, I101039 +$258.31,
-  I100936 −$187.50). They now park with a named cause instead of importing silently wrong.
+- **42 invoices still do not reconcile**, and they are real differences rather than
+  rounding: I100853 −$304.37, I101039 +$258.31, I100936 −$187.50, I101473 −$118.70 and so
+  on down to $0.30. They park with a named cause instead of importing silently wrong, and
+  need per-invoice inspection — which the shortfall guard is what makes possible.
 - **A tax code created in QuickBooks today does not arrive until the next full import.**
   `TaxCode` is deliberately absent from `CDC_ENTITIES` (QBO's CDC endpoint does not support
   it). Until it arrives, its invoices still import the correct tax **amount** under the
@@ -124,10 +141,10 @@ not optional.
   aggregate in a direction that looks wrong.
 - **Combined success criterion:** every pre-2026 Sales Invoice has `base_grand_total`
   equal to its QBO `TotalAmt`. Binary, no attribution needed. Baseline: ERPNext
-  $6,996,286.32 vs QuickBooks $4,365,679.06, 615 differing. **Honest target after this
-  release: 1,315 of 1,413** — the remaining 98 (36 discount + 62 rounding/other) park for
-  review with a named cause rather than importing wrong. Across the full mapped population
-  including 2026, 120 of 1,556 park.
+  $6,996,286.32 vs QuickBooks $4,365,679.06, 615 differing. **Target after this release:
+  1,371 of 1,413** — the remaining 42 are real differences that park for review with a
+  named cause rather than importing wrong. Across the full mapped population including
+  2026, 53 of 1,556 park.
 - **`run_resync` has never executed on this site**, so the `overwrite=True` path is
   untested in production. Rehearse it on staging.
 - **The guard runs before the overwrite check**, so `run_resync(overwrite=True)` cannot
