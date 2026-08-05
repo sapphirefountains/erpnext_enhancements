@@ -4427,12 +4427,14 @@ def test_sales_invoice_shortfall_guard_names_unmapped_items(monkeypatch):
 	assert any("reference QuickBooks items not imported" in issue for issue in issues)
 
 
-def test_sales_invoice_shortfall_guard_names_discount_lines(monkeypatch):
-	"""QBO discount lines are not modelled; the guard says so instead of blaming the tax.
+def test_qbo_discount_maps_to_the_header_discount_amount(monkeypatch):
+	"""A QBO DiscountLineDetail becomes ERPNext's header discount, and the invoice reconciles.
 
-	36 of the 1,413 pre-2026 invoices carry DiscountLineDetail, $89,561.00 in total -- a
-	larger gap than the sales tax this release fixes, and the reason those invoices still
-	will not reconcile afterwards.
+	QuickBooks models a discount as a transaction-level line with a POSITIVE Amount that
+	is subtracted from the subtotal, so it maps to Sales Invoice.discount_amount with
+	apply_discount_on "Net Total" -- not spread across item rows (QBO records no per-line
+	discount to spread) and not as a negative tax charge (that would post a discount into
+	a tax account). 36 pre-2026 invoices carry one, $89,561.00 in total.
 	"""
 	frappe = install_frappe_stub()
 	_sales_tax_stub(monkeypatch, frappe)
@@ -4440,17 +4442,45 @@ def test_sales_invoice_shortfall_guard_names_discount_lines(monkeypatch):
 
 	discounted = json.loads(json.dumps(INVOICE_I100549))
 	discounted["Line"].append(
-		{"Amount": -50.0, "DetailType": "DiscountLineDetail", "DiscountLineDetail": {"PercentBased": False}}
+		{"Amount": 50.0, "DetailType": "DiscountLineDetail", "DiscountLineDetail": {"PercentBased": False}}
 	)
-	discounted["TotalAmt"] = 335.56
+	discounted["TotalAmt"] = 335.56  # 360.00 items - 50.00 discount + 25.56 tax
 	_doctype, values = map_qbo_to_erpnext(
 		"Invoice", discounted, types.SimpleNamespace(company="Sapphire Fountains")
 	)
 
-	issues = validate_mapped_values(
-		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=discounted
+	assert values["discount_amount"] == 50.0
+	assert values["apply_discount_on"] == "Net Total"
+	# The guard nets the discount off, so a discounted invoice now reconciles.
+	assert (
+		validate_mapped_values(
+			"Invoice", "Sales Invoice", values, include_doc_required=False, payload=discounted
+		)
+		== []
 	)
-	assert any("discount line(s) totalling -50.00 are not imported" in issue for issue in issues)
+
+
+def test_percent_based_qbo_discount_uses_the_amount_quickbooks_resolved(monkeypatch):
+	"""QBO already resolves a percentage to an amount, so the mapper never recomputes it.
+
+	I100725 records 33% of $150.00 as an Amount of 49.50. Re-deriving it from
+	DiscountPercent would risk disagreeing with QuickBooks in the last cent.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_discount
+
+	payload = {
+		"Line": [
+			{
+				"Amount": 49.5,
+				"DetailType": "DiscountLineDetail",
+				"DiscountLineDetail": {"PercentBased": True, "DiscountPercent": 33},
+			}
+		]
+	}
+	assert _sales_discount(payload) == 49.5
+	assert _sales_discount({"Line": []}) == 0
 
 
 def test_sales_invoice_shortfall_guard_uses_qty_times_rate_not_the_carried_amount(monkeypatch):
@@ -4561,21 +4591,45 @@ def test_shortfall_guard_rounds_the_way_erpnext_does_before_multiplying():
 
 
 def test_shortfall_guard_rounds_the_rate_erpnext_will_store():
-	"""A QBO UnitPrice with more than two decimals is not representable at ERPNext's rate.
+	"""ERPNext stores rate at 2 dp, so the guard must reconcile against the STORED rate.
 
-	QBO invoice I100352 prices a line at 2051.9872727; ERPNext stores 2051.99 and posts a
-	cent over QuickBooks. The guard has to say so -- the acceptance criterion for this work
-	is base_grand_total == TotalAmt, and tolerating the cent would assert something false.
+	QBO invoice I100352 prices a line at 2051.9872727; ERPNext stores 2051.99. At the real
+	quantity that is a cent, now inside the rounding tolerance -- so this uses a quantity
+	large enough for the rate rounding to clear it, which is what makes the assertion
+	about the rounding MODEL rather than about the tolerance.
 	"""
 	install_frappe_stub()
 	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
 
-	values = {"items": [{"qty": 5.5, "rate": 2051.9872727}], "taxes": []}
-	# 5.5 * 2051.99 == 11285.945 -> 11285.94 (half-to-even), vs QuickBooks' 11285.93.
-	issue = _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 11285.93})
+	values = {"items": [{"qty": 550, "rate": 2051.9872727}], "taxes": []}
+	# Unrounded: 550 * 2051.9872727 == 1,128,593.00. ERPNext: 550 * 2051.99 == 1,128,594.50.
+	issue = _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 1128593.00})
 
 	assert issue is not None
-	assert "off by -0.01" in issue
+	assert "mapped 1128594.50" in issue
+
+
+def test_shortfall_guard_tolerates_a_penny_per_line_but_not_more():
+	"""Rounding drift is bounded by half a cent per row, so a per-line tolerance is honest.
+
+	One cent per item row, floor two cents -- tight enough that a 2-line invoice still
+	parks over real differences, loose enough that sub-10c rounding on a long invoice
+	does not generate noise nobody reads.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import (
+		_sales_invoice_shortfall,
+		_sales_rounding_tolerance,
+	)
+
+	assert _sales_rounding_tolerance([]) == 0.02
+	assert _sales_rounding_tolerance([{}] * 2) == 0.02
+	assert round(_sales_rounding_tolerance([{}] * 17), 2) == 0.17
+
+	two_line = {"items": [{"qty": 1, "rate": 10.0}, {"qty": 1, "rate": 10.0}], "taxes": []}
+	assert _sales_invoice_shortfall("Sales Invoice", two_line, {"TotalAmt": 20.02}) is None
+	# A real difference on the same short invoice still parks.
+	assert _sales_invoice_shortfall("Sales Invoice", two_line, {"TotalAmt": 42.98}) is not None
 
 
 def test_shortfall_guard_does_not_park_over_bankers_rounding():

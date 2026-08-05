@@ -131,15 +131,14 @@ interruptions rather than restarting from scratch.
   jurisdiction outside the ledger. **Identity comes from `TxnTaxCodeRef`, never
   `TaxRateRef`** — different QBO id spaces, and swapping them resolves silently to a
   real-but-wrong jurisdiction.
-- **QBO discount lines are still not imported.** 36 pre-2026 invoices carry
-  `DiscountLineDetail` totalling **$89,561.00**. They no longer import silently short:
-  `_sales_invoice_shortfall` parks each one naming the discount as the cause. See
-  [`WI-067`](../../work-items/WI-067-qbo-mapper-data-fidelity.md).
+- **QBO discounts ARE imported** (since v1.246.0) onto the header `discount_amount` with
+  `apply_discount_on = "Net Total"`, matching the order QuickBooks applies them. 36
+  pre-2026 invoices carry one, **$89,561.00** in total.
 - **A Sales Invoice now has to reconcile to QuickBooks to import.** `_sales_invoice_shortfall`
   compares `qty * rate` plus tax against `TotalAmt` and parks anything that does not agree —
   the sell-side twin of the Purchase Invoice guard, and the check whose absence let both the
   zero-quantity overstatement and the dropped sales tax survive unnoticed. Expect a
-  one-off queue of ~120 parked documents on the first resync (98 of them pre-2026).
+  one-off queue of ~53 parked documents on the first resync (42 of them pre-2026), each a real difference rather than rounding.
 - **Sales tax on purchases.** Expense/Bill-Payment JEs are built from line accounts; a
   transaction carrying separate sales tax may not auto-balance and will route to
   **manual review** (by design — the balance guard refuses to post a lopsided entry).
