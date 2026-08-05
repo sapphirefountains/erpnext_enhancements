@@ -258,8 +258,10 @@ The brief's §8 chain appears explicitly: **WI-021** (kiosk = source of hours) +
 | [WI-064](work-items/WI-064-triton-reporting-boundary.md) | Triton management-reporting integration (non-statutory only) | 2 | CONFIG | S | WI-035 |
 | [WI-065](work-items/WI-065-rent-to-events-rename.md) | Rename 'Rent' value stream → 'Events' (OD-3; ~60 verified touch points, atomic) | 1 | APP_CODE | M | — |
 | [WI-066](work-items/WI-066-po-creator-role-and-sod.md) | `PO Creator` role (16 holders → 5) + MR-requester ≠ PO-submitter gate; optional RFQ path documented | 0 | APP_CODE | M | WI-012, WI-013 |
+| [WI-068](work-items/WI-068-group-account-remap.md) | Move 1,813 draft pre-2026 JE lines off group accounts (`- General` children + AR/AP merge); unblocks all pre-2026 GL posting | 0 | DATA | M | verified backup |
+| [WI-069](work-items/WI-069-general-ledger-reclassification.md) | Reclassify `- General` balances into real children where the vendor determines it (61500, 60100 only) — **not** blocking | 1 | DATA | S | WI-068 + backlog submitted |
 
-Type distribution: 17 DATA · 27 CONFIG · 12 FIXTURE · 10 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
+Type distribution: 19 DATA · 27 CONFIG · 12 FIXTURE · 10 APP_CODE (5 of which are Phase 2) · 0 SERVER_SCRIPT — consistent with the brief's expectation that this project is mostly configuration and data, not code. (WI-061 is ON HOLD per OD-1 and excluded from scheduling.)
 
 ---
 

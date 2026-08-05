@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.245.0] - 2026-08-04
+
+Unblocks the pre-2026 GL posting. **1,726 draft Journal Entries cannot be submitted**
+because 1,813 of their lines — **$724,230.37** gross across **22 accounts** — post to
+group (parent) accounts, and ERPNext refuses to submit a Journal Entry whose line names
+one. Nothing pre-2026 reaches the ledger until that is cleared.
+
+QuickBooks permits posting to an account that also has sub-accounts; ERPNext does not.
+QBO genuinely booked this money **at the parent level**, so there is no finer-grained
+truth in the source to recover — the import did not lose a classification, the
+classification was never made. The chosen fix is a `- General` ledger child under each
+affected parent: the parent's rollup total stays identical to the penny, and the child
+represents "posted at this level in QuickBooks" honestly rather than inventing a split
+nobody chose.
+
+### Fixed
+
+- **The QBO mapper resolved to group accounts, so the remap would have undone itself.**
+  This is the half that matters more than the data migration. `_resolve_account` returned
+  whatever ERPNext Account a QBO account id was mapped to, group accounts included — and
+  because these 1,726 entries are **drafts**, they stay re-syncable indefinitely. The next
+  CDC poll touching any of them would rewrite the line straight back to the group parent,
+  silently reverting the migration.
+
+  `_ledger_for_posting` now redirects a resolved group Account to its `- General` ledger
+  child at **every** point where a QBO account reference becomes a *posting* account:
+  `_resolve_account` (the main chokepoint), `_item_expense_account` and
+  `_item_income_account` (an Item Default can name a group account too), and
+  `_journal_accounts` — which is the easy one to miss, because it calls `_linked_name`
+  directly rather than `_resolve_account` and is the native JournalEntry mapper behind 52
+  of the 1,726. Paths that merely test whether a QBO account is *mapped*, or that pick a
+  **parent** for a new account, deliberately do not redirect; a group is the right answer
+  there.
+
+  **The mappers stay read-only.** A missing `- General` child resolves to None and the
+  existing balance guard parks the transaction. `_ensure_group_parent` sets the opposite
+  precedent — it writes during mapping — and it was considered and not followed: promoting
+  an existing parent to a group is a reversible property change on a record the sync
+  already owns, whereas creating a ledger invents chart-of-accounts structure mid-payload-
+  transform, in a path with no review step and nobody watching. Parking is recoverable; a
+  silently invented ledger with money in it is not.
+
+- **The same falsy-zero bug on the buy side.** `_purchase_items` still carried the
+  `detail.get("Qty") or 1` / `detail.get("UnitPrice") or line.get("Amount")` pattern that
+  v1.244.0 removed from `_sales_items`, feeding Purchase Invoices (from QBO Bills) and
+  Purchase Orders. Both paths now share one `_line_qty_rate`, renamed from
+  `_sales_line_qty_rate` — they were separate copies of the same three lines, one got fixed
+  and the other did not, and nothing would have caught them drifting again.
+
+  **Latent, not actively wrong**, and **no re-import is needed for this part** — do not
+  conflate it with the Sales Invoice re-import the v1.244.0 fix requires. Verified across
+  every cached payload: Bill (1,237 payloads, 19 item-based lines) and PurchaseOrder (31
+  payloads, 49 lines) carry **zero** `Qty: 0` lines. One PurchaseOrder line does carry a
+  quantity with no `UnitPrice` and so hit the second-order bug — harmless only because its
+  quantity happened to be 1. Blast radius is 68 lines.
+
+### Added
+
+- **`quickbooks_online/core/group_account_remap.py`** — the repo-tracked, idempotent
+  migration for WI-068. Creates 20 `- General` ledger children (each inheriting its
+  parent's `root_type` and `account_type`) and moves the draft pre-2026 lines onto them.
+  A/R and A/P are deliberate **exceptions**: their 8 and 32 lines merge into the real
+  `1310 Debtors` and `2110 Creditors` ledgers instead, which is what puts those balances
+  into AR/AP aging. The 8 receivable lines include two for Crystal Fountains totalling
+  $20,082.04 that exactly match three existing payments from that customer — split them
+  across two accounts and those payments become unexplained credits.
+
+  Dry-run by default, batched with commits, re-running is a no-op, and scoped strictly to
+  `docstatus = 0 AND posting_date < 2026-01-01`. It prints its own before/after
+  verification: per-parent counts and totals against the expected figures, every touched
+  entry still balancing, zero in-scope lines left on a group account, and each parent's
+  subtree total unchanged. **Not wired to migrate or the scheduler** — it is run by hand,
+  on staging first, against a verified backup, and this release does **not** execute it
+  anywhere.
+
+### Ordering — these are not independent
+
+The group-account remap unblocks **Journal Entries**. The qty fix (shipped in v1.244.0) and
+the still-outstanding sales-tax gap unblock **Sales Invoices**. Different populations, but
+one shared constraint: **the QuickBooks sync must be paused before anything is submitted**,
+because ERPNext cannot update a submitted document and every later QBO edit to a posted
+document becomes a sync failure. Submission and sync-pause are one decision, not a
+per-batch one.
+
+For WI-068 specifically the forward fix must be deployed **with or before** the data script,
+or the remap reverts on the next sync. The runbook's step 6 — re-sync one remapped entry and
+confirm the line still points at the `- General` child — is the check that proves it, and
+the one most likely to be skipped.
+
+### Work items
+
+- **[WI-068](work-items/WI-068-group-account-remap.md)** (DATA) — this remap: the forward
+  fix, the 20 accounts, the AR/AP merge, the staging rehearsal and the backup precondition.
+  Cross-referenced to **WI-029** (chart-of-accounts rebuild), whose scope covers these 20
+  new accounts and which may fold them in.
+- **[WI-069](work-items/WI-069-general-ledger-reclassification.md)** (DATA, **not**
+  blocking) — later reclassification of `- General` balances into real children where the
+  vendor makes it determinable: 61500 Accounting & Bookkeeping (QuickBooks Online vs
+  QuickBooks Payments Fees) and 60100 Auto and Trailer (Gasoline vs Vehicle Maintenance).
+  Records that 60300 R&D (4 value-stream children) and 53100 Rent Materials (6 fountain-
+  product children) were **assessed and rejected** as not determinable from the import —
+  the determining fact is which project or product the work belonged to, and the imported
+  lines do not carry it.
+- **[Runbook](docs/migration/wi068-group-account-remap-runbook.md)** for the apply
+  procedure and rollback.
+
 ## [1.244.0] - 2026-08-04
 
 Three defects in the QuickBooks Online sync mapper, found by reconciling the
