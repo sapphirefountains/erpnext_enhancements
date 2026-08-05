@@ -4483,6 +4483,256 @@ def test_percent_based_qbo_discount_uses_the_amount_quickbooks_resolved(monkeypa
 	assert _sales_discount({"Line": []}) == 0
 
 
+# I101635's real shape, trimmed to one ordinary line plus its billable-expense passthrough
+# lines. QuickBooks writes these when a Bill line flagged billable to a customer is
+# reinvoiced: a SalesItemLineDetail whose ItemRef is EMPTY, naming its destination account
+# on ItemAccountRef instead, with MarkupInfo/ServiceDate marking it as a reimbursement.
+# Note the zero-amount passthrough row and the SubTotalLineDetail carrying a real amount --
+# both are in the production payloads and both must be ignored.
+_PASSTHROUGH_ACCOUNTS = {
+	"288": "52100 - Service Materials - SF",
+	"196": "46300 - Markup on Billable Expenses - SF",
+}
+
+INVOICE_I101635 = {
+	"Id": "21509",
+	"DocNumber": "I101635",
+	"TxnDate": "2025-06-11",
+	"CustomerRef": {"name": "Myers Mortuary", "value": "1380"},
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"Line": [
+		{
+			"Amount": 360.00,
+			"Description": "Fountain service call",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {"name": "Service", "value": "279"}, "Qty": 1, "UnitPrice": 360},
+		},
+		{
+			"Amount": 70.26,
+			"Description": "HAS15841 HASA MURIATIC ACID DISPOSABLE S",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {
+				"ItemRef": {},
+				"ItemAccountRef": {"name": "52100 Service COGS:Service Materials", "value": "288"},
+				"MarkupInfo": {"PercentBased": True, "Percent": 25},
+				"ServiceDate": "2025-06-09",
+			},
+		},
+		{
+			"Amount": 17.57,
+			"Description": "25% markup for HAS15841 HASA MURIATIC ACID DISPOSABLE S",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {
+				"ItemRef": {},
+				"ItemAccountRef": {"name": "46300 Service Income:Markup on Billable Expenses", "value": "196"},
+				"MarkupInfo": {"PercentBased": True, "Percent": 25},
+			},
+		},
+		{
+			"Amount": 0,
+			"Description": "placeholder",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {}, "ItemAccountRef": {"value": "288"}},
+		},
+		{"Amount": 447.83, "DetailType": "SubTotalLineDetail", "SubTotalLineDetail": {}},
+	],
+	"TxnTaxDetail": {"TotalTax": 25.56, "TxnTaxCodeRef": {"value": "8"}},
+	"TotalAmt": 473.39,  # 360.00 items + 70.26 + 17.57 passthrough + 25.56 tax
+}
+
+
+def test_billable_expense_lines_become_charges_on_the_account_quickbooks_named(monkeypatch):
+	"""A passthrough line books to its own ItemAccountRef, exactly as _purchase_charges does.
+
+	``_sales_items`` requires a resolvable ItemRef, so these lines were dropped in silence:
+	1,035 lines across 158 invoices, $33,024.34. Crediting 52100 reduces the COGS the
+	expense was originally booked to -- which is what reimbursing a billable expense means
+	-- while the markup credits income.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, accounts=_PASSTHROUGH_ACCOUNTS)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I101635, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	# Only the ordinary line becomes an item row; the passthrough lines become charges.
+	assert [row["item_code"] for row in values["items"]] == ["SERVICE - MAINTENANCE CONTRACT"]
+	# Billable expenses first, tax last -- and the zero-amount placeholder is dropped.
+	assert values["taxes"] == [
+		{
+			"charge_type": "Actual",
+			"account_head": "52100 - Service Materials - SF",
+			"description": "HAS15841 HASA MURIATIC ACID DISPOSABLE S",
+			"tax_amount": 70.26,
+		},
+		{
+			"charge_type": "Actual",
+			"account_head": "46300 - Markup on Billable Expenses - SF",
+			"description": "25% markup for HAS15841 HASA MURIATIC ACID DISPOSABLE S",
+			"tax_amount": 17.57,
+		},
+		{
+			"charge_type": "Actual",
+			"account_head": _SALES_TAX_ACCOUNT,
+			"description": "Utah - Weber - Ogden - Inactive - SF",
+			"tax_amount": 25.56,
+		},
+	]
+	# Purchase-only fields stay absent here too; Frappe would drop them silently.
+	assert all("category" not in row and "add_deduct_tax" not in row for row in values["taxes"])
+
+
+def test_billable_expense_charges_reconcile_the_invoice_to_the_qbo_total(monkeypatch):
+	"""End to end: items + passthrough + tax == TotalAmt, so the guard passes."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, accounts=_PASSTHROUGH_ACCOUNTS)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I101635, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	mapped = sum(round(row["qty"] * row["rate"], 2) for row in values["items"])
+	mapped += sum(row["tax_amount"] for row in values["taxes"])
+	assert round(mapped, 2) == INVOICE_I101635["TotalAmt"]
+	assert (
+		validate_mapped_values(
+			"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I101635
+		)
+		== []
+	)
+
+
+def test_a_line_naming_an_unimported_item_is_not_treated_as_passthrough(monkeypatch):
+	"""The discrimination that makes this safe: no ItemRef VALUE, not "ItemRef didn't resolve".
+
+	Routing an unimported Item's line to its ItemAccountRef would book it to an account and
+	bury the missing Item forever. It must keep parking the invoice and naming the Item.
+	Over every cached payload the two populations do not overlap: 1,035 lines carry no
+	ItemRef value and zero lines name an unimported Item.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, item_code=None, accounts=_PASSTHROUGH_ACCOUNTS)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I101635, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	# Item 279 did not resolve -- and it is NOT quietly rerouted to a charge.
+	assert values["items"] == []
+	assert [row["tax_amount"] for row in values["taxes"]] == [70.26, 17.57, 25.56]
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I101635
+	)
+	assert any("1 line(s) totalling 360.00 reference QuickBooks items not imported" in i for i in issues)
+
+
+def test_shortfall_guard_no_longer_blames_missing_items_for_passthrough_lines(monkeypatch):
+	"""The message bug this release fixes: passthrough lines were reported as missing Items.
+
+	The cause tested only whether ItemRef RESOLVED, so a line carrying no ItemRef at all was
+	reported as referencing "QuickBooks items not imported into ERPNext" -- on all 157
+	invoices the first post-fix resync parked, while all 265 QBO Items were in fact imported.
+	The ids even rendered as ``None, None``, which was the only visible tell.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, accounts=_PASSTHROUGH_ACCOUNTS)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	# Everything maps, but QuickBooks says the invoice is $100 bigger, so the guard fires.
+	short = json.loads(json.dumps(INVOICE_I101635))
+	short["TotalAmt"] = 573.39
+	_doctype, values = map_qbo_to_erpnext("Invoice", short, types.SimpleNamespace(company="Sapphire Fountains"))
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=short
+	)
+
+	assert any("does not reconcile to QuickBooks" in i for i in issues)
+	assert not any("not imported into ERPNext" in i for i in issues)
+	assert not any("None" in i for i in issues)
+	# With nothing left unexplained it falls to the caller's catch-all.
+	assert any("Every QuickBooks line on this invoice was carried across" in i for i in issues)
+
+
+def test_unbookable_billable_expense_line_is_omitted_and_named_as_its_own_cause(monkeypatch):
+	"""An unresolvable ItemAccountRef omits the charge and parks the invoice naming the ACCOUNT.
+
+	Fixed by importing or mapping the account, not by importing an item, so it reads as a
+	separate cause from a missing Item.
+	"""
+	frappe = install_frappe_stub()
+	# 196 (the markup account) resolves; 288 does not.
+	_sales_tax_stub(monkeypatch, frappe, accounts={"196": "46300 - Markup on Billable Expenses - SF"})
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I101635, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert [row["tax_amount"] for row in values["taxes"]] == [17.57, 25.56]
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I101635
+	)
+	# The zero-amount placeholder on the same account is not counted as a lost line.
+	assert any("1 billable-expense line(s) totalling 70.26 could not be booked" in i for i in issues)
+	assert any("288 (52100 Service COGS:Service Materials)" in i for i in issues)
+	assert not any("not imported into ERPNext: None" in i for i in issues)
+
+
+def test_billable_expense_account_redirects_a_group_to_its_general_child(monkeypatch):
+	"""A passthrough line onto a GROUP account posts to its "- General" child, like every other.
+
+	ERPNext refuses to submit a line naming a group account, and this path reaches a posting
+	account, so it must go through ``_ledger_for_posting`` rather than around it.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(
+		frappe.db,
+		"get_value",
+		_chart_resolver(qbo_accounts={"288": "60300 - Research & Development - SF", "196": None}),
+	)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_passthrough_charges
+
+	charges = _sales_passthrough_charges(INVOICE_I101635)
+
+	# 288 redirects to the "- General" ledger child; 196 maps to nothing and is omitted.
+	assert [row["account_head"] for row in charges] == ["60301 - R&D - General - SF"]
+	assert charges[0]["tax_amount"] == 70.26
+
+
+def test_credit_memo_books_a_passthrough_line_to_the_account_qbo_named(monkeypatch):
+	"""The Journal Entry twin: a passthrough line on a CreditMemo debits its own account.
+
+	Dormant on this site -- CreditMemo gained a mapper in v1.244.0 and has no cached
+	payloads yet -- but the line shape is identical, and leaving one of two identical paths
+	unfixed is exactly how the zero-quantity bug survived a release.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, accounts=_PASSTHROUGH_ACCOUNTS)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	memo = json.loads(json.dumps(INVOICE_I101635))
+	memo["DocNumber"] = "CM-11"
+	doctype, values = map_qbo_to_erpnext("CreditMemo", memo, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	rows = _rows_by_account(values)
+	assert rows["1310 - Debtors - SF"]["credit_in_account_currency"] == 473.39
+	assert rows["4110 - Sales - SF"]["debit_in_account_currency"] == 360.00
+	assert rows["52100 - Service Materials - SF"]["debit_in_account_currency"] == 70.26
+	assert rows["46300 - Markup on Billable Expenses - SF"]["debit_in_account_currency"] == 17.57
+	assert sum(r["debit_in_account_currency"] for r in values["accounts"]) == sum(
+		r["credit_in_account_currency"] for r in values["accounts"]
+	)
+	assert (
+		validate_mapped_values("CreditMemo", "Journal Entry", values, include_doc_required=False, payload=memo)
+		== []
+	)
+
+
 def test_sales_invoice_shortfall_guard_uses_qty_times_rate_not_the_carried_amount(monkeypatch):
 	"""The guard sums qty * rate, because that is what ERPNext recomputes and posts.
 

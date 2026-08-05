@@ -1,6 +1,6 @@
 # WI-067: Make imported Sales Invoices equal what QuickBooks says they are
 **Phase:** 0   **Type:** DATA   **Size:** M
-**Blocked by:** v1.244.0 + v1.246.0 + v1.247.0 deployed   **Blocks:** pre-2026 Sales Invoice GL posting (WI-028 draft triage, WI-032/WI-033 openings)
+**Blocked by:** v1.244.0 + v1.246.0 + v1.247.0 + v1.248.0 deployed   **Blocks:** pre-2026 Sales Invoice GL posting (WI-028 draft triage, WI-032/WI-033 openings)
 
 ## Why
 Across the **1,413 unposted pre-2026 Sales Invoices**, ERPNext totals **$6,996,286.32**
@@ -12,6 +12,11 @@ the aggregate:
 |---|---|---|---|
 | `Qty: 0` progress-billing lines billed at full unit price | **OVER**states | ~$2.32M of a $2.63M overstatement, 615 invoices | v1.244.0 |
 | `TxnTaxDetail.TotalTax` never imported | **UNDER**states | $58,162.96 across 424 invoices | v1.246.0 |
+| `DiscountLineDetail` never imported | **OVER**states | $89,561.00 across 36 invoices | v1.247.0 |
+| Billable-expense passthrough lines dropped | **UNDER**states | $33,024.34 across 1,035 lines / 158 invoices | v1.248.0 |
+
+The fourth was found by chasing what the first post-fix resync parked, and it is the reason
+that resync parked far more than this item predicted — see *Acceptance criteria*.
 
 Scope note: **$58,162.96 / 424 is the pre-2026 Sales Invoice slice.** The fix itself is
 wider, because `_map_sales_receipt` delegates to `_map_sales_invoice`: measured 2026-08-05
@@ -59,9 +64,13 @@ Native and sufficient throughout.
   needs no deploy.
 
 ## Preconditions
-- v1.244.0 (qty), v1.246.0 (tax + guard) and v1.247.0 (discounts + tolerance) all
-  deployed to the target site. They must be **resynced together** — the fixes pull in
-  opposite directions on any invoice carrying both a discount and tax.
+- v1.244.0 (qty), v1.246.0 (tax + guard), v1.247.0 (discounts + tolerance) and v1.248.0
+  (billable-expense passthrough) all deployed to the target site. They must be **resynced
+  together** — the fixes pull in opposite directions on any invoice carrying both a
+  discount and tax.
+  As of 2026-08-05 v1.244.0–v1.247.0 are deployed and a first `preview_resync` has been
+  taken but **not run**; v1.248.0 supersedes that preview, so take a fresh one after it
+  deploys rather than running `QBO-SYNC-2026-249850`.
 - `25010 - Sales Tax Agency Payable - SF` present, `is_group=0`, not disabled, and already
   `account_type = "Tax"` — set by hand on 2026-07-31, so
   `patches/set_sales_tax_account_type.py` is a no-op here and exists for other sites.
@@ -107,6 +116,22 @@ rounding drift the guard exists to catch. Not a negative Actual charge either �
 post a discount into a tax account. A percent-based discount uses the amount QuickBooks
 already resolved (33% of $150.00 recorded as $49.50) rather than recomputing it.
 
+### Billable-expense passthrough lines
+A QBO line reinvoicing a billable expense is a `SalesItemLineDetail` with an **empty
+`ItemRef`**, naming its destination account on `ItemAccountRef` and carrying `MarkupInfo` /
+`ServiceDate`. Each becomes an `Actual` Sales Taxes and Charges row on that account — the
+same posting QuickBooks makes, and the sell-side twin of `_purchase_charges`.
+
+The discrimination is load-bearing: the test is **no `ItemRef` value**, not "`ItemRef` did
+not resolve". A line naming an unimported Item must keep parking its invoice and naming the
+Item, or the missing Item is booked to an account and buried. Over every cached payload the
+two populations do not overlap — 1,035 lines carry no `ItemRef` value and **zero** name an
+unimported Item.
+
+Not item rows: there is no Item to put on one, and not one of the 1,035 lines carries a
+`Qty`. A placeholder Item would put fictitious stock movement and an invented income
+account behind real money.
+
 ### Unmapped tax codes
 `TaxCode` is deliberately **not** in `CDC_ENTITIES` (QBO's CDC endpoint does not support it),
 so a tax code created in QuickBooks today does not arrive until the next **full import**.
@@ -142,19 +167,38 @@ WHERE si.docstatus = 0 AND si.posting_date < '2026-01-01'
 ```
 
 **This release does not reach 0, and the gap is known and measured.** Modelling the mapper
-against every cached payload (2026-08-05) gives, after both fixes:
+against every cached payload (2026-08-05) gives, after all four fixes:
 
 | Outcome | Invoices | Amount |
 |---|---|---|
-| Reconcile exactly | **1,371** of 1,413 | — |
-| Real differences, parked for inspection | **42** | I100853 −$304.37 · I101039 +$258.31 · I100936 −$187.50 · down to $0.30 |
+| Reconcile exactly | **1,373** of 1,416 | — |
+| Real differences, parked for inspection | **43** | I100853 −$304.37 · I101039 +$258.31 · I100936 −$187.50 · down to $0.03 |
 
-Across the full mapped population (including 2026), **53** of 1,556 park.
+Across the full mapped population (including 2026), **54** of 1,560 park.
 
-So the post-resync target is **1,371 / 1,413**. The 42 are genuine discrepancies, not
-rounding and not mapper gaps — they need per-invoice inspection, which
-`_sales_invoice_shortfall` is precisely what makes possible. That is the difference
-between a known 42 and an unknown 615.
+> **The v1.247.0 figure of 42 / 1,413 was measured, and it was still wrong in practice.**
+> The first production `preview_resync` (log `QBO-SYNC-2026-249850`, 2026-08-05) returned
+> **1,346 update / 248 manual_review / 3 ignored / 0 conflicts**. Two reasons, both worth
+> keeping written down:
+>
+> 1. **The model covered reconciliation arithmetic only.** A resync parks documents for
+>    other reasons too — 38 invoices map no item rows at all, 1 has no resolvable customer.
+>    Any figure derived this way is a **floor on what clears**, never a prediction of the
+>    resync summary.
+> 2. **It assumed every `ItemRef` resolves.** 157 invoices carried billable-expense
+>    passthrough lines the mapper dropped, which v1.248.0 fixes; 155 of them heal.
+>
+> Quote the modelled figure as what the *guard* will do, and say so when you quote it.
+
+So the post-resync target is **1,373 / 1,416** on the guard. The 43 are genuine
+discrepancies, not rounding and not mapper gaps — they need per-invoice inspection, which
+`_sales_invoice_shortfall` is precisely what makes possible. That is the difference between
+a known 43 and an unknown 615.
+
+Three of the 158 invoices carrying passthrough lines still park after v1.248.0: I100853 (a
+genuine −$304.37 already on the list above), I101044 (3¢, just over its tolerance), and
+**I100780**, whose lines are *all* passthrough — it maps zero item rows and ERPNext refuses
+an item-less Sales Invoice. Left parked deliberately rather than given a placeholder Item.
 
 Two business decisions closed this gap from 98 to 42 (2026-08-05):
 - **Discounts map to the header `discount_amount`** (`apply_discount_on = "Net Total"`),
@@ -162,13 +206,18 @@ Two business decisions closed this gap from 98 to 42 (2026-08-05):
 - **A per-invoice rounding tolerance is accepted**: one cent per item row, floor two
   cents. QuickBooks stores prices and quantities at more decimals than ERPNext keeps, so
   those invoices genuinely cannot agree to the penny. The trade is that an error smaller
-  than a cent per line now imports silently. Discounts are scoped as
-follow-on work below.
+  than a cent per line now imports silently.
 
 Also required:
 - `25010 - Sales Tax Agency Payable - SF` has `account_type = 'Tax'`.
-- Sum of `tax_amount` over imported Sales Invoice taxes rows ≈ **$71,141.69** across 509
-  documents (**$58,162.96** over the 424 pre-2026 Invoices alone).
+- Sum of `tax_amount` over Sales Invoice taxes rows **whose `account_head` is the sales tax
+  account** ≈ **$71,141.69** across 509 documents (**$58,162.96** over the 424 pre-2026
+  Invoices alone). **Filter by account_head**: since v1.248.0 the same child table also
+  carries the billable-expense charges, so an unfiltered sum is ~$33,024.34 too high.
+- Billable-expense charges total ≈ **$33,024.34** across 1,035 rows on 158 documents, split
+  $7,491.37 to `46300 - Markup on Billable Expenses - SF` and the rest across five COGS
+  accounts (52100, 52700, 51100, 50600, 51700). No such row points at an Item's income
+  account.
 - ERPNext's `25010` draft-side total moves from $882.66 to roughly $882.66 + $71,141.69.
   It will not appear on a Trial Balance until the backlog is submitted; do not treat a
   $0.00 Trial Balance as a failure of this work item.

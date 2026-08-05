@@ -131,14 +131,26 @@ interruptions rather than restarting from scratch.
   jurisdiction outside the ledger. **Identity comes from `TxnTaxCodeRef`, never
   `TaxRateRef`** — different QBO id spaces, and swapping them resolves silently to a
   real-but-wrong jurisdiction.
-- **QBO discounts ARE imported** (since v1.246.0) onto the header `discount_amount` with
+- **QBO discounts ARE imported** (since v1.247.0) onto the header `discount_amount` with
   `apply_discount_on = "Net Total"`, matching the order QuickBooks applies them. 36
   pre-2026 invoices carry one, **$89,561.00** in total.
+- **Billable-expense passthrough lines ARE imported** (since v1.248.0). When a Bill line is
+  flagged billable to a customer and reinvoiced, QBO writes a `SalesItemLineDetail` with an
+  **empty `ItemRef`**, naming its destination account on `ItemAccountRef` instead. Each
+  becomes an `Actual` charge booked to that account — crediting the COGS account the
+  expense came out of, and the markup lines to `46300 Markup on Billable Expenses`. 1,035
+  lines across 158 invoices, **$33,024.34**. An invoice whose lines are *all* passthrough
+  maps zero item rows and still parks: ERPNext refuses an item-less Sales Invoice (one
+  invoice, I100780).
 - **A Sales Invoice now has to reconcile to QuickBooks to import.** `_sales_invoice_shortfall`
-  compares `qty * rate` plus tax against `TotalAmt` and parks anything that does not agree —
-  the sell-side twin of the Purchase Invoice guard, and the check whose absence let both the
-  zero-quantity overstatement and the dropped sales tax survive unnoticed. Expect a
-  one-off queue of ~53 parked documents on the first resync (42 of them pre-2026), each a real difference rather than rounding.
+  compares `qty * rate` plus charges and tax, less discount, against `TotalAmt` and parks
+  anything that does not agree — the sell-side twin of the Purchase Invoice guard, and the
+  check whose absence let both the zero-quantity overstatement and the dropped sales tax
+  survive unnoticed. Modelled against every cached payload at v1.248.0 it parks **54**
+  documents, 43 of them pre-2026, each a real difference rather than rounding. **A resync
+  parks more than that** — the guard is only one of several reasons a document routes to
+  manual review (no customer, no item rows, conflicts), so treat the figure as a floor on
+  what clears, not a prediction of the resync summary.
 - **Sales tax on purchases.** Expense/Bill-Payment JEs are built from line accounts; a
   transaction carrying separate sales tax may not auto-balance and will route to
   **manual review** (by design — the balance guard refuses to post a lopsided entry).

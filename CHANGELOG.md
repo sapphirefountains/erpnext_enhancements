@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.248.0] - 2026-08-05
+
+Imports QuickBooks **billable-expense passthrough lines**, the fifth and last sell-side
+fidelity gap — found by chasing what the first post-1.247.0 resync parked, which turned out
+not to be what the guard said it was.
+
+### Added
+
+- **Billable-expense passthrough lines are imported.** When a Bill or Expense line is
+  flagged billable to a customer and reinvoiced, QuickBooks writes a `SalesItemLineDetail`
+  with an **empty `ItemRef`**, naming its destination account on `ItemAccountRef` instead,
+  alongside `MarkupInfo` and `ServiceDate`. `_sales_items` requires a resolvable `ItemRef`,
+  so every one of them was dropped in silence: **1,035 lines across 158 invoices,
+  $33,024.34** over every cached Invoice payload (**1,013 lines / 153 invoices /
+  $31,727.29** in the pre-2026 slice). Invoice I101635 is typical — 4 of its 9 lines,
+  `HAS15841 HASA MURIATIC ACID DISPOSABLE S` at $70.26 beside `25% markup for HAS15841…` at
+  $17.57 — and I101332 is the extreme, **97 of 102 lines**.
+
+  `_sales_passthrough_charges` turns each into an `Actual` Sales Taxes and Charges row
+  booked to its own `ItemAccountRef` account, exactly as `_purchase_charges` already
+  handles the account-based lines of a Bill. That is the posting QuickBooks itself makes:
+  crediting `52100 Service Materials` reduces the COGS the expense was originally booked
+  to, which is what reimbursing a billable expense means, while the 511 markup lines credit
+  `46300 Markup on Billable Expenses` as income. All six destination accounts resolve to
+  postable ERPNext ledgers and **every one of the 1,035 lines carries an `ItemAccountRef`**,
+  so nothing here is guessed.
+
+  Charges rather than item rows because there is no Item to put on one and no quantity
+  either — **not one of the 1,035 lines carries a `Qty`**. Inventing a placeholder Item
+  would put fictitious stock movement and an invented income account behind real money.
+  Like `_sales_charges`, and unlike `_purchase_charges`, the row sets no `category` or
+  `add_deduct_tax`: those are Purchase-only and Frappe drops them silently.
+
+- **The Journal Entry twin, for CreditMemo and RefundReceipt.** `_item_line_income_account`
+  falls back to the same account when a line carries no `ItemRef`. **Dormant on this site**
+  — both gained mappers in 1.244.0 and have no cached payloads yet, so unlike the invoice
+  half it cannot be measured against real data, only reasoned from the identical line
+  shape. It is here because leaving one of two identically-shaped paths unfixed is exactly
+  how the zero-quantity bug survived a release (see `_line_qty_rate`).
+
+### Fixed
+
+- **`_sales_invoice_shortfall_causes` no longer reports passthrough lines as missing
+  Items.** The cause tested only whether a line's `ItemRef` *resolved*, so a line carrying
+  no `ItemRef` at all was reported as referencing "QuickBooks items not imported into
+  ERPNext" — which was false on every one of the **157 invoices** the first post-1.247.0
+  resync parked, while **all 265 QBO Items were in fact imported and mapped, a 1:1 match**.
+  The message even rendered the missing ids as `None, None, None`, which was the only
+  visible tell. It now requires an `ItemRef` value before blaming a missing Item.
+
+  A wrong triage message is not cosmetic: it is the entire product of a guard whose job is
+  to say *why* a document parked, and this one sent a day of work after Items that were
+  never missing.
+
+### Changed
+
+- **A third shortfall cause: a passthrough line whose account will not resolve.** Named
+  separately from a missing Item because it is fixed differently — by importing or mapping
+  the *account*, not an item — and it names the `ItemAccountRef`, including the case where
+  the account is a group with no `- General` ledger child.
+
+### Notes
+
+- **Where this lands.** Modelling the mapper against every cached payload (2026-08-05), the
+  reconciliation guard parks **43 of 1,416** pre-2026 invoices, down from 193; across the
+  full population **54 of 1,560**, down from 209. **155 invoices heal and none regress.**
+  Of the 158 carrying passthrough lines, three still park: I100853 (a genuine −$304.37
+  discrepancy already on the known list), I101044 (3¢, just over its tolerance), and
+  I100780, whose lines are *all* passthrough — it maps zero item rows and ERPNext refuses
+  an item-less Sales Invoice. That one is left parked rather than given a placeholder Item.
+- This models the **reconciliation guard only**. A resync parks documents for other reasons
+  too (no customer, no item rows at all, conflicts), so it is a floor on what clears, not a
+  prediction of the resync summary. The 1.247.0 estimate of 42 understated the real 248
+  precisely because it modelled arithmetic and assumed every `ItemRef` resolved.
+- **Resync required**, and nothing in this release changes the procedure:
+  `preview_resync(entity_types=["Invoice", "SalesReceipt"])` → read the preview →
+  `run_resync(preview_id)`. No new fields, no patch, no configuration.
+
 ## [1.247.0] - 2026-08-05
 
 Closes the two gaps [1.246.0](#12460---2026-08-05) recorded as open, on the owner's
