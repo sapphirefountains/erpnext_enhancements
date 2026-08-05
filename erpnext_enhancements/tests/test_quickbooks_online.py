@@ -568,6 +568,113 @@ def test_sales_items_set_cost_center_from_class(monkeypatch):
 	assert "cost_center" not in items[1]  # no ClassRef -> falls back to company default
 
 
+def _item_resolver(item_code="SERVICE - MAINTENANCE CONTRACT"):
+	"""Build a frappe.db.get_value that maps every QBO ItemRef to one ERPNext Item."""
+
+	def get_value(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "QuickBooks Sync Mapping" and (filters or {}).get("qbo_entity_type") == "Item":
+			return item_code
+		return None
+
+	return get_value
+
+
+def _sales_line(amount, **detail):
+	"""One QBO SalesItemLineDetail line; ``detail`` keys are written verbatim.
+
+	Written verbatim matters: the mapper distinguishes an ABSENT ``Qty`` from a
+	``Qty`` of 0, so a helper that defaulted the key would erase what is under test.
+	"""
+	return {"Amount": amount, "SalesItemLineDetail": dict({"ItemRef": {"value": "279"}}, **detail)}
+
+
+def test_zero_quantity_sales_lines_are_not_billed_at_full_price(monkeypatch):
+	"""QBO progress-billing lines (Qty 0) must not be billed at their unit price.
+
+	Regression for the falsy-zero bug in ``_sales_items``: ``detail.get("Qty") or 1``
+	read QBO's legitimate 0 as missing and substituted 1, and ERPNext then recomputed
+	``amount = qty * rate`` on save. This is the shape of QBO invoice I100900, which
+	totals $2,100.00 in QuickBooks and imported at $570,650.00.
+	"""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _item_resolver())
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_items
+
+	payload = {
+		"Line": [
+			_sales_line(2100.0, Qty=0.2, UnitPrice=10500),  # the only line billed this period
+			_sales_line(0, Qty=0, UnitPrice=8000),  # contract line, not billed yet
+			_sales_line(0, Qty=0, UnitPrice=None),  # ditto, and QBO prices it null
+		]
+	}
+	items = _sales_items(payload)
+
+	# Both Qty:0 lines are worth nothing, and ERPNext rejects a zero-quantity line.
+	assert len(items) == 1
+	# The whole point: the invoice bills QuickBooks' $2,100.00, not $2,100 + 8,000.
+	assert sum(item["qty"] * item["rate"] for item in items) == 2100.0
+
+
+def test_sales_line_qty_times_rate_reproduces_the_qbo_amount(monkeypatch):
+	"""Every QBO sales-line shape yields a qty/rate pair whose product is QBO's Amount."""
+	frappe = install_frappe_stub()
+	monkeypatch.setattr(frappe.db, "get_value", _item_resolver())
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_items
+
+	payload = {
+		"Line": [
+			_sales_line(262.5, UnitPrice=262.5),  # Qty absent (QBO omits it for 1)
+			_sales_line(5.91, UnitPrice=None),  # Qty absent, priced only by Amount
+			_sales_line(555.0, Qty=3, UnitPrice=185),  # both given
+			_sales_line(500.0, Qty=2),  # quantity, no unit price
+			_sales_line(75.0, Qty=0),  # Qty 0 but the line carries money
+		]
+	}
+	items = _sales_items(payload)
+
+	assert [round(item["qty"] * item["rate"], 2) for item in items] == [262.5, 5.91, 555.0, 500.0, 75.0]
+	# Second-order bug: a line with a quantity but no UnitPrice used to take the WHOLE
+	# line amount as its rate, and was then multiplied by the quantity again (2 x 500).
+	assert items[3]["rate"] == 250
+	# Qty 0 with money on the line bills one unit, so the amount survives.
+	assert (items[4]["qty"], items[4]["rate"]) == (1, 75.0)
+
+
+def test_estimate_shares_the_sales_line_quantity_fix(monkeypatch):
+	"""``_sales_items`` is shared with the Estimate -> Quotation path, so it is fixed too."""
+	frappe = install_frappe_stub()
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return "USD" if fieldname == "default_currency" else None
+		if doctype == "Price List":
+			return "Standard Selling"
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Item":
+				return "SERVICE - MAINTENANCE CONTRACT"
+			if f.get("qbo_entity_type") == "Customer" and f.get("erpnext_doctype") == "Customer":
+				return "Acme Supply"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Estimate",
+		{
+			"Id": "9",
+			"TxnDate": "2026-06-06",
+			"CustomerRef": {"value": "1"},
+			"Line": [_sales_line(400.0, Qty=2, UnitPrice=200), _sales_line(0, Qty=0, UnitPrice=9999)],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Quotation"
+	assert [(item["qty"], item["rate"]) for item in values["items"]] == [(2, 200)]
+
+
 def test_bill_payment_sets_supplier_party_on_ap_line(monkeypatch):
 	"""A BillPayment's A/P debit carries the vendor as Party and uses the default payable."""
 	frappe = install_frappe_stub()
@@ -1399,6 +1506,186 @@ def test_vendor_credit_debits_payable_credits_expense(monkeypatch):
 	rows = _rows_by_account(values)
 	assert rows["Creditors - SF"]["debit_in_account_currency"] == 168.54
 	assert rows["Build Materials - SF"]["credit_in_account_currency"] == 168.54
+
+
+def _payment_stub(monkeypatch, frappe, invoice_docstatus):
+	"""Stub the lookups ``_map_payment_entry`` makes; ``invoice_docstatus`` drives SI-1."""
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {
+				"default_currency": "USD",
+				"default_bank_account": "Checking - SF",
+				"default_receivable_account": "Debtors - SF",
+			}.get(fieldname)
+		if doctype == "Sales Invoice" and fieldname == "docstatus":
+			return invoice_docstatus
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Customer" and f.get("erpnext_doctype") == "Customer":
+				return "Acme Supply"
+			if f.get("qbo_entity_type") == "Invoice":
+				return {"21658": "SI-1", "19179": "SI-2"}.get(str(f.get("qbo_id")))
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+
+
+def _qbo_payment(*linked):
+	"""A QBO Payment payload whose lines carry ``(amount, invoice_txn_id)`` LinkedTxns."""
+	return {
+		"Id": "21659",
+		"TxnDate": "2026-07-30",
+		"TotalAmt": sum(amount for amount, _txn_id in linked),
+		"CustomerRef": {"value": "1477"},
+		"Line": [
+			{"Amount": amount, "LinkedTxn": [{"TxnId": txn_id, "TxnType": "Invoice"}]}
+			for amount, txn_id in linked
+		],
+	}
+
+
+def test_payment_entry_allocates_against_submitted_invoices(monkeypatch):
+	"""A Payment's LinkedTxn lines become Payment Entry references to their invoices."""
+	frappe = install_frappe_stub()
+	_payment_stub(monkeypatch, frappe, invoice_docstatus=1)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"Payment", _qbo_payment((795.35, "21658"), (204.65, "19179")), types.SimpleNamespace(company="SF")
+	)
+
+	assert doctype == "Payment Entry"
+	assert values["references"] == [
+		{"reference_doctype": "Sales Invoice", "reference_name": "SI-1", "allocated_amount": 795.35},
+		{"reference_doctype": "Sales Invoice", "reference_name": "SI-2", "allocated_amount": 204.65},
+	]
+
+
+def test_payment_entry_skips_references_to_draft_invoices(monkeypatch):
+	"""A payment whose invoice is still a draft imports UNALLOCATED rather than failing.
+
+	ERPNext refuses to allocate against a draft and this integration imports invoices
+	as drafts, so the payment must survive the ordering and pick its allocation up on
+	a later re-sync -- not raise and park every payment in the backlog.
+	"""
+	frappe = install_frappe_stub()
+	_payment_stub(monkeypatch, frappe, invoice_docstatus=0)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Payment", _qbo_payment((795.35, "21658")), types.SimpleNamespace(company="SF")
+	)
+
+	assert values["references"] == []
+	assert values["paid_amount"] == 795.35  # the receipt itself still imports in full
+
+
+def test_payment_entry_ignores_non_invoice_linked_txns(monkeypatch):
+	"""A payment's top-level Deposit LinkedTxn is a bank sweep, not an allocation."""
+	frappe = install_frappe_stub()
+	_payment_stub(monkeypatch, frappe, invoice_docstatus=1)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	payload = _qbo_payment((500.0, "21658"))
+	payload["LinkedTxn"] = [{"TxnId": "21583", "TxnType": "Deposit"}]
+	_doctype, values = map_qbo_to_erpnext("Payment", payload, types.SimpleNamespace(company="SF"))
+
+	assert [row["reference_name"] for row in values["references"]] == ["SI-1"]
+
+
+def _sales_ledger_stub(monkeypatch, frappe):
+	"""Stub the account/party/item lookups the credit-memo and refund mappers make."""
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {
+				"default_receivable_account": "Debtors - SF",
+				"default_income_account": "4110 - Sales - SF",
+			}.get(fieldname)
+		if doctype == "Item Default":
+			return None  # no imported Item carries one; the Company default is the real path
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Item":
+				return "SERVICE - MAINTENANCE CONTRACT"
+			if f.get("qbo_entity_type") == "Customer" and f.get("erpnext_doctype") == "Customer":
+				return "Acme Supply"
+			if f.get("qbo_entity_type") == "Account":
+				return "Checking - SF" if str(f.get("qbo_id")) == "134" else None
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+
+
+def test_credit_memo_credits_receivable_and_debits_income(monkeypatch):
+	"""A QBO CreditMemo credits A/R (customer as Party) and debits each line's income account."""
+	frappe = install_frappe_stub()
+	_sales_ledger_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"CreditMemo",
+		{
+			"Id": "9001",
+			"DocNumber": "CM-1",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": 450.0,
+			"CustomerRef": {"value": "1"},
+			"Line": [_sales_line(300.0, Qty=2, UnitPrice=150), _sales_line(150.0, UnitPrice=150)],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Journal Entry"
+	receivable = values["accounts"][0]
+	assert receivable["account"] == "Debtors - SF"
+	assert receivable["credit_in_account_currency"] == 450.0
+	assert (receivable["party_type"], receivable["party"]) == ("Customer", "Acme Supply")
+	income = [row for row in values["accounts"] if row["account"] == "4110 - Sales - SF"]
+	assert sum(row["debit_in_account_currency"] for row in income) == 450.0
+	assert sum(row["debit_in_account_currency"] for row in values["accounts"]) == sum(
+		row["credit_in_account_currency"] for row in values["accounts"]
+	)
+
+
+def test_refund_receipt_credits_bank_and_debits_income(monkeypatch):
+	"""A QBO RefundReceipt credits the account it was paid from and never touches A/R."""
+	frappe = install_frappe_stub()
+	_sales_ledger_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"RefundReceipt",
+		{
+			"Id": "9002",
+			"DocNumber": "RR-1",
+			"TxnDate": "2026-06-06",
+			"TotalAmt": 120.0,
+			"CustomerRef": {"value": "1"},
+			"DepositToAccountRef": {"value": "134"},
+			"Line": [_sales_line(120.0, Qty=1, UnitPrice=120)],
+		},
+		types.SimpleNamespace(company="SF"),
+	)
+
+	assert doctype == "Journal Entry"
+	rows = _rows_by_account(values)
+	assert rows["Checking - SF"]["credit_in_account_currency"] == 120.0
+	assert rows["4110 - Sales - SF"]["debit_in_account_currency"] == 120.0
+	assert "Debtors - SF" not in rows  # QBO settles a refund receipt immediately
+
+
+def test_credit_memo_and_refund_receipt_are_in_the_entity_catalogue():
+	"""New sell-side entities are wired into every list a full/CDC import reads."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import constants
+
+	for entity in ("CreditMemo", "RefundReceipt"):
+		assert entity in constants.ACCOUNTING_ENTITIES
+		assert entity in constants.TRANSACTION_ENTITIES
+		assert entity in constants.CDC_ENTITIES
+		assert constants.ENTITY_DOCTYPE_MAP[entity] == "Journal Entry"
 
 
 def test_sales_receipt_maps_to_sales_invoice(monkeypatch):
