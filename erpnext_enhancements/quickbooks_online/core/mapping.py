@@ -1101,19 +1101,28 @@ def _sales_invoice_shortfall(erpnext_doctype: str, values: dict, payload: dict |
 def _sales_invoice_shortfall_causes(payload: dict, values: dict) -> list[str]:
 	"""Explain what a Sales Invoice mapping could not carry across from its QBO payload.
 
-	Two causes, each needing a different fix, so they read differently rather than sharing
+	Three causes, each needing a different fix, so they read differently rather than sharing
 	one vague message. ``values`` is needed to tell "this invoice has no tax" from "this
 	invoice has tax we could not book anywhere".
 
-	Discount lines used to be a third cause; they are now imported (``_sales_discount``),
+	THE ITEM CAUSE ONCE LIED, AND IT SENT A DAY OF TRIAGE AFTER A NON-PROBLEM. It tested
+	only whether the line's ``ItemRef`` RESOLVED, so a billable-expense passthrough line --
+	which carries no ``ItemRef`` at all -- was reported as referencing "QuickBooks items not
+	imported into ERPNext". Every one of the 157 invoices parked by the first post-fix
+	resync said so, and all 265 QBO Items were in fact imported and mapped. The message even
+	rendered the missing ids as ``None, None, None``, which was the only visible tell. It now
+	requires an ``ItemRef`` value before blaming a missing Item.
+
+	Discount lines used to be a further cause; they are now imported (``_sales_discount``),
 	so a discounted invoice that still fails to reconcile falls to the caller's catch-all
 	rather than being blamed on its discount.
 	"""
 	causes = []
+	item_lines = [line for line in payload.get("Line") or [] if line.get("SalesItemLineDetail")]
 	unmapped_items = [
 		line
-		for line in payload.get("Line") or []
-		if line.get("SalesItemLineDetail")
+		for line in item_lines
+		if not _is_passthrough_line(line["SalesItemLineDetail"])
 		and not _linked_name("Item", "Item", ((line["SalesItemLineDetail"].get("ItemRef") or {}).get("value")))
 	]
 	if unmapped_items:
@@ -1122,6 +1131,23 @@ def _sales_invoice_shortfall_causes(payload: dict, values: dict) -> list[str]:
 		causes.append(
 			f"{len(unmapped_items)} line(s) totalling {total:.2f} reference QuickBooks items "
 			f"not imported into ERPNext: {_format_refs(refs)}."
+		)
+	# Passthrough lines whose destination account did not resolve. Distinct from a missing
+	# Item and fixed differently -- by importing or mapping the ACCOUNT, not the item.
+	unbooked = [
+		line
+		for line in item_lines
+		if _is_passthrough_line(line["SalesItemLineDetail"])
+		and _to_amount(line.get("Amount")) != 0
+		and not _passthrough_line_account(line["SalesItemLineDetail"])
+	]
+	if unbooked:
+		total = sum(_to_amount(line.get("Amount")) for line in unbooked)
+		refs = [line["SalesItemLineDetail"].get("ItemAccountRef") or {} for line in unbooked]
+		causes.append(
+			f"{len(unbooked)} billable-expense line(s) totalling {total:.2f} could not be booked: "
+			f"their QuickBooks account is not imported into ERPNext, or is a group with no "
+			f"'{GENERAL_LEDGER_SUFFIX}' ledger child: {_format_refs(refs)}."
 		)
 	# Tax present in QuickBooks but no charge row built: the destination account did not
 	# resolve. Fixed by configuring it, not by importing anything.
@@ -1684,7 +1710,9 @@ def _map_sales_invoice(payload, settings):
 		# Always mapped, even when empty, so a re-sync REPLACES the charges table rather
 		# than leaving a stale tax row beside a fresh one -- apply_values rewrites child
 		# tables wholesale. Same reasoning as the Purchase Invoice ``taxes`` mapping.
-		"taxes": _sales_charges(payload, settings),
+		# Billable expenses first, tax last: Actual rows do not compound, so the order is
+		# presentational only, and an invoice reads as its charges followed by its tax.
+		"taxes": _sales_passthrough_charges(payload) + _sales_charges(payload, settings),
 		"discount_amount": _sales_discount(payload),
 		# QBO discounts the subtotal before tax, which is exactly what "Net Total" means
 		# here. Set unconditionally so it cannot be left on a stale "Grand Total" from a
@@ -1721,6 +1749,102 @@ def _sales_discount(payload):
 		if line.get("DiscountLineDetail") is not None
 	)
 	return flt(total, 2)
+
+
+def _is_passthrough_line(detail) -> bool:
+	"""True if a ``SalesItemLineDetail`` is a QBO billable-expense passthrough line.
+
+	QuickBooks writes one of these when a Bill or Expense line is flagged billable to a
+	customer and then reinvoiced: a ``SalesItemLineDetail`` with an **empty ``ItemRef``**
+	that names its destination account in ``ItemAccountRef`` instead, alongside
+	``MarkupInfo`` and ``ServiceDate``. There is no QBO Item behind it, so nothing about
+	it is recoverable through the item mapping.
+
+	THE TEST IS "NO ItemRef VALUE", NOT "ItemRef DOES NOT RESOLVE", and the difference is
+	the whole point. A line naming an Item that was never imported is a genuinely missing
+	Item and must keep parking its invoice with that said; routing it here instead would
+	book it to an account and bury the missing Item forever. Measured over every cached
+	Invoice payload (2026-08-05) the two populations do not overlap at all: 1,035 lines
+	carry no ItemRef value, and **zero** lines name an unimported Item.
+	"""
+	return not (detail.get("ItemRef") or {}).get("value")
+
+
+def _passthrough_line_account(detail):
+	"""The ERPNext posting account a billable-expense passthrough line books to, or None.
+
+	``ItemAccountRef`` is QBO's "this line posts here" reference -- on an ordinary sales
+	line it is the Item's own income account, and on a passthrough line, where there is no
+	Item, it is the account QuickBooks itself posted the reimbursement to. Booking to it
+	reproduces QBO's ledger rather than guessing at one.
+
+	Goes through ``_ledger_for_posting`` like every other QBO-account-to-posting-account
+	path, so a reference onto a GROUP account resolves to its ``- General`` ledger child
+	instead of something ERPNext will refuse to submit.
+	"""
+	if not _is_passthrough_line(detail):
+		return None
+	qbo_id = (detail.get("ItemAccountRef") or {}).get("value")
+	if not qbo_id:
+		return None
+	return _ledger_for_posting(_linked_name("Account", "Account", qbo_id))
+
+
+def _sales_passthrough_charges(payload):
+	"""Build Sales Taxes and Charges rows from a QBO transaction's billable-expense lines.
+
+	The fifth and last of the sell-side fidelity gaps, and the reason 157 invoices parked
+	on the first post-fix resync. ``_sales_items`` requires a resolvable ``ItemRef``, so
+	every passthrough line (see ``_is_passthrough_line``) was dropped in silence:
+	**1,035 lines across 158 invoices, $33,024.34**, measured over every cached Invoice
+	payload on 2026-08-05. Invoice I101635 is typical -- 4 of its 9 lines are passthrough,
+	"HAS15841 HASA MURIATIC ACID DISPOSABLE S" at $70.26 beside "25% markup for HAS15841"
+	at $17.57 -- and I101332 is the extreme, 97 of 102 lines.
+
+	Each line becomes an ``Actual`` charge booked to its own ``ItemAccountRef`` account,
+	exactly as ``_purchase_charges`` already handles the account-based lines of a Bill.
+	That is the same posting QuickBooks makes: crediting ``52100 Service Materials``
+	reduces the COGS the expense was originally booked to, which is what reimbursing a
+	billable expense means, while the 511 markup lines credit
+	``46300 Markup on Billable Expenses`` as income. All six destination accounts resolve
+	to postable ERPNext ledgers, and every one of the 1,035 lines carries an
+	``ItemAccountRef`` -- there is nothing here to guess at.
+
+	Charges rather than item rows because there is no Item to put on one, and no quantity
+	either: **not one of the 1,035 lines carries a ``Qty``**. Inventing a placeholder Item
+	would put fictitious stock movement and an invented income account behind real money.
+
+	Note ``Sales Taxes and Charges`` has no ``category`` or ``add_deduct_tax`` field --
+	those are Purchase-only and Frappe would drop them silently -- so unlike
+	``_purchase_charges`` this sets neither. See ``_sales_charges``.
+
+	A line whose account will not resolve is omitted rather than given a fallback, the
+	module's standing trade: the invoice then falls short of ``TotalAmt`` and
+	``_sales_invoice_shortfall`` parks it naming the account. Zero-amount lines are
+	dropped (QBO emits placeholders; 4 in the cached data) since ERPNext has nothing to
+	post for them.
+	"""
+	charges = []
+	for line in payload.get("Line") or []:
+		detail = line.get("SalesItemLineDetail")
+		if not detail or not _is_passthrough_line(detail):
+			continue
+		amount = _to_amount(line.get("Amount"))
+		account = _passthrough_line_account(detail)
+		if not account or amount == 0:
+			continue
+		account_ref = detail.get("ItemAccountRef") or {}
+		row = {
+			"charge_type": "Actual",
+			"account_head": account,
+			"description": line.get("Description") or account_ref.get("name") or account,
+			"tax_amount": amount,
+		}
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		charges.append(row)
+	return charges
 
 
 def _sales_charges(payload, settings):
@@ -3265,7 +3389,12 @@ def _sales_items(payload):
 
 	Shared by ``_map_sales_invoice`` (Invoice / SalesReceipt) and ``_map_quotation``
 	(Estimate). Skips lines whose ItemRef isn't mapped to an ERPNext Item yet, and
-	lines ``_sales_line_qty_rate`` judges worthless (see there).
+	lines ``_line_qty_rate`` judges worthless (see there).
+
+	Lines with NO ItemRef at all are QBO billable-expense passthrough, and they are not
+	dropped -- ``_sales_passthrough_charges`` books them as charges on the Sales Invoice.
+	A Quotation keeps dropping them: a quote is not a posting document, and adding a
+	COGS-credit charge row to one would put accounting into a sales estimate.
 
 	``amount`` is carried across for reference only: ERPNext RECOMPUTES it as
 	``qty * rate`` on save, which is why the qty/rate pair has to reproduce QBO's
@@ -3429,9 +3558,23 @@ def _item_line_income_account(detail, company):
 
 	Two hops, either of which can fail: the QBO item must be imported (via the mapping
 	ledger, not a fuzzy name match), and an income account must resolve for it.
+
+	A billable-expense passthrough line has no ``ItemRef`` to make either hop with, so it
+	falls back to the account QBO named on the line itself -- the Journal Entry twin of
+	``_sales_passthrough_charges``, which does the same thing on the Sales Invoice side.
+	Both are here for the same reason ``_line_qty_rate`` is one function: the sell side
+	being fixed while an identically-shaped path was not is exactly how the
+	zero-quantity bug survived a release. This half is DORMANT on this site -- CreditMemo
+	and RefundReceipt gained mappers in v1.244.0 and have no cached payloads yet, so it
+	cannot be measured against real data the way the invoice half can, only reasoned from
+	the identical line shape.
+
+	The fallback fires only when the line carries no ``ItemRef`` value at all. A line
+	naming an Item that was never imported still resolves to nothing and still parks its
+	entry, which is the answer that gets the Item imported.
 	"""
 	item_code = _linked_name("Item", "Item", (detail.get("ItemRef") or {}).get("value"))
-	return _item_income_account(item_code, company)
+	return _item_income_account(item_code, company) or _passthrough_line_account(detail)
 
 
 def _purchase_item_ledger_lines(payload, company, *, is_credit=False):
