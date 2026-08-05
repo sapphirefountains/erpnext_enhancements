@@ -1,0 +1,163 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_section",
+  "enabled",
+  "drive_folder_id",
+  "column_break_conn",
+  "service_account_json",
+  "actions_section",
+  "test_connection",
+  "column_break_actions",
+  "run_backup_now",
+  "retention_section",
+  "retention_days",
+  "column_break_retention",
+  "min_keep",
+  "alerts_section",
+  "alert_recipients",
+  "notify_on_success",
+  "column_break_alerts",
+  "alert_if_older_than_hours",
+  "alert_if_full_older_than_hours"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "default": "0",
+   "description": "Master switch for the scheduled backups (02:00 daily, 03:00 Sundays) and the staleness watchdog. Off, nothing is scheduled. Run Backup Now works either way, so you can prove the setup before switching this on.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Offsite Backups"
+  },
+  {
+   "description": "ID of the destination folder, taken from its Drive URL (.../folders/<this>). It must live on a Shared Drive and it must be dedicated to these backups — retention deletes by age, not by filename, so anything else parked in the folder is in scope.",
+   "fieldname": "drive_folder_id",
+   "fieldtype": "Data",
+   "label": "Drive Folder ID"
+  },
+  {
+   "fieldname": "column_break_conn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The whole downloaded service account key file, braces included. Stored encrypted. Use a service account dedicated to backups — not the one the project-folder sync uses — and share the backup folder with its client_email as Content manager.",
+   "fieldname": "service_account_json",
+   "fieldtype": "Password",
+   "label": "Service Account JSON Key"
+  },
+  {
+   "fieldname": "actions_section",
+   "fieldtype": "Section Break",
+   "label": "Actions"
+  },
+  {
+   "description": "Checks the folder, whether it is on a Shared Drive, and whether this service account can actually add and delete files in it.",
+   "fieldname": "test_connection",
+   "fieldtype": "Button",
+   "label": "Test Connection"
+  },
+  {
+   "fieldname": "column_break_actions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Queues a backup on the long queue now. Progress lands in Offsite Backup Log.",
+   "fieldname": "run_backup_now",
+   "fieldtype": "Button",
+   "label": "Run Backup Now"
+  },
+  {
+   "fieldname": "retention_section",
+   "fieldtype": "Section Break",
+   "label": "Retention"
+  },
+  {
+   "default": "90",
+   "description": "Delete objects in the folder older than this many days. 0 turns pruning off entirely and keeps everything forever.",
+   "fieldname": "retention_days",
+   "fieldtype": "Int",
+   "label": "Retention (days)"
+  },
+  {
+   "fieldname": "column_break_retention",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "14",
+   "description": "Safety floor. The newest this many objects are never pruned regardless of age, and pruning is skipped altogether when the folder listing returns fewer than this — a partial listing must not cascade into deletion.",
+   "fieldname": "min_keep",
+   "fieldtype": "Int",
+   "label": "Always Keep Newest"
+  },
+  {
+   "fieldname": "alerts_section",
+   "fieldtype": "Section Break",
+   "label": "Alerts"
+  },
+  {
+   "description": "Comma separated. Falls back to admin_alert_recipients in site_config.json when blank.",
+   "fieldname": "alert_recipients",
+   "fieldtype": "Small Text",
+   "label": "Alert Recipients"
+  },
+  {
+   "default": "0",
+   "description": "Email on every successful run as well as on failures. Off by default — the watchdog already reports silence.",
+   "fieldname": "notify_on_success",
+   "fieldtype": "Check",
+   "label": "Notify On Success"
+  },
+  {
+   "fieldname": "column_break_alerts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "36",
+   "description": "Alert when no backup of any type has succeeded within this many hours. 36 gives a missed nightly run one cycle of grace.",
+   "fieldname": "alert_if_older_than_hours",
+   "fieldtype": "Int",
+   "label": "Alert If Database Backup Older Than (hours)"
+  },
+  {
+   "default": "192",
+   "description": "Checked separately from the database tier, against Weekly and Manual Full runs only — otherwise a healthy nightly database backup masks a weekly file backup that has been skipped every Sunday for months. 192 is eight days.",
+   "fieldname": "alert_if_full_older_than_hours",
+   "fieldtype": "Int",
+   "label": "Alert If Full Backup Older Than (hours)"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Offsite Backup",
+ "name": "Offsite Backup Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

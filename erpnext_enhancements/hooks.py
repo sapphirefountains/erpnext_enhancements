@@ -584,6 +584,28 @@ scheduler_events = {
 		# Frappe's own dynamic date filters cannot express a semi-monthly period
 		# and are inert on Report Builder reports anyway — see the module docstring.
 		"0 7 * * *": ["erpnext_enhancements.crm_enhancements.pay_period_reports.run_pay_period_cycle"],
+		# Offsite backups to a Google Drive Shared Drive. The three slots are
+		# deliberately clear of the cluster above (05:00, 06:00, 06:30, 07:00,
+		# 07:15) — a multi-GB dump and upload must not contend with the KPI
+		# snapshots or the QuickBooks pulls for the long queue.
+		#
+		# Both backup entry points are thin shims: they check the master switch,
+		# reconcile any stranded Running row, and hand off to the long queue with a
+		# 4h timeout. The dump itself never runs on the scheduler tick.
+		#
+		# 02:00 daily — database only.
+		"0 2 * * *": ["erpnext_enhancements.offsite_backup.backup.run_daily_backup"],
+		# 03:00 Sunday — database + public files + private files. An hour after the
+		# nightly run so the two cannot overlap even if the daily one runs long;
+		# if it somehow still is, the weekly logs a Skipped row rather than queueing
+		# behind it.
+		"0 3 * * 0": ["erpnext_enhancements.offsite_backup.backup.run_weekly_backup"],
+		# 08:00 daily — staleness watchdog. Checks the database and full tiers
+		# separately against their own thresholds, because a healthy nightly
+		# database backup would otherwise mask a weekly file backup that has been
+		# skipped every Sunday for months. This is the check that catches "nothing
+		# ran at all": a failure email only fires when a job runs and throws.
+		"0 8 * * *": ["erpnext_enhancements.offsite_backup.backup.watchdog"],
 	},
 	"daily": [
 		# training: move assignments past their due date into Overdue. A separate
