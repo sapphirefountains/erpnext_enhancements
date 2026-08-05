@@ -1,0 +1,130 @@
+{
+ "actions": [],
+ "autoname": "format:OBL-{YYYY}-{MM}-{#####}",
+ "creation": "2026-08-05 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "backup_type",
+  "status",
+  "started_at",
+  "ended_at",
+  "column_break_1",
+  "duration_seconds",
+  "files_uploaded",
+  "bytes_uploaded",
+  "pruned_count",
+  "details_section",
+  "details",
+  "error_section",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "backup_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Backup Type",
+   "options": "Daily\nWeekly\nManual\nManual Full",
+   "reqd": 1
+  },
+  {
+   "description": "Running is only ever cleared by the run's own process. A row stuck on Running is a killed worker, and reconcile_stale_runs() fails it once it is past the job timeout.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Running\nSuccess\nFailed\nSkipped",
+   "reqd": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Started At"
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended At"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "duration_seconds",
+   "fieldtype": "Int",
+   "label": "Duration (seconds)"
+  },
+  {
+   "fieldname": "files_uploaded",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Files Uploaded"
+  },
+  {
+   "description": "Long Int, not Int: a full backup can exceed the 2 GiB that a signed 32-bit column holds.",
+   "fieldname": "bytes_uploaded",
+   "fieldtype": "Long Int",
+   "label": "Bytes Uploaded"
+  },
+  {
+   "fieldname": "pruned_count",
+   "fieldtype": "Int",
+   "label": "Pruned Count"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "description": "What was uploaded, which integrity check each artefact passed (size, or size + md5), and what retention did.",
+   "fieldname": "details",
+   "fieldtype": "Code",
+   "label": "Details",
+   "options": "JSON"
+  },
+  {
+   "depends_on": "eval:doc.status=='Failed'",
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Traceback without frame locals — rendered locals would put the service account private key in this field.",
+   "fieldname": "error",
+   "fieldtype": "Code",
+   "label": "Error"
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Offsite Backup",
+ "name": "Offsite Backup Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

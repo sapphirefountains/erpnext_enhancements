@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.249.0] - 2026-08-05
+
+Adds an **Offsite Backup** module: Frappe's own backups, pushed to a Google Drive Shared
+Drive, verified byte-for-byte, pruned on a retention policy, and watched for silence.
+
+Ships dormant. No credentials, no folder, nothing enabled — the service account and the
+Drive folder are created by hand in the Google Cloud Console, and the module does nothing
+at all until somebody pastes a key into Offsite Backup Settings and ticks the switch.
+
+### Added
+
+- **`offsite_backup/` — offsite backups to a Google Drive Shared Drive.** Three cron jobs
+  merged into the existing `scheduler_events["cron"]`: `0 2 * * *` database only,
+  `0 3 * * 0` database + public files + private files, `0 8 * * *` a staleness watchdog.
+  The slots are deliberately clear of the existing cluster at 05:00, 06:00, 06:30, 07:00
+  and 07:15. Both backup entry points are thin shims — check the switch, reconcile any
+  stranded run, hand off to the **long** queue with a 4h timeout. The scheduler is one
+  shared process walking every job on the site; a multi-hour dump running inside it would
+  stall the QuickBooks pulls and the KPI snapshots with it.
+
+  Frappe v16 **removed** the built-in Google Drive / Dropbox / S3 backup doctypes from
+  core, splitting them into a separate `frappe/offsite_backups` app. That app is
+  deliberately not installed: it has no retention logic, and unbounded growth in a Shared
+  Drive is its own outage.
+
+  Two new doctypes — `Offsite Backup Settings` (Single) and `Offsite Backup Log` (one row
+  per run) — plus `drive.py` (Drive v3 transport) and `backup.py` (orchestration).
+  Deliberately separate from `google_drive/`, on a different Shared Drive with a different
+  service account and its own client builder: the duplication *is* the isolation, so that
+  a compromise of the widely-shared project-folder credential does not also hand over the
+  encrypted database dumps.
+
+- **Manual backups.** `Run Backup Now` on the settings form prompts for *Database only* or
+  *Full (database + files)* and queues it; the whitelisted `run_backup_now()` is System
+  Manager only and validates its `backup_type` against `{Manual, Manual Full}` rather than
+  trusting it. The button works with the module still disabled, so the setup can be proved
+  before the schedule is switched on. A `Recent Runs` table on the form dashboard answers
+  "is this working?" without navigating away. From a VM,
+  `bench --site <site> execute erpnext_enhancements.offsite_backup.backup.execute_backup
+  --kwargs '{"backup_type": "Manual Full"}'` runs it in the foreground, where failures
+  print to the terminal.
+
+### Why it is built the way it is
+
+Each of these is a failure mode that looks like a working backup until the day you need it.
+
+- **`site_config.json` is never uploaded.** Only `backup_path_db`, plus
+  `backup_path_files` and `backup_path_private_files` on a full run. Never
+  `backup_path_conf`. Frappe's `backup_encryption()` encrypts exactly three things — the
+  database dump and the two file archives. `copy_site_config()` writes a **verbatim
+  plaintext copy** and it is never encrypted, *even though Frappe still gives it the same
+  `-enc` suffix as its encrypted siblings*. That is the trap: the filename claims
+  encrypted and the bytes are not. The file holds `db_password`, `encryption_key` and
+  `backup_encryption_key`, so shipping it beside the ciphertext would put the decryption
+  passphrase in the same folder as the thing it decrypts and make `encrypt_backup`
+  ornamental.
+
+- **The destination must be a Shared Drive.** The run raises when `check_folder` returns no
+  `driveId`. A service account has no Drive storage quota of its own, so a My Drive folder
+  charges every upload to the *folder owner's* personal quota — it works right up until
+  their Drive fills, then fails in a way that reads as an API problem. There is
+  deliberately no Shared Drive ID settings field: the id is read off the folder metadata
+  every run, so it cannot go stale the day the folder moves.
+
+- **`canDeleteChildren`, not `canDelete`.** `canDelete` is the right to delete *the folder
+  itself*; pruning needs the right to delete the folder's *contents*. Checking the wrong
+  one passes the connection test and then fails every night at prune time.
+
+- **The Drive retry budget is per-stall, not per-file.** A 20 GiB tarball is roughly a
+  thousand 20 MiB chunks and can spend three hours on the wire, where five transient 5xx
+  is normal Drive behaviour rather than a broken upload. `upload_file` resets its attempt
+  counter *and* its backoff every time a chunk lands, so five **consecutive** failures
+  abort and five failures over three hours of steady progress do not.
+
+- **An unverified upload is deleted, not kept.** Drive's reported `size` is compared with
+  the local byte count, and where Drive returns an `md5Checksum` it is compared with a
+  locally computed MD5 streamed in 8 MiB blocks (a multi-GB file is never read into
+  memory). Any mismatch deletes the remote object and fails the run: a truncated upload
+  left in the folder is worse than no upload, because it looks like a backup. Which check
+  actually ran (`size` vs `size + md5`) is recorded per artefact.
+
+- **Retention has two independent floors.** The newest `min_keep` objects are never pruned
+  whatever their age, and *nothing* is pruned when the listing returns fewer than
+  `min_keep` objects — a partial listing must not be read as "the archive is small" and
+  cascade into deleting its tail. `createdTime` is parsed to an aware UTC datetime and
+  compared against an aware UTC cutoff; anything unparseable is left alone, because an
+  unreadable timestamp is not evidence that a file is old.
+
+- **`Running` rows are the concurrency guard, so they have to be reconcilable.** The log
+  row is inserted and **committed** before any work starts, because an uncommitted row is
+  invisible to the process that needs to see it. The cost is that a run only ever leaves
+  `Running` from inside its own process: a SIGKILL, an OOM mid-dump or a plain `bench
+  restart` strands the row forever, and the stranded row then blocks every future run in
+  silence. `reconcile_stale_runs()` fails anything past the job timeout and is called at
+  the top of every entry point.
+
+- **Skips are logged.** A run that bails because another is in flight writes a `Skipped`
+  row. A line in a log file nobody reads is how a weekly backup quietly stops happening
+  for a year.
+
+- **The watchdog checks the two tiers separately** — database against
+  `alert_if_older_than_hours`, full against `alert_if_full_older_than_hours`. Checked
+  together, a healthy nightly database backup masks a weekly file backup that has been
+  skipped every Sunday for months. It is also the only check that catches *nothing running
+  at all*: a failure email only fires when a job actually ran and threw, so a disabled
+  scheduler or a dead worker produces silence, not alerts.
+
+- **Nothing renders frame locals, and there are two doors to shut.** Failures record
+  `frappe.get_traceback()` with the default `with_context=False`, because with context on
+  the rendered locals of a failing Drive call include the parsed service account key. The
+  back door is Frappe's own: `background_jobs.execute_job` logs any *escaping* exception
+  with `frappe.log_error(title=method_name)` and no message, and `log_error` with no
+  message falls back to `get_traceback(with_context=True)` — while its sanitiser redacts
+  only the exact dict keys `password`, `passwd`, `secret`, `token`, `key` and `pwd`, and a
+  service account key's field is named **`private_key`**, which is not one of them. A plain
+  `raise` would therefore have published the key into the Error Log however carefully this
+  module logged its own traceback, so `execute_backup` re-raises a message-only
+  `RuntimeError(...) from None` pointing at the log row (`from None` matters — implicit
+  chaining renders the original frames anyway). A `_redact()` pass strips PEM private-key
+  blocks from anything stored or emailed as a third line of defence.
+
+- **The failure alert is committed, not merely queued.** `frappe.sendmail` only *inserts*
+  an Email Queue row. On the failure path the exception then reaches `execute_job`, which
+  calls `frappe.db.rollback(chain=True)` **before** it logs — so an uncommitted alert is
+  discarded and a failed backup notifies nobody. Success alerts return normally and are
+  committed by `execute_job`, so this would have been invisible in any test with
+  `notify_on_success` on and only bitten on the exact path the alert exists for.
+
+- **`SystemExit` is caught too.** With `encrypt_backup` on, Frappe's
+  `BackupGenerator.backup_encryption()` calls `sys.exit(1)` when `gpg` is missing — so the
+  single most likely failure in the run is not an `Exception`. Catching only `Exception`
+  would have skipped the bookkeeping and finalised a `Failed` row with a blank error and an
+  alert reading "No traceback was captured". `SystemExit` and `KeyboardInterrupt` are
+  re-raised unchanged so a worker shutdown still shuts the worker down.
+
+### Changed
+
+- `erpnext_enhancements/modules.txt` — appended `Offsite Backup`.
+- `erpnext_enhancements/hooks.py` — three entries **merged into** the existing
+  `scheduler_events["cron"]` dict. A second `scheduler_events = {...}` assignment would
+  have silently overwritten the first and dropped the Google Drive and QuickBooks Online
+  jobs with no error.
+
 ## [1.248.0] - 2026-08-05
 
 Imports QuickBooks **billable-expense passthrough lines**, the fifth and last sell-side
