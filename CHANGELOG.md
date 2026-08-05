@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.244.0] - 2026-08-04
+
+Three defects in the QuickBooks Online sync mapper, found by reconciling the
+imported backlog against the QuickBooks trial balance as of 2025-12-31. Over the
+1,413 unposted pre-2026 Sales Invoices ERPNext totalled **$6,996,286.32** against
+QuickBooks' **$4,365,679.06** — **615 invoices (43.5%) wrong** — and every one of
+the 1,314 pre-2026 payments ($4,069,818.35) was unallocated.
+
+### Fixed
+
+- **Zero-quantity invoice lines were billed at full price.** `_sales_items` read
+  `"qty": detail.get("Qty") or 1`. QuickBooks writes an explicit `Qty: 0` on the
+  lines of a **progress-billing** invoice that are not being billed this period —
+  the invoice lists the whole contract and only the lines carrying a quantity are
+  due. Python's `or` treats that legitimate `0` as falsy and substituted `1`, and
+  ERPNext then recomputes `amount = qty * rate` on save, so every unbilled contract
+  line was invoiced at its full unit price.
+
+  QBO invoice **I100900** (Salt Development, 2024-03-29) is the worked example: 123
+  lines, of which exactly one carries a quantity (0.2 @ $10,500 = $2,100). QuickBooks
+  totals it at **$2,100.00**, fully paid; ERPNext imported **$570,650.00** and showed
+  the whole thing outstanding. Summing the unit prices of every `Qty: 0` line across
+  the backlog predicts **$2,321,939.62** of the $2,630,607.26 overstatement — 88%,
+  concentrated in 96 invoices. It does **not** explain all of it; roughly $308.7k
+  remains, part of which is the missing sales tax noted under *Known gaps*.
+
+  The mapper now distinguishes an absent `Qty` from a `Qty` of zero. Absent (QBO
+  omits it for a single unit) → qty 1 at the line's UnitPrice, else its Amount.
+  Non-zero → that quantity, at a rate chosen so `qty * rate` reproduces QuickBooks'
+  own line Amount. Zero with a zero Amount → the line is dropped; it is worth nothing
+  and ERPNext rejects a zero-quantity Sales Invoice line outright. Zero with an
+  Amount → one unit at the line amount, so the money survives.
+
+  Deriving the rate also fixes a second-order bug on its own: a line with a quantity
+  but no UnitPrice took the **whole line amount** as its rate and was then multiplied
+  by the quantity again (2 × $500 billed $1,000 for a $500 line). `_sales_items` is
+  shared with the Estimate → Quotation mapper, so imported quotations were wrong the
+  same way and are fixed by the same change.
+
+- **Payment Entries never allocated against the invoices they settle.**
+  `_map_payment_entry` built no `references` at all, so all 1,314 pre-2026 payments
+  imported fully unallocated and A/R aging showed every invoice outstanding no matter
+  what had been received against it. QuickBooks records the settlement on each payment
+  line's `LinkedTxn` (`TxnType: "Invoice"`, `TxnId`) with that line's Amount as the
+  amount applied — data already sitting in every cached `QuickBooks Raw Payload` row,
+  simply never read. Payments now allocate from it, summed per invoice (ERPNext
+  rejects a duplicated reference) and ignoring a payment's top-level `LinkedTxn`,
+  which is the Deposit that later swept it to the bank rather than an allocation.
+
+  **Only submitted Sales Invoices are referenced.** ERPNext refuses to allocate
+  against a draft and this integration deliberately imports invoices as drafts for
+  review before they reach the GL — which is almost certainly why allocation was
+  never implemented in the first place. A payment whose invoice is not yet posted
+  imports unallocated rather than failing; because the reference table is rebuilt on
+  every sync, **re-syncing Payments after submitting the invoices fills the
+  allocations in**. Relaxing that guard to "the invoice exists" would turn a clean,
+  correctable import into a hard ValidationError on every payment in the backlog.
+
+### Added
+
+- **CreditMemo and RefundReceipt are now imported.** Neither appeared in any entity
+  list or in the mapper registry, so every customer credit and POS refund stayed in
+  QuickBooks and imported A/R was overstated by exactly the credits never brought
+  across. Both map to a **Journal Entry**, matching how `VendorCredit` is already
+  handled rather than ERPNext's native credit note — a return Sales Invoice needs
+  negative quantities and a `return_against` link to the invoice being credited, and
+  QuickBooks supplies neither (its credit stands against the customer's balance, not
+  a named invoice).
+
+  A **CreditMemo** credits A/R for `TotalAmt` carrying the customer as Party (the
+  sell-side mirror of the existing `_supplier_payable_line`) and debits each item
+  line's income account. A **RefundReceipt** credits the `DepositToAccountRef`
+  account the money left and debits income; it never touches A/R, because QuickBooks
+  settles it immediately. The new `_item_income_account` mirrors `_item_expense_account`
+  — read `Item Default.income_account`, fall back to the Company's
+  `default_income_account`, and return **None** rather than guessing, so an
+  unresolvable line drops out and the balance guard parks the entry instead of the
+  ledger quietly absorbing a wrong-but-balanced posting. On this dataset the Company
+  fallback is the usual path: no imported Item carries an income account of its own.
+
+  Both entities are wired into `ACCOUNTING_ENTITIES`, `TRANSACTION_ENTITIES`,
+  `CDC_ENTITIES`, `ENTITY_DOCTYPE_MAP`, the mapper registry and the dashboard's
+  `QBO_ENTITIES` list.
+
+### Known gaps
+
+- **Sales tax on invoices is still not imported.** QuickBooks carries invoice tax on
+  `TxnTaxDetail.TotalTax`, outside the `Line` array `_sales_items` reads, so ERPNext
+  imports the **net of the lines** and drops the tax. Invoice I100549 (Myers Mortuary,
+  2022-09-08) is $385.56 in QBO — $360.00 of lines plus $25.56 of Utah tax at 7.1% —
+  and imported as $360.00. This is why `25010 Sales Tax Agency Payable` reconciles at
+  **$882.66** against QuickBooks' **$37,096.89**. It *understates* invoices and so
+  partly offsets the overstatement fixed above, which is why correcting only one of
+  the two moves the totals in an unexpected direction. Fixing it needs a Sales Taxes
+  and Charges row plus a QBO-tax-rate → ERPNext-tax-account mapping, and is not
+  attempted here.
+
+### Deployment notes
+
+- **Existing drafts are not corrected by this release.** The mappers only run on
+  import; the ~1,413 already-imported pre-2026 Sales Invoices keep their wrong
+  quantities until they are **re-imported**. Re-import is idempotent (keyed on QBO
+  id), so re-running Import All for Invoice / Estimate / Payment repairs in place.
+- **Do not submit the backlog to the GL until after the re-import.** A submitted
+  document cannot be updated by a later sync, so anything posted now freezes the
+  overstatement into the ledger and will need a manual credit note to undo.
+- **Order matters for payment allocation.** Re-import invoices, submit them, *then*
+  re-sync Payments — payments synced while their invoices are drafts import
+  unallocated by design (see above).
+- **CreditMemo and RefundReceipt are new coverage CI cannot exercise** (there is no
+  Frappe integration-test job, and no such payload has ever been fetched into the
+  raw-payload cache). **Validate both on staging** against a real QuickBooks company
+  before running them against production, paying particular attention to entries that
+  park for review with an unbalanced-journal message.
+
 ## [1.243.0] - 2026-08-04
 
 WP-4: the marketing spend baseline and the per-value-stream dashboard — plus four

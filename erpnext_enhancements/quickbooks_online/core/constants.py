@@ -21,7 +21,9 @@ ACCOUNTING_ENTITIES = [
 	"Class",
 	"Estimate",
 	"Invoice",
+	"CreditMemo",
 	"SalesReceipt",
+	"RefundReceipt",
 	"Bill",
 	"VendorCredit",
 	"Payment",
@@ -44,7 +46,9 @@ MASTER_ENTITIES = ["Term", "PaymentMethod", "Account", "Customer", "Vendor", "It
 TRANSACTION_ENTITIES = [
 	"Estimate",
 	"Invoice",
+	"CreditMemo",
 	"SalesReceipt",
+	"RefundReceipt",
 	"Bill",
 	"VendorCredit",
 	"Payment",
@@ -73,7 +77,9 @@ CDC_ENTITIES = [
 	"Class",
 	"Estimate",
 	"Invoice",
+	"CreditMemo",
 	"SalesReceipt",
+	"RefundReceipt",
 	"Bill",
 	"VendorCredit",
 	"Payment",
@@ -140,5 +146,12 @@ ENTITY_DOCTYPE_MAP = {
 	"CreditCardPayment": "Journal Entry",
 	"VendorCredit": "Journal Entry",
 	"Deposit": "Journal Entry",
+	# Customer credits and POS refunds are the sell-side twins of VendorCredit and
+	# import the same way: a Journal Entry, not a return Sales Invoice. ERPNext models
+	# a credit note as a Sales Invoice with negative quantities and a ``return_against``
+	# link to the invoice being credited -- and QBO supplies neither, since a CreditMemo
+	# stands alone against the customer's A/R rather than against a named invoice.
+	"CreditMemo": "Journal Entry",
+	"RefundReceipt": "Journal Entry",
 }
 

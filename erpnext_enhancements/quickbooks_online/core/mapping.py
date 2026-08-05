@@ -53,6 +53,8 @@ def map_qbo_to_erpnext(entity_type: str, payload: dict, settings) -> tuple[str |
 		"Item": _map_item,
 		"Invoice": _map_sales_invoice,
 		"SalesReceipt": _map_sales_receipt,
+		"CreditMemo": _map_credit_memo,
+		"RefundReceipt": _map_refund_receipt,
 		"Bill": _map_purchase_invoice,
 		"Payment": _map_payment_entry,
 		"JournalEntry": _map_journal_entry,
@@ -1674,6 +1676,9 @@ def _map_payment_entry(payload, settings):
 	mandatory once a bank account is involved ("Reference No and Reference Date is
 	mandatory for Bank transaction"); the QBO payment reference is used, falling
 	back to the QBO id so the field is never empty.
+
+	``references`` allocates the receipt against the Sales Invoices it settles --
+	but only the SUBMITTED ones. See ``_payment_references``.
 	"""
 	party_type, party = _payment_party(payload)
 	if not party_type or not party:
@@ -1711,8 +1716,59 @@ def _map_payment_entry(payload, settings):
 		"target_exchange_rate": rate,
 		"reference_no": payload.get("PaymentRefNum") or payload.get("DocNumber") or payload.get("Id"),
 		"reference_date": payload.get("TxnDate"),
+		# Always mapped, even when empty, so a re-sync REPLACES the reference table
+		# rather than stacking a fresh allocation beside a stale one: apply_values
+		# rewrites child tables wholesale. This is also what lets a payment imported
+		# unallocated (its invoice was still a draft) pick up its allocation on a
+		# later sync, once that invoice has been submitted.
+		"references": _payment_references(payload),
 		"remarks": f"Imported from QuickBooks Online payment {payload.get('Id')}",
 	}
+
+
+def _payment_references(payload):
+	"""Build Payment Entry allocation rows from a QBO Payment's ``LinkedTxn`` lines.
+
+	QBO records which invoices a payment settles on each payment LINE's ``LinkedTxn``
+	(``TxnType: "Invoice"``, ``TxnId``), with that line's ``Amount`` as the amount
+	applied to it -- so a single payment covering three invoices carries three lines.
+	The data was always in the cached ``QuickBooks Raw Payload``; it was simply never
+	read, which is why every imported payment landed fully unallocated and A/R aging
+	showed invoices outstanding regardless of what had been received against them
+	(1,314 pre-2026 payments, $4,069,818.35).
+
+	ONLY SUBMITTED Sales Invoices are referenced (``docstatus == 1``). ERPNext refuses
+	to allocate a Payment Entry against a draft, and this integration deliberately
+	imports invoices as drafts for review before they hit the GL -- so during a
+	migration the invoice a payment settles usually does not exist in postable form
+	yet. That ordering is almost certainly why allocation was never implemented at
+	all. Rather than fail the payment, an unpostable reference is dropped and the
+	payment imports unallocated; because the table is re-mapped on every sync, a
+	re-sync after the invoice is submitted fills the allocation in. Do NOT relax this
+	guard to "invoice exists": it converts a clean, correctable import into a hard
+	ValidationError on every payment in the backlog.
+
+	Allocations are summed per invoice, since ERPNext rejects the same reference
+	twice, and a payment's top-level ``LinkedTxn`` (a Deposit that later swept it to
+	the bank) is ignored -- only line-level Invoice links are allocations.
+	"""
+	allocated = {}
+	for line in payload.get("Line") or []:
+		amount = _to_amount(line.get("Amount"))
+		for txn in line.get("LinkedTxn") or []:
+			if txn.get("TxnType") != "Invoice":
+				continue
+			invoice = _linked_name("Invoice", "Sales Invoice", txn.get("TxnId"))
+			if not invoice:
+				continue
+			if frappe.db.get_value("Sales Invoice", invoice, "docstatus") != 1:
+				continue
+			allocated[invoice] = allocated.get(invoice, 0) + amount
+	return [
+		{"reference_doctype": "Sales Invoice", "reference_name": invoice, "allocated_amount": amount}
+		for invoice, amount in allocated.items()
+		if amount
+	]
 
 
 def _map_journal_entry(payload, settings):
@@ -1870,6 +1926,101 @@ def _map_vendor_credit(payload, settings):
 		accounts,
 		f"Imported from QuickBooks Online Vendor Credit {payload.get('DocNumber') or payload.get('Id')}",
 	)
+
+
+def _customer_receivable_line(settings, ar_ref, total, customer):
+	"""Build a customer JE's A/R credit line, tagged with the customer as Party.
+
+	The sell-side mirror of ``_supplier_payable_line``: ERPNext requires a Party on
+	any Receivable-account line, and the QBO customer is that party, so the credit
+	stays matchable against the invoices it offsets. The A/R account falls back to
+	the company default receivable when the payload omits an explicit reference,
+	which QBO usually does.
+	"""
+	line = _ledger_line(_resolve_account(settings, ar_ref, "default_receivable_account"), credit=total)
+	if line:
+		line["party_type"] = "Customer"
+		line["party"] = customer
+	return line
+
+
+def _map_credit_memo(payload, settings):
+	"""Map a QBO CreditMemo to a Journal Entry (credit A/R, debit each line's income account).
+
+	A credit memo reduces what a customer owes, so it is the exact counterweight to
+	the imported Sales Invoices. Leaving it in QuickBooks -- which is what happened
+	until now, since CreditMemo had no mapper at all -- overstates imported A/R by
+	the full value of every credit never brought across.
+
+	Modelled as a Journal Entry, matching ``_map_vendor_credit`` rather than ERPNext's
+	native credit note: a return Sales Invoice needs negative quantities and a
+	``return_against`` link to the invoice being credited, and QBO supplies neither
+	(its credit stands against the customer's balance, not a named invoice).
+	"""
+	total = _to_amount(payload.get("TotalAmt"))
+	customer, _project = _resolve_customer_ref((payload.get("CustomerRef") or {}).get("value"))
+	accounts = []
+	receivable = _customer_receivable_line(
+		settings, (payload.get("ARAccountRef") or {}).get("value"), total, customer
+	)
+	if receivable:
+		accounts.append(receivable)
+	accounts.extend(_sales_item_ledger_lines(payload, settings.company))
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online Credit Memo {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _map_refund_receipt(payload, settings):
+	"""Map a QBO RefundReceipt to a Journal Entry (credit the refunding account, debit income).
+
+	A refund receipt is a point-of-sale refund: QBO settles it immediately out of
+	``DepositToAccountRef`` (the bank or cash account the money left), so unlike a
+	CreditMemo it never touches A/R. Reversing the revenue and the cash is the whole
+	entry.
+	"""
+	total = _to_amount(payload.get("TotalAmt"))
+	accounts = []
+	refunded_from = _ledger_line(
+		_resolve_account(settings, (payload.get("DepositToAccountRef") or {}).get("value")), credit=total
+	)
+	if refunded_from:
+		accounts.append(refunded_from)
+	accounts.extend(_sales_item_ledger_lines(payload, settings.company))
+	return _journal_entry_doc(
+		settings,
+		payload.get("TxnDate"),
+		accounts,
+		f"Imported from QuickBooks Online Refund Receipt {payload.get('DocNumber') or payload.get('Id')}",
+	)
+
+
+def _sales_item_ledger_lines(payload, company):
+	"""Build Journal Entry rows reversing a QBO sales transaction's item lines.
+
+	The income side shared by ``_map_credit_memo`` and ``_map_refund_receipt``: each
+	``SalesItemLineDetail`` line DEBITS the income account its Item posts to, undoing
+	revenue that was credited when the sale was booked. The sell-side twin of
+	``_purchase_item_ledger_lines``, down to omitting (never substituting an account
+	for) a line that cannot be resolved, so the balance guard parks the entry instead
+	of the ledger quietly absorbing a wrong-but-balanced posting.
+	"""
+	rows = []
+	for line in payload.get("Line") or []:
+		detail = line.get("SalesItemLineDetail")
+		if not detail:
+			continue
+		row = _ledger_line(_item_line_income_account(detail, company), debit=_to_amount(line.get("Amount")))
+		if not row:
+			continue
+		cost_center = _line_cost_center(detail)
+		if cost_center:
+			row["cost_center"] = cost_center
+		rows.append(row)
+	return rows
 
 
 def _map_deposit(payload, settings):
@@ -2748,7 +2899,13 @@ def _line_cost_center(detail):
 def _sales_items(payload):
 	"""Build ERPNext sales line items from a QBO transaction's SalesItemLineDetail lines.
 
-	Skips lines whose ItemRef isn't mapped to an ERPNext Item yet.
+	Shared by ``_map_sales_invoice`` (Invoice / SalesReceipt) and ``_map_quotation``
+	(Estimate). Skips lines whose ItemRef isn't mapped to an ERPNext Item yet, and
+	lines ``_sales_line_qty_rate`` judges worthless (see there).
+
+	``amount`` is carried across for reference only: ERPNext RECOMPUTES it as
+	``qty * rate`` on save, which is why the qty/rate pair has to reproduce QBO's
+	own line amount rather than merely look plausible beside it.
 	"""
 	items = []
 	for line in payload.get("Line", []) or []:
@@ -2757,18 +2914,68 @@ def _sales_items(payload):
 		item_code = _linked_name("Item", "Item", item_ref.get("value"))
 		if not item_code:
 			continue
+		amount = _to_amount(line.get("Amount"))
+		qty, rate = _sales_line_qty_rate(detail, amount)
+		if qty is None:
+			continue
 		row = {
 			"item_code": item_code,
 			"description": line.get("Description") or item_ref.get("name"),
-			"qty": detail.get("Qty") or 1,
-			"rate": detail.get("UnitPrice") or line.get("Amount") or 0,
-			"amount": line.get("Amount") or 0,
+			"qty": qty,
+			"rate": rate,
+			"amount": amount,
 		}
 		cost_center = _line_cost_center(detail)
 		if cost_center:
 			row["cost_center"] = cost_center
 		items.append(row)
 	return items
+
+
+def _sales_line_qty_rate(detail, amount):
+	"""Resolve a QBO sales line to the ``(qty, rate)`` ERPNext should bill, or ``(None, None)``.
+
+	An absent ``Qty`` and a ``Qty`` of zero mean opposite things in QuickBooks, and
+	conflating them is what billed a fortune that was never invoiced. QBO omits Qty
+	when the line is a single unit; it writes an explicit ``0`` on a PROGRESS-BILLING
+	invoice, which lists the whole contract and bills only the lines carrying a
+	quantity this period. The old ``detail.get("Qty") or 1`` read Python-falsy zero as
+	"missing" and substituted 1 -- so every unbilled contract line was billed at its
+	full unit price once ERPNext recomputed ``amount = qty * rate`` on save. QBO
+	invoice I100900 imported at $570,650.00 against a QBO total of $2,100.00: 122 of
+	its 123 lines were ``Qty: 0`` and contributed $568,550.00 of unit prices nobody
+	had billed. Across the pre-2026 backlog that pattern accounted for roughly $2.32M
+	of a $2.63M overstatement.
+
+	The four line shapes:
+
+	  * ``Qty`` absent            -> one unit; the line's UnitPrice, else its Amount.
+	  * ``Qty`` non-zero          -> that quantity, at a rate chosen so ``qty * rate``
+	    reproduces QBO's Amount: UnitPrice when QBO gives one, else ``Amount / qty``.
+	    The fallback also fixes a second-order bug -- a line with a quantity but no
+	    UnitPrice took the WHOLE line amount as its rate and was then multiplied by
+	    the quantity again.
+	  * ``Qty`` 0 with Amount 0   -> dropped. It is worth nothing, and ERPNext rejects
+	    a zero-quantity Sales Invoice line outright.
+	  * ``Qty`` 0 with an Amount  -> one unit at the line amount, so the money survives
+	    even though the quantity QBO reports cannot be billed.
+
+	``UnitPrice`` is read for None, not truthiness: QBO emits an explicit ``null`` on
+	lines it prices only at the Amount, and a legitimate UnitPrice of 0 must not be
+	mistaken for one of those.
+	"""
+	qty = detail.get("Qty")
+	unit_price = detail.get("UnitPrice")
+	if qty is None:
+		return 1, _to_amount(unit_price) if unit_price is not None else amount
+	qty = _to_amount(qty)
+	if qty:
+		if unit_price is not None:
+			return qty, _to_amount(unit_price)
+		return qty, amount / qty
+	if not amount:
+		return None, None
+	return 1, amount
 
 
 def _item_expense_account(item_code, company):
@@ -2804,6 +3011,41 @@ def _item_line_expense_account(detail, company):
 	"""
 	item_code = _linked_name("Item", "Item", (detail.get("ItemRef") or {}).get("value"))
 	return _item_expense_account(item_code, company)
+
+
+def _item_income_account(item_code, company):
+	"""Resolve the income account an ERPNext Item posts revenue to for ``company``.
+
+	The sell-side mirror of ``_item_expense_account``, and needed for the same reason:
+	the Sales Invoice path lets ERPNext's controller fill each line's
+	``income_account`` from Item Defaults, but a Journal Entry has no item rows and no
+	such controller, so the credit-memo/refund mappers must resolve it themselves --
+	to the SAME account ERPNext would have chosen.
+
+	Falls back to the Company's ``default_income_account``, then gives up. Returning
+	None is a real answer: the caller drops the line, the entry fails the balance
+	guard and parks for review, rather than booking revenue to a guessed account. (On
+	this dataset the fallback is the usual path -- no imported Item carries an income
+	account of its own.)
+	"""
+	if not item_code or not company:
+		return None
+	account = frappe.db.get_value(
+		"Item Default",
+		{"parent": item_code, "parenttype": "Item", "company": company},
+		"income_account",
+	)
+	return account or frappe.db.get_value("Company", company, "default_income_account")
+
+
+def _item_line_income_account(detail, company):
+	"""Resolve a QBO sales line's ``ItemRef`` to the ERPNext income account it posts to.
+
+	Two hops, either of which can fail: the QBO item must be imported (via the mapping
+	ledger, not a fuzzy name match), and an income account must resolve for it.
+	"""
+	item_code = _linked_name("Item", "Item", (detail.get("ItemRef") or {}).get("value"))
+	return _item_income_account(item_code, company)
 
 
 def _purchase_item_ledger_lines(payload, company, *, is_credit=False):

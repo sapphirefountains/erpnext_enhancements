@@ -20,7 +20,9 @@ should verify after import.
 | **Class** | Cost Center | Hierarchy preserved via `ParentRef`; parents become group cost centers. |
 | Estimate | Quotation | |
 | Invoice | Sales Invoice | |
+| **Credit Memo** | Journal Entry | Credit A/R (customer as Party), debit each line's item income account. |
 | **Sales Receipt** | Sales Invoice | Cash side not linked — see §4. |
+| **Refund Receipt** | Journal Entry | Credit the `DepositToAccountRef` account, debit item income. Never touches A/R. |
 | Bill | Purchase Invoice | |
 | **Vendor Credit** | Journal Entry | Debit A/P, credit expense lines. |
 | Payment | Payment Entry (Receive/Pay) | Posts to the company **default bank/cash** account — see §4. |
@@ -37,10 +39,10 @@ actual QBO Journal export** and are covered by unit tests in
 `tests/test_quickbooks_online.py`.
 
 ### Not auto-mapped (import manually or as adjusting entries)
-`Credit Memo`, `Refund Receipt`, `Sales Tax Payment`, `Sales Tax Adjustment`, and
-`Inventory Starting Value` are **not** mapped. They are low-volume in this dataset
-and/or depend on item-level GL accounts QBO doesn't expose in the payload. They are
-skipped cleanly ("No native ERPNext mapping"), not failed.
+`Sales Tax Payment`, `Sales Tax Adjustment`, and `Inventory Starting Value` are
+**not** mapped. They are low-volume in this dataset and/or depend on item-level GL
+accounts QBO doesn't expose in the payload. They are skipped cleanly ("No native
+ERPNext mapping"), not failed.
 
 ---
 
@@ -114,9 +116,21 @@ interruptions rather than restarting from scratch.
   Undeposited Funds unreconciled. **Choose one** per your reconciliation preference
   (Payments give you A/R clearing; Deposits give exact bank movement), or reconcile
   Undeposited Funds after import. Entity selection in Import All lets you pick.
-- **Payment allocation.** Imported Payment Entries are **unallocated** (not linked to
-  the specific invoices they paid). A/R/A/P *totals* are correct; per-invoice aging is
-  not reconstructed. Allocate later if you need invoice-level aging.
+- **Payment allocation depends on import order.** Imported Payment Entries now
+  allocate against the Sales Invoices their QBO `LinkedTxn` names — but only against
+  **submitted** ones, because ERPNext refuses to allocate against a draft and this
+  integration imports invoices as drafts. During a migration that means most payments
+  land unallocated on the first pass. **Re-sync Payments after submitting the
+  invoices** and the allocations fill in (the reference table is rebuilt on every
+  sync). Until then A/R *totals* are correct but per-invoice aging is not.
+- **Sales tax on invoices is not imported.** QBO carries invoice tax on
+  `TxnTaxDetail.TotalTax`, outside the `Line` array the mapper reads, so an imported
+  Sales Invoice is the **net of its lines** and understates QBO's `TotalAmt` by the
+  tax. Invoice I100549 (Myers Mortuary, 2022-09-08) is $385.56 in QBO — $360.00 of
+  lines plus $25.56 of Utah tax at 7.1% — and imports as $360.00. This is why
+  `25010 Sales Tax Agency Payable` reconciles at $882.66 against QuickBooks'
+  $37,096.89. Fixing it needs a Sales Taxes and Charges row plus a QBO-tax-rate →
+  ERPNext-tax-account mapping; until then, book sales tax as an adjusting entry.
 - **Sales tax on purchases.** Expense/Bill-Payment JEs are built from line accounts; a
   transaction carrying separate sales tax may not auto-balance and will route to
   **manual review** (by design — the balance guard refuses to post a lopsided entry).
