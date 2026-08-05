@@ -406,3 +406,9 @@ erpnext_enhancements.patches.seed_payroll_employee_numbers
 # Commercial are indistinguishable afterwards and without that list the change is
 # one-way. Idempotent (the filter excludes anything already retyped).
 erpnext_enhancements.patches.retype_legacy_company_customers
+# WI-067: imported QBO sales tax now posts to 25010 Sales Tax Agency Payable, which
+# the QBO Account import created with a BLANK account_type. ERPNext keys the taxes
+# account_head picker and tax-report grouping off account_type='Tax', so a blank one
+# is invisible to an accountant correcting a parked invoice by hand. Fills the blank
+# only; an account somebody deliberately typed otherwise is logged and left alone.
+erpnext_enhancements.patches.set_sales_tax_account_type

@@ -91,6 +91,23 @@ CDC_ENTITIES = [
 	"Deposit",
 ]
 
+# Fallback destination for imported sales tax, by account NUMBER, used when
+# ``QuickBooks Online Settings.sales_tax_account`` is blank. A number (not a name) so it
+# resolves on any company regardless of the abbreviation ERPNext appends, and so a fresh
+# site needs no patch to pick up the right account.
+#
+# One account on purpose. QBO TaxCodes are rate definitions, not GL accounts: QuickBooks
+# books all sales tax to a single agency-payable account and keeps the jurisdiction in its
+# Sales Tax Centre, outside the ledger. Posting to the per-TaxCode accounts ``_map_tax_code``
+# creates would build a parallel tax-liability structure that could never tie back to
+# QuickBooks. Measured 2026-08-05: those accounts are 63 TaxCode mappings collapsing onto
+# only 36 distinct Accounts (``_map_tax_code`` names them from ``payload["Name"]``, so
+# duplicates merge), every one carrying ``tax_rate 0.0``, hung flat off the Liability root,
+# with ZERO Journal Entry lines at any docstatus and ZERO GL rows -- they have never
+# received a posting. 25010 is the only tax account QBO data has ever been routed to.
+# The jurisdiction survives on each charge row's description.
+DEFAULT_SALES_TAX_ACCOUNT_NUMBER = "25010"
+
 # QBO rejects a CDC ``changedSince`` cursor older than 30 days. When the stored
 # cursor predates that window (e.g. the integration was paused), sync.run_cdc
 # clamps it to stay inside the window so the poll still succeeds; anything older

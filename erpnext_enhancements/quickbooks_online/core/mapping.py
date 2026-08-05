@@ -23,9 +23,12 @@ from __future__ import annotations
 import re
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import cint, flt, now_datetime
 
-from erpnext_enhancements.quickbooks_online.core.constants import ENTITY_DOCTYPE_MAP
+from erpnext_enhancements.quickbooks_online.core.constants import (
+	DEFAULT_SALES_TAX_ACCOUNT_NUMBER,
+	ENTITY_DOCTYPE_MAP,
+)
 from erpnext_enhancements.quickbooks_online.core.utils import (
 	json_dumps,
 	json_loads,
@@ -681,6 +684,9 @@ def validate_mapped_values(
 	shortfall = _purchase_invoice_imbalance(erpnext_doctype, values, payload)
 	if shortfall:
 		issues.append(shortfall)
+	sales_shortfall = _sales_invoice_shortfall(erpnext_doctype, values, payload)
+	if sales_shortfall:
+		issues.append(sales_shortfall)
 	unlinked_project = _blocked_unlinked_project(erpnext_doctype, values, include_doc_required)
 	if unlinked_project:
 		issues.append(unlinked_project)
@@ -977,6 +983,134 @@ def _purchase_invoice_imbalance(erpnext_doctype: str, values: dict, payload: dic
 		f"Purchase Invoice does not reconcile to QuickBooks (mapped {mapped:.2f} vs "
 		f"TotalAmt {qbo_total:.2f}, off by {difference:.2f}). " + " ".join(causes)
 	)
+
+
+def _erpnext_item_precisions():
+	"""``(rate_precision, qty_precision)`` ERPNext rounds an item row to before multiplying.
+
+	``round_floats_in`` uses the Currency precision for ``rate`` and the Float precision
+	for ``qty``. Both come from System Settings; a blank ``currency_precision`` means
+	"derive it from the number format", which for every format this app ships against is
+	2. The fallbacks are ERPNext's own defaults, so a site that has never touched System
+	Settings gets the same answer as one that set them explicitly.
+	"""
+	try:
+		currency = cint(frappe.db.get_single_value("System Settings", "currency_precision"))
+		number = cint(frappe.db.get_single_value("System Settings", "float_precision"))
+	except Exception:
+		currency, number = 0, 0
+	return currency or 2, number or 3
+
+
+def _sales_invoice_shortfall(erpnext_doctype: str, values: dict, payload: dict | None) -> str | None:
+	"""Return an issue string if a Sales Invoice doesn't total the QBO ``TotalAmt``.
+
+	The sell-side twin of ``_purchase_invoice_imbalance``, and its ABSENCE is why the two
+	largest data-fidelity bugs in this integration survived unnoticed for the whole
+	import. The buy side has reconciled against QuickBooks' own total since the mixed-Bill
+	fix; the sell side never did, so a Sales Invoice could validate, save and look
+	entirely clean while posting a number QuickBooks disagreed with. Both the zero-quantity
+	overstatement fixed in v1.244.0 (615 invoices wrong, $2.63M) and the dropped sales tax
+	fixed here (424 invoices, $58,162.96) would have been caught on the first import by
+	this one comparison. It is worth more than either fix.
+
+	Sums ``qty * rate`` per line, NOT the informational ``amount`` the mapper carries
+	across. That is a deliberate divergence from the purchase-side guard: ERPNext
+	RECOMPUTES the line amount on save, so that product is what actually reaches
+	``base_grand_total`` and therefore the only number whose agreement with QuickBooks
+	means anything.
+
+	REPRODUCING IT EXACTLY MATTERS, AND THE ORDER OF OPERATIONS IS THE WHOLE TRICK.
+	ERPNext's ``calculate_item_values`` calls ``round_floats_in(item)`` FIRST -- rounding
+	``rate`` to currency precision and ``qty`` to float precision -- and only then
+	multiplies, with ``flt`` (half-to-even) rather than Python's ``round``. Rounding
+	after multiplying, or with the wrong rounding function, produces a number ERPNext
+	never posts, and the guard then blesses invoices that are wrong and parks invoices
+	that are right. Both failure modes were observed on real payloads: QBO invoice
+	I101613 carries ``Qty 0.6666999``, which ERPNext stores as ``0.667`` and posts at
+	$54,527.25 against QuickBooks' $54,502.72 -- $24.53 out, and a multiply-then-round
+	guard calls it reconciled. Across the cached payloads, 46 invoices reconcile under
+	the naive form while ERPNext posts a different total ($723.65 absolute, worst single
+	invoice $109.80).
+
+	The cent it now refuses to overlook is a real cent: a QBO ``UnitPrice`` carrying more
+	than two decimals (2051.9872727 on I100352) is simply not representable at ERPNext's
+	rate precision, so that invoice genuinely cannot post QuickBooks' total. Parking it
+	is the honest answer -- the acceptance criterion for this work is
+	``base_grand_total == TotalAmt``, and a guard that quietly tolerated the difference
+	would be asserting something false.
+
+	Skipped when the payload carries no ``TotalAmt`` -- there is then nothing
+	authoritative to reconcile against, and inventing a total would be the same mistake
+	in a different place.
+	"""
+	if erpnext_doctype != "Sales Invoice" or not payload:
+		return None
+	if payload.get("TotalAmt") is None:
+		return None
+	qbo_total = flt(payload.get("TotalAmt"), 2)
+	rate_precision, qty_precision = _erpnext_item_precisions()
+	mapped = sum(
+		flt(flt(row.get("rate"), rate_precision) * flt(row.get("qty"), qty_precision), 2)
+		for row in values.get("items") or []
+	)
+	mapped += sum(flt(row.get("tax_amount"), 2) for row in values.get("taxes") or [])
+	difference = flt(qbo_total - mapped, 2)
+	if difference == 0:
+		return None
+	causes = _sales_invoice_shortfall_causes(payload, values)
+	if not causes:
+		causes = [
+			"Every QuickBooks line on this invoice was carried across, so the mapping does "
+			"not account for the difference (the invoice may carry a charge the importer "
+			"does not model)."
+		]
+	return (
+		f"Sales Invoice does not reconcile to QuickBooks (mapped {mapped:.2f} vs "
+		f"TotalAmt {qbo_total:.2f}, off by {difference:.2f}). " + " ".join(causes)
+	)
+
+
+def _sales_invoice_shortfall_causes(payload: dict, values: dict) -> list[str]:
+	"""Explain what a Sales Invoice mapping could not carry across from its QBO payload.
+
+	Three causes, each needing a different fix, so they read differently rather than
+	sharing one vague message. ``values`` is needed to tell "this invoice has no tax"
+	from "this invoice has tax we could not book anywhere".
+	"""
+	causes = []
+	unmapped_items = [
+		line
+		for line in payload.get("Line") or []
+		if line.get("SalesItemLineDetail")
+		and not _linked_name("Item", "Item", ((line["SalesItemLineDetail"].get("ItemRef") or {}).get("value")))
+	]
+	if unmapped_items:
+		total = sum(_to_amount(line.get("Amount")) for line in unmapped_items)
+		refs = [line["SalesItemLineDetail"].get("ItemRef") or {} for line in unmapped_items]
+		causes.append(
+			f"{len(unmapped_items)} line(s) totalling {total:.2f} reference QuickBooks items "
+			f"not imported into ERPNext: {_format_refs(refs)}."
+		)
+	# Tax present in QuickBooks but no charge row built: the destination account did not
+	# resolve. Fixed by configuring it, not by importing anything.
+	total_tax = _to_amount((payload.get("TxnTaxDetail") or {}).get("TotalTax"))
+	if total_tax and not (values.get("taxes") or []):
+		causes.append(
+			f"QuickBooks charged {total_tax:.2f} of sales tax that could not be booked: no "
+			"usable Sales Tax Account is configured on QuickBooks Online Settings (and the "
+			"default account number is missing, a group, or disabled)."
+		)
+	# Discount lines are not modelled at all -- naming them stops triage hunting for a
+	# missing item or a tax account that is fine.
+	discounts = [line for line in payload.get("Line") or [] if line.get("DiscountLineDetail") is not None]
+	if discounts:
+		total = sum(_to_amount(line.get("Amount")) for line in discounts)
+		causes.append(
+			f"{len(discounts)} QuickBooks discount line(s) totalling {total:.2f} are not "
+			"imported: the mapper does not model DiscountLineDetail."
+		)
+	return causes
 
 
 def _purchase_invoice_shortfall_causes(payload: dict) -> list[str]:
@@ -1525,8 +1659,126 @@ def _map_sales_invoice(payload, settings):
 		"price_list_currency": currency,
 		"plc_conversion_rate": 1,
 		"items": _sales_items(payload),
+		# Always mapped, even when empty, so a re-sync REPLACES the charges table rather
+		# than leaving a stale tax row beside a fresh one -- apply_values rewrites child
+		# tables wholesale. Same reasoning as the Purchase Invoice ``taxes`` mapping.
+		"taxes": _sales_charges(payload, settings),
 		"remarks": f"Imported from QuickBooks Online Invoice {payload.get('DocNumber') or payload.get('Id')}",
 	}
+
+
+def _sales_charges(payload, settings):
+	"""Build Sales Taxes and Charges rows from a QBO transaction's ``TxnTaxDetail``.
+
+	QuickBooks carries invoice tax OUTSIDE the ``Line`` array, on ``TxnTaxDetail``, so
+	``_sales_items`` -- which reads only ``Line`` -- never saw it and every taxed
+	invoice imported at the net of its lines. QBO invoice I100549 (Myers Mortuary,
+	2022-09-08) is $385.56 in QuickBooks: $360.00 of lines plus $25.56 of Utah tax at
+	7.1%. It imported as $360.00. Across the 1,413 unposted pre-2026 Sales Invoices,
+	424 carry tax and **$58,162.96** of it was dropped.
+
+	The sell-side twin of ``_purchase_charges``, with two differences worth knowing:
+
+	  * ``Sales Taxes and Charges`` has **no** ``category`` or ``add_deduct_tax``
+	    field -- those are Purchase-only. Setting them here would be silently dropped
+	    by Frappe rather than rejected, so they are deliberately absent.
+	  * One row per transaction, not one per line: ``TotalTax`` is the whole liability
+	    and ERPNext needs a single Actual charge to reproduce QBO's ``TotalAmt``.
+
+	IDENTITY COMES FROM ``TxnTaxCodeRef``, NEVER ``TaxRateRef``. They are different
+	QBO id spaces and confusing them resolves silently to a real-but-wrong account.
+	On I100549 ``TxnTaxCodeRef`` 8 is the Ogden jurisdiction, while ``TaxRateRef`` 15
+	read as a TaxCode is "Sandy Utah" -- a different city, no error, wrong tax. Only
+	TaxCode is imported by this integration (``_map_tax_code``); TaxRate is not
+	imported at all, so a TaxRateRef lookup can only ever hit an unrelated record that
+	happens to share the number.
+
+	Returns [] when the transaction carries no tax, and -- deliberately -- also when
+	the destination account cannot be resolved. Omitting the row leaves the invoice
+	short of ``TotalAmt`` so ``_sales_invoice_shortfall`` parks it, which is the
+	module's standing trade: a wrong-but-plausible invoice posts to the ledger and
+	nobody looks at it again; a parked one gets fixed.
+	"""
+	tax_detail = payload.get("TxnTaxDetail") or {}
+	total_tax = _to_amount(tax_detail.get("TotalTax"))
+	if not total_tax:
+		return []
+	account = _sales_tax_account(settings)
+	if not account:
+		return []
+	return [
+		{
+			"charge_type": "Actual",
+			"account_head": account,
+			"description": _sales_tax_description(tax_detail),
+			"tax_amount": total_tax,
+		}
+	]
+
+
+def _sales_tax_description(tax_detail):
+	"""Name the jurisdiction a tax charge came from, for the charge row's description.
+
+	All sales tax posts to one account (see ``DEFAULT_SALES_TAX_ACCOUNT_NUMBER``), so
+	this description is the ONLY place the jurisdiction survives at transaction level.
+	It resolves the QBO **TaxCode** -- the id space ``TxnTaxCodeRef`` lives in -- to the
+	Account ``_map_tax_code`` imported it as, and falls back to a generic label when
+	that TaxCode has not been imported.
+
+	The fallback is not hypothetical: ``TaxCode`` is deliberately absent from
+	``CDC_ENTITIES`` because QBO's CDC endpoint does not support it, so a tax code
+	created in QuickBooks today does not arrive until the next FULL import. Until then
+	its invoices still import with the correct tax AMOUNT under the label "Sales Tax";
+	a later full import plus resync fills the jurisdiction in. Losing a label is a far
+	better failure than losing the money.
+	"""
+	code = _linked_name("TaxCode", "Account", (tax_detail.get("TxnTaxCodeRef") or {}).get("value"))
+	return code or "Sales Tax"
+
+
+def _sales_tax_account(settings):
+	"""Resolve the single Account imported sales tax posts to, or None.
+
+	Configurable via ``QuickBooks Online Settings.sales_tax_account`` so the destination
+	can change without a deploy; blank falls back to account number
+	``DEFAULT_SALES_TAX_ACCOUNT_NUMBER`` on the configured Company. A number rather than
+	a name because ERPNext appends the company abbreviation to account names, so a
+	hardcoded name would only ever work on one site.
+
+	Returns None -- rather than a guess -- when the account is missing, is a group (not
+	postable), or is disabled. The caller then omits the tax row and the shortfall guard
+	parks the invoice.
+	"""
+	account = getattr(settings, "sales_tax_account", None)
+	if not account:
+		account = frappe.db.get_value(
+			"Account",
+			{"account_number": DEFAULT_SALES_TAX_ACCOUNT_NUMBER, "company": settings.company},
+			"name",
+		)
+	if not account:
+		return None
+	row = frappe.db.get_value("Account", account, ["is_group", "disabled"], as_dict=True)
+	if not row or row.get("is_group") or row.get("disabled"):
+		return None
+	return account
+
+
+def _sales_tax_ledger_line(payload, settings):
+	"""The tax leg for a sales transaction mapped to a Journal Entry, or None.
+
+	``_map_credit_memo`` and ``_map_refund_receipt`` build Journal Entries, which have
+	no taxes child table, so their tax needs an explicit line. Both credit the full
+	``TotalAmt`` (tax included) and debit only the item lines' net, so without this the
+	entry is short by exactly the tax and ``_journal_imbalance`` parks it.
+
+	DEBIT, because both documents REVERSE a sale: the tax liability that was credited
+	when the sale was booked is being taken back off.
+	"""
+	total_tax = _to_amount((payload.get("TxnTaxDetail") or {}).get("TotalTax"))
+	if not total_tax:
+		return None
+	return _ledger_line(_sales_tax_account(settings), debit=total_tax)
 
 
 def _map_sales_receipt(payload, settings):
@@ -1966,6 +2218,11 @@ def _map_credit_memo(payload, settings):
 	if receivable:
 		accounts.append(receivable)
 	accounts.extend(_sales_item_ledger_lines(payload, settings.company))
+	# The A/R credit is TotalAmt, which INCLUDES tax, while the item lines are net of
+	# it -- so a taxed credit memo needs its tax leg or it cannot balance.
+	tax_line = _sales_tax_ledger_line(payload, settings)
+	if tax_line:
+		accounts.append(tax_line)
 	return _journal_entry_doc(
 		settings,
 		payload.get("TxnDate"),
@@ -1990,6 +2247,10 @@ def _map_refund_receipt(payload, settings):
 	if refunded_from:
 		accounts.append(refunded_from)
 	accounts.extend(_sales_item_ledger_lines(payload, settings.company))
+	# The bank credit is TotalAmt, tax included; the item lines are net of it.
+	tax_line = _sales_tax_ledger_line(payload, settings)
+	if tax_line:
+		accounts.append(tax_line)
 	return _journal_entry_doc(
 		settings,
 		payload.get("TxnDate"),
