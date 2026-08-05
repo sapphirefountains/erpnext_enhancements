@@ -7,6 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.246.0] - 2026-08-05
+
+Closes the sales-tax gap recorded in 1.244.0, and adds the guard whose absence let both
+that gap and the 1.244.0 quantity bug survive the entire import unnoticed.
+
+QuickBooks carries invoice tax **outside** the `Line` array, on `TxnTaxDetail`, and
+`_sales_items` reads only `Line` — so every taxed invoice imported at the net of its
+lines. Invoice **I100549** (Myers Mortuary, 2022-09-08) is **$385.56** in QuickBooks:
+$360.00 of lines plus **$25.56** of Utah tax at 7.1%. It imported as **$360.00**, with an
+empty taxes table.
+
+### Added
+
+- **Sales tax is imported as a Sales Taxes and Charges row.** `_sales_charges` turns
+  `TxnTaxDetail.TotalTax` into a single `charge_type: "Actual"` charge, wired into
+  `_map_sales_invoice` (and therefore `_map_sales_receipt`, which delegates to it).
+  Measured against every cached payload 2026-08-05, this creates tax rows on **509
+  documents totalling $71,141.69** — of which the pre-2026 Sales Invoice slice quoted in
+  1.244.0 is **424 invoices / $58,162.96**; the rest is 81 invoices dated 2026 and 4 Sales
+  Receipts ($133.39).
+
+  **Identity comes from `TxnTaxCodeRef`, never `TaxRateRef`.** They are different QBO id
+  spaces and confusing them resolves *silently* to a real-but-wrong account: on I100549
+  `TxnTaxCodeRef` 8 is `Utah - Weber - Ogden - Inactive - SF`, while `TaxRateRef` 15 read
+  as a TaxCode is `Sandy Utah - SF` — a different city, no error, wrong jurisdiction. Both
+  rows exist, so neither lookup fails. TaxRate is not imported by this integration at all.
+  A test asserts the two ids give *different* answers, so an edit that reaches for the
+  wrong ref fails CI rather than mis-booking tax.
+
+  **All tax posts to one account** — `25010 Sales Tax Agency Payable`, configurable via
+  the new `QuickBooks Online Settings.sales_tax_account`, defaulting to account **number**
+  25010 on the configured Company (a number, not a name, because ERPNext appends the
+  company abbreviation). QBO TaxCodes are *rate definitions, not GL accounts*: QuickBooks
+  books all sales tax to one agency-payable account and keeps jurisdiction in its Sales
+  Tax Centre, outside the ledger. Posting to the per-TaxCode accounts `_map_tax_code`
+  creates would build a parallel tax-liability structure that could never tie back.
+  Measured: those 63 TaxCode mappings collapse onto only **36 distinct Accounts**, every
+  one with `tax_rate 0.0`, and **none has ever received a Journal Entry line or a GL row**.
+  The jurisdiction survives on each charge row's `description` instead.
+
+- **`_sales_invoice_shortfall`, the Sales Invoice reconciliation guard.** The buy side has
+  compared its mapped total against QuickBooks' `TotalAmt` since the mixed-Bill fix; the
+  sell side never did, so a Sales Invoice could validate, save and look entirely clean
+  while posting a number QuickBooks disagreed with. **That absence is the reason both this
+  bug and the 1.244.0 quantity bug went unnoticed — it would have caught both on the first
+  import, and it is worth more than either fix.**
+
+  It sums **`qty * rate`**, not the informational `amount` the mapper carries across —
+  ERPNext *recomputes* the line amount on save, so that product is the only number whose
+  agreement with QuickBooks means anything. **The rounding order is the whole trick:**
+  ERPNext's `round_floats_in` rounds `rate` to currency precision and `qty` to float
+  precision *first*, then multiplies, using Frappe's half-to-even `flt` rather than
+  Python's `round`. An earlier revision of this guard multiplied then rounded, and an
+  adversarial review caught it against real data — QBO invoice **I101613** carries
+  `Qty 0.6666999`, which ERPNext stores as `0.667` and posts at **$54,527.25** against
+  QuickBooks' **$54,502.72**, and the naive guard called it reconciled. Modelling the
+  order correctly catches **37 more** wrong pre-2026 invoices (61 → 98).
+  `_sales_invoice_shortfall_causes` names which of three things went wrong: unimported
+  items, tax that could not be booked, or unmodelled discount lines.
+
+- **Tax legs for CreditMemo and RefundReceipt.** Both map to Journal Entries, which have no
+  taxes child table, and both credit the tax-inclusive `TotalAmt` while debiting only the
+  net item lines — so a taxed one could not balance and would park. `_sales_tax_ledger_line`
+  debits the tax account, reversing the liability the original sale credited. Neither entity
+  has ever been fetched (both were only added to the catalogue in 1.244.0), so this ships
+  correct-by-construction and **cannot be validated against existing data** — check it on
+  staging after the first full import.
+
+- **`patches/set_sales_tax_account_type.py`** sets `account_type = "Tax"` on the
+  destination account. The QBO Account import left it **blank**, and ERPNext keys the
+  taxes `account_head` picker and tax-report grouping off that field — a blank one is
+  invisible to an accountant correcting a parked invoice by hand. Fills a blank only; an
+  account somebody deliberately typed otherwise is logged and left alone. Runs on
+  `bench migrate`, i.e. before any resync, so the account is typed before the first tax row
+  is written.
+
+### Known gaps
+
+- **QBO discount lines are still not imported, and they are now the largest gap.**
+  36 of the 1,413 pre-2026 invoices carry `DiscountLineDetail` totalling **$89,561.00** —
+  *more than the $58,162.96 of tax this release fixes*. Modelling them needs a decision on
+  whether an ERPNext discount belongs on the item line (`discount_amount`) or as a negative
+  Actual charge, which changes what the GL sees. Scoped in
+  [WI-067](work-items/WI-067-qbo-mapper-data-fidelity.md), not attempted here.
+- **62 further invoices** do not reconcile for other reasons — chiefly QBO unit prices and
+  quantities carrying more decimals than ERPNext stores (a `UnitPrice` of 2051.9872727 is
+  simply not representable at 2-dp rate, so that invoice genuinely cannot post
+  QuickBooks' total), plus real differences (largest: I100853 −$304.37, I101039 +$258.31,
+  I100936 −$187.50). They now park with a named cause instead of importing silently wrong.
+- **A tax code created in QuickBooks today does not arrive until the next full import.**
+  `TaxCode` is deliberately absent from `CDC_ENTITIES` (QBO's CDC endpoint does not support
+  it). Until it arrives, its invoices still import the correct tax **amount** under the
+  label `"Sales Tax"`; a later full import plus resync fills the jurisdiction in. Losing a
+  label beats losing the money. Currently **0 of 46** referenced tax code ids are unmapped,
+  so no money is at risk today.
+
+### Deployment notes
+
+**Use resync, not Import All.** Deploying code corrects nothing already imported.
+
+1. `preview_resync(entity_types=["Invoice", "SalesReceipt"])` — writes nothing; stores a
+   per-record plan against a `preview_id`.
+2. **Read the preview.** Expect roughly 615 invoice updates from the 1.244.0 quantity fix
+   plus 509 documents gaining a tax row.
+3. `run_resync(preview_id)` — replays the stored payloads with `overwrite=True`.
+
+`import_all` does **not** pass `overwrite`, so any record where a user edited a QBO-owned
+field returns a conflict instead of updating. Conversely `overwrite=True` resolves
+conflicts in QuickBooks' favour and **will discard manual edits** — which is why step 2 is
+not optional.
+
+- **Validate each fix separately on STAGING** so you know which code did what; production
+  gets a **single** resync once both are deployed. The two defects pull in opposite
+  directions (quantity overstates, tax understates), so fixing one alone moves the
+  aggregate in a direction that looks wrong.
+- **Combined success criterion:** every pre-2026 Sales Invoice has `base_grand_total`
+  equal to its QBO `TotalAmt`. Binary, no attribution needed. Baseline: ERPNext
+  $6,996,286.32 vs QuickBooks $4,365,679.06, 615 differing. **Honest target after this
+  release: 1,315 of 1,413** — the remaining 98 (36 discount + 62 rounding/other) park for
+  review with a named cause rather than importing wrong. Across the full mapped population
+  including 2026, 120 of 1,556 park.
+- **`run_resync` has never executed on this site**, so the `overwrite=True` path is
+  untested in production. Rehearse it on staging.
+- **The guard runs before the overwrite check**, so `run_resync(overwrite=True)` cannot
+  force-heal an invoice the guard rejects — it parks either way. That is intended: overwrite
+  resolves *user-edit conflicts*, not reconciliation failures.
+- **Do not submit anything to the GL until the criterion passes, and pause the QuickBooks
+  sync before submitting** — ERPNext cannot update a submitted document, so every later QBO
+  edit to a posted one becomes a sync failure. Shared with
+  [WI-068](work-items/WI-068-group-account-remap.md); it is one decision, not two.
+
 ## [1.245.0] - 2026-08-04
 
 Unblocks the pre-2026 GL posting. **1,726 draft Journal Entries cannot be submitted**
@@ -199,16 +330,15 @@ the 1,314 pre-2026 payments ($4,069,818.35) was unallocated.
 
 ### Known gaps
 
-- **Sales tax on invoices is still not imported.** QuickBooks carries invoice tax on
-  `TxnTaxDetail.TotalTax`, outside the `Line` array `_sales_items` reads, so ERPNext
-  imports the **net of the lines** and drops the tax. Invoice I100549 (Myers Mortuary,
-  2022-09-08) is $385.56 in QBO — $360.00 of lines plus $25.56 of Utah tax at 7.1% —
-  and imported as $360.00. This is why `25010 Sales Tax Agency Payable` reconciles at
-  **$882.66** against QuickBooks' **$37,096.89**. It *understates* invoices and so
-  partly offsets the overstatement fixed above, which is why correcting only one of
-  the two moves the totals in an unexpected direction. Fixing it needs a Sales Taxes
-  and Charges row plus a QBO-tax-rate → ERPNext-tax-account mapping, and is not
-  attempted here.
+- **Sales tax on invoices is not imported — FIXED IN [1.246.0](#12460---2026-08-05).**
+  QuickBooks carries invoice tax on `TxnTaxDetail.TotalTax`, outside the `Line` array
+  `_sales_items` reads, so ERPNext imported the **net of the lines** and dropped the
+  tax. Invoice I100549 (Myers Mortuary, 2022-09-08) is $385.56 in QBO — $360.00 of
+  lines plus $25.56 of Utah tax at 7.1% — and imported as $360.00. It *understates*
+  invoices and so partly offsets the overstatement fixed above, which is why
+  correcting only one of the two moves the totals in an unexpected direction. Both
+  must be resynced together; see 1.246.0 for the procedure and the combined
+  reconciliation criterion.
 
 ### Deployment notes
 

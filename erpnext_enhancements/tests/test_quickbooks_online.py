@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import math
 import sys
 import types
 from datetime import datetime
@@ -37,11 +38,33 @@ def install_frappe_stub():
 	frappe_utils.get_system_timezone = lambda: "UTC"
 
 	def _flt(value=0, precision=None):
+		"""Model ``frappe.utils.flt``, which is NOT Python's ``round``.
+
+		Frappe rounds money half-to-EVEN, after normalising the scaled value so a binary
+		representation a hair under the half (6.175 * 100 == 617.4999...) still counts as
+		a half. Python's ``round`` disagrees on exactly those values: flt(6.175, 2) is
+		6.18 where round(6.175, 2) is 6.17.
+
+		Modelling it faithfully is what lets this bench-free suite catch a rounding
+		mismatch at all. A stub that rounded differently from Frappe is precisely how the
+		Sales Invoice shortfall guard shipped its own rounding bug -- it agreed with the
+		stub and disagreed with production.
+		"""
 		try:
 			number = float(value or 0)
 		except (TypeError, ValueError):
 			return 0.0
-		return round(number, precision) if precision is not None else number
+		if precision is None:
+			return number
+		multiplier = 10 ** int(precision)
+		scaled = number * multiplier
+		floor_part = math.floor(scaled)
+		fraction = scaled - floor_part
+		if round(fraction, 8) == 0.5:
+			scaled = floor_part if floor_part % 2 == 0 else floor_part + 1
+		else:
+			scaled = round(scaled)
+		return scaled / multiplier
 
 	frappe_utils.flt = _flt
 	frappe_utils.cint = lambda value=0, *args, **kwargs: int(_flt(value))
@@ -76,6 +99,8 @@ def install_frappe_stub():
 		return []
 
 	frappe.db = types.SimpleNamespace(
+		# Blank/absent System Settings precisions -> the mapper's ERPNext defaults (2, 3).
+		get_single_value=lambda doctype, fieldname: None,
 		exists=lambda doctype, name: (
 			name
 			in {"All Customer Groups", "All Territories", "All Supplier Groups", "All Item Groups", "Nos"}
@@ -4090,3 +4115,491 @@ def test_item_expense_account_prefers_the_item_default(monkeypatch):
 	assert _item_expense_account("NOT-AN-ITEM", "Sapphire Fountains") == "Miscellaneous Expenses - SF"
 	assert _item_expense_account(None, "Sapphire Fountains") is None
 	assert _item_expense_account("SRV-414", None) is None
+
+
+# ---------------------------------------------------------------------------
+# Sales tax (TxnTaxDetail) and the Sales Invoice shortfall guard
+# ---------------------------------------------------------------------------
+
+# QBO invoice I100549 (Myers Mortuary, 2022-09-08), trimmed to the fields the mapper
+# reads. $385.56 in QuickBooks: $360.00 of lines plus $25.56 of Utah tax at 7.1%, which
+# imported as $360.00 because the tax lives OUTSIDE the Line array.
+#
+# TxnTaxCodeRef 8 and TaxRateRef 15 are the whole point of this fixture: they are
+# different QBO id spaces, and reading 15 as a TaxCode silently yields a real account for
+# the wrong city.
+INVOICE_I100549 = {
+	"Id": "9100549",
+	"DocNumber": "I100549",
+	"TxnDate": "2022-09-08",
+	"CustomerRef": {"name": "Myers Mortuary", "value": "1380"},
+	"CurrencyRef": {"name": "United States Dollar", "value": "USD"},
+	"Line": [
+		{
+			"Amount": 360.00,
+			"Description": "Fountain service call",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {
+				"ItemRef": {"name": "Service", "value": "279"},
+				"Qty": 1,
+				"UnitPrice": 360,
+				# Line-level TaxCodeRef is a STRING enum ("TAX"/"NON"), not a numeric id, so
+				# it is not resolvable through the TaxCode mapping table the way
+				# TxnTaxCodeRef is. The mapper reads only the transaction-level ref.
+				"TaxCodeRef": {"value": "TAX"},
+			},
+		},
+		# Four zero-amount description lines, as the real invoice carries.
+		{
+			"Amount": 0,
+			"Description": "note",
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {"value": "279"}, "TaxCodeRef": {"value": "NON"}},
+		},
+		{
+			"Amount": 0,
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {"value": "279"}, "TaxCodeRef": {"value": "NON"}},
+		},
+		{
+			"Amount": 0,
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {"value": "279"}, "TaxCodeRef": {"value": "NON"}},
+		},
+		{
+			"Amount": 0,
+			"DetailType": "SalesItemLineDetail",
+			"SalesItemLineDetail": {"ItemRef": {"value": "279"}, "TaxCodeRef": {"value": "NON"}},
+		},
+		# QBO repeats the net as a SubTotalLineDetail row carrying a REAL amount, so
+		# summing Line[].Amount naively double-counts the invoice (720.00, not 360.00).
+		# The mapper reads only SalesItemLineDetail, which is what makes it immune.
+		{"Amount": 360.00, "DetailType": "SubTotalLineDetail", "SubTotalLineDetail": {}},
+	],
+	"TxnTaxDetail": {
+		"TotalTax": 25.56,
+		"TxnTaxCodeRef": {"value": "8"},
+		"TaxLine": [
+			{
+				"Amount": 25.56,
+				"DetailType": "TaxLineDetail",
+				"TaxLineDetail": {
+					"NetAmountTaxable": 360.0,
+					"PercentBased": True,
+					"TaxPercent": 7.1,
+					"TaxRateRef": {"value": "15"},
+				},
+			}
+		],
+	},
+	"TotalAmt": 385.56,
+}
+
+# The trap, as it exists in production: TaxCode 8 is Ogden, TaxCode 15 is Sandy. If the
+# mapper ever resolves TaxRateRef (15) instead of TxnTaxCodeRef (8) it gets a real account
+# for the wrong jurisdiction and nothing errors.
+_TAX_CODES = {"8": "Utah - Weber - Ogden - Inactive - SF", "15": "Sandy Utah - SF"}
+
+_SALES_TAX_ACCOUNT = "25010 - Sales Tax Agency Payable - SF"
+
+
+def _sales_tax_stub(
+	monkeypatch,
+	frappe,
+	tax_account=_SALES_TAX_ACCOUNT,
+	is_group=0,
+	disabled=0,
+	item_code="SERVICE - MAINTENANCE CONTRACT",
+	income_account="4110 - Sales - SF",
+	accounts=None,
+):
+	"""Stub the lookups the sales-tax path makes; ``tax_account=None`` means 25010 is absent."""
+	accounts = accounts or {}
+
+	def gv(doctype, filters=None, fieldname=None, **kwargs):
+		if doctype == "Company":
+			return {
+				"default_currency": "USD",
+				"default_receivable_account": "1310 - Debtors - SF",
+				"default_income_account": income_account,
+			}.get(fieldname)
+		if doctype == "Price List":
+			return "Standard Selling"
+		if doctype == "Item Default":
+			return None
+		if doctype == "Account":
+			# The 25010-by-number fallback.
+			if isinstance(filters, dict) and filters.get("account_number") == "25010":
+				return tax_account
+			# _sales_tax_account's postability check, and _ledger_for_posting's is_group probe.
+			if isinstance(filters, str):
+				if kwargs.get("as_dict"):
+					return {"is_group": is_group, "disabled": disabled}
+				return 0
+			return None
+		if doctype == "QuickBooks Sync Mapping":
+			f = filters or {}
+			if f.get("qbo_entity_type") == "Item":
+				return item_code
+			if f.get("qbo_entity_type") == "TaxCode":
+				return _TAX_CODES.get(str(f.get("qbo_id")))
+			if f.get("qbo_entity_type") == "Account":
+				return accounts.get(str(f.get("qbo_id")))
+			if f.get("qbo_entity_type") == "Customer" and f.get("erpnext_doctype") == "Customer":
+				return "Myers Mortuary"
+		return None
+
+	monkeypatch.setattr(frappe.db, "get_value", gv)
+
+
+def test_invoice_tax_becomes_an_actual_charge_reconciling_to_qbo_total(monkeypatch):
+	"""The I100549 shape: one Actual charge of 25.56, and items + tax == TotalAmt 385.56."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I100549, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert doctype == "Sales Invoice"
+	assert values["taxes"] == [
+		{
+			"charge_type": "Actual",
+			"account_head": _SALES_TAX_ACCOUNT,
+			# The jurisdiction survives here, because every jurisdiction posts to one account.
+			"description": "Utah - Weber - Ogden - Inactive - SF",
+			"tax_amount": 25.56,
+		}
+	]
+	# Sales Taxes and Charges has no category / add_deduct_tax field (those are
+	# Purchase-only); setting them would be silently dropped by Frappe, not rejected.
+	assert "category" not in values["taxes"][0]
+	assert "add_deduct_tax" not in values["taxes"][0]
+
+	items_total = sum(round(row["qty"] * row["rate"], 2) for row in values["items"])
+	assert items_total == 360.00
+	assert round(items_total + values["taxes"][0]["tax_amount"], 2) == INVOICE_I100549["TotalAmt"]
+	# The SubTotalLineDetail row repeats the net (360.00). Summing Line[].Amount naively
+	# would give 720.00; reading only SalesItemLineDetail is what avoids double-counting.
+	assert sum(line["Amount"] for line in INVOICE_I100549["Line"]) == 720.00
+	# And the guard agrees it reconciles.
+	assert (
+		validate_mapped_values(
+			"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I100549
+		)
+		== []
+	)
+
+
+def test_tax_identity_comes_from_txn_tax_code_ref_not_tax_rate_ref(monkeypatch):
+	"""TaxRateRef must never resolve an account: it is a different QBO id space.
+
+	On I100549, TxnTaxCodeRef is 8 (Ogden) and TaxRateRef is 15 (which as a TaxCode is
+	Sandy -- a real account for the wrong city, resolved with no error). This asserts the
+	description follows 8, and that swapping the two ids changes the answer, so a future
+	edit that reads TaxRateRef fails here instead of silently mis-booking jurisdictions.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_charges
+
+	settings = types.SimpleNamespace(company="Sapphire Fountains")
+	assert _sales_charges(INVOICE_I100549, settings)[0]["description"] == "Utah - Weber - Ogden - Inactive - SF"
+
+	# Same payload, TxnTaxCodeRef swapped to the TaxRateRef value: a DIFFERENT answer.
+	# If these two ever agree, the mapper is reading the wrong ref.
+	swapped = json.loads(json.dumps(INVOICE_I100549))
+	swapped["TxnTaxDetail"]["TxnTaxCodeRef"] = {"value": "15"}
+	assert _sales_charges(swapped, settings)[0]["description"] == "Sandy Utah - SF"
+
+
+def test_untaxed_invoice_produces_no_taxes_row(monkeypatch):
+	"""An invoice with no TxnTaxDetail maps an empty taxes table, not a zero-value row."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	untaxed = json.loads(json.dumps(INVOICE_I100549))
+	del untaxed["TxnTaxDetail"]
+	untaxed["TotalAmt"] = 360.00
+	_doctype, values = map_qbo_to_erpnext("Invoice", untaxed, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	# Empty, but PRESENT: always mapping the key is what makes a re-sync replace the
+	# child table rather than leave a stale tax row behind.
+	assert values["taxes"] == []
+	assert "taxes" in values
+
+
+def test_unresolvable_tax_account_omits_the_row_and_parks_the_invoice(monkeypatch):
+	"""No usable tax account: omit the charge and let the shortfall guard park it.
+
+	Deliberately never falls back to a guessed account -- a wrong-but-plausible invoice
+	posts to the ledger and nobody looks at it again.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, tax_account=None)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I100549, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert values["taxes"] == []
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I100549
+	)
+	assert any("does not reconcile to QuickBooks" in issue for issue in issues)
+	assert any("25.56 of sales tax that could not be booked" in issue for issue in issues)
+
+
+def test_group_or_disabled_tax_account_is_refused(monkeypatch):
+	"""A group or disabled account is not postable, so it resolves to None like a missing one."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_tax_account
+
+	settings = types.SimpleNamespace(company="Sapphire Fountains")
+	_sales_tax_stub(monkeypatch, frappe, is_group=1)
+	assert _sales_tax_account(settings) is None
+	_sales_tax_stub(monkeypatch, frappe, disabled=1)
+	assert _sales_tax_account(settings) is None
+	_sales_tax_stub(monkeypatch, frappe)
+	assert _sales_tax_account(settings) == _SALES_TAX_ACCOUNT
+
+
+def test_configured_sales_tax_account_overrides_the_default_number(monkeypatch):
+	"""The Settings field wins over the 25010 fallback, so the destination needs no deploy."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_charges
+
+	settings = types.SimpleNamespace(company="Sapphire Fountains", sales_tax_account="29999 - Other Tax - SF")
+	assert _sales_charges(INVOICE_I100549, settings)[0]["account_head"] == "29999 - Other Tax - SF"
+
+
+def test_unimported_tax_code_still_imports_the_tax_amount(monkeypatch):
+	"""TaxCode is not a CDC entity, so a new one only arrives on a full import.
+
+	Until then its invoices must still carry the correct tax AMOUNT -- only the
+	jurisdiction label is deferred.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_charges
+
+	unknown = json.loads(json.dumps(INVOICE_I100549))
+	unknown["TxnTaxDetail"]["TxnTaxCodeRef"] = {"value": "9999"}  # never imported
+	row = _sales_charges(unknown, types.SimpleNamespace(company="Sapphire Fountains"))[0]
+
+	assert row["tax_amount"] == 25.56
+	assert row["description"] == "Sales Tax"
+
+
+def test_sales_receipt_inherits_the_tax_mapping(monkeypatch):
+	"""_map_sales_receipt delegates to _map_sales_invoice, so it gets taxes for free."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	doctype, values = map_qbo_to_erpnext(
+		"SalesReceipt", INVOICE_I100549, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert doctype == "Sales Invoice"
+	assert values["taxes"][0]["tax_amount"] == 25.56
+	assert "Sales Receipt" in values["remarks"]
+
+
+def test_sales_invoice_shortfall_guard_names_unmapped_items(monkeypatch):
+	"""An unimported item leaves the invoice short, and the guard says which item."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, item_code=None)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", INVOICE_I100549, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	assert values["items"] == []
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=INVOICE_I100549
+	)
+	assert any("reference QuickBooks items not imported" in issue for issue in issues)
+
+
+def test_sales_invoice_shortfall_guard_names_discount_lines(monkeypatch):
+	"""QBO discount lines are not modelled; the guard says so instead of blaming the tax.
+
+	36 of the 1,413 pre-2026 invoices carry DiscountLineDetail, $89,561.00 in total -- a
+	larger gap than the sales tax this release fixes, and the reason those invoices still
+	will not reconcile afterwards.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	discounted = json.loads(json.dumps(INVOICE_I100549))
+	discounted["Line"].append(
+		{"Amount": -50.0, "DetailType": "DiscountLineDetail", "DiscountLineDetail": {"PercentBased": False}}
+	)
+	discounted["TotalAmt"] = 335.56
+	_doctype, values = map_qbo_to_erpnext(
+		"Invoice", discounted, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	issues = validate_mapped_values(
+		"Invoice", "Sales Invoice", values, include_doc_required=False, payload=discounted
+	)
+	assert any("discount line(s) totalling -50.00 are not imported" in issue for issue in issues)
+
+
+def test_sales_invoice_shortfall_guard_uses_qty_times_rate_not_the_carried_amount(monkeypatch):
+	"""The guard sums qty * rate, because that is what ERPNext recomputes and posts.
+
+	A line whose carried ``amount`` disagrees with ``qty * rate`` would sail past a guard
+	that trusted ``amount`` -- and ``amount`` is exactly the field ERPNext overwrites.
+	"""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
+
+	values = {
+		"items": [{"qty": 2, "rate": 100.0, "amount": 500.0}],  # amount lies; qty*rate is 200
+		"taxes": [],
+	}
+	issue = _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 500.0})
+
+	assert issue is not None
+	assert "mapped 200.00 vs TotalAmt 500.00" in issue
+
+
+def test_sales_invoice_shortfall_guard_skipped_without_a_qbo_total():
+	"""No TotalAmt means nothing authoritative to reconcile against; do not invent one."""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
+
+	values = {"items": [{"qty": 1, "rate": 10.0}], "taxes": []}
+	assert _sales_invoice_shortfall("Sales Invoice", values, {}) is None
+	assert _sales_invoice_shortfall("Sales Invoice", values, None) is None
+	# And it never fires on a doctype it does not own.
+	assert _sales_invoice_shortfall("Purchase Invoice", values, {"TotalAmt": 999.0}) is None
+
+
+def test_credit_memo_tax_leg_balances_the_journal_entry(monkeypatch):
+	"""A taxed CreditMemo credits A/R for the tax-inclusive total, so it needs a tax debit."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe)
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext, validate_mapped_values
+
+	memo = json.loads(json.dumps(INVOICE_I100549))
+	memo["DocNumber"] = "CM-9"
+	doctype, values = map_qbo_to_erpnext("CreditMemo", memo, types.SimpleNamespace(company="Sapphire Fountains"))
+
+	assert doctype == "Journal Entry"
+	rows = _rows_by_account(values)
+	assert rows["1310 - Debtors - SF"]["credit_in_account_currency"] == 385.56
+	assert rows["4110 - Sales - SF"]["debit_in_account_currency"] == 360.00
+	assert rows[_SALES_TAX_ACCOUNT]["debit_in_account_currency"] == 25.56
+	assert sum(r["debit_in_account_currency"] for r in values["accounts"]) == sum(
+		r["credit_in_account_currency"] for r in values["accounts"]
+	)
+	assert (
+		validate_mapped_values("CreditMemo", "Journal Entry", values, include_doc_required=False, payload=memo)
+		== []
+	)
+
+
+def test_refund_receipt_tax_leg_balances_the_journal_entry(monkeypatch):
+	"""Same for a RefundReceipt, whose credit leg is the bank rather than A/R."""
+	frappe = install_frappe_stub()
+	_sales_tax_stub(monkeypatch, frappe, accounts={"134": "1110 - Checking - SF"})
+	from erpnext_enhancements.quickbooks_online.core.mapping import map_qbo_to_erpnext
+
+	refund = json.loads(json.dumps(INVOICE_I100549))
+	refund["DepositToAccountRef"] = {"value": "134"}
+	_doctype, values = map_qbo_to_erpnext(
+		"RefundReceipt", refund, types.SimpleNamespace(company="Sapphire Fountains")
+	)
+
+	rows = _rows_by_account(values)
+	assert rows["1110 - Checking - SF"]["credit_in_account_currency"] == 385.56
+	assert rows["4110 - Sales - SF"]["debit_in_account_currency"] == 360.00
+	assert rows[_SALES_TAX_ACCOUNT]["debit_in_account_currency"] == 25.56
+	assert sum(r["debit_in_account_currency"] for r in values["accounts"]) == sum(
+		r["credit_in_account_currency"] for r in values["accounts"]
+	)
+
+
+def test_shortfall_guard_rounds_the_way_erpnext_does_before_multiplying():
+	"""The guard must reproduce ERPNext's rounding ORDER, not just round somewhere.
+
+	ERPNext's ``calculate_item_values`` calls ``round_floats_in(item)`` FIRST -- rate to
+	currency precision, qty to float precision -- and only then multiplies. Rounding after
+	multiplying blesses invoices that are wrong.
+
+	This is QBO invoice I101613 (Id 21151), real production data: two lines whose
+	quantities carry seven decimals. ERPNext stores qty 0.667 and posts $54,527.25 against
+	QuickBooks' $54,502.72 -- $24.53 out. A multiply-then-round guard computes exactly
+	54,502.72 and calls it reconciled. The predicted 54,527.25 is the grand_total already
+	sitting on the imported draft, so this is not a hypothetical.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
+
+	values = {
+		"items": [
+			{"qty": 0.6666999, "rate": 69250.0},
+			{"qty": 0.6667, "rate": 12500.0},
+		],
+		"taxes": [],
+	}
+	issue = _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 54502.72})
+
+	assert issue is not None, "guard must not bless an invoice ERPNext posts $24.53 higher"
+	assert "mapped 54527.25 vs TotalAmt 54502.72" in issue
+	assert "off by -24.53" in issue
+
+
+def test_shortfall_guard_rounds_the_rate_erpnext_will_store():
+	"""A QBO UnitPrice with more than two decimals is not representable at ERPNext's rate.
+
+	QBO invoice I100352 prices a line at 2051.9872727; ERPNext stores 2051.99 and posts a
+	cent over QuickBooks. The guard has to say so -- the acceptance criterion for this work
+	is base_grand_total == TotalAmt, and tolerating the cent would assert something false.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
+
+	values = {"items": [{"qty": 5.5, "rate": 2051.9872727}], "taxes": []}
+	# 5.5 * 2051.99 == 11285.945 -> 11285.94 (half-to-even), vs QuickBooks' 11285.93.
+	issue = _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 11285.93})
+
+	assert issue is not None
+	assert "off by -0.01" in issue
+
+
+def test_shortfall_guard_does_not_park_over_bankers_rounding():
+	"""Half-to-even is ERPNext's rounding, so the guard must not use Python's round().
+
+	Qty 0.5 at $12.35 -- half an hour of labour at an odd-cent rate -- is $6.175. ERPNext
+	posts 6.18; Python's round() gives 6.17 and would park a perfectly correct invoice.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _sales_invoice_shortfall
+
+	values = {"items": [{"qty": 0.5, "rate": 12.35}], "taxes": []}
+	assert _sales_invoice_shortfall("Sales Invoice", values, {"TotalAmt": 6.18}) is None
+
+
+def test_erpnext_item_precisions_fall_back_to_erpnext_defaults():
+	"""Blank System Settings precisions mean ERPNext's own defaults, not zero."""
+	frappe = install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core.mapping import _erpnext_item_precisions
+
+	assert _erpnext_item_precisions() == (2, 3)
+
+	frappe.db.get_single_value = lambda doctype, fieldname: {
+		"currency_precision": 3,
+		"float_precision": 4,
+	}.get(fieldname)
+	assert _erpnext_item_precisions() == (3, 4)

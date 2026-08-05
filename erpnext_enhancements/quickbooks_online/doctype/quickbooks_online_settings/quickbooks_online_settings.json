@@ -26,7 +26,9 @@
   "status_message",
   "sync_section",
   "cdc_poll_minutes",
-  "retry_limit"
+  "retry_limit",
+  "accounting_section",
+  "sales_tax_account"
  ],
  "fields": [
   {
@@ -156,6 +158,18 @@
    "fieldname": "retry_limit",
    "fieldtype": "Int",
    "label": "Retry Limit"
+  },
+  {
+   "fieldname": "accounting_section",
+   "fieldtype": "Section Break",
+   "label": "Accounting"
+  },
+  {
+   "description": "Where imported sales tax posts (QuickBooks TxnTaxDetail.TotalTax). Leave blank to use account number 25010 on the configured Company. One account on purpose: QuickBooks books all sales tax to a single agency-payable account and keeps the jurisdiction in its Sales Tax Centre, so the jurisdiction is carried on each charge row's description instead. If this is blank AND 25010 is missing, or the account is a group or disabled, the tax row is omitted and the invoice parks for review rather than posting to a guessed account.",
+   "fieldname": "sales_tax_account",
+   "fieldtype": "Link",
+   "label": "Sales Tax Account",
+   "options": "Account"
   }
  ],
  "index_web_pages_for_search": 1,

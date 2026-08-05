@@ -123,14 +123,23 @@ interruptions rather than restarting from scratch.
   land unallocated on the first pass. **Re-sync Payments after submitting the
   invoices** and the allocations fill in (the reference table is rebuilt on every
   sync). Until then A/R *totals* are correct but per-invoice aging is not.
-- **Sales tax on invoices is not imported.** QBO carries invoice tax on
-  `TxnTaxDetail.TotalTax`, outside the `Line` array the mapper reads, so an imported
-  Sales Invoice is the **net of its lines** and understates QBO's `TotalAmt` by the
-  tax. Invoice I100549 (Myers Mortuary, 2022-09-08) is $385.56 in QBO — $360.00 of
-  lines plus $25.56 of Utah tax at 7.1% — and imports as $360.00. This is why
-  `25010 Sales Tax Agency Payable` reconciles at $882.66 against QuickBooks'
-  $37,096.89. Fixing it needs a Sales Taxes and Charges row plus a QBO-tax-rate →
-  ERPNext-tax-account mapping; until then, book sales tax as an adjusting entry.
+- **Sales tax IS imported** (since v1.246.0) as a single `Actual` Sales Taxes and Charges
+  row per transaction, from `TxnTaxDetail.TotalTax` — which QBO carries **outside** the
+  `Line` array, which is why it was dropped before. All jurisdictions post to one account
+  (`QuickBooks Online Settings → Sales Tax Account`, defaulting to account number 25010),
+  with the jurisdiction on the row's description, mirroring how QuickBooks itself keeps
+  jurisdiction outside the ledger. **Identity comes from `TxnTaxCodeRef`, never
+  `TaxRateRef`** — different QBO id spaces, and swapping them resolves silently to a
+  real-but-wrong jurisdiction.
+- **QBO discount lines are still not imported.** 36 pre-2026 invoices carry
+  `DiscountLineDetail` totalling **$89,561.00**. They no longer import silently short:
+  `_sales_invoice_shortfall` parks each one naming the discount as the cause. See
+  [`WI-067`](../../work-items/WI-067-qbo-mapper-data-fidelity.md).
+- **A Sales Invoice now has to reconcile to QuickBooks to import.** `_sales_invoice_shortfall`
+  compares `qty * rate` plus tax against `TotalAmt` and parks anything that does not agree —
+  the sell-side twin of the Purchase Invoice guard, and the check whose absence let both the
+  zero-quantity overstatement and the dropped sales tax survive unnoticed. Expect a
+  one-off queue of ~120 parked documents on the first resync (98 of them pre-2026).
 - **Sales tax on purchases.** Expense/Bill-Payment JEs are built from line accounts; a
   transaction carrying separate sales tax may not auto-balance and will route to
   **manual review** (by design — the balance guard refuses to post a lopsided entry).
