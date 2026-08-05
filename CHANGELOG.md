@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.247.0] - 2026-08-05
+
+Closes the two gaps [1.246.0](#12460---2026-08-05) recorded as open, on the owner's
+decisions. Together they take the pre-2026 population from **1,315 of 1,413** reconciling
+to **1,371**, and the parked queue from **98 to 42**.
+
+### Added
+
+- **QBO discounts are imported.** A `DiscountLineDetail` is a **transaction-level** line
+  carrying a *positive* `Amount` subtracted from the subtotal — verified exactly across
+  every affected invoice: `sum(item lines) − discount + TotalTax == TotalAmt`. It maps to
+  ERPNext's header `discount_amount` with `apply_discount_on = "Net Total"`, which is the
+  same order QuickBooks applies it in. **36 of the 1,413 pre-2026 invoices carry one,
+  $89,561.00 in total — a bigger gap than the sales tax fixed in 1.246.0.**
+
+  On the header rather than spread across item rows: QuickBooks records no per-line
+  discount to spread, so allocating one figure over N lines would invent detail the source
+  never had and reintroduce exactly the per-row rounding drift `_sales_invoice_shortfall`
+  exists to catch. Booking it as a negative tax charge was the other option considered and
+  is worse still — it would post a discount into a tax account. A percent-based discount
+  uses the amount QuickBooks already resolved (33% of $150.00 recorded as $49.50) rather
+  than recomputing it, so the two systems cannot disagree in the last cent.
+
+### Changed
+
+- **`_sales_invoice_shortfall` now tolerates one cent per item row, floor two cents.**
+  Not a fudge factor but the arithmetic ceiling on unavoidable rounding: ERPNext rounds
+  every item row to two decimals, so N rows can move the total by up to N/2 cents, and
+  QuickBooks stores unit prices and quantities at more decimals than ERPNext keeps
+  (`UnitPrice 2051.9872727`, `Qty 0.6666999`) — on those invoices the two systems
+  genuinely cannot agree to the penny and no mapping would fix it.
+
+  Deliberately tighter than the drift bound so it stays inside "a penny here or there": a
+  2-line invoice tolerates 2¢ and still parks over the $22.98 differences in the data,
+  while a 17-line invoice tolerates 17¢, which is what its rounding can actually produce.
+  **The trade is explicit and accepted: an error smaller than a cent per line now imports
+  silently**, because at that size it is indistinguishable from the rounding it sits beside,
+  and a guard that cried wolf on 19 penny differences would stop being read.
+
+- `_sales_invoice_shortfall_causes` no longer names discount lines as a cause — they are
+  imported now, so a discounted invoice that still fails to reconcile falls to the
+  catch-all rather than being blamed on its discount. Two causes remain: unimported items,
+  and tax that could not be booked.
+
+### Known gaps
+
+- **42 invoices still do not reconcile**, and they are real differences rather than
+  rounding or mapper gaps: I100853 −$304.37, I101039 +$258.31, I100936 −$187.50,
+  I101473 −$118.70, down to $0.30. Each parks with its computed-vs-QuickBooks figures, so
+  clearing them is per-invoice accounting work rather than code. Across the full mapped
+  population including 2026, 53 of 1,556 park.
+
+### Deployment notes
+
+- **This must be resynced together with 1.246.0**, not separately — same population, same
+  `preview_resync` → read the preview → `run_resync` procedure, and the two releases pull
+  in opposite directions on any invoice carrying both a discount and tax.
+- Nothing else changes: no new fields, no patch, no configuration.
+
 ## [1.246.0] - 2026-08-05
 
 Closes the sales-tax gap recorded in 1.244.0, and adds the guard whose absence let both
@@ -76,26 +135,27 @@ empty taxes table.
   staging after the first full import.
 
 - **`patches/set_sales_tax_account_type.py`** sets `account_type = "Tax"` on the
-  destination account. The QBO Account import left it **blank**, and ERPNext keys the
-  taxes `account_head` picker and tax-report grouping off that field — a blank one is
-  invisible to an accountant correcting a parked invoice by hand. Fills a blank only; an
-  account somebody deliberately typed otherwise is logged and left alone. Runs on
-  `bench migrate`, i.e. before any resync, so the account is typed before the first tax row
-  is written.
+  destination account when it is blank. ERPNext keys the taxes `account_head` picker and
+  tax-report grouping off that field, so an account created without one is invisible to an
+  accountant correcting a parked invoice by hand. Fills a blank only; an account somebody
+  deliberately typed otherwise is logged and left alone. Runs on `bench migrate`, i.e.
+  before any resync.
+
+  *(Corrected after release: this entry originally said the QBO Account import left `25010`
+  blank. It did not — `25010` was typed `Tax` by hand on 2026-07-31, so the patch is a
+  no-op on the Sapphire Fountains production site and exists for staging, fresh sites, and
+  a re-pointed destination account.)*
 
 ### Known gaps
 
-- **QBO discount lines are still not imported, and they are now the largest gap.**
+- **QBO discount lines are not imported — FIXED IN [1.247.0](#12470---2026-08-05).**
   36 of the 1,413 pre-2026 invoices carry `DiscountLineDetail` totalling **$89,561.00** —
-  *more than the $58,162.96 of tax this release fixes*. Modelling them needs a decision on
-  whether an ERPNext discount belongs on the item line (`discount_amount`) or as a negative
-  Actual charge, which changes what the GL sees. Scoped in
-  [WI-067](work-items/WI-067-qbo-mapper-data-fidelity.md), not attempted here.
+  *more than the $58,162.96 of tax this release fixes*.
 - **62 further invoices** do not reconcile for other reasons — chiefly QBO unit prices and
   quantities carrying more decimals than ERPNext stores (a `UnitPrice` of 2051.9872727 is
   simply not representable at 2-dp rate, so that invoice genuinely cannot post
-  QuickBooks' total), plus real differences (largest: I100853 −$304.37, I101039 +$258.31,
-  I100936 −$187.50). They now park with a named cause instead of importing silently wrong.
+  QuickBooks' total), plus real differences. **1.247.0 accepts a per-invoice rounding
+  tolerance**, which together with the discount fix leaves 42.
 - **A tax code created in QuickBooks today does not arrive until the next full import.**
   `TaxCode` is deliberately absent from `CDC_ENTITIES` (QBO's CDC endpoint does not support
   it). Until it arrives, its invoices still import the correct tax **amount** under the
@@ -127,7 +187,8 @@ not optional.
   $6,996,286.32 vs QuickBooks $4,365,679.06, 615 differing. **Honest target after this
   release: 1,315 of 1,413** — the remaining 98 (36 discount + 62 rounding/other) park for
   review with a named cause rather than importing wrong. Across the full mapped population
-  including 2026, 120 of 1,556 park.
+  including 2026, 120 of 1,556 park. **[1.247.0](#12470---2026-08-05) takes this to
+  1,371 / 42.**
 - **`run_resync` has never executed on this site**, so the `overwrite=True` path is
   untested in production. Rehearse it on staging.
 - **The guard runs before the overwrite check**, so `run_resync(overwrite=True)` cannot
