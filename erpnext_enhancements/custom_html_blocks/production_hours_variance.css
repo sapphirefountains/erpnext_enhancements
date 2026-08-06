@@ -1,0 +1,146 @@
+/* Hours: Budget vs Actual — Production Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.phv-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.phv-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.phv-title {
+    font-weight: 600;
+}
+
+.phv-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.phv-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.phv-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.phv-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.phv-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.phv-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.phv-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.phv-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.phv-name:hover {
+    text-decoration: underline;
+}
+
+.phv-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.phv-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.phv-good {
+    color: #1e7e51;
+}
+
+.phv-warn {
+    color: #b7791f;
+}
+
+.phv-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.phv-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.phv-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
+
+.phv-bar {
+    background: var(--bg-light-gray);
+    border-radius: 3px;
+    flex: 0 0 70px;
+    height: 6px;
+    overflow: hidden;
+}
+
+.phv-fill {
+    background: var(--text-muted);
+    display: block;
+    height: 100%;
+}
+
+.phv-fill-good {
+    background: #1e7e51;
+}
+
+.phv-fill-warn {
+    background: #b7791f;
+}
+
+.phv-fill-bad {
+    background: #c0392b;
+}

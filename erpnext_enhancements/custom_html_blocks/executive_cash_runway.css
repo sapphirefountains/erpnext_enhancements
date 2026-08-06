@@ -1,0 +1,161 @@
+/* Cash & Receivables — Executive Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.ecr-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.ecr-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.ecr-title {
+    font-weight: 600;
+}
+
+.ecr-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.ecr-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.ecr-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.ecr-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.ecr-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.ecr-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.ecr-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.ecr-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.ecr-name:hover {
+    text-decoration: underline;
+}
+
+.ecr-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ecr-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ecr-good {
+    color: #1e7e51;
+}
+
+.ecr-warn {
+    color: #b7791f;
+}
+
+.ecr-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.ecr-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.ecr-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
+
+.ecr-tiles {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.ecr-tile {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    display: block;
+    padding: 8px 10px;
+    text-decoration: none;
+}
+
+a.ecr-tile:hover {
+    background: var(--bg-light-gray);
+}
+
+.ecr-tile-label {
+    color: var(--text-muted);
+    display: block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.ecr-tile-value {
+    color: var(--text-color);
+    display: block;
+    font-size: var(--text-xl);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+}
+
+.ecr-tile-note {
+    color: var(--text-muted);
+    display: block;
+    font-size: var(--text-xs);
+}

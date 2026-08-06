@@ -1,0 +1,120 @@
+/* People Calendar — HR Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.hpc-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.hpc-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.hpc-title {
+    font-weight: 600;
+}
+
+.hpc-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.hpc-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.hpc-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.hpc-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.hpc-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.hpc-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.hpc-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.hpc-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.hpc-name:hover {
+    text-decoration: underline;
+}
+
+.hpc-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hpc-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.hpc-good {
+    color: #1e7e51;
+}
+
+.hpc-warn {
+    color: #b7791f;
+}
+
+.hpc-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.hpc-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.hpc-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
