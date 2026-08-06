@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.250.0] - 2026-08-06
+## [1.251.0] - 2026-08-06
 
 Moves the Closed-Won hand-off **in front of** project creation, and turns the hand-off
 steps from things you tick into things that do the work.
@@ -135,6 +135,9 @@ easiest path, make skipping visible instead of silent, and make lateness loud.
 - The site's `handoff_holiday_list` currently points at *"Utah, USA Holidays 2025"*, so
   2026 business-day maths skips weekends only. That is a Settings value, not code, and is
   left for the team to update.
+
+## [1.250.0] - 2026-08-06
+
 Regroups the **Opportunity** form. Fixtures only — no controller, hook or client-script
 change; every field keeps its data.
 
