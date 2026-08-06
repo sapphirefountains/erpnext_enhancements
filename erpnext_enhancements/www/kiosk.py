@@ -18,7 +18,7 @@ from erpnext_enhancements.api.time_kiosk import get_kiosk_bootstrap
 # Shared per-deploy cache-bust token (extracted to utils/deploy.py in v1.13.0;
 # re-exported here because kiosk docs/tooling historically reference it from
 # this module).
-from erpnext_enhancements.utils.deploy import get_deploy_version  # noqa: F401
+from erpnext_enhancements.utils.deploy import get_deploy_version
 
 # Always render fresh per-user; never cache the authenticated shell.
 no_cache = 1

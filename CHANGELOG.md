@@ -122,6 +122,73 @@ commands for each.
   reads: this is a latent defect on both hooks, and it is not the cause of the
   `Document Update Error` rows carrying that message — those come from
   `frappe_assistant_core`'s `update_document` tool, which is outside this repo.
+## [1.253.2] - 2026-08-06
+
+### Changed
+
+- **Cleared the safe half of the ruff backlog: 429 findings → 73.** `ruff check --fix`
+  applied 306 fixes across 96 files — trailing/blank-line whitespace (`W291`/`W293`),
+  import sorting (`I001`), f-string conversions (`RUF010`, `UP030`/`UP032`), stale
+  `# noqa` directives (`RUF100`), and dead `from __future__ import unicode_literals`
+  headers (`UP009`). Only ruff's **safe** fixes were taken — `--unsafe-fixes` was not
+  used — so nothing whose behaviour ruff could not guarantee was touched.
+
+  Every one of the 56 bench-free CI commands was then run, each in its own process, and
+  all pass. That mattered more than usual: `I001` reorders imports across 76 files, and
+  `E402` sits on the ignore list precisely because this codebase does not always import
+  at top of file.
+
+- **`RUF001`/`RUF002`/`RUF003` are now ignored in `pyproject.toml` rather than fixed.**
+  All 50 occurrences were deliberate typography — 30 en dashes in prose, 13 `×` in
+  dimensions, 7 true minus signs in the water-engineering text. Auto-fixing them would
+  have rewritten docstrings and user-facing strings into ASCII and quietly degraded the
+  writing. The rules are suppressed with that reasoning recorded beside them; a
+  genuinely confusable *identifier* is what `F821` — already a hard gate — is for.
+
+### Notes
+
+- **The remaining 73 are judgement calls, not bugs**, and deliberately left: `B905`
+  (`zip()` without `strict=`) is a decision per call site, `E722` (bare `except`) is
+  deliberate in this app's defensive handlers, and the rest are idiom preferences
+  (`UP030`/`UP031`, `RUF005`/`007`/`012`/`015`/`046`/`059`, `B007`, `E701`, `E731`).
+  Clearing those plus `ruff format` is what remains before `continue-on-error` can come
+  off the lint job. Tracked as TASK-2026-01241 on PRJ-00580.
+- `ruff format` was **not** run. It is a ~68k-line diff across 391 files that would
+  conflict with anything in flight, and `CLAUDE.md` warns against it as a drive-by for
+  exactly that reason. It wants its own PR, timed for a quiet moment.
+
+## [1.253.1] - 2026-08-06
+
+### Fixed
+
+- **CI ran the entire workflow twice on every PR commit, and the two runs cancelled
+  each other into false red X's.**
+
+  `on:` listed a bare `push:` alongside `pull_request:`, so each commit on a PR branch
+  fired the workflow twice. The two events carry different `github.ref` values
+  (`refs/heads/<branch>` vs `refs/pull/<n>/merge`), so the concurrency group — keyed on
+  `github.ref` — put them in *different* groups and deduplicated neither. Four jobs
+  became eight, competing for runners on every push.
+
+  That was merely wasteful until a GitHub Actions capacity incident on 2026-08-06 made
+  it expensive. The doubled demand met a starved queue, `cancel-in-progress` cancelled
+  the losers, and **a cancelled job makes its whole run report `failure`** — so PRs
+  showed red X's for jobs that had never executed, on commits with nothing wrong at all.
+  Both #728 and #729 carried those marks while being entirely healthy.
+
+  `push` is now scoped to `main`, which keeps CI on the deploy branch without re-running
+  the same commit twice; every branch here merges via a PR, so the `pull_request` run is
+  the one that matters. The concurrency group now keys on the PR number, so cancellation
+  means what it should — a newer commit superseding an older run for the same PR —
+  rather than two events racing over one commit.
+
+  Trade-off, stated plainly: a branch pushed with **no open PR** now gets no CI until
+  the PR is opened.
+
+  The deeper reason this was worth fixing is not the wasted minutes. A red X that means
+  "a duplicate got cancelled" trains people to skim past red X's, which is the same rot
+  as an advisory lint job nobody reads. CI signals are only worth having if a red one
+  means something.
 
 ## [1.253.0] - 2026-08-06
 

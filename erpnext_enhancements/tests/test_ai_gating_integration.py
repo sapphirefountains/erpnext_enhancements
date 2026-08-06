@@ -21,7 +21,7 @@ except Exception:
 
 if _HAS_FRAPPE:
     try:
-        import frappe_assistant_core  # noqa: F401
+        import frappe_assistant_core
 
         _HAS_FAC = True
     except Exception:
@@ -39,7 +39,7 @@ class TestAIGatingIntegration(unittest.TestCase):
         super().setUpClass()
         frappe.set_user("Administrator")
         # importing the package applies the gate (FAC does the same per request)
-        import erpnext_enhancements.assistant_tools  # noqa: F401
+        import erpnext_enhancements.assistant_tools
 
     def setUp(self):
         frappe.set_user("Administrator")

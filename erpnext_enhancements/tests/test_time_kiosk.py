@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Integration tests for the time-kiosk clock-in/out flow (``api.time_kiosk``).
 
 Builds a Project, Activity Type and an Employee linked to the Administrator
@@ -7,11 +6,14 @@ asserts a Job Interval opens, that a second Start is rejected, that Stop closes
 the interval and produces a synced Timesheet line, that a second Stop is
 rejected, and that the single-open-interval invariant is enforced.
 """
+from datetime import timedelta
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import now_datetime, add_to_date
-from datetime import timedelta
+from frappe.utils import add_to_date, now_datetime
+
 import erpnext_enhancements.api.time_kiosk as time_kiosk
+
 
 class TestTimeKiosk(FrappeTestCase):
 	def setUp(self):

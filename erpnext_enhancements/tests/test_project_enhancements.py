@@ -7,8 +7,11 @@ enrichment. Parallels ``test_comments_api`` for the generic variant.
 """
 import unittest
 from unittest.mock import MagicMock, patch
+
 import frappe
+
 from erpnext_enhancements import project_enhancements
+
 
 class TestProjectEnhancements(unittest.TestCase):
 	def setUp(self):

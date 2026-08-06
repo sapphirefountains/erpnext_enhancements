@@ -19,6 +19,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, get_datetime
 
+
 @frappe.whitelist()
 def create_composite_booking(asset, rental_start, rental_end, location=None):
     """Create linked Travel + Rental + Maintenance Asset Bookings for an asset.

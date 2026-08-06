@@ -28,16 +28,16 @@ Single DocType.
 """
 
 import json
+from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, get_datetime, flt, cint, add_days
-from datetime import datetime, timedelta
+from frappe.utils import add_days, cint, flt, get_datetime, now_datetime
 
+from erpnext_enhancements.workforce import photo_gate
 from erpnext_enhancements.workforce.doctype.time_kiosk_settings.time_kiosk_settings import (
     get_settings,
 )
-from erpnext_enhancements.workforce import photo_gate
 
 # Roles allowed to view *anyone's* location history. Everyone else can only view
 # their own. Kept here (rather than in Settings) so it can't be widened from the UI.
@@ -105,7 +105,7 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         open_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Open"}, "name")
         if not open_interval:
             frappe.throw(_("No open job found to pause."))
-        
+
         doc = frappe.get_doc("Job Interval", open_interval)
         doc.status = "Paused"
         doc.last_pause_time = now_dt
@@ -116,12 +116,12 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
         paused_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": "Paused"}, "name")
         if not paused_interval:
             frappe.throw(_("No paused job found to resume."))
-        
+
         doc = frappe.get_doc("Job Interval", paused_interval)
         if doc.last_pause_time:
             pause_duration = (now_dt - get_datetime(doc.last_pause_time)).total_seconds()
             doc.total_paused_seconds = flt(doc.total_paused_seconds) + pause_duration
-            
+
         doc.status = "Open"
         doc.last_pause_time = None
         doc.save(ignore_permissions=True)
@@ -132,7 +132,7 @@ def log_time(project=None, action=None, lat=None, lng=None, description=None, ta
             frappe.throw(_("Project is required to switch work."))
 
         active_interval = frappe.db.get_value("Job Interval", {"employee": employee, "status": ["in", ["Open", "Paused"]]}, ["name", "status", "last_pause_time"], as_dict=True)
-        
+
         if active_interval:
             doc = frappe.get_doc("Job Interval", active_interval.name)
             # Gate BEFORE any mutation: a throw here must leave the outgoing
@@ -266,7 +266,7 @@ def sync_interval_to_timesheet(interval_doc):
         interval_doc.db_set("sync_status", "Synced")
 
     except Exception as e:
-        frappe.log_error(f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {str(e)}", "Time Kiosk Sync Error")
+        frappe.log_error(f"Failed to sync Job Interval {interval_doc.name} to Timesheet: {e!s}", "Time Kiosk Sync Error")
         # Update Job Interval sync status to Failed
         interval_doc.db_set("sync_status", "Failed")
 
@@ -312,7 +312,7 @@ def update_timesheet_note(timesheet_name, employee, date_obj):
             frappe.db.set_value("Timesheet", timesheet_name, "note", final_note)
 
     except Exception as e:
-        frappe.log_error(f"Failed to update Timesheet note: {str(e)}", "Time Kiosk Sync Error")
+        frappe.log_error(f"Failed to update Timesheet note: {e!s}", "Time Kiosk Sync Error")
 
 @frappe.whitelist()
 def get_current_status():
@@ -663,7 +663,7 @@ def link_attachment(file_name, project, task=None):
             "file_url": original.file_url
         }
     except Exception as e:
-        frappe.log_error(f"Failed to link attachment {file_name}: {str(e)}", "Time Kiosk Attachment Error")
+        frappe.log_error(f"Failed to link attachment {file_name}: {e!s}", "Time Kiosk Attachment Error")
         return {"status": "error", "message": str(e)}
 
 
@@ -940,7 +940,7 @@ def log_geolocation(employee=None, latitude=None, longitude=None, device_agent=N
         doc.insert(ignore_permissions=True)
         return {"status": "success", "message": "Location logged."}
     except Exception as e:
-        frappe.log_error(f"Failed to log location: {str(e)}", "Time Kiosk Location Error")
+        frappe.log_error(f"Failed to log location: {e!s}", "Time Kiosk Location Error")
         return {"status": "error", "message": str(e)}
 
 
@@ -1028,7 +1028,7 @@ def log_geolocation_batch(points):
             doc.insert(ignore_permissions=True)
             accepted.append(cid)
         except Exception as e:
-            frappe.log_error(f"Failed to ingest geo point: {str(e)}", "Time Kiosk Location Error")
+            frappe.log_error(f"Failed to ingest geo point: {e!s}", "Time Kiosk Location Error")
             rejected.append({"client_id": cid, "reason": "server_error"})
 
     return {"status": "success", "accepted": accepted, "rejected": rejected}

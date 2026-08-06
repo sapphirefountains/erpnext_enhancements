@@ -30,7 +30,7 @@ def execute():
 			continue
 
 		rows = frappe.db.sql(
-			"select name, primary_address from `tab{dt}` where coalesce(primary_address, '') <> ''".format(dt=dt),
+			f"select name, primary_address from `tab{dt}` where coalesce(primary_address, '') <> ''",
 			as_dict=True,
 		)
 		cleared = 0

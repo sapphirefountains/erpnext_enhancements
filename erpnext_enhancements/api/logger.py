@@ -11,6 +11,7 @@ the message is attacker-controllable (do not trust its contents).
 
 import frappe
 
+
 @frappe.whitelist(allow_guest=True)
 def log_client_error(error_message):
     """

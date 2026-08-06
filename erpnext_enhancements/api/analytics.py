@@ -19,24 +19,26 @@ Security: requires an authenticated session (default whitelist). Errors are
 logged to the Error Log and returned as a plain ``{"error": ...}`` message.
 """
 
-import frappe
-import os
 import concurrent.futures
+import datetime as dt
+import os
 from datetime import datetime
-from google.oauth2 import service_account
+
+import frappe
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
 	DateRange,
 	Dimension,
 	Metric,
-	RunReportRequest,
 	OrderBy,
+	RunReportRequest,
 )
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import datetime as dt
 
 from erpnext_enhancements.utils.error_throttle import log_error_throttled
+
 
 @frappe.whitelist()
 def get_ga4_data():
@@ -238,7 +240,7 @@ def get_ga4_data():
 
 	except Exception as e:
 		frappe.log_error(message=frappe.get_traceback(), title="GA4 API Error")
-		return {"error": f"Failed to fetch GA4 data: {str(e)}"}
+		return {"error": f"Failed to fetch GA4 data: {e!s}"}
 
 @frappe.whitelist()
 def get_gsc_data():
@@ -414,4 +416,4 @@ def get_gsc_data():
 
 	except Exception as e:
 		log_error_throttled(frappe.get_traceback(), "GSC API Error")
-		return {"error": f"Failed to fetch GSC data: {str(e)}"}
+		return {"error": f"Failed to fetch GSC data: {e!s}"}

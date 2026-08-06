@@ -39,6 +39,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
+
 class SapphireMaintenanceRecord(Document):
 	# This doctype has ``has_web_view`` set (its ``/maintenance-records`` portal
 	# view, rendered by ``get_context`` below) but subclasses plain ``Document``

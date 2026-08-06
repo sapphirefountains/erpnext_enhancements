@@ -59,6 +59,7 @@ from erpnext_enhancements.training.doctype.training_course_version.training_cour
     MATERIAL_CHANGE,
     MINOR_EDIT,
 )
+
 # NB: `is_enabled` is imported lazily inside get_builder_bootstrap, NOT here.
 # Importing a doctype controller at module scope makes this file unloadable to any
 # bench-free suite that stubs `frappe` without also stubbing that module — it broke

@@ -11,12 +11,13 @@ Idempotent at the Serial No level (skips assets already migrated).
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+
 def execute():
     """
     Data Migration: SF Water Feature Assets -> Serial No.
     This patch executes Phase 4 of the architectural overhaul.
     """
-    
+
     # 1. Ensure the Generic Item exists for Water Features
     item_code = "Customer Water Feature"
     if not frappe.db.exists("Item", item_code):
@@ -53,21 +54,21 @@ def execute():
         # 3. Create Serial No
         # We'll use the Asset Name as the Serial No ID if possible, or append a prefix
         serial_id = asset.name # Asset IDs are unique
-        
+
         if not frappe.db.exists("Serial No", serial_id):
             sn = frappe.new_doc("Serial No")
             sn.item_code = item_code
             sn.serial_no = serial_id
             sn.customer = asset.customer
             sn.warranty_expiry_date = asset.custom_warranty_expiry_date
-            
+
             # Map custom fields
             sn.custom_site_instructions = asset.custom_site_instructions
             sn.custom_pump_make_model = asset.custom_pump_make_model
             sn.custom_filtration_media_type = asset.custom_filtration_media_type
             sn.custom_water_volume = asset.custom_water_volume
-            
-            # Projects are usually linked via Asset Booking or Sales Order, 
+
+            # Projects are usually linked via Asset Booking or Sales Order,
             # but we'll try to find a relevant project if it exists.
             # (In this system, Sapphire Maintenance Records link Asset and Project)
             sn.insert(ignore_permissions=True)

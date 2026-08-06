@@ -8,6 +8,7 @@ and then browses that project's tasks as an expandable tree built from the
 
 import frappe
 
+
 def format_tasks_for_tree(tasks):
     """Recursively formats a list of tasks for the Frappe Tree View component.
 
@@ -66,7 +67,7 @@ def get_project_tasks_hierarchy(project):
             parent_task['children'].append(task)
         else:
             root_tasks.append(task)
-            
+
     # Optional: Sort tasks by start date
     def sort_recursively(task_list):
         for task in task_list:

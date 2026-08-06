@@ -13,8 +13,9 @@ secrets), guarded to System Managers only.
 """
 
 import frappe
-from frappe.model.document import Document
 import requests
+from frappe.model.document import Document
+
 
 class TritonSettings(Document):
     def on_update(self):

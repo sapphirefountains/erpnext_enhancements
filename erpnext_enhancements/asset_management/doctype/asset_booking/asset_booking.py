@@ -20,6 +20,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+
 class AssetBooking(Document):
     def validate(self):
         """Lifecycle hook: block overlapping bookings for the same Asset."""
@@ -181,7 +182,7 @@ def get_events(start, end, filters=None):
 
     conditions = get_event_conditions("Asset Booking", filters)
 
-    query = """
+    query = f"""
         SELECT
             name, from_datetime, to_datetime, booking_type, asset
         FROM
@@ -191,7 +192,7 @@ def get_events(start, end, filters=None):
             OR (to_datetime BETWEEN %(start)s AND %(end)s)
             OR (from_datetime < %(start)s AND to_datetime > %(end)s))
             {conditions}
-    """.format(conditions=conditions)
+    """
 
     data = frappe.db.sql(query, {"start": start, "end": end}, as_dict=True)
 

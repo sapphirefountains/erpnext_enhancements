@@ -131,7 +131,7 @@ def get_project_data(is_active=None):
 			WHERE project IN %s
 			GROUP BY project, status
 		""", (project_names,), as_dict=1)
-		
+
 		task_map = {}
 		for td in task_data:
 			proj = td["project"]
@@ -147,7 +147,7 @@ def get_project_data(is_active=None):
 			filters={"reference_type": "Project", "reference_name": ["in", project_names], "status": "Open"},
 			fields=["reference_name", "allocated_to"]
 		)
-		
+
 		user_emails = list({t["allocated_to"] for t in todos if t.get("allocated_to")})
 		users = frappe.get_all("User", filters={"email": ["in", user_emails]}, fields=["email", "full_name"])
 		user_map = {u["email"]: u["full_name"] for u in users}
@@ -189,7 +189,7 @@ def get_project_data(is_active=None):
 				project["completed_on"] = completed_on_map.get(p_name) or getdate(project.get("modified"))
 			else:
 				project["completed_on"] = None
-			
+
 			assignees = assignee_map.get(p_name, [])
 			project["assignees"] = assignees
 			if assignees:
@@ -209,7 +209,7 @@ def create_inline_task(project, subject, parent_task=None):
 	"""Instantly creates a task from the inline 'Quick Add' row."""
 	if not project or not subject:
 		return {"status": "error", "message": "Project and Subject are required."}
-	
+
 	try:
 		if not frappe.has_permission("Project", ptype="write", doc=project):
 			return {"status": "error", "message": "No permission to add tasks to this project."}
@@ -511,7 +511,7 @@ def get_task_children(parent_task):
 	"""Fetches direct children of a task for lazy loading."""
 	if not parent_task:
 		return []
-	
+
 	task_fields = [
 		"name", "subject", "status", "priority", "exp_start_date",
 		"exp_end_date", "progress", "expected_time", "parent_task", "custom_subtask_order",
@@ -536,15 +536,15 @@ def get_task_children(parent_task):
 		child["assigned_to"] = ", ".join([d["full_name"] for d in assignees]) if assignees else ""
 		child["has_children"] = frappe.db.exists("Task", {"parent_task": child["name"]})
 		child["custom_is_recurring"] = child.get("custom_is_recurring") or 0
-		
+
 		# Overdue check
 		child["is_overdue"] = (
-			child.get("exp_end_date") and 
-			getdate(child.get("exp_end_date")) < today and 
+			child.get("exp_end_date") and
+			getdate(child.get("exp_end_date")) < today and
 			(child.get("progress") or 0) < 100 and
 			child.get("status") not in ["Completed", "Canceled"]
 		)
-		
+
 	return children
 
 
@@ -565,11 +565,11 @@ def get_resource_allocation_data(project_name):
 	for task in tasks:
 		if not task.exp_start_date or not task.exp_end_date or not task.expected_time:
 			continue
-		
+
 		assignees = _get_assignee_names("Task", task.name)
 		if not assignees:
 			continue
-			
+
 		start = getdate(task.exp_start_date)
 		end = getdate(task.exp_end_date)
 		duration = (end - start).days + 1
@@ -579,13 +579,13 @@ def get_resource_allocation_data(project_name):
 			name = assignee["full_name"]
 			if name not in allocation:
 				allocation[name] = {}
-			
+
 			curr = start
 			while curr <= end:
 				date_str = curr.strftime("%Y-%m-%d")
 				if date_str not in allocation[name]:
 					allocation[name][date_str] = {"hours": 0, "tasks": []}
-				
+
 				allocation[name][date_str]["hours"] += hours_per_day
 				allocation[name][date_str]["tasks"].append({
 					"id": task.name,
@@ -617,12 +617,12 @@ def get_project_health_metrics(project_name):
 	overdue_tasks = 0
 	high_priority_overdue = 0
 	completed_tasks = 0
-	
+
 	for t in tasks:
 		if t.status == "Completed":
 			completed_tasks += 1
 			continue
-		
+
 		if t.status == "Canceled":
 			continue
 
@@ -1041,7 +1041,7 @@ def _shift_successors(predecessor_name, day_diff, processed=None):
 	"""Recursively shifts dates of all tasks that depend on the given task."""
 	if processed is None:
 		processed = set()
-	
+
 	if predecessor_name in processed:
 		return
 	processed.add(predecessor_name)
@@ -1056,17 +1056,17 @@ def _shift_successors(predecessor_name, day_diff, processed=None):
 	for succ in successors:
 		task_name = succ.parent
 		task_doc = frappe.get_doc("Task", task_name)
-		
+
 		if task_doc.exp_start_date:
 			new_start = getdate(task_doc.exp_start_date) + timedelta(days=day_diff)
 			task_doc.exp_start_date = new_start.strftime("%Y-%m-%d")
-			
+
 		if task_doc.exp_end_date:
 			new_end = getdate(task_doc.exp_end_date) + timedelta(days=day_diff)
 			task_doc.exp_end_date = new_end.strftime("%Y-%m-%d")
-		
+
 		task_doc.save(ignore_permissions=True)
-		
+
 		# Recursive shift for the next level
 		_shift_successors(task_name, day_diff, processed)
 
@@ -1195,10 +1195,10 @@ def get_gantt_tasks_for_project(project_name):
 		# Check if baseline fields exist in Task doctype to avoid DB errors
 		task_meta = frappe.get_meta("Task")
 		fields = [
-			"name", "subject", "exp_start_date", "exp_end_date", 
+			"name", "subject", "exp_start_date", "exp_end_date",
 			"progress", "status", "is_milestone"
 		]
-		
+
 		has_baseline = task_meta.has_field("baseline_start_date") and task_meta.has_field("baseline_end_date")
 		if has_baseline:
 			fields.extend(["baseline_start_date", "baseline_end_date"])
@@ -1235,7 +1235,7 @@ def get_gantt_tasks_for_project(project_name):
 			filters={"reference_type": "Task", "reference_name": ["in", task_names], "status": "Open"},
 			fields=["reference_name", "allocated_to"]
 		)
-		
+
 		user_emails = list({t["allocated_to"] for t in todos if t.get("allocated_to")})
 		user_map = {}
 		if user_emails:
@@ -1262,7 +1262,7 @@ def get_gantt_tasks_for_project(project_name):
 				end_date = start_date + timedelta(days=3)
 
 			task_dependencies = dependency_map.get(task.name, [])
-			
+
 			progress = task.progress or 0
 			custom_class = ""
 			if end_date < today and progress < 100 and task.status not in ["Completed", "Canceled"]:

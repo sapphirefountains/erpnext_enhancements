@@ -136,7 +136,7 @@ def lookup_item(query, limit=10):
 	query = (query or "").strip()
 	if not query:
 		return []
-	like = "%{0}%".format(query)
+	like = f"%{query}%"
 	return frappe.get_all(
 		"Item",
 		filters={"disabled": 0},
@@ -309,7 +309,7 @@ def finalize_session(session):
 	return {
 		"session": _session_payload(doc.name),
 		"stock_reconciliation": sr.name,
-		"reconciliation_url": "/app/stock-reconciliation/{0}".format(sr.name),
+		"reconciliation_url": f"/app/stock-reconciliation/{sr.name}",
 		"rows": len(aggregated),
 	}
 
