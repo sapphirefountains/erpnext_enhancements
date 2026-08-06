@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.250.0] - 2026-08-06
+
+Regroups the **Opportunity** form. Fixtures only — no controller, hook or client-script
+change; every field keeps its data.
+
+### Changed
+
+- **The Opportunity form's field groupings are now logical.** The form had accreted
+  sections in `insert_after` order rather than in any order a salesperson would recognise.
+  The whole layout is rewritten through the `Opportunity-main-field_order` Property Setter,
+  which now enumerates **all 181 fields** instead of the 165 it listed before — the sixteen
+  it omitted (the attribution block, the Drive-folder pair, the Hand-Off Process tab) were
+  being positioned purely by their `insert_after` chains, which is what produced most of the
+  damage below. Each of the app's own Custom Fields had its `insert_after` corrected to agree
+  with the new order, so the two descriptions of the layout can't drift apart again.
+
+  What actually moved, and why each one was wrong:
+
+  - **The header is three columns again.** `custom_attribution_section` — a Section Break —
+    had been inserted *inside the first column* of the header, between "Opportunity Summary"
+    and the Scope/Schedule/Budget Rank trio. A Section Break terminates the section it lands
+    in, so everything after it (the ranks, and the entire Status / Expected Closing /
+    Probability / Territory / Created Project column) was pushed **below** a block of raw UTM
+    data instead of sitting beside the name and owner. Attribution now sits after
+    Organization, and the header reads identity | ownership + ranks | pipeline state.
+    Two fields with the same `insert_after` (`custom_lead_source` and `custom_scope_rank`
+    both claimed `custom_opportunity_summary`) is how the wedge got there; `custom_scope_rank`
+    now follows `custom_lead_source` explicitly.
+  - **Money left the "Analytics" section.** `custom_materials_budget` pointed its
+    `insert_after` at `utm_medium`, which dragged Materials Budget, Estimated Cost, Exchange
+    Rate, Time Budget and the Time & Materials checkbox inside erpnext's UTM analytics
+    section on the **Budget** tab. The Budget tab is now two honest sections: *Opportunity
+    Amount* (amount, currency, company-currency mirror, exchange rate) and *Estimated Cost*
+    (estimated cost, materials budget, time budget, T&M) — the latter finally matching the
+    "Estimated Cost" label it has carried since it held nothing but
+    `base_opportunity_amount`. `column_break_17` is unhidden to give that section its column
+    split.
+  - **The Activities tab was empty.** `open_activities_html` and `all_activities_html` sat at
+    the bottom of the Details tab while the tab literally named "Activities" rendered nothing.
+    Both activity widgets (and the "Tasks and Events" section break) now live under
+    `activities_tab`, which shortens the Details tab considerably.
+  - **Hand-Off Process moved up.** `custom_process_tab` was pinned after the hidden
+    Connections tab, i.e. dead last. It now follows Budget, so the tab strip runs
+    Details · Contacts & Addresses · Scope · Schedule · Budget · Hand-Off Process ·
+    Activities · Comments.
+  - **Lost Reasons only appears on a lost deal.** The section carried no condition while the
+    `order_lost_reason` field inside it already had `eval:doc.status==="Lost"` — so an open
+    opportunity showed an empty "Lost Reasons" heading with a stray Competitors box. The
+    section break now carries the same condition, and sits directly under the header where a
+    status-driven block belongs.
+  - **`more_info` collapses by default**, matching `organization_details_section`. Company,
+    Opportunity Date, Print Language, First Response Time and the two hidden audit fields are
+    reference material, not daily entry.
+  - The hidden legacy "Opportunity Description" block (hidden, and de-`reqd`'d, in v1.34.2;
+    superseded by the Scope tab's General Scope Description) moved from the middle of the
+    Details tab to its end, so the JSON reads in the same order as the form.
+
+  The **Contacts & Addresses** tab is deliberately unchanged: its widgets are code-owned by
+  `setup/custom_fields.py`, which reconciles their `insert_after` on every migrate, and
+  fighting it from a fixture would produce a layout that flips on each deploy.
+
+- **erpnext's own `utm_source` / `utm_medium` / `utm_campaign` / `utm_content` are hidden on
+  Opportunity.** They were visible in a section labelled "Analytics" directly beside our
+  `custom_utm_*` capture fields, which is an invitation to type into them — and per the
+  v1.241.0 schema decision, writing a campaign name into `utm_source` silently starts
+  duplicating Contacts (`Lead.before_insert` suppresses its stray Contact only when
+  `utm_source == "Existing Customer"`), while `utm_medium` and `utm_campaign` are **Links**
+  that spawn junk taxonomy rows. Measured on production before the change: `utm_source` was
+  set on 1 of 816 opportunities and `utm_campaign` on 0, against `custom_lead_source` on 814.
+  Hidden by Property Setter rather than removed — the fields, their data and their propagation
+  path are untouched, and they are parked in the field order immediately after our Attribution
+  section so unhiding one puts it somewhere sensible. Lead and Customer are not affected;
+  Property Setters are per-doctype.
+
+### Notes
+
+Applies on `bench migrate` (fixture sync re-asserts `custom_field.json` and
+`property_setter.json`). No patch is needed — nothing is deleted, and the already-executed
+`ensure_opportunity_handoff_fields` backstop still hardcodes `insert_after: dashboard_tab`
+for the Hand-Off tab, which is harmless: patches run *before* fixture sync, so the fixtures
+have the last word on a fresh site.
+
+Two pre-existing oddities were left alone rather than guessed at, because both are data
+decisions rather than layout ones: `custom_contacts__address_table` is a `Project
+Stakeholder` child table labelled just **"Table"**, visible at the bottom of the Contacts &
+Addresses tab with 33 rows on production; and `custom_estimated_cost` stays hidden inside the
+section named after it (it is written by hand nowhere and copied to the Project's
+`custom_project_cost` on hand-off).
+
 ## [1.249.0] - 2026-08-05
 
 Adds an **Offsite Backup** module: Frappe's own backups, pushed to a Google Drive Shared
