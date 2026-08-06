@@ -190,6 +190,13 @@ deliberately small, and consulted only to fill a **blank**.
 Fields we ship that erpnext has no equivalent for: `custom_utm_term`, `custom_gclid`,
 `custom_landing_page`, `custom_first_referrer`, `custom_attribution_captured_on`.
 
+Because those four erpnext fields are never written, showing them alongside ours was an
+invitation to type into them — and typing into `utm_medium`/`utm_campaign` is exactly the
+junk-taxonomy hazard above. On **Opportunity** the `utm_analytics_section` and its four
+fields are therefore hidden by property setter (v1.250.0), parked in the field order
+immediately after our own Attribution section so unhiding one puts it back in a sensible
+place. The fields and their data path are untouched.
+
 ### First touch wins
 
 `attribution._fill_blanks` is the **only** function that writes attribution onto a document,
