@@ -132,9 +132,52 @@ easiest path, make skipping visible instead of silent, and make lateness loud.
 - `handoff_invoice_flow` defaults to **Manual Billing Email**. ERPNext is not the
   accounting system yet, so the compliant step 4 action is still a note to Billing; the
   setting switches it to a draft Sales Invoice when invoicing goes live, without a deploy.
-- The site's `handoff_holiday_list` currently points at *"Utah, USA Holidays 2025"*, so
-  2026 business-day maths skips weekends only. That is a Settings value, not code, and is
-  left for the team to update.
+- **The business-day maths currently skips weekends only.** `handoff_holiday_list` points
+  at *"Utah, USA Holidays 2025"*, which is the site's **only** Holiday List and spans
+  `2025-01-01`–`2025-12-31` with nothing in 2026 — so there is no correct list to
+  re-point it at; a 2026 one has to be created. Because a holiday not skipped is consumed
+  as a working day, every 2026 due date lands *earlier* than the agreed SLA. This is data,
+  not code, and it affects `process_steps._refresh_due` for all step due dates, not just
+  the new hand-off SLAs. Tracked as TASK-2026-01242 on PRJ-00580.
+
+## [1.250.1] - 2026-08-06
+
+### Fixed
+
+- **The marketing data-source alert had never fired.**
+  `kpi_dashboards/snapshots.py` used `_()` in five places inside
+  `_alert_on_source_change` but never imported it — the module had `import frappe` and
+  `from frappe.utils import …` and no `from frappe import _`. Every call raised
+  `NameError`.
+
+  What made it invisible rather than loud is the function's own guard. Its whole body is
+  wrapped in `except Exception: frappe.log_error(...)`, which is correct and stays —
+  a notification problem must not cost the nightly snapshot it runs at the head of. But
+  it meant the `NameError` was caught and written to the Error Log under the title
+  *"KPI marketing web — source alert"*, which reads as **the alerting broke**, not
+  **the data source broke**. So a dead GA4 or Search Console feed produced no
+  notification, and the one thing standing between a stale marketing figure and somebody
+  reading it as real had never once run. In the function's own words: *"a zero looks like
+  a real number on a dashboard."*
+
+  Found by reading the advisory ruff job's output on an unrelated PR rather than by
+  anything going wrong, which is the point — the symptom of this bug was the absence of
+  a symptom.
+
+### Added
+
+- **`No undefined names (F821)` is now a hard CI gate**, carved out as its own job from
+  the advisory `Lint (ruff, advisory)`. F821 is not style: an undefined name is a runtime
+  `NameError`, and this app deliberately swallows exceptions in exactly the places one is
+  most likely to bite — scheduler jobs, `doc_events`, notification helpers — so it
+  surfaces as silence rather than a stack trace. One rule only; the wider 433-finding
+  style backlog stays advisory and untouched. Currently passes at zero violations.
+
+- `tests/test_kpi_source_alert.py` (bench-free, own CI step). The static gate catches the
+  class; this pins the behaviour the class was hiding. Its load-bearing assertions are
+  "a failing source notifies somebody" and "no Error Log row is written" — before the
+  fix, both were exactly inverted. Verified to fail (6 failures + 1 error) with the
+  import removed.
 
 ## [1.250.0] - 2026-08-06
 

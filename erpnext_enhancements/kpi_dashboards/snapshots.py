@@ -21,6 +21,7 @@ convention) and ``kpi_snapshot_retention_days``.
 import json
 
 import frappe
+from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, getdate, now_datetime, nowdate
 
 from erpnext_enhancements.kpi_dashboards import metrics
@@ -1509,6 +1510,17 @@ def _alert_on_source_change(ga4_ok, gsc_ok, errors):
 
 	Never raises: this runs at the head of the nightly batch, and a notification
 	problem must not cost the snapshot.
+
+	That swallow-everything guard is also why this function was silently dead
+	from the day it was written until v1.250.1: the module imported ``frappe``
+	but not ``_``, so every ``_(...)`` below raised ``NameError``, the ``except``
+	caught it, and the only trace was an Error Log row reading "KPI marketing web
+	— source alert" — which looks like the *alerting* broke, not the data source.
+	So the one notification that exists to stop a stale marketing number being
+	read as a real one had never fired. Keep the guard; it is correct. But note
+	that a bare ``except Exception`` around user-facing message construction turns
+	a NameError into silence, and F821 is a hard CI gate now precisely because of
+	this.
 	"""
 	try:
 		current = {"ga4": bool(ga4_ok), "gsc": bool(gsc_ok)}
