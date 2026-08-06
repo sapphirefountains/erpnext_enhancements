@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.253.1] - 2026-08-06
+
+### Fixed
+
+- **CI ran the entire workflow twice on every PR commit, and the two runs cancelled
+  each other into false red X's.**
+
+  `on:` listed a bare `push:` alongside `pull_request:`, so each commit on a PR branch
+  fired the workflow twice. The two events carry different `github.ref` values
+  (`refs/heads/<branch>` vs `refs/pull/<n>/merge`), so the concurrency group — keyed on
+  `github.ref` — put them in *different* groups and deduplicated neither. Four jobs
+  became eight, competing for runners on every push.
+
+  That was merely wasteful until a GitHub Actions capacity incident on 2026-08-06 made
+  it expensive. The doubled demand met a starved queue, `cancel-in-progress` cancelled
+  the losers, and **a cancelled job makes its whole run report `failure`** — so PRs
+  showed red X's for jobs that had never executed, on commits with nothing wrong at all.
+  Both #728 and #729 carried those marks while being entirely healthy.
+
+  `push` is now scoped to `main`, which keeps CI on the deploy branch without re-running
+  the same commit twice; every branch here merges via a PR, so the `pull_request` run is
+  the one that matters. The concurrency group now keys on the PR number, so cancellation
+  means what it should — a newer commit superseding an older run for the same PR —
+  rather than two events racing over one commit.
+
+  Trade-off, stated plainly: a branch pushed with **no open PR** now gets no CI until
+  the PR is opened.
+
+  The deeper reason this was worth fixing is not the wasted minutes. A red X that means
+  "a duplicate got cancelled" trains people to skim past red X's, which is the same rot
+  as an advisory lint job nobody reads. CI signals are only worth having if a red one
+  means something.
+
 ## [1.253.0] - 2026-08-06
 
 ### Added
