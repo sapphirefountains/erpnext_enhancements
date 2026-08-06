@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.251.1] - 2026-08-06
+
+### Fixed
+
+- **Labor Budget Utilization read roughly 3600x high.** `_production_metrics` computed the
+  KPI as `sum(custom_total_time_elapsed) / sum(custom_time_budget_in_hours) * 100` in a single
+  SQL statement. The two fields do not share a unit:
+
+  | Field | Fieldtype | Actually holds |
+  |---|---|---|
+  | `custom_total_time_elapsed` | Duration | **seconds** |
+  | `custom_time_budget_in_hours` | Data | free text, nominally **hours** |
+
+  So a project 60% through its hours budget reported about 217,000%. On PRJ-00580 alone the
+  elapsed figure is 23.8M — 6,616 hours — being divided as though it were already hours.
+
+  What kept it invisible for so long is that **this KPI has no `KPI Target`**. Grading in
+  `metrics.py` only produces Good/Watch/Bad when a target exists, so the number rendered as a
+  plain grey figure with nothing next to it to contradict it. A wrong number that is never
+  graded is never argued with.
+
+  Summing in SQL had a second, quieter problem: `custom_time_budget_in_hours` is a varchar, so
+  MySQL coerced it, and a budget of `"n/a"` became `0` without a warning. Both sides are now
+  parsed in Python with `flt()`, and a project whose budget text does not parse to a positive
+  number is excluded from **both** sums — dropping it from the numerator only would re-inflate
+  the ratio in a subtler way.
+
+  `api/production_dashboard.py::get_hours_variance` (added in 1.251.0) already converted, so
+  the widget and the KPI above it now agree. `tests/test_dashboard_widgets.py` fails if either
+  side drops the conversion, if the two columns are ever summed against each other in SQL
+  again, or if either side stops skipping unparseable budgets. All three tests were confirmed
+  to fail against the pre-fix code.
+
+  **The number will drop sharply on the next nightly run.** That is the fix landing, not a
+  collapse in productivity.
+
 ## [1.251.0] - 2026-08-06
 
 ### Added
@@ -75,8 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by 3600 before comparing, and skips a project whose budget text does not parse to a
   positive number rather than ranking it as an infinite overrun. `_production_metrics`'s
   `labor_budget_utilization` KPI in `kpi_dashboards/snapshots.py` divides the seconds sum by
-  the hours sum directly and is left untouched here — changing a published KPI's value is not
-  a docs-adjacent change, and it wants its own decision.
+  the hours sum directly and is left untouched *in this release* — changing a published KPI's
+  value is not a docs-adjacent change. It is fixed in 1.251.1 below.
 
 ## [1.250.1] - 2026-08-06
 

@@ -237,5 +237,75 @@ class MarketingAttributionColumn(unittest.TestCase):
 		self.assertIn("from erpnext_enhancements.crm_enhancements.attribution import", source)
 
 
+class ProjectHoursUnits(unittest.TestCase):
+	"""Elapsed project time is stored in seconds; the budget is stored in hours.
+
+	``Project.custom_total_time_elapsed`` is a **Duration** field (seconds) and
+	``Project.custom_time_budget_in_hours`` is a **Data** field holding hours.
+	Comparing them without converting reads ~3600x high, which is what the
+	``labor_budget_utilization`` KPI did until v1.251.1.
+
+	It survived because the KPI has no target: with no target there is no
+	Good/Watch/Bad grading, so an absurd percentage rendered as a plain grey
+	number with nothing to contradict it. Both the KPI and the Hours vs Budget
+	widget now convert, and they must keep agreeing — a widget that disagrees with
+	the number above it is worse than no widget.
+	"""
+
+	SNAPSHOTS = APP / "kpi_dashboards" / "snapshots.py"
+	WIDGET = APP / "api" / "production_dashboard.py"
+
+	def test_the_kpi_does_not_sum_the_two_fields_against_each_other_in_sql(self):
+		"""The original bug, exactly: one SQL statement summing both columns.
+
+		Summing in SQL also leaned on MySQL coercing the Data column to a number,
+		which reads "n/a" as 0 without complaint.
+		"""
+		blob = "\n".join(MarketingAttributionColumn._code_strings(self.SNAPSHOTS)).lower()
+		blob = blob.replace(" ", "")
+		self.assertFalse(
+			"sum(custom_total_time_elapsed)" in blob and "sum(custom_time_budget_in_hours)" in blob,
+			"labor_budget_utilization is summing seconds against hours in SQL again",
+		)
+
+	# The value must be divided on the spot, in the same expression that reads it.
+	CONVERSION = re.compile(r"custom_total_time_elapsed\s*\)?\s*/\s*(?:3600|SECONDS_PER_HOUR)")
+
+	def test_both_the_kpi_and_the_widget_convert_seconds_to_hours(self):
+		for path in (self.SNAPSHOTS, self.WIDGET):
+			with self.subTest(path=path.name):
+				text = path.read_text(encoding="utf-8")
+				self.assertIn("custom_total_time_elapsed", text)
+				self.assertRegex(
+					text,
+					self.CONVERSION,
+					f"{path.name} reads elapsed seconds without dividing them into hours",
+				)
+
+	@staticmethod
+	def _function_source(path, name):
+		tree = ast.parse(path.read_text(encoding="utf-8"))
+		for node in ast.walk(tree):
+			if isinstance(node, ast.FunctionDef) and node.name == name:
+				return ast.unparse(node)
+		raise AssertionError(f"{name} not found in {path}")
+
+	def test_an_unparseable_budget_is_excluded_from_both_sides(self):
+		"""Dropping a project from the numerator but not the denominator (or the
+		reverse) re-introduces the same inflation, just more subtly.
+
+		Scoped to the two functions that compute the ratio, so an unrelated
+		``continue`` elsewhere in either file cannot satisfy this.
+		"""
+		for path, function in ((self.SNAPSHOTS, "_production_metrics"), (self.WIDGET, "get_hours_variance")):
+			with self.subTest(function=function):
+				body = self._function_source(path, function)
+				self.assertRegex(
+					body,
+					r"if budget <= 0:\s*\n\s*continue",
+					f"{function} does not skip a project whose budget text will not parse",
+				)
+
+
 if __name__ == "__main__":
 	unittest.main()
