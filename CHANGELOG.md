@@ -7,43 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.251.1] - 2026-08-06
-
-### Fixed
-
-- **Labor Budget Utilization read roughly 3600x high.** `_production_metrics` computed the
-  KPI as `sum(custom_total_time_elapsed) / sum(custom_time_budget_in_hours) * 100` in a single
-  SQL statement. The two fields do not share a unit:
-
-  | Field | Fieldtype | Actually holds |
-  |---|---|---|
-  | `custom_total_time_elapsed` | Duration | **seconds** |
-  | `custom_time_budget_in_hours` | Data | free text, nominally **hours** |
-
-  So a project 60% through its hours budget reported about 217,000%. On PRJ-00580 alone the
-  elapsed figure is 23.8M — 6,616 hours — being divided as though it were already hours.
-
-  What kept it invisible for so long is that **this KPI has no `KPI Target`**. Grading in
-  `metrics.py` only produces Good/Watch/Bad when a target exists, so the number rendered as a
-  plain grey figure with nothing next to it to contradict it. A wrong number that is never
-  graded is never argued with.
-
-  Summing in SQL had a second, quieter problem: `custom_time_budget_in_hours` is a varchar, so
-  MySQL coerced it, and a budget of `"n/a"` became `0` without a warning. Both sides are now
-  parsed in Python with `flt()`, and a project whose budget text does not parse to a positive
-  number is excluded from **both** sums — dropping it from the numerator only would re-inflate
-  the ratio in a subtler way.
-
-  `api/production_dashboard.py::get_hours_variance` (added in 1.251.0) already converted, so
-  the widget and the KPI above it now agree. `tests/test_dashboard_widgets.py` fails if either
-  side drops the conversion, if the two columns are ever summed against each other in SQL
-  again, or if either side stops skipping unparseable budgets. All three tests were confirmed
-  to fail against the pre-fix code.
-
-  **The number will drop sharply on the next nightly run.** That is the fix landing, not a
-  collapse in productivity.
-
-## [1.251.0] - 2026-08-06
+## [1.252.0] - 2026-08-06
 
 ### Added
 
@@ -112,7 +76,192 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positive number rather than ranking it as an infinite overrun. `_production_metrics`'s
   `labor_budget_utilization` KPI in `kpi_dashboards/snapshots.py` divides the seconds sum by
   the hours sum directly and is left untouched *in this release* — changing a published KPI's
-  value is not a docs-adjacent change. It is fixed in 1.251.1 below.
+  value is not a docs-adjacent change. It is fixed under ### Fixed below, in this same release.
+
+### Fixed
+
+- **Labor Budget Utilization read roughly 3600x high.** `_production_metrics` computed the
+  KPI as `sum(custom_total_time_elapsed) / sum(custom_time_budget_in_hours) * 100` in a single
+  SQL statement. The two fields do not share a unit:
+
+  | Field | Fieldtype | Actually holds |
+  |---|---|---|
+  | `custom_total_time_elapsed` | Duration | **seconds** |
+  | `custom_time_budget_in_hours` | Data | free text, nominally **hours** |
+
+  So a project 60% through its hours budget reported about 217,000%. On PRJ-00580 alone the
+  elapsed figure is 23.8M — 6,616 hours — being divided as though it were already hours.
+
+  What kept it invisible for so long is that **this KPI has no `KPI Target`**. Grading in
+  `metrics.py` only produces Good/Watch/Bad when a target exists, so the number rendered as a
+  plain grey figure with nothing next to it to contradict it. A wrong number that is never
+  graded is never argued with.
+
+  Summing in SQL had a second, quieter problem: `custom_time_budget_in_hours` is a varchar, so
+  MySQL coerced it, and a budget of `"n/a"` became `0` without a warning. Both sides are now
+  parsed in Python with `flt()`, and a project whose budget text does not parse to a positive
+  number is excluded from **both** sums — dropping it from the numerator only would re-inflate
+  the ratio in a subtler way.
+
+  `api/production_dashboard.py::get_hours_variance` (added above in this release) already converted, so
+  the widget and the KPI above it now agree. `tests/test_dashboard_widgets.py` fails if either
+  side drops the conversion, if the two columns are ever summed against each other in SQL
+  again, or if either side stops skipping unparseable budgets. All three tests were confirmed
+  to fail against the pre-fix code.
+
+  **The number will drop sharply on the next nightly run.** That is the fix landing, not a
+  collapse in productivity.
+
+## [1.251.0] - 2026-08-06
+
+Moves the Closed-Won hand-off **in front of** project creation, and turns the hand-off
+steps from things you tick into things that do the work.
+
+A process-compliance audit on 2026-08-06 measured the existing tracker: anchored
+(automatic) steps 1/3/5 completed **100%** of the time, manual steps **5%**; **17 of 17**
+pending hand-off meetings were past SLA; **8 of 28** new projects had been created outside
+the process path entirely. None of that surfaced anywhere until somebody went looking.
+
+The cause was structural rather than behavioural. The 7-step tracker lived on the
+**Project**, so step 2 — *Hold Hand-Off Meeting* — only existed once the project had been
+created. The step meant to gate project creation sat downstream of it. This release
+reverts the June decision that permitted project-first creation.
+
+Three design intents from the meeting, applied throughout: make the compliant path the
+easiest path, make skipping visible instead of silent, and make lateness loud.
+
+### Added
+
+- **The hand-off gate ([`crm_enhancements/handoff.py`](erpnext_enhancements/crm_enhancements/handoff.py)).**
+  A Project cannot be created from a Closed-Won Opportunity until its hand-off meeting is
+  recorded. Nine new Opportunity Custom Fields hold that state.
+
+  **The enforcement is on `Project.before_insert`, and that is not a stylistic choice.**
+  The obvious home is `validate` — but `crm_enhancements/api.py`'s
+  `create_project_from_opportunity_background` sets `flags.ignore_validate = True` before
+  inserting, and Frappe's `run_before_save_methods()` returns early on that flag. A
+  `validate` gate would have passed review and then silently never fired on the path that
+  creates most projects. `before_insert` survives both `ignore_validate` and
+  `ignore_permissions`, which is the coverage the audit's eight off-process projects
+  actually need. `make_project` and the background job refuse as well, but only so the
+  message arrives somewhere readable; `before_insert` is the authority.
+
+  **The gate keys on a flag, not a date.** `custom_handoff_gate_applies` is set only on a
+  genuine *transition* into Closed Won. A date comparison would have been unsafe:
+  `stamp_won_date` fills a blank `custom_date_closed_won` on **any** Closed-Won save, so
+  merely re-saving one of the 227 already-won opportunities would have dragged it into the
+  gate. That backlog is deliberately exempt (WI-024 owns it) and a patch stamps the
+  exemption explicitly, so it is a fact the report can count rather than an absence nobody
+  decided.
+
+  **Skipping is allowed; silence is not.** `skip_handoff` is System Manager only and
+  requires a written reason, which lands on the record and on the Project's step 2 row
+  prefixed `[SKIPPED]` — so it reads as a skip in the tracker and the compliance report,
+  never as a completion.
+
+- **Buttons that do the step, not just record it.** On a Closed-Won Opportunity, *Hold
+  Hand-Off Meeting* opens a dialog prefilled with Sales, Production and Billing, proposes
+  the next business-day slot (15 minutes), then creates a Frappe `Event` and emails the
+  invite; afterwards it becomes *Mark Hand-Off Complete*. On the Project, the current step
+  carries an inline action: step 4 opens a billing email, step 6 the task list, step 7 the
+  same meeting scheduler. Attendees are configured in **ERPNext Enhancements Settings →
+  Hand-Off Attendee Roles** (explicit address, or the holders of a Role), so changing who
+  attends is never a deploy.
+
+  Two things about `Event` are worth recording. Its `Event Participants` child marks
+  *both* reference fields `reqd` — `email` is only an optional extra — so a group address
+  like `production@` cannot be expressed as a participant row at all; those attendees get
+  the invite email, which is the part that has to work. And `Event` on this site grants
+  create to System Manager and Finance Team only, so a Sales user cannot insert one under
+  their own permissions: the endpoint checks **Opportunity write** and then inserts with
+  `ignore_permissions`. The calendar attachment reuses `travel_management/ics.py`, which
+  implements `METHOD:PUBLISH` only — an "add to calendar" file, not an RSVP-tracking
+  invite.
+
+- **Hand-Off SLA Compliance** Script Report, plus a Friday-morning email to a configurable
+  recipient list (`"30 7 * * 5"` — a cron entry because Frappe's `weekly` bucket cannot
+  pin a weekday). Reports on-time % per role and per step, the overdue list with days
+  over, and the 7-business-day Closed-Won→Launch metric. Steps whose `due_by` never
+  started get their own bucket rather than being counted as overdue: they are blocked
+  upstream, not late, and merging the two would overstate lateness while hiding a stall.
+
+- **`Hand-Off Attendee Role`** child DocType, and Settings fields `handoff_gate_enabled`,
+  `handoff_invoice_flow`, `handoff_escalation_fallback`, `handoff_attendees`,
+  `handoff_report_recipients`.
+
+### Changed
+
+- **The finance hand-off role is now "Finance & Accounting Manager"**, renamed from
+  "Accounts Receivable" on both **Process Step Template** and **Project Process Step**
+  (steps 4 and 5), on the Hand-Off SLA Compliance report's role filter, and on the
+  Settings label.
+
+  `responsible_role` is a Select whose value is *stored on every row*, not looked up, so
+  the rename ships with `patches.rename_handoff_ar_role` to migrate the 132 existing rows
+  (2 templates + 130 project steps). Without that migration the change would fail in
+  three places at once and none of them would raise: Frappe renders a Select whose stored
+  value is not among its options as **blank**, the report's role filter stops matching
+  those rows, and `process_steps._resolve_responsible` — which compares the stored string
+  against `ROLE_AR` — stops resolving a recipient, so the finance steps quietly stop
+  notifying anybody.
+
+  The Settings *fieldname* stays `handoff_ar_rep` on purpose. Renaming a Single's field
+  would orphan the Employee already configured there for no benefit, so only the label
+  moved.
+
+- **Step 2's SLA anchors on the Opportunity.** Marking a deal Closed Won now stamps
+  `custom_handoff_due_by` (2 business days) and `custom_launch_deadline` (7 business
+  days) alongside the existing won-date stamp. Both are stored rather than recomputed, so
+  a later edit to the Holiday List cannot silently move a deadline already reported on.
+  Like `custom_stage_changed_on`, these stamps are deliberately **not** gated on the
+  feature flag — `feature_flags.py` documents why silent data stamps stay ungated: the
+  data has to already be meaningful on the day somebody flips a switch.
+
+- **Step 7 shows two clocks.** Its own SLA *and* the 7-business-day launch goal. A step
+  can be perfectly on time against the step before it and still miss the launch goal,
+  because the goal measures the whole chain — the disagreement between them is the signal,
+  so neither is derivable from the other and both are displayed.
+
+- **Overdue steps escalate to the responsible person *and* their manager**, daily while
+  they stay late, by email as well as Notification Log, with a subject line carrying the
+  customer, the step and the days overdue. Manager resolution uses `Employee.reports_to`
+  (populated on 13 of 15 active employees) with a configurable fallback address for the
+  rest — "my manager isn't set up" must not mean "nobody hears about this".
+  `status_alerts._deliver` gained an opt-in `email` parameter; every existing caller keeps
+  behaving exactly as before.
+
+- **Step 5 (Receive Customer Payment) no longer escalates.** When a customer pays is not
+  something anyone here can be nagged into fixing, and a daily email about it teaches
+  people to filter these messages — which costs us the steps that *are* ours. Step 4,
+  sending the invoice, stays in.
+
+- **A new sweep chases step 2 on the Opportunity.** The existing escalation queries
+  `Project Process Step`, and step 2 now happens before any such row exists — without
+  this the one step this release is about would be the one step nobody chases.
+
+- **Manual completions go through whitelisted `process_steps.complete_step`**, which
+  stamps `completed_on`/`completed_by` from the server clock and session and checks the
+  step's responsible role. The old client path
+  (`frappe.model.set_value(row, "status", "Completed")` then `frm.save()`) let the browser
+  propose `completed_on`; the audit found retroactive box-checking.
+
+- **Step 2 completion carries across into the Project.** When the project is finally
+  created, the step 2 row inherits the real timestamp and user from the Opportunity rather
+  than being stamped complete at creation time — otherwise project-side reporting would
+  record every hand-off as instantaneous.
+
+### Notes
+
+- `handoff_invoice_flow` defaults to **Manual Billing Email**. ERPNext is not the
+  accounting system yet, so the compliant step 4 action is still a note to Billing; the
+  setting switches it to a draft Sales Invoice when invoicing goes live, without a deploy.
+- **The business-day maths currently skips weekends only.** `handoff_holiday_list` points
+  at *"Utah, USA Holidays 2025"*, which is the site's **only** Holiday List and spans
+  `2025-01-01`–`2025-12-31` with nothing in 2026 — so there is no correct list to
+  re-point it at; a 2026 one has to be created. Because a holiday not skipped is consumed
+  as a working day, every 2026 due date lands *earlier* than the agreed SLA. This is data,
+  not code, and it affects `process_steps._refresh_due` for all step due dates, not just
+  the new hand-off SLAs. Tracked as TASK-2026-01242 on PRJ-00580.
 
 ## [1.250.1] - 2026-08-06
 

@@ -612,7 +612,7 @@ def _production_metrics():
 			)
 	if has("Project", "custom_time_budget_in_hours") and has("Project", "custom_total_time_elapsed"):
 		# The two fields disagree about units, and this KPI read ~3600x high until
-		# v1.251.1 because of it:
+		# v1.252.0 because of it:
 		#
 		#   custom_total_time_elapsed  — Duration  -> SECONDS
 		#   custom_time_budget_in_hours — Data     -> free text, nominally hours

@@ -331,6 +331,29 @@ def contract_esign_enabled():
 	)
 
 
+def handoff_gate_enabled():
+	"""True when a Project may not be created before the hand-off is recorded.
+
+	Default ON — unlike most flags here, because this one exists to *close* a
+	compliance hole the 2026-08-06 audit measured (8 of 28 projects created off
+	the process path), and shipping it dormant would leave the hole open.
+	:func:`process_automation_enabled` is still the outer switch: turning the
+	suite off turns the gate off with it, so an operator killing the hand-off UI
+	can never end up with project creation blocked and no UI explaining why.
+
+	Missing-field-safe for the same reason as the e-sign flags above: v16's
+	``db.get_single_value`` throws when the field is not yet in the Settings meta
+	(new code live before migrate has synced the doctype). Treated as ON in that
+	window only if the field is genuinely absent would be wrong — a gate nobody
+	can satisfy — so it is treated as OFF until the schema lands.
+	"""
+	if not frappe.get_meta("ERPNext Enhancements Settings").has_field("handoff_gate_enabled"):
+		return False
+	return bool(
+		cint(frappe.db.get_single_value("ERPNext Enhancements Settings", "handoff_gate_enabled"))
+	)
+
+
 def contract_esign_public_page_enabled():
 	"""True when the guest signing page at ``/contract-sign`` is published.
 

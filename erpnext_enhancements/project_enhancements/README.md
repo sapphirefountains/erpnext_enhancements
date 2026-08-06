@@ -43,23 +43,62 @@ the "Hand-Off Process" tab with a progress bar rendered by
 `public/js/project_enhancements/process_steps.js`). The engine itself is the top-level
 module [`process_steps.py`](../process_steps.py):
 
+- **The gate (2026-08-06)** — step 2, *Hold Hand-Off Meeting*, is recorded on the
+  **Opportunity**, and a Project cannot be created from a Closed-Won Opportunity until
+  it is. This reverts the June decision that allowed project-first creation: the tracker
+  lived on the Project, so the step meant to gate project creation only existed after it,
+  and the August audit found manual steps completing 5% of the time against 100% for the
+  automated ones. Enforcement is `process_steps.enforce_handoff_gate` on Project
+  `before_insert` — **not `validate`**, because `create_project_from_opportunity_background`
+  sets `flags.ignore_validate`, so a `validate` hook never fires on the app's own creation
+  path. `make_project` and the background creator refuse too, for a readable message.
+  See [`crm_enhancements/handoff.py`](../crm_enhancements/handoff.py).
+  Only deals that *transition* into Closed Won after this shipped are gated
+  (`custom_handoff_gate_applies`); the pre-existing backlog is exempt (WI-024 owns it).
+  A System Manager can skip with a mandatory reason, stored on the record and carried
+  onto the step row prefixed `[SKIPPED]` — skipping is allowed, silence is not.
 - **Seeding** — `before_insert` on Project copies enabled templates when the project
   has a `custom_opportunity`; steps anchored *Opportunity Won* / *Project Created*
-  retro-complete. In-flight projects are never back-filled (Jun 9 meeting decision);
-  they opt in via the form button → whitelisted `start_process`.
+  retro-complete, and step 2 carries its real who/when across from the Opportunity so
+  project-side reporting measures the hand-off that happened rather than stamping it
+  complete at creation time. In-flight projects are never back-filled (Jun 9 meeting
+  decision); they opt in via the form button → whitelisted `start_process`.
 - **Anchors** — a *Payment Received* anchor completes its step when
   `custom_payment_received` is ticked (runs after `status_alerts.stamp_payment_received_date`
   in the `before_save` chain — order matters).
+- **Completion** — manual steps complete through whitelisted `process_steps.complete_step`,
+  which stamps `completed_on`/`completed_by` from the **server** clock and session and
+  checks the step's responsible role. The old client path let the browser propose
+  `completed_on`; the audit found retroactive box-checking.
+- **Actions** — the current step carries a button that starts the work, not just one that
+  records it: step 4 opens a billing email (or a draft Sales Invoice, per the
+  `handoff_invoice_flow` setting — ERPNext is not the accounting system yet), step 6 the
+  task list, step 7 the meeting scheduler shared with step 2
+  (`public/js/crm_enhancements/handoff_meeting_dialog.js`).
 - **Notifications** — completing a step notifies the *new* current step's responsible
   person (SMS + Notification Log via `status_alerts._deliver`); the last completion
   posts a "process complete" comment instead. Roles resolve per project at send time:
   PM → `custom_project_owner`, AE → source Opportunity's `opportunity_owner`,
-  AR → `handoff_ar_rep` in ERPNext Enhancements Settings.
-- **Escalation** — daily scheduler nags the current step's owner once it's past
-  `due_by` (now + SLA hours when the step became current), max once/day per step.
+  Finance & Accounting Manager → `handoff_ar_rep` in ERPNext Enhancements Settings
+  (renamed from "Accounts Receivable" in v1.251.0; the *fieldname* deliberately keeps
+  its old spelling, so the configured Employee survives the rename — only the label and
+  the stored `responsible_role` values moved, via `patches.rename_handoff_ar_role`).
+- **Escalation** — daily scheduler nags the current step's owner **and their manager**
+  (`Employee.reports_to`, falling back to `handoff_escalation_fallback`) once it's past
+  `due_by`, by email as well as in-app, repeating daily while late (max once/day per step).
+  Step 5 is excluded — when a customer pays is not ours. `escalate_overdue_handoffs` does
+  the same for step 2 while it still lives on the Opportunity with no project row to find.
+- **SLAs** — step 2 is due 2 business days from Closed Won, stamped on the transition
+  (`custom_handoff_due_by`); `custom_launch_deadline` carries the meeting's headline goal
+  of launching within 7 business days of Closed Won, shown alongside step 7's own SLA
+  because a step can be on time and still miss the launch goal. Steps 4 and 6 keep the
+  chain rule (the clock starts when the prior step completes).
 - **Visibility** — the Sales Pipeline board (`crm_enhancements/page/sales_pipeline/`)
   shows a "Hand-off in progress" rail of active projects with their current step,
-  overdue ones glowing first.
+  overdue ones glowing first. The **Hand-Off SLA Compliance** Script Report
+  (`report/handoff_sla_compliance/`) reports on-time % per role and per step, the overdue
+  list, steps blocked upstream, and the 7-business-day launch metric; it is emailed
+  Friday mornings to `handoff_report_recipients`.
 
 ## Contract generation (Phase 4, v1.5.0)
 

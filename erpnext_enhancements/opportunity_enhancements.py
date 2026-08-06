@@ -25,6 +25,8 @@ hand-off process engine (``process_steps.seed_process_steps``).
 import frappe
 from erpnext.crm.doctype.opportunity.opportunity import make_project as original_make_project
 
+from erpnext_enhancements.crm_enhancements.handoff import throw_if_handoff_missing
+
 
 @frappe.whitelist()
 def make_project(source_name, target_doc=None):
@@ -42,7 +44,18 @@ def make_project(source_name, target_doc=None):
 	Returns:
 	    Document: The mapped Project document (not yet saved) with
 	    ``custom_opportunity`` populated.
+
+	Raises:
+	    frappe.ValidationError: When the source Opportunity is Closed Won and its
+	        hand-off meeting has not been recorded (or skipped with a reason).
+	        This is the *second* of three enforcement layers — the authoritative
+	        one is ``process_steps.enforce_handoff_gate`` on Project
+	        ``before_insert``. Refusing here as well means the desk
+	        "Create > Project" action fails immediately with a readable message,
+	        instead of building the whole mapped document and then dying at insert.
 	"""
+	throw_if_handoff_missing(source_name)
+
 	target = original_make_project(source_name, target_doc)
 
 	target.custom_opportunity = source_name

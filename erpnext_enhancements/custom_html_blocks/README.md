@@ -61,7 +61,7 @@ block on Home (`patches.place_desk_shortcuts_on_home`, idempotent) — no manual
 step, unlike the other blocks. Add more tools later by creating an **Enhancement Desk
 Shortcut** row (no code change).
 
-## Files — Department Dashboard widgets (v1.251.0)
+## Files — Department Dashboard widgets (v1.252.0)
 
 Each of the nine department dashboards under `kpi_dashboards/workspace/` used to carry a
 single block: the KPI Cockpit. Finance was the exception, with six operational widgets.

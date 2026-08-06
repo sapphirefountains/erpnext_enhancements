@@ -243,7 +243,7 @@ class ProjectHoursUnits(unittest.TestCase):
 	``Project.custom_total_time_elapsed`` is a **Duration** field (seconds) and
 	``Project.custom_time_budget_in_hours`` is a **Data** field holding hours.
 	Comparing them without converting reads ~3600x high, which is what the
-	``labor_budget_utilization`` KPI did until v1.251.1.
+	``labor_budget_utilization`` KPI did until v1.252.0.
 
 	It survived because the KPI has no target: with no target there is no
 	Good/Watch/Bad grading, so an absurd percentage rendered as a plain grey
