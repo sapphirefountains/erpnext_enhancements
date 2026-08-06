@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.253.0] - 2026-08-06
+
+### Added
+
+- **Project Priority now ranks 1–30 instead of 1–10.** The `custom_project_priority` Select on
+  **Project** offered ranks 1–10 while its sibling `custom_company_priority` already offered
+  1–30, so a value stream with more than ten live projects had no way to order the tail —
+  everything past rank 10 collapsed into "Not Assigned". The two fields now carry the same
+  numeric range; the non-numeric options (`Not Assigned`, `Maintenance`, `Repair Visit`,
+  `Delivery`) are unchanged and keep their existing order.
+
+  Purely a fixture change (`fixtures/custom_field.json`), applied by `bench migrate`. Nothing
+  downstream needed widening: the Projects Dashboard reads both fields' options from the
+  Project meta rather than hardcoding them (`get_priority_options`), its sort weight parses
+  any integer, and its badge hue already scaled across 1–30. Existing values are untouched —
+  this only widens what can be selected.
+
 ## [1.252.0] - 2026-08-06
 
 ### Added
