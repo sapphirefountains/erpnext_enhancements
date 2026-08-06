@@ -16,7 +16,7 @@ because that is how a Windows workstation gets there.
 > user from `/home/frappe/frappe-bench`. The site is
 > `erp.sapphirefountains.com`. Nothing here writes to business data; the only
 > destructive command in this document is the Error Log prune in
-> [§9](#9-error-log-retention-and-pruning), which is called out where it appears.
+> [§9](#9-error-log-retention) — which is optional, and called out where it appears.
 
 ---
 
@@ -32,7 +32,7 @@ because that is how a Windows workstation gets there.
 | [6](#6-attempted-unauthorized-file-access-in-pdf-generator) | `Attempted Unauthorized File Access in PDF Generator` | Letterhead points at a malformed file path | Yes |
 | [7](#7-frappemodeldocumentexecute_action) | `frappe.model.document.execute_action` | Upstream Frappe v16 bug | Yes |
 | [8](#8-report-execution-failures) | `Report execution failed for: …` | Auto Email Report with no filters | Yes |
-| [9](#9-error-log-retention-and-pruning) | 78,648 rows and growing | No retention configured | Ongoing |
+| [9](#9-error-log-retention) | 78,648 rows in the table | Ninety days of history, one huge incident in it | **Nothing to fix** |
 | [10](#10-filelocks) | `Filelock: Failed to aquire …` | Overlapping bench runs | Intermittent |
 | [11](#11-get_lesson-missing-1-required-positional-argument-attempt) | `get_lesson() missing …` | Stale browser tab | Self-healing |
 | [12](#12-bridge-token-failed-403) | `Bridge token failed: 403` | Non-`sapphirefountains.com` account | By design |
@@ -71,8 +71,9 @@ gcloud compute ssh frappe-erp --zone us-central1-a --command `
   "cd /home/frappe/frappe-bench && bench --site erp.sapphirefountains.com mariadb -e '$sql'"
 ```
 
-A signature whose `last_seen` is weeks old needs no fix — it needs
-[pruning](#9-error-log-retention-and-pruning).
+A signature whose `last_seen` is weeks old needs no fix at all. Retention will
+remove it on its own — see [§9](#9-error-log-retention), which explains why the
+table's size is not the problem it looks like.
 
 ---
 
@@ -473,51 +474,54 @@ schedule rather than leaving it to fail weekly.
 
 ---
 
-## 9. Error Log retention and pruning
+## 9. Error Log retention
 
-**What it means.** The table holds **78,648 rows**, and **Log Settings has no
-retention rule for Error Log at all** — so nothing has ever been pruned. This is
-why one thirty-hour incident in June is still 56% of the table in August.
+**Retention is already configured and already working. There is nothing to fix
+here — this section exists so nobody "fixes" it anyway.**
 
-Retention and the [v1.254.0 circuit
-breaker](../erpnext_enhancements/utils/error_throttle.py) solve different halves
-of the problem, and you want both: the breaker stops a storm being *written*,
-retention stops old rows accumulating forever.
+`Log Settings` retains **Error Log for 90 days** (alongside Activity Log,
+Scheduled Job Log and twelve others), and Frappe's daily log-clearing job is
+enforcing it. The proof is the boundary: the oldest row in the table is
+`2026-05-08 06:12`, which is *exactly* 90 days before the sample date, and only
+**77** rows sit past the cutoff — those are aging out today.
 
-**Confirm current retention:**
+So the table is **self-bounding**, and 78,648 rows is not unbounded growth. It is
+roughly ninety days of history that happens to contain one enormous incident: the
+MDM storm of 2026-06-15/16 ([§1](#1-mdm-retry-failed-for-miradore--mdm-action1-token-refresh-failed))
+is 56% of the table on its own, and it will age out by itself around **2026-09-14**.
+
+The lever that actually matters is therefore not retention but the [v1.254.0
+circuit breaker](../erpnext_enhancements/utils/error_throttle.py). Retention only
+bounds *how long* a storm stays in the table; the breaker bounds whether it is
+written at all. Ninety days of a 44,069-row incident is 44,069 rows either way.
+
+**Confirm** — note the child-table fieldname is `logs_to_clear`, not `logs`.
+Reading the wrong one returns an empty list and looks exactly like "no retention
+configured", which is a genuinely easy mistake to make:
 
 ```bash
 bench --site erp.sapphirefountains.com console <<'PY'
 import frappe
 ls = frappe.get_single("Log Settings")
-print([(r.ref_doctype, r.days) for r in (ls.get("logs") or [])] or "NO RETENTION CONFIGURED")
+print([(r.ref_doctype, r.days) for r in ls.logs_to_clear])
+
+r = frappe.db.sql("""SELECT MIN(creation) oldest, COUNT(*) total,
+    SUM(creation < DATE_SUB(NOW(), INTERVAL 90 DAY)) past_cutoff
+    FROM `tabError Log`""", as_dict=True)[0]
+print(r)
 PY
 ```
 
-**Fix — set retention (do this first).** 90 days keeps a full quarter for trend
-work while bounding the table:
+If `oldest` is at the 90-day boundary and `past_cutoff` is small, retention is
+running. Nothing to do.
 
-```bash
-bench --site erp.sapphirefountains.com console <<'PY'
-import frappe
-ls = frappe.get_single("Log Settings")
-existing = {r.ref_doctype for r in (ls.get("logs") or [])}
-for doctype, days in (("Error Log", 90), ("Scheduled Job Log", 30), ("Activity Log", 90)):
-    if doctype not in existing:
-        ls.append("logs", {"ref_doctype": doctype, "days": days})
-ls.save(ignore_permissions=True)
-frappe.db.commit()
-print([(r.ref_doctype, r.days) for r in ls.logs])
-PY
-```
+**Optional — prune early.** Only worth doing if you want the table small *now*
+rather than in September (for example, to make the desk's Error Log list usable
+again). This is not a fix; it just brings the aging-out forward.
 
-Frappe's daily `clear_log_table` scheduled job enforces this from then on.
-
-**Fix — prune the existing backlog.**
-
-> ⚠️ **This deletes data.** It is the only destructive command in this runbook.
-> Take a database snapshot first, and run the counting query before the delete so
-> you know what you are removing.
+> ⚠️ **This deletes data.** It is the only destructive command in this runbook,
+> and it is the only genuinely optional one. Take a database snapshot first, and
+> run the counting query before the delete so you know what you are removing.
 
 Count first:
 

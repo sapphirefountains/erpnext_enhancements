@@ -105,7 +105,10 @@ commands for each.
   means, how to confirm it, and the fix in both PowerShell and Bash: the Search
   Console grant, the Finance calendar share, the `sa-training-media` GCS IAM
   binding, the Workspace SMTP relay IP registration, the missing `wkhtmltopdf` and
-  Chromium binaries, stale bench filelocks, and Error Log retention/pruning.
+  Chromium binaries, and stale bench filelocks — plus a section on why the Error
+  Log's 78,648 rows are *not* a retention problem (retention is configured at 90
+  days and working; the table is ninety days of history that happens to contain
+  one 44,069-row incident, and that incident ages out on its own in September).
 
 ### Changed
 
