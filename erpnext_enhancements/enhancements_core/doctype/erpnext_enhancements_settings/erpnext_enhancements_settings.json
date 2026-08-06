@@ -147,7 +147,42 @@
   "web_lead_shared_secret",
   "account_hygiene_section",
   "require_industry_on_commercial",
-  "require_industry_on_edit"
+  "require_industry_on_edit",
+  "sales_dashboard_section",
+  "sales_speed_to_lead_enabled",
+  "sales_stalled_deals_enabled",
+  "sales_handoff_backlog_enabled",
+  "sales_renewal_radar_enabled",
+  "operations_dashboard_section",
+  "operations_day_board_enabled",
+  "operations_fleet_health_enabled",
+  "operations_chemistry_alerts_enabled",
+  "operations_labor_capture_enabled",
+  "design_dashboard_section",
+  "design_wip_board_enabled",
+  "design_signoff_queue_enabled",
+  "design_handoff_readiness_enabled",
+  "design_hydraulic_headroom_enabled",
+  "production_dashboard_section",
+  "production_wip_aging_enabled",
+  "production_milestone_slippage_enabled",
+  "production_material_readiness_enabled",
+  "production_hours_variance_enabled",
+  "marketing_dashboard_section",
+  "marketing_funnel_cascade_enabled",
+  "marketing_channel_spend_enabled",
+  "marketing_unsourced_leads_enabled",
+  "marketing_source_health_enabled",
+  "hr_dashboard_section",
+  "hr_training_compliance_enabled",
+  "hr_timesheet_completeness_enabled",
+  "hr_headcount_movement_enabled",
+  "hr_people_calendar_enabled",
+  "executive_dashboard_section",
+  "executive_scorecard_enabled",
+  "executive_cash_runway_enabled",
+  "executive_bookings_backlog_enabled",
+  "executive_risk_queue_enabled"
  ],
  "fields": [
   {
@@ -1101,6 +1136,237 @@
    "fieldname": "require_industry_on_edit",
    "fieldtype": "Check",
    "label": "...and on Edits to Existing Accounts"
+  },
+  {
+   "fieldname": "sales_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show the Speed-to-Lead queue (open Leads with no outbound Communication yet, oldest first, with hours waiting) on the Sales Dashboard. Each widget appears only where the block is placed and only for the department's roles.",
+   "fieldname": "sales_speed_to_lead_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Speed-to-Lead Queue Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show open Opportunities untouched for 14+ days on the Sales Dashboard, grouped by owner. Same 14-day threshold as the Stalled Opportunities KPI.",
+   "fieldname": "sales_stalled_deals_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Stalled Deals Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show Closed-Won Opportunities that still have no Project on the Sales Dashboard, oldest first — the same gap the Hand-Off Backlog KPI counts.",
+   "fieldname": "sales_handoff_backlog_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Hand-Off Backlog Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show Active maintenance contracts ending within 90 days on the Sales Dashboard, soonest first, flagging those already marked non-renewing.",
+   "fieldname": "sales_renewal_radar_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Renewal Radar Widget"
+  },
+  {
+   "fieldname": "operations_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Operations Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show today's maintenance visits (scheduled, in progress and completed) on the Operations Dashboard, with the assigned technician and completion percent.",
+   "fieldname": "operations_day_board_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Today's Visits Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show managed-device compliance and stale check-ins on the Operations Dashboard. Reads the Managed Device records the MDM sync writes; renders nothing if device management is unused.",
+   "fieldname": "operations_fleet_health_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Fleet & Device Health Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show recent maintenance visits flagged with out-of-range chemistry readings on the Operations Dashboard, newest first, with the site and technician.",
+   "fieldname": "operations_chemistry_alerts_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Chemistry Alerts Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show recently completed visits with no labour captured against them on the Operations Dashboard — the leak behind under-billed maintenance work.",
+   "fieldname": "operations_labor_capture_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Labor Capture Gaps Widget"
+  },
+  {
+   "fieldname": "design_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Design Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show in-flight Water Feature Designs on the Design Dashboard grouped by status, with each design's age and completion percent.",
+   "fieldname": "design_wip_board_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Design WIP Board Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show designs that have reached Reviewed but are not yet Issued on the Design Dashboard, oldest first — the queue waiting on a human decision.",
+   "fieldname": "design_signoff_queue_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Sign-Off Queue Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show designs carrying blockers or warnings on the Design Dashboard, so an incomplete design is caught before it reaches Production rather than after.",
+   "fieldname": "design_handoff_readiness_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Hand-Off Readiness Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show issued designs whose selected pump sits closest to its computed head requirement on the Design Dashboard — the thin-margin selections most likely to underperform in the field.",
+   "fieldname": "design_hydraulic_headroom_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Hydraulic Headroom Widget"
+  },
+  {
+   "fieldname": "production_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Production Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show active Build projects on the Production Dashboard, oldest first, with days open, percent complete and whether the expected end date has passed.",
+   "fieldname": "production_wip_aging_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Build WIP & Aging Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show overdue project process steps on the Production Dashboard, with days overdue and the responsible role.",
+   "fieldname": "production_milestone_slippage_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Milestone Slippage Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show material requests for active projects that are not fully received on the Production Dashboard, flagging any whose required-by date has passed.",
+   "fieldname": "production_material_readiness_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Material Readiness Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show active projects with an hours budget on the Production Dashboard, ranked by how far actual elapsed time has run past that budget.",
+   "fieldname": "production_hours_variance_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Hours Budget vs Actual Widget"
+  },
+  {
+   "fieldname": "marketing_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Marketing Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show the sessions to leads to opportunities to won cascade on the Marketing Dashboard, with the conversion rate at each step over the last 30 and 90 days.",
+   "fieldname": "marketing_funnel_cascade_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Funnel Cascade Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show month-to-date Marketing Spend by channel with the resulting cost per lead on the Marketing Dashboard. Channels with spend but no attributed leads are shown rather than hidden.",
+   "fieldname": "marketing_channel_spend_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Channel Spend & CPL Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show recent Leads with no lead source (or the pre-Aug-2026 Unknown bucket) on the Marketing Dashboard — the attribution gap, listed as rows someone can actually go and fix.",
+   "fieldname": "marketing_unsourced_leads_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Unsourced Leads Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show whether the nightly GA4 and Search Console pulls are succeeding on the Marketing Dashboard, with the last pull's error text. Search Console failed 40 consecutive nightly pulls with no visible signal before this widget existed.",
+   "fieldname": "marketing_source_health_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Source Health Widget"
+  },
+  {
+   "fieldname": "hr_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "HR Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show overdue and due-soon training assignments by learner on the HR Dashboard.",
+   "fieldname": "hr_training_compliance_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Training Compliance Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show which active employees have logged time in the last 7 days and which have not on the HR Dashboard. Stays quiet until the time doctypes carry real data.",
+   "fieldname": "hr_timesheet_completeness_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Time Capture Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show recent hires and separations with tenure on the HR Dashboard, alongside current active headcount.",
+   "fieldname": "hr_headcount_movement_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Headcount Movement Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show upcoming work anniversaries and joining-date milestones for active employees on the HR Dashboard. Reads Employee dates only — no birthdays, which the Employee master does not reliably carry.",
+   "fieldname": "hr_people_calendar_enabled",
+   "fieldtype": "Check",
+   "label": "Enable People Calendar Widget"
+  },
+  {
+   "fieldname": "executive_dashboard_section",
+   "fieldtype": "Section Break",
+   "label": "Executive Dashboard Widgets"
+  },
+  {
+   "default": "0",
+   "description": "Show one status tile per department on the Executive Dashboard — Good/Watch/Bad counts from each department's latest KPI Snapshot, with a link through to that dashboard. Reads snapshots only; it never aggregates live.",
+   "fieldname": "executive_scorecard_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Company Scorecard Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show cash collected, receivables and days sales outstanding from the latest Finance snapshot on the Executive Dashboard.",
+   "fieldname": "executive_cash_runway_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Cash & Runway Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show closed-won value, open pipeline and booked-but-unbuilt backlog on the Executive Dashboard, from the latest Sales and Production snapshots.",
+   "fieldname": "executive_bookings_backlog_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Bookings & Backlog Widget"
+  },
+  {
+   "default": "0",
+   "description": "Show what is stuck company-wide on the Executive Dashboard: stale KPI snapshots, failing integrations, and the oldest un-handed-off won deals.",
+   "fieldname": "executive_risk_queue_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Risk Queue Widget"
   }
  ],
  "issingle": 1,

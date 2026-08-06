@@ -1,0 +1,188 @@
+/* Headcount Movement — HR Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.hhm-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.hhm-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.hhm-title {
+    font-weight: 600;
+}
+
+.hhm-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.hhm-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.hhm-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.hhm-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.hhm-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.hhm-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.hhm-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.hhm-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.hhm-name:hover {
+    text-decoration: underline;
+}
+
+.hhm-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hhm-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.hhm-good {
+    color: #1e7e51;
+}
+
+.hhm-warn {
+    color: #b7791f;
+}
+
+.hhm-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.hhm-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.hhm-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
+
+.hhm-pill {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.hhm-pill-bad {
+    background: rgba(192, 57, 43, 0.12);
+    border-color: rgba(192, 57, 43, 0.35);
+    color: #c0392b;
+}
+
+.hhm-pill-warn {
+    background: rgba(183, 121, 31, 0.12);
+    border-color: rgba(183, 121, 31, 0.35);
+    color: #b7791f;
+}
+
+.hhm-pill-good {
+    background: rgba(30, 126, 81, 0.12);
+    border-color: rgba(30, 126, 81, 0.35);
+    color: #1e7e51;
+}
+
+.hhm-tiles {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.hhm-tile {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    display: block;
+    padding: 8px 10px;
+    text-decoration: none;
+}
+
+a.hhm-tile:hover {
+    background: var(--bg-light-gray);
+}
+
+.hhm-tile-label {
+    color: var(--text-muted);
+    display: block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.hhm-tile-value {
+    color: var(--text-color);
+    display: block;
+    font-size: var(--text-xl);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+}
+
+.hhm-tile-note {
+    color: var(--text-muted);
+    display: block;
+    font-size: var(--text-xs);
+}

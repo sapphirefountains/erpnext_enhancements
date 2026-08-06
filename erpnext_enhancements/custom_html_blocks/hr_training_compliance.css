@@ -1,0 +1,147 @@
+/* Training Compliance — HR Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.htc-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.htc-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.htc-title {
+    font-weight: 600;
+}
+
+.htc-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.htc-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.htc-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.htc-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.htc-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.htc-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.htc-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.htc-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.htc-name:hover {
+    text-decoration: underline;
+}
+
+.htc-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.htc-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.htc-good {
+    color: #1e7e51;
+}
+
+.htc-warn {
+    color: #b7791f;
+}
+
+.htc-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.htc-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.htc-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
+
+.htc-pill {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.htc-pill-bad {
+    background: rgba(192, 57, 43, 0.12);
+    border-color: rgba(192, 57, 43, 0.35);
+    color: #c0392b;
+}
+
+.htc-pill-warn {
+    background: rgba(183, 121, 31, 0.12);
+    border-color: rgba(183, 121, 31, 0.35);
+    color: #b7791f;
+}
+
+.htc-pill-good {
+    background: rgba(30, 126, 81, 0.12);
+    border-color: rgba(30, 126, 81, 0.35);
+    color: #1e7e51;
+}

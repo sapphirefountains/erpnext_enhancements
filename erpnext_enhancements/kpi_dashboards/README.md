@@ -64,6 +64,14 @@ One per department, plus the module workspace: `executive_dashboard`, `finance_d
 `sales_dashboard`, `marketing_dashboard`, `operations_dashboard`, `production_dashboard`,
 `design_dashboard`, `product_dashboard`, `hr_dashboard`, `kpi_dashboards`.
 
+Each carries the KPI Cockpit plus that department's **operational widgets** — live worklists
+that sit above the snapshot numbers and say what to do about them. They are Custom HTML
+Blocks; their sources and the live-vs-snapshot split are documented in
+[`custom_html_blocks/README.md`](../custom_html_blocks/README.md), and their feeds are the
+`*_dashboard.py` modules in [`api/`](../api/README.md). Product is the one department with no
+widgets yet — its dashboard's three roles (Item Manager, Stock Manager, Sales Manager) want
+three different boards, and that has not been decided.
+
 
 ## Marketing spend and value-stream reporting (WP-4, v1.243.0)
 

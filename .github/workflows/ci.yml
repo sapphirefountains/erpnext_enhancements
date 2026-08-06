@@ -166,6 +166,12 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_kpi_metrics
           erpnext_enhancements.tests.test_custom_html_blocks -v
+      # Department dashboard widgets: the registry, the settings toggles, the
+      # seeder's placement map and the shipped workspace JSONs must agree. A
+      # placement naming an unseeded block renders an empty div with no error, so
+      # the wiring is asserted here rather than discovered on a dashboard.
+      - name: Department dashboard widget wiring
+        run: python -m unittest erpnext_enhancements.tests.test_dashboard_widgets -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other stub-installing suites.
       #

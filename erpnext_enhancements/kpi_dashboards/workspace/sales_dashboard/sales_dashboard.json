@@ -1,9 +1,25 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_sales_speed_to_lead\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Sales Speed to Lead\", \"col\": 12}}, {\"id\": \"ee_chb_sales_stalled_deals\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Sales Stalled Deals\", \"col\": 12}}, {\"id\": \"ee_chb_sales_handoff_backlog\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Sales Handoff Backlog\", \"col\": 12}}, {\"id\": \"ee_chb_sales_renewal_radar\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Sales Renewal Radar\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Sales Speed to Lead",
+   "label": "Sales Speed to Lead"
+  },
+  {
+   "custom_block_name": "Sales Stalled Deals",
+   "label": "Sales Stalled Deals"
+  },
+  {
+   "custom_block_name": "Sales Handoff Backlog",
+   "label": "Sales Handoff Backlog"
+  },
+  {
+   "custom_block_name": "Sales Renewal Radar",
+   "label": "Sales Renewal Radar"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"

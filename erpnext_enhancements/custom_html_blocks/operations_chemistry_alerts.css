@@ -1,0 +1,147 @@
+/* Chemistry Alerts — Operations Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours appear only where the colour
+   IS the meaning — good / watch / bad. */
+
+.oca-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.oca-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.oca-title {
+    font-weight: 600;
+}
+
+.oca-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.oca-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.oca-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.oca-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.oca-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.oca-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.oca-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.oca-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.oca-name:hover {
+    text-decoration: underline;
+}
+
+.oca-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.oca-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.oca-good {
+    color: #1e7e51;
+}
+
+.oca-warn {
+    color: #b7791f;
+}
+
+.oca-bad {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.oca-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}
+
+.oca-group {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 8px 2px;
+    text-transform: uppercase;
+}
+
+.oca-pill {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    padding: 1px 7px;
+    white-space: nowrap;
+}
+
+.oca-pill-bad {
+    background: rgba(192, 57, 43, 0.12);
+    border-color: rgba(192, 57, 43, 0.35);
+    color: #c0392b;
+}
+
+.oca-pill-warn {
+    background: rgba(183, 121, 31, 0.12);
+    border-color: rgba(183, 121, 31, 0.35);
+    color: #b7791f;
+}
+
+.oca-pill-good {
+    background: rgba(30, 126, 81, 0.12);
+    border-color: rgba(30, 126, 81, 0.35);
+    color: #1e7e51;
+}

@@ -1,9 +1,25 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_design_wip_board\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Design WIP Board\", \"col\": 12}}, {\"id\": \"ee_chb_design_signoff_queue\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Design Signoff Queue\", \"col\": 12}}, {\"id\": \"ee_chb_design_handoff_readiness\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Design Handoff Readiness\", \"col\": 12}}, {\"id\": \"ee_chb_design_hydraulic_headroom\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Design Hydraulic Headroom\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Design WIP Board",
+   "label": "Design WIP Board"
+  },
+  {
+   "custom_block_name": "Design Signoff Queue",
+   "label": "Design Signoff Queue"
+  },
+  {
+   "custom_block_name": "Design Handoff Readiness",
+   "label": "Design Handoff Readiness"
+  },
+  {
+   "custom_block_name": "Design Hydraulic Headroom",
+   "label": "Design Hydraulic Headroom"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"

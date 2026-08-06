@@ -1,0 +1,108 @@
+/* Speed to Lead — Sales Dashboard widget.
+   Structural colours come from Frappe CSS variables (they pierce the shadow
+   boundary, so both themes work); literal colours are used only where the
+   colour IS the meaning — how long a lead has gone unanswered. */
+
+.stl-card {
+    font-size: var(--text-md);
+    color: var(--text-color);
+}
+
+.stl-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.stl-title {
+    font-weight: 600;
+}
+
+.stl-sub {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.stl-refresh {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--border-radius-sm);
+}
+
+.stl-refresh:hover {
+    background: var(--bg-light-gray);
+    color: var(--text-color);
+}
+
+.stl-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.stl-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.stl-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--border-radius-sm);
+}
+
+.stl-row:hover {
+    background: var(--bg-light-gray);
+}
+
+.stl-name {
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+.stl-name:hover {
+    text-decoration: underline;
+}
+
+.stl-meta {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.stl-age {
+    margin-left: auto;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Semantic: a lead unanswered past a working day, and past a few hours. */
+.stl-cold {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.stl-warm {
+    color: #b7791f;
+}
+
+.stl-muted {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    padding: 6px 8px;
+}

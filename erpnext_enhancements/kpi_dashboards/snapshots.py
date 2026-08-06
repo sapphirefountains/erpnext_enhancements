@@ -611,13 +611,48 @@ def _production_metrics():
 				metrics.HIGHER,
 			)
 	if has("Project", "custom_time_budget_in_hours") and has("Project", "custom_total_time_elapsed"):
-		row = frappe.db.sql(
-			"select sum(custom_total_time_elapsed), sum(custom_time_budget_in_hours) from `tabProject` "
-			"where status in ('Open','Active') and coalesce(custom_time_budget_in_hours,0)>0"
+		# The two fields disagree about units, and this KPI read ~3600x high until
+		# v1.252.0 because of it:
+		#
+		#   custom_total_time_elapsed  — Duration  -> SECONDS
+		#   custom_time_budget_in_hours — Data     -> free text, nominally hours
+		#
+		# It summed one against the other directly, so a project 60% through its
+		# budget reported ~217,000%. Nothing caught it because the KPI has no
+		# target: with no target there is no Good/Watch/Bad grading, so an absurd
+		# number rendered as a plain grey figure nobody had a reason to disbelieve.
+		#
+		# Summing in SQL also leaned on MySQL coercing a varchar to a number, which
+		# silently reads "n/a" as 0. Both sides are now parsed in Python with flt()
+		# and a project whose budget text does not parse to a positive number is
+		# excluded from BOTH sums — leaving it in the numerator only would inflate
+		# the ratio again, more subtly.
+		#
+		# api/production_dashboard.py::get_hours_variance does the same conversion
+		# per project; tests/test_dashboard_widgets.py fails if either side drops it.
+		rows = frappe.get_all(
+			"Project",
+			filters={"status": ("in", ("Open", "Active"))},
+			fields=["custom_total_time_elapsed", "custom_time_budget_in_hours"],
+			limit_page_length=0,
 		)
-		used, budget = (row[0][0], row[0][1]) if row and row[0] else (None, None)
-		if budget:
-			add("labor_budget_utilization", "Labor Budget Utilization", flt(used) / flt(budget) * 100.0, "%", "Project", metrics.LOWER)
+		used_hours = 0.0
+		budget_hours = 0.0
+		for r in rows:
+			budget = flt(r.custom_time_budget_in_hours)
+			if budget <= 0:
+				continue
+			budget_hours += budget
+			used_hours += flt(r.custom_total_time_elapsed) / 3600.0
+		if budget_hours:
+			add(
+				"labor_budget_utilization",
+				"Labor Budget Utilization",
+				used_hours / budget_hours * 100.0,
+				"%",
+				"Project",
+				metrics.LOWER,
+			)
 	if has("Project", "custom_project_dollar_amount"):
 		add(
 			"backlog_value",
