@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.251.0] - 2026-08-06
+
+### Added
+
+- **28 operational widgets across seven department dashboards.** Every department dashboard
+  under `kpi_dashboards/workspace/` shipped with exactly one block on it — the KPI Cockpit.
+  Finance was the sole exception, carrying six operational widgets since v1.244.0. So eight
+  dashboards told each team how the last 30 days went and nothing about what to do this
+  morning.
+
+  Sales, Operations, Design, Production, Marketing, HR and Executive each get four widgets:
+
+  | Department | Widgets |
+  |---|---|
+  | Sales | Speed to Lead · Stalled Deals · Hand-Off Backlog · Renewal Radar |
+  | Operations | Today's Visits · Fleet & Device Health · Chemistry Alerts · Labor Capture Gaps |
+  | Design | Design WIP · Awaiting Sign-Off · Hand-Off Readiness · Hydraulic Headroom |
+  | Production | Build WIP & Aging · Milestone Slippage · Material Readiness · Hours vs Budget |
+  | Marketing | Funnel Cascade · Channel Spend & CPL · Unsourced Leads · Source Health |
+  | HR | Training Compliance · Time Capture · Headcount Movement · People Calendar |
+  | Executive | Company Scorecard · Cash & Receivables · Bookings & Backlog · Risk Queue |
+
+  **Live worklists, snapshot trends.** Anything actionable queries its source doctypes on
+  load — a queue is only worth showing if it is true right now. Anything carrying a trend or
+  a target reads the nightly `KPI Snapshot`. The entire Executive dashboard is on the
+  snapshot side: a cross-department view exists to be compared across departments and across
+  days, and a number that changes on every refresh can do neither.
+
+  Where a KPI already counts the same population the widget reuses its threshold — stalled
+  deals at 14 days, matching `stalled_opportunities`. A widget that disagrees with the number
+  directly above it is worse than no widget.
+
+- **`api/dashboard_widgets.py`** — the gating contract the Finance widgets established,
+  generalised. `WIDGETS` maps each widget to its settings Check; the `widget_feed` decorator
+  applies the department role gate and the toggle, returning `{"enabled": false}` so a block
+  renders a muted notice instead of an error. Roles are **imported from `api/kpi.py`**, never
+  re-declared, so a widget can never be visible to someone who cannot already see the same
+  department's KPI Cockpit. Feeds take **no arguments** by design: nothing to validate, and
+  no way for a caller to widen a query.
+
+- **28 new Check fields on ERPNext Enhancements Settings**, grouped into seven per-department
+  sections, all defaulting to `0`. This matches the Finance widgets and it means a
+  `bench migrate` changes nothing a user sees until someone ticks a box — the new dashboards
+  will look empty until then, which is the first thing to check when a widget "doesn't work".
+
+- **`tests/test_dashboard_widgets.py`**, on its own CI step. Four things have to agree for a
+  widget to work: the `WIDGETS` registry, the settings Check fields, the seeder's `BLOCKS` and
+  `DEPARTMENT_DASHBOARD_BLOCKS`, and the shipped workspace JSONs. Every one of them fails
+  *silently*. A placement naming an unseeded block renders an empty div — no error, no log
+  line. A mistyped toggle fieldname is indistinguishable from "nobody has enabled it yet",
+  precisely because the toggles default OFF. The suite also guards the Marketing feeds against
+  the orphaned `Lead.source` column (see v1.243.0), scanning string literals rather than file
+  text so the prose warning about the bug doesn't trip the check on the bug.
+
+### Changed
+
+- `setup/custom_html_blocks.py`'s Finance-only `FINANCE_DASHBOARD_BLOCKS` becomes
+  `DEPARTMENT_DASHBOARD_BLOCKS`, one entry per department workspace, and the placement loop
+  runs over it. Finance's own placement is unchanged — the shipped JSON is byte-identical.
+
+### Notes
+
+- Two Project fields disagree about units, and the Hours vs Budget widget is written around
+  that rather than through it: `custom_total_time_elapsed` is a **Duration** (seconds) while
+  `custom_time_budget_in_hours` is a **Data** field holding hours. The widget divides actual
+  by 3600 before comparing, and skips a project whose budget text does not parse to a
+  positive number rather than ranking it as an infinite overrun. `_production_metrics`'s
+  `labor_budget_utilization` KPI in `kpi_dashboards/snapshots.py` divides the seconds sum by
+  the hours sum directly and is left untouched here — changing a published KPI's value is not
+  a docs-adjacent change, and it wants its own decision.
+
 ## [1.250.1] - 2026-08-06
 
 ### Fixed

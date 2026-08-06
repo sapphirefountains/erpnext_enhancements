@@ -61,6 +61,56 @@ block on Home (`patches.place_desk_shortcuts_on_home`, idempotent) — no manual
 step, unlike the other blocks. Add more tools later by creating an **Enhancement Desk
 Shortcut** row (no code change).
 
+## Files — Department Dashboard widgets (v1.251.0)
+
+Each of the nine department dashboards under `kpi_dashboards/workspace/` used to carry a
+single block: the KPI Cockpit. Finance was the exception, with six operational widgets.
+This adds four widgets to each of the other seven — Sales, Operations, Design, Production,
+Marketing, HR and Executive — so a dashboard shows what to *do*, not only how things went.
+
+| Department | Blocks | Feed |
+|---|---|---|
+| Sales | Speed to Lead · Stalled Deals · Hand-Off Backlog · Renewal Radar | [`api/sales_dashboard.py`](../api/sales_dashboard.py) |
+| Operations | Today's Visits · Fleet & Device Health · Chemistry Alerts · Labor Capture Gaps | [`api/operations_dashboard.py`](../api/operations_dashboard.py) |
+| Design | Design WIP · Awaiting Sign-Off · Hand-Off Readiness · Hydraulic Headroom | [`api/design_dashboard.py`](../api/design_dashboard.py) |
+| Production | Build WIP & Aging · Milestone Slippage · Material Readiness · Hours vs Budget | [`api/production_dashboard.py`](../api/production_dashboard.py) |
+| Marketing | Funnel Cascade · Channel Spend & CPL · Unsourced Leads · Source Health | [`api/marketing_dashboard.py`](../api/marketing_dashboard.py) |
+| HR | Training Compliance · Time Capture · Headcount Movement · People Calendar | [`api/hr_dashboard.py`](../api/hr_dashboard.py) |
+| Executive | Company Scorecard · Cash & Receivables · Bookings & Backlog · Risk Queue | [`api/executive_dashboard.py`](../api/executive_dashboard.py) |
+
+**Live worklists, snapshot trends.** Anything actionable — an unanswered lead, today's
+visits, an overdue sign-off — queries its source doctypes on load, because a queue is only
+worth showing if it is true right now. Anything with a trend or a target reads the nightly
+`KPI Snapshot` instead. The whole Executive dashboard is on the snapshot side: a
+cross-department view exists to be compared across departments and across days, and a number
+that changes on every refresh can do neither.
+
+**Every widget is off until someone turns it on.** Each has its own Check on
+**ERPNext Enhancements Settings** (grouped by department), defaulting to `0`, exactly like the
+Finance widgets. A placed-but-disabled block renders a muted "turned off" notice rather than
+an error — so after `bench migrate` the new dashboards look empty until the toggles are
+ticked. That is deliberate, and it is the first thing to check when a widget "doesn't work".
+
+**Gating lives in one place.** [`api/dashboard_widgets.py`](../api/dashboard_widgets.py)
+holds the `WIDGETS` registry (widget → settings field) and the `widget_feed` decorator that
+applies the department role gate and the toggle. Roles are imported from `api/kpi.py`, never
+re-declared, so a widget can never be visible to someone who cannot see the same department's
+KPI Cockpit. Feeds take **no arguments** — there is nothing to validate, and no way for a
+caller to widen a query.
+
+Where a KPI already counts the same population, the widget reuses its threshold (stalled
+deals at 14 days, for instance). A widget that disagrees with the number above it is worse
+than no widget.
+
+`tests/test_dashboard_widgets.py` holds the four moving parts together — the registry, the
+settings fields, the seeder's `BLOCKS` + `DEPARTMENT_DASHBOARD_BLOCKS`, and the shipped
+workspace JSONs. Each can drift silently: a placement naming an unseeded block renders an
+**empty div** with no error and no log line.
+
+The shared HTML/CSS shell (card → head → rows, plus pills, bars and stat tiles) is
+deliberately uniform across all 28 blocks; structural colours come from Frappe CSS variables
+so both themes work, and literal colours appear only where the colour *is* the meaning.
+
 ## Relationship to the desk Project Dashboard
 
 This Custom HTML Block is a lighter, embeddable cousin of the full **Project Dashboard** desk page. It reuses the same server endpoints (`erpnext_enhancements.project_enhancements.page.project_dashboard.*`) and the same shared front-end helpers (`ColumnSelector`, the embeddable Gantt widget). For the full-featured, tabbed, realtime experience, see the desk page documented in the [Project Enhancements README](../project_enhancements/README.md).
