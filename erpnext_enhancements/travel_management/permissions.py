@@ -52,9 +52,12 @@ def has_permission(doc, ptype=None, user=None):
 	user = user or frappe.session.user
 	if _is_coordinator(user):
 		return True
-	if ptype == "create" or doc.is_new():
+	# `not doc.get("creation")` rather than `doc.is_new()` — Frappe hands
+	# has_permission hooks a plain dict on some paths and a dict has no
+	# `.is_new()`. See the same note in device_management/permissions.py.
+	if ptype == "create" or not doc.get("creation"):
 		return True  # creating their own trip; validate() handles the rest
-	if doc.owner == user:
+	if doc.get("owner") == user:
 		return True
 
 	employee = _session_employee(user)

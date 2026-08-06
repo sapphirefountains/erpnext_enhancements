@@ -49,6 +49,7 @@ from erpnext_enhancements.google_drive.drive_utils import (
 	get_drive_service,
 	get_folder_meta,
 )
+from erpnext_enhancements.utils.error_throttle import log_error_throttled
 
 # Doctypes with a linked-folder field, in sync scope.
 SYNCED_DOCTYPES = {
@@ -58,6 +59,18 @@ SYNCED_DOCTYPES = {
 }
 
 MAX_RETRY_ATTEMPTS = 3
+
+# Passed as `num_retries` to every read call in the hourly shadow walk.
+#
+# The Drive API answers a plain metadata GET with `HttpError 500 "Unknown
+# Error." Details: "[{}]"` often enough that Google documents it as expected and
+# tells clients to retry with exponential backoff. We were not retrying, so each
+# blip aborted one customer's shadow sync and wrote an Error Log row — 61 of
+# them in a month, every one for a folder that was perfectly healthy on the next
+# attempt. googleapiclient's own retry handles 429/500/502/503/504 with
+# randomised backoff, which is exactly the policy Google asks for; there is no
+# reason to hand-roll it.
+GOOGLE_API_RETRIES = 4
 
 # Driver error codes meaning "this connection is dead", as opposed to "that query
 # was bad": 2006 server has gone away, 2013 lost connection during query, 2055
@@ -107,7 +120,7 @@ def _drive_id_of(service, folder_id):
 	meta = (
 		service.files()
 		.get(fileId=folder_id, fields="driveId", supportsAllDrives=True)
-		.execute()
+		.execute(num_retries=GOOGLE_API_RETRIES)
 	)
 	return (meta or {}).get("driveId")
 
@@ -317,9 +330,15 @@ def run_shadow_sync():
 				# so on a dropped connection it would raise on its way out.
 				if not _recover_after_document_failure(exc):
 					return
-				frappe.log_error(
+				# Throttled per doctype: this is the inner loop over every record
+				# with a linked folder, so anything systemic (revoked service
+				# account, Drive outage) writes a row per record per hourly run.
+				# Keying on the doctype keeps a Customer-wide failure from
+				# masking an unrelated Project one.
+				log_error_throttled(
 					f"Shadow sync failed for {doctype} {row.name}\n{traceback}",
 					"Drive Shadow Sync",
+					key=doctype,
 				)
 
 
@@ -352,7 +371,7 @@ def _list_folder_children(service, folder_id, drive_id):
 	while True:
 		if page_token:
 			kwargs["pageToken"] = page_token
-		result = service.files().list(**kwargs).execute()
+		result = service.files().list(**kwargs).execute(num_retries=GOOGLE_API_RETRIES)
 		children.extend(result.get("files", []))
 		page_token = result.get("nextPageToken")
 		if not page_token:
