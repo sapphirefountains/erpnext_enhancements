@@ -1,11 +1,35 @@
 name: CI
 
+# `push` is scoped to main ON PURPOSE. With a bare `push:` every commit on a PR
+# branch fired the workflow TWICE -- once for `push`, once for `pull_request` --
+# because the two events carry different `github.ref` values
+# (`refs/heads/<branch>` vs `refs/pull/<n>/merge`) and so landed in different
+# concurrency groups, deduplicating neither. Four jobs became eight competing for
+# runners on every push.
+#
+# That was merely wasteful until 2026-08-06, when a GitHub Actions capacity
+# incident turned it expensive: the doubled demand met a starved queue, and
+# `cancel-in-progress` then cancelled the losers -- and a CANCELLED job makes its
+# whole run report `failure`. So PRs showed red X's for jobs that had never run,
+# on commits with nothing wrong. A red X that means "a duplicate got cancelled"
+# teaches people to skim past red X's, which is the same rot as an advisory lint
+# job nobody reads.
+#
+# Every branch here is merged via a PR, so the `pull_request` run is the one that
+# matters; scoping `push` to main keeps CI on the deploy branch (main deploys
+# automatically) without re-running the same commit twice. The trade-off, stated
+# plainly: a branch pushed with NO open PR now gets no CI until the PR is opened.
 on:
   push:
+    branches: [main]
   pull_request:
 
+# Keyed on the PR number for PR runs so a new commit supersedes the previous run
+# for that same PR -- which is what cancel-in-progress is actually for. Falls
+# back to `github.ref` for pushes to main. Before this, cancellation happened
+# between two events racing over one commit, which is not a supersede at all.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
