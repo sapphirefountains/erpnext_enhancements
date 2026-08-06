@@ -35,6 +35,15 @@ def has_permission(doc, ptype=None, user=None):
 	if _sees_all(user):
 		return True
 	# Creates are governed by the DocPerm (employees have none); never block here.
-	if ptype == "create" or doc.is_new():
+	#
+	# `not doc.get("creation")` rather than `doc.is_new()`: Frappe calls
+	# has_permission hooks with a plain dict on some paths (anything that reaches
+	# `frappe.has_permission(doctype, doc=...)` with a `db.get_value(...,
+	# as_dict=True)` row), and a dict has no `.is_new()` — it raises
+	# `AttributeError: 'dict' object has no attribute 'is_new'` from inside a
+	# permission check, which surfaces as an unrelated-looking save failure.
+	# `is_new()` is itself defined as `not self.get("creation")`, so this is the
+	# same test written to work on both shapes.
+	if ptype == "create" or not doc.get("creation"):
 		return True
 	return doc.get("assigned_to_user") == user

@@ -26,6 +26,17 @@ def ensure_training_categories():
 	"""Create any starter category that does not already exist."""
 	if frappe.flags.in_test:
 		return
+	if not frappe.db.exists("DocType", "Training Category"):
+		# Same guard `ensure_training_badges` has always had, and its absence here
+		# is what produced the "Training setup" rows in the Error Log. The two
+		# existence checks are not interchangeable: `frappe.db.exists("Training
+		# Category", name)` below queries `tabTraining Category`, which survives
+		# from an earlier migrate, so it answers happily while the *DocType row*
+		# is still missing. `frappe.get_doc` then asks for a controller, Frappe
+		# reads a blank `module` off the absent row, falls back to Core, and
+		# raises `No module named 'frappe.core.doctype.training_category'` —
+		# a confusing way to say "not migrated yet".
+		return
 	for name, description in STARTER_CATEGORIES:
 		if frappe.db.exists("Training Category", name):
 			continue

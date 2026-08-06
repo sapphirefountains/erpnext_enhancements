@@ -33,7 +33,10 @@ from google.analytics.data_v1beta.types import (
 	OrderBy,
 )
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 import datetime as dt
+
+from erpnext_enhancements.utils.error_throttle import log_error_throttled
 
 @frappe.whitelist()
 def get_ga4_data():
@@ -384,6 +387,31 @@ def get_gsc_data():
 			"top_pages": top_pages
 		}
 
+	except HttpError as e:
+		status = getattr(getattr(e, "resp", None), "status", None)
+		if status in (401, 403, 404):
+			# Permanent, and the traceback says nothing the operator needs: the
+			# service account simply is not a user on this Search Console
+			# property. Google's own 403 body ("User does not have sufficient
+			# permission for site ...") is the useful part, and re-logging a
+			# 40-line traceback for it once per scheduled run buried 34 rows in
+			# the log for one unchanging fact.
+			log_error_throttled(
+				f"Search Console refused {ga4_settings.gsc_property_url!r} with {status}.\n"
+				f"Add the service account as a user on the property in Search Console "
+				f"(Settings > Users and permissions), then re-run.\n\n{e}",
+				"GSC API Error",
+				key=str(status),
+			)
+			return {
+				"error": (
+					f"Search Console denied access to {ga4_settings.gsc_property_url} ({status}). "
+					"Add the service account as a user on that property in Search Console."
+				)
+			}
+		log_error_throttled(frappe.get_traceback(), "GSC API Error", key=str(status))
+		return {"error": f"Failed to fetch GSC data: {e!s}"}
+
 	except Exception as e:
-		frappe.log_error(message=frappe.get_traceback(), title="GSC API Error")
+		log_error_throttled(frappe.get_traceback(), "GSC API Error")
 		return {"error": f"Failed to fetch GSC data: {str(e)}"}
