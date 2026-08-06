@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.250.1] - 2026-08-06
+
+### Fixed
+
+- **The marketing data-source alert had never fired.**
+  `kpi_dashboards/snapshots.py` used `_()` in five places inside
+  `_alert_on_source_change` but never imported it — the module had `import frappe` and
+  `from frappe.utils import …` and no `from frappe import _`. Every call raised
+  `NameError`.
+
+  What made it invisible rather than loud is the function's own guard. Its whole body is
+  wrapped in `except Exception: frappe.log_error(...)`, which is correct and stays —
+  a notification problem must not cost the nightly snapshot it runs at the head of. But
+  it meant the `NameError` was caught and written to the Error Log under the title
+  *"KPI marketing web — source alert"*, which reads as **the alerting broke**, not
+  **the data source broke**. So a dead GA4 or Search Console feed produced no
+  notification, and the one thing standing between a stale marketing figure and somebody
+  reading it as real had never once run. In the function's own words: *"a zero looks like
+  a real number on a dashboard."*
+
+  Found by reading the advisory ruff job's output on an unrelated PR rather than by
+  anything going wrong, which is the point — the symptom of this bug was the absence of
+  a symptom.
+
+### Added
+
+- **`No undefined names (F821)` is now a hard CI gate**, carved out as its own job from
+  the advisory `Lint (ruff, advisory)`. F821 is not style: an undefined name is a runtime
+  `NameError`, and this app deliberately swallows exceptions in exactly the places one is
+  most likely to bite — scheduler jobs, `doc_events`, notification helpers — so it
+  surfaces as silence rather than a stack trace. One rule only; the wider 433-finding
+  style backlog stays advisory and untouched. Currently passes at zero violations.
+
+- `tests/test_kpi_source_alert.py` (bench-free, own CI step). The static gate catches the
+  class; this pins the behaviour the class was hiding. Its load-bearing assertions are
+  "a failing source notifies somebody" and "no Error Log row is written" — before the
+  fix, both were exactly inverted. Verified to fail (6 failures + 1 error) with the
+  import removed.
+
 ## [1.250.0] - 2026-08-06
 
 Regroups the **Opportunity** form. Fixtures only — no controller, hook or client-script

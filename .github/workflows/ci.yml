@@ -32,6 +32,40 @@ jobs:
         run: ruff check erpnext_enhancements/ --output-format=github
 
   # ---------------------------------------------------------------------------
+  # Undefined names — a HARD gate, carved out of the advisory job above.
+  #
+  # F821 is not style. An undefined name is a NameError at runtime, and this app
+  # swallows exceptions on purpose in the places it is most likely to bite:
+  # scheduler jobs, doc_events and notification helpers all wrap their bodies in
+  # `except Exception: frappe.log_error(...)` so a notification problem cannot
+  # cost the work it was reporting on. That guard is correct — and it converts a
+  # NameError into silence.
+  #
+  # It already had. `kpi_dashboards/snapshots.py` used `_()` without importing
+  # it, so the marketing data-source alert raised NameError on every firing, got
+  # swallowed, and logged under a title reading "KPI marketing web — source
+  # alert" — which looks like the ALERTING broke, not the data source. A dead GA4
+  # or Search Console feed therefore produced no notification at all, and the one
+  # thing standing between a stale marketing number and somebody reading it as
+  # real had never once run. Fixed in v1.250.1; this stops it recurring.
+  #
+  # Separate job rather than a step in "Lint (ruff, advisory)" so that job's name
+  # stays honest and a red build here is unambiguous about what broke. Deliberately
+  # ONE rule: the wider 433-finding style backlog stays advisory above.
+  # ---------------------------------------------------------------------------
+  undefined-names:
+    name: No undefined names (F821)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.8.1
+      - name: ruff check --select F821
+        run: ruff check erpnext_enhancements/ --select F821 --output-format=github
+
+  # ---------------------------------------------------------------------------
   # Standalone unit tests — no Frappe/bench required, so they run fast on every
   # push. Covers the time-kiosk consolidation algorithm, plus the bench-free
   # suites that guard the security-sensitive AI write gate
@@ -132,6 +166,18 @@ jobs:
           python -m unittest
           erpnext_enhancements.tests.test_kpi_metrics
           erpnext_enhancements.tests.test_custom_html_blocks -v
+      # Own step: installs its own frappe stub in setUpModule, so it must not
+      # share a process with the other stub-installing suites.
+      #
+      # The F821 job guards the bug class statically; this guards the BEHAVIOUR
+      # that class was hiding. The marketing source alert raised NameError on
+      # every firing and the function's own `except Exception` swallowed it, so
+      # a broken GA4 feed notified nobody and the only trace was an Error Log row
+      # that read as though the alerting had failed. The load-bearing assertions
+      # are therefore "a failing source notifies somebody" and "no Error Log row
+      # is written" -- before the fix those were exactly inverted.
+      - name: KPI marketing source alert (a dead feed must notify)
+        run: python -m unittest erpnext_enhancements.tests.test_kpi_source_alert -v
       # Pure filesystem, like test_doctype_modules: it reads the desk JS rather
       # than running it, because there is no JS runner here and the Project
       # toolbar is assembled by five scripts that cannot see each other.
