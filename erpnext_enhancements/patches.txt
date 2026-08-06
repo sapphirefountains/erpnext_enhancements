@@ -412,3 +412,24 @@ erpnext_enhancements.patches.retype_legacy_company_customers
 # is invisible to an accountant correcting a parked invoice by hand. Fills the blank
 # only; an account somebody deliberately typed otherwise is logged and left alone.
 erpnext_enhancements.patches.set_sales_tax_account_type
+# v1.250.0 hand-off gate (PRO-0204, 2026-08-06 process meeting): the hand-off
+# meeting moves onto the Opportunity, in front of project creation. Creates the
+# nine Opportunity Custom Fields ahead of fixture sync (patches run first, and the
+# backfill below needs the columns), then writes custom_handoff_gate_applies = 0
+# on every Opportunity already sitting in Closed Won. That 0 is the whole reason
+# the 227-deal backlog stays creatable: the gate keys on the flag, which is only
+# set on a genuine transition into Closed Won, and stamping it explicitly makes
+# "exempt" a fact the report can count rather than an absence nobody decided.
+erpnext_enhancements.patches.ensure_handoff_gate_fields
+# v1.250.0 hand-off settings: the new gate/escalation/attendee knobs carry field
+# defaults, but a `default` only applies at doc creation and the Settings Single
+# already exists on live sites -- so without this the gate ships switched off by
+# accident. Same trap as default_po_approval_threshold. Fills blanks only.
+erpnext_enhancements.patches.default_handoff_settings
+# v1.250.0 hand-off SLA backfill: pending step-2 rows carry no due_by (it is only
+# stamped when a step becomes current), and a blank due_by is invisible rather
+# than on-time -- the escalation skips it and the report counts it as never
+# started. Dated from the source Opportunity's won date. Also computes the
+# 7-business-day launch deadline for deals won before the transition hook existed,
+# which would otherwise report "no won date" for the whole back catalogue.
+erpnext_enhancements.patches.backfill_handoff_due_by

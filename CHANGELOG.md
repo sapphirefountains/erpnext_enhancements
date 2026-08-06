@@ -7,6 +7,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.250.0] - 2026-08-06
+
+Moves the Closed-Won hand-off **in front of** project creation, and turns the hand-off
+steps from things you tick into things that do the work.
+
+A process-compliance audit on 2026-08-06 measured the existing tracker: anchored
+(automatic) steps 1/3/5 completed **100%** of the time, manual steps **5%**; **17 of 17**
+pending hand-off meetings were past SLA; **8 of 28** new projects had been created outside
+the process path entirely. None of that surfaced anywhere until somebody went looking.
+
+The cause was structural rather than behavioural. The 7-step tracker lived on the
+**Project**, so step 2 — *Hold Hand-Off Meeting* — only existed once the project had been
+created. The step meant to gate project creation sat downstream of it. This release
+reverts the June decision that permitted project-first creation.
+
+Three design intents from the meeting, applied throughout: make the compliant path the
+easiest path, make skipping visible instead of silent, and make lateness loud.
+
+### Added
+
+- **The hand-off gate ([`crm_enhancements/handoff.py`](erpnext_enhancements/crm_enhancements/handoff.py)).**
+  A Project cannot be created from a Closed-Won Opportunity until its hand-off meeting is
+  recorded. Nine new Opportunity Custom Fields hold that state.
+
+  **The enforcement is on `Project.before_insert`, and that is not a stylistic choice.**
+  The obvious home is `validate` — but `crm_enhancements/api.py`'s
+  `create_project_from_opportunity_background` sets `flags.ignore_validate = True` before
+  inserting, and Frappe's `run_before_save_methods()` returns early on that flag. A
+  `validate` gate would have passed review and then silently never fired on the path that
+  creates most projects. `before_insert` survives both `ignore_validate` and
+  `ignore_permissions`, which is the coverage the audit's eight off-process projects
+  actually need. `make_project` and the background job refuse as well, but only so the
+  message arrives somewhere readable; `before_insert` is the authority.
+
+  **The gate keys on a flag, not a date.** `custom_handoff_gate_applies` is set only on a
+  genuine *transition* into Closed Won. A date comparison would have been unsafe:
+  `stamp_won_date` fills a blank `custom_date_closed_won` on **any** Closed-Won save, so
+  merely re-saving one of the 227 already-won opportunities would have dragged it into the
+  gate. That backlog is deliberately exempt (WI-024 owns it) and a patch stamps the
+  exemption explicitly, so it is a fact the report can count rather than an absence nobody
+  decided.
+
+  **Skipping is allowed; silence is not.** `skip_handoff` is System Manager only and
+  requires a written reason, which lands on the record and on the Project's step 2 row
+  prefixed `[SKIPPED]` — so it reads as a skip in the tracker and the compliance report,
+  never as a completion.
+
+- **Buttons that do the step, not just record it.** On a Closed-Won Opportunity, *Hold
+  Hand-Off Meeting* opens a dialog prefilled with Sales, Production and Billing, proposes
+  the next business-day slot (15 minutes), then creates a Frappe `Event` and emails the
+  invite; afterwards it becomes *Mark Hand-Off Complete*. On the Project, the current step
+  carries an inline action: step 4 opens a billing email, step 6 the task list, step 7 the
+  same meeting scheduler. Attendees are configured in **ERPNext Enhancements Settings →
+  Hand-Off Attendee Roles** (explicit address, or the holders of a Role), so changing who
+  attends is never a deploy.
+
+  Two things about `Event` are worth recording. Its `Event Participants` child marks
+  *both* reference fields `reqd` — `email` is only an optional extra — so a group address
+  like `production@` cannot be expressed as a participant row at all; those attendees get
+  the invite email, which is the part that has to work. And `Event` on this site grants
+  create to System Manager and Finance Team only, so a Sales user cannot insert one under
+  their own permissions: the endpoint checks **Opportunity write** and then inserts with
+  `ignore_permissions`. The calendar attachment reuses `travel_management/ics.py`, which
+  implements `METHOD:PUBLISH` only — an "add to calendar" file, not an RSVP-tracking
+  invite.
+
+- **Hand-Off SLA Compliance** Script Report, plus a Friday-morning email to a configurable
+  recipient list (`"30 7 * * 5"` — a cron entry because Frappe's `weekly` bucket cannot
+  pin a weekday). Reports on-time % per role and per step, the overdue list with days
+  over, and the 7-business-day Closed-Won→Launch metric. Steps whose `due_by` never
+  started get their own bucket rather than being counted as overdue: they are blocked
+  upstream, not late, and merging the two would overstate lateness while hiding a stall.
+
+- **`Hand-Off Attendee Role`** child DocType, and Settings fields `handoff_gate_enabled`,
+  `handoff_invoice_flow`, `handoff_escalation_fallback`, `handoff_attendees`,
+  `handoff_report_recipients`.
+
+### Changed
+
+- **Step 2's SLA anchors on the Opportunity.** Marking a deal Closed Won now stamps
+  `custom_handoff_due_by` (2 business days) and `custom_launch_deadline` (7 business
+  days) alongside the existing won-date stamp. Both are stored rather than recomputed, so
+  a later edit to the Holiday List cannot silently move a deadline already reported on.
+  Like `custom_stage_changed_on`, these stamps are deliberately **not** gated on the
+  feature flag — `feature_flags.py` documents why silent data stamps stay ungated: the
+  data has to already be meaningful on the day somebody flips a switch.
+
+- **Step 7 shows two clocks.** Its own SLA *and* the 7-business-day launch goal. A step
+  can be perfectly on time against the step before it and still miss the launch goal,
+  because the goal measures the whole chain — the disagreement between them is the signal,
+  so neither is derivable from the other and both are displayed.
+
+- **Overdue steps escalate to the responsible person *and* their manager**, daily while
+  they stay late, by email as well as Notification Log, with a subject line carrying the
+  customer, the step and the days overdue. Manager resolution uses `Employee.reports_to`
+  (populated on 13 of 15 active employees) with a configurable fallback address for the
+  rest — "my manager isn't set up" must not mean "nobody hears about this".
+  `status_alerts._deliver` gained an opt-in `email` parameter; every existing caller keeps
+  behaving exactly as before.
+
+- **Step 5 (Receive Customer Payment) no longer escalates.** When a customer pays is not
+  something anyone here can be nagged into fixing, and a daily email about it teaches
+  people to filter these messages — which costs us the steps that *are* ours. Step 4,
+  sending the invoice, stays in.
+
+- **A new sweep chases step 2 on the Opportunity.** The existing escalation queries
+  `Project Process Step`, and step 2 now happens before any such row exists — without
+  this the one step this release is about would be the one step nobody chases.
+
+- **Manual completions go through whitelisted `process_steps.complete_step`**, which
+  stamps `completed_on`/`completed_by` from the server clock and session and checks the
+  step's responsible role. The old client path
+  (`frappe.model.set_value(row, "status", "Completed")` then `frm.save()`) let the browser
+  propose `completed_on`; the audit found retroactive box-checking.
+
+- **Step 2 completion carries across into the Project.** When the project is finally
+  created, the step 2 row inherits the real timestamp and user from the Opportunity rather
+  than being stamped complete at creation time — otherwise project-side reporting would
+  record every hand-off as instantaneous.
+
+### Notes
+
+- `handoff_invoice_flow` defaults to **Manual Billing Email**. ERPNext is not the
+  accounting system yet, so the compliant step 4 action is still a note to Billing; the
+  setting switches it to a draft Sales Invoice when invoicing goes live, without a deploy.
+- The site's `handoff_holiday_list` currently points at *"Utah, USA Holidays 2025"*, so
+  2026 business-day maths skips weekends only. That is a Settings value, not code, and is
+  left for the team to update.
+
 ## [1.249.0] - 2026-08-05
 
 Adds an **Offsite Backup** module: Frappe's own backups, pushed to a Google Drive Shared

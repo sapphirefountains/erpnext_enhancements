@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-08-06 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "function",
+  "role",
+  "email"
+ ],
+ "fields": [
+  {
+   "description": "Which side of the hand-off this row invites.",
+   "fieldname": "function",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Function",
+   "options": "Sales\nProduction\nBilling",
+   "reqd": 1
+  },
+  {
+   "description": "Optional. Every holder of this Role is invited. Used only when Email below is blank.",
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Role",
+   "options": "Role"
+  },
+  {
+   "description": "Optional. A single address (usually a distribution list). Takes precedence over Role.",
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email",
+   "options": "Email"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-06 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Project Enhancements",
+ "name": "Hand-Off Attendee Role",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

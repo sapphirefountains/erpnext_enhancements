@@ -131,6 +131,15 @@ def sync_opportunity_tags_for_existing(opportunity_name):
 	return doc._user_tags
 
 
+class _HandoffBlocked(Exception):
+	"""The hand-off gate refused this project creation.
+
+	Private and deliberately not a ``frappe.ValidationError``: it is control
+	flow inside the background job, never something a caller should catch
+	generically or a user should see as a traceback.
+	"""
+
+
 # The background worker now accepts 'project_template' and uses it.
 def create_project_from_opportunity_background(opportunity_name, users, project_template):
 	"""Create a Project from an Opportunity (runs on the ``long`` worker queue).
@@ -175,6 +184,7 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		than raised.
 	"""
 	project_doc = None
+	blocked_reason = None
 	try:
 		original_user = frappe.session.user
 		try:
@@ -182,6 +192,28 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 			opp = frappe.get_doc("Opportunity", opportunity_name)
 			if opp.custom_created_project:
 				return
+
+			# Hand-off gate (PRO-0204, 2026-08-06). The authoritative check is
+			# Project before_insert, which this path would hit anyway — but that
+			# would surface as a worker traceback nobody reads. Refuse here so the
+			# reason travels back through the realtime status this job already
+			# publishes, and the user sees what to do instead of a silent failure.
+			#
+			# Note this job runs as Administrator, so it cannot rely on any
+			# permission-shaped protection: the gate has to be an explicit check.
+			from erpnext_enhancements.crm_enhancements.handoff import handoff_block_reason
+
+			blocked_reason = handoff_block_reason(opportunity_name)
+			if blocked_reason:
+				frappe.log_error(
+					f"Project creation from Opportunity '{opportunity_name}' refused: {blocked_reason}",
+					"Hand-Off Gate: project creation blocked",
+				)
+				# Raised rather than returned: a bare `return` here would exit the
+				# whole function and skip the realtime broadcast below, leaving the
+				# user staring at a spinner that never resolves. This unwinds to the
+				# handler that lets the broadcast run.
+				raise _HandoffBlocked(blocked_reason)
 
 			project = frappe.new_doc("Project")
 			project.status = "Active"
@@ -401,6 +433,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 		finally:
 			frappe.set_user(original_user)
 
+	except _HandoffBlocked:
+		# An expected refusal, already logged with its reason. Deliberately not
+		# re-logged as a traceback: this is the process working, not a fault.
+		pass
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "CRM Enhancements App Background Job Failed")
 
@@ -410,10 +446,12 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 
 	for user in users:
 		message_payload = {
-			"status": "success" if project_doc else "failed",
+			"status": "success" if project_doc else ("blocked" if blocked_reason else "failed"),
 			"project_doc": project_doc,
 			"opportunity_name": opportunity_name,
 		}
+		if blocked_reason:
+			message_payload["blocked_reason"] = blocked_reason
 
 		if project_doc:
 			message_payload["drive_success"] = drive_success

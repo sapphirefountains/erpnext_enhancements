@@ -27,7 +27,43 @@ frappe.provide("erpnext_enhancements.crm");
 	// The "Create Project" dialog (template + users to notify), defaulting the
 	// notify list to the Account Executive + Project Manager role holders. Mirrors
 	// the dialog the old "Create Project" button used to show.
+	/**
+	 * Gate check before the create-project dialog opens (PRO-0204, 2026-08-06).
+	 *
+	 * The hand-off meeting must be recorded on the Opportunity first. This is
+	 * signposting, not enforcement — `process_steps.enforce_handoff_gate` refuses
+	 * on Project `before_insert` regardless — but offering a dialog that is
+	 * guaranteed to fail is a worse experience than saying why up front, and this
+	 * prompt is the path most people take.
+	 */
 	function open_create_project_dialog(opportunity_name, opts) {
+		frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.handoff_state", {
+				opportunity: opportunity_name,
+			})
+			.then(function (state) {
+				if (state && state.available && state.enabled && state.gate_applies && !state.held) {
+					frappe.msgprint({
+						title: __("Hand-Off Required"),
+						indicator: "orange",
+						message:
+							frappe.utils.escape_html(state.gate_message) +
+							`<p><a href="/app/opportunity/${encodeURIComponent(opportunity_name)}">${__(
+								"Open the opportunity"
+							)}</a></p>`,
+					});
+					return;
+				}
+				_open_create_project_dialog(opportunity_name, opts);
+			})
+			.catch(function () {
+				// A transient failure of the advisory check must not block the
+				// dialog: the server-side gate is still there to catch it.
+				_open_create_project_dialog(opportunity_name, opts);
+			});
+	}
+
+	function _open_create_project_dialog(opportunity_name, opts) {
 		opts = opts || {};
 		Promise.all([
 			frappe.xcall(

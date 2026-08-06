@@ -290,6 +290,19 @@ jobs:
       # swapped, or a second statement for a period already paid.
       - name: Pay-period commission report (window math, send-once, restore)
         run: python -m unittest erpnext_enhancements.tests.test_pay_period_reports -v
+      # The Closed-Won hand-off gate. Its own step because it installs a frappe
+      # stub in setUpModule, and sharing a process with another stub-installing
+      # suite is how they cross-talk.
+      #
+      # Guards a failure mode that is invisible from the outside: a gate that
+      # stops gating looks exactly like a gate that is working. The 2026-08-06
+      # audit measured the cost of that — 8 of 28 projects created off-process,
+      # 17 of 17 hand-off meetings past SLA — and nothing reported either. Also
+      # pins the over-firing direction (a legacy Closed-Won deal must NOT be
+      # blocked, or a 227-deal backlog freezes), the business-day maths across a
+      # weekend, and that step 5 never escalates while step 4 does.
+      - name: Closed-Won hand-off gate (bench-free)
+        run: python -m unittest erpnext_enhancements.tests.test_handoff_gate -v
       - name: QuickBooks Online sync (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_quickbooks_online.py -q
       - name: Stripe Payments (bench-free pytest suite)
