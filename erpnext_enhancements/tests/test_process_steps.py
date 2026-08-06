@@ -24,8 +24,8 @@ from erpnext_enhancements.utils.working_days import add_working_days
 TEMPLATES = [
 	frappe._dict(step_number=1, step_title="Mark Opportunity as Won", responsible_role="Account Executive", auto_anchor="Opportunity Won", sla_hours=0, sla_business_days=0, description=""),
 	frappe._dict(step_number=2, step_title="Create Project in PM System", responsible_role="Project Manager", auto_anchor="Project Created", sla_hours=0, sla_business_days=0, description=""),
-	frappe._dict(step_number=3, step_title="Create Accounting Project & Send Invoice", responsible_role="Accounts Receivable", auto_anchor="", sla_hours=24, sla_business_days=1, description=""),
-	frappe._dict(step_number=5, step_title="Receive Customer Payment", responsible_role="Accounts Receivable", auto_anchor="Payment Received", sla_hours=0, sla_business_days=0, description=""),
+	frappe._dict(step_number=3, step_title="Create Accounting Project & Send Invoice", responsible_role="Finance & Accounting Manager", auto_anchor="", sla_hours=24, sla_business_days=1, description=""),
+	frappe._dict(step_number=5, step_title="Receive Customer Payment", responsible_role="Finance & Accounting Manager", auto_anchor="Payment Received", sla_hours=0, sla_business_days=0, description=""),
 ]
 
 

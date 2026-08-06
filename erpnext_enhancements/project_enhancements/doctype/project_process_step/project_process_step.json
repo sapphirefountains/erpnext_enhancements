@@ -41,7 +41,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Responsible",
-   "options": "Account Executive\nAccounts Receivable\nProject Manager",
+   "options": "Account Executive\nFinance & Accounting Manager\nProject Manager",
    "read_only": 1
   },
   {

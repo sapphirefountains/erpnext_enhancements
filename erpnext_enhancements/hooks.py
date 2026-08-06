@@ -95,6 +95,10 @@ doctype_js = {
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
+		# must load BEFORE opportunity_handoff.js: that script calls open() on it
+		# from the "Hold Hand-Off Meeting" button. Shared with the Project form,
+		# where step 7 books the same kind of meeting.
+		"public/js/crm_enhancements/handoff_meeting_dialog.js",
 		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
@@ -112,6 +116,9 @@ doctype_js = {
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
+		# same pairing as on Opportunity: the dialog first, then the script that
+		# opens it (step 7, "Hold Project Launch Meeting").
+		"public/js/crm_enhancements/handoff_meeting_dialog.js",
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
 		# Contracts tab (custom_contracts_html): every contract on the job —
@@ -286,7 +293,18 @@ doc_events = {
 	},
 	"Project": {
 		"before_validate": "erpnext_enhancements.sync_contact.sanitize_primary_address_link",
-		"before_insert": "erpnext_enhancements.process_steps.seed_process_steps",
+		"before_insert": [
+			# ORDER IS LOAD-BEARING, and so is the hook itself being before_insert.
+			# The gate refuses a Project whose source Opportunity is Closed Won with
+			# no recorded hand-off (PRO-0204, 2026-08-06 process meeting). It cannot
+			# live on `validate`: create_project_from_opportunity_background sets
+			# flags.ignore_validate before inserting, so a validate hook silently
+			# never runs on the path that creates most projects. before_insert
+			# survives both ignore_validate and ignore_permissions.
+			# It runs FIRST so a refused project never seeds its tracker rows.
+			"erpnext_enhancements.process_steps.enforce_handoff_gate",
+			"erpnext_enhancements.process_steps.seed_process_steps",
+		],
 		"after_insert": "erpnext_enhancements.process_steps.announce_seeded_steps",
 		"before_save": [
 			"erpnext_enhancements.script_migrations.project.remove_open_status",
@@ -421,6 +439,11 @@ doc_events = {
 		"before_save": [
 			"erpnext_enhancements.crm_enhancements.api.sync_opportunity_tags",
 			"erpnext_enhancements.script_migrations.opportunity.stamp_won_date",
+			# must run after stamp_won_date: both describe the same Closed-Won
+			# moment, and the hand-off/launch deadlines are measured from it.
+			# Ungated on purpose (a silent data stamp, like custom_stage_changed_on)
+			# so the SLA data is already meaningful whenever a switch is flipped.
+			"erpnext_enhancements.crm_enhancements.handoff.stamp_handoff_gate",
 			"erpnext_enhancements.script_migrations.opportunity.validate_ranks_on_won",
 			"erpnext_enhancements.script_migrations.opportunity.validate_close_reason",
 			"erpnext_enhancements.script_migrations.opportunity.update_lead_status",
@@ -606,6 +629,11 @@ scheduler_events = {
 		# skipped every Sunday for months. This is the check that catches "nothing
 		# ran at all": a failure email only fires when a job runs and throws.
 		"0 8 * * *": ["erpnext_enhancements.offsite_backup.backup.watchdog"],
+		# Hand-off SLA compliance summary — Friday 07:30 site TZ. A cron entry
+		# rather than the "weekly" bucket because that bucket cannot pin a
+		# weekday, and the 2026-08-06 meeting asked for Friday mornings
+		# specifically. :30 keeps it clear of the 07:00/07:15 cluster above.
+		"30 7 * * 5": ["erpnext_enhancements.process_steps.send_weekly_sla_digest"],
 	},
 	"daily": [
 		# training: move assignments past their due date into Overdue. A separate

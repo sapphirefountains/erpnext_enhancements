@@ -37,6 +37,13 @@
   "handoff_section",
   "handoff_ar_rep",
   "handoff_holiday_list",
+  "handoff_gate_column_break",
+  "handoff_gate_enabled",
+  "handoff_invoice_flow",
+  "handoff_escalation_fallback",
+  "handoff_attendees_section",
+  "handoff_attendees",
+  "handoff_report_recipients",
   "briefing_section",
   "briefing_enabled",
   "briefing_use_gemini",
@@ -347,10 +354,10 @@
    "label": "Hand-Off Process (PRO-0204)"
   },
   {
-   "description": "The Finance person responsible for Accounts Receivable hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
+   "description": "The Finance & Accounting Manager responsible for the finance hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
    "fieldname": "handoff_ar_rep",
    "fieldtype": "Link",
-   "label": "Accounts Receivable Rep",
+   "label": "Finance & Accounting Manager",
    "options": "Employee"
   },
   {
@@ -359,6 +366,51 @@
    "fieldtype": "Link",
    "label": "Holiday List (Due Dates)",
    "options": "Holiday List"
+  },
+  {
+   "fieldname": "handoff_gate_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "When ticked, a Project cannot be created from a Closed Won Opportunity until its Hand-Off Meeting has been recorded (or explicitly skipped with a reason by a System Manager). Only applies to opportunities won after this feature shipped - the pre-existing Closed Won backlog is exempt. Untick to fall back to the old behaviour without a deploy.",
+   "fieldname": "handoff_gate_enabled",
+   "fieldtype": "Check",
+   "label": "Require Hand-Off Before Project Creation"
+  },
+  {
+   "default": "Manual Billing Email",
+   "description": "What the \"Create Accounting Project & Send Invoice\" step button does. \"Manual Billing Email\" opens a pre-filled note to the Billing attendees - the current hack-period process, correct while QuickBooks is still the accounting system. Switch to \"Draft Sales Invoice\" once ERPNext invoicing is live.",
+   "fieldname": "handoff_invoice_flow",
+   "fieldtype": "Select",
+   "label": "Invoice Step Action",
+   "options": "Manual Billing Email\nDraft Sales Invoice"
+  },
+  {
+   "description": "Where overdue-step escalations go when the responsible person has no manager set on their Employee record (Reports To). Leave blank to escalate to the responsible person only.",
+   "fieldname": "handoff_escalation_fallback",
+   "fieldtype": "Data",
+   "label": "Escalation Fallback Recipient",
+   "options": "Email"
+  },
+  {
+   "fieldname": "handoff_attendees_section",
+   "fieldtype": "Section Break",
+   "label": "Hand-Off Attendees & Reporting"
+  },
+  {
+   "description": "Who is invited to a Hand-Off Meeting, by function. Each row resolves to an address: an explicit Email wins, otherwise every holder of the named Role. Sales additionally falls back to the opportunity owner. Edit here rather than in code.",
+   "fieldname": "handoff_attendees",
+   "fieldtype": "Table",
+   "label": "Hand-Off Attendee Roles",
+   "options": "Hand-Off Attendee Role"
+  },
+  {
+   "description": "Who receives the weekly Hand-Off SLA Compliance summary, emailed Friday mornings (site timezone).",
+   "fieldname": "handoff_report_recipients",
+   "fieldtype": "Table",
+   "label": "SLA Report Recipients",
+   "options": "Project Reminder Email"
   },
   {
    "fieldname": "briefing_section",

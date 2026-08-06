@@ -124,6 +124,19 @@ frappe.ui.form.on("Opportunity", {
 		// The real-time listener for completion remains exactly the same.
 		frappe.realtime.on("project_creation_status", function (data) {
 			if (data.opportunity_name === frm.doc.name) {
+				// The hand-off gate refused this one (PRO-0204). Reported as its own
+				// status rather than a generic failure so the user is told what to
+				// do instead of being handed "creation failed" for a process step
+				// they can complete in two clicks on this very form.
+				if (data.status === "blocked") {
+					frappe.msgprint({
+						title: __("Hand-Off Required"),
+						indicator: "orange",
+						message: frappe.utils.escape_html(data.blocked_reason || ""),
+					});
+					frm.reload_doc();
+					return;
+				}
 				if (data.status === "success") {
 					let success_message = __("Project {0} created successfully.", [
 						`<a href="/app/project/${data.project_doc.name}">${data.project_doc.name}</a>`,

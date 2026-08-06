@@ -59,14 +59,43 @@ def _alert_recipients(flag):
 	)
 
 
-def _deliver(recipients, message, subject, reference_doctype, reference_docname):
-	"""Send ``message`` to every recipient: SMS to ``cell_number``, Notification Log to ``user_id``."""
+def _deliver(recipients, message, subject, reference_doctype, reference_docname, email=False):
+	"""Send ``message`` to every recipient: SMS to ``cell_number``, Notification Log to ``user_id``.
+
+	``email=True`` adds a third channel, sent to ``email`` when the recipient
+	carries one and otherwise to ``user_id`` (which is an address on this site).
+	Opt-in rather than default so every existing caller keeps behaving exactly as
+	it did — these alerts have been SMS + in-app since they were written, and
+	silently adding email to all of them would be a change nobody asked for.
+
+	The hand-off escalations pass ``email=True``: the 2026-08-06 meeting asked for
+	overdue steps to be *loud*, and an in-app notification is only loud to someone
+	already looking at the desk.
+	"""
 	seen = set()
 	for recipient in recipients:
 		key = (recipient.get("cell_number"), recipient.get("user_id"))
 		if key in seen:
 			continue
 		seen.add(key)
+
+		if email:
+			address = recipient.get("email") or recipient.get("user_id")
+			if address:
+				try:
+					frappe.sendmail(
+						recipients=[address],
+						subject=subject,
+						message=f"<pre style='font-family:inherit;white-space:pre-wrap'>{frappe.utils.escape_html(message)}</pre>",
+						reference_doctype=reference_doctype,
+						reference_name=reference_docname,
+					)
+				except Exception:
+					# One bad address must not cost the rest of the sweep.
+					frappe.log_error(
+						f"Status alert email to {address} failed:\n{frappe.get_traceback()}",
+						"Status Alert Email Error",
+					)
 
 		if recipient.get("cell_number"):
 			try:

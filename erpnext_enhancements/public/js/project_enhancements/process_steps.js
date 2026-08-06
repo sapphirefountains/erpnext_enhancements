@@ -46,6 +46,148 @@
 		</style>
 	`;
 
+	// -----------------------------------------------------------------------
+	// Inline step actions.
+	//
+	// The 2026-08-06 meeting's central complaint: the steps were pure
+	// record-keeping, a row you tick, with no help doing the work — and manual
+	// steps completed 5% of the time against 100% for the automated ones. So the
+	// current step gets a button that starts the actual work, next to the one
+	// that records it. Keyed by step_number, because the titles are editable
+	// site-side on Process Step Template but the numbering is the process.
+	// -----------------------------------------------------------------------
+
+	const STEP_INVOICE = 4;
+	const STEP_TASKS = 6;
+	const STEP_LAUNCH = 7;
+
+	function open_billing_email(frm) {
+		// The "hack period" flow: ERPNext is not the accounting system yet, so
+		// the compliant action is still a note to Billing, not an invoice. The
+		// server-side `handoff_invoice_flow` setting decides which of these two
+		// this button is; see erpnext_enhancements_settings.json.
+		frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.resolve_attendees", {
+				opportunity: frm.doc.custom_opportunity || null,
+			})
+			.then((attendees) => {
+				new frappe.views.CommunicationComposer({
+					doc: frm.doc,
+					frm: frm,
+					subject: __("Accounting project & invoice — {0}", [frm.doc.project_name || frm.doc.name]),
+					recipients: ((attendees && attendees.Billing) || []).join(", "),
+					message: __(
+						"Please set up the accounting project and send the invoice for {0} ({1}).",
+						[frm.doc.project_name || frm.doc.name, frm.doc.customer || ""]
+					),
+				});
+			});
+	}
+
+	function open_draft_invoice(frm) {
+		frappe.new_doc("Sales Invoice", {
+			customer: frm.doc.customer,
+			project: frm.doc.name,
+		});
+	}
+
+	function open_tasks(frm) {
+		// Jump to what already exists rather than always creating: the step is
+		// "outline tasks", and someone part-way through needs the list, not a
+		// blank Task. A project with nothing on it gets the new-Task form.
+		frappe.db
+			.count("Task", { filters: { project: frm.doc.name } })
+			.then((n) => {
+				if (n) {
+					frappe.set_route("List", "Task", { project: frm.doc.name });
+				} else {
+					frappe.new_doc("Task", { project: frm.doc.name });
+				}
+			});
+	}
+
+	function open_launch_meeting(frm) {
+		frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.project_meeting_attendees", {
+				project: frm.doc.name,
+			})
+			.then((attendees) => {
+				erpnext_enhancements.handoff_meeting_dialog.open({
+					title: __("Hold Project Launch Meeting"),
+					description: __(
+						"The project team is invited by email and the meeting is added to the calendar."
+					),
+					attendees: attendees,
+					on_submit(values) {
+						return frappe
+							.xcall(
+								"erpnext_enhancements.crm_enhancements.handoff.schedule_project_meeting",
+								{
+									project: frm.doc.name,
+									starts_on: values.starts_on,
+									duration_minutes: values.duration_minutes,
+									attendees: values.attendees,
+								}
+							)
+							.then((result) => {
+								frappe.show_alert({
+									message: result.invited
+										? __("Launch meeting created and invites sent.")
+										: __("Meeting created, but the invite email failed — check the Error Log."),
+									indicator: result.invited ? "green" : "orange",
+								});
+								frm.reload_doc();
+							});
+					},
+				});
+			});
+	}
+
+	const STEP_ACTIONS = {
+		[STEP_INVOICE]: {
+			label: "Send to Billing",
+			run(frm) {
+				const ctx = frm.__handoff_ctx || {};
+				if (ctx.invoice_flow === "Draft Sales Invoice") {
+					open_draft_invoice(frm);
+				} else {
+					open_billing_email(frm);
+				}
+			},
+		},
+		[STEP_TASKS]: { label: "Open Tasks", run: open_tasks },
+		[STEP_LAUNCH]: { label: "Schedule Launch Meeting", run: open_launch_meeting },
+	};
+
+	/**
+	 * The 7-business-day Closed-Won -> Launch goal, shown beside step 7.
+	 *
+	 * Deliberately separate from the step's own due date: a step can be on time
+	 * against the step before it and still blow the launch goal, because the goal
+	 * measures the whole chain. The meeting asked for both to be visible.
+	 */
+	function launch_deadline_block(frm, steps) {
+		const launch = steps.find((s) => Number(s.step_number) === STEP_LAUNCH);
+		const deadline = (frm.__handoff_ctx || {}).launch_deadline;
+		if (!launch || !deadline) return "";
+		const done = launch.status === "Completed";
+		const missed = done
+			? launch.completed_on && launch.completed_on > deadline
+			: frappe.datetime.now_datetime() > deadline;
+		const label = done
+			? missed
+				? __("Launch goal MISSED")
+				: __("Launch goal met")
+			: missed
+				? __("Launch goal MISSED")
+				: __("Launch goal");
+		return `
+			<div class="ee-step-meta" style="margin-top:6px; ${missed ? "color: #dc2626; font-weight:600;" : ""}">
+				${label}: ${__("launch within 7 business days of Closed Won")} —
+				${frappe.datetime.str_to_user(deadline)}
+			</div>`;
+	}
+
 	function render(frm) {
 		const field = frm.get_field("custom_process_progress");
 		if (!field || !field.$wrapper) return;
@@ -115,8 +257,14 @@
 		html += "</div>";
 
 		if (current) {
+			const action = STEP_ACTIONS[current.step_number];
 			html += `
 				<div class="ee-process-actions">
+					${
+						action
+							? `<button class="btn btn-xs btn-default ee-step-action">${__(action.label)}</button>`
+							: ""
+					}
 					<button class="btn btn-xs btn-primary ee-complete-step">
 						${__("Mark Step {0} Complete", [current.step_number])}
 					</button>
@@ -127,13 +275,30 @@
 			`;
 		}
 
+		const launch_deadline_html = launch_deadline_block(frm, steps);
+		if (launch_deadline_html) html += launch_deadline_html;
+
 		field.$wrapper.html(html);
 
 		if (current) {
+			// Completion goes through a whitelisted server method, NOT
+			// frappe.model.set_value + save. The 2026-08-06 audit found
+			// retroactive box-checking, and the old client path let the browser
+			// propose completed_on; the server now stamps it from its own clock
+			// and checks the responsible role.
 			field.$wrapper.find(".ee-complete-step").on("click", () => {
-				frappe.model.set_value(current.doctype, current.name, "status", "Completed");
-				frm.save();
+				frappe
+					.xcall("erpnext_enhancements.process_steps.complete_step", {
+						project: frm.doc.name,
+						step_name: current.name,
+					})
+					.then(() => frm.reload_doc());
 			});
+
+			const action = STEP_ACTIONS[current.step_number];
+			if (action) {
+				field.$wrapper.find(".ee-step-action").on("click", () => action.run(frm, current));
+			}
 		}
 
 		// Soft signal on the task-outlining step: open task count (display only).
@@ -153,7 +318,24 @@
 
 	frappe.ui.form.on("Project", {
 		refresh(frm) {
+			// Paint immediately from the child rows we already have, then repaint
+			// once the launch deadline and invoice flow arrive. The bar is the
+			// primary content of this tab; making it wait on a round trip would
+			// show an empty panel on every load for data that only decorates it.
 			render(frm);
+			if (frm.is_new() || !frappe.boot.ee_process_automation) return;
+			frappe
+				.xcall("erpnext_enhancements.crm_enhancements.handoff.project_handoff_context", {
+					project: frm.doc.name,
+				})
+				.then((ctx) => {
+					frm.__handoff_ctx = ctx || {};
+					render(frm);
+				})
+				.catch(() => {
+					// Decoration only — a failed context call must not blank the bar.
+					frm.__handoff_ctx = {};
+				});
 		},
 	});
 })();
