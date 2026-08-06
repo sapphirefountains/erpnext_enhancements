@@ -79,7 +79,10 @@ module [`process_steps.py`](../process_steps.py):
   person (SMS + Notification Log via `status_alerts._deliver`); the last completion
   posts a "process complete" comment instead. Roles resolve per project at send time:
   PM → `custom_project_owner`, AE → source Opportunity's `opportunity_owner`,
-  AR → `handoff_ar_rep` in ERPNext Enhancements Settings.
+  Finance & Accounting Manager → `handoff_ar_rep` in ERPNext Enhancements Settings
+  (renamed from "Accounts Receivable" in v1.251.0; the *fieldname* deliberately keeps
+  its old spelling, so the configured Employee survives the rename — only the label and
+  the stored `responsible_role` values moved, via `patches.rename_handoff_ar_role`).
 - **Escalation** — daily scheduler nags the current step's owner **and their manager**
   (`Employee.reports_to`, falling back to `handoff_escalation_fallback`) once it's past
   `due_by`, by email as well as in-app, repeating daily while late (max once/day per step).

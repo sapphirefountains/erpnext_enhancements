@@ -50,8 +50,10 @@ Responsibility is role-shaped, resolved per project at notification time
 (never stored): **Project Manager** → ``Project.custom_project_owner``
 (Employee); **Account Executive** → ``opportunity_owner`` (User) of the
 source Opportunity (``custom_opportunity``, with a ``custom_created_project``
-reverse lookup as fallback); **Accounts Receivable** → the Employee named in
-**ERPNext Enhancements Settings → Hand-Off Process** (``handoff_ar_rep``).
+reverse lookup as fallback); **Finance & Accounting Manager** → the Employee
+named in **ERPNext Enhancements Settings → Hand-Off Process**
+(``handoff_ar_rep``; the fieldname keeps its old spelling — renaming a Single's
+field would orphan the configured value for no gain, so only the label moved).
 """
 
 import frappe
@@ -67,7 +69,13 @@ from erpnext_enhancements.status_alerts import _deliver
 from erpnext_enhancements.utils.working_days import add_working_days
 
 ROLE_AE = "Account Executive"
-ROLE_AR = "Accounts Receivable"
+#: Renamed from "Accounts Receivable" in v1.251.0 to match what the role is
+#: actually called. This string is STORED on every Process Step Template and
+#: Project Process Step row, so changing it needs the data migrated with it —
+#: see ``patches/rename_handoff_ar_role``. A Select whose stored value is no
+#: longer in its options renders blank on the form and drops out of the report
+#: filter, which is the failure mode that patch exists to prevent.
+ROLE_AR = "Finance & Accounting Manager"
 ROLE_PM = "Project Manager"
 
 ANCHOR_WON = "Opportunity Won"

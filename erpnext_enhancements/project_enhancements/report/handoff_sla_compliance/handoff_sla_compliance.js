@@ -36,7 +36,7 @@ frappe.query_reports["Hand-Off SLA Compliance"] = {
 			fieldname: "responsible_role",
 			label: __("Responsible Role"),
 			fieldtype: "Select",
-			options: ["", "Account Executive", "Accounts Receivable", "Project Manager"].join("\n"),
+			options: ["", "Account Executive", "Finance & Accounting Manager", "Project Manager"].join("\n"),
 		},
 		{
 			fieldname: "state",

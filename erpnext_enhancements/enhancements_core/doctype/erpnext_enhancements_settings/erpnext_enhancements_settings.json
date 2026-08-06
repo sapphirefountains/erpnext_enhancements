@@ -354,10 +354,10 @@
    "label": "Hand-Off Process (PRO-0204)"
   },
   {
-   "description": "The Finance person responsible for Accounts Receivable hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
+   "description": "The Finance & Accounting Manager responsible for the finance hand-off steps (accounting project + invoice, payment receipt). Step notifications and overdue escalations for those steps go to this Employee.",
    "fieldname": "handoff_ar_rep",
    "fieldtype": "Link",
-   "label": "Accounts Receivable Rep",
+   "label": "Finance & Accounting Manager",
    "options": "Employee"
   },
   {

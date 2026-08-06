@@ -54,7 +54,7 @@ STEPS = [
 	{
 		"step_number": 4,
 		"step_title": "Create Accounting Project & Send Invoice",
-		"responsible_role": "Accounts Receivable",
+		"responsible_role": "Finance & Accounting Manager",
 		"auto_anchor": "",
 		"sla_hours": 24,
 		"sla_business_days": 1,
@@ -83,7 +83,7 @@ STEPS = [
 	{
 		"step_number": 5,
 		"step_title": "Receive Customer Payment",
-		"responsible_role": "Accounts Receivable",
+		"responsible_role": "Finance & Accounting Manager",
 		"auto_anchor": "Payment Received",
 		"sla_hours": 0,
 		"sla_business_days": 0,

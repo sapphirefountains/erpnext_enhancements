@@ -433,3 +433,11 @@ erpnext_enhancements.patches.default_handoff_settings
 # 7-business-day launch deadline for deals won before the transition hook existed,
 # which would otherwise report "no won date" for the whole back catalogue.
 erpnext_enhancements.patches.backfill_handoff_due_by
+# v1.251.0 hand-off role rename: "Accounts Receivable" -> "Finance & Accounting
+# Manager" on Process Step Template + Project Process Step. responsible_role is a
+# Select whose value is STORED on every row, so renaming the option without
+# migrating the 132 existing rows would fail silently in three places at once:
+# the field renders blank, the SLA report's role filter stops matching, and
+# _resolve_responsible stops finding a recipient so the finance steps quietly
+# stop notifying. Scoped to the exact old value; idempotent.
+erpnext_enhancements.patches.rename_handoff_ar_role

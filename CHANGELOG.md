@@ -86,6 +86,24 @@ easiest path, make skipping visible instead of silent, and make lateness loud.
 
 ### Changed
 
+- **The finance hand-off role is now "Finance & Accounting Manager"**, renamed from
+  "Accounts Receivable" on both **Process Step Template** and **Project Process Step**
+  (steps 4 and 5), on the Hand-Off SLA Compliance report's role filter, and on the
+  Settings label.
+
+  `responsible_role` is a Select whose value is *stored on every row*, not looked up, so
+  the rename ships with `patches.rename_handoff_ar_role` to migrate the 132 existing rows
+  (2 templates + 130 project steps). Without that migration the change would fail in
+  three places at once and none of them would raise: Frappe renders a Select whose stored
+  value is not among its options as **blank**, the report's role filter stops matching
+  those rows, and `process_steps._resolve_responsible` — which compares the stored string
+  against `ROLE_AR` — stops resolving a recipient, so the finance steps quietly stop
+  notifying anybody.
+
+  The Settings *fieldname* stays `handoff_ar_rep` on purpose. Renaming a Single's field
+  would orphan the Employee already configured there for no benefit, so only the label
+  moved.
+
 - **Step 2's SLA anchors on the Opportunity.** Marking a deal Closed Won now stamps
   `custom_handoff_due_by` (2 business days) and `custom_launch_deadline` (7 business
   days) alongside the existing won-date stamp. Both are stored rather than recomputed, so
