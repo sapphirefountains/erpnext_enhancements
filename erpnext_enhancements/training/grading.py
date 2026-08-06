@@ -452,7 +452,7 @@ def _rng(attempt, lesson_key, run):
 	the single failure this seed exists to prevent.
 	"""
 	seed_source = getattr(attempt, "shuffle_seed", None) or getattr(attempt, "name", "") or ""
-	digest = hashlib.sha256(f"{seed_source}|{lesson_key}|{cint(run)}".encode("utf-8")).hexdigest()
+	digest = hashlib.sha256(f"{seed_source}|{lesson_key}|{cint(run)}".encode()).hexdigest()
 	return random.Random(int(digest[:16], 16))
 
 

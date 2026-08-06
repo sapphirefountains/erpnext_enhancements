@@ -14,10 +14,13 @@ setUp seeds a reusable test Asset + Address and clears prior bookings; tearDown
 removes the bookings.
 """
 
-import frappe
 import unittest
+
+import frappe
 from frappe.utils import add_to_date, now_datetime
+
 from erpnext_enhancements.api.booking import create_composite_booking
+
 
 class TestAssetBooking(unittest.TestCase):
     def setUp(self):

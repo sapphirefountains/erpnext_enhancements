@@ -12,5 +12,6 @@ No custom controller logic; behaviour comes from the JSON field definitions.
 import frappe
 from frappe.model.document import Document
 
+
 class SapphireMaintenanceConsumable(Document):
 	pass

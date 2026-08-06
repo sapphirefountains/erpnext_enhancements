@@ -228,7 +228,7 @@ def get_last_field_before_tabs(doctype):
 	meta = frappe.get_meta(doctype)
 	for field in meta.fields:
 		if field.fieldtype == "Tab Break":
-			# Return the field before the first tab if possible, 
+			# Return the field before the first tab if possible,
 			# but usually we just want to insert before other tabs or at the end of the first section.
 			# For simplicity, we'll return the last field that is NOT a tab.
 			pass

@@ -24,7 +24,7 @@ def patch_delete_doc():
 	# 1. Patch frappe.client.delete
 	import frappe.client
 	original_client_delete = frappe.client.delete
-	
+
 	def patched_client_delete(doctype, name):
 		try:
 			return original_client_delete(doctype, name)
@@ -39,7 +39,7 @@ def patch_delete_doc():
 			raise e
 
 	frappe.client.delete = patched_client_delete
-	
+
 	# 2. Patch reportview delete (bulk delete)
 	try:
 		import frappe.desk.reportview

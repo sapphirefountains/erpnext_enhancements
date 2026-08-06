@@ -11,10 +11,12 @@ term is regex-escaped and matched text is HTML-escaped before being wrapped in
 ``<b>`` highlight tags to avoid injection in the dropdown label.
 """
 
+import re
+
 import frappe
 from frappe import _
 from frappe.utils import escape_html
-import re
+
 
 @frappe.whitelist()
 def search_global_docs(txt):

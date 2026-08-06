@@ -12,6 +12,7 @@ requires Workspace write access. No external services.
 import frappe
 from frappe import _
 
+
 @frappe.whitelist()
 def add_shortcut_to_workspace(workspace, label, type, link_to, doc_type=None):
     """Append a shortcut to a Workspace's ``shortcuts`` child table.
@@ -34,7 +35,7 @@ def add_shortcut_to_workspace(workspace, label, type, link_to, doc_type=None):
         frappe.throw(_("Workspace is required"))
 
     doc = frappe.get_doc("Workspace", workspace)
-    
+
     # Check duplicate
     for s in doc.shortcuts:
         if s.label == label:
@@ -46,7 +47,7 @@ def add_shortcut_to_workspace(workspace, label, type, link_to, doc_type=None):
         "link_to": link_to,
         "doc_view": "List" if type == "DocType" else ""
     })
-    
+
     doc.save()
     return doc.name
 

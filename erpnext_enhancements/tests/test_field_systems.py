@@ -153,14 +153,13 @@ def _install_frappe_stub():
 	sys.modules["frappe.model.document"] = frappe.model.document
 
 
-def setup_module(module):  # noqa: ARG001 — pytest hook
+def setup_module(module):
 	_install_frappe_stub()
 
 
 _install_frappe_stub()
 
-from erpnext_enhancements.workforce import payroll_export, photo_gate  # noqa: E402
-
+from erpnext_enhancements.workforce import payroll_export, photo_gate
 
 # ---------------------------------------------------------------------------
 # WP-2 — the capture gate

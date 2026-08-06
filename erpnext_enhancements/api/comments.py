@@ -190,7 +190,7 @@ def link_files_to_comment(file_ids, comment_id, parent_doctype, parent_name):
 				file_doc.db_set("attached_to_name", parent_name, update_modified=False)
 			else:
 				file_doc.save(ignore_permissions=True)
-		except Exception as e:
+		except Exception:
 			frappe.log_error(frappe.get_traceback(), "File Link Error")
 
 	return {"success": True}

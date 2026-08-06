@@ -37,7 +37,6 @@ from erpnext_enhancements.quickbooks_online.core.utils import (
 	set_secret,
 )
 
-
 # Lock name serializing token refreshes across workers (see refresh_access_token).
 TOKEN_REFRESH_LOCK = "quickbooks_online_token_refresh"
 
@@ -193,7 +192,7 @@ class QuickBooksClient:
 		client_secret = get_secret(self.settings, "client_secret")
 		if not token or not self.settings.client_id or not client_secret:
 			return False
-		basic = base64.b64encode(f"{self.settings.client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
+		basic = base64.b64encode(f"{self.settings.client_id}:{client_secret}".encode()).decode("utf-8")
 		try:
 			response = requests.post(
 				REVOKE_URL,
@@ -220,7 +219,7 @@ class QuickBooksClient:
 		if not self.settings.client_id or not client_secret:
 			frappe.throw("QuickBooks Online Client ID and Client Secret are required.")
 
-		basic = base64.b64encode(f"{self.settings.client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
+		basic = base64.b64encode(f"{self.settings.client_id}:{client_secret}".encode()).decode("utf-8")
 		response = requests.post(
 			TOKEN_URL,
 			headers={

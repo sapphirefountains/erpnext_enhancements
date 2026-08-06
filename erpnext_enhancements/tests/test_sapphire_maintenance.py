@@ -6,9 +6,11 @@ surfaces the serial's site instructions, and (2) ``tasks.py``'s predictive
 generator drafts a Maintenance Record from a maintenance Sales Order Item whose
 next visit is due.
 """
-import frappe
 import unittest
-from frappe.utils import nowdate, add_days
+
+import frappe
+from frappe.utils import add_days, nowdate
+
 
 class TestSapphireMaintenance(unittest.TestCase):
     def setUp(self):
@@ -20,7 +22,7 @@ class TestSapphireMaintenance(unittest.TestCase):
             item.item_group = "All Item Groups"
             item.is_stock_item = 0
             item.insert(ignore_permissions=True)
-        
+
         # Create a test Serial No
         self.serial_no = "TEST-SN-001"
         if not frappe.db.exists("Serial No", self.serial_no):
@@ -47,11 +49,13 @@ class TestSapphireMaintenance(unittest.TestCase):
         doc.insert()
 
         self.assertEqual(doc.serial_no, self.serial_no)
-        
+
         # Test dashboard context API
-        from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import get_dashboard_context
+        from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+            get_dashboard_context,
+        )
         ctx = get_dashboard_context(self.project, self.serial_no)
-        
+
         self.assertIn("serial_no", ctx)
         self.assertEqual(ctx["serial_no"].get("custom_site_instructions"), "Follow safety gate.")
 

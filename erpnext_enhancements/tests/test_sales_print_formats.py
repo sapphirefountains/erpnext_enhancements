@@ -160,7 +160,7 @@ class TestTemplatesRender(unittest.TestCase):
 
     def setUp(self):
         try:
-            import jinja2  # noqa: F401
+            import jinja2
         except ImportError:  # pragma: no cover
             self.skipTest("jinja2 not installed")
 

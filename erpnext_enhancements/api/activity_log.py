@@ -11,6 +11,7 @@ Security: requires an authenticated session and performs an explicit
 
 import frappe
 
+
 @frappe.whitelist()
 def get_activity_counts(doctype, docname):
     """

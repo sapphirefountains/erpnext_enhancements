@@ -4,10 +4,13 @@ Verifies that ``save_draft`` upserts a single ``User Form Draft`` per
 (user, ref_doctype, ref_name) — creating then overwriting ``form_data`` on a
 second save rather than duplicating — and that ``delete_draft`` removes it.
 """
+import json
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from erpnext_enhancements.api.user_drafts import save_draft, delete_draft
-import json
+
+from erpnext_enhancements.api.user_drafts import delete_draft, save_draft
+
 
 class TestUserDrafts(FrappeTestCase):
     def setUp(self):

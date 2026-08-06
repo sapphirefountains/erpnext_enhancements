@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2024, Frappe Technologies and contributors
 # For license information, please see license.txt
 
@@ -18,6 +17,7 @@ pass-through ``Document`` subclass.
 
 import frappe
 from frappe.model.document import Document
+
 
 class TripAgenda(Document):
 	"""Plain child-table controller for Trip Agenda; no custom behaviour."""

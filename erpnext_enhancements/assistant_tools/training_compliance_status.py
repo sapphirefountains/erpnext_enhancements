@@ -18,6 +18,7 @@ which it is not. Scores and completions are what this returns.
 from typing import Any
 
 import frappe
+
 # Only date_diff/nowdate: the assistant-tool contract test stubs frappe.utils
 # narrowly, so importing anything more exotic here fails at import time and takes
 # the whole tool registry down with it.

@@ -99,8 +99,7 @@ def _install_frappe_stub():
 
 _install_frappe_stub()
 
-from erpnext_enhancements.kpi_dashboards import marketing_spend_import as importer  # noqa: E402
-
+from erpnext_enhancements.kpi_dashboards import marketing_spend_import as importer
 
 # ---------------------------------------------------------------------------
 # channel canonicalisation

@@ -175,15 +175,15 @@ def set_primary_contact(account_doctype, account_name, contact_name):
 
     # Find all contacts linked to this account context
     linked_contacts = frappe.get_all(
-        "Dynamic Link", 
+        "Dynamic Link",
         filters={
-            "link_doctype": account_doctype, 
-            "link_name": account_name, 
+            "link_doctype": account_doctype,
+            "link_name": account_name,
             "parenttype": "Contact"
-        }, 
+        },
         pluck="parent"
     )
-    
+
     if linked_contacts:
         # Uncheck is_primary_contact for all of them
         frappe.db.set_value("Contact", {"name": ["in", linked_contacts]}, "is_primary_contact", 0)
@@ -201,15 +201,15 @@ def set_primary_address(account_doctype, account_name, address_name):
 
     # Find all addresses linked to this account context
     linked_addresses = frappe.get_all(
-        "Dynamic Link", 
+        "Dynamic Link",
         filters={
-            "link_doctype": account_doctype, 
-            "link_name": account_name, 
+            "link_doctype": account_doctype,
+            "link_name": account_name,
             "parenttype": "Address"
-        }, 
+        },
         pluck="parent"
     )
-    
+
     if linked_addresses:
         # Uncheck is_primary_address for all of them
         frappe.db.set_value("Address", {"name": ["in", linked_addresses]}, "is_primary_address", 0)
@@ -284,7 +284,7 @@ def link_existing_record(doctype, docname, link_doctype=None, link_name=None, li
     """Links an existing Contact or Address to a document(s)."""
     import json
     doc = frappe.get_doc(doctype, docname)
-    
+
     links_to_add = []
     if links:
         if isinstance(links, str):
@@ -293,10 +293,10 @@ def link_existing_record(doctype, docname, link_doctype=None, link_name=None, li
             links_to_add = links
     elif link_doctype and link_name:
         links_to_add = [{"link_doctype": link_doctype, "link_name": link_name}]
-        
+
     changed = False
     existing_links = set((l.link_doctype, l.link_name) for l in doc.links)
-    
+
     for l in links_to_add:
         link_dt = l.get("link_doctype")
         link_nm = l.get("link_name")
@@ -383,22 +383,22 @@ def get_contacts_for_context(sources, context_doctype=None, context_name=None):
 
     if not contact_list:
         return []
-        
+
     links = frappe.get_all(
         "Dynamic Link",
         filters={"parent": ["in", [c.name for c in contact_list]], "parenttype": "Contact"},
         fields=["parent", "link_doctype", "link_name"]
     )
-    
+
     link_map = {}
     for l in links:
         if l.parent not in link_map:
             link_map[l.parent] = []
         link_map[l.parent].append({"name": l.link_name, "doctype": l.link_doctype})
-        
+
     for c in contact_list:
         c.links = link_map.get(c.name, [])
-        
+
     return contact_list
 
 @frappe.whitelist()
@@ -435,16 +435,16 @@ def get_addresses_for_context(sources, context_doctype=None, context_name=None):
         filters={"parent": ["in", [a.name for a in address_list]], "parenttype": "Address"},
         fields=["parent", "link_doctype", "link_name"]
     )
-    
+
     link_map = {}
     for l in links:
         if l.parent not in link_map:
             link_map[l.parent] = []
         link_map[l.parent].append({"name": l.link_name, "doctype": l.link_doctype})
-        
+
     for a in address_list:
         a.links = link_map.get(a.name, [])
-        
+
     return address_list
 
 def sync_from_main_doc(doc, method):
@@ -518,7 +518,7 @@ def sync_from_contact(doc, method):
     custom_phone = getattr(doc, "custom_phone_number", None) or ""
     custom_mobile = getattr(doc, "custom_mobile_number", None) or ""
     custom_email = getattr(doc, "custom_email", None) or ""
-    
+
     phone_to_sync = custom_phone or custom_mobile
 
     for dt in PRIMARY_CONTACT_DOCTYPES:

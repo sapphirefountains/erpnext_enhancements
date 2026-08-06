@@ -426,26 +426,28 @@ class TestProjectDashboard(unittest.TestCase):
 	@patch("erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.frappe.get_all")
 	def test_get_gantt_tasks_no_baseline_fields(self, mock_get_all, mock_get_meta):
 		"""Test fetching Gantt tasks when baseline fields are missing from Task DocType."""
-		from erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard import get_gantt_tasks_for_project
-		
+		from erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard import (
+			get_gantt_tasks_for_project,
+		)
+
 		# Mock Task meta to not have baseline fields
 		mock_meta = mock_get_meta.return_value
 		mock_meta.has_field.side_effect = lambda f: f not in ["baseline_start_date", "baseline_end_date"]
-		
+
 		# Mock tasks return
 		mock_get_all.side_effect = [
 			[{"name": "TASK-001", "subject": "Test Task", "exp_start_date": "2024-01-01", "exp_end_date": "2024-01-05", "progress": 50, "status": "Open", "is_milestone": 0}], # Task query
 			[], # Dependencies query
 			[]  # ToDo query
 		]
-		
+
 		result = get_gantt_tasks_for_project("PROJ-001")
-		
+
 		# Verify baseline fields were NOT requested in the first get_all call
 		args, kwargs = mock_get_all.call_args_list[0]
 		self.assertNotIn("baseline_start_date", kwargs["fields"])
 		self.assertNotIn("baseline_end_date", kwargs["fields"])
-		
+
 		# Verify result has the fields (as None)
 		self.assertEqual(len(result), 1)
 		self.assertEqual(result[0]["id"], "TASK-001")

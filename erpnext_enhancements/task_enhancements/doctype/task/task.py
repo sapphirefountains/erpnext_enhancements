@@ -23,6 +23,7 @@ wired through ``doc_events``), not in this controller.
 import frappe
 from erpnext.projects.doctype.task.task import Task as BaseTask
 
+
 class Task(BaseTask):
     """ERPNext Task controller override (installed via override_doctype_class).
 
@@ -54,7 +55,7 @@ class Task(BaseTask):
         Overridden only to make the override explicit; it adds no behaviour and
         simply calls ``super().on_update()``.
         """
-        super(Task, self).on_update()
+        super().on_update()
 
 @frappe.whitelist()
 def get_child_tasks_html(task_name):
@@ -77,7 +78,7 @@ def get_child_tasks_html(task_name):
     try:
         task = frappe.get_doc("Task", task_name)
         descendants = _get_all_descendants("Task", task.name)
-        
+
         logger.debug(f"Found {len(descendants)} descendants.")
         if not descendants:
             logger.debug("No descendants found. Returning empty string.")
@@ -113,7 +114,7 @@ def get_child_tasks_html(task_name):
                 tree.append(d)
             elif d.parent_task in task_map:
                 task_map[d.parent_task].children.append(d)
-        
+
         logger.debug(f"Constructed a tree with {len(tree)} top-level children.")
 
         tree_html = _build_task_tree_html(tree, level=0)
@@ -154,7 +155,7 @@ def get_child_tasks_html(task_name):
                 <div class="task-tree-col task-tree-col-time">Time (hrs)</div>
             </div>
         """
-        
+
         html_output = header_html + tree_html + "</div>"
         logger.debug(f"Generated HTML (first 200 chars): {html_output[:200]}")
         return html_output
@@ -238,7 +239,7 @@ def _build_task_tree_html(tasks, level=0):
 
         if has_children:
             html += _build_task_tree_html(task.children, level + 1)
-            
+
         html += "</li>"
     html += "</ul>"
     return html

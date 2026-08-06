@@ -160,7 +160,7 @@ def generate_predictive_maintenance_records():
 	contract fall back to the legacy Sales Order Item query so pre-contract
 	maintenance orders keep generating visits.
 	"""
-	from frappe.utils import add_days, nowdate, getdate
+	from frappe.utils import add_days, getdate, nowdate
 
 	from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_contract.sapphire_maintenance_contract import (
 		iter_seasonal_visits,

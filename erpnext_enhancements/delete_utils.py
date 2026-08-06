@@ -230,7 +230,7 @@ def unlink_and_delete(doctype, name):
 		frappe.throw(_("You do not have permission to delete {0} {1}").format(doctype, name))
 
 	links = get_blocking_links(doctype, name)
-	
+
 	for link in links:
 		try:
 			if link.get("is_child"):
@@ -253,7 +253,7 @@ def unlink_and_delete(doctype, name):
 			frappe.log_error(frappe.get_traceback(), f"unlink_and_delete failed for link: {link}")
 
 	frappe.db.commit()
-	
+
 	# Delete the target doc
 	frappe.delete_doc(doctype, name, force=1, ignore_permissions=True)
 	return {"success": True}

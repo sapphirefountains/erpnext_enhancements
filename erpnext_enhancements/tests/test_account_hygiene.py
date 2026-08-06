@@ -107,8 +107,7 @@ def _install_frappe_stub():
 
 _install_frappe_stub()
 
-from erpnext_enhancements.crm_enhancements import data_quality, reconciliation  # noqa: E402
-
+from erpnext_enhancements.crm_enhancements import data_quality, reconciliation
 
 # ---------------------------------------------------------------------------
 # WP-7: the no-auto-link rule

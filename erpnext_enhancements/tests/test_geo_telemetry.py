@@ -8,10 +8,11 @@ logging, batched ingest with coordinate validation and interval-ownership checks
 grouped history reads with self-only permission enforcement, and retention purge.
 """
 import json
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from unittest.mock import patch
+
 from erpnext_enhancements.api import time_kiosk
 
 

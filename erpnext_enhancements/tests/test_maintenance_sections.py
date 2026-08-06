@@ -11,17 +11,18 @@ row enforcement on submit, the Visit Wizard API (bootstrap/save/finish),
 next-visit date roll-forward on submit-time scheduling, and the Time Kiosk's
 maintenance-form context (required / form link / submitted-since).
 """
-import frappe
 import unittest
-from frappe.utils import nowdate, add_days, getdate
 
-from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
-	evaluate_reading_ranges,
-	get_visit_payload,
-)
+import frappe
+from frappe.utils import add_days, getdate, nowdate
+
 from erpnext_enhancements.api.maintenance_workflow import (
 	build_stock_entry_rows,
 	resolve_consumable_warehouse,
+)
+from erpnext_enhancements.sapphire_maintenance.doctype.sapphire_maintenance_record.sapphire_maintenance_record import (
+	evaluate_reading_ranges,
+	get_visit_payload,
 )
 
 WATER_FEATURE_ITEM = "Customer Water Feature"
@@ -688,8 +689,8 @@ class TestMaintenanceSections(unittest.TestCase):
 		self.assertFalse(after)
 
 	def test_create_visit_today_is_extra_one_off(self):
-		from erpnext_enhancements.api.maintenance_visit import EXTRA_VISIT_LABEL, create_visit_today
 		from erpnext_enhancements.api.maintenance_scheduling import update_next_visit_dates
+		from erpnext_enhancements.api.maintenance_visit import EXTRA_VISIT_LABEL, create_visit_today
 
 		due = add_days(nowdate(), 15)
 		contract = self._make_contract(
@@ -734,6 +735,7 @@ class TestMaintenanceSections(unittest.TestCase):
 
 	def test_kiosk_maintenance_context_and_submission_check(self):
 		from frappe.utils import now_datetime
+
 		from erpnext_enhancements.api.time_kiosk import get_maintenance_context
 
 		# No Active contract and no Active template -> not required
@@ -777,7 +779,10 @@ class TestMaintenanceSections(unittest.TestCase):
 		record.maintenance_contract = contract.name
 		record.insert(ignore_permissions=True)
 
-		from erpnext_enhancements.api.maintenance_scheduling import update_next_visit_dates, calculate_next_date
+		from erpnext_enhancements.api.maintenance_scheduling import (
+			calculate_next_date,
+			update_next_visit_dates,
+		)
 		update_next_visit_dates(record, None)
 
 		contract.reload()

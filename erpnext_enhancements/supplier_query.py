@@ -8,6 +8,7 @@ doctype are created by ``setup/supplier_groups.py`` at ``after_migrate``.
 """
 import frappe
 
+
 def sync_supplier_groups(doc, method=None):
 	"""Flatten primary + additional supplier groups into the denormalized fields.
 
@@ -18,7 +19,7 @@ def sync_supplier_groups(doc, method=None):
 	"""
 	primary = getattr(doc, "supplier_group", None)
 	additional_list = []
-	
+
 	# Additional groups from child table
 	additional_rows = doc.get("custom_additional_supplier_groups") or []
 	for row in additional_rows:
@@ -26,21 +27,21 @@ def sync_supplier_groups(doc, method=None):
 			# Only add to additional list if it's NOT the primary group
 			if row.supplier_group != primary:
 				additional_list.append(row.supplier_group)
-	
+
 	# 1. Update the Search Field (Primary + Additional)
 	all_groups = []
 	if primary:
 		all_groups.append(primary)
 	all_groups.extend(additional_list)
-	
+
 	if all_groups:
 		doc.custom_supplier_groups_search = ", " + ", ".join(all_groups) + ", "
 	else:
 		doc.custom_supplier_groups_search = ""
-		
+
 	# 2. Update the Display List Field (Additional Only)
 	doc.custom_additional_supplier_groups_list = ", ".join(additional_list)
-		
+
 def sync_all_suppliers():
 	"""Backfill the denormalized group fields on every existing Supplier.
 

@@ -68,6 +68,17 @@ ignore = [
     "F405", # can't detect undefined names from * import
     "F722", # syntax error in forward type annotation
     "W191", # indentation contains tabs
+    # RUF001/2/3 flag "ambiguous" Unicode that is deliberate typography here, not a
+    # homoglyph attack: en dashes in prose, the multiplication sign in dimensions
+    # like 1920x1080, and a true minus sign in the water-engineering text. Auto-
+    # fixing them would rewrite the docstrings and user-facing strings into ASCII
+    # and quietly degrade the writing, so they are ignored rather than "cleaned".
+    # Verified 2026-08-06: all 50 occurrences were EN DASH, MULTIPLICATION SIGN or
+    # MINUS SIGN. If a genuinely confusable identifier ever appears, that is what
+    # F821 (a hard CI gate) and code review are for.
+    "RUF001", # ambiguous character in a string
+    "RUF002", # ambiguous character in a docstring
+    "RUF003", # ambiguous character in a comment
 ]
 typing-modules = ["frappe.types.DF"]
 

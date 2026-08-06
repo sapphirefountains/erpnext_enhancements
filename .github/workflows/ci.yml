@@ -34,13 +34,24 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Lint — advisory for now.
+  # Lint — advisory, but much closer to a gate than it was.
   #
-  # The codebase carries a pre-existing ruff backlog (mostly whitespace / import
-  # ordering that `ruff format` owns via pre-commit). This job surfaces lint
-  # findings on every PR without blocking merges. Once a dedicated lint-cleanup
-  # PR has run `ruff check --fix` + `ruff format`, drop `continue-on-error` to
-  # make it a hard gate.
+  # v1.253.2 ran `ruff check --fix` across the app (306 findings: whitespace,
+  # import sorting, f-strings, stale noqa) and moved RUF001/2/3 to the ignore
+  # list, since every occurrence was deliberate typography — en dashes, `×` in
+  # dimensions, a real minus sign — that "fixing" would have rewritten into ASCII.
+  # That took the backlog from 429 to 73.
+  #
+  # The remaining 73 are NOT auto-fixable and are judgement calls, not bugs:
+  # B905 (`zip()` without `strict=`) is a behavioural decision per call site,
+  # E722 (bare `except`) is deliberate in the defensive handlers this app relies
+  # on, and the rest are idiom preferences (UP030/UP031, RUF005/007/012/015/046).
+  # Clearing those, then `ruff format` (391 files, ~68k lines — time it when
+  # nothing is in flight), is what stands between here and dropping
+  # `continue-on-error`. Tracked as TASK-2026-01241 on PRJ-00580.
+  #
+  # F821 is already a hard gate in its own job below; that is the rule that
+  # actually catches runtime failures, and it does not wait for this.
   # ---------------------------------------------------------------------------
   lint:
     name: Lint (ruff, advisory)
