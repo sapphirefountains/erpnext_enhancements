@@ -9,10 +9,10 @@ token-expiry checks and Intuit webhook signature verification.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
-import base64
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 

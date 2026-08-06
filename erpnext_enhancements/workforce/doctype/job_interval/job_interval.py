@@ -14,8 +14,9 @@ Created/driven by the Time Kiosk PWA via the ``api.time_kiosk`` endpoints.
 """
 
 import frappe
-from frappe.model.document import Document
 from frappe import _
+from frappe.model.document import Document
+
 
 class JobInterval(Document):
 	def validate(self):

@@ -872,8 +872,9 @@ def test_preferred_slots_validate_dedupe_and_compact():
 
 
 def test_preferred_slots_reject_bad_input():
-	import pytest as _pytest
 	from datetime import date, timedelta
+
+	import pytest as _pytest
 
 	from erpnext_enhancements.crm_enhancements.fountain_move import intake
 
@@ -910,8 +911,9 @@ def test_preferred_slots_reject_days_we_do_not_move_on():
 	"""Crews move Mon-Wed only. A ``type=date`` input cannot express that, so the
 	server is the only place the rule is enforced — a hand-built POST or a
 	browser that degraded the input to plain text arrives here unfiltered."""
-	import pytest as _pytest
 	from datetime import date
+
+	import pytest as _pytest
 
 	from erpnext_enhancements.crm_enhancements.fountain_move import intake
 

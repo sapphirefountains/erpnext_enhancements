@@ -8,6 +8,7 @@ Idempotent via ``create_custom_fields(..., update=True)``.
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+
 def execute():
     """Create the Item Supplier / PO Item / MR Item purchase-link custom fields."""
     custom_fields = {

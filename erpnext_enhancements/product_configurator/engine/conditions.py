@@ -82,7 +82,7 @@ def safe_eval_expr(expr, ctx):
 		if isinstance(node, ast.Name) and node.id not in ctx:
 			raise ConditionError(f"Expression {expr!r} references unknown name {node.id!r}")
 	try:
-		return eval(  # noqa: S307 — AST-whitelisted above, builtins stripped
+		return eval(
 			compile(tree, "<configurator condition>", "eval"), {"__builtins__": {}}, dict(ctx)
 		)
 	except ZeroDivisionError as e:

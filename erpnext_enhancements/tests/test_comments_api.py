@@ -6,8 +6,11 @@ permission gating, filter construction and author-enrichment logic in isolation.
 """
 import unittest
 from unittest.mock import MagicMock, patch
+
 import frappe
+
 from erpnext_enhancements.api import comments
+
 
 class TestCommentsAPI(unittest.TestCase):
 	def setUp(self):

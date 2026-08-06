@@ -259,7 +259,7 @@ def _message(from_date, to_date, spend, revenue):
 				)
 			)
 
-	orphaned = sum(int((row.get("without_project") or 0)) for row in revenue.values())
+	orphaned = sum(int(row.get("without_project") or 0) for row in revenue.values())
 	if orphaned:
 		notes.append(
 			_("{0} won opportunities in this window have no linked Project, so their revenue is the "

@@ -16,5 +16,6 @@ tables (see ``sapphire_maintenance_record.get_visit_payload``).
 import frappe
 from frappe.model.document import Document
 
+
 class SapphireMaintenanceTemplate(Document):
 	pass

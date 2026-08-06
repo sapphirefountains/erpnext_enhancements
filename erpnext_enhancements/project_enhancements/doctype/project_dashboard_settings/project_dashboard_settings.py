@@ -11,6 +11,7 @@ are configured. No custom controller logic is required.
 import frappe
 from frappe.model.document import Document
 
+
 class ProjectDashboardSettings(Document):
 	"""Controller for the Project Dashboard Settings Single doctype (no custom logic)."""
 	pass

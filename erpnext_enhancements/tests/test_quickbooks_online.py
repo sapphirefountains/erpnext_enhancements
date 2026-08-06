@@ -1865,7 +1865,10 @@ def test_item_default_accounts_redirect_off_group_accounts(monkeypatch):
 			}
 		),
 	)
-	from erpnext_enhancements.quickbooks_online.core.mapping import _item_expense_account, _item_income_account
+	from erpnext_enhancements.quickbooks_online.core.mapping import (
+		_item_expense_account,
+		_item_income_account,
+	)
 
 	assert _item_expense_account("PUMP-1", "SF") == "60301 - R&D - General - SF"
 	# A group with no "- General" child yields None rather than sliding down to the

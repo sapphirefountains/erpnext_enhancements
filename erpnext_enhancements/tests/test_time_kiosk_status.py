@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Integration test for the time-kiosk idle-status response (``get_current_status``).
 
 Regression guard (see project memory): when an employee exists but has no open
@@ -9,7 +8,9 @@ pins the exact shape the frontend must distinguish.
 """
 import frappe
 from frappe.tests.utils import FrappeTestCase
+
 from erpnext_enhancements.api.time_kiosk import get_current_status
+
 
 class TestTimeKioskStatus(FrappeTestCase):
 	def setUp(self):

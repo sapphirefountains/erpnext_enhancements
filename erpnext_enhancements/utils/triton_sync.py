@@ -9,6 +9,7 @@ call is enqueued to a background worker so it never blocks (or fails) the save.
 import frappe
 import requests
 
+
 def global_triton_sync(doc, method=None):
     """Enqueue a Triton change-webhook for a saved document.
 
@@ -68,4 +69,4 @@ def global_triton_sync(doc, method=None):
             queue='default'
         )
     except Exception as e:
-        frappe.log_error(f"Triton Sync Error: {str(e)}", "Triton Webhook")
+        frappe.log_error(f"Triton Sync Error: {e!s}", "Triton Webhook")

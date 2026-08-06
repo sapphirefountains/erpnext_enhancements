@@ -31,7 +31,7 @@ def test_connection():
     """Verify the Triton connection (from the shared Triton Settings) by minting
     a bridge token for the current user. Surfaced from the Settings form menu."""
     frappe.only_for("System Manager")
-    from erpnext_enhancements.triton_chat import mint_user_token, get_settings
+    from erpnext_enhancements.triton_chat import get_settings, mint_user_token
 
     settings = get_settings()
     if not settings.get("enabled"):

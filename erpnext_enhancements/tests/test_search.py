@@ -5,10 +5,13 @@ to confirm ``search_global_docs`` returns only results the user may read: doctyp
 level denial (Role) hides all of a type, while doctype-level allow still defers to
 per-document ``get_all`` so only individually-permitted records (test1) appear.
 """
+from unittest.mock import MagicMock, patch
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from unittest.mock import patch, MagicMock
+
 from erpnext_enhancements.api.search import search_global_docs
+
 
 class TestSearchAPI(FrappeTestCase):
     @patch('frappe.db.sql')

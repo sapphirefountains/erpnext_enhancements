@@ -128,7 +128,8 @@ def _reassign_todo(doc, prior):
     open. Call AFTER doc.save() so the save can't clobber the ``_assign`` field
     these writes update.
     """
-    from frappe.desk.form.assign_to import add as _assign_add, remove as _assign_remove
+    from frappe.desk.form.assign_to import add as _assign_add
+    from frappe.desk.form.assign_to import remove as _assign_remove
 
     try:
         _assign_remove(doc.doctype, doc.name, prior)

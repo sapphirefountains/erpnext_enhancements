@@ -13,6 +13,7 @@ lets an app post-process that dict. This module supplies the Employee override:
 
 from frappe import _
 
+
 def get_data(data):
     """Add a "Travel" connections group (linking Travel Trip) to the Employee dashboard.
 

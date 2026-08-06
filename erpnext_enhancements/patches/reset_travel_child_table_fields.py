@@ -7,6 +7,7 @@ property setters are gone.
 """
 import frappe
 
+
 def execute():
     """Delete the ``in_list_view`` Property Setters on the four trip child tables."""
     child_tables = [

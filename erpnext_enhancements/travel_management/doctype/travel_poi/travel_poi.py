@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2024, Frappe Technologies and contributors
 # For license information, please see license.txt
 
@@ -15,6 +14,7 @@ No custom server logic is required, so the controller is a plain pass-through
 
 import frappe
 from frappe.model.document import Document
+
 
 class TravelPOI(Document):
 	"""Plain Document controller for Travel POI; no custom behaviour."""

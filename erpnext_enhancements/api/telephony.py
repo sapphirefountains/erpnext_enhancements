@@ -31,18 +31,20 @@ SECURITY — read carefully:
           cell number from the session user.
 """
 
-import frappe
-from frappe import _
-import requests
-import json
-import re
-import os
 import base64
 import functools
-from twilio.request_validator import RequestValidator
-from urllib.parse import urlparse, quote
+import json
+import os
+import re
+from urllib.parse import quote, urlparse
+
+import frappe
+import requests
+from frappe import _
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
+from twilio.request_validator import RequestValidator
+
 
 @frappe.whitelist(allow_guest=True)
 def get_gateway_config():
@@ -63,7 +65,7 @@ def get_gateway_config():
             "voice_model_id": getattr(settings, "voice_model_id", "gemini-live-2.5-flash-native-audio"),
         }
     except Exception as e:
-        frappe.log_error(f"Failed to fetch Triton settings: {str(e)}", "Gateway Config Error")
+        frappe.log_error(f"Failed to fetch Triton settings: {e!s}", "Gateway Config Error")
         return {
             "master_system_prompt": "You are Triton.",
             "forwarding_phone_number": "+18018200044",
@@ -112,7 +114,7 @@ def validate_webhook_secret(func):
         auth_header = frappe.request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer ") and not auth_header.startswith("token "):
             frappe.throw(_("Missing or Invalid Authorization Header"), frappe.PermissionError)
-            
+
         token = auth_header.split(" ")[1] if " " in auth_header else auth_header
         if not auth_header.startswith("token ") and token != secret:
             frappe.throw(_("Invalid Webhook Secret"), frappe.PermissionError)
@@ -221,7 +223,7 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
         SELECT name, first_name, last_name FROM `tabContact` 
         WHERE custom_phone_number REGEXP %s 
         LIMIT 1""", (fuzzy_regex,), as_dict=True)
-    
+
     if contacts:
         contact_name = contacts[0].name
         display_name = f"{contacts[0].first_name or ''} {contacts[0].last_name or ''}".strip()
@@ -240,7 +242,7 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
 
     if not customer_name and not contact_name and create_if_missing:
         fallback_name = twilio_caller_name if twilio_caller_name else f"Unknown Caller - {phone_number}"
-        
+
         cust = frappe.get_doc({
             "doctype": "Customer",
             "customer_name": fallback_name,
@@ -281,14 +283,14 @@ def _get_caller_info(phone_number, twilio_caller_name=None, create_if_missing=Tr
 
     context_items = []
     if customer_name:
-        opps = frappe.get_all("Opportunity", 
-            filters={"party_name": customer_name, "status": ["not in", ["Closed", "Lost"]]}, 
+        opps = frappe.get_all("Opportunity",
+            filters={"party_name": customer_name, "status": ["not in", ["Closed", "Lost"]]},
             fields=["name", "opportunity_from", "title"])
         for o in opps:
             context_items.append(f"Opportunity: {o.title or o.name}")
 
-        projs = frappe.get_all("Project", 
-            filters={"customer": customer_name, "status": ["!=", "Completed"]}, 
+        projs = frappe.get_all("Project",
+            filters={"customer": customer_name, "status": ["!=", "Completed"]},
             fields=["name", "project_name"])
         for p in projs:
             context_items.append(f"Project: {p.project_name or p.name}")
@@ -508,7 +510,7 @@ def log_call_transcript(call_sid, transcript, caller_number=None, **kwargs):
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
-        frappe.log_error(f"Failed to log transcript for {call_sid}: {str(e)}", "Triton Transcript Error")
+        frappe.log_error(f"Failed to log transcript for {call_sid}: {e!s}", "Triton Transcript Error")
         return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
@@ -594,7 +596,7 @@ def process_unified_recording(**kwargs):
             comm = frappe.get_doc("Communication", existing_comm[0].name)
             comm.content = f"**Executive Summary:**\n{summary}\n\n**Full Audio Transcript:**\n<pre>{transcript}</pre>\n\n<hr>\n**System & AI Log:**\n{comm.content}"
             comm.communication_type = "Communication"
-            
+
             if customer_name and not any(link.link_name == customer_name for link in comm.timeline_links):
                 comm.append("timeline_links", {
                     "link_doctype": "Customer",
@@ -606,7 +608,7 @@ def process_unified_recording(**kwargs):
                     "link_doctype": "Contact",
                     "link_name": contact_name
                 })
-                
+
             comm.save(ignore_permissions=True)
         else:
             sent_status = "Sent" if direction == "Outbound" else "Received"
@@ -670,7 +672,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach audio file: {str(fe)}", "Triton File Error")
+                frappe.log_error(f"Failed to attach audio file: {fe!s}", "Triton File Error")
         elif 'file' in frappe.request.files:
             try:
                 uploaded_file = frappe.request.files.get('file')
@@ -692,7 +694,7 @@ def process_unified_recording(**kwargs):
                     "fcontent": file_content
                 })
             except Exception as fe:
-                frappe.log_error(f"Failed to attach multipart audio file: {str(fe)}", "Triton File Error")
+                frappe.log_error(f"Failed to attach multipart audio file: {fe!s}", "Triton File Error")
 
         # Mirror the recording into the Operations Shared Drive (monthly
         # YYYY_MM folders). Queued in the background and gated on
@@ -747,7 +749,7 @@ def process_unified_recording(**kwargs):
                 communication=comm.name,
             )
         except Exception as ce:
-            frappe.log_error(f"Call Log upsert failed for {call_sid}: {str(ce)}", "Call Intelligence")
+            frappe.log_error(f"Call Log upsert failed for {call_sid}: {ce!s}", "Call Intelligence")
 
         try:
             settings = frappe.get_cached_doc("Triton Settings")
@@ -762,7 +764,7 @@ def process_unified_recording(**kwargs):
 
         try:
             email_subject_type = "Voicemail" if is_voicemail else "Call Transcript"
-            
+
             base_url = frappe.utils.get_url()
             links_html = "<br><br><strong>System Links:</strong><ul>"
             if customer_name:
@@ -774,7 +776,7 @@ def process_unified_recording(**kwargs):
             links_html += "</ul>"
 
             message_html = f"<strong>Caller:</strong> {display_name} ({customer_phone})<br><br><strong>Summary:</strong><br>{summary}<br><br><strong>Full Transcript:</strong><br><pre>{transcript}</pre>{links_html}"
-            
+
             frappe.sendmail(
                 recipients=["info@sapphirefountains.com"],
                 subject=f"New Triton {email_subject_type} from {display_name}",
@@ -783,14 +785,14 @@ def process_unified_recording(**kwargs):
                 now=True
             )
         except Exception as ee:
-            frappe.log_error(f"Failed to send email: {str(ee)}", "Triton Email Error")
+            frappe.log_error(f"Failed to send email: {ee!s}", "Triton Email Error")
 
         frappe.db.commit()
         return {"status": "success", "communication_id": comm.name}
 
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure: {str(e)}", "Triton Sync Error")
+        frappe.log_error(f"Critical sync failure: {e!s}", "Triton Sync Error")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
@@ -931,7 +933,7 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
     """
     try:
         message_html = f"<strong>Caller Number:</strong> {caller_number}<br><br><strong>Message/Summary:</strong><br>{body}"
-        
+
         frappe.sendmail(
             recipients=["info@sapphirefountains.com"],
             subject=f"Triton Message: {subject}",
@@ -940,7 +942,7 @@ def send_voicemail_email(subject, body, caller_number=None, **kwargs):
         )
         return {"status": "success"}
     except Exception as e:
-        frappe.log_error(f"Failed to send email: {str(e)}", "Triton Email Error")
+        frappe.log_error(f"Failed to send email: {e!s}", "Triton Email Error")
         return {"status": "error", "message": str(e)}
 
 def analyze_transfer_transcript(transcript, customer_name):
@@ -980,10 +982,10 @@ def trigger_outbound_call(doctype, docname, target_number):
             ))
 
         settings = frappe.get_doc("Triton Settings")
-        
+
         # Use the correct field 'gateway_url' instead of 'triton_base_url'
         triton_url = getattr(settings, "gateway_url", None)
-        
+
         # Use the webhook secret for authentication as there is no specific API key field
         api_secret = settings.get_password("admin_webhook_secret", raise_exception=False)
 
@@ -1016,10 +1018,10 @@ def trigger_outbound_call(doctype, docname, target_number):
         return {"status": "success", "message": _("Call initiated via Triton")}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to trigger outbound call via Triton: {str(e)}", "Triton Outbound Call Error")
+        frappe.log_error(f"Failed to trigger outbound call via Triton: {e!s}", "Triton Outbound Call Error")
         frappe.throw(_("Failed to initiate call via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in trigger_outbound_call: {str(e)}", "Triton Outbound Call Error")
+        frappe.log_error(f"Unexpected error in trigger_outbound_call: {e!s}", "Triton Outbound Call Error")
         frappe.throw(str(e))
 
 
@@ -1050,7 +1052,7 @@ def get_employee_number(employee_name):
 
         return None
     except Exception as e:
-        frappe.log_error(f"Failed to get employee number for '{employee_name}': {str(e)}", "Triton Routing Error")
+        frappe.log_error(f"Failed to get employee number for '{employee_name}': {e!s}", "Triton Routing Error")
         return None
 
 
@@ -1110,7 +1112,7 @@ def log_call_details(call_sid, direction, from_number, to_number, duration, tran
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Failed to log call details for {call_sid}: {str(e)}", "Triton Log Call Error")
+        frappe.log_error(f"Failed to log call details for {call_sid}: {e!s}", "Triton Log Call Error")
         return {"status": "error", "message": str(e)}
 
 
@@ -1222,7 +1224,7 @@ def process_unified_sms(**kwargs):
                     file_doc.db_set('attached_to_name', comm.name, update_modified=False)
                     file_doc.insert(ignore_permissions=True)
                 except Exception as ex:
-                    frappe.log_error(f"Failed to attach media to SMS: {str(ex)}")
+                    frappe.log_error(f"Failed to attach media to SMS: {ex!s}")
 
         # Intelligent Assignment
         last_assignee = None
@@ -1279,7 +1281,7 @@ def process_unified_sms(**kwargs):
                 "priority": "High" if not last_assignee else "Medium"
             })
         except Exception as e:
-            frappe.log_error(f"Failed to assign SMS {comm.name} to {assignee}: {str(e)}")
+            frappe.log_error(f"Failed to assign SMS {comm.name} to {assignee}: {e!s}")
 
         # Urgency Handling
         if is_urgent:
@@ -1310,7 +1312,7 @@ def process_unified_sms(**kwargs):
         return {"status": "success", "communication_id": comm.name}
     except Exception as e:
         frappe.db.rollback()
-        frappe.log_error(f"Critical sync failure in process_unified_sms: {str(e)}", "Triton Sync Error")
+        frappe.log_error(f"Critical sync failure in process_unified_sms: {e!s}", "Triton Sync Error")
         frappe.response["http_status_code"] = 500
         return {"status": "error", "message": str(e)}
 
@@ -1484,8 +1486,8 @@ def send_sms(target_number, message, media_urls=None, reference_doctype=None, re
         return {"status": "success", "message": _("SMS sent successfully via Triton."), "communication_id": comm.name}
 
     except requests.exceptions.RequestException as e:
-        frappe.log_error(f"Failed to send SMS via Triton: {str(e)}", "Triton Outbound SMS Error")
+        frappe.log_error(f"Failed to send SMS via Triton: {e!s}", "Triton Outbound SMS Error")
         frappe.throw(_("Failed to send SMS via Triton. Please check error logs."))
     except Exception as e:
-        frappe.log_error(f"Unexpected error in send_sms: {str(e)}", "Triton Outbound SMS Error")
+        frappe.log_error(f"Unexpected error in send_sms: {e!s}", "Triton Outbound SMS Error")
         frappe.throw(str(e))

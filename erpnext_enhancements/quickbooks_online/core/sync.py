@@ -40,7 +40,6 @@ from erpnext_enhancements.quickbooks_online.core.mapping import (
 )
 from erpnext_enhancements.quickbooks_online.core.utils import get_settings, json_dumps
 
-
 # A QuickBooks Sync Log left Running/Queued longer than this is treated as orphaned
 # (its worker stopped, restarted or OOM'd) so it neither blocks a new run forever nor
 # lingers as a phantom "Running". Keyed per sync type because a full import legitimately

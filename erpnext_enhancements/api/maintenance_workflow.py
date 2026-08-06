@@ -25,7 +25,8 @@ links and Settings only.
 
 import frappe
 from frappe import _
-from frappe.utils import flt, nowdate, get_datetime
+from frappe.utils import flt, get_datetime, nowdate
+
 
 def process_maintenance_submission(record_name):
     """
@@ -55,7 +56,7 @@ def process_maintenance_submission(record_name):
             try:
                 step_func(doc)
             except Exception as e:
-                error_msg = f"{step_name} failed: {str(e)}"
+                error_msg = f"{step_name} failed: {e!s}"
                 frappe.log_error(frappe.get_traceback(), _("Maintenance Submission Step Failed"))
                 doc.add_comment("Comment", _(error_msg))
                 failures.append(error_msg)

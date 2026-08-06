@@ -8,6 +8,7 @@ items to their furthest procurement stage (MR -> Stock Entry, direct PO) and tha
 ``PROCUREMENT_DOCTYPE_ORDER`` with expandable per-document items.
 """
 import unittest.mock
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import random_string

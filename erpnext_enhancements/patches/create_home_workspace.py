@@ -6,6 +6,7 @@ when the workspace is already present.
 """
 import frappe
 
+
 def execute():
     """Create the standard public "Home" Workspace when missing."""
     if not frappe.db.exists("Workspace", "Home"):

@@ -24,8 +24,8 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, add_months, cint, flt, getdate, now_datetime, nowdate
 
-from erpnext_enhancements.kpi_dashboards import metrics
 from erpnext_enhancements.crm_enhancements.attribution import UNKNOWN_LEAD_SOURCE
+from erpnext_enhancements.kpi_dashboards import metrics
 
 DEFAULT_RETENTION_DAYS = 120
 

@@ -13,8 +13,10 @@ Scheduler: ``cleanup_stale_drafts`` runs daily (hooks.py) to bulk-purge drafts
 older than ``DRAFT_RETENTION_DAYS`` so the table doesn't grow unbounded.
 """
 
-import frappe
 import json
+
+import frappe
+
 
 @frappe.whitelist()
 def save_draft(ref_doctype, ref_name, form_data):

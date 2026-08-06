@@ -50,7 +50,7 @@ def install_frappe_stub():
 
 install_frappe_stub()
 
-from erpnext_enhancements.travel_management import ics  # noqa: E402
+from erpnext_enhancements.travel_management import ics
 
 
 def make_row(**kwargs):

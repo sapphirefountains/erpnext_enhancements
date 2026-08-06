@@ -10,6 +10,7 @@ No custom controller logic is required.
 import frappe
 from frappe.model.document import Document
 
+
 class ProjectDashboardPermittedRole(Document):
 	"""Controller for the Project Dashboard Permitted Role child table (no custom logic)."""
 	pass

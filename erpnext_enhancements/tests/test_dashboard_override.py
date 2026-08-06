@@ -5,6 +5,7 @@ Verifies that the override registers the custom non-standard fieldnames
 ``custom_project``) without clobbering any pre-existing dashboard config.
 """
 import unittest
+
 from erpnext_enhancements.project_enhancements import get_dashboard_data
 
 

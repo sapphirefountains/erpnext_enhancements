@@ -11,6 +11,7 @@ needing full Item write access. No external services.
 
 import frappe
 
+
 @frappe.whitelist()
 def get_item_links(item_codes, supplier=None):
     """
@@ -19,18 +20,18 @@ def get_item_links(item_codes, supplier=None):
     """
     if isinstance(item_codes, str):
         item_codes = frappe.parse_json(item_codes)
-    
+
     if not item_codes:
         return {}
 
     filters = {"parent": ["in", item_codes]}
-    
+
     # Strict filtering: If PO has a supplier, only return that supplier's link
     if supplier:
         filters["supplier"] = supplier
 
-    links = frappe.get_all("Item Supplier", 
-        filters=filters, 
+    links = frappe.get_all("Item Supplier",
+        filters=filters,
         fields=["parent", "supplier", "purchase_url"]
     )
 
@@ -38,15 +39,15 @@ def get_item_links(item_codes, supplier=None):
     grouped_links = {}
     for link in links:
         if not link.purchase_url: continue
-        
+
         if link.parent not in grouped_links:
             grouped_links[link.parent] = []
-        
+
         grouped_links[link.parent].append({
             "supplier": link.supplier,
             "url": link.purchase_url
         })
-        
+
     return grouped_links
 
 @frappe.whitelist()
@@ -58,7 +59,7 @@ def save_item_link(item_code, supplier, url):
 
     # Check if this supplier already exists for the item
     exists = frappe.db.exists("Item Supplier", {"parent": item_code, "supplier": supplier})
-    
+
     if exists:
         frappe.db.set_value("Item Supplier", exists, "purchase_url", url)
     else:
@@ -69,5 +70,5 @@ def save_item_link(item_code, supplier, url):
             "purchase_url": url
         })
         item_doc.save(ignore_permissions=True) # Allow User to save even if they don't have Item write access
-    
+
     return True
