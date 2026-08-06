@@ -19,8 +19,10 @@ block current.
 It also places the blocks on the **Home** workspace (idempotent append) so the
 landing page shows all of them, and surfaces the **KPI Cockpit** on Home and on
 each department dashboard (see ``KPI_DEPARTMENT_DASHBOARDS``) so the numbers show
-up where each team already works. Blocks created on the site under names *not*
-listed here are left alone, and nothing is ever deleted.
+up where each team already works, and places each department's operational
+widgets on that department's workspace only (``DEPARTMENT_DASHBOARD_BLOCKS``).
+Blocks created on the site under names *not* listed here are left alone, and
+nothing is ever deleted.
 
 The source files live INSIDE the Python package, so they ship with it on every
 install and partial sync (the legacy repo-root ``Custom HTML Block/`` folder is
@@ -44,14 +46,43 @@ BLOCKS = [
 	# additionally surfaced on Home and each department dashboard below, where the
 	# block auto-locks to a department by route (role-gated per department).
 	("KPI Cockpit", "kpi_cockpit"),
-	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
-	# workspace (see FINANCE_DASHBOARD_BLOCKS), each gated by its own toggle.
+	# Department Dashboard operational widgets — each placed only on its own
+	# department workspace (see DEPARTMENT_DASHBOARD_BLOCKS) and gated by its own
+	# toggle on ERPNext Enhancements Settings, default OFF.
 	("Finance New Jobs", "finance_new_jobs"),
 	("Finance Who's Working", "finance_whos_working"),
 	("Finance Bank Balances", "finance_bank_balances"),
 	("Finance Weather", "finance_weather"),
 	("Finance Astrology", "finance_astrology"),
 	("Finance Calendar", "finance_calendar"),
+	("Sales Speed to Lead", "sales_speed_to_lead"),
+	("Sales Stalled Deals", "sales_stalled_deals"),
+	("Sales Handoff Backlog", "sales_handoff_backlog"),
+	("Sales Renewal Radar", "sales_renewal_radar"),
+	("Operations Day Board", "operations_day_board"),
+	("Operations Fleet Health", "operations_fleet_health"),
+	("Operations Chemistry Alerts", "operations_chemistry_alerts"),
+	("Operations Labor Capture", "operations_labor_capture"),
+	("Design WIP Board", "design_wip_board"),
+	("Design Signoff Queue", "design_signoff_queue"),
+	("Design Handoff Readiness", "design_handoff_readiness"),
+	("Design Hydraulic Headroom", "design_hydraulic_headroom"),
+	("Production WIP Aging", "production_wip_aging"),
+	("Production Milestone Slippage", "production_milestone_slippage"),
+	("Production Material Readiness", "production_material_readiness"),
+	("Production Hours Variance", "production_hours_variance"),
+	("Marketing Funnel Cascade", "marketing_funnel_cascade"),
+	("Marketing Channel Spend", "marketing_channel_spend"),
+	("Marketing Unsourced Leads", "marketing_unsourced_leads"),
+	("Marketing Source Health", "marketing_source_health"),
+	("HR Training Compliance", "hr_training_compliance"),
+	("HR Time Capture", "hr_time_capture"),
+	("HR Headcount Movement", "hr_headcount_movement"),
+	("HR People Calendar", "hr_people_calendar"),
+	("Executive Scorecard", "executive_scorecard"),
+	("Executive Cash Runway", "executive_cash_runway"),
+	("Executive Bookings Backlog", "executive_bookings_backlog"),
+	("Executive Risk Queue", "executive_risk_queue"),
 ]
 
 # Subset of BLOCKS appended to the Home workspace. KPI Cockpit reaches Home via
@@ -82,19 +113,67 @@ KPI_DEPARTMENT_DASHBOARDS = (
 	"Executive Dashboard",
 )
 
-# Operational widgets placed only on the Finance Dashboard workspace (shipped
-# in its module workspace JSON; this append is the backstop if a block goes
-# missing). Each block is additionally role-gated + toggle-gated server-side,
-# so a placed-but-disabled block just renders a muted notice.
-FINANCE_DASHBOARD = "Finance Dashboard"
-FINANCE_DASHBOARD_BLOCKS = (
-	"Finance New Jobs",
-	"Finance Who's Working",
-	"Finance Bank Balances",
-	"Finance Weather",
-	"Finance Astrology",
-	"Finance Calendar",
-)
+# Operational widgets placed only on their own department workspace (shipped in
+# the module workspace JSONs; this append is the backstop if a block goes
+# missing). Each block is additionally role-gated + toggle-gated server-side, so
+# a placed-but-disabled block just renders a muted notice rather than an error.
+#
+# Order here is the order the blocks appear above the KPI Cockpit on that
+# workspace. Every name must also appear in BLOCKS — tests/test_custom_html_blocks.py
+# asserts that, because a placement referencing an unseeded block renders an
+# empty div with no other symptom.
+DEPARTMENT_DASHBOARD_BLOCKS = {
+	"Finance Dashboard": (
+		"Finance New Jobs",
+		"Finance Who's Working",
+		"Finance Bank Balances",
+		"Finance Weather",
+		"Finance Astrology",
+		"Finance Calendar",
+	),
+	"Sales Dashboard": (
+		"Sales Speed to Lead",
+		"Sales Stalled Deals",
+		"Sales Handoff Backlog",
+		"Sales Renewal Radar",
+	),
+	"Operations Dashboard": (
+		"Operations Day Board",
+		"Operations Fleet Health",
+		"Operations Chemistry Alerts",
+		"Operations Labor Capture",
+	),
+	"Design Dashboard": (
+		"Design WIP Board",
+		"Design Signoff Queue",
+		"Design Handoff Readiness",
+		"Design Hydraulic Headroom",
+	),
+	"Production Dashboard": (
+		"Production WIP Aging",
+		"Production Milestone Slippage",
+		"Production Material Readiness",
+		"Production Hours Variance",
+	),
+	"Marketing Dashboard": (
+		"Marketing Funnel Cascade",
+		"Marketing Channel Spend",
+		"Marketing Unsourced Leads",
+		"Marketing Source Health",
+	),
+	"HR Dashboard": (
+		"HR Training Compliance",
+		"HR Time Capture",
+		"HR Headcount Movement",
+		"HR People Calendar",
+	),
+	"Executive Dashboard": (
+		"Executive Scorecard",
+		"Executive Cash Runway",
+		"Executive Bookings Backlog",
+		"Executive Risk Queue",
+	),
+}
 
 
 def _source_dir():
@@ -176,11 +255,12 @@ def sync_custom_html_blocks():
 			if _append_custom_blocks(workspace, [KPI_COCKPIT]):
 				changed = True
 
-	# Finance Dashboard operational widgets — placed only on the Finance Dashboard
-	# workspace, in FINANCE_DASHBOARD_BLOCKS order (a missing workspace is skipped).
-	finance_blocks = [name for name in FINANCE_DASHBOARD_BLOCKS if name in synced]
-	if finance_blocks and _append_custom_blocks(FINANCE_DASHBOARD, finance_blocks):
-		changed = True
+	# Department operational widgets — each placed only on its own workspace, in
+	# DEPARTMENT_DASHBOARD_BLOCKS order (a missing workspace is skipped).
+	for workspace, block_names in DEPARTMENT_DASHBOARD_BLOCKS.items():
+		placed = [name for name in block_names if name in synced]
+		if placed and _append_custom_blocks(workspace, placed):
+			changed = True
 
 	if changed:
 		frappe.clear_cache()

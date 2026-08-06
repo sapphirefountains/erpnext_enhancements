@@ -1,9 +1,25 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_hr_training_compliance\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"HR Training Compliance\", \"col\": 12}}, {\"id\": \"ee_chb_hr_time_capture\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"HR Time Capture\", \"col\": 12}}, {\"id\": \"ee_chb_hr_headcount_movement\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"HR Headcount Movement\", \"col\": 12}}, {\"id\": \"ee_chb_hr_people_calendar\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"HR People Calendar\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-10 12:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "HR Training Compliance",
+   "label": "HR Training Compliance"
+  },
+  {
+   "custom_block_name": "HR Time Capture",
+   "label": "HR Time Capture"
+  },
+  {
+   "custom_block_name": "HR Headcount Movement",
+   "label": "HR Headcount Movement"
+  },
+  {
+   "custom_block_name": "HR People Calendar",
+   "label": "HR People Calendar"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"

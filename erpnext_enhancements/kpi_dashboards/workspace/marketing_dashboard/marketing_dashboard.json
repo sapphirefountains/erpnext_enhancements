@@ -1,9 +1,25 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_marketing_funnel_cascade\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Funnel Cascade\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_channel_spend\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Channel Spend\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_unsourced_leads\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Unsourced Leads\", \"col\": 12}}, {\"id\": \"ee_chb_marketing_source_health\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Marketing Source Health\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Marketing Funnel Cascade",
+   "label": "Marketing Funnel Cascade"
+  },
+  {
+   "custom_block_name": "Marketing Channel Spend",
+   "label": "Marketing Channel Spend"
+  },
+  {
+   "custom_block_name": "Marketing Unsourced Leads",
+   "label": "Marketing Unsourced Leads"
+  },
+  {
+   "custom_block_name": "Marketing Source Health",
+   "label": "Marketing Source Health"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"

@@ -1,9 +1,25 @@
 {
  "app": "erpnext_enhancements",
  "charts": [],
- "content": "[{\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
+ "content": "[{\"id\": \"ee_chb_executive_scorecard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Scorecard\", \"col\": 12}}, {\"id\": \"ee_chb_executive_cash_runway\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Cash Runway\", \"col\": 12}}, {\"id\": \"ee_chb_executive_bookings_backlog\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Bookings Backlog\", \"col\": 12}}, {\"id\": \"ee_chb_executive_risk_queue\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"Executive Risk Queue\", \"col\": 12}}, {\"id\": \"ee_chb_kpi_cockpit\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"KPI Cockpit\", \"col\": 12}}]",
  "creation": "2026-07-07 18:00:00.000000",
  "custom_blocks": [
+  {
+   "custom_block_name": "Executive Scorecard",
+   "label": "Executive Scorecard"
+  },
+  {
+   "custom_block_name": "Executive Cash Runway",
+   "label": "Executive Cash Runway"
+  },
+  {
+   "custom_block_name": "Executive Bookings Backlog",
+   "label": "Executive Bookings Backlog"
+  },
+  {
+   "custom_block_name": "Executive Risk Queue",
+   "label": "Executive Risk Queue"
+  },
   {
    "custom_block_name": "KPI Cockpit",
    "label": "KPI Cockpit"
