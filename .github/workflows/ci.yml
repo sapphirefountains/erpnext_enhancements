@@ -140,6 +140,14 @@ jobs:
           erpnext_enhancements.tests.test_drive_match -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # Same failure shape as the www/ controller check: Frappe computes a script
+      # report's import path from scrub(report_name) rather than reading the
+      # directory, so a plausibly-misnamed folder migrates cleanly, lists in the
+      # desk, and only 500s when somebody opens the report. Two "Hand-Off ..."
+      # reports shipped that way -- scrub() turns the hyphen into its own
+      # underscore (hand_off_), the hand-written folder said handoff_.
+      - name: Report module placement (folder == scrub(report_name))
+        run: python -m unittest erpnext_enhancements.tests.test_report_modules -v
       # hooks.py is one big dict literal, and Python resolves a repeated key by keeping
       # the LAST and silently discarding the earlier value -- no error, no warning, the
       # hooks just never fire. Two duplicated doc_events keys cost six live handlers
