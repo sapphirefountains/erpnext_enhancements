@@ -469,10 +469,27 @@ def get_learner_bootstrap():
         "library": library,
         "resume": _resume(user),
         "today": today(),
+        # Every key here is read by the player, and every setting the player reads
+        # is here. Both halves of that sentence were false: `max_playback_rate` and
+        # `doc_min_dwell_seconds` were read by video.js and blocks.js and sent by
+        # nothing, so both silently fell back to client constants and the two
+        # Training Settings fields did nothing at all. They did not even exist as
+        # fields — the client was reading settings nobody could set.
         "settings": {
             "heartbeat_interval_seconds": cint(settings.heartbeat_interval_seconds) or 15,
             "progress_flush_seconds": cint(settings.progress_flush_seconds) or 60,
             "attempt_idle_timeout_minutes": cint(settings.attempt_idle_timeout_minutes) or 120,
+            # The client caps this at 1.25 whatever arrives, because
+            # progress.clamp_new_seconds truncates claimed seconds to elapsed
+            # x MAX_CLAIM_RATE. Sending a larger number cannot raise the ceiling,
+            # only lower a learner's credited time — so the setting can tighten
+            # the speed menu and never loosen it past what the server will pay for.
+            # getattr, not attribute access: these two fields are newer than the
+            # doctype, and a deploy puts this code on the site a moment before
+            # `bench migrate` puts the columns in the database. The boot payload
+            # is the first call every learner makes, so the window matters.
+            "max_playback_rate": flt(getattr(settings, "max_playback_rate", None)) or 1.25,
+            "doc_min_dwell_seconds": cint(getattr(settings, "doc_min_dwell_seconds", None)) or 20,
         },
     }
 
@@ -808,7 +825,15 @@ def _normalise_beat(data):
     """
     out = dict(data)
 
+    # `ranges` is video.js's name for the pair list; `played` is blocks.js's.
+    # Same half-open encoding, two vocabularies, and this function had only ever
+    # implemented one of them — so a document block's dwell arrived, produced no
+    # `intervals`, and credited nothing. `kind` rides through untouched: the
+    # normaliser's job is names, not policy, and `record_heartbeat` is where a
+    # document beat is treated differently from a video one.
     ranges = data.get("ranges")
+    if ranges is None:
+        ranges = data.get("played")
     if ranges is not None and "intervals" not in out:
         intervals = []
         for pair in ranges or []:
@@ -823,7 +848,19 @@ def _normalise_beat(data):
                 intervals.append([start, end])
         out["intervals"] = intervals
     out.pop("ranges", None)
+    out.pop("played", None)
 
+    # `claimed` is blocks.js's `claimed_seconds`. The cross-check in
+    # `record_heartbeat` that compares the two against each other — the one that
+    # would have caught the v1.235.0 half-open misread three releases earlier —
+    # was reading a key the document blocks never sent, so it silently checked
+    # nothing for them.
+    if "claimed_seconds" not in out and data.get("claimed") is not None:
+        out["claimed_seconds"] = cint(data.get("claimed"))
+    out.pop("claimed", None)
+
+    # video.js sends {forward, backward}; blocks.js sends a plain 0. Only the
+    # dict form needs flattening — cint handles the rest downstream.
     seeks = data.get("seeks")
     if isinstance(seeks, dict):
         out["seeks"] = cint(seeks.get("forward"))
@@ -832,6 +869,11 @@ def _normalise_beat(data):
     if isinstance(discount, dict) and "hidden" not in out:
         out["hidden"] = cint(discount.get("hidden"))
     out.pop("discount", None)
+
+    # "I have read it." One-way by design on the client and treated the same way
+    # here, so a stale beat replayed out of the offline queue cannot un-tick it.
+    if data.get("ack") is not None:
+        out["ack"] = cint(data.get("ack"))
 
     return out
 

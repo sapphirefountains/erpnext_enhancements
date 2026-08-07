@@ -718,9 +718,13 @@ class TestClaimMismatch(unittest.TestCase):
 		self.assertEqual(progress.load("ATT-0001")["lessons"]["L1"]["status"], "done")
 
 	def test_a_payload_without_keys_is_ignored(self):
+		# `ack` is on the refusal too, and deliberately: the two exits of
+		# `record_heartbeat` returning different key sets is the shape of defect
+		# this module has spent five releases on. None means "no acknowledgement
+		# here", which is what player.js's `if (response.ack != null)` wants.
 		self.assertEqual(
 			progress.record_heartbeat("ATT-0001", {"intervals": [[0, 600]]}),
-			{"coverage": 0.0, "credited": 0, "flags": ["ignored"]},
+			{"coverage": 0.0, "credited": 0, "flags": ["ignored"], "ack": None},
 		)
 
 	def test_an_empty_payload_is_ignored(self):
@@ -927,6 +931,109 @@ class TestFlushStaleAttempts(unittest.TestCase):
 		finally:
 			sys.modules["frappe"].flags.pop("in_migrate", None)
 		self.assertEqual(len(_writes_of()), before)
+
+
+# ------------------------------------------------------------- document blocks
+
+
+class TestDocumentBlocks(unittest.TestCase):
+	"""PDF and Downloadable File blocks recorded nothing at all.
+
+	`blocks.js` has always sent `kind`, `played`, `claimed` and `ack`. None of the
+	four was read here, so dwell credited zero seconds and the explicit "I have read
+	it" — the module README's documented substitute for per-page tracking, and the
+	thing an auditor would actually be shown — was stored nowhere. `player.js` then
+	read `response.ack` back off a reply that had never carried it.
+
+	The normaliser in `api/training.py` renames the document vocabulary onto this
+	module's; what is tested here is what happens after that (TASK-2026-01178).
+	"""
+
+	def setUp(self):
+		_reset_state()
+		# Give the server-clock clamp something to work with.
+		#
+		# It allows `elapsed x 1.25` new seconds, and `_elapsed_seconds` falls back
+		# to one heartbeat interval (15) for an attempt that has never beaten — so
+		# a first beat can only ever bank 18, and every coverage figure below would
+		# read 90%. That is the clamp working exactly as designed and has nothing to
+		# do with document blocks. One empty beat establishes `beat_at`, then wall
+		# time gives it a budget, and these tests get to be about their subject.
+		progress.record_heartbeat(
+			"ATT-0001", {"lesson_key": "L1", "block_key": "PRIME", "duration": 600, "intervals": []}
+		)
+		_advance(120)
+
+	def _doc_beat(self, seconds, **extra):
+		payload = {
+			"lesson_key": "L1",
+			"block_key": "DOC1",
+			"kind": "doc",
+			"duration": 20,
+			"intervals": [[0, seconds]] if seconds else [],
+			"claimed_seconds": seconds,
+		}
+		payload.update(extra)
+		return progress.record_heartbeat("ATT-0001", payload)
+
+	def _stored(self):
+		return progress.load("ATT-0001")["lessons"]["L1"]["blocks"]["DOC1"]
+
+	def test_dwell_is_credited(self):
+		result = self._doc_beat(20)
+		self.assertEqual(result["credited"], 20)
+		self.assertEqual(result["coverage"], 100.0)
+
+	def test_partial_dwell_is_partial_coverage(self):
+		self.assertEqual(self._doc_beat(10)["coverage"], 50.0)
+
+	def test_the_first_document_beat_records_an_unacknowledged_block(self):
+		"""0, not absent. player.js treats an absent `ack` as "not tracked" and will
+		not hold a learner on a gate nobody is evaluating — so the gate only exists
+		once the server has said the concept applies to this block."""
+		self._doc_beat(5)
+		self.assertEqual(self._stored()["ack"], 0)
+
+	def test_the_acknowledgement_is_recorded_and_returned(self):
+		result = self._doc_beat(20, ack=1)
+		self.assertEqual(result["ack"], 1)
+		self.assertEqual(self._stored()["ack"], 1)
+
+	def test_the_acknowledgement_survives_a_reload(self):
+		self._doc_beat(20, ack=1)
+		_advance(30)
+		self._doc_beat(20)
+		self.assertEqual(self._stored()["ack"], 1)
+
+	def test_a_later_beat_cannot_untick_it(self):
+		"""One-way on the client and one-way here. A beat replayed out of the
+		offline queue carries whatever was true when it was built, and the last one
+		to land must not be able to withdraw a statement of fact."""
+		self._doc_beat(20, ack=1)
+		self._doc_beat(20, ack=0)
+		self.assertEqual(self._stored()["ack"], 1)
+
+	def test_the_dwell_target_is_the_servers_not_the_payloads(self):
+		"""A document has no Training Video Asset to check a duration against, so
+		trusting the payload's would let `duration: 1` reach full coverage after one
+		second. The setting is the divisor."""
+		result = self._doc_beat(20, duration=1)
+		self.assertEqual(result["coverage"], 100.0)
+		self.assertEqual(self._stored()["dur"], 20)
+
+	def test_a_video_beat_gets_no_ack_at_all(self):
+		"""The concept does not apply, and None is how player.js is told so."""
+		payload = {"lesson_key": "L1", "block_key": "B1", "duration": 600, "intervals": [[0, 10]]}
+		result = progress.record_heartbeat("ATT-0001", payload)
+		self.assertIsNone(result["ack"])
+		self.assertNotIn("ack", progress.load("ATT-0001")["lessons"]["L1"]["blocks"]["B1"])
+
+	def test_a_video_beat_still_trusts_its_own_duration(self):
+		"""The doc override must not leak onto the video path — the asset row is the
+		authority there, and 20 seconds would be a spectacular regression."""
+		payload = {"lesson_key": "L1", "block_key": "B1", "duration": 600, "intervals": [[0, 10]]}
+		progress.record_heartbeat("ATT-0001", payload)
+		self.assertEqual(progress.load("ATT-0001")["lessons"]["L1"]["blocks"]["B1"]["dur"], 600)
 
 
 if __name__ == "__main__":

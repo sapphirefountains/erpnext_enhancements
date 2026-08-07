@@ -28,6 +28,8 @@
   "column_break_runtime",
   "attempt_idle_timeout_minutes",
   "max_intervals_per_video",
+  "max_playback_rate",
+  "doc_min_dwell_seconds",
   "media_section",
   "drive_training_folder_id",
   "gcs_bucket",
@@ -191,6 +193,21 @@
    "fieldname": "max_intervals_per_video",
    "fieldtype": "Int",
    "label": "Max Watched Ranges Per Video"
+  },
+  {
+   "default": "1.25",
+   "description": "Fastest playback speed the player offers. Capped at 1.25 in the client regardless of what is set here, because progress.clamp_new_seconds truncates claimed seconds to elapsed x 1.25 — allow more and a learner using the speed menu silently loses watch time and collects an integrity flag for it.",
+   "fieldname": "max_playback_rate",
+   "fieldtype": "Float",
+   "label": "Max Playback Rate",
+   "precision": "2"
+  },
+  {
+   "default": "20",
+   "description": "How long a PDF or downloadable file must be open before the learner may tick “I have read it”. Deliberately short: it exists to stop a reflexive tick-and-move-on, not to simulate reading.",
+   "fieldname": "doc_min_dwell_seconds",
+   "fieldtype": "Int",
+   "label": "Minimum Document Dwell (Seconds)"
   },
   {
    "fieldname": "media_section",

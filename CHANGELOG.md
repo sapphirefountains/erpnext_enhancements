@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.257.0] - 2026-08-07
+
+MINOR rather than the PATCH the tasks called for: two new Training Settings fields
+ship here. The tasks assumed the fields existed and only the boot payload was
+missing them — see below.
+
+### Added
+
+- **`Training Settings.max_playback_rate` and `Training Settings.doc_min_dwell_seconds`.**
+  Both tasks describe these as settings the boot payload forgot to send. Neither
+  field existed. The client had been reading settings nobody could set, falling
+  back to constants, for as long as both features have shipped. Closes
+  TASK-2026-01182.
+
+  `max_playback_rate` can only *tighten* the speed menu: `video.js` still clamps
+  to 1.25 whatever arrives, because `progress.clamp_new_seconds` truncates claimed
+  seconds at elapsed × 1.25. A higher setting would not raise the ceiling — it
+  would silently cost a learner watch time and earn them an integrity flag for it.
+
+### Fixed
+
+- **PDF and Downloadable File blocks recorded nothing at all.** `blocks.js` has
+  sent `kind`, `played`, `claimed` and `ack` since the document blocks were
+  written; the server read none of the four. Dwell credited zero seconds and the
+  explicit "I have read it" — the module README's documented substitute for
+  per-page tracking, and the thing an auditor would actually be shown — was stored
+  nowhere. `player.js` then read `response.ack` back off a reply that had never
+  carried it. Closes TASK-2026-01178.
+
+  `_normalise_beat` now translates the document vocabulary onto the one the engine
+  speaks: `played` → `intervals` (same half-open encoding, different word),
+  `claimed` → `claimed_seconds`. That second rename matters more than it looks:
+  `record_heartbeat` cross-checks the claimed total against the seconds it derives
+  from the ranges — the check that would have caught the v1.235.0 half-open
+  misread three releases earlier — and for document blocks it was comparing
+  against a key that was never sent, so it silently checked nothing.
+
+- **The document dwell target is the server's, not the payload's.**
+  `_resolve_duration` trusts the client's `duration` for want of anything better.
+  That is safe for video, where the Training Video Asset row carries a verified
+  duration and a shrinking one is refused outright, and unsafe here, because a
+  document has no asset to check against — a payload claiming `duration: 1` would
+  reach full coverage after one second. `record_heartbeat` now takes the divisor
+  from `doc_min_dwell_seconds`.
+
+- **`ack` round-trips and survives a reload.** Stored on the block, returned on
+  every beat, and set-only: a beat replayed out of the offline queue carries
+  whatever was true when it was built, and the last one to land must not be able
+  to withdraw a statement of fact recorded against a compliance record. The `0` is
+  written on the first document beat so the gate can distinguish "opened, not yet
+  acknowledged" from "not a tracked block at all" — `player.js` treats an absent
+  `ack` as untracked and will not hold a learner on a gate nobody is evaluating.
+  A video beat returns `ack: None`, which is what that check wants.
+
 ## [1.256.0] - 2026-08-07
 
 ### Changed

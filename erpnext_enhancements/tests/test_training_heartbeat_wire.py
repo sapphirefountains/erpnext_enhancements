@@ -395,5 +395,83 @@ class TestTransportMapPointsAtRealEndpoints(unittest.TestCase):
 		self.assertEqual(missing, [], f"player calls transport.{missing} with no map entry")
 
 
+BLOCKS_JS = REPO_ROOT / "erpnext_enhancements/public/js/training/blocks.js"
+
+
+class TestTheDocumentVocabulary(unittest.TestCase):
+	"""PDF and Downloadable File blocks speak a dialect nothing here had learned.
+
+	`blocks.js` sends `played` where video.js sends `ranges`, and `claimed` where it
+	sends `claimed_seconds`. Same encodings, different words — and this function had
+	only ever implemented one of the two vocabularies, so a document beat produced no
+	`intervals`, credited nothing, and the dwell tracking recorded silence
+	(TASK-2026-01178).
+
+	The cost was not only the lost dwell. `record_heartbeat` cross-checks the
+	claimed total against the seconds it derives from the ranges — the check that
+	would have caught the v1.235.0 half-open misread three releases earlier — and
+	for document blocks it was comparing against a key that was never sent, so it
+	silently checked nothing.
+	"""
+
+	def test_played_becomes_intervals(self):
+		self.assertEqual(normalise({"played": [[0, 20]]})["intervals"], [[0, 20]])
+
+	def test_played_is_dropped_once_translated(self):
+		out = normalise({"played": [[0, 20]]})
+		self.assertNotIn("played", out)
+
+	def test_ranges_still_wins_when_both_arrive(self):
+		"""Nothing sends both today. If something starts to, the video vocabulary is
+		the one with the server-verified duration behind it."""
+		out = normalise({"ranges": [[0, 5]], "played": [[0, 20]]})
+		self.assertEqual(out["intervals"], [[0, 5]])
+
+	def test_claimed_becomes_claimed_seconds(self):
+		self.assertEqual(normalise({"claimed": 20})["claimed_seconds"], 20)
+
+	def test_claimed_is_dropped_once_translated(self):
+		self.assertNotIn("claimed", normalise({"claimed": 20}))
+
+	def test_an_explicit_claimed_seconds_is_not_overwritten(self):
+		out = normalise({"claimed": 20, "claimed_seconds": 5})
+		self.assertEqual(out["claimed_seconds"], 5)
+
+	def test_kind_rides_through_untouched(self):
+		"""The normaliser's job is names, not policy. Which block type gets which
+		treatment is `record_heartbeat`'s decision."""
+		self.assertEqual(normalise({"kind": "doc"})["kind"], "doc")
+
+	def test_ack_is_coerced_to_an_int(self):
+		self.assertEqual(normalise({"ack": True})["ack"], 1)
+		self.assertEqual(normalise({"ack": 0})["ack"], 0)
+
+	def test_a_beat_without_ack_does_not_invent_one(self):
+		"""Absent has to stay absent: player.js reads `response.ack != null` and a
+		fabricated 0 would put every video block behind an acknowledgement gate."""
+		self.assertNotIn("ack", normalise({"ranges": [[0, 5]]}))
+
+	def test_a_plain_integer_seeks_count_survives(self):
+		"""video.js sends {forward, backward}; blocks.js sends 0."""
+		self.assertEqual(normalise({"seeks": 0})["seeks"], 0)
+
+
+class TestBlocksJsStillSendsWhatIsRead(unittest.TestCase):
+	"""Pins the producer, so this cannot drift back apart in silence."""
+
+	def _doc_beat_source(self):
+		src = BLOCKS_JS.read_text(encoding="utf-8")
+		start = src.index("function beat(extra)")
+		return src[start : start + 700]
+
+	def test_the_document_beat_sends_the_keys_the_server_translates(self):
+		body = self._doc_beat_source()
+		for key in ("kind:", "played:", "claimed:", "duration:", "block_key:"):
+			self.assertIn(key, body, f"blocks.js stopped sending {key}")
+
+	def test_the_acknowledgement_is_sent_as_ack(self):
+		self.assertIn("ack: 1", BLOCKS_JS.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
 	unittest.main()
