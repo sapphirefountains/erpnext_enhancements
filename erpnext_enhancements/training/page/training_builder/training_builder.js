@@ -3044,6 +3044,11 @@ class TrainingBuilder {
 						correct: ok,
 						text: tb_plain(question.question_text || question.text || ""),
 						explanation: entry.explanation || "",
+						// `points`/`awarded` mirror grading._grade_question. Without
+						// them the review card's "3/5" never draws, so an author
+						// checking their point weightings saw nothing at all.
+						points: entry.points,
+						awarded: ok ? entry.points : 0,
 					});
 				});
 				const score = total ? (earned / total) * 100 : 0;
@@ -3056,7 +3061,14 @@ class TrainingBuilder {
 					per_question,
 					run: state.quiz_runs,
 					best: state.quiz_best,
+					// The preview has no attempt limit, so `attempts_left` stays
+					// null — but `can_retry` still has to be said, or the author
+					// previewing a failed quiz sees no Try again button and
+					// reasonably concludes the learner will not get one either.
 					attempts_left: null,
+					attempts_used: state.quiz_runs,
+					max_attempts: null,
+					can_retry: score < pass,
 				});
 			},
 

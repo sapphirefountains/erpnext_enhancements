@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.3] - 2026-08-07
+
+### Fixed
+
+- **The quiz "Try again" button has never rendered, and the score breakdown has
+  always been blank.** A learner who failed with two attempts still in hand was
+  shown no way to use them. Four names disagreed across `submit_quiz`; none of the
+  four raised anything, because a missing key in JavaScript is `undefined` and
+  every branch that read one failed closed. Closes TASK-2026-01175.
+
+  `canRetry` asked for `can_retry`, which nothing sent, then fell back to
+  `attempts_remaining`, which no endpoint has ever sent either — so both arms were
+  `undefined` and it returned false for everyone. `attemptsText` read the same
+  absent key and returned an empty string. `renderReview` read `entry.earned`
+  where grading sends `awarded`, so the per-question "3/5" never drew.
+
+  **The client moved, not the server — which is the opposite of what the task
+  assumed.** The task asked us to confirm nothing else reads `attempts_left` or
+  `awarded` before renaming them, and something does, in both cases:
+  `player.js` reads `attempts_left` on the lesson result panel, and grading reads
+  `awarded` on its way to the Training Attempt Question row's `points_awarded`.
+  Renaming either would have moved the break rather than closed it. The client
+  names had no readers at all.
+
+- **`can_retry` is now derived on the server instead of inferred on the client.**
+  `quiz.js` was right to demand explicit permission and treat silence as no —
+  offering a retry the server will refuse spends a learner's goodwill on a dead
+  button — but nothing ever said yes. The rule is one line and belongs where
+  `max_attempts` and the run count already are. Passing does not offer a retry:
+  `best` keeps the highest score so a resit cannot cost anything, but "Try again"
+  under a pass reads as though the pass did not count.
+
+  `attempts_used` and `max_attempts` now ride along too, so the player can say
+  "Attempt 2 of 3" — which `attempts_left` alone cannot phrase, and cannot phrase
+  at all on an unlimited course, where it is `None`.
+
+- **The builder's quiz preview omitted the point fields entirely**, so an author
+  checking their per-question weightings saw the same blank breakdown a learner
+  did, and a previewed failure offered no Try again. It now mirrors the runtime:
+  `points`/`awarded` per question, plus `can_retry` and the attempt counters.
+
+### Added
+
+- Quiz-seam coverage in `tests/test_training_boot_wire.py`, including a test that
+  `attempts_left` still has its second reader in `player.js` — pinned so that a
+  future tidy-up does not rename it and reopen this from the other end.
+
 ## [1.255.2] - 2026-08-07
 
 ### Fixed
