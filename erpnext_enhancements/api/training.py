@@ -1189,8 +1189,16 @@ def finish_attempt(attempt):
     _require_runtime()
     doc = _attempt(attempt)
     if doc.status != "In Progress":
-        return {"passed": doc.status != "Failed", "attempt": doc.name, "status": doc.status,
-                "outstanding": [], "completion": _completion_for(doc)}
+        # Re-opening something already finished. The score comes off the record
+        # rather than being recomputed: it is what the learner was graded on, and
+        # recomputing could quietly disagree with the completion certificate.
+        return _finished_attempt_payload(
+            doc,
+            passed=doc.status != "Failed",
+            score=_recorded_score(doc),
+            outstanding=[],
+            completion=_completion_for(doc),
+        )
 
     outstanding, scores, coverages = [], [], []
     for lesson in _version_lessons(doc.course_version):
@@ -1231,7 +1239,13 @@ def finish_attempt(attempt):
         )
 
     if outstanding:
-        return {"passed": False, "attempt": doc.name, "status": doc.status, "outstanding": outstanding}
+        return _finished_attempt_payload(
+            doc,
+            passed=False,
+            score=_recorded_score(doc),
+            outstanding=outstanding,
+            completion=None,
+        )
 
     # A course with no quiz anywhere is passed on its gates alone; recording it as
     # 0% would make every transcript of a video-only course look like a failure.
@@ -1264,12 +1278,53 @@ def finish_attempt(attempt):
     )
     _close_assignment(doc, completion)
 
+    return _finished_attempt_payload(
+        doc,
+        passed=True,
+        score=score,
+        outstanding=[],
+        completion=completion,
+    )
+
+
+def _recorded_score(doc):
+    """The score already on the attempt, or ``None`` if there is not one yet.
+
+    ``None`` rather than 0.0 on purpose. Zero is a real score a learner can get,
+    and the player renders whatever it is handed — so a missing score dressed up
+    as a zero is indistinguishable from a genuine nought out of ten. Absent says
+    absent, and the caller decides what to show.
+    """
+    if not doc.meta.has_field("score_percent"):
+        return None
+    score = getattr(doc, "score_percent", None)
+    return flt(score) if score is not None else None
+
+
+def _finished_attempt_payload(doc, passed, score, outstanding, completion):
+    """The one shape :func:`finish_attempt` returns, from all three of its exits.
+
+    It had three shapes, and the differences between them were invisible until
+    somebody hit the right one:
+
+    * the pass carried ``score``;
+    * **the already-finished early return did not** — so re-opening a course
+      passed at full marks rendered "Passed – 0%", because ``pct(undefined)`` is
+      0 and the player draws what it is given (TASK-2026-01180);
+    * the outstanding-gates return carried neither ``score`` nor ``completion``,
+      and the client reads both.
+
+    Same shape as the v1.217.0 certificate bug: present, plausible, wrong. Three
+    exits that each assembled their own dict is how one of them ends up missing a
+    key nobody notices, so there is one assembler now and the exits differ only in
+    what they pass to it.
+    """
     return {
-        "passed": True,
+        "passed": bool(passed),
         "attempt": doc.name,
         "status": doc.status,
         "score": score,
-        "outstanding": [],
+        "outstanding": outstanding or [],
         "completion": completion,
     }
 

@@ -1094,7 +1094,15 @@
 			head.appendChild(el("h1", "tr-title", passed ? t("Passed") : t("Not passed yet")));
 
 			var summary = el("div", "tr-result" + (passed ? " is-passed" : " is-failed"));
-			summary.appendChild(el("div", "tr-result-score", pct(result.score) + "%"));
+			// No score is not a score of zero. `pct(undefined)` is 0, so this used
+			// to state "0%" with complete confidence for any attempt whose score
+			// did not reach it — which is exactly how a course passed at full marks
+			// re-rendered as "Passed – 0%". The server now sends the recorded score
+			// on every path, but an older attempt that predates score_percent still
+			// has none, and saying nothing is the honest answer to not knowing.
+			if (result.score != null) {
+				summary.appendChild(el("div", "tr-result-score", pct(result.score) + "%"));
+			}
 			summary.appendChild(
 				el("p", "tr-result-line",
 					passed

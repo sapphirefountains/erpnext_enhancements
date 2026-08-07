@@ -97,6 +97,22 @@ def _returned_keys(function_name):
     return set()
 
 
+
+def _python_function_source(source, name):
+    """One function's source text, by AST line span.
+
+    `_js_body` brace-matches, which is meaningless against Python — pointing it at
+    a `def` returns whatever happens to sit after the first `{` in the file, and
+    an assertion against that passes or fails for no reason connected to the code.
+    """
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return "\n".join(lines[node.lineno - 1 : node.end_lineno])
+    raise AssertionError(f"no function named {name}")
+
+
 class TestTheScanWorks(unittest.TestCase):
     """Guards every assertion below from passing because a parse went stale."""
 
@@ -979,3 +995,58 @@ class TestNextCheckpointsIsReadAtLast(unittest.TestCase):
 
     def test_the_video_seeds_its_state_from_the_spec(self):
         self.assertIn("spec.next_checkpoint_at", _video_code())
+
+
+# -------------------------------------------------------------- finish_attempt
+#
+# TASK-2026-01180. Three exits, three hand-assembled dicts, and the differences
+# between them were invisible until you hit the right one. Re-opening a course
+# passed at full marks rendered "Passed - 0%", because the already-finished early
+# return carried no `score` and `pct(undefined)` is 0.
+
+
+class TestFinishAttemptHasOneSerializer(unittest.TestCase):
+    def _runtime(self):
+        return RUNTIME.read_text(encoding="utf-8")
+
+    def test_the_serializer_exists(self):
+        self.assertIn("def _finished_attempt_payload(", self._runtime())
+
+    def test_every_exit_goes_through_it(self):
+        """Counted rather than spot-checked: a fourth exit added later that
+        assembles its own dict is the same bug again."""
+        body = _python_function_source(self._runtime(), "finish_attempt")
+        self.assertEqual(body.count("_finished_attempt_payload("), 3)
+        self.assertNotIn('"passed":', body)
+
+    def test_the_shape_carries_score_on_every_path(self):
+        keys = _returned_keys("_finished_attempt_payload")
+        self.assertEqual(
+            keys, {"passed", "attempt", "status", "score", "outstanding", "completion"}
+        )
+
+    def test_the_reopened_path_reads_the_recorded_score(self):
+        """Off the record, not recomputed — recomputing could quietly disagree
+        with the completion certificate already issued."""
+        body = _python_function_source(self._runtime(), "finish_attempt")
+        self.assertIn("_recorded_score(doc)", body)
+
+    def test_a_missing_score_is_none_not_zero(self):
+        """Zero is a real score. Absent has to say absent, or the two are the
+        same string on screen."""
+        body = _python_function_source(self._runtime(), "_recorded_score")
+        self.assertIn("return None", body)
+        self.assertIn("if score is not None else None", body)
+
+    def test_the_player_does_not_render_an_absent_score_as_zero(self):
+        body = _js_body(_player_code(), "function renderResults()")
+        self.assertIn("result.score != null", body)
+
+
+class TestFinishAttemptKeysAreRead(unittest.TestCase):
+    def test_the_client_reads_every_key_the_payload_sends(self):
+        code = _player_code()
+        start = code.index('call("finishAttempt"')
+        handler = code[start : start + 1400]
+        for key in ("status", "outstanding", "passed", "completion", "score"):
+            self.assertIn(f"result.{key}", handler, f"player.js stopped reading {key}")

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.5] - 2026-08-07
+
+### Fixed
+
+- **"Passed – 0%" on full-marks work.** Re-opening a completed course hits
+  `finish_attempt`'s already-finished early return, which did not carry `score`.
+  `pct(undefined)` is 0 and the player draws what it is handed, so a learner who
+  had scored 100% was shown a confident nought. Closes TASK-2026-01180.
+
+  `finish_attempt` had **three** exits, each assembling its own dict, and the
+  differences between them were invisible until you hit the right one: the pass
+  carried `score`; the already-finished return did not; and the outstanding-gates
+  return carried neither `score` nor `completion`, both of which the client reads.
+  There is one `_finished_attempt_payload` assembler now, and the exits differ
+  only in what they pass to it. A test counts the call sites, so a fourth exit
+  that hand-rolls its own dict fails CI rather than shipping with a missing key.
+
+  The re-opened path takes the score **off the record** rather than recomputing
+  it — recomputing could quietly disagree with the completion certificate already
+  issued against that attempt.
+
+- **A missing score is now `None`, not `0.0`, and the player renders nothing
+  rather than "0%".** Zero is a real score a learner can get, so a missing one
+  dressed up as a zero is indistinguishable from a genuine nought out of ten.
+  This matters beyond the fix above: an attempt predating `score_percent` still
+  has no score to report, and saying nothing is the honest answer to not knowing.
+  Same shape as the v1.217.0 certificate bug — present, plausible, wrong.
+
 ## [1.255.4] - 2026-08-07
 
 ### Fixed
