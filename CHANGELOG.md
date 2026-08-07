@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.254.1] - 2026-08-07
+
+Follow-up to v1.254.0. An adversarial audit of that release — run after it merged —
+found a defect in the circuit breaker itself, a test stub that was certifying it,
+and a factual error in its changelog. All three are fixed here, and the five
+behaviour changes v1.254.0 shipped without tests now have them.
+
+### Fixed
+
+- **`utils/error_throttle.py` wrote its counter to one Redis key and read it from
+  another, so `reset()` was a silent no-op and `suppressed_count()` always
+  returned 0.** Frappe's `RedisWrapper` namespaces keys only inside the `*_value`
+  family: `set_value` / `get_value` / `delete_value` all route through
+  `make_key()`, which returns `f"{db_name}|{key}"`. The raw redis-py methods —
+  `incr`, `expire`, `get`, `delete` — are **not overridden at all** and take the
+  key verbatim. v1.254.0 wrote with `incr` and read/cleared with
+  `get_value`/`delete_value`, so the two families never addressed the same slot.
+  (A second mismatch rode along on the same line: `get_value` unpickles, while
+  raw `incr` stores a plain integer string.)
+
+  The suppression itself always worked, because `incr` and `expire` at least
+  agreed with each other, and neither broken helper had a production caller — so
+  nothing user-facing regressed. What did not work was the operator promise in
+  `reset()`'s own docstring: fix the cause, reset, see the next failure logged in
+  full. That silently did nothing.
+
+  This module needs `incr` for atomicity — a counter a race can undercount is a
+  counter that lets a storm through — so it stays on the raw family and now does
+  its own namespacing: `_signature()` builds `f"{site}|ee_error_throttle::{sha1}"`
+  and all four operations use raw `incr`/`expire`/`get`/`delete` against it.
+
+  That also fixes a consequence worth naming separately: because the old key
+  skipped `make_key`, it was the only cache key in the app not scoped to a site.
+  On a bench where several sites share a Redis they shared one throttle budget, so
+  one site's storm could suppress another site's first, genuinely-distinct error —
+  precisely the masking this module exists to prevent.
+
+- **The test stub was more forgiving than production, so it certified the bug.**
+  `_FakeCache` was a flat dict in which `incr`, `get_value` and `delete_value` all
+  addressed the same unprefixed key with no pickling. That collapsed the very
+  distinction the defect lived in, and `test_reset_restores_the_budget` passed —
+  18/18 green — against code where `reset()` provably did nothing on a real bench.
+  The stub now reproduces `RedisWrapper`'s asymmetry deliberately: `make_key` +
+  pickle on the `*_value` family, verbatim keys and integer payloads on the raw
+  one. Re-introducing the v1.254.0 key handling now fails five tests.
+
+- **A factually wrong claim in v1.254.0's comment and changelog.** Both stated that
+  `is_new()` "is itself defined as `not self.get("creation")`". It is not: on
+  Frappe v16 it is `bool(self.get("__islocal"))` (`base_document.py:631`). The
+  permission-hook change is still correct — "has no creation timestamp" is the
+  right test *for those two hooks*, since all they need to know is whether there
+  is a saved row whose owner to compare against — but the stated justification was
+  wrong, and an equivalence claim like that is exactly the kind of thing someone
+  copies somewhere it does matter. The comment now says what is actually true, and
+  the 1.254.0 entry carries an inline correction.
+
+### Added
+
+- **`tests/test_error_log_followup.py` — 21 tests covering the five v1.254.0
+  changes that shipped with none.** The two that had tests (date coercion, the
+  throttle) were the two whose failure was loud. The five that did not were the
+  quiet ones: a swallowed exception, a skipped seed, a missing retry, a permission
+  check returning the wrong bool.
+
+  - **Finance Calendar** — a 403 names sharing and a 404 names the calendar id,
+    rather than both reporting a Google outage; a permanent refusal is cached so
+    the next dashboard load does not re-ask; a *transient* 500 is deliberately not
+    cached; and no failure shape reaches the caller as an exception.
+  - **`ensure_training_categories`** — seeds on a healthy site, no-ops silently
+    when the DocType is not installed yet, never re-seeds an existing category, and
+    one bad record cannot abort a migrate.
+  - **Drive retries** — the metadata read passes `num_retries`, and a 404 still
+    propagates rather than being retried away (a deleted folder is permanent, and
+    the caller flags it on the record).
+  - **Both permission hooks** — neither raises on any plausible dict shape, and a
+    saved record belonging to someone else is still refused. These pin the
+    *behaviour* and deliberately do not assert equivalence with `is_new()`.
+
+  Its own CI step, per the stub-isolation convention, and it stubs
+  `googleapiclient` because the runner does not install it while both modules
+  under test import `HttpError` at module scope.
+
+  Every one of the four is mutation-checked: reverting the production change it
+  guards fails the suite.
+
+- **Six tests pinning the throttle's key agreement** in
+  `tests/test_error_log_fixes.py` — one slot per counter, `suppressed_count` reads
+  what the throttle wrote, `reset` actually clears it, the key is namespaced by
+  site, two sites do not share a budget, and a missing site conf still throttles
+  rather than crashing.
+
 ## [1.254.0] - 2026-08-06
 
 A debugging pass over the production **Error Log** (78,648 rows). Four code
@@ -116,9 +207,12 @@ commands for each.
   `doc.is_new()`.** Frappe hands these hooks a plain dict on some paths, and a dict
   has no `.is_new()` — it raises `AttributeError: 'dict' object has no attribute
   'is_new'` from inside a permission check, which surfaces as an
-  unrelated-looking save failure. `is_new()` is itself defined as `not
-  self.get("creation")`, so both hooks now use that directly, which works on either
-  shape. Hardening in the same spirit as the `getattr(obj, "field", None)` custom-field
+  unrelated-looking save failure. Both hooks now test `not doc.get("creation")`,
+  which works on either shape. **Correction (see 1.254.1):** this entry originally
+  claimed `is_new()` "is itself defined as `not self.get("creation")`". That is
+  false — on Frappe v16 it is `bool(self.get("__islocal"))`. The change is still
+  right for these two hooks, but not for the reason given here.
+  Hardening in the same spirit as the `getattr(obj, "field", None)` custom-field
   reads: this is a latent defect on both hooks, and it is not the cause of the
   `Document Update Error` rows carrying that message — those come from
   `frappe_assistant_core`'s `update_document` tool, which is outside this repo.
