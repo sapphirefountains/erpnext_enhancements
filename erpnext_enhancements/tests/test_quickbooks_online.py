@@ -1948,10 +1948,17 @@ def test_group_account_remap_constants_reconcile_to_the_measured_population():
 	gross = sum(row[4] for row in remap.NEW_LEDGER_CHILDREN) + sum(row[3] for row in remap.MERGE_INTO_EXISTING)
 
 	# Measured against production 2026-08-04: 22 group accounts, 1,813 draft pre-2026
-	# lines, $724,230.37 gross, in 1,726 Journal Entries.
-	assert len(remap.NEW_LEDGER_CHILDREN) + len(remap.MERGE_INTO_EXISTING) == 22
+	# lines, $724,230.37 gross, in 1,726 Journal Entries. 23 routes rather than 22
+	# because 52000 was added for the 2026 window and carries no pre-2026 lines, so it
+	# contributes 0 to both totals below -- which is the assertion that it is routing,
+	# not a silent change to what the original run covered.
+	assert len(remap.NEW_LEDGER_CHILDREN) + len(remap.MERGE_INTO_EXISTING) == 23
 	assert lines == 1813
 	assert round(gross, 2) == 724230.37
+	# The table and WINDOWS are two representations of the same measurement; nothing but
+	# this stops one being edited without the other.
+	assert remap.WINDOWS["pre-2026"]["expected_lines"] == lines
+	assert remap.WINDOWS["pre-2026"]["expected_gross"] == round(gross, 2)
 
 	child_numbers = [row[1] for row in remap.NEW_LEDGER_CHILDREN]
 	parent_numbers = [row[0] for row in remap.NEW_LEDGER_CHILDREN] + [row[0] for row in remap.MERGE_INTO_EXISTING]
@@ -1960,6 +1967,72 @@ def test_group_account_remap_constants_reconcile_to_the_measured_population():
 	# Every child name ends in the suffix _ledger_for_posting matches on, or the forward
 	# fix cannot find the account this script just created.
 	assert all(row[2].endswith(remap.GENERAL_SUFFIX) for row in remap.NEW_LEDGER_CHILDREN)
+
+
+def test_group_account_remap_windows_are_half_open_and_do_not_overlap():
+	"""``pre-2026`` and ``2026`` tile the timeline exactly once, with no gap and no seam.
+
+	They share a boundary date, so an off-by-one in either direction is invisible until
+	a migration either double-moves a line or silently skips one: an inclusive upper
+	bound would put 2026-01-01 in both windows, and a gap would leave it in neither.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import group_account_remap as remap
+
+	assert remap.WINDOWS["pre-2026"]["to_date"] == remap.WINDOWS["2026"]["from_date"]
+
+	pre = remap._window_sql(remap._resolve_window("pre-2026", None, None))
+	current = remap._window_sql(remap._resolve_window("2026", None, None))
+
+	# Half-open on the right, closed on the left -- the boundary date belongs to exactly
+	# one window, and the pre-2026 clause still reduces to what the original run ran.
+	assert pre == ("je.posting_date < %(to_date)s", {"to_date": "2026-01-01"})
+	assert current == ("je.posting_date >= %(from_date)s", {"from_date": "2026-01-01"})
+
+
+def test_group_account_remap_ad_hoc_window_never_asserts_a_population():
+	"""An unmeasured date range reports what it finds instead of claiming a verdict.
+
+	A range nobody surveyed has no expected population, so inheriting one from a
+	different range would be worse than having no check: it would fail loudly on
+	correct data, and the operator would learn to ignore the check that matters.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import group_account_remap as remap
+
+	window = remap._resolve_window("pre-2026", "2026-03-01", "2026-04-01")
+
+	assert window["measured"] is False
+	assert window["expected_lines"] is None and window["expected_gross"] is None
+	# The explicit pair wins over the named window rather than being silently ignored.
+	assert (window["from_date"], window["to_date"]) == ("2026-03-01", "2026-04-01")
+	assert remap._window_sql(window) == (
+		"je.posting_date >= %(from_date)s AND je.posting_date < %(to_date)s",
+		{"from_date": "2026-03-01", "to_date": "2026-04-01"},
+	)
+
+	assert remap._resolve_window("2026", None, None)["measured"] is True
+
+
+def test_group_account_remap_routes_every_account_the_2026_window_measured():
+	"""Every group account carrying 2026 lines has somewhere to go.
+
+	Measured on production 2026-08-07: these 15 accounts hold all 315 blocked lines.
+	Widening the date range without this list is exactly the bug being fixed -- 52000
+	was in neither routing table, so 3 of the 315 would have stayed unpostable and the
+	cutover would have failed on them after the remap reported success.
+	"""
+	install_frappe_stub()
+	from erpnext_enhancements.quickbooks_online.core import group_account_remap as remap
+
+	measured_2026 = {
+		"20000", "50000", "51000", "52000", "53000", "53100", "60000", "60100",
+		"60210", "60300", "60400", "60420", "60800", "60810", "61500",
+	}
+	routed = {row[0] for row in remap.NEW_LEDGER_CHILDREN} | {row[0] for row in remap.MERGE_INTO_EXISTING}
+
+	assert measured_2026 <= routed
+	assert len(measured_2026) == remap.WINDOWS["2026"]["expected_accounts"]
 
 
 def test_group_account_remap_suffix_matches_the_mapper_redirect():

@@ -2,6 +2,15 @@
 **Phase:** 0   **Type:** DATA   **Size:** M
 **Blocked by:** verified backup of the target site   **Blocks:** pre-2026 GL posting (WI-028 draft triage, WI-032 opening TB)
 
+> **Follow-up — the 2026 window is now in scope.** Everything below describes the
+> `pre-2026` window, which is applied. The 315 lines this work item deliberately excluded
+> are needed by **TASK-2026-01236** (final review before the QuickBooks backlog cutover):
+> they block the 2026 half of the GL for exactly the same reason. The script now takes a
+> `window` argument rather than a fixed cutoff, so the scope decision recorded here stays
+> reproducible. See the runbook's *[The 2026 window](../docs/migration/wi068-group-account-remap-runbook.md#the-2026-window)*
+> section. One route was missing entirely — `52000 Service COGS` appeared in neither
+> table, so widening the date range alone would still have left 3 lines unpostable.
+
 ## Why
 **1,726 draft Journal Entries cannot be submitted.** 1,813 of their lines — $724,230.37
 gross across 22 accounts — post to **group (parent) accounts**, and ERPNext refuses to
@@ -182,6 +191,8 @@ Run the script's own verification block; all of these must hold.
   fix, and sales tax still outstanding). Only the "pause the sync before submitting"
   constraint is shared.
 - **The 315 out-of-scope group lines** on submitted or 2026+ entries. Submitted documents
-  cannot be updated, and 2026+ entries are outside the migration window.
+  cannot be updated, and 2026+ entries are outside the migration window. *(Superseded for
+  the 2026+ half — see the follow-up note at the top. Submitted entries remain out of
+  scope permanently.)*
 - **Auto-creating the `- General` child during mapping.** Deliberately rejected — see
   Part 1.

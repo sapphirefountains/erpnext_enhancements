@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.0] - 2026-08-07
+
+### Added
+
+- **The WI-068 group-account remap now takes a `window` argument, and knows about the 2026
+  backlog.** 315 draft Journal Entry lines ($154,602.92 across 15 group accounts, in 193
+  entries, spanning 2026-01-01 to 2026-08-01) post to group accounts, and ERPNext refuses
+  to submit a Journal Entry whose line names one. They block the 2026 half of the
+  QuickBooks backlog GL posting that TASK-2026-01236 gates on.
+
+  WI-068 scoped itself to `posting_date < 2026-01-01` **by design** — at the time only the
+  pre-2026 backlog was being posted — so this set was left alone deliberately, not missed.
+  `CUTOFF_DATE` is therefore untouched and `pre-2026` remains the default window: that run
+  is already applied to production and its report is the record of what it did, so it has
+  to keep reproducing exactly. The date range moved into a `WINDOWS` table instead, each
+  entry carrying the population measured against production beside the dates it describes.
+
+  **Widening the date range alone would not have been enough.** `52000 Service COGS`
+  appeared in neither routing table, so 3 of the 315 lines had nowhere to go and the
+  cutover would have failed on them *after* the remap reported success. Added as
+  `52001 - Service COGS - General`, consistent with the `50001`/`51001` siblings (`52100`
+  onward were already taken). It carries `0, 0.00` in the routing table because it has no
+  pre-2026 lines, which is what keeps the `pre-2026` expected totals unchanged at
+  1,813 / $724,230.37.
+
+  `20000 Accounts Payable` needed no new child — it merges into `2110 - Creditors`, which
+  the existing `MERGE_INTO_EXISTING` table already routes. But Creditors is a **Payable**
+  ledger and ERPNext requires a party on every line posted to one, while the group parent
+  does not. A partyless line is therefore legal where it sits and illegal where it is
+  going, which would have traded a "cannot post to a group account" failure for a "party
+  required" one at the same point in the cutover. All 10 lines carry a Supplier (verified
+  2026-08-07) and the script now re-checks it per run, skipping the account with an error
+  naming the offending rows rather than moving them into a different failure.
+
+### Fixed
+
+- **A re-run no longer mints ledgers the window does not need.** The routing table spans
+  every window, so `_build_plan` acting on all of it regardless meant a `pre-2026` re-run
+  would create `52001` for an account only 2026 ever touched. Child creation is now guarded
+  on the window actually having lines for that parent, restoring "re-running any window is
+  a true no-op".
+
+### Changed
+
+- **An ad-hoc `from_date`/`to_date` range reports its population instead of asserting it.**
+  Named windows carry a measured expected line count and gross that the run checks before
+  moving anything. An unmeasured range has nothing to be right or wrong about, so
+  inheriting a named window's figures would fail loudly on correct data and teach the
+  operator to ignore the one check that matters.
+
+  Three tests cover the new logic and each was confirmed to **fail against the pre-change
+  code**: removing the `52000` route, making the upper bound inclusive (which would put
+  2026-01-01 in both windows), and letting an ad-hoc range claim to be measured. 182/182
+  pass in the QuickBooks suite.
+
+  Documented in the runbook's new *The 2026 window* section, which also records something
+  that differs in kind rather than degree: `mapping._ledger_for_posting` redirects a group
+  account to its `- General` child, and `20000` has none, so on a re-sync those 10 AP lines
+  **park for manual review rather than reverting**. The remap is not undone either way.
+  This is inherited from the pre-2026 run, where `10000 Accounts Receivable` merges into
+  Debtors on identical terms.
+
 ## [1.254.1] - 2026-08-07
 
 Follow-up to v1.254.0. An adversarial audit of that release — run after it merged —

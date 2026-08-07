@@ -1,8 +1,17 @@
 # WI-068 apply runbook — group-account remap
 
-Moves 1,813 draft pre-2026 Journal Entry lines ($724,230.37 across 22 group accounts, in
-1,726 entries) off group accounts and onto postable ledgers, so the pre-2026 GL can be
-submitted at all.
+Moves draft Journal Entry lines off group accounts and onto postable ledgers, so the GL can
+be submitted at all.
+
+The script runs against a named **window**. Steps 0–7 below are written for `pre-2026` and
+are the record of the run already applied to production. For the 2026 window — needed by
+TASK-2026-01236 before the QuickBooks backlog can be posted — read those steps first, then
+follow **[the 2026 window](#the-2026-window)** at the end, which lists only what differs.
+
+| Window | Range | Lines | Gross | Accounts | Entries | Status |
+|---|---|---|---|---|---|---|
+| `pre-2026` | `< 2026-01-01` | 1,813 | $724,230.37 | 22 | 1,726 | Applied |
+| `2026` | `>= 2026-01-01` | 315 | $154,602.92 | 15 | 193 | **Not yet applied** |
 
 Work item: [`WI-068`](../../work-items/WI-068-group-account-remap.md).
 Script: `erpnext_enhancements/quickbooks_online/core/group_account_remap.py`.
@@ -152,3 +161,49 @@ sync failure. Submission and sync-pause are a single decision — see WI-068 pre
 | Wrong result, nothing submitted yet | Restore the backup. The 20 new accounts can also be deleted while they carry no submitted GL entries. |
 | Already submitted against the new accounts | The accounts are permanent. Correct by reclassifying Journal Entry, not by editing posted rows. This is why staging goes first. |
 | Forward fix missing, remap reverted | Deploy the release, then re-run `apply=True`. No data is lost — the lines simply moved back. |
+
+---
+
+## The 2026 window
+
+Everything above applies unchanged except the command, the expected numbers, and the two
+notes at the end. Pass `window` on every invocation — **omitting it silently runs
+`pre-2026`**, which on a site where that window is already applied is a no-op that reports
+success and moves nothing.
+
+```bash
+# dry run
+bench --site <site> execute \
+  erpnext_enhancements.quickbooks_online.core.group_account_remap.remap_group_account_lines \
+  --kwargs "{'window': '2026'}"
+
+# apply
+bench --site <site> execute \
+  erpnext_enhancements.quickbooks_online.core.group_account_remap.remap_group_account_lines \
+  --kwargs "{'window': '2026', 'apply': True}"
+```
+
+Expected figures, measured on production 2026-08-07:
+
+- `population matches expected: True` — 315/315 lines, 154,602.92/154,602.92.
+- 15 group accounts, spanning 2026-01-01 to 2026-08-01, in 193 Journal Entries.
+- **One account is created: `52001 - Service COGS - General`.** The other 14 destinations
+  already exist — 13 `- General` children from the pre-2026 run, plus `2110 - Creditors`.
+- `in-scope lines still on a group account: 0 (ok=True)` after applying.
+- `out-of-scope group lines left untouched: 1813` on a site where `pre-2026` has **not**
+  been applied; **0** where it has. This number is the mirror image of the other window,
+  not a constant — check it against which windows have run, not against the pre-2026 value.
+
+Two things that differ in kind, not just in number:
+
+- **`20000 - Accounts Payable` merges into `2110 - Creditors`, not into a `- General`
+  child**, and Creditors is a Payable ledger, so ERPNext requires a party on every line.
+  All 10 lines carry a Supplier (verified 2026-08-07). The script re-checks this and skips
+  the whole account with an error naming the offending rows if any line has lost its party
+  — so a skip here is a data problem to fix, never something to force past.
+- **Step 6 (the re-sync survival check) behaves differently for those 10 AP lines.**
+  `mapping._ledger_for_posting` redirects a group account to its `- General` child, and
+  `20000` has none — it returns `None`, which parks the transaction for manual review
+  rather than reverting the line. So on the AP account the check is "does it park", not
+  "does it revert". The remap is not undone either way. This is inherited from the pre-2026
+  run, where `10000 - Accounts Receivable` merges into Debtors on exactly the same terms.
