@@ -1195,6 +1195,15 @@ def submit_quiz(attempt, lesson_key, answers):
     payload["run"] = runs
     payload["best"] = flt(quiz.get("best"))
     payload["attempts_left"] = attempts_left
+    # "7 of 10 correct", which `quiz.js` has been ready to draw since it was
+    # written and has never had the numbers for. Found by the boundary contract
+    # test (TASK-2026-01184) on its first run: both keys were read, neither was
+    # sent, and the line is guarded by `!= null` so it simply never appeared.
+    # Counted from `per_question` rather than recomputed, so it cannot disagree
+    # with the breakdown printed underneath it.
+    per_question = result.get("per_question") or []
+    payload["question_count"] = len(per_question)
+    payload["correct_count"] = sum(1 for row in per_question if row.get("correct"))
     # `attempts_used` and `max_attempts` let the player say "Attempt 2 of 3",
     # which `attempts_left` alone cannot phrase — and cannot phrase at all on an
     # unlimited course, where it is None.
