@@ -387,6 +387,16 @@ jobs:
       # there is nothing at runtime that could notice.
       - name: Training bootstrap wire (player reads what the API sends)
         run: python -m unittest erpnext_enhancements.tests.test_training_boot_wire -v
+      # The generalisation of the step above, and the one that closes the whole
+      # bug class. The suites either side of it each pin ONE side of a seam, which
+      # is exactly why they stayed green through eight releases of the same
+      # defect. This one enumerates every whitelisted reply's keys -- following
+      # the helpers in grading.py and progress.py that add to them -- and every
+      # key the player reads off a reply, then fails on anything present on one
+      # side only. Deliberate asymmetries live in two allowlists that must each
+      # carry a reason, and a third test prunes them when they stop being true.
+      - name: Training boundary contract (every reply key has a reader, and vice versa)
+        run: python -m unittest erpnext_enhancements.tests.test_training_boundary_contract -v
       # The kiosk service worker is registered at ROOT scope, so what it answers
       # for is every page's problem. It used to serve the whole app's assets
       # cache-first with ignoreSearch, which froze JavaScript across the site for

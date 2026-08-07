@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.258.0] - 2026-08-07
+
+### Added
+
+- **`tests/test_training_boundary_contract.py` — the test that catches this whole
+  bug class instead of one instance of it.** Closes TASK-2026-01184.
+
+  Twelve-plus defects in this module have shared one shape: a key one side writes
+  and the other never reads, or reads under a different name. Nothing throws — a
+  missing key in JavaScript is `undefined`, `undefined || []` is an empty list,
+  `pct(undefined)` is 0, and all of those render perfectly. The suites either side
+  of this one each pin *one* side of a seam, which is precisely why they stayed
+  green through eight releases of the same defect.
+
+  This enumerates both sides and diffs them. **Sent:** every `@frappe.whitelist()`
+  reply in `api/training.py`, followed through subscript assignment
+  (`payload["x"] = ...`), `dict(other)` copies, local names, and calls into
+  `training/grading.py` and `training/progress.py` — because a key added by a
+  delegate is on the wire just as surely as one written in the endpoint. **Read:**
+  every `<binder>.<key>` in the four player files and `www/training.html`, where
+  the binder holds a server reply. Anything on one side and not the other fails.
+
+  Deliberate asymmetries live in two allowlists, and **each entry must carry a
+  reason** — a test enforces that, and two more prune entries that have stopped
+  being asymmetric. An allowlist nobody prunes stops being a list of exceptions
+  and becomes a list of things that used to be true.
+
+  Scope is the reply *envelope*. Content nested inside a reply — course cards,
+  outline rows, lesson blocks — is deliberately out, because it already has its
+  own comparisons in `test_training_boot_wire`. What the test cannot catch is the
+  right key read off the wrong object; it is a set comparison, not a type checker,
+  and it catches names that exist on one side only, which is every defect this
+  module has actually shipped.
+
+  Runs as its own CI step, like every other training suite, because the frappe
+  stubs cross-talk in one process.
+
+### Fixed
+
+- **The quiz result's "7 of 10 correct" line has never rendered** — found by the
+  new contract test on its first run. `quiz.js` reads `correct_count` and
+  `question_count`; `submit_quiz` sent neither, and the line is guarded by
+  `!= null`, so it silently drew nothing. Both are now counted from
+  `per_question`, so they cannot disagree with the breakdown printed underneath
+  them.
+
 ## [1.257.1] - 2026-08-07
 
 ### Fixed
