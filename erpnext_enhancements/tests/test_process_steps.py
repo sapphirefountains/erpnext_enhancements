@@ -14,6 +14,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import get_datetime, getdate
 
 from erpnext_enhancements.process_steps import (
+	_actionable_steps,
 	_first_pending,
 	notify_step_transitions,
 	seed_process_steps,
@@ -26,6 +27,13 @@ TEMPLATES = [
 	frappe._dict(step_number=2, step_title="Create Project in PM System", responsible_role="Project Manager", auto_anchor="Project Created", sla_hours=0, sla_business_days=0, description=""),
 	frappe._dict(step_number=3, step_title="Create Accounting Project & Send Invoice", responsible_role="Finance & Accounting Manager", auto_anchor="", sla_hours=24, sla_business_days=1, description=""),
 	frappe._dict(step_number=5, step_title="Receive Customer Payment", responsible_role="Finance & Accounting Manager", auto_anchor="Payment Received", sla_hours=0, sla_business_days=0, description=""),
+]
+
+#: TEMPLATES plus Outline Tasks (6) and Hold Launch Meeting (7), for the tests
+#: that need those two steps present to exercise the "5 doesn't block 6/7" rule.
+TEMPLATES_WITH_TASKS_AND_LAUNCH = TEMPLATES + [
+	frappe._dict(step_number=6, step_title="Outline Tasks & Responsibilities in PM System", responsible_role="Project Manager", auto_anchor="", sla_hours=48, sla_business_days=2, description=""),
+	frappe._dict(step_number=7, step_title="Hold Project Launch Meeting", responsible_role="Project Manager", auto_anchor="", sla_hours=48, sla_business_days=2, description=""),
 ]
 
 
@@ -86,6 +94,28 @@ def _seeded_project(**overrides):
 	):
 		seed_process_steps(project)
 	return project
+
+
+def _seeded_project_full(**overrides):
+	"""Like ``_seeded_project`` but seeded from ``TEMPLATES_WITH_TASKS_AND_LAUNCH``."""
+	project = _FakeProject(custom_opportunity="OPP-0001", **overrides)
+	with (
+		patch("erpnext_enhancements.process_steps._templates", return_value=TEMPLATES_WITH_TASKS_AND_LAUNCH),
+		patch.object(frappe.db, "get_value", return_value="2026-06-01"),
+		patch.object(frappe.db, "get_single_value", return_value=None),
+	):
+		seed_process_steps(project)
+	return project
+
+
+def _snapshot(project):
+	"""A ``before``-shaped ``_FakeProject`` copy of ``project``'s current steps,
+	for feeding ``notify_step_transitions`` a before/after pair."""
+	snapshot = _FakeProject(custom_opportunity="OPP-0001")
+	snapshot._fields["custom_process_steps"] = [
+		_FakeRow(dict(row)) for row in project.get("custom_process_steps")
+	]
+	return snapshot
 
 
 def _force_flag(testcase, value=True):
@@ -149,6 +179,72 @@ class TestSeeding(FrappeTestCase):
 		]
 		self.assertEqual(_first_pending(rows).step_number, 3)
 		self.assertIsNone(_first_pending([frappe._dict(step_number=1, status="Completed")]))
+
+
+class TestActionableSteps(FrappeTestCase):
+	"""2026-08-07 decision: step 5 (payment) must not block 6/7, since payment
+	can take weeks and neither step is money-dependent. Ordering among 1-4,
+	and between 6 and 7 themselves, is otherwise unchanged."""
+
+	def test_payment_does_not_block_tasks_or_launch(self):
+		rows = [
+			frappe._dict(step_number=1, status="Completed"),
+			frappe._dict(step_number=2, status="Completed"),
+			frappe._dict(step_number=3, status="Completed"),
+			frappe._dict(step_number=4, status="Completed"),
+			frappe._dict(step_number=5, status="Pending"),  # payment still outstanding
+			frappe._dict(step_number=6, status="Pending"),
+			frappe._dict(step_number=7, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {5, 6})  # 7 still waits on 6
+
+	def test_launch_still_waits_on_tasks(self):
+		rows = [
+			frappe._dict(step_number=5, status="Pending"),
+			frappe._dict(step_number=6, status="Completed"),
+			frappe._dict(step_number=7, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {5, 7})
+
+	def test_unpaid_invoice_still_blocks_everything(self):
+		# Step 4 (send invoice) is not the payment step -- it still gates
+		# 5/6/7 normally, same as any other manual step.
+		rows = [
+			frappe._dict(step_number=1, status="Completed"),
+			frappe._dict(step_number=2, status="Completed"),
+			frappe._dict(step_number=3, status="Completed"),
+			frappe._dict(step_number=4, status="Pending"),
+			frappe._dict(step_number=5, status="Pending"),
+			frappe._dict(step_number=6, status="Pending"),
+			frappe._dict(step_number=7, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {4})
+
+	def test_skipped_step_does_not_block(self):
+		# Project Process Step's status options include "Skipped"; confirm it
+		# is treated the same as Completed for blocking purposes, not assumed
+		# away just because nothing writes it today.
+		rows = [
+			frappe._dict(step_number=1, status="Skipped"),
+			frappe._dict(step_number=2, status="Pending"),
+		]
+		actionable = {row.step_number for row in _actionable_steps(rows)}
+		self.assertEqual(actionable, {2})
+
+	def test_empty_when_nothing_pending(self):
+		self.assertEqual(_actionable_steps([frappe._dict(step_number=1, status="Completed")]), [])
+
+	def test_agrees_with_first_pending_when_single_actionable(self):
+		rows = [
+			frappe._dict(step_number=1, status="Completed"),
+			frappe._dict(step_number=3, status="Pending"),
+			frappe._dict(step_number=4, status="Pending"),
+		]
+		self.assertEqual([row.step_number for row in _actionable_steps(rows)], [3])
+		self.assertEqual(_first_pending(rows).step_number, 3)
 
 
 class TestSync(FrappeTestCase):
@@ -237,6 +333,68 @@ class TestTransitions(FrappeTestCase):
 		with patch.object(frappe, "enqueue") as enqueue:
 			notify_step_transitions(project)
 		enqueue.assert_not_called()
+
+
+class TestPaymentDoesNotBlockLater(FrappeTestCase):
+	"""End-to-end (through seed/sync/notify) coverage of the same 2026-08-07
+	decision as ``TestActionableSteps``, on ``TEMPLATES_WITH_TASKS_AND_LAUNCH``."""
+
+	def setUp(self):
+		super().setUp()
+		_force_flag(self)
+
+	def test_seeding_leaves_5_6_7_pending_with_no_due_dates(self):
+		project = _seeded_project_full()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		for no in (3, 5, 6, 7):
+			self.assertEqual(by_no[no].status, "Pending")
+		self.assertIsNotNone(by_no[3].due_by)  # the only actionable step at seed time
+		self.assertIsNone(by_no[5].due_by)
+		self.assertIsNone(by_no[6].due_by)
+		self.assertIsNone(by_no[7].due_by)
+
+	def test_completing_3_opens_5_and_6_together(self):
+		project = _seeded_project_full()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		by_no[3].status = "Completed"
+		sync_process_steps(project)
+		# 5 has no SLA (auto-anchored to payment) so no due date; 6 has a real
+		# SLA and must start its own clock the moment it becomes actionable --
+		# not sit waiting behind 5, which is still Pending.
+		self.assertIsNone(by_no[5].due_by)
+		self.assertIsNotNone(by_no[6].due_by)
+		self.assertIsNone(by_no[7].due_by)  # still blocked by 6
+
+	def test_notifies_both_newly_actionable_owners(self):
+		project = _seeded_project_full()
+		before = _snapshot(project)
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		by_no[3].status = "Completed"
+		project._before = before
+		with patch.object(frappe, "enqueue") as enqueue:
+			notify_step_transitions(project)
+		notified = {call.kwargs.get("step_name") for call in enqueue.call_args_list}
+		self.assertEqual(notified, {by_no[5].name, by_no[6].name})
+
+	def test_completing_6_opens_7_while_5_still_pending(self):
+		project = _seeded_project_full()
+		by_no = {s.step_number: s for s in project.get("custom_process_steps")}
+		by_no[3].status = "Completed"
+		sync_process_steps(project)  # 5 & 6 become actionable
+
+		before = _snapshot(project)
+		by_no[6].status = "Completed"  # 5 (payment) is untouched -- still Pending
+		sync_process_steps(project)
+		project._before = before
+
+		with patch.object(frappe, "enqueue") as enqueue:
+			notify_step_transitions(project)
+
+		self.assertEqual(by_no[5].status, "Pending")
+		self.assertEqual(by_no[7].status, "Pending")
+		self.assertIsNotNone(by_no[7].due_by)
+		notified = {call.kwargs.get("step_name") for call in enqueue.call_args_list}
+		self.assertEqual(notified, {by_no[7].name})  # not 5 -- already notified earlier
 
 
 class TestWorkingDays(FrappeTestCase):

@@ -3,17 +3,24 @@
 
 """Hand-Off Process Coverage — one row per Opportunity that has a linked
 Project, showing whether that project's hand-off tracker (PRO-0204 Project
-Process Steps) has been started and, if so, which step is currently live.
+Process Steps) has been started and, if so, which step(s) are currently live.
 
 This surfaces the population that used to render a blank "Hand-Off Process"
 tab: Closed-Won opportunities whose linked project has **no** started tracker
 (``Tracker Started = No``). Default filters land on exactly that set. See
 ``crm_enhancements/project_prompt.opportunity_handoff_steps`` (the tab data
 source) and ``process_steps.py`` (the engine that seeds the steps).
+
+"Currently live" can be more than one step since the 2026-08-07 change: step 5
+(Receive Customer Payment) no longer blocks 6/7, so a project can show, e.g.,
+both "5. Receive Customer Payment" and "6. Outline Tasks..." at once. Uses
+``process_steps._actionable_steps`` rather than re-deriving that rule here.
 """
 
 import frappe
 from frappe import _
+
+from erpnext_enhancements.process_steps import _actionable_steps
 
 
 def execute(filters=None):
@@ -31,7 +38,7 @@ def get_columns():
 		{"label": _("Project Status"), "fieldname": "project_status", "fieldtype": "Data", "width": 105},
 		{"label": _("Tracker Started"), "fieldname": "tracker_started", "fieldtype": "Data", "width": 120},
 		{"label": _("Steps"), "fieldname": "n_steps", "fieldtype": "Int", "width": 65},
-		{"label": _("Current Step"), "fieldname": "current_step", "fieldtype": "Data", "width": 240},
+		{"label": _("Active Step(s)"), "fieldname": "current_step", "fieldtype": "Data", "width": 320},
 	]
 
 
@@ -58,9 +65,9 @@ def get_data(filters):
 
 	projects = list({o.custom_created_project for o in opps if o.custom_created_project})
 
-	# Step count + first pending step per project (bulk; avoids N+1).
+	# Step count + actionable step(s) per project (bulk; avoids N+1).
 	counts = {}
-	first_pending = {}
+	rows_by_project = {}
 	for s in frappe.get_all(
 		"Project Process Step",
 		filters={"parenttype": "Project", "parent": ("in", projects)},
@@ -68,8 +75,12 @@ def get_data(filters):
 		order_by="parent asc, step_number asc",
 	):
 		counts[s.parent] = counts.get(s.parent, 0) + 1
-		if s.status == "Pending" and s.parent not in first_pending:
-			first_pending[s.parent] = f"{s.step_number}. {s.step_title}"
+		rows_by_project.setdefault(s.parent, []).append(s)
+
+	current_step = {
+		parent: ", ".join(f"{s.step_number}. {s.step_title}" for s in _actionable_steps(rows))
+		for parent, rows in rows_by_project.items()
+	}
 
 	proj_status = {
 		p.name: p.status
@@ -96,7 +107,7 @@ def get_data(filters):
 				"project_status": proj_status.get(proj),
 				"tracker_started": _("Yes") if started else _("No"),
 				"n_steps": n,
-				"current_step": first_pending.get(proj)
+				"current_step": current_step.get(proj)
 				or (_("All steps complete") if started else _("Tracker not started")),
 			}
 		)

@@ -4,10 +4,15 @@
  * Renders the `custom_process_steps` child table as a step progress bar in
  * the `custom_process_progress` HTML field (Hand-Off Process tab):
  *
- *  - ✓ completed steps (with who/when), the current step highlighted with
- *    its due date and a one-click "Mark Complete" action, upcoming steps
+ *  - ✓ completed steps (with who/when), every *actionable* step highlighted
+ *    with its due date and a one-click "Mark Complete" action, upcoming steps
  *    muted, skipped steps struck through.
- *  - Overdue current step glows red (matches the Sales Pipeline lights).
+ *  - Steps 6 (Outline Tasks) and 7 (Hold Launch Meeting) don't wait on step 5
+ *    (Receive Customer Payment) — payment can take weeks, and neither is
+ *    money-dependent — so 5 and 6 (and, once 6 is done, 7) can all be
+ *    actionable at once, each with its own highlight and button. Mirrors
+ *    `_actionable_steps` in `process_steps.py`; keep the two in sync.
+ *  - Overdue actionable steps glow red (matches the Sales Pipeline lights).
  *  - The "Outline Tasks" step shows a soft signal — the project's open task
  *    count — per the meeting: visibility, never a blocker.
  *  - Projects without a tracker (in-flight before v1.3.0, or created without
@@ -60,6 +65,29 @@
 	const STEP_INVOICE = 4;
 	const STEP_TASKS = 6;
 	const STEP_LAUNCH = 7;
+	const STEP_PAYMENT = 5;
+
+	/**
+	 * Every Pending step whose predecessors are all resolved — not just the
+	 * single lowest-numbered one. Mirrors `_actionable_steps` in
+	 * process_steps.py: a step blocks later ones only while it is itself
+	 * Pending AND isn't STEP_PAYMENT, so 6 and 7 don't stall behind payment
+	 * while 6 still has to finish before 7 opens up.
+	 */
+	function actionable_steps(steps) {
+		const blocking_pending = new Set(
+			steps
+				.filter((s) => s.status === "Pending" && Number(s.step_number) !== STEP_PAYMENT)
+				.map((s) => Number(s.step_number))
+		);
+		return steps.filter((s) => {
+			if (s.status !== "Pending") return false;
+			for (const n of blocking_pending) {
+				if (n < Number(s.step_number)) return false;
+			}
+			return true;
+		});
+	}
 
 	function open_billing_email(frm) {
 		// The "hack period" flow: ERPNext is not the accounting system yet, so
@@ -223,26 +251,29 @@
 			return;
 		}
 
-		const current = steps.find((s) => s.status === "Pending");
+		// Plural now: step 5 (payment) doesn't block 6/7, so several steps can
+		// be actionable at the same time. See actionable_steps() above.
+		const actionable = actionable_steps(steps);
+		const actionable_names = new Set(actionable.map((s) => s.name));
 		const done = steps.filter((s) => s.status === "Completed").length;
 		const now = frappe.datetime.now_datetime();
 
 		let html = `${STYLE}<div class="ee-process-bar">`;
 		steps.forEach((step) => {
-			const is_current = current && step.name === current.name;
-			const overdue = is_current && step.due_by && step.due_by < now;
+			const is_actionable = actionable_names.has(step.name);
+			const overdue = is_actionable && step.due_by && step.due_by < now;
 			const cls =
 				step.status === "Completed"
 					? "done"
 					: step.status === "Skipped"
 						? "skipped"
-						: is_current
+						: is_actionable
 							? `current${overdue ? " overdue" : ""}`
 							: "";
 			let meta = esc(step.responsible_role || "");
 			if (step.status === "Completed" && step.completed_on) {
 				meta = `${__("Done")} ${frappe.datetime.str_to_user(step.completed_on)}`;
-			} else if (is_current && step.due_by) {
+			} else if (is_actionable && step.due_by) {
 				meta = `${esc(step.responsible_role || "")} · ${overdue ? __("OVERDUE") : __("due")} ${frappe.datetime.str_to_user(step.due_by)}`;
 			}
 			html += `
@@ -256,21 +287,28 @@
 		});
 		html += "</div>";
 
-		if (current) {
-			const action = STEP_ACTIONS[current.step_number];
+		// One action row per actionable step — usually one, but e.g. 5
+		// (Payment) and 6 (Outline Tasks) can both show at once.
+		actionable.forEach((step) => {
+			const action = STEP_ACTIONS[step.step_number];
 			html += `
-				<div class="ee-process-actions">
+				<div class="ee-process-actions" data-actions-for="${esc(step.name)}">
+					<span class="text-muted" style="font-size:11px; margin-right:6px;">${esc(step.step_title || "")}:</span>
 					${
 						action
-							? `<button class="btn btn-xs btn-default ee-step-action">${__(action.label)}</button>`
+							? `<button class="btn btn-xs btn-default ee-step-action" data-step="${esc(step.name)}">${__(action.label)}</button>`
 							: ""
 					}
-					<button class="btn btn-xs btn-primary ee-complete-step">
-						${__("Mark Step {0} Complete", [current.step_number])}
+					<button class="btn btn-xs btn-primary ee-complete-step" data-step="${esc(step.name)}">
+						${__("Mark Step {0} Complete", [step.step_number])}
 					</button>
-					<span class="text-muted" style="margin-left:8px; font-size:11px;">
-						${__("{0} of {1} done", [done, steps.length])}
-					</span>
+				</div>
+			`;
+		});
+		if (actionable.length) {
+			html += `
+				<div class="text-muted" style="font-size:11px; margin-top:4px;">
+					${__("{0} of {1} done", [done, steps.length])}
 				</div>
 			`;
 		}
@@ -280,26 +318,28 @@
 
 		field.$wrapper.html(html);
 
-		if (current) {
-			// Completion goes through a whitelisted server method, NOT
-			// frappe.model.set_value + save. The 2026-08-06 audit found
-			// retroactive box-checking, and the old client path let the browser
-			// propose completed_on; the server now stamps it from its own clock
-			// and checks the responsible role.
-			field.$wrapper.find(".ee-complete-step").on("click", () => {
-				frappe
-					.xcall("erpnext_enhancements.process_steps.complete_step", {
-						project: frm.doc.name,
-						step_name: current.name,
-					})
-					.then(() => frm.reload_doc());
-			});
+		// Completion goes through a whitelisted server method, NOT
+		// frappe.model.set_value + save. The 2026-08-06 audit found
+		// retroactive box-checking, and the old client path let the browser
+		// propose completed_on; the server now stamps it from its own clock
+		// and checks the responsible role. data-step disambiguates which of
+		// possibly several actionable steps a click belongs to.
+		field.$wrapper.find(".ee-complete-step").on("click", function () {
+			const step_name = $(this).data("step");
+			frappe
+				.xcall("erpnext_enhancements.process_steps.complete_step", {
+					project: frm.doc.name,
+					step_name: step_name,
+				})
+				.then(() => frm.reload_doc());
+		});
 
-			const action = STEP_ACTIONS[current.step_number];
-			if (action) {
-				field.$wrapper.find(".ee-step-action").on("click", () => action.run(frm, current));
-			}
-		}
+		field.$wrapper.find(".ee-step-action").on("click", function () {
+			const step_name = $(this).data("step");
+			const step = actionable.find((s) => s.name === step_name);
+			const action = step && STEP_ACTIONS[step.step_number];
+			if (action) action.run(frm, step);
+		});
 
 		// Soft signal on the task-outlining step: open task count (display only).
 		const tasks_step = steps.find((s) => /task/i.test(s.step_title || ""));

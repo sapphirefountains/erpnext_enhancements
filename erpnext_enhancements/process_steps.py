@@ -28,19 +28,29 @@ Template** records):
   Account Executive holding the hand-off meeting (Step 2): the internal hand-off
   now leads, before the downstream accounting setup the meeting said kept
   dropping.
+* :func:`_actionable_steps` — which Pending steps are workable right now. Steps
+  used to have exactly one "current" step (the lowest-numbered Pending row);
+  now step 5 (Payment) is exempted from *blocking* what comes after it, so 6
+  and 7 can become actionable — and get notified, due-dated and escalated —
+  while payment is still outstanding (2026-08-07 decision: customer payment
+  can take weeks, and neither step is money-dependent). See
+  ``NON_BLOCKING_STEP_NUMBERS``.
 * :func:`sync_process_steps` (Project ``before_save``, after the payment
   stamp from ``status_alerts``) — auto-completes *Payment Received*-anchored
   steps when the Payment Received box is ticked, stamps
-  ``completed_on``/``completed_by`` on manual completions, and keeps the
-  current step's ``due_by`` set (now + SLA hours when it becomes current).
+  ``completed_on``/``completed_by`` on manual completions, and keeps every
+  actionable step's ``due_by`` set (now + SLA hours when it becomes
+  actionable).
 * :func:`notify_step_transitions` (Project ``on_update``) — when a save
-  completed one or more steps, notifies the *new* current step's responsible
-  person (SMS + Notification Log via ``status_alerts._deliver``); when the
-  last step completes, posts a "process complete" comment instead.
+  completed one or more steps, notifies whichever step(s) *newly* became
+  actionable (SMS + Notification Log via ``status_alerts._deliver``); when
+  nothing is left pending, posts a "process complete" comment instead.
 * :func:`escalate_overdue_steps` (daily scheduler) — re-nags the responsible
-  person **and their manager** for every active project whose current step is
-  past ``due_by`` (max once per day per step, ``last_reminded_on``), by email
-  as well as in-app. Step 5 is excluded — customer payment timing is not ours.
+  person **and their manager** for every actionable step of every active
+  project that is past ``due_by`` (max once per day per step,
+  ``last_reminded_on``), by email as well as in-app. Step 5 itself is
+  excluded — customer payment timing is not ours to fix, so nagging about it
+  would just teach people to filter these emails.
   :func:`escalate_overdue_handoffs` does the same for step 2 while it still
   lives on the Opportunity and has no project row to be found by.
 * :func:`send_weekly_sla_digest` (Friday cron) — the compliance summary behind
@@ -91,8 +101,16 @@ HANDOFF_STEP_NUMBER = 2
 
 #: "Receive Customer Payment". Excluded from overdue escalation: when the
 #: customer pays is not something anybody here can be nagged into fixing.
-#: Step 4 (sending the invoice) is ours and stays in.
+#: Step 4 (sending the invoice) is ours and stays in. Also excluded from
+#: *blocking* later steps (see :func:`_actionable_steps`) — payment can take
+#: weeks, and there is no reason "Outline Tasks" (6) or "Hold Project Launch
+#: Meeting" (7), both PM-owned and neither dependent on money having arrived,
+#: should sit stalled behind it.
 PAYMENT_STEP_NUMBER = 5
+
+#: Step numbers that never block a *later* step from becoming actionable, even
+#: while still Pending themselves. Currently just the payment step; see above.
+NON_BLOCKING_STEP_NUMBERS = frozenset({PAYMENT_STEP_NUMBER})
 
 #: Marks a step completed by the permission-gated skip path rather than done.
 #: A prefix on ``notes``, not a status, because a skipped step must not stall the
@@ -124,13 +142,42 @@ def _first_pending(steps):
 	return min(pending, key=lambda row: cint(row.step_number)) if pending else None
 
 
+def _actionable_steps(steps):
+	"""Every Pending step whose predecessors are all resolved — not just the
+	single lowest-numbered one.
+
+	A step blocks later ones only while it is itself Pending *and* not in
+	``NON_BLOCKING_STEP_NUMBERS``. That lets step 5 (payment) sit Pending
+	indefinitely without stalling 6 and 7, while still requiring, e.g., step 6
+	to finish before step 7 opens up. Always non-empty when ``steps`` has any
+	Pending row at all: the lowest-numbered Pending step can never be blocked
+	by anything smaller than itself.
+	"""
+	blocking_pending = {
+		cint(row.step_number)
+		for row in steps
+		if row.status == "Pending" and cint(row.step_number) not in NON_BLOCKING_STEP_NUMBERS
+	}
+	actionable = [
+		row
+		for row in steps
+		if row.status == "Pending" and not any(n < cint(row.step_number) for n in blocking_pending)
+	]
+	return sorted(actionable, key=lambda row: cint(row.step_number))
+
+
 def _handoff_holiday_list():
 	"""Holiday List used for business-day due dates (settings; None = weekends only)."""
 	return frappe.db.get_single_value("ERPNext Enhancements Settings", "handoff_holiday_list")
 
 
 def _refresh_due(doc):
-	"""Ensure the current (first pending) step has a due date: now + SLA business days.
+	"""Ensure every actionable step has a due date: now + SLA business days.
+
+	Was "the current (first pending) step"; now every step
+	:func:`_actionable_steps` returns, since 6 and 7 can become actionable at
+	the same time as (or ahead of) 5 — each needs its own SLA clock starting
+	the moment it opens up, not just whichever step is numerically first.
 
 	The SLA is counted in business days (Mon-Fri, skipping the configured Holiday
 	List) so a 2-day SLA set on a Friday lands the following Tuesday. ``0`` business
@@ -138,16 +185,16 @@ def _refresh_due(doc):
 	field (pre-backfill) fall back to the legacy calendar ``sla_hours``, rounded up
 	to whole days.
 	"""
-	current = _first_pending(doc.get(STEPS_FIELD) or [])
-	if not current or current.due_by:
-		return
-	days = current.get("sla_business_days")
-	if days is None:
-		days = (cint(current.get("sla_hours")) + 23) // 24  # legacy fallback: ceil(hours/24)
-	days = cint(days)
-	if days <= 0:
-		return
-	current.due_by = add_working_days(now_datetime(), days, holiday_list=_handoff_holiday_list())
+	for row in _actionable_steps(doc.get(STEPS_FIELD) or []):
+		if row.due_by:
+			continue
+		days = row.get("sla_business_days")
+		if days is None:
+			days = (cint(row.get("sla_hours")) + 23) // 24  # legacy fallback: ceil(hours/24)
+		days = cint(days)
+		if days <= 0:
+			continue
+		row.due_by = add_working_days(now_datetime(), days, holiday_list=_handoff_holiday_list())
 
 
 def _opportunity_handoff(opportunity):
@@ -329,7 +376,15 @@ def sync_process_steps(doc, method=None):
 
 
 def notify_step_transitions(doc, method=None):
-	"""Project ``on_update`` — a step just completed: hand off to the next owner."""
+	"""Project ``on_update`` — a step just completed: hand off to the new owner(s).
+
+	"The next owner" can now be plural: completing step 4 can open both step 5
+	(payment) and step 6 (tasks) at once, and each owner should hear their step
+	is up exactly once — not step 5's owner re-pinged every time something
+	downstream of it later changes. So this diffs the *actionable* sets before
+	and after the save, using ``get_doc_before_save()``, and only notifies
+	steps that newly became actionable.
+	"""
 	if not _has_steps_field(doc) or not process_automation_enabled():
 		return
 	steps = doc.get(STEPS_FIELD) or []
@@ -348,10 +403,16 @@ def notify_step_transitions(doc, method=None):
 	if not newly_completed:
 		return
 
-	current = _first_pending(steps)
-	if current:
-		_enqueue_step_notice(doc.name, "up")
-	else:
+	before_actionable = {row.name for row in _actionable_steps(before.get(STEPS_FIELD) or [])}
+	after_actionable = _actionable_steps(steps)
+	newly_actionable = [row for row in after_actionable if row.name not in before_actionable]
+
+	for row in newly_actionable:
+		_enqueue_step_notice(doc.name, "up", step_name=row.name)
+
+	if not after_actionable:
+		# Nothing Pending survives a non-empty _actionable_steps() input, so this
+		# is exactly "every step is Completed or Skipped" — see its docstring.
 		done = sum(1 for row in steps if row.status == "Completed")
 		doc.add_comment(
 			"Comment",
@@ -359,11 +420,12 @@ def notify_step_transitions(doc, method=None):
 		)
 
 
-def _enqueue_step_notice(project, kind):
+def _enqueue_step_notice(project, kind, step_name=None):
 	frappe.enqueue(
 		"erpnext_enhancements.process_steps.deliver_step_notice",
 		project=project,
 		kind=kind,
+		step_name=step_name,
 		queue="short",
 		enqueue_after_commit=True,
 	)
@@ -485,8 +547,10 @@ def _customer_label(project_row):
 def deliver_step_notice(project, kind="up", step_name=None):
 	"""Background job: notify the responsible person for a step.
 
-	``kind="up"`` targets the project's current (first pending) step;
-	``kind="overdue"`` targets the specific child row ``step_name``.
+	Targets ``step_name`` when given — an "up" notice for one newly actionable
+	step, or an "overdue" notice, which always names one. Falls back to the
+	project's first pending step when it isn't, for callers (just
+	:func:`announce_seeded_steps`) that haven't got a specific row in hand.
 	"""
 	doc = frappe.db.get_value(
 		"Project",
@@ -503,7 +567,7 @@ def deliver_step_notice(project, kind="up", step_name=None):
 		fields=["name", "step_number", "step_title", "responsible_role", "status", "due_by"],
 		order_by="step_number asc",
 	)
-	if kind == "overdue" and step_name:
+	if step_name:
 		step = next((row for row in steps if row.name == step_name), None)
 	else:
 		step = _first_pending(steps)
@@ -551,17 +615,19 @@ def deliver_step_notice(project, kind="up", step_name=None):
 
 
 def escalate_overdue_steps():
-	"""Daily scheduler — re-nag the current step's owner and their manager.
+	"""Daily scheduler — re-nag every actionable step's owner and their manager.
 
-	Only the *current* step of each active project escalates (later pending
-	steps aren't actionable yet), at most once per day per step. Repeats every
-	day the step stays late — ``last_reminded_on`` de-dupes by calendar date, not
-	by "already nagged once".
+	Was "only the current step of each active project"; now every step
+	:func:`_actionable_steps` returns, since step 5 (payment) no longer stalls
+	6 and 7 behind it — an overdue "Outline Tasks" must still escalate even
+	while payment is still outstanding. At most once per day per step. Repeats
+	every day the step stays late — ``last_reminded_on`` de-dupes by calendar
+	date, not by "already nagged once".
 
-	Step 5 (Receive Customer Payment) is deliberately excluded: when a customer
-	pays is outside our control, and nagging our own AR about it daily teaches
-	people to filter these emails, which costs us the steps that *are* ours.
-	Step 4 — sending the invoice — is ours and stays in.
+	Step 5 (Receive Customer Payment) itself is still excluded from escalating:
+	when a customer pays is outside our control, and nagging our own AR about it
+	daily teaches people to filter these emails, which costs us the steps that
+	*are* ours. Step 4 — sending the invoice — is ours and stays in.
 
 	Also sweeps the hand-off step while it still lives on the Opportunity, where
 	no ``Project Process Step`` row exists yet to be found by the query below.
@@ -587,28 +653,29 @@ def escalate_overdue_steps():
 		)
 	)
 
-	current_by_project = {}
+	by_project = {}
 	for row in rows:
-		if row.parent in active and row.parent not in current_by_project:
-			current_by_project[row.parent] = row
+		if row.parent in active:
+			by_project.setdefault(row.parent, []).append(row)
 
-	for project, row in current_by_project.items():
-		if cint(row.step_number) == PAYMENT_STEP_NUMBER:
-			continue  # customer payment timing is not ours to be nagged about
-		if not row.due_by or get_datetime(row.due_by) > now:
-			continue
-		if row.last_reminded_on and get_datetime(row.last_reminded_on).date() == now.date():
-			continue
-		try:
-			deliver_step_notice(project, kind="overdue", step_name=row.name)
-			frappe.db.set_value(
-				"Project Process Step", row.name, "last_reminded_on", now, update_modified=False
-			)
-		except Exception:
-			frappe.log_error(
-				f"Escalation for {project} step {row.name} failed:\n{frappe.get_traceback()}",
-				"Process Step Escalation Error",
-			)
+	for project, project_rows in by_project.items():
+		for row in _actionable_steps(project_rows):
+			if cint(row.step_number) == PAYMENT_STEP_NUMBER:
+				continue  # customer payment timing is not ours to be nagged about
+			if not row.due_by or get_datetime(row.due_by) > now:
+				continue
+			if row.last_reminded_on and get_datetime(row.last_reminded_on).date() == now.date():
+				continue
+			try:
+				deliver_step_notice(project, kind="overdue", step_name=row.name)
+				frappe.db.set_value(
+					"Project Process Step", row.name, "last_reminded_on", now, update_modified=False
+				)
+			except Exception:
+				frappe.log_error(
+					f"Escalation for {project} step {row.name} failed:\n{frappe.get_traceback()}",
+					"Process Step Escalation Error",
+				)
 
 
 def escalate_overdue_handoffs():
