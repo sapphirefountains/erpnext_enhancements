@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.256.0] - 2026-08-07
+
+### Changed
+
+- **Steps 6 (Outline Tasks) and 7 (Hold Project Launch Meeting) no longer wait behind step 5
+  (Receive Customer Payment).** The tracker used to have exactly one "current" step — the
+  lowest-numbered Pending row — so a slow-paying customer stalled the PM out of outlining
+  tasks or booking the launch meeting even though neither depends on money having arrived.
+  Customer payment can take weeks; production work doesn't.
+
+  `process_steps.py` replaces the single-current assumption with
+  `_actionable_steps()`: every Pending step whose predecessors are all resolved, where step 5
+  is exempted from *blocking* (not from anything else — it still escalates the same as
+  before, just never gates what comes after it). Step 4 (send invoice) is unaffected and
+  still gates normally; step 6 still has to finish before step 7 opens up. Four call sites
+  moved from "the current step" to "every actionable step": `_refresh_due` (each newly
+  actionable step starts its own SLA clock rather than only the numerically-first one),
+  `notify_step_transitions` (diffs actionable sets before/after a save via
+  `get_doc_before_save()` so each step's owner is notified exactly once, the moment their
+  step opens up — not step 5's owner re-pinged every time something downstream of it later
+  changes), `deliver_step_notice` (now targets an explicit `step_name` for "up" notices, not
+  just "overdue" ones), and `escalate_overdue_steps` (re-nags every overdue actionable step
+  per project, not only the first).
+
+  `process_steps.js` mirrors the same rule client-side (`actionable_steps()`) — the Project
+  form's hand-off bar can now show two action rows at once (e.g. "5. Receive Customer
+  Payment" and "6. Outline Tasks...", each with its own due date, highlight and "Mark Step N
+  Complete" button) instead of hiding step 6 behind step 5. The **Hand-Off Process Coverage**
+  report's "Current Step" column is renamed **Active Step(s)** and now lists every actionable
+  step per project (via the same `_actionable_steps`) instead of only the first pending one.
+  The **Hand-Off SLA Compliance** report needed no change — it already reads `due_by`/
+  `status` per row rather than assuming one active step per project, so steps 6/7 simply stop
+  reading as "Not Started" (blocked upstream) once they have a due date of their own.
+
+  New coverage in `tests/test_process_steps.py` (`TestActionableSteps`,
+  `TestPaymentDoesNotBlockLater`) and a constant-shape check in `tests/test_handoff_gate.py`.
+  These are `FrappeTestCase`-based and need a real bench to execute; verified by hand-tracing
+  against the implementation and by `python -m py_compile`, not by an actual test run — see
+  `run-tests` skill.
+
+### Fixed
+
+- **CRM-OPP-2026-00150 ("Millcreek City - DMX Repair") had `custom_handoff_gate_applies`
+  stuck at 0 despite closing after the hand-off gate shipped**, so the Opportunity's
+  Hold/Mark-Complete/Skip buttons never appeared and PRJ-00753 was created without the
+  formal hand-off flow ever running. Root cause: the Opportunity transitioned to Closed Won
+  at 2026-08-06 08:33:47, in the window before that day's deploy had applied the
+  `custom_handoff_gate_applies` column and wired `stamp_handoff_gate` — so the schema guard
+  in `stamp_handoff_gate` correctly no-opped (the field didn't exist yet), and the column
+  later arrived with its bare default of `0`. The one-time backfill patch
+  (`ensure_handoff_gate_fields`) only stamps rows that are still `NULL` and had already run
+  before this Opportunity existed, so it never touched this record either — a deal can close
+  in the gap between "the gate's fields land" and "the gate's own hook is live" and fall on
+  the wrong side of the exemption with nothing left to retroactively catch it.
+
+  Corrected by hand: `custom_handoff_gate_applies` set to `1`, and the hand-off recorded via
+  the skip path (`custom_handoff_meeting_held=1` with a reason) rather than as a fabricated
+  completion — no meeting was ever booked through the system for this deal, and marking it
+  "held" would have recreated the exact retroactive box-checking PRO-0204 exists to prevent.
+  One-off data correction; not scripted as a patch since it is specific to one record found
+  by inspection, not a population that can be queried for safely (a deal can legitimately
+  have `gate_applies = 0` for the intended reason — the pre-2026-08-06 backlog).
+
 ## [1.255.1] - 2026-08-07
 
 ### Fixed

@@ -593,6 +593,13 @@ class TestEscalationPolicy(unittest.TestCase):
 		self.assertEqual(process_steps.PAYMENT_STEP_NUMBER, 5)
 		self.assertNotEqual(process_steps.PAYMENT_STEP_NUMBER, 4)
 
+	def test_non_blocking_steps_is_exactly_payment(self):
+		"""2026-08-07: payment is the only step exempted from *blocking* later
+		ones (steps 6/7 no longer wait on it) -- step 4 must still gate normally."""
+		import erpnext_enhancements.process_steps as process_steps
+
+		self.assertEqual(process_steps.NON_BLOCKING_STEP_NUMBERS, frozenset({5}))
+
 	def test_handoff_step_number_matches_the_template_sequence(self):
 		import erpnext_enhancements.process_steps as process_steps
 
