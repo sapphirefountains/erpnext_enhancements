@@ -82,7 +82,7 @@ STEPS = [
 	},
 	{
 		"step_number": 5,
-		"step_title": "Receive Customer Payment",
+		"step_title": "Initial Payment From Customer",
 		"responsible_role": "Finance & Accounting Manager",
 		"auto_anchor": "Payment Received",
 		"sla_hours": 0,

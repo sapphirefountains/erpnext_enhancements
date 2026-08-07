@@ -12,8 +12,8 @@ tab: Closed-Won opportunities whose linked project has **no** started tracker
 source) and ``process_steps.py`` (the engine that seeds the steps).
 
 "Currently live" can be more than one step since the 2026-08-07 change: step 5
-(Receive Customer Payment) no longer blocks 6/7, so a project can show, e.g.,
-both "5. Receive Customer Payment" and "6. Outline Tasks..." at once. Uses
+(Initial Payment From Customer) no longer blocks 6/7, so a project can show, e.g.,
+both "5. Initial Payment From Customer" and "6. Outline Tasks..." at once. Uses
 ``process_steps._actionable_steps`` rather than re-deriving that rule here.
 """
 

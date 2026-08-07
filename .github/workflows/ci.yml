@@ -180,6 +180,14 @@ jobs:
       # would quietly stop matching and the feed would follow you around again.
       - name: Activity feed on the first tab only (JS + CSS agree)
         run: python -m unittest erpnext_enhancements.tests.test_activity_first_tab_only -v
+      # The payment step's follow-up button and its two whitelisted endpoints.
+      # The suites that exercise the real behaviour need a bench and so never
+      # run here -- which is why the seam is pinned statically: a renamed
+      # endpoint or a dropped STEP_ACTIONS entry raises nowhere, the button
+      # just stops working in production. Also pins the step rename, which
+      # lives in three places at once (seed patch, migration, prose).
+      - name: Initial-payment follow-up wiring + step rename
+        run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Same failure shape as the www/ controller check: Frappe computes a script

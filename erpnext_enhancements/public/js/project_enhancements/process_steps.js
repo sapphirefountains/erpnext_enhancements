@@ -8,7 +8,7 @@
  *    with its due date and a one-click "Mark Complete" action, upcoming steps
  *    muted, skipped steps struck through.
  *  - Steps 6 (Outline Tasks) and 7 (Hold Launch Meeting) don't wait on step 5
- *    (Receive Customer Payment) — payment can take weeks, and neither is
+ *    (Initial Payment From Customer) — payment can take weeks, and neither is
  *    money-dependent — so 5 and 6 (and, once 6 is done, 7) can all be
  *    actionable at once, each with its own highlight and button. Mirrors
  *    `_actionable_steps` in `process_steps.py`; keep the two in sync.
@@ -185,7 +185,82 @@
 		},
 		[STEP_TASKS]: { label: "Open Tasks", run: open_tasks },
 		[STEP_LAUNCH]: { label: "Schedule Launch Meeting", run: open_launch_meeting },
+		[STEP_PAYMENT]: { label: "Set Follow-Up Reminder", run: open_payment_followup },
 	};
+
+	/**
+	 * Schedule the next chase on an unpaid initial payment.
+	 *
+	 * Payment is the one step with no due date and no escalation, deliberately —
+	 * the customer's cheque is not ours to hurry, and nagging about it only
+	 * teaches people to filter the emails. That left it the only actionable step
+	 * with nothing to *do*. This is the replacement: not a clock, a manual chain.
+	 * Each reminder that fires brings you back here to set the next one.
+	 *
+	 * The date and the recipient both come from the server — business-day maths
+	 * honours the hand-off Holiday List, and the reminder is addressed to the
+	 * Finance & Accounting Manager for this project, who is usually not whoever
+	 * is clicking. Defaulting either of them client-side would let the two drift.
+	 */
+	function open_payment_followup(frm) {
+		frappe
+			.xcall("erpnext_enhancements.process_steps.get_payment_followup", {
+				project: frm.doc.name,
+			})
+			.then((info) => {
+				const d = new frappe.ui.Dialog({
+					title: __("Follow Up On Initial Payment"),
+					fields: [
+						{
+							fieldtype: "HTML",
+							fieldname: "who",
+							options: `<p class="text-muted" style="margin-bottom:8px;">${
+								info.employee_name
+									? __("Reminds {0}.", [frappe.utils.escape_html(info.employee_name)])
+									: __("No Finance & Accounting Manager is configured.")
+							}${
+								info.remind_at
+									? " " +
+										__("Replaces the reminder currently set for {0}.", [
+											frappe.datetime.str_to_user(info.remind_at),
+										])
+									: ""
+							}</p>`,
+						},
+						{
+							label: __("Remind At"),
+							fieldname: "remind_at",
+							fieldtype: "Datetime",
+							reqd: 1,
+							default: info.default_remind_at,
+							description: __("{0} business days out by default, skipping weekends and holidays.", [
+								info.business_days,
+							]),
+						},
+					],
+					primary_action_label: __("Set Reminder"),
+					primary_action(values) {
+						frappe
+							.xcall("erpnext_enhancements.process_steps.schedule_payment_followup", {
+								project: frm.doc.name,
+								remind_at: values.remind_at,
+							})
+							.then((res) => {
+								d.hide();
+								frappe.show_alert({
+									message: __("{0} will be reminded on {1}", [
+										res.employee_name,
+										frappe.datetime.str_to_user(res.remind_at),
+									]),
+									indicator: "green",
+								});
+								render(frm);
+							});
+					},
+				});
+				d.show();
+			});
+	}
 
 	/**
 	 * The 7-business-day Closed-Won -> Launch goal, shown beside step 7.
@@ -340,6 +415,30 @@
 			const action = step && STEP_ACTIONS[step.step_number];
 			if (action) action.run(frm, step);
 		});
+
+		// Soft signal on the payment step: when the next chase is set. Display
+		// only, and best-effort — the step has no due date of its own, so this
+		// is the only place the follow-up date is visible.
+		const payment_step = steps.find((s) => Number(s.step_number) === STEP_PAYMENT);
+		if (payment_step && payment_step.status === "Pending" && !frm.is_new()) {
+			frappe
+				.xcall("erpnext_enhancements.process_steps.get_payment_followup", {
+					project: frm.doc.name,
+				})
+				.then((info) => {
+					if (!info || !info.remind_at) return;
+					field.$wrapper
+						.find(`[data-extra="${CSS.escape(payment_step.name)}"]`)
+						.html(
+							`<span class="text-muted" style="font-size:11px;">${__("next follow-up {0}", [
+								frappe.datetime.str_to_user(info.remind_at),
+							])}</span>`
+						);
+				})
+				.catch(() => {
+					// Decoration only — never blank the bar over it.
+				});
+		}
 
 		// Soft signal on the task-outlining step: open task count (display only).
 		const tasks_step = steps.find((s) => /task/i.test(s.step_title || ""));

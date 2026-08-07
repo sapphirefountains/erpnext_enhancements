@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.260.0] - 2026-08-07
+
+### Added
+
+- **A follow-up reminder button on the initial-payment step.** Step 5 was the
+  only actionable hand-off step with nothing to *do*. That is deliberate — it
+  carries `sla_business_days = 0` and is excluded from overdue escalation,
+  because when a customer pays is not something anybody here can be nagged into
+  fixing, and nagging about it only teaches people to filter the emails. But the
+  result was a step you could look at and not act on.
+
+  The button schedules the next chase: a core **Reminder** (the same record the
+  bell icon's "Remind Me" creates, so it fires through Frappe's own cron and
+  needs no delivery machinery of ours), defaulting to **two business days** out.
+  Business days are counted by the same `add_working_days` the step due dates
+  use, so a Thursday click lands Monday rather than Saturday, and the hand-off
+  Holiday List is honoured.
+
+  It is a manual chain by design, not a recurrence: each reminder that fires
+  brings you back to set the next one. Rescheduling replaces the outstanding
+  reminder rather than stacking — but only un-fired ones, so the record of
+  chases already made survives. When one is scheduled, the date shows beside the
+  step, which is the only place it is visible given the step has no due date.
+
+  The reminder is addressed to the **Finance & Accounting Manager** resolved for
+  that project, not to whoever clicked — a PM chasing a project can put it on the
+  right person's list. That resolution goes through the existing
+  `_resolve_responsible`, so "who gets reminded", "who gets nagged" and "who may
+  tick the step" all read the same setting and cannot drift. Two whitelisted
+  endpoints: `get_payment_followup` (read-only, what the button shows) and
+  `schedule_payment_followup` (gated on write access to the Project, since it
+  writes a Reminder for another user).
+
+- **`tests/test_payment_followup_wire.py`** (9 tests, its own CI step). Static:
+  parses the Python with AST and the JS with regex, imports neither. The suites
+  that exercise the real behaviour need a bench and never run in CI, so the seam
+  is pinned here instead — a renamed endpoint or a dropped `STEP_ACTIONS` entry
+  raises nowhere, the button simply stops working in production.
+
+### Changed
+
+- **Hand-off step 5 renamed from "Receive Customer Payment" to "Initial Payment
+  From Customer."** `step_title` is *copied onto each project's child rows* when
+  the process is seeded rather than looked up, so renaming the template alone
+  would leave the site showing two names for the same step depending on which
+  project you opened — 88 rows across 85 open projects. `rename_payment_step_title`
+  migrates them, modelled on `rename_handoff_ar_role`.
+
+  Nothing here fails silently the way the role rename would have: every consumer
+  of `step_title` only displays it. That was **verified rather than assumed** —
+  the one title-based match in the codebase, `/task/i` in `process_steps.js`, is
+  step 6 — because a title match hiding somewhere is what would have turned a
+  cosmetic rename into a broken process.
+
 ## [1.259.4] - 2026-08-07
 
 ### Changed
