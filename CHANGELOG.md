@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.259.1] - 2026-08-07
+
+### Removed
+
+- **The two abandoned custom Purchase Order print formats.**
+  `Purchase Order - Sapphire` is the only one we print. `Test Purchase Order
+  Format` (a builder experiment last touched 2025-10-23) and `PO Test Print
+  Format` are deleted by a one-shot patch. Closes TASK-2026-01237.
+
+### Changed
+
+- **The other three superseded PO formats are *disabled on every migrate*, not
+  deleted — and the difference is the whole of this change.** `Purchase Order
+  Standard`, `Purchase Order with Item Image` and `Drop Shipping Format` ship with
+  ERPNext, and **standard formats re-sync from their app's JSON on migrate**. That
+  is the same fact which forced `ensure_chrome_pdf_generator` to be an
+  every-migrate hook rather than the one-off data fix somebody tried first. A
+  patch that deleted them would appear to work and undo itself at the next `bench
+  migrate` — the worst shape of failure, because nobody looks again until they
+  print a PO weeks later. `disable_superseded_print_formats` re-applies
+  `disabled = 1` after each sync, using `frappe.db.set_value` because
+  `Print Format.validate` refuses ORM writes to standard formats outright.
+
+- **`CHROME_EXCLUDED_FORMATS` is now empty, and deliberately kept.** Its only
+  member was `Test Purchase Order Format`, excluded because its header was shorter
+  than its body, which trips an unbounded index in frappe's
+  `pdf_generator/pdf_merge.py`. The note there said the guard stays "until either
+  the format is deleted or upstream bounds that index" — this is that deletion.
+  The upstream bug is unchanged, so the mechanism and the explanation stay for the
+  next format that meets it.
+
+  The patch checks every column on the site that can name a print format (plus
+  Property Setters, which name theirs in `value` rather than a Link column) and
+  **logs and bails rather than deleting** anything still referenced — a dangling
+  Link is worse than an extra row in a dropdown. Nothing referenced any of them at
+  the time of writing; the check is for the next person. Idempotent.
+
 ## [1.259.0] - 2026-08-07
 
 ### Added

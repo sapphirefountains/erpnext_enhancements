@@ -187,6 +187,13 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_sales_print_formats -v
       - name: PO approval threshold (WI-013, bench-free)
         run: python -m unittest erpnext_enhancements.tests.test_po_approval -v
+      # Which superseded PO formats get DELETED and which only get DISABLED. The
+      # three that ship with ERPNext re-sync from its JSON on migrate, so a patch
+      # that deleted them would appear to work and undo itself at the next
+      # migrate -- and nobody looks again until they print a PO weeks later.
+      # Getting the split backwards is invisible until production.
+      - name: Purchase Order print format purge (delete vs disable)
+        run: python -m unittest erpnext_enhancements.tests.test_purchase_order_print_formats -v
       # Own step: installs its own frappe stub in setUpModule, so it must not
       # share a process with the other bench-free suites.
       - name: Administrator login alerts (bench-free)
