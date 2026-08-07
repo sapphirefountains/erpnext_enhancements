@@ -1355,3 +1355,26 @@ mark {
 .list-row-container {
     z-index: 1;
 }
+
+/* ==========================================================================
+   ACTIVITY FEED — FIRST TAB ONLY (TASK-2026-00353)
+
+   Frappe renders the timeline into `.form-footer`, a SIBLING of the tab panes
+   rather than a child of one, so it sits below whichever tab is open. Read the
+   Details tab and the conversation is where it belongs; open Contacts, or
+   Budget, or Dispatch, and the same wall of comments is still underneath,
+   pushing the thing you came for off the screen.
+
+   The class is toggled by global_enhancements/activity_first_tab_only.js. It is
+   a class and not an inline style so the rule lives here with the rest of the
+   desk CSS, survives Frappe re-rendering the footer, and is legible in devtools.
+
+   `display: none` rather than `visibility: hidden`: the footer is tall, and
+   leaving it occupying space would trade a wall of comments for a wall of
+   nothing. The comment box goes with it — a reply typed under the Budget tab
+   still attaches to the document, so offering it there is offering a second
+   place to do the same thing.
+   ========================================================================== */
+.form-page.ee-activity-off-tab .form-footer {
+    display: none;
+}

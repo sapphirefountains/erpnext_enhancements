@@ -173,6 +173,13 @@ jobs:
       # disabled and re-disable on every migrate.
       - name: Notification recipients (group addresses, and the exceptions)
         run: python -m unittest erpnext_enhancements.tests.test_notification_recipients -v
+      # The activity feed and its stylesheet are two halves of one behaviour, and
+      # they fail silently apart: a class nothing styles, or a rule nothing sets.
+      # Also pins that the first tab is found POSITIONALLY -- several of our
+      # doctypes have renamed Details to Overview or Summary, so a title check
+      # would quietly stop matching and the feed would follow you around again.
+      - name: Activity feed on the first tab only (JS + CSS agree)
+        run: python -m unittest erpnext_enhancements.tests.test_activity_first_tab_only -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Same failure shape as the www/ controller check: Frappe computes a script
