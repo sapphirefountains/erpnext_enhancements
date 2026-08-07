@@ -475,3 +475,17 @@ erpnext_enhancements.patches.purge_purchase_order_print_formats
 erpnext_enhancements.patches.rename_gallon_uk_uom
 erpnext_enhancements.patches.disable_unused_uoms
 erpnext_enhancements.patches.set_default_stock_uom_unit
+# TASK-2026-01240. A role recipient resolves to whoever holds that role, so a
+# departmental alert lands in personal inboxes and stops landing anywhere the day
+# somebody leaves. Group addresses survive both.
+#
+# Only the SIX site-created notifications are here; the six repo-managed ones are
+# repointed in fixtures/notification.json and re-applied on every migrate. These
+# six carry 2.4k-3k characters of HTML body each, and fixturing them would drag
+# ~15k characters of email template into the repo to drift against the site.
+#
+# Untouched on purpose: Error Log / Integration Request stay on System Manager (a
+# role follows whoever is actually administering the system), and the
+# document-field recipients (New ToDo, Remind Me, MR Receipt) are aimed at one
+# person by design. company@ is the whole-company list and is not an alert target.
+erpnext_enhancements.patches.repoint_notifications_to_group_emails

@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.259.3] - 2026-08-07
+
+### Changed
+
+- **Twelve Notifications now go to group addresses instead of role holders.**
+  A role recipient resolves to whoever currently holds that role, so a
+  departmental alert lands in a handful of personal inboxes — and stops landing
+  anywhere the day somebody leaves or a role is reshuffled. A group address
+  survives both. Closes TASK-2026-01240.
+
+  | Notification | Was | Now |
+  |---|---|---|
+  | Compliance Flag on Call | Call Center Supervisor | `service_repair@` |
+  | High Escalation Risk Call | Call Center Supervisor | `service_repair@` |
+  | Maintenance Reading Out of Range | Maintenance Supervisor | `service_repair@` |
+  | Maintenance Review Needed | Projects Manager | `operations@` |
+  | Maintenance Contract Renewal Due | Projects Manager | `operations@` |
+  | Maintenance Finalized | Accounts Manager | `billing@` |
+  | New Lead Created | Sales Team | `sales@` |
+  | New Opportunity | Sales Team | `sales@` |
+  | New Project Created | Finance Team | `billing@` |
+  | Project Type Change Alert | Finance Team, System Manager, Operations Team | `billing@`, `operations@` |
+  | Task Completed | Operations Team | `operations@` |
+  | New Fiscal Year Created | Accounts User, Accounts Manager | `billing@` |
+
+  **Nine are deliberately untouched**, and the reasons are in the code rather than
+  only in this entry: `Error Log` and `Integration Request` stay on System Manager
+  (a role follows whoever is actually administering the system; a shared inbox
+  nobody owns does not); `New ToDo Created`, `Remind Me Email` and `Material
+  Request Receipt Notification` are addressed by document field and aimed at one
+  person **by design**, which is the exception the task calls out; `Email Team on
+  Opportunity Won` and the two Material Request alerts were already on groups.
+
+  **`company@` is the whole-company mailing list**, so it is not a target for any
+  routine alert. A test asserts it appears nowhere.
+
+  **Split by how each is managed, on purpose.** The six repo-managed notifications
+  are repointed in `fixtures/notification.json` and re-applied on every migrate.
+  The other six were created in the UI and carry 2.4k–3k characters of HTML body
+  each; fixturing them would drag ~15k characters of email template into the repo
+  to drift against whatever anybody edits on the site next, so a patch repoints
+  their recipients and leaves the templates alone. The consequence, stated rather
+  than hidden: a later UI edit to those six is not corrected on migrate, whereas
+  the fixtured six are.
+
+### Added
+
+- `tests/test_notification_recipients.py`, own CI step. It pins the two failure
+  modes that are invisible when they happen — a routine alert routed to
+  `company@` mails the entire company, and applying "point everything at groups"
+  literally would strip the document-field recipients from the three
+  notifications where a named individual is the whole purpose — plus the fixture
+  invariant this repo has been bitten by before: a Notification fixture without an
+  explicit `enabled: 1` imports **disabled** and re-disables itself on every
+  migrate, which is how an alert ends up configured, present and silent.
+
 ## [1.259.2] - 2026-08-07
 
 ### Changed
