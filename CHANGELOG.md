@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.258.1] - 2026-08-07
+
+### Changed
+
+- **`KPI Snapshot` grants read to the nine departments' roles, not System Manager
+  alone.** A tool's `requires_permission` controls per-user *visibility* as well as
+  execution, so the planned `kpi_dashboard_status` assistant tool would have been
+  invisible to exactly the department managers who own the numbers — even though
+  `api/kpi.py::_can_view` would happily let, say, an Accounts Manager read Finance.
+  Closes TASK-2026-01187.
+
+  **Written into the doctype's own `permissions` block, not a Custom DocPerm
+  fixture as the task suggested.** `KPI Snapshot` is our doctype, so its
+  permissions belong in its JSON, which `bench migrate` applies. The Custom DocPerm
+  route is for doctypes we do not own; its export filter is scoped to Material
+  Request and Purchase Order (`hooks.py`), and Custom DocPerm rows *fully replace*
+  a doctype's standard perms, so that route would have meant re-authoring the
+  System Manager row by hand for no benefit.
+
+### Added
+
+- **A row filter, because a DocPerm is doctype-wide and the widening above is not
+  safe without one.** An Accounts Manager granted `read` on KPI Snapshot can read
+  *every* snapshot — Sales, HR, Executive — through the desk list view or
+  `/api/resource/KPI Snapshot`, whatever `_can_view` says, because that function
+  guards two whitelisted endpoints and not the doctype. The task's own framing was
+  that this widens who can *see the tool*, not who can see another department's
+  numbers; that is only true with `kpi_dashboards/permissions.py` registered on
+  `permission_query_conditions` and `has_permission`. `_can_view` remains the
+  authority on which departments; the new module is the same rule expressed where
+  Frappe enforces reads.
+
+- `tests/test_kpi_snapshot_permissions.py`, with its own CI step, pinning both
+  halves together — neither is correct alone. It also pins that **`HR User` is
+  never granted**: it is one keystroke from the correct role, every employee on
+  this site holds it, and the first pass at generating these rows did grant it,
+  by regexing `DEPARTMENT_ROLES` out of the source and matching the comment that
+  says in as many words not to use it. The generator now reads the assignment
+  through the AST. Comments are not data, and on this doctype the difference was
+  whether the whole company could read the HR KPIs.
+
 ## [1.258.0] - 2026-08-07
 
 ### Added

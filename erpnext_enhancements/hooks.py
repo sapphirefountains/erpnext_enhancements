@@ -1114,6 +1114,13 @@ permission_query_conditions = {
 	"Managed Device": "erpnext_enhancements.device_management.permissions.get_permission_query_conditions",
 	# Sapphire Maintenance Record: portal customers see only their own submitted visits
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.get_permission_query_conditions",
+	# KPI Snapshot: a department manager sees their own departments' numbers only.
+	# The DocPerms had to widen from System-Manager-only for the KPI assistant tool
+	# to be visible to the people who own the numbers, and a DocPerm is doctype-wide
+	# -- without this, `read` on the doctype would have meant read on every
+	# department. api/kpi.py::_can_view decides which; this enforces it where Frappe
+	# actually checks reads.
+	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.get_permission_query_conditions",
 	# Training Assignment: a learner sees only their own; a supervisor also sees
 	# their direct reports (Employee.reports_to), which is what makes the sign-off
 	# queue a plain filtered list rather than a bespoke endpoint. Course CONTENT is
@@ -1129,6 +1136,10 @@ permission_query_conditions = {
 }
 
 has_permission = {
+	# The single-document counterpart of the KPI Snapshot query condition above.
+	# A query condition filters lists; this is what refuses a direct read of one
+	# snapshot by name.
+	"KPI Snapshot": "erpnext_enhancements.kpi_dashboards.permissions.has_permission",
 	"Travel Trip": "erpnext_enhancements.travel_management.permissions.has_permission",
 	"Managed Device": "erpnext_enhancements.device_management.permissions.has_permission",
 	"Sapphire Maintenance Record": "erpnext_enhancements.sapphire_maintenance.permissions.has_permission",

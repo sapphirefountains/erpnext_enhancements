@@ -138,6 +138,14 @@ jobs:
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
           erpnext_enhancements.tests.test_drive_match -v
+      # KPI Snapshot's DocPerms had to widen past System Manager for the KPI
+      # assistant tool to be visible to the managers who own the numbers, and a
+      # DocPerm is doctype-wide -- so the widening only stays safe while the row
+      # filter ships with it. This pins both halves together, and pins that
+      # "HR User" is never granted: it is one keystroke from the correct role and
+      # every employee on this site holds it.
+      - name: KPI Snapshot permissions (widened reads stay department-scoped)
+        run: python -m unittest erpnext_enhancements.tests.test_kpi_snapshot_permissions -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Same failure shape as the www/ controller check: Frappe computes a script
