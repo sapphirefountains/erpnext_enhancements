@@ -155,6 +155,14 @@ jobs:
       # every employee on this site holds it.
       - name: KPI Snapshot permissions (widened reads stay department-scoped)
         run: python -m unittest erpnext_enhancements.tests.test_kpi_snapshot_permissions -v
+      # Three UOM patches whose ORDER is load-bearing: the Gallon rename has to
+      # land before the disable pass, or that pass sees `Gallon` unused and
+      # switches off a UOM three live documents point at. Also pins that the
+      # rename is an EXACT match -- `Pound/Gallon (UK)` and friends are densities,
+      # and a substring rename would merge two different units in a system that
+      # prices by them.
+      - name: UOM cleanup (rename, disable, default)
+        run: python -m unittest erpnext_enhancements.tests.test_uom_cleanup -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Same failure shape as the www/ controller check: Frappe computes a script

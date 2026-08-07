@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.259.2] - 2026-08-07
+
+### Changed
+
+- **The UOM `Gallon (UK)` is now just `Gallon`.** We mean the one gallon, and the
+  disambiguating suffix ERPNext ships is noise on a purchase order. **Exact match
+  only:** eight other seeded UOMs contain the word "Gallon", and
+  `Pound/Gallon (UK)`, `Ounce/Gallon (UK)` and `Grain/Gallon (UK)` are
+  *densities* — a substring rename would turn them into `Pound/Gallon` and quietly
+  merge two different units in a system that prices by them. `frappe.rename_doc`
+  does the cascade, rewriting every Link column database-wide rather than the
+  handful we happen to know about today.
+
+- **235 unused UOMs are disabled, leaving the five this business actually uses**
+  (`Unit`, `Nos`, `FT`, `Square Foot`, `Gallon`). Closes TASK-2026-01238.
+
+  **Disabled, not deleted, and the task said "purge".** Deleting looked right at
+  first — UOMs are seeded by two *patches*, both already in `tabPatch Log`, so
+  unlike a standard Print Format they do not come back on migrate. Counting the
+  references turned it over: **235 of the 240 are named by `UOM Conversion
+  Factor`**, ERPNext's seeded conversion matrix. Treating that as "in use" leaves
+  nothing deletable; ignoring it and deleting anyway means tearing 235 rows out of
+  ERPNext's own reference data. Meanwhile `enabled = 0` already does exactly what
+  was asked — `frappe/desk/search.py` filters `enabled = 1` for any doctype with
+  that field, so a disabled UOM disappears from every link picker, and the list
+  "grows as needed" with one tick rather than a re-creation.
+
+  That the mechanism is safe on a *referenced* record was already demonstrated
+  here: `Nos` has been `enabled = 0` on this site while 281 Items use it as their
+  stock UOM, with no ill effect. Disabling hides a UOM from new entry; it does not
+  invalidate documents that already carry it.
+
+  Usage is computed from `INFORMATION_SCHEMA` at run time, not hard-coded: there
+  are **119** UOM-bearing columns across frappe, ERPNext and this app, and a list
+  written today is wrong after the next app install.
+
+- **`Unit` is the default UOM for new Items**, in the repo rather than only on the
+  site. Closes TASK-2026-01239. Set through `Stock Settings.save()` and not
+  `db.set_value`, which is the whole trick: `Item.stock_uom` carries no default of
+  its own and reads `tabDefaultValue`, and the only thing that writes that row is
+  `Stock Settings.on_update`. A direct write would leave the settings page reading
+  "Unit" while every new Item still defaulted to the old value — correct-looking
+  and wrong.
 ## [1.259.1] - 2026-08-07
 
 ### Removed

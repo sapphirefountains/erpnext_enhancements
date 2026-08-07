@@ -452,3 +452,26 @@ erpnext_enhancements.patches.rename_handoff_ar_role
 # Refuses to delete a format anything still references, and says so in the Error
 # Log rather than leaving a dangling Link. Idempotent.
 erpnext_enhancements.patches.purge_purchase_order_print_formats
+# TASK-2026-01238 / 01239. Order matters and the three are one story.
+#
+# 1. Rename the UOM `Gallon (UK)` -> `Gallon`: we mean the one gallon, and the
+#    suffix is noise on a purchase order. EXACT match only -- eight other seeded
+#    UOMs contain "Gallon", and `Pound/Gallon (UK)` and friends are DENSITIES, so
+#    a substring rename would merge two different units in a system that prices
+#    by them. frappe.rename_doc cascades every Link column database-wide.
+# 2. Disable the ~235 UOMs nothing uses. DISABLED, not deleted: 235 of the 240 are
+#    referenced by `UOM Conversion Factor`, ERPNext's seeded conversion matrix, so
+#    deleting means tearing up its reference data -- while `enabled = 0` already
+#    hides a UOM from every link picker (frappe/desk/search.py filters enabled=1),
+#    which is what the task actually wanted, and is reversible with one tick.
+#    Usage is computed from INFORMATION_SCHEMA at run time: there are 119
+#    UOM-bearing columns and a hard-coded list is wrong after the next app install.
+# 3. Make `Unit` the site default. Saved through the controller on purpose --
+#    Item.stock_uom has no default of its own and reads tabDefaultValue, which only
+#    Stock Settings.on_update writes, so a db.set_value would leave the settings
+#    page reading "Unit" while new Items still defaulted to the old value.
+#
+# The rename runs first so the disable pass sees `Gallon` in use and keeps it on.
+erpnext_enhancements.patches.rename_gallon_uk_uom
+erpnext_enhancements.patches.disable_unused_uoms
+erpnext_enhancements.patches.set_default_stock_uom_unit
