@@ -903,3 +903,79 @@ class TestCanRetryIsSaidOutLoud(unittest.TestCase):
         builder = _builder_code()
         self.assertIn("can_retry:", builder)
         self.assertIn("awarded:", builder)
+
+
+# ----------------------------------------------------------------- get_lesson
+#
+# TASK-2026-01177. `get_lesson` sends the progress of the ONE lesson it was asked
+# for; the player assigned it over the slot holding the whole {lessons: {...}} map.
+# So opening any lesson erased every other lesson's state — and its own, because
+# `lessonProgress()` reads `state.progress.lessons`, which the assignment left
+# undefined. A half-finished course rendered as entirely not started.
+
+
+class TestGetLessonProgressIsMerged(unittest.TestCase):
+    # The reply handler is an anonymous `.then`, so there is no declaration for
+    # `_js_body` to brace-match from. Slice forward off the call itself, the same
+    # way the heartbeat-beacon tests above do.
+    def _handler(self):
+        code = _player_code()
+        start = code.index('call("getLesson"')
+        return code[start : start + 1400]
+
+    def test_the_scan_works(self):
+        keys = _returned_keys("get_lesson")
+        self.assertIn("progress", keys)
+        self.assertIn("next_checkpoints", keys)
+        self.assertIn("payload.progress", self._handler())
+
+    def test_the_single_lesson_dict_is_not_assigned_over_the_map(self):
+        self.assertNotIn("state.progress = payload.progress", self._handler())
+
+    def test_it_is_merged_under_its_own_key(self):
+        body = self._handler()
+        self.assertIn("state.progress.lessons = state.progress.lessons ||", body)
+        self.assertIn("lessons[key] = payload.progress", body)
+
+    def test_the_server_still_sends_one_lesson_not_a_map(self):
+        """If this ever starts returning {lessons: {...}} the merge above becomes
+        a nesting bug, so the two have to be pinned together."""
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        self.assertIn("def _lesson_progress(attempt_name, lesson_key):", runtime)
+        self.assertIn('.get("lessons") or {}).get(lesson_key)', runtime)
+
+    def test_nothing_else_replaces_the_progress_object(self):
+        """The sweep the task asked for. Every other write folds into the map —
+        `mergeHeartbeat` and `recordQuizRun` both use the defaulting idiom, and
+        `adoptAttempt` replaces `lessons` with the server's own full map, which is
+        the authoritative one. A bare `state.progress = <anything else>` is the bug
+        class returning."""
+        found = re.findall(r"state\.progress\s*=\s*([^;\n]+)", _player_code())
+        unexpected = [rhs.strip() for rhs in found if rhs.strip() != "state.progress || {}"]
+        self.assertEqual(unexpected, [], f"player.js replaces state.progress with {unexpected}")
+
+
+class TestNextCheckpointsIsReadAtLast(unittest.TestCase):
+    """Sent by `get_lesson` since Phase 2 and read by nothing.
+
+    It closes a real hole rather than being tidy-up. Beats do not start until
+    roughly ten seconds of credited playback, and the mount-time `armNext()` can
+    only reach a checkpoint within tolerance of the resume position — so a
+    checkpoint in the opening seconds was too late for the arm and too early for
+    the first beat, and by the time one arrived the playhead was past it.
+    """
+
+    def test_the_player_hands_it_to_the_block_context(self):
+        body = _js_body(_player_code(), "function blockContext()")
+        self.assertIn("nextCheckpoints", body)
+
+    def test_the_player_still_stores_it(self):
+        self.assertIn("state.nextCheckpoints = payload.next_checkpoints", _player_code())
+
+    def test_the_video_mount_reads_it_off_the_context(self):
+        body = _js_body(_video_code(), "Video.mount = function (wrapper, block, ctx)")
+        self.assertIn("ctx.nextCheckpoints", body)
+        self.assertIn("next_checkpoint_at", body)
+
+    def test_the_video_seeds_its_state_from_the_spec(self):
+        self.assertIn("spec.next_checkpoint_at", _video_code())

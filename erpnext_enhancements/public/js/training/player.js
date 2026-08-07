@@ -370,6 +370,10 @@
 				settings: b.settings || {},
 				t: t,
 				blockProgress: blockProgress,
+				// `{block_key: at_seconds}` from get_lesson. Written since Phase 2 and
+				// read by nothing until TASK-2026-01177 — see the seeding comment in
+				// video.js for the hole it closes.
+				nextCheckpoints: state.nextCheckpoints || {},
 				heartbeat: function (beat) {
 					var body = beat || {};
 					// Never taken from the caller: the server derives the learner
@@ -641,12 +645,28 @@
 						.then(function (payload) {
 							payload = payload || {};
 							adoptAttempt(payload.attempt);
-							state.progress = payload.progress || { lessons: {} };
-							state.nextCheckpoints = payload.next_checkpoints || {};
 							if (payload.lesson) {
 								state.lesson = payload.lesson;
 								state.lessonKey = payload.lesson.lesson_key || wanted;
 							}
+							// MERGE, never assign. `get_lesson` sends the progress of the
+							// ONE lesson it was asked for — {status, blocks, checkpoints,
+							// quiz} — and this slot holds the whole {lessons: {...}} map
+							// adopted at attempt start. Assigning one over the other left
+							// `state.progress.lessons` undefined, so `lessonProgress()`
+							// returned {} for every lesson including the one just opened,
+							// and the outline showed a course the learner had half
+							// finished as entirely not started. Opening lesson B forgot
+							// lesson A; opening A again forgot B.
+							//
+							// Merging on the client rather than reshaping the endpoint:
+							// `mergeHeartbeat` a few lines up already folds a single
+							// block's reply into this same map the same way, so this is
+							// the shape the file already speaks.
+							var key = state.lessonKey || wanted;
+							var lessons = (state.progress.lessons = state.progress.lessons || {});
+							if (payload.progress) lessons[key] = payload.progress;
+							state.nextCheckpoints = payload.next_checkpoints || {};
 							setBusy(false);
 							return payload;
 						});

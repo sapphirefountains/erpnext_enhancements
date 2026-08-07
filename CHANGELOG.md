@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.4] - 2026-08-07
+
+### Fixed
+
+- **Opening a lesson erased every other lesson's progress from the outline — and
+  its own.** `get_lesson` sends the progress of the one lesson it was asked for,
+  `{status, blocks, checkpoints, quiz}`; `player.js` assigned that over the slot
+  holding the whole `{lessons: {...}}` map adopted at attempt start. Closes
+  TASK-2026-01177.
+
+  The second-order effect was the worse one. `lessonProgress()` reads
+  `state.progress.lessons`, which the assignment left `undefined`, so it returned
+  `{}` for *every* lesson including the one just opened — and a learner who had
+  finished three lessons and reopened the first saw a course that had never been
+  started. Nothing errored; `undefined` propagated politely all the way to a
+  rendered zero.
+
+  Merged on the client rather than reshaping the endpoint, per the task's own
+  preference and because the file already speaks that shape: `mergeHeartbeat` and
+  `recordQuizRun` both fold their replies into this same map with the same
+  defaulting idiom. The sweep the task asked for found no other instance —
+  `adoptAttempt` does replace `lessons` wholesale, but with the server's own full
+  map, which is the authoritative one. A test now pins that `state.progress` is
+  never reassigned to anything else.
+
+- **`next_checkpoints` is read at last, and it closes a real hole in v1.255.2's
+  checkpoint fix.** `get_lesson` has sent `{block_key: at_seconds}` since Phase 2
+  and nothing had ever read it. That looked like dead weight until the arming path
+  was rebuilt: beats do not start until roughly ten seconds of credited playback,
+  and the mount-time `armNext()` can only reach a checkpoint within
+  `CHECKPOINT_TOLERANCE` of the resume position. A checkpoint in the opening
+  seconds of a video fell between the two — too late for the arm, too early for
+  the first beat — and by the time a beat arrived the playhead was already past
+  it, so it never fired. `next_checkpoints` seeds the video's re-arm at mount,
+  which is exactly what the endpoint's docstring always said it was for.
+
 ## [1.255.3] - 2026-08-07
 
 ### Fixed
