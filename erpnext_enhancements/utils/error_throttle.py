@@ -41,6 +41,19 @@ DEFAULT_LIMIT = 3
 _CACHE_PREFIX = "ee_error_throttle::"
 
 
+def _site() -> str:
+	"""The site this counter belongs to, for the key namespace.
+
+	Mirrors what ``RedisWrapper.make_key`` uses (``frappe.local.conf.db_name``).
+	Falls back rather than raising: a throttle that cannot name its site should
+	still throttle, just in a shared bucket.
+	"""
+	try:
+		return frappe.local.conf.get("db_name") or "unknown-site"
+	except Exception:
+		return "unknown-site"
+
+
 def _signature(title: str, key: str | None) -> str:
 	"""The cache key a message throttles against.
 
@@ -50,9 +63,29 @@ def _signature(title: str, key: str | None) -> str:
 	an explicit ``key`` to split one title into several independent budgets (for
 	example per provider, so a dead Miradore credential cannot mask a separate
 	Action1 failure).
+
+	**The ``<site>|`` prefix is applied here, by hand, and that is deliberate.**
+	Frappe's ``RedisWrapper`` only namespaces keys inside the ``*_value`` helpers
+	— ``set_value``/``get_value``/``delete_value`` all route through
+	``make_key()``, which returns ``f"{db_name}|{key}"``. The raw redis-py methods
+	(``incr``, ``expire``, ``get``, ``delete``) are **not** overridden at all and
+	use the key verbatim.
+
+	This module needs ``incr`` for atomicity — a counter that a race can undercount
+	is a counter that lets a storm through — so it is stuck on the raw family, and
+	must therefore do its own namespacing. v1.254.0 got this wrong in a way worth
+	recording: it wrote with ``incr`` (raw key) and read/cleared with
+	``get_value``/``delete_value`` (prefixed key), so the two never addressed the
+	same slot. ``reset()`` was a silent no-op and ``suppressed_count()`` always
+	returned 0. The suppression itself worked, because ``incr`` and ``expire``
+	at least agreed with *each other*.
+
+	Every operation in this module now uses the raw family against this one key.
+	Do not mix in a ``*_value`` call: it will silently miss.
 	"""
 	raw = f"{title}::{key or ''}"
-	return _CACHE_PREFIX + hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+	digest = hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+	return f"{_site()}|{_CACHE_PREFIX}{digest}"
 
 
 def log_error_throttled(
@@ -106,17 +139,24 @@ def suppressed_count(title: str, key: str | None = None) -> int:
 
 	Read-only; used by tests and by diagnostics that want to report "this failed
 	N times" without re-reading the Error Log table.
+
+	Raw ``get``, not ``get_value``: see :func:`_signature`. ``get_value`` would
+	both look under a differently-namespaced key *and* try to unpickle a value
+	that ``incr`` stored as a plain integer string.
 	"""
 	try:
-		return int(frappe.cache().get_value(_signature(title, key)) or 0)
+		return int(frappe.cache().get(_signature(title, key)) or 0)
 	except Exception:
 		return 0
 
 
 def reset(title: str, key: str | None = None) -> None:
 	"""Clear one signature's budget — for tests, and for an operator who has
-	just fixed the cause and wants the next failure to be logged in full."""
+	just fixed the cause and wants the next failure to be logged in full.
+
+	Raw ``delete``, not ``delete_value``: see :func:`_signature`.
+	"""
 	try:
-		frappe.cache().delete_value(_signature(title, key))
+		frappe.cache().delete(_signature(title, key))
 	except Exception:
 		pass

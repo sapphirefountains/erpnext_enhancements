@@ -42,8 +42,15 @@ def has_permission(doc, ptype=None, user=None):
 	# as_dict=True)` row), and a dict has no `.is_new()` — it raises
 	# `AttributeError: 'dict' object has no attribute 'is_new'` from inside a
 	# permission check, which surfaces as an unrelated-looking save failure.
-	# `is_new()` is itself defined as `not self.get("creation")`, so this is the
-	# same test written to work on both shapes.
+	#
+	# This is NOT a drop-in restatement of `is_new()`, and v1.254.0's comment
+	# claiming it was is simply wrong. On Frappe v16 `is_new()` is
+	# `bool(self.get("__islocal"))` (base_document.py:631) — a different
+	# predicate. "Has no creation timestamp" is the right test *for this hook*
+	# because the only thing it needs to answer is "is there a saved row whose
+	# owner I should compare against"; an unsaved doc has nothing to compare and
+	# is governed by the create DocPerm instead. Do not propagate the equivalence
+	# claim to somewhere it actually matters.
 	if ptype == "create" or not doc.get("creation"):
 		return True
 	return doc.get("assigned_to_user") == user
