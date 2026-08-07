@@ -2922,11 +2922,20 @@ class TrainingBuilder {
 				});
 				const duration = Math.max(1, Number(payload && payload.duration) || 1);
 				const coverage = Math.min(100, (Object.keys(seen).length / duration) * 100);
+				const next_at = (lesson.checkpoints || [])
+					.filter((cp) => cp.block_key === block_key && !state.answered[cp.checkpoint_key])
+					.map((cp) => Number(cp.at_seconds) || 0)
+					.sort((a, b) => a - b)[0];
 				return Promise.resolve({
 					coverage,
 					credited: Object.keys(seen).length,
 					flags: [],
-					next_checkpoint_at: null,
+					// Hard-coded null until TASK-2026-01174, which is when the player
+					// started reading this. It is how video.js learns a checkpoint is
+					// coming up — arming can only ask for one the playhead has already
+					// reached — so a preview that always said "none" would show the
+					// author a video in which no pin ever fires.
+					next_checkpoint_at: next_at == null ? null : next_at,
 				});
 			},
 
@@ -2938,12 +2947,14 @@ class TrainingBuilder {
 				const pending = (lesson.checkpoints || [])
 					.filter((cp) => cp.block_key === args.block_key && !state.answered[cp.checkpoint_key])
 					.sort((a, b) => Number(a.at_seconds) - Number(b.at_seconds))[0];
-				if (!pending) return Promise.resolve(null);
-				// NOTE: the flat shape is what video.js reads (`cp.checkpoint_key`).
-				// The real endpoint wraps it as {enabled, checkpoint} — a Phase-2
-				// mismatch reported in the handover. The preview follows the
-				// player, because the player is the thing being previewed.
-				return Promise.resolve(this.preview_checkpoint(pending));
+				if (!pending) return Promise.resolve({ enabled: true, checkpoint: null });
+				// The {enabled, checkpoint} envelope is the real endpoint's shape,
+				// and as of TASK-2026-01174 it is also the one video.js reads. This
+				// used to return the checkpoint flat, with a note explaining that
+				// the preview deliberately mimicked the player's misreading — which
+				// was the right call while the player was wrong, and is the wrong
+				// one now. The preview still follows the player; the player moved.
+				return Promise.resolve({ enabled: true, checkpoint: this.preview_checkpoint(pending) });
 			},
 
 			answerCheckpoint: (args) => {
@@ -2960,11 +2971,22 @@ class TrainingBuilder {
 				const used = (state.attempts[cp.checkpoint_key] = (state.attempts[cp.checkpoint_key] || 0) + 1);
 				const exhausted = ok || (Number(cp.max_attempts) > 0 && used >= Number(cp.max_attempts));
 				if (exhausted) state.answered[cp.checkpoint_key] = 1;
+				// `resume_at` / `rewind_applied` mirror `grading._checkpoint_result`,
+				// including its rule that a rewind applies only to a wrong answer
+				// with an attempt still left. The player takes these as authoritative
+				// now, so a preview that omitted them would silently stop rewinding
+				// and the author would test a checkpoint that behaves unlike the
+				// real one — which is the whole thing the preview exists to prevent.
+				const at = Number(cp.at_seconds) || 0;
+				const rewind = Number(cp.rewind_seconds_on_wrong) || 0;
+				const rewind_applied = !ok && !(exhausted && !ok) && rewind > 0;
 				return Promise.resolve({
 					correct: ok,
 					exhausted: exhausted && !ok,
 					attempts_used: used,
 					explanation: cp.explanation || "",
+					rewind_applied: rewind_applied,
+					resume_at: rewind_applied ? Math.max(0, at - rewind) : at,
 				});
 			},
 
@@ -3093,17 +3115,18 @@ class TrainingBuilder {
 		// Answer-free, exactly as `_checkpoint_payload` serves it. The author can
 		// see the answers in the inspector; the preview must still show them what
 		// a learner sees, or "test this checkpoint" tests nothing.
+		// Key for key with `_checkpoint_payload`. It used to carry `at` *and*
+		// `at_seconds` — a hedge against not knowing which one the runtime meant,
+		// which is its own small evidence that the two names were a problem. The
+		// runtime now speaks the doctype's field names and only those.
 		return {
 			checkpoint_key: cp.checkpoint_key,
 			block_key: cp.block_key,
 			at_seconds: Number(cp.at_seconds) || 0,
-			at: Number(cp.at_seconds) || 0,
 			question_type: cp.question_type,
 			question_text: cp.question_text,
-			pause_video: Number(cp.pause_video) || 0,
 			allow_skip: Number(cp.allow_skip) || 0,
 			max_attempts: Number(cp.max_attempts) || 0,
-			rewind_seconds_on_wrong: Number(cp.rewind_seconds_on_wrong) || 0,
 			options: (cp.options || []).map((option) => ({
 				option_key: option.option_key,
 				text: option.option_text || "",
@@ -3154,7 +3177,8 @@ class TrainingBuilder {
 			const transport = this.preview_transport(lesson);
 			// Only the checkpoint under test is offered, so the run-up cannot
 			// stumble into an earlier pin and answer a different question.
-			transport.openCheckpoint = () => Promise.resolve(this.preview_checkpoint(cp));
+			transport.openCheckpoint = () =>
+			Promise.resolve({ enabled: true, checkpoint: this.preview_checkpoint(cp) });
 			const video = new window.TR.Video(
 				$root[0],
 				{

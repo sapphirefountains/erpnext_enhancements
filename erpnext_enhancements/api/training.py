@@ -904,6 +904,32 @@ def _checkpoint_payload(checkpoint):
     guarantee being made — that ``is_correct`` and the per-option explanation stay
     on the server — is only as strong as the narrowest projection. The same
     reasoning is written out at length in ``training_author._split_lesson``.
+
+    **The keys are the Training Checkpoint field names, deliberately.** They used
+    to be abbreviated — ``at``, ``type``, ``question``, ``rewind`` — and nothing
+    read them under those names: ``video.js`` and the builder's preview harness
+    (``training_builder.preview_checkpoint``) both spelled them out in full, which
+    is to say both consumers independently agreed with the doctype and disagreed
+    with this function. An abbreviation is a translation layer, and a translation
+    layer with no reader is just a second name for the same thing waiting to be
+    read wrong. ``at`` in particular did not say its unit, in a module whose
+    entire defect history is units and names.
+
+    Three fields the old payload carried are gone rather than renamed. Each was
+    sent, read by nobody, and would have been flagged by the boundary contract
+    test (TASK-2026-01184) the moment it lands:
+
+    * ``counts_toward_score`` — scoring happens here. The player was never told
+      what to do with it and there is nothing it could correctly do.
+    * ``rewind_seconds_on_wrong`` — superseded by ``answer_checkpoint``'s
+      ``resume_at``. Sending the ingredients *and* the answer is how the two
+      drifted apart in the first place (TASK-2026-01183).
+    * ``pause_video`` — ``video.js`` pauses unconditionally when it opens the
+      scrim, and the scrim covers the element, so there is no behaviour behind
+      this flag to switch. It is not dropped because the author's setting does
+      not matter; it is dropped because it does not currently reach anything,
+      and a key on the wire is a promise that it does. Restoring it is a player
+      change (what does an un-paused checkpoint look like?), not a payload one.
     """
     row = frappe.db.get_value(
         "Training Checkpoint",
@@ -915,11 +941,8 @@ def _checkpoint_payload(checkpoint):
             "at_seconds",
             "question_type",
             "question_text",
-            "pause_video",
             "allow_skip",
             "max_attempts",
-            "rewind_seconds_on_wrong",
-            "counts_toward_score",
         ],
         as_dict=True,
     )
@@ -932,14 +955,11 @@ def _checkpoint_payload(checkpoint):
     return {
         "checkpoint_key": row.checkpoint_key,
         "block_key": row.block_key,
-        "at": cint(row.at_seconds),
-        "type": row.question_type,
-        "question": row.question_text,
-        "pause": bool(cint(row.pause_video)),
+        "at_seconds": cint(row.at_seconds),
+        "question_type": row.question_type,
+        "question_text": row.question_text,
         "allow_skip": bool(cint(row.allow_skip)),
         "max_attempts": cint(row.max_attempts),
-        "rewind": cint(row.rewind_seconds_on_wrong),
-        "scored": bool(cint(row.counts_toward_score)),
         "options": [{"option_key": o.option_key, "text": o.option_text} for o in options],
     }
 
@@ -974,7 +994,12 @@ def answer_checkpoint(attempt, checkpoint_key, option_keys, response_ms=None):
     payload = dict(result)
     payload["attempts"] = attempts
     payload["attempts_left"] = max(cint(row.max_attempts) - attempts, 0) if cint(row.max_attempts) else None
-    payload["rewind"] = cint(row.rewind_seconds_on_wrong) if not result.get("correct") else 0
+    # `rewind` used to be added here as well, as the raw seconds off the
+    # checkpoint. Nothing read it, and it disagreed with the `rewind_applied`
+    # that `grading._checkpoint_result` puts in the same dict: this one fired on
+    # any wrong answer, that one only on a wrong answer with a try left. Two
+    # numbers for one decision, one of them wrong, neither of them read — the
+    # client now takes `resume_at`/`rewind_applied` and nothing else.
     payload["response_ms"] = cint(response_ms)
     return payload
 

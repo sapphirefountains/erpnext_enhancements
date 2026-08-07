@@ -662,3 +662,165 @@ class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
         body = template[start : start + 900]
         self.assertIn("csrf_token", body)
         self.assertNotIn("sid", body)
+
+
+# ------------------------------------------------------------------ checkpoints
+#
+# The eighth, ninth and tenth wire mismatches in this module, all on one seam and
+# all in the same direction: the runtime invented short names, and both consumers
+# — video.js and the builder's preview harness — used the doctype's. Fixed in
+# TASK-2026-01174 / 01179 by moving the runtime, since a name that says its unit
+# beats a name that saves four characters.
+#
+# Read the header of this file for why these checks are static.
+
+VIDEO = JS_DIR / "video.js"
+BUILDER = APP / "training/page/training_builder/training_builder.js"
+
+
+def _strip_comments(src):
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
+
+
+def _video_code():
+    return _strip_comments(VIDEO.read_text(encoding="utf-8"))
+
+
+def _builder_code():
+    return _strip_comments(BUILDER.read_text(encoding="utf-8"))
+
+
+def _js_object_keys(code, marker):
+    """The TOP-LEVEL keys of the object literal ``marker``'s function returns.
+
+    Depth-aware on purpose. A flat regex over the body also collects
+    ``option_key`` and ``text`` out of the nested map that builds ``options``,
+    which makes the comparison against the server's payload fail for a reason
+    that has nothing to do with the two shapes agreeing.
+    """
+    body = _js_body(code, marker)
+    start = body.index("return {")
+    depth = 0
+    keys = set()
+    for line in body[start:].splitlines():
+        if depth == 1:
+            found = re.match(r"\s*([a-z_]+):", line)
+            if found:
+                keys.add(found.group(1))
+        depth += line.count("{") - line.count("}")
+        if depth <= 0 and keys:
+            break
+    return keys
+
+
+class TestCheckpointPayloadIsReadable(unittest.TestCase):
+    """Guards the assertions below from passing because a parse went stale."""
+
+    def test_the_payload_shape_is_found(self):
+        keys = _returned_keys("_checkpoint_payload")
+        self.assertIn("checkpoint_key", keys)
+        self.assertGreaterEqual(len(keys), 6)
+
+    def test_the_video_is_readable(self):
+        self.assertGreater(len(_video_code()), 5000)
+
+
+class TestCheckpointFieldNames(unittest.TestCase):
+    def test_the_player_reads_the_names_the_server_sends(self):
+        """Five of seven disagreed. `at` vs `at_seconds` was the load-bearing one:
+        `maybeFireCheckpoint` compared a NaN against the playhead, so even an
+        armed checkpoint could not fire."""
+        sent = _returned_keys("_checkpoint_payload")
+        code = _video_code()
+        for field in ("checkpoint_key", "at_seconds", "question_text", "question_type"):
+            self.assertIn(field, sent, f"_checkpoint_payload no longer sends {field}")
+            self.assertIn(field, code, f"video.js no longer reads {field}")
+
+    def test_the_short_names_are_gone(self):
+        """`at`, `question`, `type`, `rewind`, `pause`, `scored` — the abbreviations
+        nothing ever read. Named individually so a reviewer sees the whole set."""
+        sent = _returned_keys("_checkpoint_payload")
+        for gone in ("at", "question", "type", "rewind", "pause", "scored"):
+            self.assertNotIn(gone, sent, f"_checkpoint_payload is sending `{gone}` again")
+
+    def test_the_builder_preview_matches_the_runtime_key_for_key(self):
+        """`preview_checkpoint` exists so an author can test a checkpoint before
+        a learner meets one. It is worth nothing if it serves a different shape —
+        and it drifted precisely because nothing compared the two."""
+        preview = _js_object_keys(_builder_code(), "preview_checkpoint(cp) {")
+        self.assertEqual(
+            preview,
+            _returned_keys("_checkpoint_payload"),
+            "training_builder.preview_checkpoint and api.training._checkpoint_payload "
+            "have drifted apart",
+        )
+
+
+class TestCheckpointEnvelope(unittest.TestCase):
+    def test_the_player_unwraps_the_envelope(self):
+        """`open_checkpoint` replies {enabled, checkpoint}. armNext read
+        `cp.checkpoint_key` off the envelope, got undefined, and armed nothing —
+        for every learner, on every attempt, since the endpoint was written."""
+        body = _js_body(_video_code(), "function armNext()")
+        self.assertIn("res.checkpoint", body)
+
+    def test_the_runtime_still_sends_the_envelope(self):
+        keys = _returned_keys("open_checkpoint")
+        self.assertEqual(keys, {"enabled", "checkpoint"})
+
+    def test_the_builder_preview_sends_the_envelope_too(self):
+        code = _builder_code()
+        self.assertIn("enabled: true, checkpoint:", code)
+
+
+class TestRewindHasOneAuthority(unittest.TestCase):
+    """TASK-2026-01183. Two computations of where playback resumes, and they did
+    not agree: grading rewinds only when an attempt is left, the client rewound on
+    any wrong answer. The client's has been deleted."""
+
+    def test_the_client_honours_the_server_position(self):
+        body = _js_body(_video_code(), "function answerCheckpoint(cp, optionKeys, submitBtn)")
+        self.assertIn("res.rewind_applied", body)
+        self.assertIn("res.resume_at", body)
+
+    def test_the_client_no_longer_derives_it(self):
+        self.assertNotIn("rewind_seconds_on_wrong", _video_code())
+
+    def test_the_server_still_computes_it(self):
+        grading = (APP / "training/grading.py").read_text(encoding="utf-8")
+        self.assertIn('"resume_at"', grading)
+        self.assertIn('"rewind_applied"', grading)
+
+    def test_the_dead_rewind_key_is_gone(self):
+        """`answer_checkpoint` also bolted a raw `rewind` onto the reply. Unread,
+        and it disagreed with the `rewind_applied` sitting beside it."""
+        body = _js_body(RUNTIME.read_text(encoding="utf-8"), "def answer_checkpoint(")
+        self.assertNotIn('payload["rewind"]', body)
+
+
+class TestCheckpointsCanRearm(unittest.TestCase):
+    """The break neither task named. `armNext` runs once at mount and can only
+    fetch a checkpoint the playhead has already reached — so with the envelope and
+    the field names both fixed, a checkpoint at 0:30 of a 90-second video was still
+    unreachable. `next_checkpoint_at` is how the server says one is coming; it was
+    sent on every beat and read by nobody."""
+
+    def test_the_server_sends_it_on_every_beat(self):
+        # Not via _returned_keys: the endpoint bolts this onto the reply with a
+        # subscript assignment rather than putting it in the dict literal, so
+        # there is nothing for the AST walk to see.
+        self.assertIn('result["next_checkpoint_at"]', RUNTIME.read_text(encoding="utf-8"))
+
+    def test_the_player_reads_it_off_the_beat(self):
+        body = _js_body(_video_code(), "function applyBeatResult(res)")
+        self.assertIn("next_checkpoint_at", body)
+
+    def test_reaching_it_arms_the_checkpoint(self):
+        body = _js_body(_video_code(), "function maybeFireCheckpoint(from, to)")
+        self.assertIn("nextCheckpointAt", body)
+        self.assertIn("armNext()", body)
+
+    def test_the_builder_preview_reports_it(self):
+        """Otherwise the author previews a video in which no pin ever fires."""
+        self.assertIn("next_checkpoint_at: next_at", _builder_code())

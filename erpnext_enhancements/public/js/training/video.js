@@ -456,6 +456,13 @@
       deliveryFailures: 0,
       offlineToasted: false,
       armed: null, // { checkpoint_key, at_seconds, ... }
+      // Where the *next* unanswered checkpoint sits, as the server last reported
+      // it on a beat. `armNext` can only fetch a checkpoint the playhead has
+      // already reached — by design, so the reply is never a list of places to
+      // skip to — which means something has to notice the playhead arriving.
+      // This is that something. Null means "none left in this block".
+      nextCheckpointAt: null,
+      arming: false, // one openCheckpoint round trip at a time
       scrimOpen: false,
       yielded: false,
       destroyed: false,
@@ -728,6 +735,16 @@
       if (!res) return;
       if (res.coverage != null) st.serverCoverage = flt(res.coverage);
       if (res.flags && res.flags.length) st.serverFlags = res.flags;
+      // Sent on every beat since the endpoint was written, read by nobody until
+      // now. Without it the only arming that ever happened was the one call at
+      // mount, which can only reach a checkpoint within CHECKPOINT_TOLERANCE of
+      // the resume position — so a checkpoint at 0:30 of a 90-second video was
+      // unreachable even with the envelope and the field names both correct.
+      // `undefined` means the server did not speak (no lesson/block on the beat);
+      // an explicit null means there is no next checkpoint. Only the latter clears.
+      if ("next_checkpoint_at" in res) {
+        st.nextCheckpointAt = res.next_checkpoint_at == null ? null : flt(res.next_checkpoint_at);
+      }
       renderMeter();
       emit("coverage", {
         coverage: st.serverCoverage,
@@ -889,7 +906,14 @@
           block_key: spec.block_key,
         })
       )
-        .then(function (cp) {
+        .then(function (res) {
+          // `open_checkpoint` replies {enabled, checkpoint}, the same envelope
+          // `get_lesson` and `get_quiz` use. This read the checkpoint_key off the
+          // envelope, found undefined, and armed nothing — every time, for every
+          // learner, since the endpoint was written. `st.armed` was null on every
+          // tick, `maybeFireCheckpoint` returned on its first line, and a
+          // completion gate stood on an event that could not happen.
+          var cp = res && res.checkpoint ? res.checkpoint : null;
           st.armed = cp && cp.checkpoint_key ? cp : null;
           return st.armed;
         })
@@ -903,12 +927,37 @@
     }
 
     function maybeFireCheckpoint(from, to) {
-      if (!st.armed || st.scrimOpen) return;
-      var at = flt(st.armed.at_seconds);
-      // Only ever fired from inside a CREDITED span, so "reached by a seek" is
-      // structurally impossible here rather than separately guarded.
-      if (at < from - CHECKPOINT_TOLERANCE || at > to) return;
-      openCheckpoint(st.armed);
+      if (st.scrimOpen) return;
+
+      if (st.armed) {
+        var at = flt(st.armed.at_seconds);
+        // Only ever fired from inside a CREDITED span, so "reached by a seek" is
+        // structurally impossible here rather than separately guarded.
+        if (at < from - CHECKPOINT_TOLERANCE || at > to) return;
+        openCheckpoint(st.armed);
+        return;
+      }
+
+      // Nothing armed, and the last beat said the next one is due at
+      // `nextCheckpointAt` — which this credited span has just reached.
+      //
+      // Arming cannot happen any earlier than this. `open_checkpoint` returns
+      // only a checkpoint at or before the playhead, deliberately: a reply that
+      // named a future timestamp would be a map of where to skip to. So the
+      // player has to ask on arrival, and this is arrival. A stale value left
+      // over from an answered checkpoint sits behind `from` and quietly fails
+      // the range test rather than re-firing.
+      if (!spec.checkpoints_enabled || st.arming || st.nextCheckpointAt == null) return;
+      if (st.nextCheckpointAt < from - CHECKPOINT_TOLERANCE || st.nextCheckpointAt > to) return;
+
+      st.arming = true;
+      armNext().then(function (cp) {
+        st.arming = false;
+        // The playhead moved during the round trip, so `currentTime` is the
+        // honest comparison now — not the span that triggered the fetch.
+        if (!cp || st.scrimOpen) return;
+        if (flt(cp.at_seconds) <= flt(video.currentTime) + CHECKPOINT_TOLERANCE) openCheckpoint(cp);
+      });
     }
 
     function openCheckpoint(cp) {
@@ -1045,15 +1094,21 @@
           // a question they cannot pass abandons the course, and it arrives back
           // as a support ticket rather than as a completion.
           var exhausted = !!res.exhausted || (maxAttempts > 0 && attemptsUsed >= maxAttempts);
-          var rewound = false;
 
-          if (!res.correct && !exhausted) {
-            var back = cint(cp.rewind_seconds_on_wrong);
-            if (back > 0) {
-              video.currentTime = Math.max(0, flt(cp.at_seconds) - back);
-              rebaseline();
-              rewound = true;
-            }
+          // The server decides whether playback rewinds and to where.
+          //
+          // This used to recompute it: `cp.at_seconds - cp.rewind_seconds_on_wrong`,
+          // against a `rewind_seconds_on_wrong` the payload never carried under
+          // that name — so `back` was 0 and no wrong answer has ever rewound.
+          // Fixing the name alone would have left two implementations of one
+          // decision, and they did not agree: `grading._checkpoint_result` rewinds
+          // only when there is still an attempt left, this rewound on any wrong
+          // answer. `resume_at` and `rewind_applied` are the answer; there is no
+          // longer a second opinion to drift from (TASK-2026-01183).
+          var rewound = !!res.rewind_applied;
+          if (rewound && res.resume_at != null) {
+            video.currentTime = Math.max(0, flt(res.resume_at));
+            rebaseline();
           }
 
           emit("checkpoint-answered", { checkpoint: cp, correct: !!res.correct, exhausted: exhausted });
