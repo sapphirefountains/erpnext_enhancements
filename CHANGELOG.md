@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.257.1] - 2026-08-07
+
+### Fixed
+
+- **A deliberately dormant training module told every visitor "Nothing is assigned
+  to you right now."** `Training Settings.training_enabled` is the staged-rollout
+  switch, and the server has always answered a dormant site with
+  `{enabled: false, message}` from `_unavailable()`. The player read neither key,
+  fell through to the catalogue, and rendered the empty-catalogue sentence —
+  which is a statement about that *person*, is wrong, and is the one thing
+  guaranteed to stop them asking why the page looks empty. Closes TASK-2026-01181.
+
+  The dormant view renders the **server's** message rather than a second copy
+  written here: the server is the only side that knows whether the module is not
+  open yet or off for maintenance, and a duplicate sentence in the client is a
+  second thing to keep true. The check is an explicit `=== false`, so a payload
+  that omits the key cannot black out a working site — absent means "the server
+  did not say", which is not "off".
+
+  Checked before any deep link, deliberately. `get_course` throws once the runtime
+  gate refuses, so a bookmarked course URL opened on a dormant site would have
+  shown an error page where the server had a sentence ready for the learner.
+
+### Changed
+
+- `tests/test_training_boot_wire.py`'s boot-key scan now unions in `_unavailable()`
+  — the *other* shape that one call can return. It previously read only the
+  happy-path dict literal, so `b.message` looked like a key the server never
+  sends. The boundary contract test (TASK-2026-01184) has to generalise this: a
+  function's returned keys are the keys of everything it can return, including
+  from the helpers it delegates to.
+
 ## [1.257.0] - 2026-08-07
 
 MINOR rather than the PATCH the tasks called for: two new Training Settings fields

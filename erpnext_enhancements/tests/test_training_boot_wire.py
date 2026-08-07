@@ -132,14 +132,20 @@ class TestTheScanWorks(unittest.TestCase):
 
 class TestBootKeysExist(unittest.TestCase):
     def test_every_boot_key_the_player_reads_is_sent(self):
-        sent = _returned_keys("get_learner_bootstrap") | CLIENT_OPTIONS
+        # `_unavailable()` counts. It is the *other* shape this one call can
+        # return — a dormant site gets `{enabled, message}` and nothing else — so
+        # scanning only the happy-path dict literal would call `b.message` an
+        # unknown key when it is the whole point of the dormant reply. The
+        # boundary contract test (TASK-2026-01184) has to generalise this: a
+        # function's returned keys include the keys of everything it returns.
+        sent = _returned_keys("get_learner_bootstrap") | _returned_keys("_unavailable") | CLIENT_OPTIONS
         read = set(re.findall(r"\bb\.([a-z_]+)", _player_code()))
         unknown = sorted(read - sent)
         self.assertEqual(
             unknown,
             [],
             f"player.js reads {unknown} off the bootstrap; the server sends "
-            f"{sorted(_returned_keys('get_learner_bootstrap'))}",
+            f"{sorted(sent - CLIENT_OPTIONS)}",
         )
 
     def test_the_assigned_list_is_read(self):
@@ -1149,3 +1155,46 @@ class TestTheAckRoundTrips(unittest.TestCase):
     def test_the_gate_can_still_tell_untracked_from_unacknowledged(self):
         """An absent `ack` means "not tracked" and must never hold a learner."""
         self.assertIn("stored.ack === 0", _player_code())
+
+
+# ----------------------------------------------------------------- boot.enabled
+#
+# TASK-2026-01181. `Training Settings.training_enabled` is the staged-rollout
+# switch and the server has always answered a dormant site with
+# `{enabled: false, message}`. The player read neither key, fell through to the
+# catalogue, and told every visitor "Nothing is assigned to you right now" — a
+# statement about that person, wrong, and the one sentence guaranteed to stop them
+# asking why.
+
+
+class TestThePlayerHonoursBootEnabled(unittest.TestCase):
+    def test_the_server_still_sends_both_keys(self):
+        keys = _returned_keys("_unavailable")
+        self.assertEqual(keys, {"enabled", "message"})
+
+    def test_the_player_checks_it_before_anything_else(self):
+        """Before any deep link. `get_course` throws once the runtime gate
+        refuses, so a course URL opened on a dormant site would show an error page
+        where the server had a sentence ready."""
+        body = _js_body(_player_code(), "function start()")
+        self.assertIn("b.enabled === false", body)
+        self.assertLess(body.index("b.enabled === false"), body.index("openCourse("))
+
+    def test_it_is_an_explicit_false_not_a_falsy_check(self):
+        """A boot payload that omits the key entirely must not black out a working
+        site — absent means "the server did not say", which is not "off"."""
+        self.assertIn("b.enabled === false", _player_code())
+        self.assertNotIn("if (!b.enabled)", _player_code())
+
+    def test_the_dormant_view_renders_the_servers_message(self):
+        body = _js_body(_player_code(), "function renderUnavailable()")
+        self.assertIn("b.message", body)
+
+    def test_the_dormant_view_is_routed(self):
+        body = _js_body(_player_code(), "function go(view)")
+        self.assertIn('view === "unavailable"', body)
+
+    def test_the_empty_catalogue_message_still_exists_for_the_enabled_case(self):
+        """The two states are different sentences and both are needed: nothing
+        assigned on a live site is a real thing to say."""
+        self.assertIn("Nothing is assigned to you right now.", _player_code())

@@ -440,7 +440,8 @@
 			clear(foot);
 			head.classList.remove("is-sticky");
 			route();
-			if (view === "catalog") renderCatalog();
+			if (view === "unavailable") renderUnavailable();
+			else if (view === "catalog") renderCatalog();
 			else if (view === "course") renderCourse();
 			else if (view === "lesson") renderLesson();
 			else if (view === "quiz") renderQuiz();
@@ -469,6 +470,26 @@
 		}
 
 		// --------------------------------------------------------------- catalog
+
+		// The module is switched off, and says so in the server's own words.
+		//
+		// `Training Settings.training_enabled` is the staged-rollout switch, and
+		// the server has always answered a dormant site with
+		// `{enabled: false, message}` (api/training._unavailable). The player never
+		// read either key, so it fell through to the catalogue and told every
+		// visitor "Nothing is assigned to you right now" — which is a statement
+		// about that person, is wrong, and is the one sentence guaranteed to stop
+		// them asking why. A deliberately dormant module should say it is dormant.
+		function renderUnavailable() {
+			head.appendChild(el("h1", "tr-title", t("Training")));
+			// The server's message, not one invented here: it is the only side that
+			// knows *why* — not open yet, or turned off for maintenance — and a
+			// second copy of that sentence in the client is a second thing to keep
+			// true. The fallback exists only for a payload with no message at all.
+			main.appendChild(
+				el("p", "tr-empty", b.message || t("Training is not available yet."))
+			);
+		}
 
 		function renderCatalog() {
 			head.appendChild(el("h1", "tr-title", t("Your training")));
@@ -1210,6 +1231,14 @@
 		});
 
 		function start() {
+			// Before anything else, and before any deep link. A course URL opened on
+			// a dormant site must not fetch — `get_course` throws once the runtime
+			// gate refuses, so the learner would get an error page where the server
+			// had a sentence ready for them.
+			if (b.enabled === false) {
+				go("unavailable");
+				return;
+			}
 			var startAt = b.start || {};
 			var course = startAt.course || (b.history === false ? "" : queryParam("course"));
 			var lessonKey = startAt.lesson_key || (b.history === false ? "" : queryParam("lesson"));
