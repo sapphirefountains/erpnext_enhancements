@@ -461,7 +461,16 @@
       // already reached — by design, so the reply is never a list of places to
       // skip to — which means something has to notice the playhead arriving.
       // This is that something. Null means "none left in this block".
-      nextCheckpointAt: null,
+      //
+      // Seeded from the spec because beats do not start until roughly ten
+      // seconds of credited playback, and the mount-time `armNext()` can only
+      // reach a checkpoint within CHECKPOINT_TOLERANCE of the resume position.
+      // Between those two is a hole, and every checkpoint in the opening
+      // seconds of a video fell down it: too late for the arm, too early for
+      // the first beat, and by the time one arrived the playhead was already
+      // past. `get_lesson` has always sent `next_checkpoints` for exactly this
+      // and nothing had ever read it.
+      nextCheckpointAt: spec.next_checkpoint_at == null ? null : flt(spec.next_checkpoint_at),
       arming: false, // one openCheckpoint round trip at a time
       scrimOpen: false,
       yielded: false,
@@ -1454,6 +1463,10 @@
         title: block.heading,
         checkpoints_enabled: block.checkpoints_enabled,
         min_coverage_percent: block.min_coverage,
+        // `{block_key: at_seconds}` for the next unanswered checkpoint in each
+        // block, straight off `get_lesson`. Lets a checkpoint in the opening
+        // seconds arm before the first heartbeat has had a chance to say so.
+        next_checkpoint_at: (ctx.nextCheckpoints || {})[block.block_key],
         settings: ctx.settings || {},
       },
       {
