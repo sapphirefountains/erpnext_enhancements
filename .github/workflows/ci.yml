@@ -163,6 +163,16 @@ jobs:
       # prices by them.
       - name: UOM cleanup (rename, disable, default)
         run: python -m unittest erpnext_enhancements.tests.test_uom_cleanup -v
+      # Notification recipients. Two things that are easy to get wrong and
+      # invisible when they are: `company@` is the WHOLE-COMPANY mailing list, so
+      # a routine alert there mails everyone; and the document-field recipients
+      # (New ToDo -> allocated_to, Remind Me -> user) are personal BY DESIGN, so
+      # "point everything at groups" applied literally breaks the one case where a
+      # named individual is the entire purpose. Also pins that every Notification
+      # fixture carries an explicit `enabled: 1` -- without it they import
+      # disabled and re-disable on every migrate.
+      - name: Notification recipients (group addresses, and the exceptions)
+        run: python -m unittest erpnext_enhancements.tests.test_notification_recipients -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
       # Same failure shape as the www/ controller check: Frappe computes a script

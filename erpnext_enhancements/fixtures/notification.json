@@ -1,111 +1,111 @@
 [
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "Maintenance Review Needed",
-    "channel": "Email",
-    "subject": "Review required for Maintenance Record {{ doc.name }}",
-    "document_type": "Sapphire Maintenance Record",
-    "event": "Value Change",
-    "value_changed": "workflow_state",
-    "condition": "doc.workflow_state == 'Pending Review'",
-    "send_to_all_assignees": 0,
-    "recipients": [
-      {
-        "receiver_by_role": "Projects Manager"
-      }
-    ]
-  },
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "Maintenance Finalized",
-    "channel": "Email",
-    "subject": "Maintenance Completed: {{ doc.name }}",
-    "document_type": "Sapphire Maintenance Record",
-    "event": "Value Change",
-    "value_changed": "workflow_state",
-    "condition": "doc.workflow_state == 'Final/Submitted'",
-    "send_to_all_assignees": 0,
-    "attach_print": 1,
-    "print_format": "Maintenance Record Print",
-    "message": "Maintenance Record {{ doc.name }} has been finalized.\n\nA draft Sales Invoice ({{ doc.sales_invoice }}) has been generated for your review and standard GL posting.\n\nPlease check the ERPNext Sales Invoice list for the corresponding draft.",
-    "recipients": [
-      {
-        "receiver_by_role": "Accounts Manager"
-      }
-    ]
-  },
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "Maintenance Reading Out of Range",
-    "channel": "Email",
-    "subject": "Water chemistry out of range: {{ doc.name }} ({{ doc.project }})",
-    "document_type": "Sapphire Maintenance Record",
-    "event": "Submit",
-    "condition": "doc.has_out_of_range_readings",
-    "send_to_all_assignees": 0,
-    "message": "Maintenance Record {{ doc.name }} for project {{ doc.project }} was submitted with out-of-range water chemistry readings:\n\n{% for row in doc.chemistry_readings %}{% if row.out_of_range %}- {{ row.reading }}{% if row.serial_no %} ({{ row.serial_no }}){% endif %}: {{ row.reading_value }} {{ row.uom or '' }} (target {{ row.min_value }}–{{ row.max_value }})\n{% endif %}{% endfor %}\nTechnician: {{ doc.technician }}",
-    "recipients": [
-      {
-        "receiver_by_role": "Maintenance Supervisor"
-      }
-    ]
-  },
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "High Escalation Risk Call",
-    "channel": "Email",
-    "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
-    "document_type": "Call Log",
-    "event": "Value Change",
-    "value_changed": "custom_escalation_risk",
-    "condition": "doc.custom_escalation_risk == 'High'",
-    "send_to_all_assignees": 0,
-    "message": "A call was flagged HIGH escalation risk by post-call analysis.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nSentiment: {{ doc.custom_sentiment or 'n/a' }}\nIntent: {{ doc.type_of_call or 'n/a' }}\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nFollow-up actions:\n{{ doc.custom_follow_up_actions or 'none recorded' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
-    "recipients": [
-      {
-        "receiver_by_role": "Call Center Supervisor"
-      }
-    ]
-  },
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "Compliance Flag on Call",
-    "channel": "Email",
-    "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
-    "document_type": "Call Log",
-    "event": "Value Change",
-    "value_changed": "custom_has_compliance_flags",
-    "condition": "doc.custom_has_compliance_flags",
-    "send_to_all_assignees": 0,
-    "message": "Post-call analysis raised compliance flag(s) on this call.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nFlags:\n{{ doc.custom_compliance_flags or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
-    "recipients": [
-      {
-        "receiver_by_role": "Call Center Supervisor"
-      }
-    ]
-  },
-  {
-    "doctype": "Notification",
-    "enabled": 1,
-    "name": "Maintenance Contract Renewal Due",
-    "channel": "Email",
-    "subject": "Maintenance contract renewal due: {{ doc.name }} ({{ doc.customer }})",
-    "document_type": "Sapphire Maintenance Contract",
-    "event": "Days Before",
-    "date_changed": "end_date",
-    "days_in_advance": 30,
-    "condition": "doc.status == 'Active'",
-    "send_to_all_assignees": 0,
-    "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. With auto-renewal enabled this contract will renew for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after {{ doc.end_date }} and stops generating visits.\n\nDecide now: let it renew, adjust the rate, or set the non-renewal notice.",
-    "recipients": [
-      {
-        "receiver_by_role": "Projects Manager"
-      }
-    ]
-  }
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Maintenance Review Needed",
+  "channel": "Email",
+  "subject": "Review required for Maintenance Record {{ doc.name }}",
+  "document_type": "Sapphire Maintenance Record",
+  "event": "Value Change",
+  "value_changed": "workflow_state",
+  "condition": "doc.workflow_state == 'Pending Review'",
+  "send_to_all_assignees": 0,
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Maintenance Finalized",
+  "channel": "Email",
+  "subject": "Maintenance Completed: {{ doc.name }}",
+  "document_type": "Sapphire Maintenance Record",
+  "event": "Value Change",
+  "value_changed": "workflow_state",
+  "condition": "doc.workflow_state == 'Final/Submitted'",
+  "send_to_all_assignees": 0,
+  "attach_print": 1,
+  "print_format": "Maintenance Record Print",
+  "message": "Maintenance Record {{ doc.name }} has been finalized.\n\nA draft Sales Invoice ({{ doc.sales_invoice }}) has been generated for your review and standard GL posting.\n\nPlease check the ERPNext Sales Invoice list for the corresponding draft.",
+  "recipients": [
+   {
+    "cc": "billing@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Maintenance Reading Out of Range",
+  "channel": "Email",
+  "subject": "Water chemistry out of range: {{ doc.name }} ({{ doc.project }})",
+  "document_type": "Sapphire Maintenance Record",
+  "event": "Submit",
+  "condition": "doc.has_out_of_range_readings",
+  "send_to_all_assignees": 0,
+  "message": "Maintenance Record {{ doc.name }} for project {{ doc.project }} was submitted with out-of-range water chemistry readings:\n\n{% for row in doc.chemistry_readings %}{% if row.out_of_range %}- {{ row.reading }}{% if row.serial_no %} ({{ row.serial_no }}){% endif %}: {{ row.reading_value }} {{ row.uom or '' }} (target {{ row.min_value }}–{{ row.max_value }})\n{% endif %}{% endfor %}\nTechnician: {{ doc.technician }}",
+  "recipients": [
+   {
+    "cc": "service_repair@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "High Escalation Risk Call",
+  "channel": "Email",
+  "subject": "High escalation risk call: {{ doc.custom_caller_name or doc.from }}",
+  "document_type": "Call Log",
+  "event": "Value Change",
+  "value_changed": "custom_escalation_risk",
+  "condition": "doc.custom_escalation_risk == 'High'",
+  "send_to_all_assignees": 0,
+  "message": "A call was flagged HIGH escalation risk by post-call analysis.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nSentiment: {{ doc.custom_sentiment or 'n/a' }}\nIntent: {{ doc.type_of_call or 'n/a' }}\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nFollow-up actions:\n{{ doc.custom_follow_up_actions or 'none recorded' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
+  "recipients": [
+   {
+    "cc": "service_repair@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Compliance Flag on Call",
+  "channel": "Email",
+  "subject": "Compliance flag on call: {{ doc.custom_caller_name or doc.from }}",
+  "document_type": "Call Log",
+  "event": "Value Change",
+  "value_changed": "custom_has_compliance_flags",
+  "condition": "doc.custom_has_compliance_flags",
+  "send_to_all_assignees": 0,
+  "message": "Post-call analysis raised compliance flag(s) on this call.\n\nCaller: {{ doc.custom_caller_name or 'Unknown' }} ({{ doc.from }})\nAgent: {{ doc.custom_agent_name or doc.employee_user_id or 'n/a' }}\n\nFlags:\n{{ doc.custom_compliance_flags or 'n/a' }}\n\nSummary:\n{{ doc.summary or 'n/a' }}\n\nOpen the call: {{ frappe.utils.get_url() }}/app/call-log/{{ doc.name }}",
+  "recipients": [
+   {
+    "cc": "service_repair@sapphirefountains.com"
+   }
+  ]
+ },
+ {
+  "doctype": "Notification",
+  "enabled": 1,
+  "name": "Maintenance Contract Renewal Due",
+  "channel": "Email",
+  "subject": "Maintenance contract renewal due: {{ doc.name }} ({{ doc.customer }})",
+  "document_type": "Sapphire Maintenance Contract",
+  "event": "Days Before",
+  "date_changed": "end_date",
+  "days_in_advance": 30,
+  "condition": "doc.status == 'Active'",
+  "send_to_all_assignees": 0,
+  "message": "Maintenance contract {{ doc.name }} for {{ doc.customer }} reaches the end of its term on {{ doc.end_date }}.\n\nPer the Maintenance Services Agreement (§9.2), non-renewal requires 30 days' written notice. With auto-renewal enabled this contract will renew for another one-year term unless its Non-Renewal Notice flag is set; otherwise it expires the day after {{ doc.end_date }} and stops generating visits.\n\nDecide now: let it renew, adjust the rate, or set the non-renewal notice.",
+  "recipients": [
+   {
+    "cc": "operations@sapphirefountains.com"
+   }
+  ]
+ }
 ]
