@@ -1050,3 +1050,102 @@ class TestFinishAttemptKeysAreRead(unittest.TestCase):
         handler = code[start : start + 1400]
         for key in ("status", "outstanding", "passed", "completion", "score"):
             self.assertIn(f"result.{key}", handler, f"player.js stopped reading {key}")
+
+
+# --------------------------------------------------------------- boot settings
+#
+# TASK-2026-01182. The client read `boot.settings.max_playback_rate` and
+# `boot.settings.doc_min_dwell_seconds`; the server sent neither, so both fell
+# back to hard-coded client constants and the two Training Settings fields did
+# nothing. They did not exist as fields either — the player was reading settings
+# nobody could set.
+
+SETTINGS_DOCTYPE = APP / "training/doctype/training_settings/training_settings.json"
+BLOCKS = JS_DIR / "blocks.js"
+
+
+def _blocks_code():
+    return _strip_comments(BLOCKS.read_text(encoding="utf-8"))
+
+
+def _settings_fieldnames():
+    import json
+
+    doc = json.loads(SETTINGS_DOCTYPE.read_text(encoding="utf-8"))
+    return {f["fieldname"] for f in doc["fields"]}
+
+
+def _boot_settings_keys():
+    """The keys of the `settings` dict inside get_learner_bootstrap's return."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "get_learner_bootstrap":
+            continue
+        for statement in ast.walk(node):
+            if not (isinstance(statement, ast.Return) and isinstance(statement.value, ast.Dict)):
+                continue
+            for key, value in zip(statement.value.keys, statement.value.values):
+                if isinstance(key, ast.Constant) and key.value == "settings":
+                    return {
+                        k.value
+                        for k in value.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    }
+    return set()
+
+
+class TestBootSettingsReachThePlayer(unittest.TestCase):
+    def test_the_scan_works(self):
+        self.assertIn("heartbeat_interval_seconds", _boot_settings_keys())
+
+    def test_the_fields_exist_on_the_doctype(self):
+        """They did not. The client was reading settings nobody could set."""
+        fields = _settings_fieldnames()
+        self.assertIn("max_playback_rate", fields)
+        self.assertIn("doc_min_dwell_seconds", fields)
+
+    def test_both_are_on_the_boot_payload(self):
+        keys = _boot_settings_keys()
+        self.assertIn("max_playback_rate", keys)
+        self.assertIn("doc_min_dwell_seconds", keys)
+
+    def test_every_settings_key_the_player_reads_is_sent(self):
+        """Both directions, so a new client-side read cannot go unserved either."""
+        sent = _boot_settings_keys()
+        read = set(re.findall(r"settings\.([a-z_]+)", _video_code()))
+        read |= set(re.findall(r'settingsValue\(ctx, "([a-z_]+)"', _blocks_code()))
+        unknown = sorted(read - sent)
+        self.assertEqual(unknown, [], f"the player reads {unknown}; boot.settings sends {sorted(sent)}")
+
+    def test_the_video_still_caps_the_rate_itself(self):
+        """The setting can tighten the speed menu and must never loosen it past
+        MAX_PLAYBACK_RATE — progress.clamp_new_seconds truncates claimed seconds
+        at elapsed x 1.25, so a larger rate silently costs a learner watch time
+        and earns them an integrity flag for it."""
+        self.assertIn("Math.min(flt(settings.max_playback_rate) || MAX_PLAYBACK_RATE, MAX_PLAYBACK_RATE)", _video_code())
+
+    def test_the_document_dwell_is_read_through_the_settings_helper(self):
+        self.assertIn('settingsValue(ctx, "doc_min_dwell_seconds"', _blocks_code())
+
+    def test_the_server_owns_the_dwell_target_too(self):
+        """A document has no asset row to check a duration against, so the divisor
+        cannot be the payload's — see progress.record_heartbeat."""
+        prog = (APP / "training/progress.py").read_text(encoding="utf-8")
+        self.assertIn('_setting("doc_min_dwell_seconds"', prog)
+
+
+class TestTheAckRoundTrips(unittest.TestCase):
+    """`player.js` has read `response.ack` since the document blocks were written,
+    off a reply that never carried it."""
+
+    def test_the_server_returns_it(self):
+        prog = (APP / "training/progress.py").read_text(encoding="utf-8")
+        self.assertIn('"ack": block.get("ack")', prog)
+
+    def test_the_player_merges_it(self):
+        body = _js_body(_player_code(), "function mergeHeartbeat(blockKey, response)")
+        self.assertIn("response.ack", body)
+
+    def test_the_gate_can_still_tell_untracked_from_unacknowledged(self):
+        """An absent `ack` means "not tracked" and must never hold a learner."""
+        self.assertIn("stored.ack === 0", _player_code())

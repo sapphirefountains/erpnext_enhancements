@@ -71,6 +71,7 @@ DEFAULT_MAX_INTERVALS = 200
 DEFAULT_FLUSH_SECONDS = 60
 DEFAULT_HEARTBEAT_SECONDS = 15
 DEFAULT_IDLE_TIMEOUT_MINUTES = 120
+DEFAULT_DOC_MIN_DWELL = 20
 
 # Tolerance on the server-clock clamp. Above 1.0 because a beat can arrive late
 # (a throttled background tab batches its timers) and the seconds it reports were
@@ -346,12 +347,25 @@ def record_heartbeat(attempt_name, payload):
 	lesson_key = str(payload.get("lesson_key") or "").strip()
 	block_key = str(payload.get("block_key") or "").strip()
 	if not attempt_name or not lesson_key or not block_key:
-		return {"coverage": 0.0, "credited": 0, "flags": ["ignored"]}
+		return {"coverage": 0.0, "credited": 0, "flags": ["ignored"], "ack": None}
 
 	data = load(attempt_name)
 	lesson = data["lessons"].setdefault(lesson_key, _empty_lesson())
 	lesson.setdefault("blocks", {})
 	block = lesson["blocks"].setdefault(block_key, _empty_block())
+
+	# A document block is dwell time against a target this side owns.
+	#
+	# `_resolve_duration` trusts the payload's `duration` for want of anything
+	# better, which is safe for video — the Training Video Asset row carries a
+	# server-verified duration, and the ratchet below refuses a shrinking one —
+	# and is not safe here, because a document has no asset to check against. A
+	# payload claiming `duration: 1` would reach full coverage after one second.
+	# So the divisor is the setting, read here, and the client's is discarded.
+	kind = str(payload.get("kind") or "").strip().lower()
+	if kind == "doc":
+		payload = dict(payload)
+		payload["duration"] = _setting("doc_min_dwell_seconds", DEFAULT_DOC_MIN_DWELL)
 
 	flags = []
 	duration = _resolve_duration(block, payload, flags)
@@ -405,6 +419,25 @@ def record_heartbeat(attempt_name, payload):
 	block["seeks"] = cint(block.get("seeks")) + max(0, cint(payload.get("seeks")))
 	block["hidden"] = cint(block.get("hidden")) + max(0, cint(payload.get("hidden")))
 
+	# "I have read it", recorded at last.
+	#
+	# `blocks.js` has sent this since the document blocks were written and nothing
+	# here had ever read it, so the explicit acknowledgement — the module README's
+	# documented substitute for per-page tracking, and the thing an auditor would
+	# actually be shown — was recorded nowhere. `player.js` then read `response.ack`
+	# back off a reply that never carried it.
+	#
+	# Set-only, never cleared, matching the one-way checkbox on the client. A beat
+	# replayed out of the offline queue arrives with whatever was true when it was
+	# built, and the last one to land must not be able to un-tick a statement of
+	# fact. The 0 is written on the first document beat so the gate can tell
+	# "opened, not yet acknowledged" from "not a tracked block at all" — player.js
+	# treats an absent `ack` as not-tracked and will not hold a learner on it.
+	if kind == "doc" and "ack" not in block:
+		block["ack"] = 0
+	if cint(payload.get("ack")):
+		block["ack"] = 1
+
 	if lesson.get("status") != "done":
 		lesson["status"] = "in_progress"
 
@@ -413,7 +446,15 @@ def record_heartbeat(attempt_name, payload):
 	_touch_beat(attempt_name, spent_seconds=gained / MAX_CLAIM_RATE)
 	save(attempt_name, data)
 
-	return {"coverage": round(block["cov"] * 100.0, 2), "credited": int(gained), "flags": flags}
+	# `ack` is None for a video block, which is exactly what player.js's
+	# `if (response.ack != null)` wants — it merges an acknowledgement when there
+	# is one and leaves the block alone when the concept does not apply.
+	return {
+		"coverage": round(block["cov"] * 100.0, 2),
+		"credited": int(gained),
+		"flags": flags,
+		"ack": block.get("ack"),
+	}
 
 
 def flush_stale_attempts():
