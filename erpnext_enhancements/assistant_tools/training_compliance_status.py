@@ -78,6 +78,12 @@ class TrainingComplianceStatus(BaseTool):
                     "description": "Also return completed assignments (off by default: the "
                     "useful answer is normally the exceptions)",
                 },
+                "expiring_within_days": {
+                    "type": "integer",
+                    "description": "Also return certifications lapsing within this many days "
+                    "(already-lapsed ones included). Recertification is the same compliance "
+                    "question one step ahead, so it lives here rather than in a tool of its own",
+                },
                 "limit": {
                     "type": "integer",
                     "default": 200,
@@ -148,7 +154,7 @@ class TrainingComplianceStatus(BaseTool):
                 elif row["days_until_due"] <= due_days:
                     due_soon.append(row)
 
-        return {
+        result = {
             "as_of": today,
             "overdue": overdue,
             "due_soon": due_soon,
@@ -158,6 +164,65 @@ class TrainingComplianceStatus(BaseTool):
                 "Completion here means the course was passed. It does not imply anyone "
                 "watched attentively — see the tool description."
             ),
+        }
+
+        expiring_days = arguments.get("expiring_within_days")
+        if expiring_days:
+            result["expiring"] = self._expiring(expiring_days, filters, today)
+        return result
+
+    def _expiring(self, within_days, filters, today):
+        """Certifications that lapse soon — recertification, not assignment.
+
+        Here rather than in a tool of its own. "Who is about to fall out of
+        compliance" is the same question this tool already answers, one step into
+        the future: an expiring certification becomes an overdue assignment the
+        moment the recert job runs. Splitting it across two tools would mean
+        asking twice to learn one thing, and the model would have no reason to
+        make the second call.
+        """
+        if not frappe.db.exists("DocType", "Training Certificate"):
+            return {"available": False, "reason": "Certificates are not enabled on this site."}
+        try:
+            within_days = int(within_days)
+        except (TypeError, ValueError):
+            return {"available": False, "reason": "expiring_within_days must be a number."}
+
+        cert_filters = {"expires_on": ["is", "set"]}
+        if filters.get("course"):
+            cert_filters["course"] = filters["course"]
+        if filters.get("employee"):
+            cert_filters["employee"] = filters["employee"]
+
+        rows = frappe.get_all(
+            "Training Certificate",
+            filters=cert_filters,
+            # Deliberately not `verification_code` (it is what proves a certificate
+            # genuine to a third party) or `certificate_html` (the rendered
+            # artefact, long and of no use to a reader asking who lapses when).
+            fields=[
+                "name", "course", "course_title", "holder_name", "user", "employee",
+                "status", "issued_on", "expires_on",
+            ],
+            order_by="expires_on asc",
+            limit_page_length=self.default_config["max_rows"],
+        )
+        soon = []
+        for row in rows:
+            days = date_diff(row["expires_on"], today)
+            # Already-lapsed ones are included: they are the most urgent, and a
+            # window that silently starts at today would hide them behind a
+            # question that sounds like it covers them.
+            if days <= within_days:
+                row["days_until_expiry"] = days
+                row["lapsed"] = days < 0
+                soon.append(row)
+        return {
+            "available": True,
+            "within_days": within_days,
+            "certificates": soon,
+            "count": len(soon),
+            "lapsed_count": sum(1 for r in soon if r["lapsed"]),
         }
 
     # ------------------------------------------------------------------ helpers

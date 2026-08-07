@@ -138,6 +138,15 @@ jobs:
           erpnext_enhancements.tests.test_device_management
           erpnext_enhancements.tests.test_mdm_integration
           erpnext_enhancements.tests.test_drive_match -v
+      # The A1 read tools each wrap a function that returns more than a reader
+      # should see: a live billable Google Maps browser key, the e-signature
+      # evidence (token hashes, the agreement text as signed, signature image,
+      # signer IP, consent wording), a certificate's verification code, and
+      # per-learner answers behind an "aggregate" item analysis. Static, and
+      # checked against the live doctypes, so a field renamed later cannot drop
+      # out of the list it is supposed to be in.
+      - name: Assistant tool redaction (what the read tools must never return)
+        run: python -m unittest erpnext_enhancements.tests.test_assistant_tools_redaction -v
       # KPI Snapshot's DocPerms had to widen past System Manager for the KPI
       # assistant tool to be visible to the managers who own the numbers, and a
       # DocPerm is doctype-wide -- so the widening only stays safe while the row

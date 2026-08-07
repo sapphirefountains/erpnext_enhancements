@@ -118,12 +118,16 @@ Listed in `hooks.py` order. Every tool here must also appear in exactly one
 |---|---|---|
 | `training_compliance_status` | Training | perm-enforced Training Assignment queries — overdue first, then due-soon, then a per-course summary; never reports watch coverage alone |
 | `training_learner_record` | Training | one person's completions, current vs expired vs superseded certifications, assignments and scores; refuses ambiguous names |
+| `training_course_catalog` | Training | the course-shaped third: catalogue + gates + version history + aggregate assignment/attempt counts. `item_analysis` is aggregate only and **withholds questions below 5 recorded answers** — a success rate over three people identifies them |
 | `maintenance_day_board` | Maintenance | `api/maintenance_board.py::get_day_board_data` |
 | `maintenance_contract_status` | Maintenance | fresh perm-enforced queries on Sapphire Maintenance Contract |
 | `maintenance_visit_history` | Maintenance | perm-enforced queries + `_chemistry_trends` |
 | `maintenance_site_briefing` | Maintenance | `sapphire_maintenance_record.py::get_dashboard_context` |
 | `project_status_overview` | Projects | Project Dashboard `get_project_data` / health / gantt / master-project feeds |
 | `project_procurement_status` | Projects | `project_enhancements::get_procurement_status` / `get_procurement_documents` |
+| `project_pickup_route` | Projects | `api/pickup_routing.py::get_pickup_route_data` — **strips `api_key`** (a live billable Google Maps *browser* key) and `use_routes_api`; keeps address-less suppliers rather than dropping them, since a shorter route that omits them is quietly wrong |
+| `contract_signing_status` | Contracts | `esign/api.py::get_signature_state`, `project_contract.py::get_contracts`, and a perm-aware backlog mirroring `esign/tasks.py::digest_awaiting_signature`. `days_out` from **`first_sent_on`**, not `sent_on` — reminders rewrite `sent_on`. Returns **none** of the signing evidence (token hashes, `agreement_html`, `document_snapshot`, `signature_image`, signer IP, `user_agent`, `consent_text`) |
+| `kpi_dashboard_status` | Analytics | `api/kpi.py::visible_departments` + `::get_kpi_dashboard`, plus `source_freshness_json` off the snapshot. Unqualified calls return **Watch/Bad only** across visible departments; `refresh_kpi_dashboard` is deliberately not exposed (it commits) |
 | `workforce_time_status` | Time Kiosk | fresh perm-enforced Job Interval queries + `time_kiosk.get_current_status` |
 | `check_ai_pending_action` | AI Governance | read-only status/result lookup of gated AI Pending Actions |
 | `create_followup_task` | Productivity | **write (gated)** — creates a ToDo follow-up, optionally linked + assigned |
