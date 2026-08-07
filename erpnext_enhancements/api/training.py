@@ -1147,10 +1147,30 @@ def submit_quiz(attempt, lesson_key, answers):
 
     limit = cint(frappe.db.get_value("Training Course", doc.course, "max_attempts"))
     runs = cint(quiz.get("runs"))
+    attempts_left = max(limit - runs, 0) if limit else None
+
     payload = dict(result)
     payload["run"] = runs
     payload["best"] = flt(quiz.get("best"))
-    payload["attempts_left"] = max(limit - runs, 0) if limit else None
+    payload["attempts_left"] = attempts_left
+    # `attempts_used` and `max_attempts` let the player say "Attempt 2 of 3",
+    # which `attempts_left` alone cannot phrase — and cannot phrase at all on an
+    # unlimited course, where it is None.
+    payload["attempts_used"] = runs
+    payload["max_attempts"] = limit or None
+    # Said out loud rather than inferred.
+    #
+    # `quiz.js` has always asked for explicit permission and treated silence as
+    # no, which is the right instinct — offering a retry the server will refuse
+    # spends a learner's goodwill on a dead button. But nothing ever said yes,
+    # so a learner who failed with two attempts in hand was shown no way to use
+    # them. The rule is one line and it belongs here, where `max_attempts` and
+    # the run count already are, not reconstructed on the client from parts.
+    #
+    # Passing does not offer a retry. `best` keeps the highest score, so a resit
+    # cannot cost anything, but "Try again" under a pass reads as though the
+    # pass did not count.
+    payload["can_retry"] = not result.get("passed") and (attempts_left is None or attempts_left > 0)
     return payload
 
 

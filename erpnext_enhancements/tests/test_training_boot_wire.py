@@ -824,3 +824,82 @@ class TestCheckpointsCanRearm(unittest.TestCase):
     def test_the_builder_preview_reports_it(self):
         """Otherwise the author previews a video in which no pin ever fires."""
         self.assertIn("next_checkpoint_at: next_at", _builder_code())
+
+
+# ------------------------------------------------------------------------ quiz
+#
+# TASK-2026-01175. Four names disagreed across `submit_quiz`, so a learner who
+# failed with attempts in hand was shown no way to use them, and the per-question
+# score breakdown rendered blank.
+#
+# The task guessed the server should be renamed. It should not: both server names
+# have other readers — `attempts_left` is read by `player.js` on the lesson result
+# panel, `awarded` by grading on its way to the Training Attempt Question row's
+# `points_awarded`. The client names had no readers at all. So the client moved,
+# except for `can_retry`, which nothing sent and which is now derived once on the
+# server rather than reconstructed from parts on the client.
+
+QUIZ = JS_DIR / "quiz.js"
+
+
+def _quiz_code():
+    return _strip_comments(QUIZ.read_text(encoding="utf-8"))
+
+
+class TestQuizReplyKeys(unittest.TestCase):
+    def test_the_scan_works(self):
+        self.assertGreater(len(_quiz_code()), 5000)
+        self.assertIn("attempts_left", _returned_keys("get_quiz"))
+
+    def test_retry_reads_the_name_the_server_sends(self):
+        body = _js_body(_quiz_code(), "function canRetry(result)")
+        self.assertIn("result.attempts_left", body)
+        self.assertNotIn("attempts_remaining", body)
+
+    def test_the_attempts_line_reads_it_too(self):
+        body = _js_body(_quiz_code(), "function attemptsText(result)")
+        self.assertIn("result.attempts_left", body)
+        self.assertNotIn("attempts_remaining", body)
+
+    def test_attempts_remaining_is_gone_entirely(self):
+        """It was never a key, only a belief about one."""
+        self.assertNotIn("attempts_remaining", _quiz_code())
+        self.assertNotIn("attempts_remaining", _player_code())
+
+    def test_the_per_question_score_reads_awarded(self):
+        body = _js_body(_quiz_code(), "function renderReview(entry, i, byId, numberOf, result)")
+        self.assertIn("entry.awarded", body)
+        self.assertNotIn("entry.earned", body)
+
+    def test_the_server_still_calls_it_awarded(self):
+        grading = (APP / "training/grading.py").read_text(encoding="utf-8")
+        self.assertIn('"awarded"', grading)
+
+    def test_attempts_left_still_has_its_other_reader(self):
+        """Renaming it server-side would have moved the break to the lesson result
+        panel rather than closing it. Pinned so nobody tries."""
+        self.assertIn("result.attempts_left", _player_code())
+
+
+class TestCanRetryIsSaidOutLoud(unittest.TestCase):
+    """Silence used to mean no, and the server was always silent."""
+
+    def test_the_server_sends_it(self):
+        self.assertIn('payload["can_retry"]', RUNTIME.read_text(encoding="utf-8"))
+
+    def test_the_client_prefers_it_over_inferring(self):
+        body = _js_body(_quiz_code(), "function canRetry(result)")
+        self.assertIn("result.can_retry === true", body)
+        self.assertIn("result.can_retry === false", body)
+
+    def test_the_attempt_counters_are_sent(self):
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        for key in ("attempts_used", "max_attempts"):
+            self.assertIn(f'payload["{key}"]', runtime)
+
+    def test_the_builder_preview_says_it_too(self):
+        """Otherwise an author previewing a failed quiz sees no Try again button
+        and reasonably concludes the learner will not get one either."""
+        builder = _builder_code()
+        self.assertIn("can_retry:", builder)
+        self.assertIn("awarded:", builder)
