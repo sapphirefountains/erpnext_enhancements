@@ -97,6 +97,22 @@ def _returned_keys(function_name):
     return set()
 
 
+
+def _python_function_source(source, name):
+    """One function's source text, by AST line span.
+
+    `_js_body` brace-matches, which is meaningless against Python — pointing it at
+    a `def` returns whatever happens to sit after the first `{` in the file, and
+    an assertion against that passes or fails for no reason connected to the code.
+    """
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return "\n".join(lines[node.lineno - 1 : node.end_lineno])
+    raise AssertionError(f"no function named {name}")
+
+
 class TestTheScanWorks(unittest.TestCase):
     """Guards every assertion below from passing because a parse went stale."""
 
@@ -662,3 +678,375 @@ class TestHeartbeatIsShapedForItsEndpoint(unittest.TestCase):
         body = template[start : start + 900]
         self.assertIn("csrf_token", body)
         self.assertNotIn("sid", body)
+
+
+# ------------------------------------------------------------------ checkpoints
+#
+# The eighth, ninth and tenth wire mismatches in this module, all on one seam and
+# all in the same direction: the runtime invented short names, and both consumers
+# — video.js and the builder's preview harness — used the doctype's. Fixed in
+# TASK-2026-01174 / 01179 by moving the runtime, since a name that says its unit
+# beats a name that saves four characters.
+#
+# Read the header of this file for why these checks are static.
+
+VIDEO = JS_DIR / "video.js"
+BUILDER = APP / "training/page/training_builder/training_builder.js"
+
+
+def _strip_comments(src):
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return "\n".join(line for line in src.splitlines() if not line.strip().startswith("//"))
+
+
+def _video_code():
+    return _strip_comments(VIDEO.read_text(encoding="utf-8"))
+
+
+def _builder_code():
+    return _strip_comments(BUILDER.read_text(encoding="utf-8"))
+
+
+def _js_object_keys(code, marker):
+    """The TOP-LEVEL keys of the object literal ``marker``'s function returns.
+
+    Depth-aware on purpose. A flat regex over the body also collects
+    ``option_key`` and ``text`` out of the nested map that builds ``options``,
+    which makes the comparison against the server's payload fail for a reason
+    that has nothing to do with the two shapes agreeing.
+    """
+    body = _js_body(code, marker)
+    start = body.index("return {")
+    depth = 0
+    keys = set()
+    for line in body[start:].splitlines():
+        if depth == 1:
+            found = re.match(r"\s*([a-z_]+):", line)
+            if found:
+                keys.add(found.group(1))
+        depth += line.count("{") - line.count("}")
+        if depth <= 0 and keys:
+            break
+    return keys
+
+
+class TestCheckpointPayloadIsReadable(unittest.TestCase):
+    """Guards the assertions below from passing because a parse went stale."""
+
+    def test_the_payload_shape_is_found(self):
+        keys = _returned_keys("_checkpoint_payload")
+        self.assertIn("checkpoint_key", keys)
+        self.assertGreaterEqual(len(keys), 6)
+
+    def test_the_video_is_readable(self):
+        self.assertGreater(len(_video_code()), 5000)
+
+
+class TestCheckpointFieldNames(unittest.TestCase):
+    def test_the_player_reads_the_names_the_server_sends(self):
+        """Five of seven disagreed. `at` vs `at_seconds` was the load-bearing one:
+        `maybeFireCheckpoint` compared a NaN against the playhead, so even an
+        armed checkpoint could not fire."""
+        sent = _returned_keys("_checkpoint_payload")
+        code = _video_code()
+        for field in ("checkpoint_key", "at_seconds", "question_text", "question_type"):
+            self.assertIn(field, sent, f"_checkpoint_payload no longer sends {field}")
+            self.assertIn(field, code, f"video.js no longer reads {field}")
+
+    def test_the_short_names_are_gone(self):
+        """`at`, `question`, `type`, `rewind`, `pause`, `scored` — the abbreviations
+        nothing ever read. Named individually so a reviewer sees the whole set."""
+        sent = _returned_keys("_checkpoint_payload")
+        for gone in ("at", "question", "type", "rewind", "pause", "scored"):
+            self.assertNotIn(gone, sent, f"_checkpoint_payload is sending `{gone}` again")
+
+    def test_the_builder_preview_matches_the_runtime_key_for_key(self):
+        """`preview_checkpoint` exists so an author can test a checkpoint before
+        a learner meets one. It is worth nothing if it serves a different shape —
+        and it drifted precisely because nothing compared the two."""
+        preview = _js_object_keys(_builder_code(), "preview_checkpoint(cp) {")
+        self.assertEqual(
+            preview,
+            _returned_keys("_checkpoint_payload"),
+            "training_builder.preview_checkpoint and api.training._checkpoint_payload "
+            "have drifted apart",
+        )
+
+
+class TestCheckpointEnvelope(unittest.TestCase):
+    def test_the_player_unwraps_the_envelope(self):
+        """`open_checkpoint` replies {enabled, checkpoint}. armNext read
+        `cp.checkpoint_key` off the envelope, got undefined, and armed nothing —
+        for every learner, on every attempt, since the endpoint was written."""
+        body = _js_body(_video_code(), "function armNext()")
+        self.assertIn("res.checkpoint", body)
+
+    def test_the_runtime_still_sends_the_envelope(self):
+        keys = _returned_keys("open_checkpoint")
+        self.assertEqual(keys, {"enabled", "checkpoint"})
+
+    def test_the_builder_preview_sends_the_envelope_too(self):
+        code = _builder_code()
+        self.assertIn("enabled: true, checkpoint:", code)
+
+
+class TestRewindHasOneAuthority(unittest.TestCase):
+    """TASK-2026-01183. Two computations of where playback resumes, and they did
+    not agree: grading rewinds only when an attempt is left, the client rewound on
+    any wrong answer. The client's has been deleted."""
+
+    def test_the_client_honours_the_server_position(self):
+        body = _js_body(_video_code(), "function answerCheckpoint(cp, optionKeys, submitBtn)")
+        self.assertIn("res.rewind_applied", body)
+        self.assertIn("res.resume_at", body)
+
+    def test_the_client_no_longer_derives_it(self):
+        self.assertNotIn("rewind_seconds_on_wrong", _video_code())
+
+    def test_the_server_still_computes_it(self):
+        grading = (APP / "training/grading.py").read_text(encoding="utf-8")
+        self.assertIn('"resume_at"', grading)
+        self.assertIn('"rewind_applied"', grading)
+
+    def test_the_dead_rewind_key_is_gone(self):
+        """`answer_checkpoint` also bolted a raw `rewind` onto the reply. Unread,
+        and it disagreed with the `rewind_applied` sitting beside it."""
+        body = _js_body(RUNTIME.read_text(encoding="utf-8"), "def answer_checkpoint(")
+        self.assertNotIn('payload["rewind"]', body)
+
+
+class TestCheckpointsCanRearm(unittest.TestCase):
+    """The break neither task named. `armNext` runs once at mount and can only
+    fetch a checkpoint the playhead has already reached — so with the envelope and
+    the field names both fixed, a checkpoint at 0:30 of a 90-second video was still
+    unreachable. `next_checkpoint_at` is how the server says one is coming; it was
+    sent on every beat and read by nobody."""
+
+    def test_the_server_sends_it_on_every_beat(self):
+        # Not via _returned_keys: the endpoint bolts this onto the reply with a
+        # subscript assignment rather than putting it in the dict literal, so
+        # there is nothing for the AST walk to see.
+        self.assertIn('result["next_checkpoint_at"]', RUNTIME.read_text(encoding="utf-8"))
+
+    def test_the_player_reads_it_off_the_beat(self):
+        body = _js_body(_video_code(), "function applyBeatResult(res)")
+        self.assertIn("next_checkpoint_at", body)
+
+    def test_reaching_it_arms_the_checkpoint(self):
+        body = _js_body(_video_code(), "function maybeFireCheckpoint(from, to)")
+        self.assertIn("nextCheckpointAt", body)
+        self.assertIn("armNext()", body)
+
+    def test_the_builder_preview_reports_it(self):
+        """Otherwise the author previews a video in which no pin ever fires."""
+        self.assertIn("next_checkpoint_at: next_at", _builder_code())
+
+
+# ------------------------------------------------------------------------ quiz
+#
+# TASK-2026-01175. Four names disagreed across `submit_quiz`, so a learner who
+# failed with attempts in hand was shown no way to use them, and the per-question
+# score breakdown rendered blank.
+#
+# The task guessed the server should be renamed. It should not: both server names
+# have other readers — `attempts_left` is read by `player.js` on the lesson result
+# panel, `awarded` by grading on its way to the Training Attempt Question row's
+# `points_awarded`. The client names had no readers at all. So the client moved,
+# except for `can_retry`, which nothing sent and which is now derived once on the
+# server rather than reconstructed from parts on the client.
+
+QUIZ = JS_DIR / "quiz.js"
+
+
+def _quiz_code():
+    return _strip_comments(QUIZ.read_text(encoding="utf-8"))
+
+
+class TestQuizReplyKeys(unittest.TestCase):
+    def test_the_scan_works(self):
+        self.assertGreater(len(_quiz_code()), 5000)
+        self.assertIn("attempts_left", _returned_keys("get_quiz"))
+
+    def test_retry_reads_the_name_the_server_sends(self):
+        body = _js_body(_quiz_code(), "function canRetry(result)")
+        self.assertIn("result.attempts_left", body)
+        self.assertNotIn("attempts_remaining", body)
+
+    def test_the_attempts_line_reads_it_too(self):
+        body = _js_body(_quiz_code(), "function attemptsText(result)")
+        self.assertIn("result.attempts_left", body)
+        self.assertNotIn("attempts_remaining", body)
+
+    def test_attempts_remaining_is_gone_entirely(self):
+        """It was never a key, only a belief about one."""
+        self.assertNotIn("attempts_remaining", _quiz_code())
+        self.assertNotIn("attempts_remaining", _player_code())
+
+    def test_the_per_question_score_reads_awarded(self):
+        body = _js_body(_quiz_code(), "function renderReview(entry, i, byId, numberOf, result)")
+        self.assertIn("entry.awarded", body)
+        self.assertNotIn("entry.earned", body)
+
+    def test_the_server_still_calls_it_awarded(self):
+        grading = (APP / "training/grading.py").read_text(encoding="utf-8")
+        self.assertIn('"awarded"', grading)
+
+    def test_attempts_left_still_has_its_other_reader(self):
+        """Renaming it server-side would have moved the break to the lesson result
+        panel rather than closing it. Pinned so nobody tries."""
+        self.assertIn("result.attempts_left", _player_code())
+
+
+class TestCanRetryIsSaidOutLoud(unittest.TestCase):
+    """Silence used to mean no, and the server was always silent."""
+
+    def test_the_server_sends_it(self):
+        self.assertIn('payload["can_retry"]', RUNTIME.read_text(encoding="utf-8"))
+
+    def test_the_client_prefers_it_over_inferring(self):
+        body = _js_body(_quiz_code(), "function canRetry(result)")
+        self.assertIn("result.can_retry === true", body)
+        self.assertIn("result.can_retry === false", body)
+
+    def test_the_attempt_counters_are_sent(self):
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        for key in ("attempts_used", "max_attempts"):
+            self.assertIn(f'payload["{key}"]', runtime)
+
+    def test_the_builder_preview_says_it_too(self):
+        """Otherwise an author previewing a failed quiz sees no Try again button
+        and reasonably concludes the learner will not get one either."""
+        builder = _builder_code()
+        self.assertIn("can_retry:", builder)
+        self.assertIn("awarded:", builder)
+
+
+# ----------------------------------------------------------------- get_lesson
+#
+# TASK-2026-01177. `get_lesson` sends the progress of the ONE lesson it was asked
+# for; the player assigned it over the slot holding the whole {lessons: {...}} map.
+# So opening any lesson erased every other lesson's state — and its own, because
+# `lessonProgress()` reads `state.progress.lessons`, which the assignment left
+# undefined. A half-finished course rendered as entirely not started.
+
+
+class TestGetLessonProgressIsMerged(unittest.TestCase):
+    # The reply handler is an anonymous `.then`, so there is no declaration for
+    # `_js_body` to brace-match from. Slice forward off the call itself, the same
+    # way the heartbeat-beacon tests above do.
+    def _handler(self):
+        code = _player_code()
+        start = code.index('call("getLesson"')
+        return code[start : start + 1400]
+
+    def test_the_scan_works(self):
+        keys = _returned_keys("get_lesson")
+        self.assertIn("progress", keys)
+        self.assertIn("next_checkpoints", keys)
+        self.assertIn("payload.progress", self._handler())
+
+    def test_the_single_lesson_dict_is_not_assigned_over_the_map(self):
+        self.assertNotIn("state.progress = payload.progress", self._handler())
+
+    def test_it_is_merged_under_its_own_key(self):
+        body = self._handler()
+        self.assertIn("state.progress.lessons = state.progress.lessons ||", body)
+        self.assertIn("lessons[key] = payload.progress", body)
+
+    def test_the_server_still_sends_one_lesson_not_a_map(self):
+        """If this ever starts returning {lessons: {...}} the merge above becomes
+        a nesting bug, so the two have to be pinned together."""
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        self.assertIn("def _lesson_progress(attempt_name, lesson_key):", runtime)
+        self.assertIn('.get("lessons") or {}).get(lesson_key)', runtime)
+
+    def test_nothing_else_replaces_the_progress_object(self):
+        """The sweep the task asked for. Every other write folds into the map —
+        `mergeHeartbeat` and `recordQuizRun` both use the defaulting idiom, and
+        `adoptAttempt` replaces `lessons` with the server's own full map, which is
+        the authoritative one. A bare `state.progress = <anything else>` is the bug
+        class returning."""
+        found = re.findall(r"state\.progress\s*=\s*([^;\n]+)", _player_code())
+        unexpected = [rhs.strip() for rhs in found if rhs.strip() != "state.progress || {}"]
+        self.assertEqual(unexpected, [], f"player.js replaces state.progress with {unexpected}")
+
+
+class TestNextCheckpointsIsReadAtLast(unittest.TestCase):
+    """Sent by `get_lesson` since Phase 2 and read by nothing.
+
+    It closes a real hole rather than being tidy-up. Beats do not start until
+    roughly ten seconds of credited playback, and the mount-time `armNext()` can
+    only reach a checkpoint within tolerance of the resume position — so a
+    checkpoint in the opening seconds was too late for the arm and too early for
+    the first beat, and by the time one arrived the playhead was past it.
+    """
+
+    def test_the_player_hands_it_to_the_block_context(self):
+        body = _js_body(_player_code(), "function blockContext()")
+        self.assertIn("nextCheckpoints", body)
+
+    def test_the_player_still_stores_it(self):
+        self.assertIn("state.nextCheckpoints = payload.next_checkpoints", _player_code())
+
+    def test_the_video_mount_reads_it_off_the_context(self):
+        body = _js_body(_video_code(), "Video.mount = function (wrapper, block, ctx)")
+        self.assertIn("ctx.nextCheckpoints", body)
+        self.assertIn("next_checkpoint_at", body)
+
+    def test_the_video_seeds_its_state_from_the_spec(self):
+        self.assertIn("spec.next_checkpoint_at", _video_code())
+
+
+# -------------------------------------------------------------- finish_attempt
+#
+# TASK-2026-01180. Three exits, three hand-assembled dicts, and the differences
+# between them were invisible until you hit the right one. Re-opening a course
+# passed at full marks rendered "Passed - 0%", because the already-finished early
+# return carried no `score` and `pct(undefined)` is 0.
+
+
+class TestFinishAttemptHasOneSerializer(unittest.TestCase):
+    def _runtime(self):
+        return RUNTIME.read_text(encoding="utf-8")
+
+    def test_the_serializer_exists(self):
+        self.assertIn("def _finished_attempt_payload(", self._runtime())
+
+    def test_every_exit_goes_through_it(self):
+        """Counted rather than spot-checked: a fourth exit added later that
+        assembles its own dict is the same bug again."""
+        body = _python_function_source(self._runtime(), "finish_attempt")
+        self.assertEqual(body.count("_finished_attempt_payload("), 3)
+        self.assertNotIn('"passed":', body)
+
+    def test_the_shape_carries_score_on_every_path(self):
+        keys = _returned_keys("_finished_attempt_payload")
+        self.assertEqual(
+            keys, {"passed", "attempt", "status", "score", "outstanding", "completion"}
+        )
+
+    def test_the_reopened_path_reads_the_recorded_score(self):
+        """Off the record, not recomputed — recomputing could quietly disagree
+        with the completion certificate already issued."""
+        body = _python_function_source(self._runtime(), "finish_attempt")
+        self.assertIn("_recorded_score(doc)", body)
+
+    def test_a_missing_score_is_none_not_zero(self):
+        """Zero is a real score. Absent has to say absent, or the two are the
+        same string on screen."""
+        body = _python_function_source(self._runtime(), "_recorded_score")
+        self.assertIn("return None", body)
+        self.assertIn("if score is not None else None", body)
+
+    def test_the_player_does_not_render_an_absent_score_as_zero(self):
+        body = _js_body(_player_code(), "function renderResults()")
+        self.assertIn("result.score != null", body)
+
+
+class TestFinishAttemptKeysAreRead(unittest.TestCase):
+    def test_the_client_reads_every_key_the_payload_sends(self):
+        code = _player_code()
+        start = code.index('call("finishAttempt"')
+        handler = code[start : start + 1400]
+        for key in ("status", "outstanding", "passed", "completion", "score"):
+            self.assertIn(f"result.{key}", handler, f"player.js stopped reading {key}")

@@ -904,6 +904,32 @@ def _checkpoint_payload(checkpoint):
     guarantee being made — that ``is_correct`` and the per-option explanation stay
     on the server — is only as strong as the narrowest projection. The same
     reasoning is written out at length in ``training_author._split_lesson``.
+
+    **The keys are the Training Checkpoint field names, deliberately.** They used
+    to be abbreviated — ``at``, ``type``, ``question``, ``rewind`` — and nothing
+    read them under those names: ``video.js`` and the builder's preview harness
+    (``training_builder.preview_checkpoint``) both spelled them out in full, which
+    is to say both consumers independently agreed with the doctype and disagreed
+    with this function. An abbreviation is a translation layer, and a translation
+    layer with no reader is just a second name for the same thing waiting to be
+    read wrong. ``at`` in particular did not say its unit, in a module whose
+    entire defect history is units and names.
+
+    Three fields the old payload carried are gone rather than renamed. Each was
+    sent, read by nobody, and would have been flagged by the boundary contract
+    test (TASK-2026-01184) the moment it lands:
+
+    * ``counts_toward_score`` — scoring happens here. The player was never told
+      what to do with it and there is nothing it could correctly do.
+    * ``rewind_seconds_on_wrong`` — superseded by ``answer_checkpoint``'s
+      ``resume_at``. Sending the ingredients *and* the answer is how the two
+      drifted apart in the first place (TASK-2026-01183).
+    * ``pause_video`` — ``video.js`` pauses unconditionally when it opens the
+      scrim, and the scrim covers the element, so there is no behaviour behind
+      this flag to switch. It is not dropped because the author's setting does
+      not matter; it is dropped because it does not currently reach anything,
+      and a key on the wire is a promise that it does. Restoring it is a player
+      change (what does an un-paused checkpoint look like?), not a payload one.
     """
     row = frappe.db.get_value(
         "Training Checkpoint",
@@ -915,11 +941,8 @@ def _checkpoint_payload(checkpoint):
             "at_seconds",
             "question_type",
             "question_text",
-            "pause_video",
             "allow_skip",
             "max_attempts",
-            "rewind_seconds_on_wrong",
-            "counts_toward_score",
         ],
         as_dict=True,
     )
@@ -932,14 +955,11 @@ def _checkpoint_payload(checkpoint):
     return {
         "checkpoint_key": row.checkpoint_key,
         "block_key": row.block_key,
-        "at": cint(row.at_seconds),
-        "type": row.question_type,
-        "question": row.question_text,
-        "pause": bool(cint(row.pause_video)),
+        "at_seconds": cint(row.at_seconds),
+        "question_type": row.question_type,
+        "question_text": row.question_text,
         "allow_skip": bool(cint(row.allow_skip)),
         "max_attempts": cint(row.max_attempts),
-        "rewind": cint(row.rewind_seconds_on_wrong),
-        "scored": bool(cint(row.counts_toward_score)),
         "options": [{"option_key": o.option_key, "text": o.option_text} for o in options],
     }
 
@@ -974,7 +994,12 @@ def answer_checkpoint(attempt, checkpoint_key, option_keys, response_ms=None):
     payload = dict(result)
     payload["attempts"] = attempts
     payload["attempts_left"] = max(cint(row.max_attempts) - attempts, 0) if cint(row.max_attempts) else None
-    payload["rewind"] = cint(row.rewind_seconds_on_wrong) if not result.get("correct") else 0
+    # `rewind` used to be added here as well, as the raw seconds off the
+    # checkpoint. Nothing read it, and it disagreed with the `rewind_applied`
+    # that `grading._checkpoint_result` puts in the same dict: this one fired on
+    # any wrong answer, that one only on a wrong answer with a try left. Two
+    # numbers for one decision, one of them wrong, neither of them read — the
+    # client now takes `resume_at`/`rewind_applied` and nothing else.
     payload["response_ms"] = cint(response_ms)
     return payload
 
@@ -1122,10 +1147,30 @@ def submit_quiz(attempt, lesson_key, answers):
 
     limit = cint(frappe.db.get_value("Training Course", doc.course, "max_attempts"))
     runs = cint(quiz.get("runs"))
+    attempts_left = max(limit - runs, 0) if limit else None
+
     payload = dict(result)
     payload["run"] = runs
     payload["best"] = flt(quiz.get("best"))
-    payload["attempts_left"] = max(limit - runs, 0) if limit else None
+    payload["attempts_left"] = attempts_left
+    # `attempts_used` and `max_attempts` let the player say "Attempt 2 of 3",
+    # which `attempts_left` alone cannot phrase — and cannot phrase at all on an
+    # unlimited course, where it is None.
+    payload["attempts_used"] = runs
+    payload["max_attempts"] = limit or None
+    # Said out loud rather than inferred.
+    #
+    # `quiz.js` has always asked for explicit permission and treated silence as
+    # no, which is the right instinct — offering a retry the server will refuse
+    # spends a learner's goodwill on a dead button. But nothing ever said yes,
+    # so a learner who failed with two attempts in hand was shown no way to use
+    # them. The rule is one line and it belongs here, where `max_attempts` and
+    # the run count already are, not reconstructed on the client from parts.
+    #
+    # Passing does not offer a retry. `best` keeps the highest score, so a resit
+    # cannot cost anything, but "Try again" under a pass reads as though the
+    # pass did not count.
+    payload["can_retry"] = not result.get("passed") and (attempts_left is None or attempts_left > 0)
     return payload
 
 
@@ -1144,8 +1189,16 @@ def finish_attempt(attempt):
     _require_runtime()
     doc = _attempt(attempt)
     if doc.status != "In Progress":
-        return {"passed": doc.status != "Failed", "attempt": doc.name, "status": doc.status,
-                "outstanding": [], "completion": _completion_for(doc)}
+        # Re-opening something already finished. The score comes off the record
+        # rather than being recomputed: it is what the learner was graded on, and
+        # recomputing could quietly disagree with the completion certificate.
+        return _finished_attempt_payload(
+            doc,
+            passed=doc.status != "Failed",
+            score=_recorded_score(doc),
+            outstanding=[],
+            completion=_completion_for(doc),
+        )
 
     outstanding, scores, coverages = [], [], []
     for lesson in _version_lessons(doc.course_version):
@@ -1186,7 +1239,13 @@ def finish_attempt(attempt):
         )
 
     if outstanding:
-        return {"passed": False, "attempt": doc.name, "status": doc.status, "outstanding": outstanding}
+        return _finished_attempt_payload(
+            doc,
+            passed=False,
+            score=_recorded_score(doc),
+            outstanding=outstanding,
+            completion=None,
+        )
 
     # A course with no quiz anywhere is passed on its gates alone; recording it as
     # 0% would make every transcript of a video-only course look like a failure.
@@ -1219,12 +1278,53 @@ def finish_attempt(attempt):
     )
     _close_assignment(doc, completion)
 
+    return _finished_attempt_payload(
+        doc,
+        passed=True,
+        score=score,
+        outstanding=[],
+        completion=completion,
+    )
+
+
+def _recorded_score(doc):
+    """The score already on the attempt, or ``None`` if there is not one yet.
+
+    ``None`` rather than 0.0 on purpose. Zero is a real score a learner can get,
+    and the player renders whatever it is handed — so a missing score dressed up
+    as a zero is indistinguishable from a genuine nought out of ten. Absent says
+    absent, and the caller decides what to show.
+    """
+    if not doc.meta.has_field("score_percent"):
+        return None
+    score = getattr(doc, "score_percent", None)
+    return flt(score) if score is not None else None
+
+
+def _finished_attempt_payload(doc, passed, score, outstanding, completion):
+    """The one shape :func:`finish_attempt` returns, from all three of its exits.
+
+    It had three shapes, and the differences between them were invisible until
+    somebody hit the right one:
+
+    * the pass carried ``score``;
+    * **the already-finished early return did not** — so re-opening a course
+      passed at full marks rendered "Passed – 0%", because ``pct(undefined)`` is
+      0 and the player draws what it is given (TASK-2026-01180);
+    * the outstanding-gates return carried neither ``score`` nor ``completion``,
+      and the client reads both.
+
+    Same shape as the v1.217.0 certificate bug: present, plausible, wrong. Three
+    exits that each assembled their own dict is how one of them ends up missing a
+    key nobody notices, so there is one assembler now and the exits differ only in
+    what they pass to it.
+    """
     return {
-        "passed": True,
+        "passed": bool(passed),
         "attempt": doc.name,
         "status": doc.status,
         "score": score,
-        "outstanding": [],
+        "outstanding": outstanding or [],
         "completion": completion,
     }
 

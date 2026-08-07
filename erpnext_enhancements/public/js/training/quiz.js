@@ -639,20 +639,30 @@
 	}
 
 	function canRetry(result) {
-		// Explicit server permission only. `attempts_remaining` is honoured because
-		// it is also the server speaking, but silence means no — offering a retry
-		// the server will refuse spends a learner's goodwill on a dead button.
+		// Explicit server permission only. `attempts_left` is honoured because it
+		// is also the server speaking, but silence means no — offering a retry the
+		// server will refuse spends a learner's goodwill on a dead button.
+		//
+		// The instinct was right and the spelling was wrong: this asked for
+		// `attempts_remaining`, which no endpoint has ever sent, and `can_retry`,
+		// which nothing sent either. Both arms were undefined, so this returned
+		// false for everyone and the Try again button never rendered — including
+		// for a learner who had failed with two attempts still in hand.
+		//
+		// The server's name is `attempts_left`, and it stays: `player.js` reads it
+		// on the lesson result panel, so renaming it here would have moved the
+		// break rather than closed it.
 		if (result.can_retry === true) return true;
 		if (result.can_retry === false) return false;
-		return typeof result.attempts_remaining === "number" && result.attempts_remaining > 0;
+		return typeof result.attempts_left === "number" && result.attempts_left > 0;
 	}
 
 	function attemptsText(result) {
-		if (typeof result.attempts_remaining === "number") {
-			if (result.attempts_remaining <= 0) return t("No attempts left");
-			return result.attempts_remaining === 1
+		if (typeof result.attempts_left === "number") {
+			if (result.attempts_left <= 0) return t("No attempts left");
+			return result.attempts_left === 1
 				? t("1 attempt left")
-				: result.attempts_remaining + " " + t("attempts left");
+				: result.attempts_left + " " + t("attempts left");
 		}
 		if (typeof result.attempts_used === "number" && result.max_attempts) {
 			return t("Attempt") + " " + result.attempts_used + " " + t("of") + " " + result.max_attempts;
@@ -704,8 +714,14 @@
 				)
 			);
 		}
-		if (entry.earned != null && entry.points != null) {
-			head.appendChild(el("span", "tr-rev-pts", entry.earned + "/" + entry.points));
+		// `awarded`, not `earned`. The server has always called it `awarded`
+		// (grading._grade_question), and so does the Training Attempt Question row
+		// it is filed into as `points_awarded` — so this was the only place in the
+		// module using the other word, and the per-question score silently never
+		// rendered. Aligning the client rather than the server, because the server
+		// name has two readers and `earned` had none.
+		if (entry.awarded != null && entry.points != null) {
+			head.appendChild(el("span", "tr-rev-pts", entry.awarded + "/" + entry.points));
 		}
 		card.appendChild(head);
 

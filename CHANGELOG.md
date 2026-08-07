@@ -70,6 +70,195 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by inspection, not a population that can be queried for safely (a deal can legitimately
   have `gate_applies = 0` for the intended reason — the pre-2026-08-06 backlog).
 
+## [1.255.5] - 2026-08-07
+
+### Fixed
+
+- **"Passed – 0%" on full-marks work.** Re-opening a completed course hits
+  `finish_attempt`'s already-finished early return, which did not carry `score`.
+  `pct(undefined)` is 0 and the player draws what it is handed, so a learner who
+  had scored 100% was shown a confident nought. Closes TASK-2026-01180.
+
+  `finish_attempt` had **three** exits, each assembling its own dict, and the
+  differences between them were invisible until you hit the right one: the pass
+  carried `score`; the already-finished return did not; and the outstanding-gates
+  return carried neither `score` nor `completion`, both of which the client reads.
+  There is one `_finished_attempt_payload` assembler now, and the exits differ
+  only in what they pass to it. A test counts the call sites, so a fourth exit
+  that hand-rolls its own dict fails CI rather than shipping with a missing key.
+
+  The re-opened path takes the score **off the record** rather than recomputing
+  it — recomputing could quietly disagree with the completion certificate already
+  issued against that attempt.
+
+- **A missing score is now `None`, not `0.0`, and the player renders nothing
+  rather than "0%".** Zero is a real score a learner can get, so a missing one
+  dressed up as a zero is indistinguishable from a genuine nought out of ten.
+  This matters beyond the fix above: an attempt predating `score_percent` still
+  has no score to report, and saying nothing is the honest answer to not knowing.
+  Same shape as the v1.217.0 certificate bug — present, plausible, wrong.
+
+## [1.255.4] - 2026-08-07
+
+### Fixed
+
+- **Opening a lesson erased every other lesson's progress from the outline — and
+  its own.** `get_lesson` sends the progress of the one lesson it was asked for,
+  `{status, blocks, checkpoints, quiz}`; `player.js` assigned that over the slot
+  holding the whole `{lessons: {...}}` map adopted at attempt start. Closes
+  TASK-2026-01177.
+
+  The second-order effect was the worse one. `lessonProgress()` reads
+  `state.progress.lessons`, which the assignment left `undefined`, so it returned
+  `{}` for *every* lesson including the one just opened — and a learner who had
+  finished three lessons and reopened the first saw a course that had never been
+  started. Nothing errored; `undefined` propagated politely all the way to a
+  rendered zero.
+
+  Merged on the client rather than reshaping the endpoint, per the task's own
+  preference and because the file already speaks that shape: `mergeHeartbeat` and
+  `recordQuizRun` both fold their replies into this same map with the same
+  defaulting idiom. The sweep the task asked for found no other instance —
+  `adoptAttempt` does replace `lessons` wholesale, but with the server's own full
+  map, which is the authoritative one. A test now pins that `state.progress` is
+  never reassigned to anything else.
+
+- **`next_checkpoints` is read at last, and it closes a real hole in v1.255.2's
+  checkpoint fix.** `get_lesson` has sent `{block_key: at_seconds}` since Phase 2
+  and nothing had ever read it. That looked like dead weight until the arming path
+  was rebuilt: beats do not start until roughly ten seconds of credited playback,
+  and the mount-time `armNext()` can only reach a checkpoint within
+  `CHECKPOINT_TOLERANCE` of the resume position. A checkpoint in the opening
+  seconds of a video fell between the two — too late for the arm, too early for
+  the first beat — and by the time a beat arrived the playhead was already past
+  it, so it never fired. `next_checkpoints` seeds the video's re-arm at mount,
+  which is exactly what the endpoint's docstring always said it was for.
+
+## [1.255.3] - 2026-08-07
+
+### Fixed
+
+- **The quiz "Try again" button has never rendered, and the score breakdown has
+  always been blank.** A learner who failed with two attempts still in hand was
+  shown no way to use them. Four names disagreed across `submit_quiz`; none of the
+  four raised anything, because a missing key in JavaScript is `undefined` and
+  every branch that read one failed closed. Closes TASK-2026-01175.
+
+  `canRetry` asked for `can_retry`, which nothing sent, then fell back to
+  `attempts_remaining`, which no endpoint has ever sent either — so both arms were
+  `undefined` and it returned false for everyone. `attemptsText` read the same
+  absent key and returned an empty string. `renderReview` read `entry.earned`
+  where grading sends `awarded`, so the per-question "3/5" never drew.
+
+  **The client moved, not the server — which is the opposite of what the task
+  assumed.** The task asked us to confirm nothing else reads `attempts_left` or
+  `awarded` before renaming them, and something does, in both cases:
+  `player.js` reads `attempts_left` on the lesson result panel, and grading reads
+  `awarded` on its way to the Training Attempt Question row's `points_awarded`.
+  Renaming either would have moved the break rather than closed it. The client
+  names had no readers at all.
+
+- **`can_retry` is now derived on the server instead of inferred on the client.**
+  `quiz.js` was right to demand explicit permission and treat silence as no —
+  offering a retry the server will refuse spends a learner's goodwill on a dead
+  button — but nothing ever said yes. The rule is one line and belongs where
+  `max_attempts` and the run count already are. Passing does not offer a retry:
+  `best` keeps the highest score so a resit cannot cost anything, but "Try again"
+  under a pass reads as though the pass did not count.
+
+  `attempts_used` and `max_attempts` now ride along too, so the player can say
+  "Attempt 2 of 3" — which `attempts_left` alone cannot phrase, and cannot phrase
+  at all on an unlimited course, where it is `None`.
+
+- **The builder's quiz preview omitted the point fields entirely**, so an author
+  checking their per-question weightings saw the same blank breakdown a learner
+  did, and a previewed failure offered no Try again. It now mirrors the runtime:
+  `points`/`awarded` per question, plus `can_retry` and the attempt counters.
+
+### Added
+
+- Quiz-seam coverage in `tests/test_training_boot_wire.py`, including a test that
+  `attempts_left` still has its second reader in `player.js` — pinned so that a
+  future tidy-up does not rename it and reopen this from the other end.
+
+## [1.255.2] - 2026-08-07
+
+### Fixed
+
+- **In-video checkpoints have never fired, on any attempt, since the endpoint was
+  written — and there were three independent reasons, not one.** The anti-cheat
+  machinery was inert in production: every attempt stored `checkpoints == {}`, and
+  `require_checkpoints_answered` — a completion gate — stood on an event that could
+  not happen. Closes TASK-2026-01174, TASK-2026-01179 and TASK-2026-01183.
+
+  1. **The envelope.** `open_checkpoint` replies `{enabled, checkpoint}`, the same
+     shape `get_lesson` and `get_quiz` use. `video.js` read `checkpoint_key` off
+     the envelope itself, found `undefined`, and armed nothing. `st.armed` was null
+     on every tick and `maybeFireCheckpoint` returned on its first line.
+
+  2. **The field names.** Five of seven disagreed. The runtime sent `at`, `type`,
+     `question`, `rewind`, `pause`; both consumers — `video.js` and the builder's
+     preview harness — spelled out the Training Checkpoint field names. So the two
+     halves independently agreed with the doctype and disagreed with the one
+     function between them. The runtime moved, because a name that states its unit
+     (`at_seconds`) beats one that saves four characters, in a module whose whole
+     defect history is units and names.
+
+  3. **Nothing re-armed.** This is the one no task had spotted, and fixing only
+     (1) and (2) would have left checkpoints just as dead. `armNext()` runs once at
+     mount, and `open_checkpoint` deliberately returns only a checkpoint the
+     playhead has *already reached* — a reply naming a future timestamp would be a
+     map of where to skip to. So something has to notice the playhead arriving, and
+     that something is `next_checkpoint_at`, which the server has put on every
+     heartbeat since the endpoint was written and which nothing read. A checkpoint
+     at 0:30 of a 90-second video was unreachable. `applyBeatResult` now keeps it
+     and `maybeFireCheckpoint` arms on arrival.
+
+  Three keys left the payload rather than being renamed, each sent and read by
+  nobody: `counts_toward_score` (scoring is server-side; there was nothing the
+  player could correctly do with it), `rewind_seconds_on_wrong` (superseded, see
+  below), and `pause_video` (the player pauses unconditionally when it opens the
+  scrim, so there is no behaviour behind the flag to switch — restoring it is a
+  player change, not a payload one).
+
+- **Two sources of truth for where playback resumes after a wrong answer.**
+  `answer_checkpoint` returns an authoritative `resume_at` and `rewind_applied`;
+  `video.js` ignored both and recomputed the position from a
+  `rewind_seconds_on_wrong` the payload never carried under that name — so the
+  subtraction was against `undefined`, and **no wrong answer has ever rewound**.
+  Renaming the key alone would have left two implementations of one decision that
+  did not agree: `grading._checkpoint_result` rewinds only when an attempt is still
+  left, the client rewound on any wrong answer. The client derivation is deleted.
+  `answer_checkpoint` also bolted a raw `rewind` onto its reply — unread, and
+  contradicting the `rewind_applied` beside it; that is gone too.
+
+- **The builder's preview harness followed the player into the bug, on purpose,
+  and has been brought back with it.** `training_builder.js` served checkpoints
+  flat with a note explaining that it mirrored the player's misreading rather than
+  the real endpoint — the right call while the player was wrong, and the wrong one
+  now. It also carried `at` *and* `at_seconds`, a hedge against not knowing which
+  the runtime meant, which is its own small evidence that the two names were a
+  problem. It now matches `_checkpoint_payload` key for key, reports
+  `next_checkpoint_at`, and returns `resume_at`/`rewind_applied` so an author
+  testing a pin sees what a learner will.
+
+### Added
+
+- Checkpoint-seam coverage in `tests/test_training_boot_wire.py` (the module that
+  already asks "does the player read the keys the server actually sends?"): the
+  payload's field names, the envelope in both directions, the single rewind
+  authority, the re-arm path, and a key-for-key comparison between
+  `_checkpoint_payload` and `training_builder.preview_checkpoint` — the drift that
+  caused this, now pinned.
+- `tests/test_training_grading.py` pins what `require_checkpoints_answered` does
+  with an empty checkpoints map. Silently waived and permanently blocked are both
+  defensible readings and very different bugs, and nothing said which this was. It
+  is neither, because "empty" is two situations: no checkpoints *authored* opens
+  the gate (fail-open, so turning the flag on at course level cannot strand every
+  lesson without pins), while checkpoints authored and none answered closes it —
+  which is why shipping the arming fix also releases learners who were stuck behind
+  a question they were never asked.
+
 ## [1.255.1] - 2026-08-07
 
 ### Fixed
