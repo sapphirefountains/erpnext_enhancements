@@ -441,3 +441,14 @@ erpnext_enhancements.patches.backfill_handoff_due_by
 # _resolve_responsible stops finding a recipient so the finance steps quietly
 # stop notifying. Scoped to the exact old value; idempotent.
 erpnext_enhancements.patches.rename_handoff_ar_role
+# TASK-2026-01237. "Purchase Order - Sapphire" is the only PO format we print.
+# This deletes the two ABANDONED CUSTOM ones only -- `Test Purchase Order Format`
+# (the builder experiment that CHROME_EXCLUDED_FORMATS existed for) and
+# `PO Test Print Format`. The other three ship with ERPNext, and deleting a
+# standard format is pointless: it re-syncs from erpnext's JSON on the next
+# migrate, so the purge would appear to work and quietly undo itself. Those are
+# disabled on every migrate instead, by
+# enhancements_core.setup_print_formats.disable_superseded_print_formats.
+# Refuses to delete a format anything still references, and says so in the Error
+# Log rather than leaving a dangling Link. Idempotent.
+erpnext_enhancements.patches.purge_purchase_order_print_formats

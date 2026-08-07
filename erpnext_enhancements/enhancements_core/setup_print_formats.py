@@ -219,14 +219,68 @@ def ensure_enhancements_core_print_formats():
 		frappe.log_error(frappe.get_traceback(), "Enhancements Core print formats")
 
 
-# Formats deliberately left on wkhtmltopdf. `Test Purchase Order Format` is an abandoned
-# builder experiment (last touched 2025-10-23) that trips a real bug in frappe's chrome
-# path: `pdf_generator/pdf_merge.py` merges one header page onto each body page and indexes
-# `header.pages[i]` without checking length, so a body longer than the header render raises
-# `IndexError: Sequence index out of range`. It reproduces on nothing else here -- every real
-# document, up to a 128-line Sales Invoice, renders fine -- but the guard stays until either
-# the format is deleted or upstream bounds that index.
-CHROME_EXCLUDED_FORMATS = {"Test Purchase Order Format"}
+# Formats deliberately left on wkhtmltopdf. Empty since v1.259.1, and deliberately
+# kept rather than deleted.
+#
+# Its only member was `Test Purchase Order Format`, an abandoned builder experiment
+# that tripped a real bug in frappe's chrome path: `pdf_generator/pdf_merge.py`
+# merges one header page onto each body page and indexes `header.pages[i]` without
+# checking length, so a body longer than the header render raises `IndexError:
+# Sequence index out of range`. It reproduced on nothing else here -- every real
+# document, up to a 128-line Sales Invoice, rendered fine. The note above this line
+# used to end "the guard stays until either the format is deleted or upstream bounds
+# that index", and TASK-2026-01237 deleted the format
+# (`patches/purge_purchase_order_print_formats.py`).
+#
+# The upstream bug is still there. Anyone who builds a format with a header shorter
+# than its body will meet it again, and this is where the name goes.
+CHROME_EXCLUDED_FORMATS: set[str] = set()
+
+# Purchase Order formats superseded by `Purchase Order - Sapphire`, disabled on every
+# migrate rather than deleted once.
+#
+# These three ship with ERPNext (`standard = "Yes"`), and standard formats **re-sync
+# from app JSON on migrate** -- the same reason `ensure_chrome_pdf_generator` below
+# exists as code rather than as the one-off data fix somebody tried first. A patch
+# that deleted or disabled them would come undone at the next `bench migrate`, and
+# would look like it had worked until somebody printed a PO weeks later.
+#
+# The two *custom* PO formats are a different matter and are genuinely deleted, once,
+# by the patch: nothing recreates them.
+SUPERSEDED_PURCHASE_ORDER_FORMATS = (
+	"Purchase Order Standard",
+	"Purchase Order with Item Image",
+	"Drop Shipping Format",
+)
+
+
+def disable_superseded_print_formats():
+	"""Keep the superseded standard PO formats out of the print dropdown.
+
+	Disabled, not deleted: they belong to ERPNext, and deleting a standard format
+	means it returns on the next migrate. `disabled = 1` is a field on the record,
+	so re-applying it after each sync is what actually holds.
+
+	Uses `frappe.db.set_value` for the same reason as the chrome pass --
+	`Print Format.validate` throws "Standard Print Format cannot be updated", so the
+	ORM cannot touch these at all.
+	"""
+	try:
+		if not frappe.db.has_column("Print Format", "disabled"):
+			return
+		disabled = 0
+		for name in SUPERSEDED_PURCHASE_ORDER_FORMATS:
+			if not frappe.db.exists("Print Format", name):
+				continue
+			if frappe.db.get_value("Print Format", name, "disabled"):
+				continue
+			frappe.db.set_value("Print Format", name, "disabled", 1, update_modified=False)
+			disabled += 1
+		if disabled:
+			frappe.db.commit()
+			frappe.logger().info(f"Purchase Order print formats: disabled {disabled} superseded")
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Superseded print format cleanup")
 
 
 def ensure_chrome_pdf_generator():

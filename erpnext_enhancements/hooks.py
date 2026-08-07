@@ -849,6 +849,18 @@ after_migrate = [
 	# formats outright. LAST in this list on purpose -- it should see any format the hooks
 	# above have just created. See setup_print_formats.ensure_chrome_pdf_generator.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.ensure_chrome_pdf_generator",
+	# Keep the three superseded ERPNext Purchase Order formats out of the print
+	# dropdown -- "Purchase Order - Sapphire" is the only one we print. On EVERY
+	# migrate for exactly the reason above: they are standard formats and re-sync
+	# from erpnext's JSON, so a one-shot patch would come undone at the next
+	# migrate and look like it had worked until somebody printed a PO. The two
+	# CUSTOM PO formats are genuinely deleted, once, by
+	# patches/purge_purchase_order_print_formats.py -- nothing recreates those.
+	# After the chrome pass on purpose: disabling a format it has already pointed
+	# at chrome costs nothing, and the reverse order would leave a disabled format
+	# skipped by the chrome filter and then re-enabled by a future migrate with a
+	# stale generator.
+	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
