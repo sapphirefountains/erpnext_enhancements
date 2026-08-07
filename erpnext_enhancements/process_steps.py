@@ -752,8 +752,11 @@ def send_weekly_sla_digest():
 		return
 
 	try:
-		from erpnext_enhancements.project_enhancements.report.handoff_sla_compliance import (
-			handoff_sla_compliance as report,
+		# Package name is scrub("Hand-Off SLA Compliance") — Frappe derives a script
+		# report's module path from the report name, so the hyphen becomes its own
+		# underscore. Do not "tidy" this to handoff_*; the report stops loading.
+		from erpnext_enhancements.project_enhancements.report.hand_off_sla_compliance import (
+			hand_off_sla_compliance as report,
 		)
 
 		filters = frappe._dict({"from_date": report.DEFAULT_FROM_DATE})

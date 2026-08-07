@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.1] - 2026-08-07
+
+### Fixed
+
+- **"Hand-Off SLA Compliance" and "Hand-Off Process Coverage" 500'd on open —
+  `ModuleNotFoundError`.** Both reports installed fine, listed fine, and failed the moment
+  anyone clicked them:
+
+  ```
+  No module named
+  'erpnext_enhancements.project_enhancements.report.hand_off_sla_compliance'
+  ```
+
+  Frappe never reads the directory to find a script report. It *computes* the import path
+  from the record — `<app>/<scrub(module)>/report/<scrub(report_name)>/<scrub(report_name)>.py`
+  — and loads the `.js` from the matching path. `frappe.scrub` replaces spaces **and
+  hyphens** with underscores, so `Hand-Off SLA Compliance` resolves to `hand_off_sla_compliance`,
+  with the hyphen contributing its own underscore. Both reports were written into
+  `handoff_*` folders, which reads correctly to a human and is unreachable to Frappe.
+  Renamed the directories and their `.py`/`.js`/`.json` files to the scrubbed names; the
+  report records themselves are unchanged, so no rename patch is needed and the desk links,
+  workspace shortcuts and `get_url_to_report()` calls all keep working.
+
+  The same typo also broke the Friday SLA digest (`process_steps.send_weekly_sla_digest`),
+  which imports the report module to render its numbers — but there the failure was
+  swallowed by the surrounding `except Exception: frappe.log_error(...)`, so the email
+  simply stopped arriving instead of erroring.
+
+### Added
+
+- **`tests/test_report_modules.py` — a bench-free guard for the above.** `bench migrate`
+  validates none of this: a misnamed report folder installs cleanly and the defect is only
+  found by a user opening the report, the same shape as the hyphenated-`www/`-controller
+  bug that `scripts/check_www_controllers.py` guards. The test asserts, for every Report
+  JSON in the app, that `report_name` matches the record `name`, that the module is in
+  `modules.txt` and matches the containing directory, that the folder and every
+  `.py`/`.js`/`.json` stem equal `scrub(report_name)`, and that each Script Report's module
+  defines a top-level `execute()`. Wired into `ci.yml` as its own unittest step beside the
+  DocType placement check.
+
 ## [1.255.0] - 2026-08-07
 
 ### Added

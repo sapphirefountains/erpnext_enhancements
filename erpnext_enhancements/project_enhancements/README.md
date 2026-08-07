@@ -96,7 +96,8 @@ module [`process_steps.py`](../process_steps.py):
 - **Visibility** — the Sales Pipeline board (`crm_enhancements/page/sales_pipeline/`)
   shows a "Hand-off in progress" rail of active projects with their current step,
   overdue ones glowing first. The **Hand-Off SLA Compliance** Script Report
-  (`report/handoff_sla_compliance/`) reports on-time % per role and per step, the overdue
+  (`report/hand_off_sla_compliance/` — the directory is `scrub()` of the report name,
+  hyphen included) reports on-time % per role and per step, the overdue
   list, steps blocked upstream, and the 7-business-day launch metric; it is emailed
   Friday mornings to `handoff_report_recipients`.
 
