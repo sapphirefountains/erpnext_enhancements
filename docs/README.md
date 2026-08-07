@@ -22,6 +22,7 @@ anything.
 | [DOCUMENT_MERGE.md](DOCUMENT_MERGE.md) | Duplicate document merging and its fail-closed philosophy |
 | [UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md](UX_QUICK_ENTRY_AND_FORM_LAYOUTS.md) | Quick Entry and form-layout conventions |
 | [attribution-runbook.md](attribution-runbook.md) | Lead attribution: the settings, the website ingress payload contract, and the one tickbox that turns enforcement off |
+| [error-log-runbook.md](error-log-runbook.md) | Every Error Log signature that no code change can fix — dead MDM credentials, missing Google grants, the SMTP relay IP, log retention — with the commands in Bash and PowerShell |
 | [field-photos-and-payroll-runbook.md](field-photos-and-payroll-runbook.md) | The job-photo capture gate, where photos are routed, and the Shaw & Nielsen payroll workbook |
 | [marketing-spend-runbook.md](marketing-spend-runbook.md) | Loading marketing spend, the value-stream dashboard, and the four KPIs that were measuring a dead column |
 | [industry-type-proposal.md](industry-type-proposal.md) | Proposed keep/merge/retire list for the 89 Industry Type values, from live usage counts. A proposal — nothing executed |

@@ -244,6 +244,14 @@ jobs:
       # just lost.
       - name: Drive shadow sync (survives a dropped DB connection)
         run: python -m unittest erpnext_enhancements.tests.test_drive_sync_recovery -v
+      # Own step for the same reason -- its own frappe stub in setUpModule.
+      # Guards the two v1.254.0 Error Log fixes: the Task -> Google Calendar
+      # payload (which called .isoformat() on a field that is a str on the
+      # after_insert doc, and so failed on every Task created through the desk),
+      # and the log_error circuit breaker that exists because one expired
+      # credential wrote 44,069 Error Log rows in thirty hours.
+      - name: Error Log fixes (calendar payload + log_error circuit breaker)
+        run: python -m unittest erpnext_enhancements.tests.test_error_log_fixes -v
       # Own step for the same reason -- its own frappe stub in setUpModule. Guards
       # the linked-folder reconciliation: a deleted Drive folder must end up
       # flagged ON THE RECORD, or the Open Drive Folder button keeps handing

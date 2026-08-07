@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.254.0] - 2026-08-07
+## [1.255.0] - 2026-08-07
 
 ### Added
 
@@ -69,6 +69,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This is inherited from the pre-2026 run, where `10000 Accounts Receivable` merges into
   Debtors on identical terms.
 
+## [1.254.0] - 2026-08-06
+
+A debugging pass over the production **Error Log** (78,648 rows). Four code
+defects fixed, one latent one hardened, and a circuit breaker added so that a
+single failing credential can never again account for 88% of the table. The
+issues that are *not* code — expired tokens, unshared calendars, missing IAM
+grants, absent binaries — are written up in
+[`docs/error-log-runbook.md`](docs/error-log-runbook.md) with PowerShell and Bash
+commands for each.
+
+### Fixed
+
+- **Every Task created through the desk failed to reach the shared Google
+  Calendar.** `script_migrations/task.py` built its event payload with
+  `doc.exp_start_date.isoformat()`. That field is a `datetime.date` once the row
+  has been read back from the database, but on the in-memory doc that
+  `after_insert` receives — built straight from the request payload — it is still
+  a plain `str`, and a `str` has no `.isoformat()`. So the hook raised
+  `AttributeError: 'str' object has no attribute 'isoformat'`, logged a "Google
+  Calendar Sync Failed" row, and left an apologetic comment on the Task. 541 rows
+  in total, 299 of them in the last month, still firing the day this was written.
+
+  Dates now go through `frappe.utils.getdate`, which accepts either shape. Two
+  further bugs behind the first one, neither of which had ever been reached:
+
+  - The `else` branch fell back to `doc.get_formatted("creation")`, which returns
+    a *display* string in the user's date format ("06-08-2026 16:09:03"). Google
+    would have rejected it.
+  - The payload put a date-only value in `start.dateTime`. Google requires a full
+    RFC 3339 timestamp there; Task's expected start/end are Date fields with no
+    time component. These are now `start.date` / `end.date` all-day events, which
+    is also the honest representation — a task due Thursday is not a task due
+    00:00 Thursday. All-day `end.date` is exclusive, so the end is stamped one day
+    on; without that, every task rendered a day short and single-day tasks
+    collapsed to zero length and vanished from the calendar grid.
+
+- **The hourly Drive shadow sync aborted a customer at a time on transient Google
+  500s.** The Drive API answers a plain metadata GET with `HttpError 500 "Unknown
+  Error."` often enough that Google documents it as expected and tells clients to
+  retry with backoff. We were not retrying, so each blip aborted one record's
+  shadow sync and wrote an Error Log row — 61 in a month, every one for a folder
+  that was healthy on the next attempt. The two read calls in the walk now pass
+  `num_retries` to googleapiclient, whose built-in retry covers 429/500/502/503/504
+  with randomised backoff. The existing 404 handling is unchanged: a *deleted*
+  folder is still flagged on the record rather than retried.
+
+- **`ensure_training_categories` crashed on any migrate that ran it before the
+  Training DocTypes were installed.** `ensure_training_badges` had guarded on
+  `frappe.db.exists("DocType", "Training Badge")` since it was written; the
+  categories seeder never got the same guard. The two existence checks are not
+  interchangeable — `frappe.db.exists("Training Category", name)` queries
+  `tabTraining Category`, which survives from an earlier migrate, so it answers
+  happily while the *DocType row* is still missing. `frappe.get_doc` then asks for
+  a controller, Frappe reads a blank `module` off the absent row, falls back to
+  Core, and raises `No module named 'frappe.core.doctype.training_category'` — a
+  confusing way to say "not migrated yet".
+
+- **Two Google integrations logged a full traceback per attempt for a permanent
+  misconfiguration.** Search Console (`api/analytics.py`) returns 403 because the
+  service account is not a user on the property; the Finance Calendar
+  (`api/finance_calendar.py`) returns 404 because its configured id does not exist
+  or was never shared with the service account. Neither is an outage and neither
+  can be retried into working, but both re-logged 40 lines of traceback on every
+  scheduled run and every dashboard load — 34 and 14 rows respectively. Both now
+  detect the permanent statuses, log once (throttled) with the remedy rather than
+  the stack, and return an error string that names the fix. The calendar also
+  caches the refusal for 120s so a dashboard reload stops re-asking Google; the TTL
+  is deliberately far below the 30-minute success cache, so an admin who has just
+  corrected the id sees the widget recover in a couple of minutes rather than
+  wondering for half an hour whether the fix took.
+
+### Added
+
+- **`utils/error_throttle.py` — a circuit breaker for `frappe.log_error`.** Error
+  Log is a DocType, so every `log_error` is an INSERT, and a caller that fails
+  inside a loop writes one row per failure. On 2026-06-15/16 the MDM retry loop hit
+  a standing Miradore `401` and wrote **44,069 rows in about thirty hours** — 88% of
+  the table — for what was in substance one fact: a credential had expired. A
+  QuickBooks import storm added ~27k more over the next two days.
+
+  `log_error_throttled` logs the first `limit` occurrences of a signature inside a
+  `window` in full, logs the next one as a suppression notice, and drops the rest.
+  Throttling is per-signature and takes an optional `key`, so a dead Miradore
+  credential can never mask an unrelated Action1 failure — hiding a *second*
+  problem would make this worse than the storm it replaces. A cache failure falls
+  back to logging unconditionally: losing an error is worse than writing a
+  duplicate.
+
+  Applied at the four call sites that can repeat unboundedly (Task calendar sync,
+  Drive shadow sync, GSC, Finance Calendar). Deliberately **not** a blanket
+  replacement for `frappe.log_error` — a one-shot failure in a request handler is a
+  fact, not a storm, and should still log every time.
+
+- **[`docs/error-log-runbook.md`](docs/error-log-runbook.md)** — the operator half
+  of this pass. Every Error Log signature that is *not* a code defect, with what it
+  means, how to confirm it, and the fix in both PowerShell and Bash: the Search
+  Console grant, the Finance calendar share, the `sa-training-media` GCS IAM
+  binding, the Workspace SMTP relay IP registration, the missing `wkhtmltopdf` and
+  Chromium binaries, and stale bench filelocks — plus a section on why the Error
+  Log's 78,648 rows are *not* a retention problem (retention is configured at 90
+  days and working; the table is ninety days of history that happens to contain
+  one 44,069-row incident, and that incident ages out on its own in September).
+
+### Changed
+
+- **`has_permission` hooks for Managed Device and Travel Trip no longer call
+  `doc.is_new()`.** Frappe hands these hooks a plain dict on some paths, and a dict
+  has no `.is_new()` — it raises `AttributeError: 'dict' object has no attribute
+  'is_new'` from inside a permission check, which surfaces as an
+  unrelated-looking save failure. `is_new()` is itself defined as `not
+  self.get("creation")`, so both hooks now use that directly, which works on either
+  shape. Hardening in the same spirit as the `getattr(obj, "field", None)` custom-field
+  reads: this is a latent defect on both hooks, and it is not the cause of the
+  `Document Update Error` rows carrying that message — those come from
+  `frappe_assistant_core`'s `update_document` tool, which is outside this repo.
 ## [1.253.2] - 2026-08-06
 
 ### Changed
