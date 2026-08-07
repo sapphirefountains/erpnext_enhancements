@@ -489,3 +489,4 @@ erpnext_enhancements.patches.set_default_stock_uom_unit
 # document-field recipients (New ToDo, Remind Me, MR Receipt) are aimed at one
 # person by design. company@ is the whole-company list and is not an alert target.
 erpnext_enhancements.patches.repoint_notifications_to_group_emails
+erpnext_enhancements.patches.rename_payment_step_title

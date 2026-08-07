@@ -99,7 +99,7 @@ STEPS_FIELD = "custom_process_steps"
 #: completion is carried onto the project row when the project is finally made.
 HANDOFF_STEP_NUMBER = 2
 
-#: "Receive Customer Payment". Excluded from overdue escalation: when the
+#: "Initial Payment From Customer". Excluded from overdue escalation: when the
 #: customer pays is not something anybody here can be nagged into fixing.
 #: Step 4 (sending the invoice) is ours and stays in. Also excluded from
 #: *blocking* later steps (see :func:`_actionable_steps`) — payment can take
@@ -111,6 +111,14 @@ PAYMENT_STEP_NUMBER = 5
 #: Step numbers that never block a *later* step from becoming actionable, even
 #: while still Pending themselves. Currently just the payment step; see above.
 NON_BLOCKING_STEP_NUMBERS = frozenset({PAYMENT_STEP_NUMBER})
+
+#: How far out :func:`schedule_payment_followup` puts the next chase, in business
+#: days. The payment step has ``sla_business_days = 0`` — no due date, no
+#: escalation, deliberately, because the customer's cheque is not ours to hurry.
+#: That left it the one actionable step with nothing to *do*, so the follow-up is
+#: a manual chain instead: each reminder that fires is an invitation to set the
+#: next one, rather than a clock nobody can beat.
+PAYMENT_FOLLOWUP_BUSINESS_DAYS = 2
 
 #: Marks a step completed by the permission-gated skip path rather than done.
 #: A prefix on ``notes``, not a status, because a skipped step must not stall the
@@ -624,7 +632,7 @@ def escalate_overdue_steps():
 	every day the step stays late — ``last_reminded_on`` de-dupes by calendar
 	date, not by "already nagged once".
 
-	Step 5 (Receive Customer Payment) itself is still excluded from escalating:
+	Step 5 (Initial Payment From Customer) itself is still excluded from escalating:
 	when a customer pays is outside our control, and nagging our own AR about it
 	daily teaches people to filter these emails, which costs us the steps that
 	*are* ours. Step 4 — sending the invoice — is ours and stays in.
@@ -984,3 +992,145 @@ def start_process(project):
 	doc.save()
 	announce_seeded_steps(doc)
 	return {"steps": len(doc.get(STEPS_FIELD))}
+
+
+def _payment_step_row(doc):
+	"""The payment step's child row on a project, or ``None``."""
+	for row in doc.get(STEPS_FIELD) or []:
+		if cint(row.get("step_number")) == PAYMENT_STEP_NUMBER:
+			return row
+	return None
+
+
+def _followup_owner(doc):
+	"""(user, employee_name) for the person the payment chase belongs to.
+
+	Resolved through :func:`_resolve_responsible` rather than a role check, so
+	"who gets reminded" cannot drift from "who gets nagged" and "who may tick the
+	step" — all three read the same setting.
+	"""
+	for recipient in _resolve_responsible(doc, ROLE_AR):
+		if recipient.get("user_id"):
+			return recipient["user_id"], recipient.get("employee_name") or recipient["user_id"]
+	return None, None
+
+
+def _pending_followups(project, user):
+	"""Un-fired reminders this feature created for a project, newest first.
+
+	Filtered on ``notified = 0``: a reminder that has already popped is history
+	and must survive, or rescheduling would quietly erase the record of every
+	chase already made.
+	"""
+	return frappe.get_all(
+		"Reminder",
+		filters={
+			"reminder_doctype": "Project",
+			"reminder_docname": project,
+			"user": user,
+			"notified": 0,
+		},
+		fields=["name", "remind_at"],
+		order_by="remind_at desc",
+	)
+
+
+@frappe.whitelist()
+def get_payment_followup(project):
+	"""What the button should show: the next scheduled chase, and the default.
+
+	Returns ``{"remind_at", "user", "employee_name", "default_remind_at",
+	"business_days"}``. ``remind_at`` is ``None`` when nothing is scheduled.
+	Read-only; safe to call on every form refresh.
+	"""
+	doc = frappe.get_doc("Project", project)
+	if not doc.has_permission("read"):
+		frappe.throw(_("Not permitted to read this Project."), frappe.PermissionError)
+
+	user, employee_name = _followup_owner(doc)
+	pending = _pending_followups(project, user) if user else []
+	return {
+		"remind_at": pending[0].remind_at if pending else None,
+		"user": user,
+		"employee_name": employee_name,
+		"default_remind_at": add_working_days(
+			now_datetime(), PAYMENT_FOLLOWUP_BUSINESS_DAYS, holiday_list=_handoff_holiday_list()
+		),
+		"business_days": PAYMENT_FOLLOWUP_BUSINESS_DAYS,
+	}
+
+
+@frappe.whitelist()
+def schedule_payment_followup(project, remind_at=None):
+	"""Schedule the next chase on an unpaid initial payment.
+
+	Creates a core **Reminder** — the same record the bell icon's "Remind Me"
+	makes, so it fires through Frappe's own reminder cron and needs no delivery
+	machinery of ours.
+
+	``remind_at`` defaults to :data:`PAYMENT_FOLLOWUP_BUSINESS_DAYS` business days
+	out, counted the same way step due dates are (Mon-Fri minus the hand-off
+	Holiday List), so a Thursday click lands Monday rather than Saturday.
+
+	The reminder is addressed to the **Finance & Accounting Manager** resolved for
+	this project, which is usually not the person clicking — a PM chasing a
+	project should be able to put it on the right person's list. That is why this
+	inserts with ``ignore_permissions``: the gate is write access on the Project,
+	checked here, not the session user's rights over somebody else's Reminder.
+	"""
+	throw_if_process_automation_disabled()
+	doc = frappe.get_doc("Project", project)
+	if not doc.has_permission("write"):
+		frappe.throw(_("Not permitted to modify this Project."), frappe.PermissionError)
+
+	row = _payment_step_row(doc)
+	if not row:
+		frappe.throw(_("This project has no payment step to follow up on."))
+	if row.status == "Completed":
+		frappe.throw(_("The initial payment is already recorded — nothing to chase."))
+
+	user, employee_name = _followup_owner(doc)
+	if not user:
+		frappe.throw(
+			_(
+				"No user to remind. Set the Finance & Accounting Manager in "
+				"ERPNext Enhancements Settings → Hand-Off Process, and make sure that "
+				"Employee record has a User ID."
+			)
+		)
+
+	when = get_datetime(remind_at) if remind_at else add_working_days(
+		now_datetime(), PAYMENT_FOLLOWUP_BUSINESS_DAYS, holiday_list=_handoff_holiday_list()
+	)
+	if when <= now_datetime():
+		frappe.throw(_("Pick a reminder time in the future."))
+
+	# One pending chase at a time. Rescheduling replaces the outstanding one
+	# rather than stacking, which is what "set the next reminder" means — but
+	# only un-fired ones, so the history of chases already made is untouched.
+	superseded = _pending_followups(project, user)
+	for existing in superseded:
+		frappe.delete_doc("Reminder", existing.name, ignore_permissions=True, delete_permanently=True)
+
+	label = doc.get("project_name") or project
+	customer = doc.get("customer")
+	reminder = frappe.get_doc(
+		{
+			"doctype": "Reminder",
+			"user": user,
+			"remind_at": when,
+			"reminder_doctype": "Project",
+			"reminder_docname": project,
+			"description": _("Follow up on the initial payment for {0}{1}. Set the next reminder from the project's process steps.").format(
+				label, f" ({customer})" if customer else ""
+			),
+		}
+	)
+	reminder.insert(ignore_permissions=True)
+
+	return {
+		"remind_at": when,
+		"user": user,
+		"employee_name": employee_name,
+		"replaced": len(superseded),
+	}
