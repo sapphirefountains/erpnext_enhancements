@@ -252,6 +252,14 @@ jobs:
       # credential wrote 44,069 Error Log rows in thirty hours.
       - name: Error Log fixes (calendar payload + log_error circuit breaker)
         run: python -m unittest erpnext_enhancements.tests.test_error_log_fixes -v
+      # Own step, same reason -- its own frappe stub in setUpModule, plus a fake
+      # googleapiclient (the real one is NOT installed on this runner, and both
+      # finance_calendar.py and drive_sync.py import HttpError at module scope).
+      # Covers the five v1.254.0 behaviour changes that shipped untested: the
+      # Google-API error handling, the migrate guard, the Drive retry, and both
+      # permission hooks.
+      - name: Error Log follow-up (API error handling, migrate guard, retries, permissions)
+        run: python -m unittest erpnext_enhancements.tests.test_error_log_followup -v
       # Own step for the same reason -- its own frappe stub in setUpModule. Guards
       # the linked-folder reconciliation: a deleted Drive folder must end up
       # flagged ON THE RECORD, or the Open Drive Folder button keeps handing

@@ -27,6 +27,7 @@ Run: python -m unittest erpnext_enhancements.tests.test_error_log_fixes
 """
 
 import datetime
+import pickle
 import sys
 import types
 import unittest
@@ -42,8 +43,26 @@ error_throttle = None
 LOGGED = []
 
 
+DB_NAME = "test_site_db"
+
+
 class _FakeCache:
-	"""Enough of frappe's cache for the throttle: incr, expire, get, delete.
+	"""A stand-in that reproduces ``RedisWrapper``'s asymmetry **on purpose**.
+
+	This is the entire point of the class, and the reason it is not three lines
+	long. Frappe's ``RedisWrapper`` namespaces and pickles inside the ``*_value``
+	family — ``set_value`` / ``get_value`` / ``delete_value`` all route through
+	``make_key()``, which returns ``f"{db_name}|{key}"`` — while ``incr``,
+	``expire``, ``get`` and ``delete`` are **not overridden at all**. They come
+	straight from redis-py, take the key verbatim, and store a plain integer
+	string with no pickling.
+
+	v1.254.0's version of this stub was a flat dict that collapsed the two
+	families into one keyspace. That is why ``test_reset_restores_the_budget``
+	passed 18/18 green against code where ``reset()`` provably did nothing on a
+	real bench: the stub was kinder than production, so it certified a defect
+	instead of catching it. A fake that is more forgiving than the real thing
+	tests nothing.
 
 	``expire`` is recorded rather than enforced — the tests drive window
 	behaviour by clearing keys directly, which keeps them free of sleeps.
@@ -54,6 +73,12 @@ class _FakeCache:
 		self.expiries = {}
 		self.raise_on_incr = False
 
+	def make_key(self, key):
+		"""Verbatim copy of ``RedisWrapper.make_key``'s shape."""
+		return f"{DB_NAME}|{key}".encode()
+
+	# ---- raw redis-py family: key verbatim, integer payload, no pickling ----
+
 	def incr(self, key):
 		if self.raise_on_incr:
 			raise RuntimeError("redis is down")
@@ -63,15 +88,30 @@ class _FakeCache:
 	def expire(self, key, seconds):
 		self.expiries[key] = seconds
 
+	def get(self, key):
+		val = self.store.get(key)
+		# redis returns bytes, never an int. Callers must cope with that.
+		return None if val is None else str(val).encode()
+
+	def delete(self, key):
+		self.store.pop(key, None)
+
+	# ---- frappe *_value family: make_key + pickle ---------------------------
+
 	def get_value(self, key):
-		return self.store.get(key)
+		raw = self.store.get(self.make_key(key))
+		if raw is None:
+			return None
+		# Test double; the only thing ever pickled here is what set_value wrote.
+		return pickle.loads(raw)
 
 	def set_value(self, key, value, expires_in_sec=None):
-		self.store[key] = value
-		self.expiries[key] = expires_in_sec
+		k = self.make_key(key)
+		self.store[k] = pickle.dumps(value)
+		self.expiries[k] = expires_in_sec
 
 	def delete_value(self, key):
-		self.store.pop(key, None)
+		self.store.pop(self.make_key(key), None)
 
 
 CACHE = _FakeCache()
@@ -108,6 +148,9 @@ def setUpModule():
 	frappe.get_traceback = lambda: "traceback"
 	frappe.call = lambda *a, **kw: None
 	frappe.flags = types.SimpleNamespace(in_test=False)
+	# `error_throttle._site()` reads this to namespace its key, the same source
+	# RedisWrapper.make_key uses.
+	frappe.local = types.SimpleNamespace(conf={"db_name": DB_NAME})
 
 	utils = types.ModuleType("frappe.utils")
 	utils.getdate = _getdate
@@ -289,6 +332,87 @@ class TestErrorThrottle(unittest.TestCase):
 		error_throttle.reset("T")
 		error_throttle.log_error_throttled("boom", "T", window=60, limit=1)
 		self.assertEqual(len(LOGGED), before + 1)
+
+
+class TestThrottleKeyAgreement(unittest.TestCase):
+	"""Every operation must address the *same* Redis slot.
+
+	v1.254.0 shipped a module that wrote its counter with raw ``incr`` and read
+	it back with ``get_value``. Those are different keyspaces in Frappe —
+	``get_value`` routes through ``make_key`` and ``incr`` does not — so
+	``reset()`` was a silent no-op and ``suppressed_count()`` always answered 0.
+	The suite was green throughout, because the stub of the day was a flat dict.
+
+	These tests assert the agreement directly, against a stub that now models
+	the real split, so the same mistake cannot pass again.
+	"""
+
+	def setUp(self):
+		LOGGED.clear()
+		CACHE.store.clear()
+		CACHE.expiries.clear()
+		CACHE.raise_on_incr = False
+
+	def test_the_counter_lands_in_exactly_one_slot(self):
+		"""Not two — a write under one key and a read under another is the bug."""
+		error_throttle.log_error_throttled("boom", "T", window=60, limit=5)
+		self.assertEqual(len(CACHE.store), 1, f"expected one cache key, got {list(CACHE.store)}")
+
+	def test_suppressed_count_reads_what_the_throttle_wrote(self):
+		for _ in range(7):
+			error_throttle.log_error_throttled("boom", "T", window=60, limit=2)
+		self.assertEqual(error_throttle.suppressed_count("T"), 7)
+
+	def test_suppressed_count_is_zero_for_an_unseen_signature(self):
+		self.assertEqual(error_throttle.suppressed_count("never-happened"), 0)
+
+	def test_reset_actually_clears_the_slot(self):
+		"""The operator-facing promise: fix the cause, reset, see the next one."""
+		error_throttle.log_error_throttled("boom", "T", window=60, limit=1)
+		self.assertEqual(len(CACHE.store), 1)
+		error_throttle.reset("T")
+		self.assertEqual(CACHE.store, {}, "reset() left the counter behind")
+		self.assertEqual(error_throttle.suppressed_count("T"), 0)
+
+	def test_the_key_is_namespaced_by_site(self):
+		"""Otherwise every site on a shared Redis shares one budget, and one
+		site's storm suppresses another site's first, genuinely-distinct error —
+		exactly the masking this module exists to prevent."""
+		error_throttle.log_error_throttled("boom", "T", window=60, limit=5)
+		key = next(iter(CACHE.store))
+		self.assertTrue(
+			key.startswith(f"{DB_NAME}|"),
+			f"cache key {key!r} is not namespaced by the site",
+		)
+
+	def test_two_sites_do_not_share_a_budget(self):
+		"""Same title, different site: independent counters."""
+		error_throttle.log_error_throttled("boom", "Shared", window=60, limit=1)
+		first_key = next(iter(CACHE.store))
+
+		frappe_stub = sys.modules["frappe"]
+		original = frappe_stub.local.conf
+		try:
+			frappe_stub.local.conf = {"db_name": "another_site_db"}
+			error_throttle.log_error_throttled("boom", "Shared", window=60, limit=1)
+		finally:
+			frappe_stub.local.conf = original
+
+		self.assertEqual(len(CACHE.store), 2, "the second site reused the first site's counter")
+		self.assertNotIn(first_key, [k for k in CACHE.store if k != first_key])
+
+	def test_a_missing_site_conf_does_not_break_throttling(self):
+		"""A throttle that cannot name its site must still throttle."""
+		frappe_stub = sys.modules["frappe"]
+		original = frappe_stub.local
+		try:
+			frappe_stub.local = None  # attribute access will raise
+			for _ in range(6):
+				error_throttle.log_error_throttled("boom", "T", window=60, limit=2)
+		finally:
+			frappe_stub.local = original
+		# 2 full rows + 1 suppression notice: still capped, not crashed.
+		self.assertEqual(len(LOGGED), 3)
 
 
 if __name__ == "__main__":
