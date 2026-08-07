@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.255.2] - 2026-08-07
+
+### Fixed
+
+- **In-video checkpoints have never fired, on any attempt, since the endpoint was
+  written — and there were three independent reasons, not one.** The anti-cheat
+  machinery was inert in production: every attempt stored `checkpoints == {}`, and
+  `require_checkpoints_answered` — a completion gate — stood on an event that could
+  not happen. Closes TASK-2026-01174, TASK-2026-01179 and TASK-2026-01183.
+
+  1. **The envelope.** `open_checkpoint` replies `{enabled, checkpoint}`, the same
+     shape `get_lesson` and `get_quiz` use. `video.js` read `checkpoint_key` off
+     the envelope itself, found `undefined`, and armed nothing. `st.armed` was null
+     on every tick and `maybeFireCheckpoint` returned on its first line.
+
+  2. **The field names.** Five of seven disagreed. The runtime sent `at`, `type`,
+     `question`, `rewind`, `pause`; both consumers — `video.js` and the builder's
+     preview harness — spelled out the Training Checkpoint field names. So the two
+     halves independently agreed with the doctype and disagreed with the one
+     function between them. The runtime moved, because a name that states its unit
+     (`at_seconds`) beats one that saves four characters, in a module whose whole
+     defect history is units and names.
+
+  3. **Nothing re-armed.** This is the one no task had spotted, and fixing only
+     (1) and (2) would have left checkpoints just as dead. `armNext()` runs once at
+     mount, and `open_checkpoint` deliberately returns only a checkpoint the
+     playhead has *already reached* — a reply naming a future timestamp would be a
+     map of where to skip to. So something has to notice the playhead arriving, and
+     that something is `next_checkpoint_at`, which the server has put on every
+     heartbeat since the endpoint was written and which nothing read. A checkpoint
+     at 0:30 of a 90-second video was unreachable. `applyBeatResult` now keeps it
+     and `maybeFireCheckpoint` arms on arrival.
+
+  Three keys left the payload rather than being renamed, each sent and read by
+  nobody: `counts_toward_score` (scoring is server-side; there was nothing the
+  player could correctly do with it), `rewind_seconds_on_wrong` (superseded, see
+  below), and `pause_video` (the player pauses unconditionally when it opens the
+  scrim, so there is no behaviour behind the flag to switch — restoring it is a
+  player change, not a payload one).
+
+- **Two sources of truth for where playback resumes after a wrong answer.**
+  `answer_checkpoint` returns an authoritative `resume_at` and `rewind_applied`;
+  `video.js` ignored both and recomputed the position from a
+  `rewind_seconds_on_wrong` the payload never carried under that name — so the
+  subtraction was against `undefined`, and **no wrong answer has ever rewound**.
+  Renaming the key alone would have left two implementations of one decision that
+  did not agree: `grading._checkpoint_result` rewinds only when an attempt is still
+  left, the client rewound on any wrong answer. The client derivation is deleted.
+  `answer_checkpoint` also bolted a raw `rewind` onto its reply — unread, and
+  contradicting the `rewind_applied` beside it; that is gone too.
+
+- **The builder's preview harness followed the player into the bug, on purpose,
+  and has been brought back with it.** `training_builder.js` served checkpoints
+  flat with a note explaining that it mirrored the player's misreading rather than
+  the real endpoint — the right call while the player was wrong, and the wrong one
+  now. It also carried `at` *and* `at_seconds`, a hedge against not knowing which
+  the runtime meant, which is its own small evidence that the two names were a
+  problem. It now matches `_checkpoint_payload` key for key, reports
+  `next_checkpoint_at`, and returns `resume_at`/`rewind_applied` so an author
+  testing a pin sees what a learner will.
+
+### Added
+
+- Checkpoint-seam coverage in `tests/test_training_boot_wire.py` (the module that
+  already asks "does the player read the keys the server actually sends?"): the
+  payload's field names, the envelope in both directions, the single rewind
+  authority, the re-arm path, and a key-for-key comparison between
+  `_checkpoint_payload` and `training_builder.preview_checkpoint` — the drift that
+  caused this, now pinned.
+- `tests/test_training_grading.py` pins what `require_checkpoints_answered` does
+  with an empty checkpoints map. Silently waived and permanently blocked are both
+  defensible readings and very different bugs, and nothing said which this was. It
+  is neither, because "empty" is two situations: no checkpoints *authored* opens
+  the gate (fail-open, so turning the flag on at course level cannot strand every
+  lesson without pins), while checkpoints authored and none answered closes it —
+  which is why shipping the arming fix also releases learners who were stuck behind
+  a question they were never asked.
+
 ## [1.255.1] - 2026-08-07
 
 ### Fixed

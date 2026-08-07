@@ -1158,5 +1158,66 @@ class TestEvaluateGates(unittest.TestCase):
 		self.assertEqual(STATE["saves"], [])
 
 
+class TestTheCheckpointGateOnAnEmptyMap(unittest.TestCase):
+	"""What ``require_checkpoints_answered`` does when nothing has been answered.
+
+	The question is not academic. Checkpoints had never armed in production
+	(TASK-2026-01174), so every attempt carried ``checkpoints == {}`` — and the
+	gate that stands on them was live the whole time. Silently waived and
+	permanently blocked are both defensible readings of an empty map; they are
+	very different bugs, and nothing pinned which one this was.
+
+	It is neither, because "empty" is two situations and the gate distinguishes
+	them: it iterates the *lesson's authored* checkpoints and looks each one up in
+	the learner's answers. No checkpoints authored means no iterations, so the gate
+	opens. Checkpoints authored and none answered means one miss each, so it
+	closes. Both are pinned below so a future refactor cannot quietly swap them.
+	"""
+
+	def _gates(self):
+		return grading.evaluate_gates(self.attempt, LESSON_KEY)
+
+	def _watched(self, **extra):
+		_set_progress(blocks={"blk1": {"dur": 600, "iv": [[0, 600]], "cov": 1.0}}, **extra)
+
+	def test_a_lesson_with_no_checkpoints_is_not_blocked_by_the_flag(self):
+		"""Fail-open, and deliberately: turning the flag on at course level must not
+		strand every lesson that happens to carry no pins."""
+		_reset_state()
+		_course(require_checkpoints=1)
+		_video_asset()
+		_publish_lesson(questions=[], has_quiz=0)
+		self.attempt = _attempt()
+		self._watched()
+		result = self._gates()
+		self.assertTrue(result["ok"], result["reasons"])
+
+	def test_an_authored_checkpoint_with_an_empty_answer_map_blocks(self):
+		"""The production case. This is why shipping the arming fix also releases
+		learners who were stuck behind a question they were never asked."""
+		_reset_state()
+		_course(require_checkpoints=1)
+		_video_asset()
+		_checkpoint(key="cpkey1", at=252)
+		_publish_lesson(questions=[], has_quiz=0)
+		self.attempt = _attempt()
+		self._watched(checkpoints={})
+		result = self._gates()
+		self.assertFalse(result["ok"])
+		self.assertTrue(any("unanswered" in reason for reason in result["reasons"]))
+
+	def test_answering_it_opens_the_gate(self):
+		"""The other half of the pair — otherwise the test above passes for a gate
+		that is simply always closed."""
+		_reset_state()
+		_course(require_checkpoints=1)
+		_video_asset()
+		_checkpoint(key="cpkey1", at=252)
+		_publish_lesson(questions=[], has_quiz=0)
+		self.attempt = _attempt()
+		self._watched(checkpoints={"cpkey1": {"answered": 1, "correct": 1, "attempts": 1}})
+		self.assertTrue(self._gates()["ok"])
+
+
 if __name__ == "__main__":
 	unittest.main()
