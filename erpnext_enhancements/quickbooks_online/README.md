@@ -35,7 +35,7 @@ OAuth2  →  Client  →  Mapping  →  Sync  →  Sync Log / Raw Payload
 | `core/sync.py` | Sync orchestration + logging | `import_all`, `preview_resync`, `run_resync`, `sync_entity`, `run_cdc`, `retry_failed`, `query_all`, `store_raw_payload`, `start`/`finish`/`fail_log` |
 | `core/reconcile.py` | Read-only balance/transaction reconciliation (Reports API) | `compare_account_balances`, `reconcile_transactions`, `_parse_trial_balance` |
 | `core/opening_balances.py` | Build a balanced opening Journal Entry from QBO balances | `sync_opening_balances`, `_opening_account_line`, `_party_opening_line`, `_plug_line` |
-| `core/group_account_remap.py` | One-off (WI-068): move draft pre-2026 JE lines off group accounts onto `- General` ledgers. Dry-run by default, **never wired to migrate/scheduler** | `remap_group_account_lines`, `NEW_LEDGER_CHILDREN`, `MERGE_INTO_EXISTING` |
+| `core/group_account_remap.py` | One-off (WI-068): move draft JE lines off group accounts onto `- General` ledgers, one **window** at a time (`pre-2026` applied; `2026` outstanding for TASK-2026-01236). Dry-run by default, **never wired to migrate/scheduler** | `remap_group_account_lines`, `WINDOWS`, `NEW_LEDGER_CHILDREN`, `MERGE_INTO_EXISTING` |
 | `core/tasks.py` | Hourly scheduler hooks | `refresh_token_if_needed`, `cdc_poll`, `retry_failed_syncs` |
 | `report/quickbooks_balance_comparison/*` | QBO vs ERPNext account-balance report | `execute` (filters: as-of date, tolerance, only-discrepancies) |
 | `core/utils.py` | Shared helpers | `get_settings`, `get_secret`/`set_secret`, `clear_oauth_tokens`, `json_dumps`/`loads`, `parse_qbo_datetime`, `is_token_expiring`, `verify_intuit_signature`, `update_settings_status` |
