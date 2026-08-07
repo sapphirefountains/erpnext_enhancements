@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.259.0] - 2026-08-07
+
+### Added
+
+- **Four read-only assistant tools.** Each wraps an existing function and adds no
+  business logic of its own. Closes TASK-2026-01188.
+
+  - **`contract_signing_status`** — where contracts stand in the e-signature flow:
+    the outstanding backlog, one contract's latest request, or every contract on a
+    project or customer. `days_out` is measured from **`first_sent_on`**, not
+    `sent_on`: every reminder re-sends and rewrites `sent_on`, so a figure driven
+    by it resets to zero on each nudge and reports the most-chased contract as the
+    freshest — the same trap `esign/tasks.py` documents for the weekly digest. The
+    backlog uses `frappe.get_list`, not `get_all`, because it is the one view not
+    anchored to a document the caller named.
+  - **`kpi_dashboard_status`** — called without a department it returns only the
+    Watch and Bad values across every department the caller may see. Nine
+    departments in full is a context bomb: a hundred healthy numbers burying the
+    four that are not. Every reply carries `source_freshness`, read off the
+    snapshot document because `api/kpi.py::_serialize` does not include it — a KPI
+    built from a feed that last updated a week ago is a plausible number that is
+    not true today, and the value cannot say so itself. `refresh_kpi_dashboard`
+    is deliberately not exposed: it rebuilds and commits.
+  - **`project_pickup_route`** — the physical collection run for a project.
+    Suppliers with no address are reported rather than filtered out, because
+    dropping them produces a shorter route that is quietly wrong; "these vendor
+    records need an address" is part of the answer.
+  - **`training_course_catalog`** — the course-shaped third training tool:
+    catalogue, gates, version history and aggregate assignment/attempt counts,
+    with optional per-question `item_analysis`.
+
+- **`training_compliance_status` gained `expiring_within_days`.** Recertification
+  is the same compliance question one step into the future — an expiring
+  certificate becomes an overdue assignment the moment the recert job runs — so it
+  belongs on the tool that already answers "who is about to fall out of
+  compliance" rather than in a fifth tool the model would have no reason to call.
+  Already-lapsed certificates are included, because a window that silently started
+  today would hide them behind a question that sounds like it covers them.
+
+- `tests/test_assistant_tools_redaction.py`, with its own CI step.
+
+### Security
+
+- **Three of the four wrapped functions return more than a reader should see, and
+  the tools strip it.** These are not tidying decisions:
+
+  - `get_pickup_route_data` returns `api_key` — a live, **billable** Google Maps
+    *browser* key. Its real caller is a dialog that has to draw a map; an MCP
+    client is not a browser, and a key in a chat transcript gets quoted back,
+    logged, and eventually pasted somewhere it can be spent. Stripped along with
+    `use_routes_api`, the other half of a client rendering instruction.
+  - Contract Signature Request carries the signing **evidence** — `token_hash` and
+    `previous_token_hash` (the security boundary of the whole flow),
+    `agreement_html` / `document_snapshot` (the text as signed),
+    `signature_image`, `signer_ip_claimed` / `signer_ip_peer` / `user_agent`, and
+    `consent_text`. The projection is written out rather than taken from the meta,
+    so a field added later is excluded by default.
+  - Training Certificate carries `verification_code`, which is what proves a
+    certificate genuine to a third party. Not read.
+
+  `item_analysis` is aggregate only and **withholds questions with fewer than five
+  recorded answers**: a question answered by three people, reported as "33%
+  correct", is a statement about one identifiable person's answer wearing a
+  percentage as a disguise. The withheld count is reported, because an item
+  analysis that silently omits its thin questions reads as though every question
+  is well answered.
+
+  The redaction tests check each sensitive field against the **live doctype JSON**,
+  so a rename cannot leave a stale list quietly guarding nothing, and they strip
+  docstrings before searching — every one of these fields is named in prose
+  explaining why it is withheld, and a search that counted comments would find
+  them everywhere and prove nothing.
+
 ## [1.258.1] - 2026-08-07
 
 ### Changed

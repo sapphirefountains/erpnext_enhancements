@@ -77,6 +77,15 @@ EXPLICIT_READONLY = {
     # classified now makes that unrepeatable.
     "training_compliance_status",
     "training_learner_record",
+    # A1 (v1.259.0): four more reads. Each wraps an existing function and adds no
+    # business logic of its own; the redactions they apply are in their modules.
+    # kpi_dashboard_status deliberately does NOT expose refresh_kpi_dashboard,
+    # which rebuilds a snapshot and commits — that one is a write and belongs
+    # nowhere near this set.
+    "contract_signing_status",
+    "kpi_dashboard_status",
+    "project_pickup_route",
+    "training_course_catalog",
 }
 
 # This app's own *write* tools (assistant_tools/<name>.py). They must gate even

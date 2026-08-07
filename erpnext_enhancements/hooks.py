@@ -1186,12 +1186,35 @@ assistant_tools = [
 	# proof of engagement that it cannot support.
 	"erpnext_enhancements.assistant_tools.training_compliance_status.TrainingComplianceStatus",
 	"erpnext_enhancements.assistant_tools.training_learner_record.TrainingLearnerRecord",
+	# training_course_catalog is the course-shaped third: what exists, how each is
+	# configured, and aggregate assignment/attempt counts. Its item_analysis is
+	# aggregate ONLY and withholds questions below a small-n threshold -- a success
+	# rate over three people is a statement about one identifiable person's answer
+	# wearing a percentage as a disguise.
+	"erpnext_enhancements.assistant_tools.training_course_catalog.TrainingCourseCatalog",
 	"erpnext_enhancements.assistant_tools.maintenance_day_board.MaintenanceDayBoard",
 	"erpnext_enhancements.assistant_tools.maintenance_contract_status.MaintenanceContractStatus",
 	"erpnext_enhancements.assistant_tools.maintenance_visit_history.MaintenanceVisitHistory",
 	"erpnext_enhancements.assistant_tools.maintenance_site_briefing.MaintenanceSiteBriefing",
 	"erpnext_enhancements.assistant_tools.project_status_overview.ProjectStatusOverview",
 	"erpnext_enhancements.assistant_tools.project_procurement_status.ProjectProcurementStatus",
+	# The physical counterpart of procurement_status: which suppliers have goods
+	# waiting and where they are. Strips `api_key` from the underlying reply --
+	# that is a live billable Google Maps BROWSER key, and an MCP client is not a
+	# browser. Suppliers with no address are reported, not filtered: dropping them
+	# produces a shorter route that is quietly wrong.
+	"erpnext_enhancements.assistant_tools.project_pickup_route.ProjectPickupRoute",
+	# Contracts: where each stands in the e-signature flow. Returns none of the
+	# signing evidence -- token hashes, the agreement text as signed, the signature
+	# image, signer IP, user agent, consent wording. days_out is measured from
+	# first_sent_on, because every reminder rewrites sent_on and a figure driven by
+	# that reports the most-chased contract as the freshest.
+	"erpnext_enhancements.assistant_tools.contract_signing_status.ContractSigningStatus",
+	# KPI cockpit reader. Unqualified calls return only Watch/Bad values across the
+	# departments the caller may see -- nine departments in full is a context bomb
+	# that buries the four numbers that matter. refresh_kpi_dashboard is NOT
+	# exposed: it rebuilds and commits.
+	"erpnext_enhancements.assistant_tools.kpi_dashboard_status.KpiDashboardStatus",
 	"erpnext_enhancements.assistant_tools.workforce_time_status.WorkforceTimeStatus",
 	# v1.14.0 AI governance: the model's read-only half of the write-confirmation
 	# round-trip (see assistant_tools/_gate.py — there is deliberately no MCP
