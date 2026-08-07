@@ -47,6 +47,11 @@ import "./filter_help.js";
 import "./global_enhancements/global_search_doctypes.js";
 // Field help text as a hover "ⓘ" icon (gated by frappe.boot.ee_field_description_icons)
 import "./global_enhancements/field_description_icons.js";
+// Show the activity feed on the first tab only. Frappe renders the timeline into
+// `.form-footer`, a SIBLING of the tab panes, so it follows you onto every tab and
+// pushes the thing you came for off the screen. One shared script rather than a
+// per-doctype hook -- see TASK-2026-00353.
+import "./global_enhancements/activity_first_tab_only.js";
 // Google Places autocomplete on address_line1 (erpnext_enhancements.address_
 // autocomplete.attach). Global, not doctype_js["Address"], because the Address
 // quick-entry dialog below is a frappe.ui.Dialog — no form script ever fires

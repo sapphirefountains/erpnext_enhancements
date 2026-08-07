@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.259.4] - 2026-08-07
+
+### Changed
+
+- **The activity feed now shows on the first tab only.** Frappe renders the
+  timeline into `.form-footer`, which is a *sibling* of the tab panes rather than a
+  child of one — so it sits below whichever tab is open. Read the Details tab and
+  the conversation is where it belongs; open Contacts, or Budget, or Dispatch, and
+  the same wall of comments is still underneath, pushing the thing you came for
+  off the screen. Closes TASK-2026-00353.
+
+  **One shared script, not a per-doctype hook**, as the task asked: a
+  `form-refresh` handler plus a scoped `MutationObserver`, the same shape
+  `activity_log_numbering.js` already uses for global timeline work. Frappe
+  rebuilds `.form-footer` after a save and when it constructs the tab list, and
+  fires no event for either.
+
+  Three decisions worth recording, because each is a way this could have been
+  subtly wrong:
+
+  - **The first tab is found positionally, not by name.** Several of our doctypes
+    have already renamed Details to Overview or Summary, so a title check would
+    have quietly stopped matching and the feed would follow you around again.
+  - **A form with no tabs is untouched.** There the timeline is simply the bottom
+    of the form, and there is no other tab for it to be wrong on.
+  - **A mid-render form defaults to showing the feed.** Guessing "hidden" while
+    the active tab is still being marked flashes it away and back on every paint.
+
+  A class on the form wrapper rather than an inline style, so the rule lives with
+  the rest of the desk CSS, survives Frappe re-rendering the footer, and is
+  legible in devtools. `display: none` rather than `visibility: hidden` — the
+  footer is tall, and leaving it occupying space trades a wall of comments for a
+  wall of nothing. The comment box goes with it: a reply typed under the Budget
+  tab still attaches to the same document, so offering it there is offering a
+  second place to do one thing.
+
+### Added
+
+- `tests/test_activity_first_tab_only.py`, own CI step. The JS and the CSS are two
+  halves of one behaviour and fail silently apart — a class nothing styles, or a
+  rule nothing sets — so the suite pins both, that no second script toggles the
+  same class, and that the first tab is located positionally.
 ## [1.259.3] - 2026-08-07
 
 ### Changed
