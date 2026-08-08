@@ -292,7 +292,12 @@
 			var lesson = state.lesson;
 			if (!lesson) return { ok: false, reasons: reasons };
 
-			var courseMin = pct((state.course && state.course.min_video_coverage) || 0);
+			// `state.gates`, not `state.course`. get_course groups the thresholds
+			// under a `gates` key of its own — `load()` has always stored it — and
+			// these two reads were the only consumers, both looking in the wrong
+			// object. So the advisory panel showed 0% for every course, which reads
+			// as "no requirement" rather than as a bug.
+			var courseMin = pct((state.gates && state.gates.min_video_coverage) || 0);
 			(lesson.blocks || []).forEach(function (block) {
 				if (!block.required) return;
 				var stored = blockProgress(block.block_key);
@@ -325,7 +330,7 @@
 			if (quiz.enabled) {
 				var runs = (lessonProgress(state.lessonKey).quiz || {});
 				var best = Number(runs.best || 0);
-				var need = pct(quiz.pass_score || (state.course && state.course.passing_score) || 0);
+				var need = pct(quiz.pass_score || (state.gates && state.gates.passing_score) || 0);
 				if (!runs.runs || best < need) {
 					reasons.push(t("Pass the quiz to finish this lesson."));
 				}
@@ -344,7 +349,7 @@
 			required.forEach(function (block) {
 				var stored = blockProgress(block.block_key);
 				if (block.type === "Video") {
-					var need = pct(block.min_coverage || (state.course && state.course.min_video_coverage) || 0);
+					var need = pct(block.min_coverage || (state.gates && state.gates.min_video_coverage) || 0);
 					if (!need || pct((stored.cov || 0) * 100) >= need) done += 1;
 				} else if (block.type === "PDF" || block.type === "Downloadable File") {
 					if (stored.ack !== 0) done += 1;

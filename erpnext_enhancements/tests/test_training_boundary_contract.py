@@ -32,9 +32,25 @@ have their own comparisons in ``test_training_boot_wire`` (``TestCourseCardField
 ``TestOutlineRowFields``). Extending the binder list to ``course``/``lesson``/
 ``block`` here would duplicate those and drag the whole content tree in with them.
 
-**What it cannot catch:** the right key read off the wrong object. This is a set
-comparison, not a type checker. It catches names that exist on one side only,
-which is every defect this module has actually shipped.
+**What the set comparison cannot catch:** the right key read off the wrong
+object. It compares names, not paths.
+
+That limitation was originally written down here with the words "which is every
+defect this module has actually shipped" — and that was already untrue when it
+was written. TASK-2026-01176 was exactly this shape: ``get_course`` groups the
+course thresholds under ``gates``, and the player's two readers took them off
+``state.course``, so the advisory panel showed 0% for every course. Worse, the
+allowlist entries for ``passing_score`` and ``min_video_coverage`` *recorded the
+bug as intended behaviour* — "read off the course object" — which is how a
+reason field stops being a safeguard and becomes a place to file things you have
+stopped thinking about.
+
+``TestGateThresholdBinding`` below closes that specific hole: the keys the server
+nests under ``gates`` must be read off a ``gates`` binder, and must be read at
+all. It is deliberately narrow — one envelope group, pinned by path — rather
+than a general type checker, because the general version is a different project.
+If another group develops the same problem, copy it rather than widening the set
+comparison.
 
 Static because there is no bench in CI — AST on the Python, regex on the JS.
 Deterministic beats clever.
@@ -114,7 +130,7 @@ SENT_BUT_NOT_READ = {
     # TestOutlineRowFields in test_training_boot_wire already compare.
     "cover_image": "course metadata; covered by TestCourseCardFields",
     "minutes": "course metadata; covered by TestCourseCardFields",
-    "passing_score": "read as state.course.passing_score; covered by the card tests",
+    "passing_score": "read as state.gates.passing_score; object identity pinned by TestGateThresholdBinding",
     "percent_complete": "course/card metadata; covered by TestCourseCardFields",
     "release_notes": "course metadata; covered by TestCourseCardFields",
     "require_checkpoints_answered": "course policy, shown in the gates panel",
@@ -125,7 +141,7 @@ SENT_BUT_NOT_READ = {
     "version_number": "course metadata; covered by TestCourseCardFields",
     "weight": "outline row metadata; covered by TestOutlineRowFields",
     "course_version": "identity, echoed for the desk and the transcript",
-    "min_video_coverage": "course policy, read off the course object",
+    "min_video_coverage": "read as state.gates.min_video_coverage; object identity pinned by TestGateThresholdBinding",
     "questions": "read as ctx.quiz.questions when TR.Quiz is mounted",
     "type": "read as question.type off the question rows, which are content, not envelope",
     # Sent for consumers that are not the four player files.
@@ -468,3 +484,78 @@ class TestTheSeamsThatBrokeStayPinned(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGateThresholdBinding(unittest.TestCase):
+    """The `gates` group must be read off `gates`, and must be read at all.
+
+    Narrow on purpose. The set comparison above comes within one step of
+    TASK-2026-01176 and cannot take it: `min_video_coverage` was sent, and a
+    string `min_video_coverage` did appear in the player, so both sides matched.
+    What differed was the object it hung off — `state.course` rather than
+    `state.gates` — which a name comparison cannot see.
+
+    Both halves of that defect are asserted here, because it had two:
+    the readers pointed at the wrong object, *and* `state.gates` was assigned in
+    `load()` and then referenced nowhere else in the file. Either alone is enough
+    to blank the advisory panel, and a payload that is stored but never read
+    looks identical to a working one from the server's side.
+    """
+
+    def _gate_keys(self):
+        """Keys the server nests under `gates` in get_course's return."""
+        tree = ast.parse(RUNTIME.read_text(encoding="utf-8"), filename=str(RUNTIME))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef) or node.name != "get_course":
+                continue
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Return) or not isinstance(sub.value, ast.Dict):
+                    continue
+                for key, value in zip(sub.value.keys, sub.value.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "gates"
+                        and isinstance(value, ast.Dict)
+                    ):
+                        return {
+                            k.value
+                            for k in value.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                        }
+        return set()
+
+    def test_the_scan_found_the_gates_group(self):
+        """A rename of the group would empty this and pass everything below."""
+        keys = self._gate_keys()
+        self.assertTrue(
+            keys,
+            "no `gates` dict found in get_course's return — if the group was renamed, "
+            "rename it here too rather than deleting this class",
+        )
+        self.assertIn("min_video_coverage", keys)
+        self.assertIn("passing_score", keys)
+
+    def test_gate_keys_are_not_read_off_the_course_object(self):
+        """The exact 01176 defect: right key, wrong object."""
+        source = player_source()
+        misread = sorted(
+            key for key in self._gate_keys() if re.search(rf"\bstate\.course\.{re.escape(key)}\b", source)
+        )
+        self.assertFalse(
+            misread,
+            "read off state.course but sent under `gates`, so the value is always "
+            f"undefined and the advisory panel silently shows 0%: {misread}",
+        )
+
+    def test_the_gates_object_is_actually_consumed(self):
+        """`state.gates` assigned and never read is the other half of the bug."""
+        source = player_source()
+        reads = set(re.findall(r"\bstate\.gates\.([a-z][a-z0-9_]*)\b", source))
+        self.assertTrue(
+            reads,
+            "`state.gates` is never read — get_course sends the thresholds and the "
+            "player stores them into a field nothing consumes",
+        )
+        # Every key read off `gates` must be one the server actually sends there.
+        stray = sorted(reads - self._gate_keys())
+        self.assertFalse(stray, f"read off state.gates but not sent under `gates`: {stray}")
