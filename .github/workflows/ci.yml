@@ -28,9 +28,23 @@ on:
 # for that same PR -- which is what cancel-in-progress is actually for. Falls
 # back to `github.ref` for pushes to main. Before this, cancellation happened
 # between two events racing over one commit, which is not a supersede at all.
+# Cancellation is for PRs only. On a PR, a newer commit genuinely supersedes the
+# older run -- same branch, same question, stale answer. On `main` it does not:
+# every push is a DIFFERENT commit, and cancelling one to start the next means
+# the superseded commit's CI never finishes.
+#
+# That is not hypothetical. On 2026-08-07 four `main` runs were cancelled, three
+# of them within 31 seconds, because PRs were merged back to back. Each of those
+# commits had passed CI as a PR -- but a PR runs against the *merge ref* as main
+# stood at that moment, so the run on `main` is the only check of the tree that
+# actually resulted. Three merged states were never validated, and `main` deploys
+# automatically.
+#
+# So: supersede on PRs, never on main. The cost is that back-to-back merges queue
+# instead of collapsing, which is the correct trade for the deploy branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ---------------------------------------------------------------------------

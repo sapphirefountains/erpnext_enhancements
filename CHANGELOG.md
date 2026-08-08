@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.260.3] - 2026-08-07
+
+### Fixed
+
+- **CI no longer cancels a `main` run when the next merge lands.** Part of
+  TASK-2026-01243, found while verifying that task's own fix (v1.253.1, PR #732)
+  against real run history rather than a throwaway PR.
+
+  That fix worked: across the 49 runs since it merged, duplicated commits fell
+  from 16 to 1 and stray push runs from 12 branches to 2 — and all of the residue
+  is transitional, on branches created before it. For a `push` event GitHub uses
+  the workflow file *on the pushed branch*, so a stale branch still carried the
+  unscoped `on: push:` until it caught up. Nothing after 23:28 that same evening.
+
+  What it did not address is `cancel-in-progress` on `main`. Cancellation is
+  right for a PR — a newer commit supersedes the older run, same branch, same
+  question. On `main` it is wrong: every push is a *different* commit, so
+  cancelling one to start the next means the superseded commit's CI never
+  finishes. On 2026-08-07 four `main` runs were cancelled, three within 31
+  seconds, because PRs were merged back to back.
+
+  Each of those commits had passed CI as a PR — but a PR runs against the merge
+  ref as `main` stood at that moment, so the run on `main` is the only check of
+  the tree that actually resulted. Three merged states went unvalidated, on a
+  branch that deploys automatically.
+
+  `cancel-in-progress` is now `${{ github.event_name == 'pull_request' }}`:
+  supersede on PRs, never on main. Back-to-back merges queue instead of
+  collapsing, which is the correct trade for the deploy branch.
+
 ## [1.260.2] - 2026-08-07
 
 ### Fixed
