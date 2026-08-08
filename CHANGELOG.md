@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.260.1] - 2026-08-07
+
+### Fixed
+
+- **Production migrations have been wedged since 13:09 today. This unwedges
+  them.** `patches/rename_gallon_uk_uom.py` called
+  `frappe.rename_doc(..., ignore_permissions=True, ...)`. That keyword does not
+  exist on Frappe 16.30 — the signature is `(doctype, old, new, force, merge,
+  ignore_if_exists, show_alert, rebuild_search)` — so the call raised
+  `TypeError`.
+
+  A patch that raises aborts the **entire** `bench migrate`, so this did not fail
+  as one bad patch. It failed as *no patches at all*. On production the last
+  successful entry in Patch Log is `purge_purchase_order_print_formats` at
+  13:09:27; everything queued behind it never ran:
+
+  - `rename_gallon_uk_uom` itself (`Gallon (UK)` is still there, `Gallon` is not)
+  - `disable_unused_uoms`
+  - `set_default_stock_uom_unit`
+  - `repoint_notifications_to_group_emails`
+  - `rename_payment_step_title` (v1.260.0, shipped hours later)
+
+  So the hand-off step still reads "Receive Customer Payment" in production, and
+  will keep doing so until this merges — the rename was fine, it just never got
+  to run.
+
+  `force=True` already does what the bad keyword was reaching for: it skips the
+  permission and link checks a migrate has no user to answer.
+
+  Found by the `app-deploy-prod` Cloud Build check on an unrelated PR, which is
+  the only reason it surfaced today rather than at the next deploy.
+
+### Changed
+
+- **`test_uom_cleanup` now checks the call signature, not just the call.** The
+  existing assertion was `assertIn("frappe.rename_doc(", source)` — true of a
+  call with a keyword that does not exist. Nothing else could have caught this
+  either: ruff's F821 sees undefined *names*, not wrong *keywords*, and the
+  bench-free suites never import frappe.
+
+  The Frappe 16.30 parameter list is now written down and checked by AST against
+  **every** `frappe.rename_doc` call in the app, not only this patch's. The other
+  six call sites were swept and are clean.
+
 ## [1.260.0] - 2026-08-07
 
 ### Added
