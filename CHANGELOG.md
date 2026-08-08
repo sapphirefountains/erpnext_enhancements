@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A branch whose name merely contained "main" deployed to production.** Cloud
+  Build branch filters are **regexes**, and `cloud_build_deploy_branch` defaulted
+  to a bare `main` — so `app-deploy-prod` matched any branch containing that
+  substring. It is now `^main$`, which is what `deploy_branch_regex` three lines
+  above it in the same file has always used.
+
+  This was not theoretical. The PR that carries this change was on a branch named
+  `claude/ci-no-cancel-on-main`, and every push to it ran `app-deploy-prod`
+  against `production-erpnext-standard-vm`: SSH in, reset the app to
+  `upstream/main`, `bench migrate`, `bench build`, `FLUSHDB` on both redis
+  instances, restart the bench.
+
+  It stopped at `bench migrate`, which failed on the unrelated patch bug fixed in
+  v1.260.1 — and because the remote command is a single `&&` chain under `set
+  -e`, nothing after it ran. **A broken migration is the only reason a pull
+  request did not flush the production job queue and restart the site.** Flushing
+  that queue silently destroys pending background jobs, which this repo has been
+  bitten by before.
+
+  Requires `terraform apply` to take effect; the trigger's current filter lives in
+  Google Cloud, not in this file.
+
 - **CI no longer cancels a `main` run when the next merge lands.** Part of
   TASK-2026-01243, found while verifying that task's own fix (v1.253.1, PR #732)
   against real run history rather than a throwaway PR.
