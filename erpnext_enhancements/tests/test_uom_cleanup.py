@@ -87,6 +87,63 @@ class TestTheRenameIsExact(unittest.TestCase):
         """Hand-updating the columns would miss whichever one is added next."""
         self.assertIn("frappe.rename_doc(", RENAME.read_text(encoding="utf-8"))
 
+    def test_every_rename_doc_call_matches_frappe_16s_signature(self):
+        """No call may pass a keyword `frappe.rename_doc` does not accept.
+
+        This assertion is here because the substring check above was not enough,
+        and the gap was expensive. The original patch called
+        ``rename_doc(..., ignore_permissions=True, ...)``; that keyword does not
+        exist on Frappe 16.30, so the call raised ``TypeError`` — and a patch that
+        raises aborts the entire ``bench migrate``. Production migrations were
+        wedged from 2026-08-07 13:09 until it was fixed, with every patch queued
+        behind it silently never running, including two shipped the same day.
+
+        Nothing else could have caught it: ruff's F821 sees undefined *names*, not
+        wrong *keywords*, and the suites here never import frappe. So the
+        signature is written down and checked against every call site in the app,
+        not just this patch's.
+        """
+        # frappe/__init__.py on 16.30. Positional-or-keyword, so any of them may
+        # legitimately appear as a keyword; anything outside this set cannot.
+        allowed = {
+            "doctype",
+            "old",
+            "new",
+            "force",
+            "merge",
+            "ignore_if_exists",
+            "show_alert",
+            "rebuild_search",
+        }
+
+        offences = []
+        for path in sorted(APP.rglob("*.py")):
+            if "__pycache__" in path.parts or path.name == Path(__file__).name:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not (isinstance(func, ast.Attribute) and func.attr == "rename_doc"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg and kw.arg not in allowed:
+                        offences.append(
+                            f"  {path.relative_to(APP).as_posix()}:{node.lineno}  "
+                            f"rename_doc(..., {kw.arg}=...)"
+                        )
+
+        self.assertFalse(
+            offences,
+            "frappe.rename_doc does not accept these keywords on Frappe 16.30. A "
+            "patch that raises aborts the whole migrate, so this reaches production "
+            "as 'no patches ran', not as one failing patch:\n" + "\n".join(offences),
+        )
+
     def test_it_moves_the_autoname_field_too(self):
         """UOM is `autoname: field:uom_name`; leaving the field behind renames the
         record back on the next save."""

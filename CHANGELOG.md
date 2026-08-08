@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.260.2] - 2026-08-07
+
+### Fixed
+
+- **Course coverage and pass thresholds always displayed as 0%.** Closes
+  TASK-2026-01176. `get_course` groups the course policy under a `gates` key of
+  its own, and `load()` has always stored it as `state.gates` — but all three
+  readers in `player.js` took the values off `state.course`, where they have
+  never been. `undefined` becomes 0 through `pct()`, and 0 renders as "no
+  requirement", so the advisory panel told every learner they had nothing to
+  reach.
+
+  Advisory only: `evaluate_gates` is the authority and was always correct, so
+  nobody was let through a gate they should not have passed. What was broken is
+  that a learner could not see what was being asked of them.
+
+  This is the eleventh defect of this exact shape in this module, and the second
+  where the payload was *stored and never read* — `state.gates` was referenced
+  exactly once in the whole file, which was the assignment itself.
+
+### Changed
+
+- **The boundary contract test now pins object identity for the `gates` group,
+  and its allowlist stops lying.** The suite added in v1.256.0 was built for
+  precisely this bug class and came within one step of catching it:
+  `min_video_coverage` was sent, and the string appeared in the player, so a set
+  comparison of names matched and passed. What differed was the object.
+
+  Worse, its allowlist *recorded the defect as intended behaviour* — the reason
+  fields read "read off the course object" and "read as
+  `state.course.passing_score`" — and the module docstring claimed the
+  wrong-object case "is every defect this module has actually shipped", which was
+  already untrue when it was written. A reason field that documents a bug as a
+  design is how an allowlist stops being a safeguard.
+
+  `TestGateThresholdBinding` closes it: keys the server nests under `gates` must
+  be read off a `gates` binder, and must be read *at all* — both halves, because
+  this defect had both. Deliberately narrow, one envelope group pinned by path,
+  rather than a general type checker.
+
+  It earned itself immediately. A manual sweep found two call sites; the test
+  found a third in `lessonPercent()` that the sweep had deduplicated away.
+
+## [1.260.1] - 2026-08-07
+
+### Fixed
+
+- **Production migrations have been wedged since 13:09 today. This unwedges
+  them.** `patches/rename_gallon_uk_uom.py` called
+  `frappe.rename_doc(..., ignore_permissions=True, ...)`. That keyword does not
+  exist on Frappe 16.30 — the signature is `(doctype, old, new, force, merge,
+  ignore_if_exists, show_alert, rebuild_search)` — so the call raised
+  `TypeError`.
+
+  A patch that raises aborts the **entire** `bench migrate`, so this did not fail
+  as one bad patch. It failed as *no patches at all*. On production the last
+  successful entry in Patch Log is `purge_purchase_order_print_formats` at
+  13:09:27; everything queued behind it never ran:
+
+  - `rename_gallon_uk_uom` itself (`Gallon (UK)` is still there, `Gallon` is not)
+  - `disable_unused_uoms`
+  - `set_default_stock_uom_unit`
+  - `repoint_notifications_to_group_emails`
+  - `rename_payment_step_title` (v1.260.0, shipped hours later)
+
+  So the hand-off step still reads "Receive Customer Payment" in production, and
+  will keep doing so until this merges — the rename was fine, it just never got
+  to run.
+
+  `force=True` already does what the bad keyword was reaching for: it skips the
+  permission and link checks a migrate has no user to answer.
+
+  Found by the `app-deploy-prod` Cloud Build check on an unrelated PR, which is
+  the only reason it surfaced today rather than at the next deploy.
+
+### Changed
+
+- **`test_uom_cleanup` now checks the call signature, not just the call.** The
+  existing assertion was `assertIn("frappe.rename_doc(", source)` — true of a
+  call with a keyword that does not exist. Nothing else could have caught this
+  either: ruff's F821 sees undefined *names*, not wrong *keywords*, and the
+  bench-free suites never import frappe.
+
+  The Frappe 16.30 parameter list is now written down and checked by AST against
+  **every** `frappe.rename_doc` call in the app, not only this patch's. The other
+  six call sites were swept and are clean.
+
 ## [1.260.0] - 2026-08-07
 
 ### Added

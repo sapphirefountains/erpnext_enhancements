@@ -51,7 +51,15 @@ def execute():
 		return
 
 	# Rewrites every Link column that points at the old name, database-wide.
-	frappe.rename_doc("UOM", OLD, NEW, force=True, ignore_permissions=True, show_alert=False)
+	#
+	# NO `ignore_permissions` kwarg. `frappe.rename_doc` on Frappe 16.30 takes
+	# (doctype, old, new, force, merge, ignore_if_exists, show_alert,
+	# rebuild_search) and nothing else, so passing it raised TypeError — which,
+	# because a raising patch aborts the whole `bench migrate`, wedged production
+	# migrations from 2026-08-07 13:09 until this fix. Every patch queued behind
+	# this one silently never ran. `force=True` already does what was wanted here:
+	# it skips the permission and link checks that a migrate has no user to answer.
+	frappe.rename_doc("UOM", OLD, NEW, force=True, show_alert=False)
 
 	# autoname is `field:uom_name`, so the field has to agree with the new name or
 	# the next save renames it straight back.
