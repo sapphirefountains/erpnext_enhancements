@@ -527,9 +527,23 @@ variable "deploy_branch_regex" {
 }
 
 variable "cloud_build_deploy_branch" {
-  description = "Branch name that triggers CI/CD app deployment (deploy-test, deploy-prod)."
+  # ANCHORED. Cloud Build branch filters are regexes, not literals, so a bare
+  # `main` matches any branch whose name merely CONTAINS it — and app-deploy-prod
+  # SSHes to the production VM, resets the app to upstream/main, migrates,
+  # rebuilds, FLUSHDBs both redis instances and restarts the bench.
+  #
+  # Observed on 2026-08-07: a PR branch called `claude/ci-no-cancel-on-main`
+  # triggered a full production deploy on every push, purely because of its name.
+  # It got as far as `bench migrate` and failed there (on an unrelated patch bug),
+  # which is the only reason the FLUSHDB and restart never ran — `set -e` and the
+  # `&&` chain stopped it. A branch named the same way on a green main would have
+  # flushed the production job queue and restarted the site, from a pull request.
+  #
+  # `deploy_branch_regex` above already anchors for exactly this reason; this one
+  # was the outlier.
+  description = "Regex matching the branch that triggers CI/CD app deployment (deploy-test, deploy-prod)."
   type        = string
-  default     = "main"
+  default     = "^main$"
 }
 
 variable "destroy_branch_regex" {
