@@ -1,0 +1,648 @@
+{
+ "actions": [],
+ "creation": "2026-08-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "intro_html",
+  "rollout_section",
+  "enabled",
+  "dry_run_mode",
+  "restrict_to_whitelist",
+  "column_break_rollout",
+  "relay_identity_mode",
+  "allowed_users",
+  "google_section",
+  "google_project_id",
+  "gcp_project_number",
+  "workspace_customer_id",
+  "workspace_domain",
+  "column_break_google",
+  "delegation_service_account",
+  "vm_service_account_email",
+  "chat_app_service_account",
+  "endpoints_section",
+  "interaction_endpoint_url",
+  "pubsub_topic",
+  "column_break_endpoints",
+  "pubsub_events_subscription",
+  "pubsub_interaction_subscription",
+  "flags_section",
+  "google_sync_enabled",
+  "relay_outbound_enabled",
+  "relay_inbound_enabled",
+  "mirror_attachments",
+  "threading_enabled",
+  "column_break_flags",
+  "triton_enabled",
+  "org_structure_mirroring_enabled",
+  "document_spaces_enabled",
+  "import_mode_enabled",
+  "store_retrieval_query_text",
+  "kill_switch_section",
+  "pause_outbound",
+  "pause_inbound",
+  "column_break_kill_switch",
+  "pause_triton",
+  "pause_retrieval",
+  "quotas_section",
+  "space_write_tokens_per_second",
+  "upload_token_cost",
+  "project_space_writes_per_minute",
+  "project_membership_writes_per_minute",
+  "project_message_writes_per_minute",
+  "column_break_quotas",
+  "message_byte_limit",
+  "attachment_byte_limit",
+  "operational_section",
+  "relay_max_attempts",
+  "relay_initial_backoff_seconds",
+  "backoff_cap_seconds",
+  "http_timeout_seconds",
+  "sweeper_batch_size",
+  "column_break_operational",
+  "subscription_ttl_seconds",
+  "subscription_renew_before_seconds",
+  "presence_heartbeat_seconds",
+  "presence_ttl_seconds",
+  "log_message_bodies",
+  "retention_section",
+  "message_retention_days",
+  "hard_delete_after_days",
+  "keep_tombstones_forever",
+  "column_break_retention",
+  "inbound_event_retention_days",
+  "relay_job_retention_days",
+  "admin_oversight_role",
+  "triton_section",
+  "context_token_ceiling",
+  "budget_t0_stable",
+  "budget_t1_thread",
+  "budget_t1_floor",
+  "budget_t2_cross",
+  "budget_t3_authored",
+  "budget_reserve",
+  "column_break_triton",
+  "tier_t0_enabled",
+  "tier_t1_enabled",
+  "tier_t2_enabled",
+  "tier_t3_enabled"
+ ],
+ "fields": [
+  {
+   "fieldname": "intro_html",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted\"><b>This page holds identifiers, never credentials.</b> Google authentication is keyless: there is no private key on disk, none in this database and none in <code>site_config.json</code>. The whole trust relationship is one IAM binding (<code>roles/iam.serviceAccountTokenCreator</code>) on the delegation service account, and revocation is a single <code>gcloud iam service-accounts remove-iam-policy-binding</code>. If you are about to paste a service-account JSON key anywhere on this form, stop — the design has been misread.</p>"
+  },
+  {
+   "fieldname": "rollout_section",
+   "fieldtype": "Section Break",
+   "label": "Rollout"
+  },
+  {
+   "default": "0",
+   "description": "Master switch. When off, no code path in this app makes any Google call, renders any chat surface, or runs any chat job. Ships off; this is a rollout control, not an incident control — use the Kill Switches below during an incident.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Chat"
+  },
+  {
+   "default": "1",
+   "description": "When on, the Google Chat transport client performs zero network I/O and returns deterministic synthetic responses (spaces/DRYRUN-…). Everything else runs normally. Leave on until the Google Cloud runbook has actually been executed.",
+   "fieldname": "dry_run_mode",
+   "fieldtype": "Check",
+   "label": "Dry Run Mode (no network I/O)"
+  },
+  {
+   "default": "1",
+   "description": "When on, only the users listed opposite (plus the Administrator) may use chat. Enforced server-side on every call, not just in the UI. This is how the pilot stays a pilot.",
+   "fieldname": "restrict_to_whitelist",
+   "fieldtype": "Check",
+   "label": "Restrict to whitelisted users only"
+  },
+  {
+   "fieldname": "column_break_rollout",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Domain-Wide Delegation",
+   "description": "Domain-Wide Delegation relays each message as the real person, so it appears in the native Google Chat client with no App badge. App Auth posts everything as the Chat app and is the escape lever if delegation is ever withdrawn — it changes who every relayed message appears to be from, so it is not a routine setting.",
+   "fieldname": "relay_identity_mode",
+   "fieldtype": "Select",
+   "label": "Relay Identity Mode",
+   "options": "Domain-Wide Delegation\nApp Auth"
+  },
+  {
+   "depends_on": "eval:doc.restrict_to_whitelist",
+   "description": "Users permitted to use chat while the whitelist is active.",
+   "fieldname": "allowed_users",
+   "fieldtype": "Table",
+   "label": "Allowed Users",
+   "options": "Chat Allowed User"
+  },
+  {
+   "fieldname": "google_section",
+   "fieldtype": "Section Break",
+   "label": "Google Connection (identifiers only)"
+  },
+  {
+   "description": "The GCP project id hosting the Chat app, e.g. sapphire-chat-prod.",
+   "fieldname": "google_project_id",
+   "fieldtype": "Data",
+   "label": "Google Project ID",
+   "length": 140
+  },
+  {
+   "description": "The numeric GCP project number. Used where Google's own consoles ask for the number rather than the id.",
+   "fieldname": "gcp_project_number",
+   "fieldtype": "Data",
+   "label": "GCP Project Number",
+   "length": 64
+  },
+  {
+   "description": "The Google Workspace customer id (C0…), from Admin console > Account settings.",
+   "fieldname": "workspace_customer_id",
+   "fieldtype": "Data",
+   "label": "Workspace Customer ID",
+   "length": 64
+  },
+  {
+   "description": "The primary Workspace domain, e.g. sapphirefountains.com. Used to reject relaying on behalf of an address outside the domain.",
+   "fieldname": "workspace_domain",
+   "fieldtype": "Data",
+   "label": "Workspace Domain",
+   "length": 140
+  },
+  {
+   "fieldname": "column_break_google",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The EMAIL ADDRESS of the service account granted domain-wide delegation — the identity messages are relayed as. Not a key, not a JSON blob: an address ending in .iam.gserviceaccount.com.",
+   "fieldname": "delegation_service_account",
+   "fieldtype": "Data",
+   "label": "Delegation Service Account (email)",
+   "length": 255
+  },
+  {
+   "description": "The EMAIL ADDRESS of the service account attached to the VM. It holds roles/iam.serviceAccountTokenCreator on the delegation account and signs the assertion via the IAM Credentials signJwt API, which is what makes the design keyless.",
+   "fieldname": "vm_service_account_email",
+   "fieldtype": "Data",
+   "label": "VM Service Account (email)",
+   "length": 255
+  },
+  {
+   "description": "The EMAIL ADDRESS of the Chat app's own service account. Used only for Triton's replies, which post under the bot identity; human messages never use it.",
+   "fieldname": "chat_app_service_account",
+   "fieldtype": "Data",
+   "label": "Chat App Service Account (email)",
+   "length": 255
+  },
+  {
+   "fieldname": "endpoints_section",
+   "fieldtype": "Section Break",
+   "label": "Endpoints and Pub/Sub"
+  },
+  {
+   "description": "The HTTPS endpoint configured in the Google Chat API console, and the value the inbound webhook compares the JWT 'aud' claim against BYTE FOR BYTE — including the trailing slash, or its absence. A one-character difference is not a validation warning: it is every inbound event rejected with a 401 that reads like a signing failure. Copy and paste it from the console; do not retype it.",
+   "fieldname": "interaction_endpoint_url",
+   "fieldtype": "Data",
+   "label": "Interaction Endpoint URL (JWT audience)",
+   "length": 255
+  },
+  {
+   "description": "Fully-qualified Pub/Sub topic the Workspace Events subscription publishes to: projects/{project}/topics/{topic}.",
+   "fieldname": "pubsub_topic",
+   "fieldtype": "Data",
+   "label": "Pub/Sub Topic",
+   "length": 255
+  },
+  {
+   "fieldname": "column_break_endpoints",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "projects/{project}/subscriptions/{subscription} — the subscription the inbound event consumer reads.",
+   "fieldname": "pubsub_events_subscription",
+   "fieldtype": "Data",
+   "label": "Pub/Sub Events Subscription",
+   "length": 255
+  },
+  {
+   "description": "Reserved. Empty under the HTTP interaction transport; only used if interactions ever move to Pub/Sub.",
+   "fieldname": "pubsub_interaction_subscription",
+   "fieldtype": "Data",
+   "label": "Pub/Sub Interaction Subscription",
+   "length": 255
+  },
+  {
+   "fieldname": "flags_section",
+   "fieldtype": "Section Break",
+   "label": "Feature Flags"
+  },
+  {
+   "default": "0",
+   "description": "Master flag for talking to Google at all. Off means ERPNext-only chat: messages are stored and delivered inside ERPNext and never mirrored.",
+   "fieldname": "google_sync_enabled",
+   "fieldtype": "Check",
+   "label": "Google Sync Enabled"
+  },
+  {
+   "default": "0",
+   "description": "ERPNext to Google Chat. Off means messages written here are never relayed outward.",
+   "fieldname": "relay_outbound_enabled",
+   "fieldtype": "Check",
+   "label": "Outbound Relay Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Google Chat to ERPNext. Off means inbound events are still received and stored, but never turned into messages.",
+   "fieldname": "relay_inbound_enabled",
+   "fieldtype": "Check",
+   "label": "Inbound Events Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Mirror attachments as well as text. Each attachment costs two write tokens against the one-write-per-second-per-space budget, so a busy space with screenshots will rate-limit.",
+   "fieldname": "mirror_attachments",
+   "fieldtype": "Check",
+   "label": "Mirror Attachments"
+  },
+  {
+   "default": "0",
+   "description": "Use Google Chat threads rather than flat posting. Turn on only after the five-minute thread-settlement check has passed on a real space; a wrong messageReplyOption silently starts a new top-level thread and ignores the thread id.",
+   "fieldname": "threading_enabled",
+   "fieldtype": "Check",
+   "label": "Threading Enabled"
+  },
+  {
+   "fieldname": "column_break_flags",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "The @triton path inside chat rooms.",
+   "fieldname": "triton_enabled",
+   "fieldtype": "Check",
+   "label": "Triton Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Mirror the org structure (departments, teams) into Google Chat spaces.",
+   "fieldname": "org_structure_mirroring_enabled",
+   "fieldtype": "Check",
+   "label": "Org Structure Mirroring Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Allow rooms to be linked to an ERPNext document (a Project, a Sales Order). The fields exist from Phase 1; the provisioning automation does not.",
+   "fieldname": "document_spaces_enabled",
+   "fieldtype": "Check",
+   "label": "Document Spaces Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Migration only, never steady state. Relaxes the ordering and echo rules so historical messages can be backfilled. Leaving this on in normal operation corrupts the sync state machine.",
+   "fieldname": "import_mode_enabled",
+   "fieldtype": "Check",
+   "label": "Import Mode Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Store the raw text of retrieval queries in the audit log, not just its hash. Off by default because the query a manager types is itself sensitive.",
+   "fieldname": "store_retrieval_query_text",
+   "fieldtype": "Check",
+   "label": "Store Retrieval Query Text"
+  },
+  {
+   "fieldname": "kill_switch_section",
+   "fieldtype": "Section Break",
+   "label": "Kill Switches"
+  },
+  {
+   "default": "0",
+   "description": "Stop relaying to Google without tearing the feature down. Queued relay jobs stay queued.",
+   "fieldname": "pause_outbound",
+   "fieldtype": "Check",
+   "label": "Pause Outbound"
+  },
+  {
+   "default": "0",
+   "description": "Stop ingesting from Google. Events accumulate in Pub/Sub and are recoverable when this is turned back off — they are not lost.",
+   "fieldname": "pause_inbound",
+   "fieldtype": "Check",
+   "label": "Pause Inbound"
+  },
+  {
+   "fieldname": "column_break_kill_switch",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Mute @triton while leaving human mirroring alive.",
+   "fieldname": "pause_triton",
+   "fieldtype": "Check",
+   "label": "Pause Triton"
+  },
+  {
+   "default": "0",
+   "description": "Close the retrieval gate without disabling chat. Triton keeps answering, but with no chat context.",
+   "fieldname": "pause_retrieval",
+   "fieldtype": "Check",
+   "label": "Pause Retrieval"
+  },
+  {
+   "fieldname": "quotas_section",
+   "fieldtype": "Section Break",
+   "label": "Quotas and Rate Limits"
+  },
+  {
+   "default": "1",
+   "description": "Google's measured per-space write cap. Float rather than Int deliberately: this is the refill rate of a token bucket and must share a type with the charge below, or the arithmetic truncates. A sub-1/s value throttles a noisy space without a schema change.",
+   "fieldname": "space_write_tokens_per_second",
+   "fieldtype": "Float",
+   "label": "Space Write Tokens per Second",
+   "precision": "3"
+  },
+  {
+   "default": "2",
+   "description": "What one media.upload costs against the same bucket as a message write. Float for the same reason as the refill rate.",
+   "fieldname": "upload_token_cost",
+   "fieldtype": "Float",
+   "label": "Upload Token Cost",
+   "precision": "3"
+  },
+  {
+   "default": "60",
+   "description": "Project-wide space create/update writes per minute (Google's published quota).",
+   "fieldname": "project_space_writes_per_minute",
+   "fieldtype": "Int",
+   "label": "Project Space Writes per Minute"
+  },
+  {
+   "default": "300",
+   "description": "Project-wide membership writes per minute.",
+   "fieldname": "project_membership_writes_per_minute",
+   "fieldtype": "Int",
+   "label": "Project Membership Writes per Minute"
+  },
+  {
+   "default": "3000",
+   "description": "Project-wide message writes per minute.",
+   "fieldname": "project_message_writes_per_minute",
+   "fieldtype": "Int",
+   "label": "Project Message Writes per Minute"
+  },
+  {
+   "fieldname": "column_break_quotas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "32000",
+   "description": "Maximum size of a whole Google Chat message in BYTES, not characters. Multi-byte text hits this sooner than a character count suggests.",
+   "fieldname": "message_byte_limit",
+   "fieldtype": "Int",
+   "label": "Message Byte Limit"
+  },
+  {
+   "default": "209715200",
+   "description": "Maximum attachment size in bytes (200 MB).",
+   "fieldname": "attachment_byte_limit",
+   "fieldtype": "Int",
+   "label": "Attachment Byte Limit"
+  },
+  {
+   "fieldname": "operational_section",
+   "fieldtype": "Section Break",
+   "label": "Operational"
+  },
+  {
+   "default": "5",
+   "description": "Attempts before a relay job is moved to Dead. Matches the offsite-backup module's MAX_ATTEMPTS, which is the house constant for a Google-facing retry.",
+   "fieldname": "relay_max_attempts",
+   "fieldtype": "Int",
+   "label": "Relay Max Attempts"
+  },
+  {
+   "default": "2",
+   "description": "Base of the exponential backoff, in seconds. Full jitter is applied: the delay is uniform in [0, min(cap, base * 2^attempt)].",
+   "fieldname": "relay_initial_backoff_seconds",
+   "fieldtype": "Int",
+   "label": "Backoff Base (seconds)"
+  },
+  {
+   "default": "32",
+   "description": "Ceiling on a single backoff delay, in seconds, and the ceiling a server's Retry-After hint is clamped to. Without a cap the fifth attempt on a long outage lands hours away. 32 per Phase 1 §4.5 and not higher: the transport client sleeps synchronously between attempts, so with 5 attempts a cap of 300 parks a worker on one call for roughly twenty minutes.",
+   "fieldname": "backoff_cap_seconds",
+   "fieldtype": "Int",
+   "label": "Backoff Cap (seconds)"
+  },
+  {
+   "default": "30",
+   "description": "Per-request timeout for every HTTP call to Google. Never 0 — requests treats 0 as no timeout, which parks a worker on a hung socket forever. The controller floors it at 1.",
+   "fieldname": "http_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "HTTP Timeout (seconds)"
+  },
+  {
+   "default": "200",
+   "description": "Rows a sweeper job processes per run. Matches the existing Drive retry sweeper.",
+   "fieldname": "sweeper_batch_size",
+   "fieldtype": "Int",
+   "label": "Sweeper Batch Size"
+  },
+  {
+   "fieldname": "column_break_operational",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "604800",
+   "description": "Requested lifetime of a Workspace Events subscription, in seconds. 604800 (7 days) is the ceiling Google allows for a subscription that does not include resource payloads.",
+   "fieldname": "subscription_ttl_seconds",
+   "fieldtype": "Int",
+   "label": "Subscription TTL (seconds)"
+  },
+  {
+   "default": "86400",
+   "description": "Renew a subscription this many seconds before it expires. A full day early on purpose: the 12-hour lifecycle reminder is the backstop, not the plan. An expired subscription is permanent, silent, total loss of inbound sync.",
+   "fieldname": "subscription_renew_before_seconds",
+   "fieldtype": "Int",
+   "label": "Renew Subscription Before (seconds)"
+  },
+  {
+   "default": "30",
+   "description": "How often a focused client reports presence. 30 is the house constant (live_form_sync.js:71-72), per ADR §F.13. This must never be the thing keeping the WebSocket alive — socket.io's own 25s ping is the keepalive. Raising it for efficiency on the assumption that it doubles as a keepalive would silently kill every idle connection.",
+   "fieldname": "presence_heartbeat_seconds",
+   "fieldtype": "Int",
+   "label": "Presence Heartbeat (seconds)"
+  },
+  {
+   "default": "75",
+   "description": "Redis TTL on a presence key. 75 is the house constant (ADR §F.13), two and a half heartbeats: two may be missed before a user drops to offline. A deploy flushes Redis, so the worst case is everyone showing offline for one heartbeat.",
+   "fieldname": "presence_ttl_seconds",
+   "fieldtype": "Int",
+   "label": "Presence TTL (seconds)"
+  },
+  {
+   "default": "0",
+   "description": "Include message bodies in diagnostic logs. Off, and it should stay off: the Error Log is readable by every System Manager and is not a place employee-private conversation belongs.",
+   "fieldname": "log_message_bodies",
+   "fieldtype": "Check",
+   "label": "Log Message Bodies"
+  },
+  {
+   "fieldname": "retention_section",
+   "fieldtype": "Section Break",
+   "label": "Retention and Governance"
+  },
+  {
+   "default": "0",
+   "description": "Delete messages older than this many days. 0 keeps them forever.",
+   "fieldname": "message_retention_days",
+   "fieldtype": "Int",
+   "label": "Message Retention (days)"
+  },
+  {
+   "default": "0",
+   "description": "Promote a soft-deleted message to a real row deletion after this many days. 0 never promotes. Has no effect while Keep Tombstones Forever is on — setting both is rejected on save rather than silently ignored.",
+   "fieldname": "hard_delete_after_days",
+   "fieldtype": "Int",
+   "label": "Hard Delete After (days)"
+  },
+  {
+   "default": "1",
+   "description": "Never remove the tombstone row a delete leaves behind. On by default: Google's own tombstone is content-free, so ERPNext's copy is the only record that the message existed and what it said.",
+   "fieldname": "keep_tombstones_forever",
+   "fieldtype": "Check",
+   "label": "Keep Tombstones Forever"
+  },
+  {
+   "fieldname": "column_break_retention",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Purge processed inbound events after this many days. Failed rows are exempt and are never purged.",
+   "fieldname": "inbound_event_retention_days",
+   "fieldtype": "Int",
+   "label": "Inbound Event Retention (days)"
+  },
+  {
+   "default": "30",
+   "description": "Purge completed relay jobs after this many days. Dead rows are exempt.",
+   "fieldname": "relay_job_retention_days",
+   "fieldtype": "Int",
+   "label": "Relay Job Retention (days)"
+  },
+  {
+   "description": "The role permitted to read chat content it is not a participant in. Intended value: Chat Auditor. Left blank on purpose so the escape hatch fails closed until somebody deliberately opens it — while this is empty, no role can read a room it is not a member of. Every privileged read writes a Chat Retrieval Audit row.",
+   "fieldname": "admin_oversight_role",
+   "fieldtype": "Link",
+   "label": "Admin Oversight Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "triton_section",
+   "fieldtype": "Section Break",
+   "label": "Triton Context Budget"
+  },
+  {
+   "default": "40000",
+   "description": "Hard ceiling on assembled chat context, in tokens. Covers retrieved chat context only — it excludes the system prompt and tool definitions. Editable rather than a constant because it is meant to be revisited with real token counts after two weeks of use.",
+   "fieldname": "context_token_ceiling",
+   "fieldtype": "Int",
+   "label": "Context Token Ceiling"
+  },
+  {
+   "default": "6000",
+   "description": "T0 — the pinned document card and stable room digests. Prompt-cacheable, so it neither borrows from nor lends to the other tiers, and it is not counted against the ceiling: the ceiling governs the pool that flows (T1 + T2 + T3 + reserve).",
+   "fieldname": "budget_t0_stable",
+   "fieldtype": "Int",
+   "label": "T0 Stable Budget"
+  },
+  {
+   "default": "18000",
+   "description": "T1 — the current thread, verbatim. Unused budget flows T1 to T2 to T3.",
+   "fieldname": "budget_t1_thread",
+   "fieldtype": "Int",
+   "label": "T1 Thread Budget"
+  },
+  {
+   "default": "4000",
+   "description": "The size T1 is guaranteed to keep when the degradation ladder fires. T1 is never starved below this. Must be less than or equal to the T1 Thread Budget.",
+   "fieldname": "budget_t1_floor",
+   "fieldtype": "Int",
+   "label": "T1 Floor"
+  },
+  {
+   "default": "14000",
+   "description": "T2 — retrieved chunks from other rooms the asker is a member of.",
+   "fieldname": "budget_t2_cross",
+   "fieldtype": "Int",
+   "label": "T2 Cross-Room Budget"
+  },
+  {
+   "default": "6000",
+   "description": "T3 — the asking user's own authored history.",
+   "fieldname": "budget_t3_authored",
+   "fieldtype": "Int",
+   "label": "T3 Authored Budget"
+  },
+  {
+   "default": "2000",
+   "description": "Held back for the citation manifest and slack. Counted against the ceiling alongside T1, T2 and T3.",
+   "fieldname": "budget_reserve",
+   "fieldtype": "Int",
+   "label": "Reserve"
+  },
+  {
+   "fieldname": "column_break_triton",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "tier_t0_enabled",
+   "fieldtype": "Check",
+   "label": "Tier T0 Enabled (stable prefix)"
+  },
+  {
+   "default": "1",
+   "fieldname": "tier_t1_enabled",
+   "fieldtype": "Check",
+   "label": "Tier T1 Enabled (current thread)"
+  },
+  {
+   "default": "1",
+   "fieldname": "tier_t2_enabled",
+   "fieldtype": "Check",
+   "label": "Tier T2 Enabled (cross-room)"
+  },
+  {
+   "default": "1",
+   "fieldname": "tier_t3_enabled",
+   "fieldtype": "Check",
+   "label": "Tier T3 Enabled (authored)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

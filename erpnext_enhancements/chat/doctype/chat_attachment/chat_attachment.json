@@ -1,0 +1,170 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "message",
+  "room",
+  "column_break_identity",
+  "source",
+  "ingest_state",
+  "skip_reason",
+  "local_section",
+  "file",
+  "file_name",
+  "column_break_local",
+  "content_type",
+  "file_size",
+  "google_section",
+  "gchat_attachment_name",
+  "gchat_attachment_data_ref",
+  "column_break_google",
+  "drive_file_id"
+ ],
+ "fields": [
+  {
+   "description": "The message this attachment belongs to. Never changes once written.",
+   "fieldname": "message",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Message",
+   "options": "Chat Message",
+   "reqd": 1,
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Denormalised from the message on purpose: the download endpoint's membership check must not have to join through Chat Message.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Mirrors Google's Attachment.source. Uploaded = a Chat-hosted blob we may copy (UPLOADED_CONTENT). Drive Link = a Drive file we may only link to (DRIVE_FILE), because copying the bytes would re-home somebody else's Drive ACL inside our permission model. ERPNext = uploaded on our side first.",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "Uploaded\nDrive Link\nERPNext",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "description": "Where the ingest of this attachment got to. Written by Phase 2's ingest job, which is retried by the sweeper and must therefore be idempotent.",
+   "fieldname": "ingest_state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Ingest State",
+   "options": "Pending\nStored\nLinked\nSkipped\nFailed",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.ingest_state==\"Skipped\" || doc.ingest_state==\"Failed\"",
+   "description": "Why the bytes were not stored - a blocked content type, or a file over the size ceiling.",
+   "fieldname": "skip_reason",
+   "fieldtype": "Small Text",
+   "label": "Skip Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "local_section",
+   "fieldtype": "Section Break",
+   "label": "Stored Bytes"
+  },
+  {
+   "description": "The private File row holding the bytes. Empty for a Drive Link, whose bytes stay in Drive under Drive's own ACL.",
+   "fieldname": "file",
+   "fieldtype": "Link",
+   "label": "File",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "description": "Google Attachment.contentName - the original filename as the sender saw it, never a path.",
+   "fieldname": "file_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "File Name",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_local",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Google Attachment.contentType.",
+   "fieldname": "content_type",
+   "fieldtype": "Data",
+   "label": "Content Type",
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "description": "Size in bytes.",
+   "fieldname": "file_size",
+   "fieldtype": "Int",
+   "label": "File Size",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_section",
+   "fieldtype": "Section Break",
+   "label": "Google Chat"
+  },
+  {
+   "description": "spaces/{space}/messages/{message}/attachments/{attachment}. Unique so that a replayed inbound event ingests the same attachment at most once - structural dedupe, not procedural. Empty until ingest; Frappe coerces empty to NULL on a unique DocField, so unrelayed rows do not collide.",
+   "fieldname": "gchat_attachment_name",
+   "fieldtype": "Data",
+   "label": "Google Attachment Name",
+   "length": 255,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "attachmentDataRef.resourceName - the only legitimate download handle. Never store or follow downloadUri or thumbnailUri: Google documents both as browser-session URLs and says twice that Chat apps should not use them.",
+   "fieldname": "gchat_attachment_data_ref",
+   "fieldtype": "Data",
+   "label": "Attachment Data Ref",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_google",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "driveDataRef.driveFileId. Set instead of file for a Drive Link; media.download explicitly cannot fetch Drive files.",
+   "fieldname": "drive_file_id",
+   "fieldtype": "Data",
+   "label": "Drive File ID",
+   "length": 140,
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Attachment",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

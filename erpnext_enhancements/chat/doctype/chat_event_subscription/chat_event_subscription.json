@@ -1,0 +1,133 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "subscription_uid",
+  "target_resource",
+  "target_user",
+  "column_break_head",
+  "state",
+  "suspension_reason",
+  "event_types",
+  "expiry_section",
+  "expire_time",
+  "last_renewed",
+  "column_break_expiry",
+  "consecutive_failures",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "description": "Google's Subscription.uid. Unique so that subscriptions.list can be reconciled against this table in one probe, and so that the 'no ACTIVE subscription for this coworker' alarm cannot be fooled by a duplicate bookkeeping row. Empty until the create call returns; Frappe coerces empty to NULL on a unique DocField, so unwritten rows do not collide.",
+   "fieldname": "subscription_uid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Subscription UID",
+   "length": 140,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "The Google resource the subscription watches, e.g. users/{user} for a per-coworker message subscription.",
+   "fieldname": "target_resource",
+   "fieldtype": "Data",
+   "label": "Target Resource",
+   "length": 255,
+   "reqd": 1
+  },
+  {
+   "description": "The coworker whose grant this subscription runs under. Roughly one subscription per coworker means roughly one independent revocation surface per coworker.",
+   "fieldname": "target_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Target User",
+   "options": "User"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "STATE_UNSPECIFIED",
+   "description": "Google's Subscription.state, read back rather than assumed. There is no EXPIRED value because Google does not keep expired subscriptions in any state - it deletes them. Expiry is read off expire_time, not off this field.",
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "State",
+   "options": "STATE_UNSPECIFIED\nACTIVE\nSUSPENDED\nDELETED",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.state==\"SUSPENDED\"",
+   "description": "Google's suspensionReason. USER_SCOPE_REVOKED is not a bug and must never be retried into the ground - it means a coworker revoked their grant, and the correct response is to stop retrying, raise the suspension alarm naming them, and let a human ask.",
+   "fieldname": "suspension_reason",
+   "fieldtype": "Select",
+   "label": "Suspension Reason",
+   "options": "\nUSER_SCOPE_REVOKED\nRESOURCE_DELETED\nUSER_AUTHORIZATION_FAILURE\nENDPOINT_PERMISSION_DENIED\nENDPOINT_NOT_FOUND\nENDPOINT_RESOURCE_EXHAUSTED\nAPP_SCOPE_REVOKED\nAPP_AUTHORIZATION_FAILURE",
+   "read_only": 1
+  },
+  {
+   "description": "The CloudEvent types this subscription requests, one per line.",
+   "fieldname": "event_types",
+   "fieldtype": "Small Text",
+   "label": "Event Types"
+  },
+  {
+   "fieldname": "expiry_section",
+   "fieldtype": "Section Break",
+   "label": "Expiry"
+  },
+  {
+   "description": "Read back from Google after every create and every patch, never computed locally. A patch that silently failed to extend is otherwise invisible until the subscription is already gone. Reactivating a suspended subscription keeps the original expiry, so a suspension does not buy time.",
+   "fieldname": "expire_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Expire Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_renewed",
+   "fieldtype": "Datetime",
+   "label": "Last Renewed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_expiry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Consecutive failed renewal or reactivation attempts. Reset to zero on any success.",
+   "fieldname": "consecutive_failures",
+   "fieldtype": "Int",
+   "label": "Consecutive Failures"
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Event Subscription",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

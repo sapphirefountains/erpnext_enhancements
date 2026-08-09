@@ -1,0 +1,54 @@
+{
+ "actions": [],
+ "creation": "2026-08-08 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "mention_type",
+  "user",
+  "start_index",
+  "length"
+ ],
+ "fields": [
+  {
+   "fieldname": "mention_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Mention Type",
+   "options": "User\nRoom\nTriton",
+   "reqd": 1
+  },
+  {
+   "description": "Set when mention_type is User. A Link, not Data: it participates in rename and link validation, and a dangling mention is a notification that goes nowhere.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User"
+  },
+  {
+   "description": "Offset into text_plain. Stored so the client can render the mention span without re-parsing the body, and so an inbound Google USER_MENTION annotation is kept faithfully - parse the annotation, never regex the raw text.",
+   "fieldname": "start_index",
+   "fieldtype": "Int",
+   "label": "Start Index"
+  },
+  {
+   "fieldname": "length",
+   "fieldtype": "Int",
+   "label": "Length"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Mention",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

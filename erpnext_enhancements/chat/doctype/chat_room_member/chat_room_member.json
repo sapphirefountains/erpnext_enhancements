@@ -1,0 +1,193 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-08 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "user",
+  "role",
+  "column_break_head",
+  "is_active",
+  "derived_from_document",
+  "lifecycle_section",
+  "joined_at",
+  "left_at",
+  "column_break_lifecycle",
+  "left_seq",
+  "read_state_section",
+  "last_read_seq",
+  "last_read_at",
+  "column_break_read_state",
+  "notification_mode",
+  "muted_until",
+  "google_section",
+  "gchat_membership_name",
+  "gchat_member_state",
+  "column_break_google",
+  "sync_state"
+ ],
+ "fields": [
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Member",
+   "fieldname": "role",
+   "fieldtype": "Select",
+   "label": "Role",
+   "options": "Member\nManager",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Soft removal. Membership is never row-deleted, so the audit trail can answer 'was this person in the room when that was said' and a leave-and-rejoin reconciles against the surviving Google membership resource name.",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Is Active"
+  },
+  {
+   "default": "0",
+   "description": "Set when this row is materialised from the linked document's own permissions rather than from an explicit invite. The nightly reconciliation job's diff over these rows is an alert, not a log line.",
+   "fieldname": "derived_from_document",
+   "fieldtype": "Check",
+   "label": "Derived From Document",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lifecycle_section",
+   "fieldtype": "Section Break",
+   "label": "Lifecycle"
+  },
+  {
+   "fieldname": "joined_at",
+   "fieldtype": "Datetime",
+   "label": "Joined At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "left_at",
+   "fieldtype": "Datetime",
+   "label": "Left At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lifecycle",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "The room sequence position at which this member left, bounding their readable range. A sequence, not a timestamp, because Frappe writes creation/modified in site-local time while the database clock is UTC, so any SQL-side comparison of left_at is silently wrong by the site's offset.",
+   "fieldname": "left_seq",
+   "fieldtype": "Int",
+   "label": "Left Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "read_state_section",
+   "fieldtype": "Section Break",
+   "label": "Read State"
+  },
+  {
+   "default": "0",
+   "description": "THE READ HIGH-WATER MARK. One row per (user, room), never one per (user, message): in a 20-person room per-message receipts turn 2,000 message writes/day into ~20,000 receipt writes/day, which is the dominant scaling risk in the whole design.",
+   "fieldname": "last_read_seq",
+   "fieldtype": "Int",
+   "label": "Last Read Sequence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_read_at",
+   "fieldtype": "Datetime",
+   "label": "Last Read At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_read_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "All",
+   "fieldname": "notification_mode",
+   "fieldtype": "Select",
+   "label": "Notification Mode",
+   "options": "All\nMentions Only\nNone"
+  },
+  {
+   "fieldname": "muted_until",
+   "fieldtype": "Datetime",
+   "label": "Muted Until"
+  },
+  {
+   "fieldname": "google_section",
+   "fieldtype": "Section Break",
+   "label": "Google Chat"
+  },
+  {
+   "description": "spaces/{space}/members/{member}.",
+   "fieldname": "gchat_membership_name",
+   "fieldtype": "Data",
+   "label": "Google Chat Membership Name",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "gchat_member_state",
+   "fieldtype": "Select",
+   "label": "Google Chat Member State",
+   "options": "\nJOINED\nINVITED\nNOT_A_MEMBER",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_google",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "description": "Same vocabulary as Chat Message.sync_state and Chat Relay Job.status, deliberately, so an operator reading three tables during an incident does not have to translate.",
+   "fieldname": "sync_state",
+   "fieldtype": "Select",
+   "label": "Sync State",
+   "options": "Pending\nRelayed\nFailed\nNot Mirrored",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Room Member",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "search_fields": "room,user",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

@@ -268,6 +268,106 @@ def _check_ga4(key, label, route):
 		configured=True, metrics=metrics, links=links)
 
 
+# The Google identifiers chat needs before it can talk to anything, by LABEL. There is no
+# credential among them and there is not meant to be — auth is a keyless IAM binding on the
+# delegation service account (ADR 0009 §E), so a Password field here would mean the design
+# went wrong. They are still reported only as set/missing: a service-account address and a
+# Pub/Sub topic are reconnaissance, and the tile's job is "is it configured", not "what is it".
+_CHAT_IDENTIFIERS = (
+	("Delegation SA", "delegation_service_account"),
+	("VM SA", "vm_service_account_email"),
+	("Chat app SA", "chat_app_service_account"),
+	("Project number", "gcp_project_number"),
+	("Endpoint URL", "interaction_endpoint_url"),
+	("Pub/Sub topic", "pubsub_topic"),
+)
+
+
+def _check_chat(key: str, label: str, route: str) -> dict:
+	"""Employee chat ↔ Google Chat. Ships dormant, so "off" is the expected steady state.
+
+	Two switches, not one: ``enabled`` is the master gate and ``dry_run_mode`` keeps every
+	Google call local and synthetic even when it is open. Live means enabled AND dry-run off,
+	which is exactly what ``chat_settings.is_chat_enabled()`` decides, mirrored here rather
+	than imported so this page never depends on the chat module being installed.
+	"""
+	enabled = bool(_single("Chat Settings", "enabled"))
+	dry_run = bool(_single("Chat Settings", "dry_run_mode"))
+	restricted = bool(_single("Chat Settings", "restrict_to_whitelist"))
+	missing = [name for name, field in _CHAT_IDENTIFIERS if not _single("Chat Settings", field)]
+	links = [{"label": "Settings", "route": route}, {"label": "Rooms", "route": "/app/chat-room"}]
+
+	if not enabled:
+		# Dormant is how this ships and how it stays until somebody deliberately opens it,
+		# so this is neutral, not amber. `configured` reports the Google side honestly.
+		return _tile(key, label, "neutral", "Dormant (chat disabled)", configured=not missing, links=links,
+			notes=["Chat is off. Enable it in Chat Settings; it stays in dry-run (no Google traffic) "
+				"until Dry Run Mode is also unticked."])
+
+	tones, metrics = [], []
+	metrics.append(_metric("Mode", "dry run" if dry_run else "live", "amber" if dry_run else "green"))
+	tones.append("amber" if dry_run else "green")
+	ident_tone = "green" if not missing else ("amber" if dry_run else "red")
+	tones.append(ident_tone)
+	metrics.append(_metric("Google identifiers", f"{len(_CHAT_IDENTIFIERS) - len(missing)}/"
+		f"{len(_CHAT_IDENTIFIERS)} set", ident_tone))
+
+	allowed = _count("Chat Allowed User", {"parenttype": "Chat Settings"})
+	metrics.append(_metric("Pilot", f"{allowed} allow-listed" if restricted else "everyone",
+		"amber" if restricted and not allowed else "neutral"))
+	metrics.append(_metric("Rooms", _count("Chat Room", {"is_archived": 0})))
+	metrics.append(_metric("Messages (24h)", _count("Chat Message", {"creation": (">", _hours_ago(24))})))
+
+	# The two queues. Both are Phase 2's to drain; a backlog here is the earliest visible
+	# sign that the relay or the Pub/Sub puller has stopped.
+	# "Dead" as well as "Failed": a dead-lettered job is the terminal state, and this
+	# repo has no dead-letter alerting anywhere else (ADR 0009 §F.9.2) -- if it is not
+	# counted here nothing tells anyone a message stopped trying.
+	relay_failed = _count("Chat Relay Job", {"status": ("in", ["Failed", "Dead"])})
+	inbound_failed = _count("Chat Inbound Event", {"status": "Failed"})
+	queue_tone = "red" if (relay_failed or inbound_failed) else "green"
+	tones.append(queue_tone)
+	metrics.append(_metric("Relay failures", relay_failed, "red" if relay_failed else "green"))
+	metrics.append(_metric("Inbound failures", inbound_failed, "red" if inbound_failed else "green"))
+
+	# A Workspace Events subscription that quietly expires is permanent, total, SILENT loss
+	# of inbound sync (ADR 0009 §G.5.2) — nothing errors, messages simply stop arriving. The
+	# soonest expiry is therefore the one number on this tile worth alarming on.
+	expiry = _soonest_subscription_expiry()
+	if expiry is not None:
+		secs = _seconds_until(expiry)
+		sub_tone = countdown_tone(secs, amber_within=24 * 3600)
+		tones.append(sub_tone)
+		if secs is None:
+			value = "unknown"
+		elif secs <= 0:
+			value = "expired"
+		else:
+			value = f"in {humanize_age(secs).replace(' ago', '')}"
+		metrics.append(_metric("Subscription expiry", value, sub_tone))
+
+	headline = "Dry run" if dry_run else ("Live" if not missing else "Live, identifiers missing")
+	return _tile(key, label, worst_tone(tones), headline, configured=not missing,
+		metrics=metrics, links=links,
+		notes=[f"Not configured: {', '.join(missing)}."] if missing else None)
+
+
+def _soonest_subscription_expiry():  # -> datetime | str | None, whatever the column holds
+	"""The earliest ``expire_time`` among active subscriptions, or None if there are none.
+
+	Its own guarded helper because ``_count`` swallows a missing table and ``get_all`` does
+	not — and this page must render on a site that has the code but has not migrated yet.
+	"""
+	try:
+		# "ACTIVE" uppercase: the Select mirrors Google's own enum
+		# (STATE_UNSPECIFIED / ACTIVE / SUSPENDED / DELETED), not Frappe title case.
+		rows = frappe.get_all("Chat Event Subscription", filters={"state": "ACTIVE"},
+			fields=["expire_time"], order_by="expire_time asc", limit_page_length=1)
+	except Exception:
+		return None
+	return rows[0].expire_time if rows else None
+
+
 # ----------------------------------------------------------- scheduler & errors
 
 
@@ -411,6 +511,7 @@ _INTEGRATIONS = [
 	("ga4", "Analytics (GA4 / Search Console)", "/app/ga4-settings", _check_ga4),
 	("miradore", "MDM — Miradore (mobile)", "/app/mdm-settings", _check_miradore),
 	("action1", "RMM — Action1 (computers)", "/app/mdm-settings", _check_action1),
+	("chat", "Chat (Google Chat mirror)", "/app/chat-settings", _check_chat),
 ]
 
 

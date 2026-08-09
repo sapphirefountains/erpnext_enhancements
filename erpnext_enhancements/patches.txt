@@ -490,3 +490,20 @@ erpnext_enhancements.patches.set_default_stock_uom_unit
 # person by design. company@ is the whole-company list and is not an alert target.
 erpnext_enhancements.patches.repoint_notifications_to_group_emails
 erpnext_enhancements.patches.rename_payment_step_title
+# Chat module (ADR 0009). Order matters: the composite indexes are the schema
+# claims Frappe's DocType JSON cannot express -- there is no first-class
+# composite-index field -- so they exist only if the patch runs, and Phase 2's
+# echo suppression and per-room FIFO are built on them. The roles come next
+# because "Chat User" is the one DocPerm in the whole module (on Chat Room,
+# read-only, row-scoped by membership) and the Role-fixture rule applies:
+# fixtures import alphabetically and AFTER post_model_sync patches, so a Role a
+# fixture references must be seeded by a patch -- the same reason
+# seed_po_approver_role exists. Neither role is assigned to anybody here; a
+# direct grant is wiped the next time a profiled user is saved, so attachment
+# goes through a Role Profile and is a deliberate rollout step. Settings land
+# last and land DORMANT: enabled=0, dry_run_mode=1, restrict_to_whitelist=1 with
+# an empty allow-list. Chat ships inert and is switched on by hand. All three
+# are idempotent and safe to run twice.
+erpnext_enhancements.patches.add_chat_indexes
+erpnext_enhancements.patches.seed_chat_roles
+erpnext_enhancements.patches.default_chat_settings

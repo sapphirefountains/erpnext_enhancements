@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.261.0] - 2026-08-08
+
+### Added
+
+- **The `Chat` module: storage schema, Google authentication, a typed Chat API client
+  and an authenticated inbound webhook** — Phase 1 of the ERPNext ⇄ Google Chat build
+  described in ADR 0009. Ten DocTypes, three patches, four permission-hook pairs, one
+  whitelisted endpoint, one guest webhook, five bench-free test suites and a blocking
+  secret-scan CI gate.
+
+  **It ships dormant on purpose.** `chat_enabled = 0`, `dry_run_mode = 1` and
+  `restrict_to_whitelist = 1` with an empty allow-list, seeded by patch. Nothing in this
+  release talks to Google until someone deliberately turns it on. There is also no relay
+  worker, no subscription manager and no `doc_events` wiring — Phase 2 owns all of it.
+  The client exists and is callable; nothing calls it.
+
+  The parts that will look like mistakes to someone who wasn't here:
+
+  - **The keyless delegation assertion is hand-rolled.** `google.auth.impersonated_credentials`
+    still has no `subject` parameter and no `with_subject` method, so impersonating a user
+    without a downloaded service-account key means building the JWT claim set by hand and
+    signing it through IAM Credentials `signJwt`. This is not a gap waiting for the library
+    to catch up — it is why a small crypto module exists, and it keeps us consistent with
+    ADR 0004, on a host whose deploy pipeline has no `pip install` step at all.
+
+  - **`gchat_message_name` is `Data` at length 255, not the default.** Frappe's `Data`
+    defaults to `varchar(140)`, and a Google Chat message resource name has no documented
+    maximum. At 140 the unique index would truncate-collide two genuinely different Google
+    messages into one row — silent message loss, discovered long after the fact. The unique
+    constraint is declared on the DocField rather than only in a patch, because Frappe's
+    empty-string-to-NULL coercion only fires for fields carrying `unique: 1`, and without it
+    the second un-relayed message in the table fails to insert.
+
+  - **Chat DocTypes ship with an empty `permissions` array**, with exactly one exception:
+    `Chat Room` carries a single bare `read` row for the `Chat User` role. Both halves are
+    deliberate. No DocPerm is what stops the third-party MCP tool server — which lives in
+    neither of our repositories and cannot be edited here — from reading chat tables through
+    its generic document tools. The one exception exists because Frappe's v16 socket server
+    permission-checks a `doc_subscribe` join by calling back into Python under the joining
+    user's own session, and a zero-DocPerm room refuses that join *silently*, which would
+    take realtime delivery down with no error anywhere.
+
+  - **Messages sort by `creation`, never `modified`.** Sorting a transcript by modification
+    time teleports an edited message to the bottom. The DocType also sets `track_changes = 0`,
+    because the audit trail decision #12 requires is served by a purpose-built log whose shape
+    we control, not by Frappe's `Version` table whose shape we do not.
+
+  - **Departed-member visibility fails closed.** A `left_seq` column exists on
+    `Chat Room Member` but grants nothing. What a person may still read after leaving a room
+    is an open governance question (CQ-10 in ADR 0009) that has not been answered, and an
+    adversarial review caught the first implementation answering it in code, in the
+    access-widening direction. It now denies until a human decides.
+
+  - **The outbox sweeper, not the job queue, is the delivery guarantee.** The production
+    deploy issues `FLUSHDB` against the queue Redis, so any relay job enqueued and not yet run
+    is destroyed by an ordinary release. `Chat Relay Job` is schema in this version; the
+    scheduled sweeper that re-drives it is load-bearing rather than belt-and-braces, and
+    Phase 2 must not replace it with a plain queue.
+
+  - **Google Chat still notifies people, and that is the accepted answer.** Suppressing
+    Chat's own notification requires app authentication, and app authentication makes every
+    relayed message arrive from a bot with an `App` badge. The two cannot both be true, and
+    there is no sender override outside one-time import mode. Resolved in favour of human
+    attribution, so anyone running the native Chat client receives a third ping. Documented,
+    expected, not a defect. `createMessageNotificationOptions` is plumbed through the client
+    but deliberately unused.
+
+  - **Exactly one module speaks HTTP to Google**, enforced by a test rather than by
+    convention, because the containment is what makes the permission story auditable.
+
+## [1.260.4] - 2026-08-07
+
+### Added
+
+- **ADR 0009 — the ERPNext ⇄ Google Chat ⇄ Triton employee chat architecture**, with
+  Appendix A (the behaviour inventory of the existing floating Triton widget) and
+  Appendix B (the file-by-file plan for the six implementation phases). Docs only:
+  no executable behaviour changes.
+
+  **Accepted 2026-08-08, resolving the trilemma below in favour of human
+  attribution.** Locked decision #3 is restated project-wide: ERPNext fires exactly
+  two notifications, and users running the native Google Chat client additionally
+  receive Chat's own. The third ping is documented and expected, not a defect.
+
+  Three findings in it are the kind this changelog exists to preserve, because each
+  is a workaround whose reason is invisible from the code that will implement it:
+
+  - **Human attribution and notification suppression are mutually exclusive in the
+    Google Chat API.** `NOTIFICATION_TYPE_SILENT` — the only documented way to stop
+    Chat firing its own notification for a message — requires *app* authentication,
+    and under app auth Chat makes the app the sender and stamps an `App` badge.
+    There is no `sender` override outside one-time import mode. So a relay that
+    posts as the real human cannot post silently, and one that posts silently
+    cannot post as the human. Two further constraints tighten it: a silent message
+    can neither start nor reply to a thread, and app auth cannot upload attachments
+    at all. The record carries this as the project's first open question rather
+    than resolving it, because it changes the product and not just the code.
+
+  - **Keyless domain-wide delegation is hand-rolled because `google-auth` cannot do
+    it.** `google.auth.impersonated_credentials` still has no `subject` parameter
+    and no `with_subject` method, so impersonating a user without a downloaded
+    service-account key means building the JWT assertion by hand and signing it via
+    IAM Credentials `signJwt`. This is not an oversight to be tidied away into the
+    library later; it is the reason a small crypto module exists at all, and it
+    keeps the deployment consistent with ADR 0004's no-vendor-SDK constraint.
+
+  - **The outbox sweeper, not the job queue, is the delivery guarantee.** The
+    production deploy issues `FLUSHDB` against the queue Redis, so any relay job
+    enqueued and not yet run is destroyed by an ordinary deploy. A queue-only
+    design would silently drop messages on every release. The scheduled sweeper
+    that re-drives uncommitted outbox rows is therefore load-bearing rather than
+    belt-and-braces.
+
+  The record deliberately lives at `decisions/adr/0009-…` rather than the
+  `docs/adr/0001-…` path its source prompt specified: this repo's ADR convention
+  predates that prompt, `0001` is taken, and a second ADR namespace under `docs/`
+  would have split the register. The deviation is stated in the record itself.
+
 ## [1.260.3] - 2026-08-07
 
 ### Fixed

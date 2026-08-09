@@ -555,6 +555,47 @@ jobs:
       # of 32 item rows on production were mislabelled.
       - name: Procurement quantity/status math (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_procurement_quantities.py -q
+      # -----------------------------------------------------------------------
+      # Chat / Google Chat (ADR 0009, Phase 1). SIX steps, one file each, and the
+      # split between them is not cosmetic.
+      #
+      # Five of these are pytest-style (plain functions, `monkeypatch`) and get
+      # their own `python -m pytest` step. Appending one of them to a `python -m
+      # unittest` module list above would collect ZERO tests and report success --
+      # the exact failure that left the QuickBooks suite running nowhere for weeks,
+      # and that left test_triton_personas.py never executed at all. The guardrails
+      # suite is TestCase-based and so is the one that belongs on unittest.
+      #
+      # One file per step for the other reason too: each bench-free suite installs
+      # its own `frappe` stub, and a shared process is how they cross-talk.
+      #
+      # The security-relevant one is the webhook verifier. `chat.gchat.webhook.handle`
+      # is `allow_guest=True` -- world-reachable -- and the JWT is the only thing
+      # between it and an open relay. Two of its six negative cases (a valid Google
+      # token with the wrong issuer, and one minted for another audience) are exactly
+      # what a generic ID-token verification waves through, so they are pinned by
+      # name. Verified 2026-08-08 by deleting the issuer check from a copy of the
+      # module: ten assertions went red, the rest stayed green.
+      - name: Chat guardrails (DocPerms, realtime targeting, transport containment)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_guardrails -v
+      - name: Chat Google client (backoff, id derivation, dry-run calls nothing)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_gchat_client.py -q
+      - name: Chat DWD assertion claims (exp <= 10 min, no key material logged)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_auth_claims.py -q
+      - name: Chat webhook JWT verification (six negative cases, 401 with no DB write)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_webhook_verify.py -q
+      - name: Chat Settings budget arithmetic (tier budgets + reserve <= ceiling)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_settings_budget.py -q
+      # The only automated coverage of triton_chat.py, and `grep -c
+      # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
+      # the file shipped and then never ran. Everything it guards -- the SSE relay,
+      # the per-user persona cache key (a site-wide key would serve one user's
+      # private personas to everybody), the path-traversal guard on
+      # _custom_persona_path -- was defended by a suite that had never executed.
+      # Phase 3 modifies the widget and Phase 5 refactors the relay; both need this
+      # net under them first (ADR 0009 Appendix B §12, C1).
+      - name: Triton persona proxy + SSE relay (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_triton_personas.py -q
       # The repo's first JavaScript test, and it needs no runner beyond the node
       # already on the GitHub image — deliberately not a new framework.
       #
@@ -605,6 +646,48 @@ jobs:
             echo "::error::Version drift -- __init__.py is '$PY' but package.json is '$PKG'. Bump both together (release.yml will refuse to tag otherwise)."
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # Committed secrets — a HARD gate, and deliberately its own job.
+  #
+  # ADR 0009 makes the Google integration keyless: the VM mints its own tokens via
+  # IAM Credentials `signJwt`, there is no service-account JSON key, and
+  # `Chat Settings` holds identifiers only. That design removes the credential.
+  # This job is what keeps it removed, because the design holds only until somebody
+  # drops a key file in the tree to test something locally.
+  #
+  # NOT a step in `unit-tests`, for one concrete reason: `actions/checkout` clones
+  # at depth 1, and the whole point of the scan is HISTORY. `git rm` does not
+  # un-publish anything — a key committed and reverted an hour later is still in
+  # the pack, still in every clone, still on GitHub. On a shallow clone the script
+  # would examine one commit and report a clean history it never read, which is the
+  # precise failure mode ("passes because the pattern is wrong") a secret scanner
+  # must not have. So: its own job, `fetch-depth: 0`, and the script itself REFUSES
+  # to run on a shallow clone rather than reporting a false pass.
+  #
+  # NO `continue-on-error`. `ruff check` above is advisory by design, because of a
+  # known style backlog; that reasoning does not transfer. An advisory secret scan
+  # is not a secret scan.
+  #
+  # Proven, not assumed (2026-08-08): planting a fake service-account key, an OAuth
+  # client secret and a base64 token beside a googleapis URL made it exit 1 on all
+  # three; removing them returned it to 0 over 2,187 working-tree files and 7,437
+  # history blobs in ~22s. Scanning this repo's real history found nothing.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: No committed secrets (working tree + full git history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Load-bearing. The default depth of 1 makes the history scan a no-op.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan every tracked file and every blob in history
+        run: python scripts/check_no_committed_secrets.py
 
   # ---------------------------------------------------------------------------
   # NOTE: A Frappe integration-test job (spinning up a real bench with ERPNext

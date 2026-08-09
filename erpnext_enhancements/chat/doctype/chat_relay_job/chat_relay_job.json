@@ -1,0 +1,196 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "job_seq",
+  "operation",
+  "column_break_head",
+  "status",
+  "available_at",
+  "attempts",
+  "reference_section",
+  "reference_doctype",
+  "reference_name",
+  "column_break_reference",
+  "request_id",
+  "impersonate_user",
+  "payload_section",
+  "payload",
+  "outcome_section",
+  "last_error",
+  "http_status",
+  "column_break_outcome",
+  "google_error_status",
+  "completed_at"
+ ],
+ "fields": [
+  {
+   "description": "The room this operation targets. Also the rate-limit bucket key: Google Chat allows one write per second per space.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Per-room FIFO position. Unique with room (created by patch), which is what makes Create-Before-Edit a property of the schema rather than a hope.",
+   "fieldname": "job_seq",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Job Sequence",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The enum IS the handler selector. Phase 2 maps it to a function through a module-level dict; the payload never carries a dotted method path, so the arbitrary-code sink the older Drive outbox has to guard against does not exist here.",
+   "fieldname": "operation",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Operation",
+   "options": "Message Create\nMessage Update\nMessage Delete\nSpace Create\nSpace Update\nMember Add\nMember Remove\nAttachment Upload",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "description": "Dead means the retry budget is spent and a coworker believes they sent a message that nobody in Chat received. A daily digest surfaces Dead rows; they are not silence.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nIn Progress\nDone\nFailed\nDead\nSkipped",
+   "reqd": 1
+  },
+  {
+   "default": "Now",
+   "description": "Not before this instant. Both backoff and per-space rate-limit deferral land here, so the sweeper needs exactly one ordering column.",
+   "fieldname": "available_at",
+   "fieldtype": "Datetime",
+   "label": "Available At",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "The retry budget. At relay_max_attempts the row goes Dead.",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts"
+  },
+  {
+   "fieldname": "reference_section",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "description": "Chat Message, Chat Room, Chat Room Member or Chat Attachment. Deliberately not indexed with reference_name: relay history for one message is an occasional admin lookup, and ordering comes from job_seq.",
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Document Type",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "label": "Reference Name",
+   "length": 140,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_reference",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The deterministic requestId sent to Google. Deterministic so that a retry after an ambiguous timeout is de-duplicated by Google rather than by us.",
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "label": "Request ID",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "description": "Which human this call is made as, under domain-wide delegation. The relay authors messages as the real person, so this is never empty for a message operation.",
+   "fieldname": "impersonate_user",
+   "fieldtype": "Link",
+   "label": "Impersonate User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payload_section",
+   "fieldtype": "Section Break",
+   "label": "Payload"
+  },
+  {
+   "description": "Operation arguments only. Never a dotted method path - a stored callable is an arbitrary-code sink.",
+   "fieldname": "payload",
+   "fieldtype": "Code",
+   "label": "Payload",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "Outcome"
+  },
+  {
+   "description": "Truncated to 1000 characters at write. The writer never raises: logging must not break the action being logged.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "http_status",
+   "fieldtype": "Int",
+   "label": "HTTP Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_outcome",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Google's canonical error status, e.g. RESOURCE_EXHAUSTED or NOT_FOUND.",
+   "fieldname": "google_error_status",
+   "fieldtype": "Data",
+   "label": "Google Error Status",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "fieldname": "completed_at",
+   "fieldtype": "Datetime",
+   "label": "Completed At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Relay Job",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}
