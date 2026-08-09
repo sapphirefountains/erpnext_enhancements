@@ -204,6 +204,19 @@ jobs:
         run: python -m unittest erpnext_enhancements.tests.test_payment_followup_wire -v
       - name: DocType module placement
         run: python -m unittest erpnext_enhancements.tests.test_doctype_modules -v
+      # The placement test above says a DocType is in the right folder. This one says the
+      # folder gets INSTALLED. Adding a module to modules.txt is not sufficient on an
+      # already-installed site: frappe.model.sync.sync_for() iterates
+      # frappe.local.app_modules, a snapshot taken once at frappe.init() from redis that no
+      # part of `bench migrate` rebuilds. A migrate that starts with a stale snapshot walks
+      # the PREVIOUS release's module list, skips the whole new module folder, creates no
+      # table, logs nothing and exits 0 -- and the post_model_sync patches that touch those
+      # tables burn their Patch Log entries against a schema that is not there, which in
+      # Frappe means they can never run again. v1.261.0 shipped the Chat module exactly
+      # that way on 2026-08-09. Unittest (TestCase-based), so it belongs on this step list
+      # and NOT on a pytest step.
+      - name: Module installability (modules.txt alone does not install a module)
+        run: python -m unittest erpnext_enhancements.tests.test_module_installability -v
       # Same failure shape as the www/ controller check: Frappe computes a script
       # report's import path from scrub(report_name) rather than reading the
       # directory, so a plausibly-misnamed folder migrates cleanly, lists in the

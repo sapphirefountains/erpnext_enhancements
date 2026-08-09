@@ -24,6 +24,17 @@ at document *creation*. Two ways that is not enough here:
 
 Blank-fill only. An operator who has deliberately ticked something is never clobbered, so a
 re-run — or a re-run after the pilot has started — is a no-op. Safe to run twice.
+
+**Two entry points, for the same reason `add_chat_indexes` has two.** :func:`execute` is the
+patch and is allowed to fail the migrate; :func:`ensure_chat_settings` is registered in
+``hooks.py``'s ``after_migrate`` and logs instead. A patch is not guaranteed to run: ``bench
+install-app`` calls ``set_all_patches_as_completed``, so on a fresh site this patch is written
+straight to Patch Log and never executes — and on 2026-08-09 it *did* execute, before the
+DocType existed, which spends the Patch Log entry just as permanently. Both roads end at an
+unmaterialised Single, and an unmaterialised Single is a loaded gun: Frappe synthesises the
+DocField defaults only while ``tabSingles`` holds **no** row, so the first partial write flips
+every unwritten field to ``None`` — ``dry_run_mode`` and ``restrict_to_whitelist`` then read 0,
+which is the unsafe direction for both.
 """
 
 import frappe
@@ -80,6 +91,30 @@ def execute() -> None:
 	# System-Manager-only. validate() still runs — the shipped defaults satisfy the budget
 	# and retention arithmetic, and if they ever stop doing so the migrate should say so.
 	settings.save(ignore_permissions=True)
+
+
+def ensure_chat_settings() -> None:
+	"""The ``after_migrate`` entry point. Same work, **never raises**.
+
+	Runs on every migrate and every deploy is a migrate, so a raise here would not report one
+	bad default — it would brick the deploy pipeline until somebody edited ``hooks.py``. The
+	patch runs once and may fail loudly; this logs and returns.
+
+	Cost on a healthy site: one ``get_singles_dict`` and no write.
+	"""
+	try:
+		execute()
+	except Exception:
+		# Never re-raise out of a migrate hook: a bare re-raise from inside a job publishes
+		# the frame locals to the Error Log, and this frame holds the whole settings document.
+		try:
+			frappe.log_error(
+				title="default_chat_settings",
+				message="ensure_chat_settings could not seed the Chat Settings Single; "
+				"it stays unmaterialised and reads DocField defaults until the next migrate",
+			)
+		except Exception:
+			pass
 
 
 def _is_set(stored: dict, fieldname: str) -> bool:

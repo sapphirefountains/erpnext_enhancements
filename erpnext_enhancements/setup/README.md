@@ -20,6 +20,7 @@ every time, so they both *create* what's missing and *correct* drift.
 
 | File | Hook | Purpose |
 |---|---|---|
+| `module_map.py` | `before_migrate` | Rebuilds the app → modules map from every app's `modules.txt` — must run before model sync (see below) |
 | `document_locks.py` | `before_migrate` | Clears stale Role Profile document locks — must run before fixture sync (see below) |
 | `process_documents.py` | `after_migrate` | Upserts the business's Mermaid.js process charts |
 | `custom_html_blocks.py` | `after_migrate` | Upserts the Projects-module dashboard widgets from `custom_html_blocks/` |
@@ -45,6 +46,25 @@ site-side edit is temporary by design.
 Note the contrast with the seeding patches (`seed_process_step_templates`,
 `seed_contract_templates`), which are deliberately *insert-only* so that human edits survive.
 Choose based on whether the content is ours to own or theirs to tune.
+
+## Why `module_map.py` runs on `before_migrate`
+
+**Adding a module to `modules.txt` is not sufficient on an already-installed site.**
+`frappe.model.sync.sync_for()` iterates `frappe.local.app_modules`, a snapshot taken once in
+`frappe.init()` out of the Redis key `app_modules`; `modules.txt` is read only when that key is
+empty, and nothing in `bench migrate` rebuilds it (`SiteMigration.setUp`'s `frappe.clear_cache()`
+deletes the key but does not call `setup_module_map`). A migrate that starts with a stale
+snapshot walks the *previous* release's module list and silently skips a module added in this
+one: no DocType imported, no table created, no `Module Def` made — and the migrate exits 0.
+That is how v1.261.0 shipped ten Chat DocTypes and installed none of them (2026-08-09).
+
+`before_migrate` is Frappe's `pre_schema_updates`, i.e. before **both** patch phases and before
+`sync_all()`. That is the only window in which rebuilding the map helps; `after_migrate` is a
+whole migrate too late. Deleting the cache key before calling `setup_module_map` is equally
+load-bearing — it re-reads the key first and only falls back to `modules.txt` when it is empty.
+
+Guarded in CI by `tests/test_module_installability.py`, and explained at length in
+[`chat/README.md`](../chat/README.md#the-module-map-trap-modulestxt-is-not-enough-on-an-installed-site).
 
 ## Why `document_locks.py` runs on `before_migrate`
 

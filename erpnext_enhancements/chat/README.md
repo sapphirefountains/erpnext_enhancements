@@ -356,6 +356,63 @@ Two more consequences of user authentication, worth knowing before they surprise
 
 ---
 
+## The module-map trap: `modules.txt` is not enough on an installed site
+
+**This module shipped and installed nothing, and the deploy said success.** v1.261.0 merged
+on 2026-08-09 with the `Chat` line in `modules.txt`, ten DocType JSONs on disk and three
+patches; `bench migrate` exited 0 having created no table, no `Module Def` and no `Chat
+Settings` row. Read this before you add module #30.
+
+`frappe.model.sync.sync_for()` does not read `modules.txt`. It iterates
+`frappe.local.app_modules`, a snapshot built **once** in `frappe.init()` by
+`frappe.setup_module_map()` — which reads `modules.txt` only when the Redis key `app_modules`
+comes back empty. Nothing in `bench migrate` rebuilds it: `SiteMigration.setUp`'s
+`frappe.clear_cache()` deletes the key but does not call `setup_module_map` (only
+`clear_global_cache()` does), so the map stays as `init` found it for the whole process. This
+deploy pipeline then makes staleness likely rather than exotic — `infra/cloudbuild-deploy.yaml`
+is `reset → bench migrate → bench build → FLUSHDB both redis → restart`, so the cache flush
+happens *after* the migrate and the map is whatever a pre-reset process (usually the
+once-a-minute scheduler tick) last wrote: the previous release's module list. A module that is
+new in the release being deployed is invisible; its folder is never walked; nothing raises,
+because there is no file to fail on. It is a race, which is why Fleet Maintenance and Package
+Dispatch installed first time while Product Configurator (+5 days), Offsite Backup (+1 day) and
+Training (+12 minutes, one redeploy) did not.
+
+Two corollaries worth having in your head, because both invert the obvious guess:
+
+- **A `Module Def` row is a consequence, not a precondition.** Nothing validates it at import
+  time — model sync runs with `ignore_links`, `ignore_validate` and `ignore_mandatory` — and
+  `DocType.on_update` → `make_module_and_roles` *creates* the row when the module's first
+  DocType imports. `add_module_defs` exists but is called only from `install_app`, never on
+  migrate. So a hand-written `Module Def` fixes nothing, and a declarative
+  `<module>/module_def/<name>.json` fixes less than nothing: `module_def` is not in
+  `IMPORTABLE_DOCTYPES`, and it would have to be found by walking the folder that is being
+  skipped. (Four other modules ship such a file. All four rows in production have live insert
+  timestamps that do not match the JSON, i.e. none of them was ever imported.)
+- **A patch that no-ops is spent forever.** `patch_handler.run_all` filters the pending list
+  against `Patch Log` and has no re-run path, so `add_chat_indexes` (11 composites skipped,
+  tables missing) and `default_chat_settings` (returned at its `db.exists("DocType", …)`
+  guard) were both recorded as executed with `skipped = 0`. They will never run again on that
+  site. This is why a patch that touches its own module's brand-new tables on the very deploy
+  that introduces the module needs an idempotent `after_migrate` twin — `ensure_chat_indexes`
+  had one and it is the only reason invariant I2's index set exists in production today.
+
+What ships as a result, all of it repo-side — production is never hand-patched:
+
+| Piece | Where | What it does |
+|---|---|---|
+| `refresh_app_module_map` | `setup/module_map.py`, `before_migrate` | Deletes the `app_modules` key **then** calls `setup_module_map(include_all_apps=True)`, so `sync_all()` sees the current `modules.txt`. Runs before both patch phases. Order matters: rebuild without deleting and you re-seat the stale value. |
+| `patches/refresh_module_map.py` | `[pre_model_sync]` | The same three lines as a one-shot, inside the same `@atomic` phase as `sync_all()`. Deliberately redundant with the hook; it is the guarantee that survives someone trimming a hook list. |
+| `patches/finish_chat_bootstrap.py` | `[post_model_sync]` | New Patch Log identity that calls the **original** `add_chat_indexes.execute()` and `default_chat_settings.execute()`. The originals are untouched, so a fresh install still runs each exactly once. |
+| `ensure_chat_settings` | `patches/default_chat_settings.py`, `after_migrate` | The dormancy seed's non-raising every-migrate twin, matching `ensure_chat_indexes`. |
+| `tests/test_module_installability.py` | CI | Fails the PR if a module ships DocTypes without being registered, if a registered module has no package, or if the map refresh is not wired before model sync. |
+
+**Adding a new module?** Nothing to do — the `before_migrate` hook covers it. Do *not* write a
+`Module Def` JSON, and do not assume a `post_model_sync` patch can touch tables its own module
+introduces in the same release without an idempotent `after_migrate` backstop.
+
+---
+
 ## Tests
 
 ### Bench-free — these run in CI and block the PR
@@ -375,6 +432,7 @@ process is how they cross-talk.
 | `tests/test_chat_auth_claims.py` | pytest | its own `python -m pytest …/test_chat_auth_claims.py -q` step |
 | `tests/test_chat_webhook_verify.py` | pytest | its own `python -m pytest …/test_chat_webhook_verify.py -q` step |
 | `tests/test_chat_settings_budget.py` | pytest | its own `python -m pytest …/test_chat_settings_budget.py -q` step |
+| `tests/test_module_installability.py` | unittest | its own `python -m unittest erpnext_enhancements.tests.test_module_installability -v` step — the guard on [the module-map trap](#the-module-map-trap-modulestxt-is-not-enough-on-an-installed-site) |
 | `scripts/check_no_committed_secrets.py` | script | `python scripts/check_no_committed_secrets.py` — **blocking**, not advisory |
 
 The CI runner installs only `httpx pytest jinja2`, so a bench-free suite must stub

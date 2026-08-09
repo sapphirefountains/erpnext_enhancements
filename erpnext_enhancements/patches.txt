@@ -4,6 +4,16 @@
 erpnext_enhancements.patches.rename_poseidon_settings_doctype
 # v1.15.0 travel management redesign: clear legacy drafts before the schema flip
 erpnext_enhancements.patches.drop_legacy_travel_trips
+# Chat install repair: rebuild the app->modules map so model sync can SEE a module
+# that is new in this release. sync_for() iterates frappe.local.app_modules, which is
+# snapshotted at frappe.init() from redis and never rebuilt during a migrate -- so a
+# stale snapshot silently skips the whole module folder and the migrate still exits 0
+# (v1.261.0 shipped ten Chat DocTypes and installed none of them, 2026-08-09).
+# pre_model_sync is the only section that can help; post_model_sync is a whole migrate
+# too late. Deliberately redundant with the before_migrate hook that does the same
+# thing on EVERY migrate (setup/module_map.py) -- this is the belt-and-braces one-shot
+# that runs inside the same @atomic phase as sync_all(). No-op when the map is correct.
+erpnext_enhancements.patches.refresh_module_map
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
@@ -507,3 +517,12 @@ erpnext_enhancements.patches.rename_payment_step_title
 erpnext_enhancements.patches.add_chat_indexes
 erpnext_enhancements.patches.seed_chat_roles
 erpnext_enhancements.patches.default_chat_settings
+# Chat bootstrap repair (2026-08-09): two of the three patches above ran on the
+# v1.261.0 deploy BEFORE the chat schema existed, guarded correctly, did nothing, and
+# were written to Patch Log with skipped = 0. run_all() filters the pending list
+# against Patch Log and has no re-run path, so both are spent forever: 11 composite
+# indexes uncreated and the Chat Settings Single unmaterialised. A new module is a new
+# Patch Log key, so this runs once per site and calls the ORIGINAL, already-idempotent
+# implementations -- the originals stay untouched and a fresh install still runs them
+# exactly once, in order. Same end state on a fresh site and on prod; safe twice.
+erpnext_enhancements.patches.finish_chat_bootstrap

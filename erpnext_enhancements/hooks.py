@@ -763,12 +763,57 @@ jinja = {
 
 # Run BEFORE each `bench migrate` (in pre_schema_updates, before fixture sync).
 before_migrate = [
+	# Rebuild the app -> modules map from every app's modules.txt BEFORE model sync.
+	# ADDING A MODULE TO modules.txt IS NOT ENOUGH ON AN ALREADY-INSTALLED SITE.
+	# frappe.model.sync.sync_for() iterates frappe.local.app_modules, NOT modules.txt.
+	# That map is snapshotted once in frappe.init() out of the redis key "app_modules"
+	# and nothing in `bench migrate` rebuilds it -- SiteMigration.setUp()'s
+	# frappe.clear_cache() deletes the key but does not call setup_module_map(). So a
+	# migrate that starts with a stale snapshot walks the PREVIOUS release's module
+	# list: a module added in the release being deployed is never walked, no DocType
+	# is imported, no table is created, no Module Def is made, every post_model_sync
+	# patch touching those tables burns its Patch Log entry against a missing schema --
+	# and the migrate exits 0. That is how v1.261.0 shipped ten Chat DocTypes and
+	# installed none of them (2026-08-09). It is a race, not a certainty: this deploy
+	# FLUSHDBs the cache AFTER the migrate, so whether the key is stale depends on what
+	# last wrote it (typically the once-a-minute scheduler tick).
+	# before_migrate is Frappe's pre_schema_updates, i.e. before BOTH patch phases and
+	# before sync_all() -- the only window where this helps. See setup/module_map.py;
+	# the one-shot twin is patches/refresh_module_map.py and the CI guard is
+	# tests/test_module_installability.py.
+	"erpnext_enhancements.setup.module_map.refresh_app_module_map",
 	# Drop stale Role Profile document locks so fixture sync can't crash with
 	# DocumentLockedError. Frappe core's RoleProfile.on_update queue_action locks
 	# the doc and defers "resave all users" to the long queue; the deploy's Redis
 	# FLUSHDB destroys that job before it can unlock, orphaning the lock for up to
 	# 3h. A second migrate inside that window then aborts here. See document_locks.py.
 	"erpnext_enhancements.setup.document_locks.clear_stale_role_profile_locks",
+]
+
+# Run once, during `bench install-app`, BEFORE core's add_module_defs and sync_for.
+before_install = [
+	# The same stale-snapshot hole as before_migrate above, on the install path, which
+	# before_migrate does not cover. Core does guard this -- but on the APP, not the
+	# module: install_app only refreshes when `name not in frappe.local.app_modules`,
+	# and setup_module_map(include_all_apps=True) maps every app on the bench whether
+	# installed on this site or not. So erpnext_enhancements is already a key in the
+	# snapshot before it is installed here, the condition is False, no rebuild happens,
+	# and sync_for walks whatever module list the redis key happened to hold. Safe to
+	# return None: install_app aborts only on a literal False.
+	"erpnext_enhancements.setup.module_map.refresh_app_module_map",
+]
+
+# Run once, at the end of `bench install-app`.
+after_install = [
+	# after_migrate does NOT run during install-app -- core runs before_install,
+	# after_install and after_sync only -- and install-app writes the whole of
+	# patches.txt to Patch Log as already-executed. So on a fresh site neither the
+	# composite indexes nor the Chat Settings singleton would exist until somebody
+	# happened to run a migrate. Both callables below are the same idempotent
+	# functions the after_migrate backstops use, and both are contractually
+	# forbidden from raising: a failure here must never abort an app install.
+	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
+	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -870,8 +915,10 @@ after_migrate = [
 	# patches.txt as already-executed, so on a new bench the patch is skipped and never
 	# runs again -- and the failure is silent, because inserts succeed happily without a
 	# unique constraint until the day two of them should have collided.
-	# VERIFY: that install-app skip behaviour is read from frappe's installer, not
-	# executed here; confirm on a fresh bench with SHOW INDEX FROM "tabChat Message".
+	# CONFIRMED 2026-08-09 from frappe version-16 source: install_app() calls
+	# set_all_patches_as_completed(name), which inserts a Patch Log row for every line in
+	# patches.txt without executing any of them. Still worth one SHOW INDEX FROM
+	# "tabChat Message" on the next fresh bench, since only the DB settles DDL.
 	# Safe either way: every index is checked against information_schema before any DDL,
 	# so on the normal migrate path (where the patch already ran) this is ~11 cheap reads
 	# and no writes. It is `ensure_chat_indexes`, not the patch's own `execute`, because
@@ -881,6 +928,16 @@ after_migrate = [
 	# Position in this list does not matter -- after_migrate runs after model sync, so
 	# the tables exist by the time any of these do.
 	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
+	# Same two-entry-point shape, same reason, for the dormancy seed -- and it is here
+	# because the index backstop is the ONLY thing that saved the 2026-08-09 deploy while
+	# `default_chat_settings`, which had no backstop, is still unseeded on prod.
+	# `Chat Settings` is a Single: Frappe synthesises its DocField defaults only while
+	# tabSingles holds NO row for it, so an unmaterialised Single reads correctly today
+	# and flips every unwritten field to None on the first partial write -- taking
+	# dry_run_mode and restrict_to_whitelist to 0, the unsafe direction for both.
+	# Blank-fill only, so an operator's deliberate tick is never clobbered, and it never
+	# raises. One get_singles_dict and no write on a healthy migrate.
+	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

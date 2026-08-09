@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.261.1] - 2026-08-09
+
+### Fixed
+
+- **Adding a module to `modules.txt` is not enough on an already-installed site, and the
+  migrate that silently installs nothing still exits 0.** v1.261.0 shipped ten Chat
+  DocTypes and installed none of them. The deploy reported success.
+
+  `frappe.model.sync.sync_for()` iterates `frappe.local.app_modules`, **not**
+  `modules.txt`. That map is snapshotted once in `frappe.init()` out of the redis key
+  `app_modules`, and nothing in `bench migrate` rebuilds it — `SiteMigration.setUp()`
+  deletes the key but never calls `setup_module_map()`. A migrate that begins with a
+  stale snapshot walks the *previous* release's module list, so a module added in the
+  release being deployed is never walked: no DocType imported, no table created, no
+  `Module Def` made, and every `post_model_sync` patch touching those tables burns its
+  Patch Log entry against a schema that isn't there. There is no exception to fail on,
+  because there is no file to import.
+
+  It is a race, not a certainty — this deploy `FLUSHDB`s the cache *after* the migrate,
+  so whether the key is stale depends on what last wrote it. **It has fired before:**
+  `Training` hit exactly this on 2026-08-01 and was papered over by a redeploy 12 minutes
+  later that nobody connected to it. Chat is the second occurrence and the first one
+  anybody diagnosed.
+
+  The fix rebuilds the map in `before_migrate` (Frappe's `pre_schema_updates`, the only
+  window before both patch phases and `sync_all()`), with a one-shot patch twin for the
+  site that is already wrong, and the same refresh on `before_install` — core guards that
+  path on the *app*, not the module, and `setup_module_map(include_all_apps=True)` maps
+  every app on the bench whether installed here or not, so its condition is already false
+  and no rebuild happens.
+
+  Guarded by `tests/test_module_installability.py`, which fails if any module folder
+  shipping DocTypes is missing from `modules.txt`, if the refresh leaves `before_migrate`,
+  if the one-shot twin is demoted out of `pre_model_sync`, or if either bootstrap loses
+  its backstop. Proven to go red on seven distinct mutations rather than assumed to work.
+
+  Two things this episode corrected in the earlier record. The composite indexes were
+  **not** lost — the `after_migrate` backstop that shipped in v1.261.0 created all eleven
+  once the schema existed, which is direct evidence the two-entry-point pattern earns its
+  keep. And invariant I2 was never at risk: uniqueness on `gchat_message_name` is a
+  field-level `unique: 1` on the DocType, not something the patch creates. The only
+  unrecovered damage was `Chat Settings` never being materialised, which had no backstop
+  and now has one.
+
+- **`after_migrate` does not run during `bench install-app`.** Core runs `before_install`,
+  `after_install` and `after_sync` there and nothing else, while `install-app` writes the
+  whole of `patches.txt` to Patch Log as already-executed. Both chat bootstraps justified
+  themselves by the second half of that sentence while being registered only on
+  `after_migrate`, so on a genuinely fresh site neither would ever have fired. Both are
+  now on `after_install` as well.
+
 ## [1.261.0] - 2026-08-08
 
 ### Added
