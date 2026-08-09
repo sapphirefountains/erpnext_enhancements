@@ -39,6 +39,17 @@ by name and is skipped rather than duplicated.
 for the fresh-site case and logs instead. The reasoning is on
 :func:`ensure_chat_indexes` — read it before collapsing them into one.
 
+**A missing table is reported as a banner on stdout, not as eleven Error Log rows.** That
+changed after 2026-08-09, when this patch correctly skipped all 11 indexes because the Chat
+module had never reached model sync — and the deploy reported success, because a skip note in
+the Error Log is indistinguishable from a clean run at the deploy level. ``bench migrate``'s
+stdout is the deploy log, so :func:`_report_skips` prints there as well as logging one
+aggregated row. It still does not *raise*: an exception in ``post_model_sync`` aborts the
+migrate after the code has already been reset to the new release, which leaves the site
+running new code against a half-migrated schema — worse than a loud log. The structural
+guarantee that the module installs at all belongs one layer up, in
+``setup/module_map.py`` + ``tests/test_module_installability.py``.
+
 Run twice; the second run writes nothing and touches nothing.
 """
 
@@ -94,11 +105,13 @@ def execute() -> None:
 
 	Loud on purpose: a half-applied index set is a design whose uniqueness guarantees
 	are not actually guaranteed, and the only thing worse than a migrate that stops here
-	is one that continues. Skips (missing table, missing column, index already present)
-	are silent-but-logged; a real DDL failure is collected so one bad constraint cannot
-	hide the state of the other ten, and re-raised at the end.
+	is one that continues. An index already present is a silent no-op; a *missing table or
+	column* is reported as a banner on stdout plus one aggregated Error Log row, because at
+	this point in a migrate it means the module never synced (see :func:`_report_skips`); and
+	a real DDL failure is collected so one bad constraint cannot hide the state of the other
+	ten, and re-raised at the end.
 	"""
-	failures = _create_all()
+	failures = _create_all("add_chat_indexes (patch)")
 	if failures:
 		raise frappe.ValidationError("add_chat_indexes could not create: " + "; ".join(failures))
 
@@ -120,25 +133,40 @@ def ensure_chat_indexes() -> None:
 	site the patch is skipped and never runs again — and *that* failure is silent, since
 	inserts succeed happily without a unique constraint right up until two of them should
 	have collided.
+
+	**This function is registered on both `after_migrate` and `after_install`, and it
+	needs both.** `after_migrate` does not run during `bench install-app` — core runs
+	`before_install`, `after_install` and `after_sync` there and nothing else — so on a
+	fresh site the `after_migrate` registration alone would never fire, which is the very
+	case the paragraph above says the backstop exists for. Verified against Frappe v16
+	`installer.install_app`; do not drop either registration.
 	"""
-	failures = _create_all()
+	failures = _create_all("ensure_chat_indexes (after_migrate)")
 	if failures:
 		_note("could not create: " + "; ".join(failures))
 
 
-def _create_all() -> list[str]:
+def _create_all(source: str) -> list[str]:
 	"""Create every composite in :data:`UNIQUE_CONSTRAINTS` and :data:`INDEXES`.
+
+	Args:
+		source: Which entry point is running, named in the skip banner so a deploy log
+			says whether it was the one-shot patch or the every-migrate backstop.
 
 	Returns:
 		One string per failure, empty when everything exists or was created.
 	"""
 	failures: list[str] = []
+	skipped: list[str] = []
 
 	for doctype, columns, constraint_name in UNIQUE_CONSTRAINTS:
-		_apply(doctype, columns, constraint_name, unique=True, failures=failures)
+		_apply(doctype, columns, constraint_name, unique=True, failures=failures, skipped=skipped)
 
 	for doctype, columns, index_name in INDEXES:
-		_apply(doctype, columns, index_name, unique=False, failures=failures)
+		_apply(doctype, columns, index_name, unique=False, failures=failures, skipped=skipped)
+
+	if skipped:
+		_report_skips(source, skipped)
 
 	return failures
 
@@ -150,20 +178,21 @@ def _apply(
 	*,
 	unique: bool,
 	failures: list[str],
+	skipped: list[str],
 ) -> None:
 	"""Create one index/constraint if the table, the columns and the gap all exist."""
 	table = f"tab{doctype}"
 
 	if not _table_exists(doctype):
-		# Not a failure: a site that has this patch but not the DocType is mid-install,
-		# and post_model_sync will have created the table before a real migrate reaches
-		# here. Logged rather than ignored so "the index is missing" is never a mystery.
-		_note(f"{table}: table missing, skipped index {name}")
+		# Not a failure in itself — but on a real migrate it means the chat DocTypes did
+		# not sync, which is a silently broken deploy. Collected and reported once, loudly,
+		# by _report_skips rather than logged per index.
+		skipped.append(f"{table}: table missing, skipped index {name}")
 		return
 
 	missing = [column for column in columns if not _has_column(doctype, column)]
 	if missing:
-		_note(f"{table}: column(s) {', '.join(missing)} missing, skipped index {name}")
+		skipped.append(f"{table}: column(s) {', '.join(missing)} missing, skipped index {name}")
 		return
 
 	if _index_exists(table, name):
@@ -216,6 +245,48 @@ def _index_exists(table: str, index_name: str) -> bool:
 		)
 	except Exception:
 		return False
+
+
+def _report_skips(source: str, skipped: list[str]) -> None:
+	"""Say — unmissably — that composites the design depends on were not created.
+
+	Two channels, because the 2026-08-09 incident proved one is not enough:
+
+	* **stdout**, because ``bench migrate``'s stdout *is* the deploy log. Eleven Error Log
+	  rows are invisible to a pipeline that only checks the exit code; a banner is not.
+	* **one** aggregated Error Log row rather than one per index, so the Error Log carries
+	  the diagnosis instead of eleven copies of a symptom.
+
+	The most likely cause is named explicitly. A missing ``tabChat …`` at this point almost
+	never means "mid-install" — it means model sync never walked ``erpnext_enhancements/chat/``,
+	which is the stale-app-module-map failure ``setup/module_map.py`` exists to prevent.
+	"""
+	total = len(UNIQUE_CONSTRAINTS) + len(INDEXES)
+	headline = (
+		f"CHAT SCHEMA INCOMPLETE: {source} skipped {len(skipped)} of {total} composite "
+		f"indexes/constraints because their tables or columns do not exist"
+	)
+	remedy = (
+		"Most likely cause: the Chat module was not visible to frappe.model.sync (a stale "
+		"app_modules map), so no chat DocType was imported and no table was created. "
+		"See erpnext_enhancements/setup/module_map.py and chat/README.md. Invariant I2 "
+		"(unique gchat_message_name) and the per-room uniqueness constraints are UNBACKED "
+		"until this reports clean."
+	)
+
+	try:
+		print("")
+		print("*" * 78)
+		print(f"[erpnext_enhancements] {headline}")
+		for entry in skipped:
+			print(f"    {entry}")
+		print(f"    {remedy}")
+		print("*" * 78)
+		print("")
+	except Exception:
+		pass
+
+	_note(headline + "\n\n" + "\n".join(skipped) + "\n\n" + remedy)
 
 
 def _note(message: str) -> None:
