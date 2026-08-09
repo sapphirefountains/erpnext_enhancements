@@ -1,0 +1,289 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-08 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room",
+  "seq",
+  "column_break_head",
+  "sender",
+  "sender_kind",
+  "message_type",
+  "body_section",
+  "text",
+  "text_plain",
+  "mentions",
+  "threading_section",
+  "parent_message",
+  "column_break_threading",
+  "thread_root",
+  "state_section",
+  "has_attachments",
+  "is_edited",
+  "edited_at",
+  "column_break_state",
+  "is_deleted",
+  "deleted_at",
+  "deleted_by",
+  "deletion_source",
+  "sync_section",
+  "gchat_message_name",
+  "gchat_thread_name",
+  "gchat_create_time",
+  "gchat_last_update_time",
+  "column_break_sync",
+  "client_message_id",
+  "sync_state",
+  "sync_origin",
+  "truncated_for_relay"
+ ],
+ "fields": [
+  {
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Room",
+   "options": "Chat Room",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The monotonic per-room sequence (CHAT-SEQ-1). Positive, allocated inside the inserting transaction, unique per (room, seq), never derived from a timestamp, never client-assigned, never reused - deletes are soft. This is the sort key for a transcript, not creation: two inserts into one room can share creation to the microsecond, and seq has no timezone.",
+   "fieldname": "seq",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sender",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sender",
+   "options": "User",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Human",
+   "description": "Drives rendering and unread exclusion - a user's own Triton reply should not mark their room unread.",
+   "fieldname": "sender_kind",
+   "fieldtype": "Select",
+   "label": "Sender Kind",
+   "options": "Human\nTriton\nSystem",
+   "reqd": 1
+  },
+  {
+   "default": "Text",
+   "fieldname": "message_type",
+   "fieldtype": "Select",
+   "label": "Message Type",
+   "options": "Text\nFile\nSystem",
+   "reqd": 1
+  },
+  {
+   "fieldname": "body_section",
+   "fieldtype": "Section Break",
+   "label": "Body"
+  },
+  {
+   "description": "The body AS AUTHORED, stored verbatim and never trusted. Sanitisation happens on the way out, in the client, using DOM APIs and never innerHTML.",
+   "fieldname": "text",
+   "fieldtype": "Long Text",
+   "label": "Text"
+  },
+  {
+   "description": "Plain-text extraction. It is what the 32,000-BYTE relay budget is measured against after UTF-8 encoding, what retrieval chunks are assembled from, and what Chat Room.last_message_preview is truncated from - so no read path ever re-parses markup.",
+   "fieldname": "text_plain",
+   "fieldtype": "Long Text",
+   "label": "Text (Plain)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mentions",
+   "fieldtype": "Table",
+   "label": "Mentions",
+   "options": "Chat Mention"
+  },
+  {
+   "fieldname": "threading_section",
+   "fieldtype": "Section Break",
+   "label": "Threading"
+  },
+  {
+   "description": "The reply edge. Threading is ONE level: a reply to a reply attaches to the same root, mirroring the existing Comments App, which is why thread_root never needs recomputation.",
+   "fieldname": "parent_message",
+   "fieldtype": "Link",
+   "label": "Parent Message",
+   "options": "Chat Message",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_threading",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Denormalised root, maintained in before_insert as parent.thread_root or parent.name, so the thread panel is one indexed range scan instead of a recursive walk. This pair is what survives the Google threading risk: if API-created spaces cannot be threaded at all, ERPNext still holds complete thread structure and only the Chat-side rendering is lossy.",
+   "fieldname": "thread_root",
+   "fieldtype": "Link",
+   "label": "Thread Root",
+   "options": "Chat Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "state_section",
+   "fieldtype": "Section Break",
+   "label": "State"
+  },
+  {
+   "default": "0",
+   "fieldname": "has_attachments",
+   "fieldtype": "Check",
+   "label": "Has Attachments",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_edited",
+   "fieldtype": "Check",
+   "label": "Is Edited",
+   "read_only": 1
+  },
+  {
+   "fieldname": "edited_at",
+   "fieldtype": "Datetime",
+   "label": "Edited At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "SOFT DELETE - text is retained on the row. Google's own tombstone is content-free (showDeleted returns name, deleteTime and deletionMetadata, never the body), so if ERPNext does not keep it, nobody has it. Every read path filters is_deleted = 0 except the Phase 6 oversight endpoint, which pays for the privilege with an audit row.",
+   "fieldname": "is_deleted",
+   "fieldtype": "Check",
+   "label": "Is Deleted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deleted_at",
+   "fieldtype": "Datetime",
+   "label": "Deleted At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deleted_by",
+   "fieldtype": "Link",
+   "label": "Deleted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "deletion_source",
+   "fieldtype": "Select",
+   "label": "Deletion Source",
+   "options": "\nERPNext\nGoogle Chat\nRetention\nAdmin",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_section",
+   "fieldtype": "Section Break",
+   "label": "Sync"
+  },
+  {
+   "description": "spaces/{space}/messages/{message}. Data(255) with unique on the DocField - invariant I2 made STRUCTURAL. The varchar(140) default would truncate-collide two distinct Google messages into one, which is silent message loss. Declared unique here rather than only in a patch so Frappe coerces the unset value to NULL: with the constraint added only by frappe.db.add_unique, unrelayed rows store '' and the SECOND unrelayed message in the entire table fails to insert.",
+   "fieldname": "gchat_message_name",
+   "fieldtype": "Data",
+   "label": "Google Chat Message Name",
+   "length": 255,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "description": "spaces/{space}/threads/{thread} - the thread RESOURCE NAME, never a threadKey. threadKey is documented at up to 4000 characters, which no Frappe Data field can hold and no Frappe-emitted index can key on; storing it here would be a silent truncation at insert.",
+   "fieldname": "gchat_thread_name",
+   "fieldtype": "Data",
+   "label": "Google Chat Thread Name",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "gchat_create_time",
+   "fieldtype": "Datetime",
+   "label": "Google Chat Create Time",
+   "read_only": 1
+  },
+  {
+   "description": "Google Message.lastUpdateTime. The monotonic guard an inbound update is tested against, so a delayed redelivery cannot overwrite a newer edit.",
+   "fieldname": "gchat_last_update_time",
+   "fieldtype": "Datetime",
+   "label": "Google Chat Last Update Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_sync",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Our client- prefixed idempotency id, derived once and stored forever. Data(64) because Google caps clientAssignedMessageId at 63 characters, lowercase letters, numbers and hyphens, unique within a space - and Frappe silently raises any Data length below 64 to 64 anyway. Unique per (room, client_message_id) via patch, scoped to the room because Google's own guarantee is per-space.",
+   "fieldname": "client_message_id",
+   "fieldtype": "Data",
+   "label": "Client Message ID",
+   "length": 64,
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "description": "Relay bookkeeping. Every write to this field uses set_value(update_modified=False): the D6 cache watermark is (max(seq), count(*), max(modified)), so a retry that touched modified would invalidate every cached digest for the room on every attempt.",
+   "fieldname": "sync_state",
+   "fieldtype": "Select",
+   "label": "Sync State",
+   "options": "Pending\nRelayed\nFailed\nNot Mirrored\nInbound",
+   "read_only": 1
+  },
+  {
+   "default": "ERPNext",
+   "description": "Which side authored this row. Three-valued, not a boolean: Triton's replies are neither an employee's message nor a mirror of one.",
+   "fieldname": "sync_origin",
+   "fieldtype": "Select",
+   "label": "Sync Origin",
+   "options": "ERPNext\nGoogle Chat\nTriton",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "This body did not fit in Google's 32,000-byte message limit and was truncated for the relay only. The ERPNext row still holds the whole thing.",
+   "fieldname": "truncated_for_relay",
+   "fieldtype": "Check",
+   "label": "Truncated For Relay",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Message",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

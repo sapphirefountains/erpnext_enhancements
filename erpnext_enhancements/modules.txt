@@ -26,3 +26,4 @@ Product Configurator
 Package Dispatch
 Training
 Offsite Backup
+Chat

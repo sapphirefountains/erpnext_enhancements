@@ -861,6 +861,26 @@ after_migrate = [
 	# skipped by the chrome filter and then re-enabled by a future migrate with a
 	# stale generator.
 	"erpnext_enhancements.enhancements_core.setup_print_formats.disable_superseded_print_formats",
+	# chat: re-assert the composite indexes and composite UNIQUE constraints that
+	# Frappe's DocType JSON cannot express (there is no first-class composite-index
+	# field, so `(room, seq)`, `(room, client_message_id)`, `(room, user)` and the rest
+	# exist ONLY because a patch created them). This is the same module the patch entry
+	# in patches.txt names, called deliberately a second time, because a patch is not
+	# guaranteed to run on a FRESH site: `bench install-app` marks an app's whole
+	# patches.txt as already-executed, so on a new bench the patch is skipped and never
+	# runs again -- and the failure is silent, because inserts succeed happily without a
+	# unique constraint until the day two of them should have collided.
+	# VERIFY: that install-app skip behaviour is read from frappe's installer, not
+	# executed here; confirm on a fresh bench with SHOW INDEX FROM "tabChat Message".
+	# Safe either way: every index is checked against information_schema before any DDL,
+	# so on the normal migrate path (where the patch already ran) this is ~11 cheap reads
+	# and no writes. It is `ensure_chat_indexes`, not the patch's own `execute`, because
+	# the two want opposite failure behaviour: the patch runs once and SHOULD stop the
+	# migrate if a constraint cannot be created; a hook that raises here would brick
+	# every future deploy instead, so the backstop logs to the Error Log and returns.
+	# Position in this list does not matter -- after_migrate runs after model sync, so
+	# the tables exist by the time any of these do.
+	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -1145,6 +1165,21 @@ permission_query_conditions = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_query_conditions",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_query_conditions",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_query_conditions",
+	# Chat (ADR 0009 §F.18): row-level scoping is MEMBERSHIP, not role. Chat Room is
+	# the only chat doctype carrying a DocPerm at all (`read` for "Chat User"), so it is
+	# the only one where this hook is the live gate -- the other three ship with an
+	# empty `permissions` array, which refuses everyone but Administrator before any
+	# hook is consulted. They are registered anyway, deliberately: the ADR's standing
+	# obligation is that the pair must already exist the day somebody adds a DocPerm row
+	# so they can look at a message in the desk, and these are the tested expression of
+	# the membership rule that the package's raw SQL reuses (permission hooks do NOT
+	# protect frappe.db.sql -- see chat/permissions.py's review checklist).
+	# Chat Room is active membership only; Chat Message / Chat Attachment additionally
+	# let a departed member read history up to their `left_seq` (CQ-10).
+	"Chat Room": "erpnext_enhancements.chat.permissions.chat_room_query",
+	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_query",
+	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_query",
+	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_query",
 }
 
 has_permission = {
@@ -1161,6 +1196,20 @@ has_permission = {
 	"Training Completion": "erpnext_enhancements.training.permissions.completion_has_permission",
 	"Training Certificate": "erpnext_enhancements.training.permissions.certificate_has_permission",
 	"Training Signoff": "erpnext_enhancements.training.permissions.signoff_has_permission",
+	# Chat: the twin of every query condition above, and parity here is the house
+	# doctrine -- ten and ten before this block, four and four after it.
+	# "Chat Room" is not just the single-document gate: it IS the realtime security
+	# boundary (invariant I8). socket.io's `doc_subscribe` calls back into Python and
+	# runs the full document-level permission stack, including this hook, under the
+	# joining user's own session before it joins `doc:Chat Room/<name>`. Get it right
+	# and socket security is free; get it wrong and realtime leaks message bodies with
+	# every REST endpoint still locked down.
+	# On v16 a has_permission hook that returns None DENIES, so every path in these
+	# four returns an explicit bool, exception paths included.
+	"Chat Room": "erpnext_enhancements.chat.permissions.chat_room_has_permission",
+	"Chat Room Member": "erpnext_enhancements.chat.permissions.chat_room_member_has_permission",
+	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_has_permission",
+	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_has_permission",
 }
 
 ignore_links_on_delete = ["User Form Draft"]

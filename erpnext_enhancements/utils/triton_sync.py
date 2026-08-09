@@ -27,9 +27,19 @@ def global_triton_sync(doc, method=None):
     # pointless POST per call (and risk a feedback loop). "AI Governance" holds
     # high-volume log doctypes (pending actions / action log / model usage)
     # that would spam the webhook queue for zero indexing value.
+    #
+    # "Chat" is invariant CHAT-EXCL-1 (ADR 0009 §D.5) and it is excluded for both
+    # reasons at once. Volume: chat is the highest-write module in the app, and a
+    # webhook POST per message — plus one per membership row, relay job and inbound
+    # event — is a self-inflicted DoS on the queue. Privacy: the payload announces
+    # employee-private message rows to an external service that has no mandate to
+    # index them, and ERPNext's chat reaches Triton deliberately through the Phase 5
+    # retrieval gate, which derives the asking user's allowed_rooms server-side.
+    # Both failures are SILENT — the writes succeed either way — so nothing here
+    # would ever tell you it was missing.
     excluded_modules = [
         "Core", "System", "Setup", "Custom", "Data Migration", "Email",
-        "Integrations", "Telephony", "AI Governance",
+        "Integrations", "Telephony", "AI Governance", "Chat",
     ]
 
     # Module-level exclusion is too coarse for the fountain-move intake: it lives

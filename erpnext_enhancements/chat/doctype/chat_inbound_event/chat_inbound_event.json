@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-08 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "transport",
+  "event_type",
+  "received_at",
+  "column_break_head",
+  "status",
+  "attempts",
+  "resulting_message",
+  "routing_section",
+  "gchat_space_name",
+  "gchat_resource_name",
+  "column_break_routing",
+  "pubsub_message_id",
+  "payload_section",
+  "payload",
+  "error_section",
+  "last_error"
+ ],
+ "fields": [
+  {
+   "description": "Which of the two inbound mechanisms delivered this. Interaction = the Chat app's HTTPS endpoint. Workspace Event = a Pub/Sub push from a Workspace Events subscription.",
+   "fieldname": "transport",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Transport",
+   "options": "Interaction\nWorkspace Event",
+   "reqd": 1
+  },
+  {
+   "description": "e.g. google.workspace.chat.message.v1.created, or MESSAGE. Deliberately not indexed - dedupe is on pubsub_message_id and on Chat Message.gchat_message_name, and a third probe would be redundant.",
+   "fieldname": "event_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Event Type",
+   "length": 140
+  },
+  {
+   "default": "Now",
+   "description": "Set from frappe.utils.now_datetime(), never from SQL NOW() - the site clock and the database clock are not guaranteed to be the same reading.",
+   "fieldname": "received_at",
+   "fieldtype": "Datetime",
+   "label": "Received At",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Received",
+   "description": "Processed and Ignored rows are purged by retention. Failed rows are never purged automatically: a purge that deletes the evidence of the events it failed to process is a purge that hides an outage.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Received\nProcessed\nIgnored\nFailed",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts"
+  },
+  {
+   "description": "What this delivery produced, if anything. A batched payload produces many message operations from one row, so this points at the first or only one.",
+   "fieldname": "resulting_message",
+   "fieldtype": "Link",
+   "label": "Resulting Message",
+   "options": "Chat Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "routing_section",
+   "fieldtype": "Section Break",
+   "label": "Routing"
+  },
+  {
+   "description": "spaces/{space} - resolved to a Chat Room by the worker.",
+   "fieldname": "gchat_space_name",
+   "fieldtype": "Data",
+   "label": "Google Space Name",
+   "length": 255
+  },
+  {
+   "description": "The changed resource named by the event.",
+   "fieldname": "gchat_resource_name",
+   "fieldtype": "Data",
+   "label": "Google Resource Name",
+   "length": 255
+  },
+  {
+   "fieldname": "column_break_routing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Pub/Sub's own message id. Pub/Sub is at-least-once, so this unique constraint is the whole duplicate defence: the second delivery of the same message becomes a DuplicateEntryError the puller treats as 'already acked'. Empty for the HTTP transport - Frappe coerces empty to NULL on a unique DocField, and MariaDB allows unlimited NULLs in a unique index, so those rows do not collide with each other.",
+   "fieldname": "pubsub_message_id",
+   "fieldtype": "Data",
+   "label": "Pub/Sub Message ID",
+   "length": 140,
+   "unique": 1
+  },
+  {
+   "fieldname": "payload_section",
+   "fieldtype": "Section Break",
+   "label": "Payload"
+  },
+  {
+   "description": "The event body VERBATIM, stored before any interpretation. Never normalised, never re-serialised, never trimmed. This column is the only way to reprocess after a parser bug, the fixture source for the parser's own tests, and the only evidence available when Google changes a payload shape - which they do. Batched payloads (batchCreated, batchUpdated, batchDeleted, batchChanged) are the norm, and one row is one delivery, not one contained resource, so acknowledging the delivery stays a single decision.",
+   "fieldname": "payload",
+   "fieldtype": "Code",
+   "label": "Payload",
+   "options": "JSON"
+  },
+  {
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Inbound Event",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

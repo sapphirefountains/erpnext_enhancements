@@ -1,0 +1,271 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-08 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "room_type",
+  "title",
+  "description",
+  "column_break_head",
+  "is_archived",
+  "retention_days",
+  "link_section",
+  "linked_doctype",
+  "linked_document",
+  "column_break_link",
+  "dm_user_1",
+  "dm_user_2",
+  "provisioning_section",
+  "provisioning_mode",
+  "provisioning_state",
+  "column_break_provisioning",
+  "provisioning_attempts",
+  "provisioning_error",
+  "google_section",
+  "gchat_space_name",
+  "gchat_space_type",
+  "column_break_google",
+  "gchat_threading_state",
+  "gchat_space_uri",
+  "activity_section",
+  "seq_high_water",
+  "last_message",
+  "last_message_at",
+  "column_break_activity",
+  "last_message_sender",
+  "last_message_preview"
+ ],
+ "fields": [
+  {
+   "description": "Which of the four shapes decision #10 requires this room is. Set once, at creation: a DM cannot become a group.",
+   "fieldname": "room_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Room Type",
+   "options": "Direct Message\nGroup\nOrganization\nDocument",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Absent for direct messages, which are rendered from the peer's name instead.",
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "length": 140
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_archived",
+   "fieldtype": "Check",
+   "label": "Is Archived"
+  },
+  {
+   "default": "0",
+   "description": "0 inherits the site-wide setting from Chat Settings.",
+   "fieldname": "retention_days",
+   "fieldtype": "Int",
+   "label": "Retention Days"
+  },
+  {
+   "fieldname": "link_section",
+   "fieldtype": "Section Break",
+   "label": "Linked Document"
+  },
+  {
+   "description": "Per-document rooms only. Set together with Linked Document or not at all: the unique (linked_doctype, linked_document) constraint hits the empty-string trap if only one is filled.",
+   "fieldname": "linked_doctype",
+   "fieldtype": "Link",
+   "label": "Linked Doctype",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "linked_document",
+   "fieldtype": "Dynamic Link",
+   "label": "Linked Document",
+   "options": "linked_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_link",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Direct messages only. The lexicographically LOWER of the pair, so (A,B) and (B,A) resolve to one row under the unique (dm_user_1, dm_user_2) constraint.",
+   "fieldname": "dm_user_1",
+   "fieldtype": "Link",
+   "label": "DM User 1",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "description": "Direct messages only. The lexicographically HIGHER of the pair.",
+   "fieldname": "dm_user_2",
+   "fieldtype": "Link",
+   "label": "DM User 2",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provisioning_section",
+   "fieldtype": "Section Break",
+   "label": "Google Space Provisioning"
+  },
+  {
+   "default": "On First Message",
+   "description": "WHEN the backing Google space is created, not whether the room exists. On First Message is the default because project-wide space writes are capped at 60/minute: eagerly provisioning a space per per-document room would saturate that quota for hours and leave thousands of empty spaces in every coworker's Chat client.",
+   "fieldname": "provisioning_mode",
+   "fieldtype": "Select",
+   "label": "Provisioning Mode",
+   "options": "Not Mirrored\nOn Create\nOn First Message",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "provisioning_state",
+   "fieldtype": "Select",
+   "label": "Provisioning State",
+   "options": "Pending\nProvisioning\nReady\nFailed\nDisabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_provisioning",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "provisioning_attempts",
+   "fieldtype": "Int",
+   "label": "Provisioning Attempts",
+   "read_only": 1
+  },
+  {
+   "description": "Truncated to 1000 characters at write.",
+   "fieldname": "provisioning_error",
+   "fieldtype": "Small Text",
+   "label": "Provisioning Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "google_section",
+   "fieldtype": "Section Break",
+   "label": "Google Chat"
+  },
+  {
+   "description": "The Google Chat space resource name, spaces/{space}. Data(255), not the varchar(140) default: Google documents no maximum for the {space} segment, and 255 sits ~3x inside MariaDB's 3072-byte index-key limit under ROW_FORMAT=DYNAMIC. unique on the DocField (never only in a patch) so Frappe coerces the unset value to NULL and unprovisioned rooms can coexist.",
+   "fieldname": "gchat_space_name",
+   "fieldtype": "Data",
+   "label": "Google Chat Space Name",
+   "length": 255,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "gchat_space_type",
+   "fieldtype": "Select",
+   "label": "Google Chat Space Type",
+   "options": "\nSPACE\nGROUP_CHAT\nDIRECT_MESSAGE",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_google",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Read back from spaces.get. spaceThreadingState is Output only on Google's side, so this is observed, never requested.",
+   "fieldname": "gchat_threading_state",
+   "fieldtype": "Select",
+   "label": "Google Chat Threading State",
+   "options": "\nTHREADED_MESSAGES\nGROUPED_MESSAGES\nUNTHREADED_MESSAGES",
+   "read_only": 1
+  },
+  {
+   "description": "Deep link into the native Google Chat client.",
+   "fieldname": "gchat_space_uri",
+   "fieldtype": "Data",
+   "label": "Google Chat Space URI",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "activity_section",
+   "fieldtype": "Section Break",
+   "label": "Activity"
+  },
+  {
+   "description": "ADVISORY MIRROR ONLY. The allocator is MAX(seq) FOR UPDATE over the room's messages; this column exists so a nightly drift check can compare the two. Never read it to allocate.",
+   "fieldname": "seq_high_water",
+   "fieldtype": "Int",
+   "label": "Sequence High Water",
+   "read_only": 1
+  },
+  {
+   "description": "Denormalised from Chat Message. Written with set_value(update_modified=False) so the room's modified stays meaningful.",
+   "fieldname": "last_message",
+   "fieldtype": "Link",
+   "label": "Last Message",
+   "options": "Chat Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_message_at",
+   "fieldtype": "Datetime",
+   "label": "Last Message At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_activity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_message_sender",
+   "fieldtype": "Link",
+   "label": "Last Message Sender",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "description": "PLAIN TEXT, truncated to 200 characters, escaped by us. Core Notification Log subjects carry raw HTML and the bell renders it as markup; the room list must not become a second render surface for a message body.",
+   "fieldname": "last_message_preview",
+   "fieldtype": "Small Text",
+   "label": "Last Message Preview",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-08 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Room",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "Chat User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "room_type,title",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

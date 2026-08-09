@@ -4,7 +4,8 @@ Runs once per desk session load; keep it cheap — everything added here is
 serialized into every desk page's boot payload.
 """
 
-from frappe.utils import get_url
+import frappe
+from frappe.utils import cint, get_url
 
 from erpnext_enhancements.api.collab import get_collab_doctypes
 from erpnext_enhancements.api.desk_shortcuts import get_visible_shortcuts_for_user
@@ -70,6 +71,17 @@ def boot_session(bootinfo):
 	the public form URL, resolved server-side via ``get_url`` so the client never
 	hand-builds it. The server-side guards in ``feature_flags`` remain the
 	authority for both.
+
+	``frappe.boot.ee_chat`` answers one question for the desk client: *should this
+	user see chat at all?* — the master switch AND this user's pilot-whitelist
+	standing, collapsed into one boolean because those two are never usefully
+	separate on the client. Phase 1 ships no browser code whatsoever, so nothing
+	reads it yet; it exists now so Phase 3's SPA entry point has a gate on the day
+	it lands rather than an ``/api/method`` round-trip on every desk load. It is
+	deliberately NOT gated on ``dry_run_mode`` — dry-run exists precisely so the UI
+	can be exercised without touching Google. Cosmetic only: ``chat.permissions``
+	and ``api/chat.py`` remain the authority, and ``Chat Settings`` ships dormant so
+	this is ``0`` on every site until somebody deliberately turns it on.
 	"""
 	bootinfo.collab_doctypes = sorted(get_collab_doctypes())
 	bootinfo.ee_process_automation = 1 if process_automation_enabled() else 0
@@ -84,3 +96,27 @@ def boot_session(bootinfo):
 	bootinfo.ee_fountain_move_url = get_url("/fountain-move")
 	bootinfo.ee_contract_esign = 1 if contract_esign_enabled() else 0
 	bootinfo.ee_contract_esign_public = 1 if contract_esign_public_page_enabled() else 0
+	bootinfo.ee_chat = 1 if _chat_visible() else 0
+
+
+def _chat_visible() -> bool:
+	"""Is chat switched on *and* open to this user? Never raises, never blocks boot.
+
+	Its own helper rather than an entry in ``feature_flags`` because both halves live
+	on the chat module's own Single: ``Chat Settings.enabled`` is the master switch and
+	``chat_settings.is_user_allowed`` is the pilot gate that ``restrict_to_whitelist``
+	turns on. Imported inside the function so a desk load on a site that has this code
+	but has not migrated yet — no ``Chat Settings`` DocType, no table — costs nothing
+	and cannot fail at import time.
+
+	Every failure answers "no". ``extend_bootinfo`` runs on every desk load for every
+	user, and a feature flag that can raise turns a missing DocType into a blank desk.
+	"""
+	try:
+		from erpnext_enhancements.chat.doctype.chat_settings.chat_settings import is_user_allowed
+
+		if not cint(frappe.db.get_single_value("Chat Settings", "enabled")):
+			return False
+		return is_user_allowed()
+	except Exception:
+		return False

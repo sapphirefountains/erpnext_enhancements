@@ -23,3 +23,12 @@ infra/tfplan
 # Redis dump files, produced when a local redis-server is started for bench work
 dump.rdb
 *.rdb
+
+# Google service-account key files. Belt and braces only — the chat integration is
+# deliberately keyless (the VM's own identity signs the delegation assertion via IAM
+# signJwt), so a file matching one of these should not exist at all. If one appears,
+# the design was abandoned somewhere. scripts/check_no_committed_secrets.py is the
+# actual gate and it scans git history, not just the working tree.
+*-key.json
+service-account*.json
+*credentials*.json

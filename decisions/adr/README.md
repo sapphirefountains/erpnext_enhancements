@@ -35,3 +35,4 @@ one, so the history of the reasoning survives.
 | [0006](0006-ai-writes-need-desk-confirmation.md) | AI writes are confirmed in the desk, never by the model | Accepted |
 | [0007](0007-tolerate-mixed-indentation.md) | Tolerate mixed indentation rather than reformat | Accepted, temporary |
 | [0008](0008-global-assets-ship-as-bundles.md) | Global browser assets ship as esbuild bundles, not raw `/assets` paths | Accepted |
+| [0009](0009-erpnext-google-chat-triton.md) | Employee chat is a module in this app, mirrored to Google Chat, with Triton on `@triton` | Accepted |
