@@ -58,6 +58,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `after_migrate`, so on a genuinely fresh site neither would ever have fired. Both are
   now on `after_install` as well.
 
+## [1.261.1] - 2026-08-09
+
+### Fixed
+
+- **The load balancer closes idle connections after 30 seconds, and Terraform never set
+  otherwise.** `timeout_sec` is now `3600` on both `production-vm-backend` and
+  `spot-vm-backend` in `infra/configs/load_balancer.yaml`.
+
+  On an external Application Load Balancer the backend service timeout is **not** a
+  request deadline — it is how long an idle connection may live. At Google's 30-second
+  default the LB closes Frappe's socket.io WebSocket every thirty seconds, taking
+  presence, typing indicators, read receipts and live message delivery with it, and it
+  504s Triton's SSE stream mid-answer. Both work perfectly against localhost, which is
+  what makes it expensive to diagnose: the bug only exists where the load balancer is.
+
+  **The only thing hiding it today is socket.io's own 25-second ping beating the cut by
+  five seconds** — a margin nobody chose and nothing protects. Raise the ping interval
+  for efficiency, or let a slow turn idle the socket, and it surfaces.
+
+  Set in Terraform rather than with `gcloud compute backend-services update`, which is
+  what the vendor runbook says. The gcloud form takes effect immediately and is then
+  silently reverted by the next `terraform apply` — this LB is fully managed by
+  `infra/load_balancer.tf` through the vendored `net-lb-app-ext` module, which already
+  exposes `timeout_sec` as an optional field on `backend_service_configs`. **Requires
+  `terraform apply` to take effect; it is not applied by the app deploy.**
+
+  Spot matches production deliberately. A spot environment on the default timeout is not
+  somewhere you can reproduce a realtime or streaming bug, and the first symptom of that
+  is somebody concluding a WebSocket fault is environmental.
+
+  Verify, and note this one command also answers three other open questions — whether a
+  Cloud Armor policy exists outside Terraform, the edge policy, and session affinity:
+
+  ```
+  gcloud compute backend-services describe production-glb-production-vm-backend \
+    --global --project=erpnext-465317 \
+    --format="yaml(name,timeoutSec,securityPolicy,edgeSecurityPolicy,sessionAffinity)"
+  ```
+
+  Session affinity stays `NONE` and that is correct while each LB has exactly one VM NEG
+  behind it — there is nothing to be sticky to. It becomes mandatory the moment either
+  becomes a MIG with more than one instance, because socket.io's handshake is several
+  HTTP requests before the upgrade and they would land on different backends.
+
 ## [1.261.0] - 2026-08-08
 
 ### Added

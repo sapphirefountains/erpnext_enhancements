@@ -12,6 +12,10 @@ ${spot_lb_name}:
       health_checks: ["$$mig_health_check_id"]
       protocol: "HTTP"
       port_name: "http"
+      # Matches production deliberately. If spot keeps the 30s default it stops being a
+      # place you can reproduce a realtime or streaming bug, and the first symptom is
+      # someone concluding a WebSocket fault is environmental. See the note above.
+      timeout_sec: 3600
   backend_buckets_config: {}
   forwarding_rules_config:
     https-rule:
@@ -37,6 +41,14 @@ ${production_lb_name}:
       health_checks: ["$$mig_health_check_id"]
       protocol: "HTTP"
       port_name: "http"
+      # Google's default is 30s, and for an external Application Load Balancer this is
+      # not a request deadline -- it is how long an idle connection is allowed to live.
+      # At 30s the LB closes Frappe's socket.io WebSocket every 30 seconds, which takes
+      # presence, typing indicators, read receipts and live message delivery with it, and
+      # it 504s Triton's SSE stream mid-answer. Both work perfectly on localhost, which is
+      # what makes this expensive to find. Today the only thing hiding it is socket.io's
+      # own 25s ping beating the cut by five seconds -- a margin nobody chose.
+      timeout_sec: 3600
   backend_buckets_config: {}
   forwarding_rules_config:
     https-rule:
