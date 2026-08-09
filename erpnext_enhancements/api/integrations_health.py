@@ -2,9 +2,11 @@
 app depends on is configured, connected, and not failing.
 
 This app talks to a lot of third parties (QuickBooks Online, Google Drive,
-Twilio/"Triton", Vertex AI/Gemini, Google Analytics 4 / Search Console) and
-each fails *quietly* in its own corner: a QuickBooks token lapses, the Drive
-service account was never pasted in, an hourly sync errors into the Error Log.
+Google Calendar, Twilio/"Triton", Vertex AI/Gemini, Google Analytics 4 /
+Search Console) and each fails *quietly* in its own corner: a QuickBooks token
+lapses, the Drive service account was never pasted in, an hourly sync errors
+into the Error Log, a Task→Calendar push dies against a renamed API and stays
+dead for two months because the failure is caught and throttled.
 ``get_health`` rolls all of that — plus scheduler liveness and a 24 h error
 digest — into one System-Manager-only payload the desk page renders as a
 green/amber/red tile per integration.
@@ -213,6 +215,108 @@ def _check_drive(key, label, route):
 	headline = "Connected" if not failed_24h else f"{failed_24h} failed in 24h"
 	return _tile(key, label, worst_tone(tones) if tones else "green", headline, configured=True,
 		metrics=metrics, links=links, actions=["drive_test"])
+
+
+def _check_google_calendar(key, label, route):
+	"""Task → shared Google Calendar push (``script_migrations/task.py``).
+
+	The odd one out on this page: no settings doctype of its own and no toggle in
+	this app. It rides Frappe's built-in ``Google Calendar`` OAuth record, and the
+	calendar it targets is a module constant sitting next to the hook. Which is
+	precisely why it earns a tile — a v16 API change killed the push on 2026-06-08
+	and nothing said so for two months, because the failure was caught, throttled,
+	and never surfaced to a user.
+
+	"Tasks synced (24h)" is the number that would have caught it: Tasks created
+	against Events pushed to this calendar in the same window. Everything else here
+	exists to explain why that number is what it is.
+	"""
+	from erpnext_enhancements.script_migrations.task import (
+		GOOGLE_SHARED_CALENDAR_ID,
+		GOOGLE_SYNC_USER_EMAIL,
+	)
+
+	links = [{"label": "Google Calendar", "route": route}, {"label": "Events", "route": "/app/event"}]
+	try:
+		accounts = frappe.get_all(
+			"Google Calendar",
+			filters={"google_calendar_id": GOOGLE_SHARED_CALENDAR_ID},
+			fields=["name", "user", "enable", "push_to_google_calendar", "refresh_token"],
+			limit_page_length=1,
+		)
+	except Exception:
+		accounts = []
+
+	if not accounts:
+		return _tile(key, label, "red", "Calendar not found", configured=False, links=links,
+			notes=[
+				"No Google Calendar record points at the shared task calendar "
+				f"({GOOGLE_SHARED_CALENDAR_ID}), so every Task created is skipping the push "
+				"silently. Add the calendar under Google Calendar and authorise it."
+			])
+
+	account = accounts[0]
+	# refresh_token is a Password field: the doctype column holds an asterisk
+	# placeholder, so this reads as "authorised?" and never as the token itself.
+	authorised = bool(account.refresh_token)
+	pushing = bool(account.enable and account.push_to_google_calendar)
+
+	tones, metrics, notes = [], [], []
+	metrics.append(_metric("Calendar", account.name, "green"))
+	metrics.append(_metric("Authorized as", account.user or "—"))
+	if account.user and account.user != GOOGLE_SYNC_USER_EMAIL:
+		notes.append(
+			f"Events go out on {account.user}'s grant; the sync was set up under "
+			f"{GOOGLE_SYNC_USER_EMAIL}. Not an error, but check it if events land somewhere odd."
+		)
+
+	push_tone = "green" if pushing else "amber"
+	tones.append(push_tone)
+	metrics.append(_metric("Push to Google", "on" if pushing else "off", push_tone))
+
+	auth_tone = "green" if authorised else "red"
+	tones.append(auth_tone)
+	metrics.append(_metric("OAuth grant", "authorized" if authorised else "missing", auth_tone))
+
+	tasks = _count("Task", {"creation": (">", _hours_ago(24))})
+	synced = _count("Event", {"google_calendar": account.name, "creation": (">", _hours_ago(24))})
+	# Silence is not failure: a window with no Tasks in it proves nothing either way,
+	# so only "Tasks were created, push is on, none of them synced" is red.
+	sync_tone = "red" if (pushing and tasks and not synced) else "green" if synced else "neutral"
+	tones.append(sync_tone)
+	metrics.append(_metric("Tasks synced (24h)", f"{synced} of {tasks}", sync_tone))
+
+	# Matches the title script_migrations/task.py logs under, plus the "(throttled)"
+	# suffix log_error_throttled appends to its suppression notice.
+	failed = _count("Error Log", {
+		"method": ("like", "Google Calendar Sync Failed%"),
+		"creation": (">", _hours_ago(24)),
+	})
+	fail_tone = "red" if failed else "green"
+	tones.append(fail_tone)
+	metrics.append(_metric("Sync failures (24h)", failed, fail_tone))
+	if failed:
+		notes.append(
+			"Failures are throttled to a few rows an hour, so this count is a signal, not a "
+			"volume — one row can stand for hundreds of Tasks."
+		)
+
+	if not pushing:
+		notes.append(
+			"Enable and/or Push to Google Calendar are off on the Google Calendar record, so "
+			"Tasks are not reaching the shared calendar at all. The Task hook is still wired; "
+			"it skips quietly, which is why nothing errors."
+		)
+
+	if not pushing:
+		headline = "Push disabled — Tasks are not syncing"
+	elif failed:
+		headline = f"{failed} failed in 24h"
+	else:
+		headline = "Syncing"
+
+	return _tile(key, label, worst_tone(tones), headline, configured=authorised,
+		metrics=metrics, links=links, notes=notes)
 
 
 def _check_triton(key, label, route):
@@ -506,6 +610,7 @@ def _check_action1(key, label, route):
 _INTEGRATIONS = [
 	("quickbooks", "QuickBooks Online", "/app/quickbooks-online-settings", _check_quickbooks),
 	("drive", "Google Drive", "/app/project-folder-google-drive-settings", _check_drive),
+	("google_calendar", "Google Calendar (Task sync)", "/app/google-calendar", _check_google_calendar),
 	("triton", "Telephony (Triton / Twilio)", "/app/triton-settings", _check_triton),
 	("gemini", "AI Drafting (Vertex / Gemini)", "/app/triton-settings", _check_gemini),
 	("ga4", "Analytics (GA4 / Search Console)", "/app/ga4-settings", _check_ga4),

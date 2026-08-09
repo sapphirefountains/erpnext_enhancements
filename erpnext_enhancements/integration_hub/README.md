@@ -17,10 +17,10 @@ module is the desk pages, the settings doctype, and the workspace.
 ## Integrations Health
 
 System-Manager-only. It reports QuickBooks token state, CDC status and failed syncs; Google
-Drive configuration and sync-log failures; Triton/Twilio, Gemini, GA4/GSC; scheduler
-liveness; and a 24-hour Error Log digest.
+Drive configuration and sync-log failures; the Google Calendar Task-sync push; Triton/Twilio,
+Gemini, GA4/GSC; scheduler liveness; and a 24-hour Error Log digest.
 
-Two design properties worth preserving:
+Three design properties worth preserving:
 
 - **Secrets are read only as "configured?" booleans.** The page never surfaces a credential,
   so it is safe to screenshot into a support thread.
@@ -28,6 +28,11 @@ Two design properties worth preserving:
   `crm_enhancements.drive_sync.test_connection`) is **opt-in**, behind a button. A health
   page that live-checks every integration on render becomes the thing that takes them down
   when someone leaves it open.
+- **A tile that only reports configuration reports nothing.** "Configured" is not "working" —
+  the Google Calendar tile exists because a Task→Calendar push stayed configured, credentialled
+  and completely dead for two months. So tiles carry a *liveness* metric wherever one is cheap
+  to compute from the database: last sync age, failures in the window, or work-in against
+  work-out (that tile counts Tasks created against Events pushed). Add one when you add a tile.
 
 ## GA4 dashboard
 

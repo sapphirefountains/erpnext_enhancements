@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.262.0] - 2026-08-09
+
+### Fixed
+
+- **Task → Google Calendar sync called a function that does not exist in Frappe v16, and had
+  been dead for two months.** `script_migrations/task.py` pushed each new Task with
+
+  ```python
+  frappe.call("frappe.integrations.doctype.google_calendar.google_calendar.insert_event", ...)
+  ```
+
+  There is no `insert_event` in v16. Every Task created since **2026-06-08 07:49** raised
+  `AttributeError: module 'frappe.integrations.doctype.google_calendar.google_calendar' has
+  no attribute 'insert_event'` — **547 Error Log rows** by the time this was written, plus 2
+  throttle-suppression notices.
+
+  **Nobody saw any of it**, and that is the more interesting half. The call sits inside a
+  `try/except` that comments the failure onto the Task and logs through
+  `log_error_throttled`, so a burst of 69 Tasks produced 4 rows and no alert. The throttle
+  did its job — 547 identical rows say nothing the first four don't — but a volume control
+  is not a monitor, and on its own it made a dead integration *quieter* rather than louder.
+
+  **This was not a rename.** v16's module-level event functions are
+  `insert_event_to_calendar` (Google → Frappe) and `insert_event_in_google_calendar`
+  (Frappe → Google); the old code's hand-built `{"doctype": "Google Calendar Event", …}`
+  payload named a doctype that has never existed. The carrier doctype is `Event`. So the fix
+  is not a new function name but a new shape: build a real **`Event`** with
+  `sync_with_google_calendar = 1` and a `google_calendar` link, insert it, and let Frappe's
+  own `Event` `after_insert` hook do the Google call. That keeps the sync on a path Frappe
+  documents and tests instead of on a private function that can move under us again.
+
+  Three details that will look arbitrary later:
+
+  - **`Event.google_calendar` is a Link to the `Google Calendar` *record*, not a calendar
+    id.** The `c_bbb30…@group.calendar.google.com` constant has to be resolved to a record
+    name first (`_shared_calendar_account`). Handing Frappe the raw id fails its own
+    `frappe.db.exists("Google Calendar", …)` guard, which `return`s — no push, no exception,
+    no row. The quietest possible failure, and exactly the one we just spent two months not
+    noticing.
+  - **`all_day = 1` carries the "date, not dateTime" rule that the old comment carried.**
+    Task's expected start/end are Date fields with no time component, Google rejects a bare
+    `YYYY-MM-DD` in a `dateTime` slot, and `all_day` is precisely the flag that makes
+    Frappe's `format_date_according_to_google_calendar` emit the `start.date`/`end.date`
+    pair instead. The `add_days(end_date, 1)` is still required for the same reason as
+    before — Google treats an all-day `end.date` as *exclusive*, so without it every task
+    rendered a day short and single-day tasks vanished from the grid entirely — but it now
+    applies to `Event.ends_on`, whose date component Frappe passes straight through.
+  - **`send_reminder = 0` and `event_type = "Private"`.** `send_reminder` defaults to 1 and
+    puts every Event into Frappe's daily digest mail; this sync exists to fill a Google
+    calendar, not to open a new mail flow, and Google sends its own reminders. `Private`
+    keeps one Event per Task off every other user's desk Calendar — it has no effect on the
+    Google side, where visibility comes from the shared calendar's own sharing, so `Public`
+    would only duplicate inside ERPNext a calendar the team already reads in Google.
+
+  Frappe's push `msgprint`s "Event Synced with Google Calendar." on success, so the insert
+  runs under `frappe.flags.mute_messages` (restored in a `finally`) to keep a modal off every
+  Task save. `frappe.throw` still raises through a mute, so failures still land in `except`
+  with their message intact.
+
+- **A dormant calendar is now a silent skip rather than a manufactured record.** If no
+  `Google Calendar` record matches the shared calendar id, or `enable` /
+  `push_to_google_calendar` are off, the sync returns without creating an Event, without a
+  log row and without a comment. That state is site configuration, not a per-Task failure,
+  and an Event that can never reach Google is a record pretending the pipe is open.
+  **This is the live state on production**: all three `Google Calendar` records were
+  disabled on 2026-04-15 and still hold valid refresh tokens, so the code fix alone restores
+  nothing — someone has to tick **Enable** and **Push to Google Calendar** on the
+  *ERPNext Tasks* record. The new health tile says so in as many words.
+
+### Added
+
+- **A "Google Calendar (Task sync)" tile on Integrations Health**, because the throttled log
+  was the wrong and only failure surface for something that can stay broken for two months.
+  It is the odd one out on that page — no settings doctype of its own, no toggle in this app,
+  riding Frappe's built-in `Google Calendar` OAuth record with the target calendar hard-coded
+  next to the hook — which is precisely why it needed reporting.
+
+  The metric that matters is **Tasks synced (24 h)**: Tasks created against Events pushed to
+  that calendar in the same window. Configuration state (calendar found, authorising account,
+  push on/off, OAuth grant present) explains *why* that number is what it is; the number
+  itself is what would have caught 2026-06-08 on 2026-06-09. Red only when Tasks were
+  created, push is on, and none of them synced — a window with no Tasks in it proves nothing
+  either way, and a tile that cries wolf on a quiet weekend gets ignored on a Monday.
+
+  Push disabled reads **amber** with the headline "Push disabled — Tasks are not syncing",
+  matching how QuickBooks' `sync_enabled` is reported. The `refresh_token` is read exactly
+  the way every other secret on this page is: as a boolean. It is a Password field, so the
+  doctype column holds an asterisk placeholder, and "authorised?" is all that comes back.
+
+### Changed
+
+- `tests/test_error_log_fixes.py` now asserts the **shape of the `Event`** the sync builds —
+  that it is an `Event`, that it is all-day, that its `google_calendar` is a resolved record
+  name and not a raw calendar id, that a dormant or missing calendar produces no Event and no
+  Error Log row, and that `mute_messages` is restored. Each of those was wrong before and
+  each was wrong *silently*, which is the only kind of wrong this file exists to catch.
+
 ## [1.261.0] - 2026-08-08
 
 ### Added

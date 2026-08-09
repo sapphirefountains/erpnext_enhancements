@@ -1,6 +1,6 @@
-"""Bench-free unit tests for the Error Log debugging pass (v1.254.0).
+"""Bench-free unit tests for the Error Log debugging pass (v1.254.0, v1.262.0).
 
-Two things are guarded here, both of them lessons from production rows rather
+Three things are guarded here, all of them lessons from production rows rather
 than hypotheticals:
 
 1. ``script_migrations/task.py`` built its Google Calendar payload by calling
@@ -13,7 +13,18 @@ than hypotheticals:
    because *that* is the bug; a test that only passed ``date`` objects would
    have gone green against the broken code.
 
-2. ``utils/error_throttle.py`` exists because one dead credential wrote 44,069
+2. Fixing (1) only got the payload as far as a call that does not exist.
+   ``frappe.integrations.doctype.google_calendar.google_calendar.insert_event``
+   is not a v16 function and "Google Calendar Event" is not a doctype, so the
+   *next* 547 rows said ``AttributeError: module ... has no attribute
+   'insert_event'`` instead. v1.262.0 replaced the whole payload with a real
+   ``Event`` doc, which is Frappe's only supported outbound path. The tests
+   assert the shape of that Event — that it is an ``Event``, that it is all-day,
+   that it carries a resolved ``Google Calendar`` *record name* rather than a raw
+   calendar id — because each of those was wrong before and each was wrong
+   silently.
+
+3. ``utils/error_throttle.py`` exists because one dead credential wrote 44,069
    Error Log rows in thirty hours. Its whole contract is "a storm becomes a
    handful of rows", so that is what is asserted — including that distinct
    signatures never share a budget, which is the property that keeps throttling
@@ -139,6 +150,32 @@ def _today():
 	return datetime.date.today().isoformat()
 
 
+class _Row(dict):
+	"""A ``frappe.get_all`` row: ``_dict``, so attribute access works as well as keys."""
+
+	__getattr__ = dict.get
+
+
+class _FakeEvent:
+	"""What ``frappe.get_doc({...})`` hands back for the Event the sync builds.
+
+	Records the field dict and the ``insert`` kwargs rather than writing anything —
+	the assertions are all about the *shape handed to Frappe*, since the Google call
+	itself lives in Frappe's own ``Event`` ``after_insert`` hook and is not ours to
+	test.
+	"""
+
+	def __init__(self, fields, sink):
+		self.fields = fields
+		self.insert_kwargs = None
+		self._sink = sink
+
+	def insert(self, **kwargs):
+		self.insert_kwargs = kwargs
+		self._sink.append(self)
+		return self
+
+
 def setUpModule():
 	global task_module, error_throttle
 
@@ -146,8 +183,11 @@ def setUpModule():
 	frappe.log_error = lambda message=None, title=None, **kw: LOGGED.append((title, message))
 	frappe.cache = lambda: CACHE
 	frappe.get_traceback = lambda: "traceback"
-	frappe.call = lambda *a, **kw: None
-	frappe.flags = types.SimpleNamespace(in_test=False)
+	frappe.get_all = lambda *a, **kw: []
+	frappe.get_doc = lambda fields: _FakeEvent(fields, [])
+	# `mute_messages` is toggled around the Event insert, so it has to exist and be
+	# restorable — a SimpleNamespace without it would raise AttributeError.
+	frappe.flags = types.SimpleNamespace(in_test=False, mute_messages=False)
 	# `error_throttle._site()` reads this to namespace its key, the same source
 	# RedisWrapper.make_key uses.
 	frappe.local = types.SimpleNamespace(conf={"db_name": DB_NAME})
@@ -172,6 +212,7 @@ class _Doc:
 	"""A stand-in Task. ``add_comment`` records rather than writes."""
 
 	def __init__(self, **fields):
+		self.name = "TASK-2026-00001"
 		self.subject = "A task"
 		self.description = None
 		self.exp_start_date = None
@@ -209,23 +250,37 @@ class TestCalendarDateCoercion(unittest.TestCase):
 			self.assertIsNone(task_module._calendar_date(empty))
 
 
+#: What ``frappe.get_all("Google Calendar", ...)`` finds on a healthy site: the
+#: record whose ``google_calendar_id`` is the shared task calendar, enabled and
+#: pushing. Its *name* — not the calendar id — is what an Event may link to.
+CALENDAR_RECORD = {"name": "ERPNext Tasks", "enable": 1, "push_to_google_calendar": 1}
+
+
 class TestCalendarPayload(unittest.TestCase):
-	"""What actually gets sent to Google."""
+	"""The ``Event`` the sync hands to Frappe, which is what reaches Google."""
 
 	def setUp(self):
 		LOGGED.clear()
 		CACHE.store.clear()
 		self.sent = []
-		self._real_call = task_module.frappe.call
-		task_module.frappe.call = lambda *a, **kw: self.sent.append(kw)
+		self.account = dict(CALENDAR_RECORD)
+		frappe = task_module.frappe
+		self._real = (frappe.get_all, frappe.get_doc)
+		frappe.get_all = lambda *a, **kw: [_Row(self.account)] if self.account else []
+		frappe.get_doc = lambda fields: _FakeEvent(fields, self.sent)
 
 	def tearDown(self):
-		task_module.frappe.call = self._real_call
+		task_module.frappe.get_all, task_module.frappe.get_doc = self._real
 
 	def _sync(self, **fields):
 		doc = _Doc(**fields)
 		task_module.sync_task_to_google_calendar(doc)
 		return doc
+
+	def _event(self, **fields):
+		self._sync(**fields)
+		self.assertEqual(len(self.sent), 1, "the calendar event was never built")
+		return self.sent[0].fields
 
 	def test_a_task_with_string_dates_does_not_log_an_error(self):
 		"""The regression, end to end: no Error Log row for an ordinary Task."""
@@ -233,41 +288,109 @@ class TestCalendarPayload(unittest.TestCase):
 		self.assertEqual(LOGGED, [], f"sync logged an error it should not have: {LOGGED}")
 		self.assertEqual(len(self.sent), 1, "the calendar insert never happened")
 
+	def test_it_builds_an_event_not_the_doctype_that_never_existed(self):
+		"""``Google Calendar Event`` is not a Frappe doctype and never was. The
+		carrier for an outbound Google event is ``Event``, and nothing else."""
+		event = self._event(exp_start_date="2026-08-10")
+		self.assertEqual(event["doctype"], "Event")
+		self.assertTrue(event["sync_with_google_calendar"])
+
+	def test_it_links_a_calendar_record_not_a_raw_calendar_id(self):
+		"""``Event.google_calendar`` is a Link to the ``Google Calendar`` doctype.
+		Handing it the ``c_...@group.calendar.google.com`` id fails Frappe's own
+		``frappe.db.exists`` guard, which returns without pushing and without
+		erroring — the quietest possible failure."""
+		event = self._event(exp_start_date="2026-08-10")
+		self.assertEqual(event["google_calendar"], "ERPNext Tasks")
+		self.assertNotEqual(event["google_calendar"], task_module.GOOGLE_SHARED_CALENDAR_ID)
+
 	def test_dates_are_all_day_not_datetime(self):
 		"""Task's expected start/end are Date fields with no time component, and
-		Google rejects a bare ``YYYY-MM-DD`` in a ``dateTime`` slot."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		event = self.sent[0]["doc"]
-		self.assertIn("date", event["start"])
-		self.assertNotIn("dateTime", event["start"])
-		self.assertEqual(event["start"]["date"], "2026-08-10")
+		``all_day`` is what makes Frappe emit Google's ``date`` pair instead of
+		``dateTime`` — Google rejects a bare ``YYYY-MM-DD`` in a ``dateTime`` slot."""
+		event = self._event(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
+		self.assertEqual(event["all_day"], 1)
+		self.assertTrue(event["starts_on"].startswith("2026-08-10"))
 
 	def test_the_end_date_is_exclusive(self):
 		"""Google treats an all-day ``end.date`` as exclusive: a task running
 		through the 12th ends on the 13th, or it renders a day short."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
-		self.assertEqual(self.sent[0]["doc"]["end"]["date"], "2026-08-13")
+		event = self._event(exp_start_date="2026-08-10", exp_end_date="2026-08-12")
+		self.assertTrue(event["ends_on"].startswith("2026-08-13"))
 
 	def test_a_single_day_task_is_not_zero_length(self):
 		"""Without the +1 a one-day task collapses and vanishes from the grid."""
-		self._sync(exp_start_date="2026-08-10", exp_end_date="2026-08-10")
-		event = self.sent[0]["doc"]
-		self.assertEqual(event["start"]["date"], "2026-08-10")
-		self.assertEqual(event["end"]["date"], "2026-08-11")
+		event = self._event(exp_start_date="2026-08-10", exp_end_date="2026-08-10")
+		self.assertTrue(event["starts_on"].startswith("2026-08-10"))
+		self.assertTrue(event["ends_on"].startswith("2026-08-11"))
 
 	def test_no_dates_falls_back_to_creation(self):
 		"""And specifically not to ``get_formatted``, which returns a *display*
 		string in the user's date format that Google would refuse."""
-		self._sync()
-		event = self.sent[0]["doc"]
-		self.assertEqual(event["start"]["date"], "2026-08-06")
-		self.assertEqual(event["end"]["date"], "2026-08-07")
+		event = self._event()
+		self.assertTrue(event["starts_on"].startswith("2026-08-06"))
+		self.assertTrue(event["ends_on"].startswith("2026-08-07"))
 
 	def test_a_start_without_an_end_is_a_single_day(self):
+		event = self._event(exp_start_date="2026-08-10")
+		self.assertTrue(event["starts_on"].startswith("2026-08-10"))
+		self.assertTrue(event["ends_on"].startswith("2026-08-11"))
+
+	def test_a_backdated_end_never_precedes_the_start(self):
+		"""``Event.validate`` throws on ends_on < starts_on. A Task with no start
+		falls back to ``creation``, which can be after an end someone backdated —
+		a date oddity that must not become a logged sync failure."""
+		event = self._event(exp_end_date="2026-01-01")
+		self.assertTrue(event["starts_on"].startswith("2026-08-06"))
+		self.assertTrue(event["ends_on"].startswith("2026-08-07"))
+		self.assertEqual(LOGGED, [])
+
+	def test_the_event_is_inserted_ignoring_permissions(self):
+		"""Whoever created the Task almost certainly cannot create an Event."""
 		self._sync(exp_start_date="2026-08-10")
-		event = self.sent[0]["doc"]
-		self.assertEqual(event["start"]["date"], "2026-08-10")
-		self.assertEqual(event["end"]["date"], "2026-08-11")
+		self.assertEqual(self.sent[0].insert_kwargs, {"ignore_permissions": True})
+
+	def test_the_mute_flag_is_restored(self):
+		"""It is set only to keep Frappe's "Event Synced" modal off every Task save;
+		leaving it set would swallow every later msgprint in the request."""
+		task_module.frappe.flags.mute_messages = False
+		self._sync(exp_start_date="2026-08-10")
+		self.assertFalse(task_module.frappe.flags.mute_messages)
+
+	def test_a_dormant_calendar_is_a_silent_skip(self):
+		"""Push turned off is site configuration, not a per-Task failure. One Error
+		Log row (or one comment) per Task created site-wide is exactly the noise the
+		throttle exists to stop; the Integrations Health tile reports it instead."""
+		self.account["push_to_google_calendar"] = 0
+		doc = self._sync(exp_start_date="2026-08-10")
+		self.assertEqual(self.sent, [], "a dormant calendar still built an event")
+		self.assertEqual(LOGGED, [])
+		self.assertEqual(doc.comments, [])
+
+	def test_a_disabled_calendar_is_a_silent_skip(self):
+		self.account["enable"] = 0
+		self._sync(exp_start_date="2026-08-10")
+		self.assertEqual(self.sent, [])
+		self.assertEqual(LOGGED, [])
+
+	def test_a_missing_calendar_is_a_silent_skip(self):
+		self.account = None
+		doc = self._sync(exp_start_date="2026-08-10")
+		self.assertEqual(self.sent, [])
+		self.assertEqual(LOGGED, [])
+		self.assertEqual(doc.comments, [])
+
+	def test_a_failing_insert_is_throttled_and_commented(self):
+		"""The failure path that stayed invisible for two months still has to leave
+		both a row and a trace on the Task itself."""
+		def _explode(fields):
+			raise RuntimeError("Google said no")
+
+		task_module.frappe.get_doc = _explode
+		doc = self._sync(exp_start_date="2026-08-10")
+		self.assertEqual([title for title, _ in LOGGED], ["Google Calendar Sync Failed"])
+		self.assertEqual(len(doc.comments), 1)
+		self.assertIn("Google said no", doc.comments[0][1]["text"])
 
 
 class TestErrorThrottle(unittest.TestCase):
