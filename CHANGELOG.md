@@ -89,6 +89,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script is loaded — it could not have opened the booking dialog there. Moving it also
   retires the load-order pairing both `doctype_js` entries had to carry.
 
+## [1.262.3] - 2026-08-10
+
+### Fixed
+
+- **The smoke test read `clientAssignedMessageId` off the wrong response, so the one assumption
+  Phase 2 shipped on was still unmeasured after a live run.** Step 4 checked it on the
+  `messages.create` reply; step 6 called `messages.get` and asserted only on `text` and
+  `lastUpdateTime`.
+
+  That is the wrong half. Phase 2's inbound echo ladder never sees a create response: the
+  subscription runs `payloadOptions.includeResource: false` — the only configuration with a
+  seven-day TTL, confirmed live — so an event carries a resource **name** and nothing else, and
+  the pipeline resolves it with `messages.get`. The client id is then matched against
+  `unique(room, client_message_id)` to decide *our own echo* versus *a coworker's message*. So
+  the field's presence **on the fetch** is what the design rests on, and no Google document or
+  sample shows it populated in any response; the proto declaring it a plain read/write field is
+  an argument, not evidence.
+
+  Step 6 now prints and checks it, and cross-checks it against the id `create` echoed — two
+  different answers for one message would match neither side of the index. The summary reports
+  the verdict as its own block.
+
+  **Absence is deliberately not a step failure.** The smoke test's job is to report what the API
+  does; treating an unwelcome answer as a broken test is how a finding gets argued with instead
+  of acted on.
+
+- **`Chat Settings.pubsub_events_subscription` held a *topic* path and
+  `pubsub_interaction_subscription` held the events *subscription*** — the two were swapped on
+  production. The puller would have tried to pull from `…/topics/chat-events`, which is not a
+  subscription, and failed at the first inbound event. Interaction events arrive over HTTP and
+  that field is now empty, which is what Phase 2 intended. Corrected in place; no code change.
+
+- **`Chat Settings.oversized_message_policy` was empty rather than `Truncate With Link`.**
+  `Chat Settings` is a Single, and Frappe synthesises DocField defaults only while `tabSingles`
+  holds no row for the doctype — once it does, a newly added field lands empty. The Phase 1
+  `ensure_chat_settings` backstop blank-fills the fields *it* knew about, not Phase 2's. An
+  empty Select on the truncation path is a live bug on the first oversized message. Corrected in
+  place, and a sweep of every Chat Settings field carrying a DocField default confirmed this was
+  the only one affected.
+
+## [1.262.2] - 2026-08-10
+
+### Fixed
+
+- **Every Opportunity→Project conversion sent one email to nobody and logged a traceback for
+  it.** The create-project dialog's "Users to Notify" field is a `MultiSelect`, and a
+  `MultiSelect` leaves a trailing separator behind after each pick — it submits
+  `"a@x.com, b@y.com, "`. `create_project_from_opportunity_background` split that on `,`
+  without filtering, so the empty final element became its own `frappe.sendmail` call with a
+  blank recipient. Gmail refuses the entire message at `RCPT TO` (`555 5.5.2 Syntax error,
+  cannot decode response`), which surfaces as an `smtplib.SMTPRecipientsRefused` traceback in
+  the Error Log.
+
+  **The visible symptom was misleading, which is why this sat for two weeks.** The real
+  recipients were notified normally — each user gets a separate email, so only the phantom
+  one failed. What it produced was a dead Email Queue row and an Error Log entry per
+  conversion (six of each on production between 2026-07-24 and 2026-08-10, every one of them
+  subject `New Project Created: …`), with nobody reporting a missing notification. Frappe then
+  retried each dud three times, so the Error Log count runs ahead of the queue count.
+
+  Normalization now lives in one place, `_notify_recipients`, and is applied at both ends:
+  in `enqueue_project_creation`, so a field holding only separators is refused up front
+  instead of queueing a job that notifies nobody, and again in the background worker
+  immediately before `frappe.sendmail`, because that is the last point at which a blank
+  recipient can still poison a message. Whitespace-only and `None` entries go too.
+
+  Note for anyone auditing the rest of the codebase against this class of bug: every other
+  comma-split in the app already filtered (`[x.strip() for x in … if x.strip()]`).
+  `crm_enhancements/api.py` was the sole exception.
+
 ## [1.262.1] - 2026-08-10
 
 ### Added

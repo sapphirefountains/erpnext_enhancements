@@ -19,6 +19,24 @@ No code here is changed by this docstring pass; comments only.
 import frappe
 
 
+def _notify_recipients(users):
+	"""Normalize the dialog's ``users`` payload into a clean list of user IDs.
+
+	The "Users to Notify" MultiSelect submits a comma-separated string and leaves a
+	trailing separator behind (``"a@x.com, b@y.com, "``), so a bare ``split(",")``
+	yields an empty final element. That empty string was reaching
+	:func:`frappe.sendmail` as a recipient and Gmail refused the whole message
+	(``555 5.5.2 Syntax error``) — one dead Email Queue row and one Error Log for
+	every conversion from 2026-07-24 on, while the real recipients still got theirs.
+
+	Accepts a comma-separated string or a list; blank and whitespace-only entries
+	are dropped.
+	"""
+	if isinstance(users, str):
+		users = users.split(",")
+	return [str(user).strip() for user in (users or []) if str(user or "").strip()]
+
+
 # The enqueue function now accepts 'project_template' and passes it on.
 @frappe.whitelist()
 def enqueue_project_creation(opportunity_name, users=None, project_template=None):
@@ -30,7 +48,8 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 	Args:
 		opportunity_name: Name (ID) of the source Opportunity.
 		users: Comma-separated string / list of users to notify when the job
-			finishes (realtime + email). Required.
+			finishes (realtime + email). Required. Normalized by
+			:func:`_notify_recipients`, so a trailing separator is harmless.
 		project_template: Name of the Project Template to apply to the new
 			Project. Required.
 
@@ -38,13 +57,16 @@ def enqueue_project_creation(opportunity_name, users=None, project_template=None
 		dict: ``{"status": "queued"}`` once the job is enqueued.
 
 	Raises:
-		frappe.ValidationError: via ``frappe.throw`` if ``users`` or
-			``project_template`` is missing.
+		frappe.ValidationError: via ``frappe.throw`` if ``users`` is missing or
+			resolves to nobody, or if ``project_template`` is missing.
 
 	Side effects:
 		Enqueues :func:`create_project_from_opportunity_background` (queue
 		``long``, 1800s timeout).
 	"""
+	# Normalized here so a field holding only separators ("," / " ") is refused up
+	# front rather than queueing a job that notifies nobody.
+	users = _notify_recipients(users)
 	if not users:
 		frappe.throw("Please select at least one user to notify.")
 
@@ -440,9 +462,10 @@ def create_project_from_opportunity_background(opportunity_name, users, project_
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "CRM Enhancements App Background Job Failed")
 
-	# The real-time broadcast logic remains the same.
-	if isinstance(users, str):
-		users = users.split(",")
+	# The real-time broadcast logic remains the same. Normalized again rather than
+	# trusting the caller: this is the last point before frappe.sendmail, and a
+	# blank recipient poisons the whole message at the SMTP layer.
+	users = _notify_recipients(users)
 
 	for user in users:
 		message_payload = {
