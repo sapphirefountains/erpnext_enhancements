@@ -598,6 +598,66 @@ scheduler_events = {
 		# digest per learner covering every course they owe, not one per assignment.
 		# Gated by Training Settings -> Send Notifications.
 		"15 7 * * *": ["erpnext_enhancements.training.tasks.send_due_reminders"],
+		# ---- Chat sync engine (ADR 0009 Phase 2, v1.262.0) -------------------------------
+		# EVERY job below no-ops while `Chat Settings.enabled` is 0, which is how it ships.
+		# They are registered dormant on purpose: a scheduler entry added later, by hand, on
+		# the day chat goes live is the one that gets forgotten.
+		#
+		# The per-minute pair exists because this app CANNOT run a supervised worker. There is
+		# no Procfile in this repo -- the bench generates one on the VM and systemd runs honcho
+		# against it -- so ADR §G.4.2's recommended long-running streaming-pull consumer is not
+		# a change we can commit. The cron is its stated fallback, and the cost is up to a
+		# minute of latency on a coworker's message.
+		#
+		# `pull_inbound_events` takes a Redis lock and drains for a bounded slice of the
+		# minute, then returns; the next tick re-arms it. A deploy kills it mid-slice, which is
+		# survivable precisely because the puller commits the raw row BEFORE acking Pub/Sub --
+		# an unacked delivery is redelivered, an acked-but-uncommitted one is gone.
+		"* * * * *": [
+			"erpnext_enhancements.chat.sync.pubsub.pull_inbound_events",
+			# Two jobs in one entry, and the second is not just a lost-work sweeper: it is the
+			# defer TIMER. frappe.enqueue reaches no RQ scheduler and RQ's own scheduling lives
+			# in the queue Redis a deploy FLUSHDBs, so inbound._defer writes
+			# `Chat Inbound Event.available_at` and stops -- making THIS interval the real
+			# granularity of a defer. At ten minutes, a three-defer budget would be a
+			# thirty-minute worst case for one message.
+			"erpnext_enhancements.chat.sync.inbound.sweep_stuck_inbound_events",
+		],
+		# The outbox sweeper, and the reason the relay survives anything. The production deploy
+		# runs `redis-cli -p 11000 FLUSHDB`, so every queued-but-unrun job is destroyed on an
+		# ordinary successful release -- silently, because the enqueue already returned. Frappe
+		# v16 also wires no RQ retries at all. So the queue is a latency optimisation and THIS
+		# is the delivery guarantee: it re-drives `Pending` rows past `available_at` and returns
+		# `In Progress` rows whose lease expired (a crashed worker) to `Pending`.
+		"*/5 * * * *": ["erpnext_enhancements.chat.sync.outbound.sweep_relay_jobs"],
+		# Provisioning and attachments: both are prerequisite work for a relay that is already
+		# queued and waiting, so they are frequent but cheap -- each returns immediately when
+		# its table has nothing pending.
+		"*/10 * * * *": [
+			"erpnext_enhancements.chat.sync.provisioning.sweep_pending_provisioning",
+			"erpnext_enhancements.chat.sync.attachments.sweep_pending_attachments",
+		],
+		# Subscription renewal. An expired Workspace Events subscription is DELETED and cannot
+		# be renewed -- only recreated -- and the failure is completely silent, so this is the
+		# highest-consequence entry in this block. Hourly against a granted lifetime measured
+		# in days is deliberate over-frequency: the job is idempotent, the expiration reminders
+		# fire at T-12h and T-1h, and the cost of running it needlessly is one cheap read while
+		# the cost of missing it is total inbound loss until somebody notices.
+		#
+		# :25 and :50, NOT :20 and :40. Those two are QuickBooks' `cdc_poll` and
+		# `retry_failed_syncs`, and a duplicate key in a Python dict literal does not warn --
+		# the later entry silently REPLACES the earlier one. Reusing them would have deleted
+		# two live QuickBooks jobs, and nothing would have reported it. Caught by
+		# tests/test_hooks_integrity.py, which exists for exactly this.
+		"25 * * * *": ["erpnext_enhancements.chat.sync.subscriptions.renew_due_subscriptions"],
+		# The sweep that converts a missed renewal from data loss into lag: messages.list with
+		# `createTime >` the room's watermark, ingested through the SAME idempotent inbound path.
+		# Offset well clear of the renewal above so a renewal storm and a sweep do not contend
+		# for the same per-project read budget.
+		"50 * * * *": ["erpnext_enhancements.chat.sync.reconcile.reconcile_due_rooms"],
+		# Orphaned document rooms -- a linked document deleted or cancelled must not silently
+		# leave a Google space nobody owns.
+		"30 4 * * *": ["erpnext_enhancements.chat.sync.provisioning.sweep_orphaned_document_rooms"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and
@@ -814,6 +874,8 @@ after_install = [
 	# forbidden from raising: a failure here must never abort an app install.
 	"erpnext_enhancements.patches.add_chat_indexes.ensure_chat_indexes",
 	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
+	# Phase 2's composites, same shape and same reason as the line above it.
+	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -938,6 +1000,14 @@ after_migrate = [
 	# Blank-fill only, so an operator's deliberate tick is never clobbered, and it never
 	# raises. One get_singles_dict and no write on a healthy migrate.
 	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
+	# chat Phase 2 (v1.262.0): same two-entry-point shape and the same reason as
+	# ensure_chat_indexes above. unique(message, revision_no) on Chat Message Revision and
+	# the crashed-worker sweep's (status, lease_expires_at) exist ONLY because a patch
+	# created them, and `bench install-app` marks the whole of patches.txt executed without
+	# running any of it. Checks information_schema before any DDL, so on the normal migrate
+	# path this is five cheap reads and no writes. Never raises -- a hook that raised here
+	# would brick every future deploy rather than report one bad constraint.
+	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and

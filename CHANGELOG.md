@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.262.0] - 2026-08-09
+
+Phase 2 of the ERPNext-owned employee chat system (ADR 0009): the message core and the
+bidirectional sync engine. ERPNext is the source of truth; Google Chat is a mirrored
+transport. Everything below ships **dormant** — `Chat Settings.enabled` is still `0` and
+`dry_run_mode` is still `1`, so no code path in this release performs network I/O against
+Google until somebody deliberately arms it.
+
+### Added
+
+- **The outbound relay**, as a transactional outbox rather than a queue. `Chat Relay Job`
+  rows are written in the same transaction as the message they relay, and a scheduler sweep
+  drains them. **The queue is a latency optimisation and never the delivery guarantee**,
+  because the production deploy issues `FLUSHDB` against the queue Redis on port 11000 — an
+  ordinary successful deploy destroys every enqueued-but-unrun job, silently, since the
+  enqueue call already returned success. This has cost us missing Drive folders before. A row
+  survives the deploy; the worst a lost enqueue costs is one sweep interval.
+
+- **Echo suppression**, which is the reason this phase exists. A message ERPNext relays to
+  Google comes back over the Workspace Events subscription as a `message.v1.created`. Stored
+  naively it would be relayed again, and at one write per second per space the room fills with
+  duplicates in seconds.
+
+  The ladder is: structural dedupe on `unique(gchat_message_name)`; then
+  `spaces.messages.get` on the resource name; then a check of the fetched
+  `clientAssignedMessageId` against `unique(room, client_message_id)`. A hit is definitionally
+  our own echo — bind the resource name, insert nothing, notify nothing, relay nothing.
+
+  **The `messages.get` is not a fallback, it is the normal path**, and the reason is a
+  configuration choice made in Phase 0: the subscription runs with
+  `payloadOptions.includeResource: false`, because that is the only configuration with a
+  seven-day TTL ceiling (four hours with resource data). The trade is one extra read per
+  event, budgeted against the 3,000-reads-per-minute project quota, in exchange for renewing
+  roughly twenty subscriptions once a week instead of every two hours — and for the fact that
+  the twelve-hour expiry reminder cannot fire at all on a four-hour TTL.
+
+- **The `messageId` / `requestId` split, and why only one of them is load-bearing.** Both are
+  sent on every `messages.create`. `requestId`'s deduplication window is **undocumented** —
+  absent from the REST reference, the discovery document, the proto comment and the guide, and
+  AIP-155 explicitly leaves it to the implementer. Outside whatever that window is, a replay
+  creates a second message. `messageId` carries a hard, permanent, server-enforced uniqueness
+  constraint within the space with no expiry. So `messageId` is the durable idempotency key and
+  `requestId` is a best-effort optimisation for an immediate network retry. No window figure
+  appears anywhere in this codebase, because no Chat documentation supports one.
+
+- **The inbound pipeline** — a bounded Pub/Sub pull driven by a one-minute `cron`, writing the
+  untouched delivery to `Chat Inbound Event`, committing, acking, and only then enqueuing
+  processing. Acking before the row commits loses events on a worker crash; doing real work
+  before acking causes redelivery storms.
+
+  A supervised streaming-pull worker would have lower latency and **is not available to us**:
+  there is no `Procfile` in this repository. The bench's Procfile is generated on the VM by
+  `bench` itself, `systemd` runs `honcho start` against it, and neither is under version
+  control here — so a long-running worker is not a repo-committable change. ADR 0009 §G.4.2
+  names the cron as the shipping-first fallback and prices it at up to a minute of added
+  latency for a coworker message.
+
+- **`Chat Message Revision`** — the edit and delete audit trail. Holds the body before and
+  after every change, the actor, the origin and the origin timestamp, and it is **never**
+  deleted by a user-facing delete. Its read permission is tighter than the message table's,
+  not the same, because this is where superseded and deleted content lives.
+
+- **`Chat Provisioning Run`** — the checkpoint row that makes a bulk org-structure sweep
+  resumable. Space writes are capped at sixty per minute project-wide, so a first-run sweep
+  over the whole org trips the quota immediately; an interrupted run must resume rather than
+  restart, and it defaults to dry-run.
+
+- **A Redis-backed per-space token bucket**, shared across workers. An in-process bucket is
+  wrong the moment a second worker starts. The arithmetic is a pure function tested in the
+  bench-free tier and the Lua script deploys exactly that arithmetic and nothing else.
+
+- **An in-memory fake Chat API with fault injection**, used as a `transport=` double so the
+  tests exercise the real builders, the real retry loop and the real `_request` contract. A
+  client subclass would have tested the fake instead of the code.
+
+- **The two seams later phases wire into**: `notify_new_message` and
+  `mark_room_context_stale`. Both are stubs. The tests assert `notify_new_message` is called
+  exactly once per genuinely new message and zero times for echoes, replays, reconciliations
+  and outbound relays — which is the cheapest possible proof that the sync engine is not
+  duplicating.
+
+### Fixed
+
+- **`frappe.DuplicateEntryError` is the wrong exception for a unique index, and ADR 0009 says
+  to catch it in two places.** It is raised *only* for a primary-key collision — a duplicate
+  `name`. Every other unique index, including `gchat_message_name`, `(room, seq)`,
+  `(room, client_message_id)` and `pubsub_message_id`, raises `frappe.UniqueValidationError`,
+  and the two share no base beyond `Exception`: `DuplicateEntryError` derives from Frappe's own
+  `NameError`, `UniqueValidationError` from `ValidationError`.
+
+  So the instruction to "treat `DuplicateEntryError` as success" — in ADR §G.3.1, in ADR §G.8
+  Rule 2, and in `chat_inbound_event.py`'s docstring — **would not have caught the collision it
+  exists to catch.** Structural dedupe would have failed open into a logged error on every
+  at-least-once Pub/Sub redelivery, which is the precise opposite of the design's intent. Every
+  insert on a chat dedupe key now catches both, inside `frappe.database.database.savepoint`,
+  because a failed statement can otherwise poison the surrounding transaction. Verified against
+  Frappe v16 `model/base_document.py:db_insert` on 2026-08-09.
+
+### Changed
+
+- **The relay does not thread, and `Chat Settings.threading_enabled` stays off.**
+  `Space.spaceThreadingState` is **output only** — `spaces.setup` states verbatim that *"Spaces
+  with threaded replies aren't supported"*, and `spaces.patch`'s `updateMask` does not include
+  the field. The Google Chat API offers no way to create a threaded space at all, so this was
+  never a "get it right at creation time" risk; there is no create-time decision to get wrong.
+  Threading remains ERPNext-side only, which `Chat Message.thread_root`'s field description
+  already anticipated: ERPNext holds the complete thread structure and only the Chat-side
+  rendering is lossy. Phase 5's in-thread Triton replies need re-planning on this basis.
+
+- **Membership writes and `spaces.setup` no longer count against the per-space write budget**,
+  because they never did. `members.create`, `members.delete`, `spaces.setup` and
+  `spaces.create` appear in no per-space quota row — memberships consume only the 300-per-minute
+  project bucket, and a space cannot have a per-space budget before it exists. Charging them to
+  the one-write-per-second space bucket would have throttled membership reconciliation roughly
+  three hundred times harder than necessary.
+
+- **`Chat Message.sender` is no longer required.** A Chat member who maps to no ERPNext `User`
+  — an external participant, or a Workspace user without an account — must be stored, never
+  dropped, because ERPNext is the record of what was said. With `sender` required those messages
+  could not be inserted at all. The row now carries `sender` **or** `sender_email`, never
+  neither, and the controller enforces exactly that.
+
+- Subscription renewal now schedules from the `expireTime` **returned by Google**, never from a
+  configured constant. `ttl` is input-only and the published ceilings are "up to" figures;
+  nothing guarantees the server grants one. `Chat Settings.subscription_ttl_seconds` is a
+  request, not a promise.
+
 ## [1.261.2] - 2026-08-09
 
 ### Fixed

@@ -45,13 +45,59 @@ What it covers, and why each one is here
 * **Raw SQL without the membership filter would leak.** Documented as a negative example
   and *never executed as one* — see :class:`TestRawSqlIsNotProtectedByTheseHooks`.
 
+Phase 2 additions (§4.K) — rows now arrive from a second origin
+---------------------------------------------------------------
+
+Phase 1 wrote these hooks and **never ran them**. Phase 2 gives them a second writer
+(Google), a dozen background jobs with no session user, an audit table holding deleted
+bodies, and senders who have no ERPNext `User` at all. Each of the following is one test,
+and each defends something the Phase 1 shape did not have to survive:
+
+* **Every read entry point, not just `get_list`.** `frappe.get_list`, the desk **report
+  view**, `frappe.client.get_list`, the `/api/resource` handlers, and `frappe.get_doc`. The
+  report view is called out separately because it is the path people forget, and ADR §9-F's
+  standing acceptance bar is worded about it.
+* **A `DocShare` row must not widen a chat room read.** Read from the v16 source this
+  session: `frappe/database/query.py` ORs `table.name.isin(shared_docs)` into the WHERE
+  after every condition, commented *"shared docs trump all other restrictions"*. `Chat Room`
+  carries a `read` DocPerm, so this is **reachable** rather than theoretical. See
+  :class:`TestADocShareMustNotWidenAChatRoomRead` — a failure there is a finding about the
+  platform, not a flaky test, and the test names say so.
+* **Tombstones.** Per the contract the deleted body deliberately stays on the live row
+  (Google's tombstone is empty of content, so ERPNext is the only copy). That makes
+  `is_deleted = 0` an obligation of every read path, and this suite pins where that
+  obligation lives.
+* **`Chat Message Revision` is tighter than `Chat Message`, not equal.** It is where
+  superseded and deleted content lives.
+* **A message with `sender_email` and a null `sender`** — a Chat member with no ERPNext
+  account — is still scoped by room membership. The membership rule keys on the room, and
+  this proves an unattributable sender did not accidentally become an unscoped one.
+* **The private-file 403**, authenticated and unauthenticated. Duplicated on purpose:
+  `tests/test_chat_attachments_bench.py` covers it from the attachment side, and this suite
+  is the one a human is told to run when a chat *permission* changes.
+
 Fixtures are three users, two rooms and four messages, all created by the suite and all
 rolled back with the enclosing transaction. Nothing here reads production data, and the
 message bodies are deliberately dull.
+
+Two honesty notes for whoever runs this
+---------------------------------------
+
+1. **Nothing here has ever been executed.** Not by CI, which has no bench, and not by the
+   session that wrote the Phase 2 additions, which had no Frappe installed. Treat the first
+   run as a debugging session: an entry point whose signature moved will surface as a
+   `TypeError` or an `ImportError`, which fails the test rather than skipping it. That is
+   deliberate — a security test that skips is worse than one that breaks.
+2. **The REST cases call the whitelisted handler, not an HTTP socket.** `/api/resource/<DT>`
+   dispatches to `frappe.client.get_list` and `/api/resource/<DT>/<name>` to
+   `frappe.client.get`; those functions are what is exercised. What that does *not* prove is
+   the routing layer above them — a future route that reaches `DatabaseQuery` by another
+   path is out of this suite's reach.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -699,3 +745,673 @@ class TestTheZeroDocPermDoctrine(ChatPermissionFixture):
 		for doctype in ("Chat Room", "Chat Room Member", "Chat Message", "Chat Attachment"):
 			self.assertIn(doctype, queries, f"{doctype} has no permission_query_conditions")
 			self.assertIn(doctype, singles, f"{doctype} has no has_permission twin")
+
+
+# ===========================================================================
+# PHASE 2 (§4.K) — rows now arrive from a second origin
+# ===========================================================================
+
+
+def _rendered(payload: Any) -> str:
+	"""Whatever a read path returned, flattened to text so a leak cannot hide in its shape.
+
+	The REST and report-view handlers each return their own container — a list of dicts, a
+	`{"keys": [...], "values": [...]}` compression, sometimes a bare list of names — and
+	pinning any one of those shapes would make this suite fail on a Frappe upgrade for a
+	reason that is not a security regression. The question worth asking is shape-independent:
+	*does the room's identifier or title appear anywhere in the response at all.*
+	"""
+	try:
+		return frappe.as_json(payload)
+	except Exception:
+		return repr(payload)
+
+
+class TestEveryReadEntryPointDeniesANonMember(ChatPermissionFixture):
+	"""One test per entry point. Passing one proves nothing about the others.
+
+	`get_list` and the report view go through `DatabaseQuery` / the v16 query `Engine`, which
+	is where `permission_query_conditions` is applied. `frappe.client.get_list` adds its own
+	argument handling on top. `frappe.get_doc(...).check_permission()` consults
+	`has_permission` and nothing else. Four mechanisms; four tests.
+	"""
+
+	def test_the_list_path_returns_nothing_from_a_room_the_user_is_not_in(self) -> None:
+		frappe.set_user(OUTSIDER)
+		rows = frappe.get_list("Chat Room", fields=["name", "title"], limit_page_length=0)
+		self.assertNotIn(self.room, _rendered(rows))
+
+	def test_the_desk_report_view_returns_nothing_from_that_room(self) -> None:
+		"""**The path people forget**, exercised through the handler the desk actually calls.
+
+		`frappe.desk.reportview.get` reads its arguments from `frappe.local.form_dict`, which
+		is why they are staged there rather than passed — calling it any other way would test
+		a call signature instead of the endpoint. ADR §9-F's acceptance bar is literally
+		*"even a raw report view cannot leak another user's rooms."*
+		"""
+		from frappe.desk import reportview
+
+		frappe.set_user(OUTSIDER)
+		saved = frappe.local.form_dict
+		try:
+			frappe.local.form_dict = frappe._dict(
+				{
+					"doctype": "Chat Room",
+					"fields": json.dumps(["`tabChat Room`.`name`", "`tabChat Room`.`title`"]),
+					"filters": json.dumps([]),
+					"order_by": "`tabChat Room`.`modified` desc",
+					"start": 0,
+					"page_length": 100,
+				}
+			)
+			rendered = _rendered(reportview.get())
+		finally:
+			frappe.local.form_dict = saved
+
+		self.assertNotIn(self.room, rendered, "the report view leaked a room id")
+		self.assertNotIn(
+			"Chat permissions - member's room",
+			rendered,
+			"the report view leaked a room TITLE, which is the disclosure that matters — a "
+			"room called 'Redundancies Q3' is a leak even with no message attached to it",
+		)
+
+	def test_frappe_client_get_list_returns_nothing_from_that_room(self) -> None:
+		"""`/api/method/frappe.client.get_list`, and the list form of `/api/resource/<DT>`.
+
+		Same handler, two routes. It is a separate test from `frappe.get_list` because it
+		normalises its own arguments before delegating, and argument normalisation is where a
+		filter gets dropped.
+		"""
+		from frappe.client import get_list as client_get_list
+
+		frappe.set_user(OUTSIDER)
+		rendered = _rendered(client_get_list("Chat Room", fields=["name", "title"], limit_page_length=0))
+		self.assertNotIn(self.room, rendered)
+
+	def test_the_api_resource_single_document_handler_refuses(self) -> None:
+		"""`/api/resource/Chat Room/<name>` dispatches to `frappe.client.get`.
+
+		It must raise rather than return the document. A handler that returned `{}` would
+		also pass a naive "no data leaked" assertion while telling the caller the room
+		exists.
+		"""
+		from frappe.client import get as client_get
+
+		frappe.set_user(OUTSIDER)
+		with self.assertRaises(frappe.PermissionError):
+			client_get("Chat Room", self.room)
+
+	def test_get_doc_raises_for_a_non_member(self) -> None:
+		frappe.set_user(OUTSIDER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc("Chat Room", self.room).check_permission("read")
+
+	def test_a_member_still_reaches_their_own_room_through_every_entry_point(self) -> None:
+		"""The load-bearing negative: a gate that denies everybody passes every test above.
+
+		Without this, the cheapest way to make this class green is to break chat.
+		"""
+		from frappe.client import get as client_get
+		from frappe.client import get_list as client_get_list
+
+		frappe.set_user(MEMBER)
+		self.assertIn(
+			self.room,
+			[row.name for row in frappe.get_list("Chat Room", fields=["name"], limit_page_length=0)],
+		)
+		self.assertIn(self.room, _rendered(client_get_list("Chat Room", fields=["name"])))
+		self.assertTrue(client_get("Chat Room", self.room))
+
+
+class TestADocShareMustNotWidenAChatRoomRead(ChatPermissionFixture):
+	"""**A finding, if it fails.** Read from the v16 source this session:
+
+	`frappe/database/query.py` builds the WHERE by ANDing every
+	`permission_query_conditions` fragment and then does::
+
+	    # shared docs trump all other restrictions
+	    where_condition |= table.name.isin(shared_docs)
+
+	An OR after every AND. So a `DocShare` row makes a document visible **regardless of what
+	the membership hook returned**. On `Chat Message` that is unreachable — zero DocPerm
+	refuses before any query runs — but **`Chat Room` carries a `read` DocPerm**, which is
+	exactly what makes the doc-room socket join resolvable, so on `Chat Room` the path is
+	open.
+
+	Why it matters here rather than in the abstract: sharing is a one-click action in the
+	desk, ERPNext core code shares documents as a side effect of assignment and workflow, and
+	a shared `Chat Room` is a live socket subscription to everything said in it from that
+	moment on. Nobody sharing a "room" record would expect that.
+
+	If these tests fail, **do not soften them**. The finding is that chat room membership can
+	be widened by a mechanism outside the chat module, and the fix is a design decision
+	(refuse the share in a `DocShare` validate hook, or drop `Chat Room`'s DocPerm and find
+	another way to make the socket join resolvable) — not a test edit.
+	"""
+
+	def setUp(self) -> None:
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.share = self._share_room_with_outsider()
+
+	def _share_room_with_outsider(self) -> str:
+		"""Insert the `DocShare` row directly, and prove it landed.
+
+		Directly rather than through `frappe.share.add` so this does not depend on that
+		helper's keyword signature, which is the sort of thing that moves between versions —
+		and a share that silently failed to be created would make every assertion below pass
+		while testing nothing, which is the worst possible outcome for this particular class.
+		"""
+		doc = frappe.get_doc(
+			{
+				"doctype": "DocShare",
+				"share_doctype": "Chat Room",
+				"share_name": self.room,
+				"user": OUTSIDER,
+				"read": 1,
+			}
+		)
+		doc.flags.ignore_share_permission = True
+		doc.insert(ignore_permissions=True)
+		# Never committed — the enclosing test transaction rolls the share back with
+		# everything else, which matters here more than usual: a DocShare row surviving a
+		# crashed run would silently widen a real room on whatever site this was executed on.
+		self.assertTrue(
+			frappe.db.exists(
+				"DocShare", {"share_doctype": "Chat Room", "share_name": self.room, "user": OUTSIDER}
+			),
+			"the DocShare row was not created, so every assertion in this class would pass "
+			"while proving nothing. Fix the fixture before reading anything into a green run.",
+		)
+		return doc.name
+
+	def test_a_docshare_row_does_not_put_the_room_in_a_non_members_list(self) -> None:
+		frappe.set_user(OUTSIDER)
+		names = [row.name for row in frappe.get_list("Chat Room", fields=["name"], limit_page_length=0)]
+		self.assertNotIn(
+			self.room,
+			names,
+			"FINDING, not a flake: a DocShare row widened a chat room read past the "
+			"membership hook. v16's query Engine ORs shared documents in after ANDing every "
+			"permission condition ('shared docs trump all other restrictions'), and Chat Room "
+			"carries a read DocPerm, so the path is reachable. Room read is the socket "
+			"doc-room join and a join is checked ONCE — so this is a live feed of a "
+			"conversation, granted by a mechanism the chat module does not control. Escalate; "
+			"do not relax this assertion.",
+		)
+
+	def test_a_docshare_row_does_not_pass_the_single_document_gate(self) -> None:
+		"""The `has_permission` half, which is the one the socket join consults.
+
+		Frappe merges share rights into `get_doc_permissions`, so this can diverge from the
+		list result above — and the divergence direction matters: the list path is the desk,
+		the single-document path is realtime.
+		"""
+		frappe.set_user(OUTSIDER)
+		self.assertFalse(
+			frappe.has_permission("Chat Room", doc=self.room, ptype="read"),
+			"FINDING: a DocShare row satisfied the single-document gate on Chat Room. That "
+			"gate IS the realtime security boundary (ADR §H.4.1) — doc_subscribe calls it "
+			"before joining doc:Chat Room/<room>, and membership is never re-checked after "
+			"the join.",
+		)
+
+	def test_the_chat_hook_itself_still_refuses_the_shared_room(self) -> None:
+		"""Narrow the blame. If the two tests above fail but this one passes, the chat module
+		is correct and the platform is widening it — which is a different bug with a different
+		owner and a different fix."""
+		self.assertIs(permissions.chat_room_has_permission(self.room, "read", OUTSIDER), False)
+		self.assertNotEqual(permissions.chat_room_query(OUTSIDER), "")
+
+	def test_a_share_does_not_reach_the_messages_in_the_shared_room(self) -> None:
+		"""Even if the room leaks, the bodies must not follow it.
+
+		`Chat Message` has zero DocPerm, so this should hold by a completely different
+		mechanism — the permission stack refuses before any hook or share is consulted. Worth
+		its own assertion precisely because it is independent: it is the containment that
+		survives the room-level finding.
+		"""
+		frappe.set_user(OUTSIDER)
+		names = [row.name for row in frappe.get_list("Chat Message", fields=["name"], limit_page_length=0)]
+		self.assertEqual(names, [])
+		self.assertFalse(frappe.has_permission("Chat Message", doc=self.msg_1, ptype="read"))
+
+
+class TestTombstonedRowsDoNotReturnDeletedBodies(ChatPermissionFixture):
+	"""I10, and the contract's deliberate divergence from the prompt.
+
+	The prompt says move a deleted body into the audit table and clear the live row. The
+	contract (§5, ADR §F.6.5) says **keep it on the row**, because Google's tombstone is rich
+	in metadata and empty of content — `showDeleted=true` returns the delete time and never
+	the text — so if ERPNext drops the body, nobody has it.
+
+	The consequence is the thing these tests pin: `is_deleted = 0` is an obligation of every
+	**read path**, not of the permission layer. `membership_filter_sql` scopes by room and
+	says nothing about deletion, by design, because the Phase 6 oversight endpoint has to be
+	able to see through it. So a reader that forgets the `is_deleted = 0` predicate returns
+	deleted text to an ordinary member — and that is a leak of exactly the content a user
+	explicitly asked to remove.
+	"""
+
+	def setUp(self) -> None:
+		super().setUp()
+		self.deleted_message = self._make_message(self.room, seq=20, text="please forget I said this")
+		# Set directly rather than through `.save()`: `on_update` would run the outbound
+		# propagation path, and what a reader sees given a row state is a different question
+		# from how the row reached that state. `update_modified=False` matches the relay's own
+		# discipline — the D6 cache watermark reads `max(modified)`.
+		frappe.db.set_value(
+			"Chat Message",
+			self.deleted_message,
+			{"is_deleted": 1, "deleted_by": MEMBER, "deletion_source": "ERPNext"},
+			update_modified=False,
+		)
+
+	def test_a_non_member_gets_nothing_whether_or_not_the_row_is_tombstoned(self) -> None:
+		"""Tombstoning must not accidentally widen. A row in an unusual state is exactly the
+		row a filter forgets."""
+		frappe.set_user(OUTSIDER)
+		self.assertEqual(frappe.get_list("Chat Message", fields=["name", "text"], limit_page_length=0), [])
+		self.assertFalse(frappe.has_permission("Chat Message", doc=self.deleted_message, ptype="read"))
+		self.assertIs(
+			permissions.chat_message_has_permission(
+				frappe.get_doc("Chat Message", self.deleted_message), "read", OUTSIDER
+			),
+			False,
+		)
+
+	def test_the_body_is_retained_on_the_row_because_google_keeps_no_copy(self) -> None:
+		"""The divergence, asserted so nobody "fixes" it back to the prompt's shape.
+
+		Clearing the live row would make the ERPNext delete destructive and irreversible, on
+		the strength of a tombstone that contains no text.
+		"""
+		body = frappe.db.get_value("Chat Message", self.deleted_message, "text")
+		self.assertTrue(
+			body,
+			"the deleted message's body was cleared from the live row. Google's tombstone has "
+			"no content (ADR §F.6.5 / §G.7.4), so ERPNext is the only copy and this is data "
+			"destruction, not redaction. If the retention policy genuinely changed, the "
+			"oversight path in Phase 6 has to change with it.",
+		)
+
+	def test_the_membership_fragment_does_not_filter_deleted_rows_so_readers_must(self) -> None:
+		"""**Where the obligation lives**, pinned as an executable statement.
+
+		This asserts the *absence* of a filter on purpose. The fragment is membership-only so
+		the Phase 6 oversight endpoint can see through it; that means every ordinary read
+		path — history paging, search, the Phase 3 endpoint, Phase 5 retrieval — must AND
+		`is_deleted = 0` itself.
+
+		**If somebody adds deletion filtering to `membership_filter_sql`, this test goes red,
+		and that is the point:** the oversight path breaks silently in the same change, and
+		this is the only thing that says so.
+		"""
+		fragment = permissions.membership_filter_sql(
+			"`tabChat Message`.`room`",
+			user=MEMBER,
+			seq_column="`tabChat Message`.`seq`",
+		)
+		names = {
+			row["name"]
+			for row in frappe.db.sql(f"select name from `tabChat Message` where {fragment}", as_dict=True)
+		}
+		self.assertIn(
+			self.deleted_message,
+			names,
+			"membership_filter_sql now excludes tombstoned rows. That is a behaviour change "
+			"with two consequences nobody will notice from the diff: the Phase 6 oversight "
+			"read (decision #12 — an admin role can read all history) silently stops seeing "
+			"deleted content, and every read path that was correctly ANDing `is_deleted = 0` "
+			"now does it twice. Decide deliberately and update this test and the oversight "
+			"path together.",
+		)
+		with_filter = {
+			row["name"]
+			for row in frappe.db.sql(
+				f"select name from `tabChat Message` where {fragment} and ifnull(is_deleted, 0) = 0",
+				as_dict=True,
+			)
+		}
+		self.assertNotIn(self.deleted_message, with_filter)
+		self.assertIn(self.msg_1, with_filter, "the deletion predicate must not hide live rows")
+
+
+class TestChatMessageRevisionIsTighterThanTheMessageTable(ChatPermissionFixture):
+	"""The audit table is where superseded and deleted bodies live.
+
+	It is the one table where a leak survives the user's decision to delete, so the contract
+	gives it **tighter** permissions than `Chat Message`, not equal ones: zero DocPerm and —
+	unlike `Chat Message` — no `permission_query_conditions` / `has_permission` pair at all.
+	The platform therefore refuses it to everybody except `Administrator`.
+
+	One consequence is worth stating rather than discovering: **the oversight role does not
+	open this table either.** A `has_permission` hook can only restrict what a DocPerm
+	already grants, and there is no DocPerm, so there is nothing for a hook to narrow. Phase
+	6's e-discovery endpoint must therefore read it with `ignore_permissions=True` behind its
+	own explicit role gate, and pay for the read with `permissions.note_privileged_read`.
+	That is a heavier, more visible motion than a DocPerm row, and it is the right one for
+	this table.
+	"""
+
+	def setUp(self) -> None:
+		super().setUp()
+		self.revision = frappe.get_doc(
+			{
+				"doctype": "Chat Message Revision",
+				"message": self.msg_1,
+				"room": self.room,
+				"revision_no": 1,
+				"change_type": "Delete",
+				"origin": "ERPNext",
+				"actor": MEMBER,
+				"text_before": "the superseded body that must not leak",
+				"text_after": "",
+			}
+		).insert(ignore_permissions=True)
+
+	def test_it_carries_no_docperm_at_all(self) -> None:
+		perms = frappe.get_all("DocPerm", filters={"parent": "Chat Message Revision"}, fields=["role"])
+		self.assertEqual(
+			perms,
+			[],
+			"Chat Message Revision has grown a DocPerm row. This table holds the body of "
+			"every superseded edit and every deleted message; a read row on it re-opens the "
+			"desk form, /api/resource, report view, export and the generic MCP read tools "
+			"over content a user explicitly deleted. If oversight genuinely needs it, the "
+			"Phase 6 endpoint reads with ignore_permissions behind its own role gate and "
+			"writes an audit row — it does not need a DocPerm.",
+		)
+
+	def test_an_ordinary_member_cannot_list_or_open_a_revision(self) -> None:
+		"""A member of the room the revision belongs to. The closest thing to a legitimate
+		reader there is, and still refused."""
+		frappe.set_user(MEMBER)
+		self.assertEqual(frappe.get_list("Chat Message Revision", fields=["name"], limit_page_length=0), [])
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc("Chat Message Revision", self.revision.name).check_permission("read")
+
+	def test_a_non_member_cannot_reach_it_either(self) -> None:
+		frappe.set_user(OUTSIDER)
+		self.assertEqual(frappe.get_list("Chat Message Revision", fields=["name"], limit_page_length=0), [])
+		self.assertFalse(frappe.has_permission("Chat Message Revision", doc=self.revision.name, ptype="read"))
+
+	def test_the_oversight_role_does_not_open_it_and_that_is_the_design(self) -> None:
+		"""Asserted so the behaviour is a decision on the record rather than a surprise.
+
+		Somebody will one day configure `admin_oversight_role`, try to read a revision, get
+		refused and assume the hatch is broken. It is not: there is no DocPerm for a hook to
+		narrow, and that is deliberately heavier than the message table's posture.
+		"""
+		self._set_oversight_role(OVERSIGHT_ROLE)
+		_ensure_role(OVERSIGHT_ROLE)
+		user = frappe.get_doc("User", AUDITOR)
+		user.append("roles", {"role": OVERSIGHT_ROLE})
+		user.save(ignore_permissions=True)
+
+		frappe.set_user(AUDITOR)
+		self.assertEqual(
+			frappe.get_list("Chat Message Revision", fields=["name"], limit_page_length=0),
+			[],
+			"the oversight role can now list Chat Message Revision. If a DocPerm was added to "
+			"make that work, ADR §F.18.4's standing obligation fires and the SAME commit owes "
+			"a permission_query_conditions + has_permission pair scoped to the role, plus a "
+			"note_privileged_read call on every path.",
+		)
+
+	def test_the_superseded_body_is_not_reachable_through_the_message_it_belongs_to(self) -> None:
+		"""Belt and braces: reading the parent message must not drag the revision along.
+
+		Frappe does not fetch unrelated child documents, but the revision carries `message`
+		and `room` links and a future convenience helper is exactly how it would start being
+		joined in.
+		"""
+		frappe.set_user(MEMBER)
+		rendered = _rendered(frappe.get_list("Chat Message", fields=["name"], limit_page_length=0))
+		self.assertNotIn("the superseded body that must not leak", rendered)
+
+
+class TestAnExternalSenderIsStillScopedByRoomMembership(ChatPermissionFixture):
+	"""§4.H: a Chat member with no ERPNext `User` — `sender_email` set, `sender` null.
+
+	`sender` was relaxed from `reqd` in Phase 2 precisely so these messages are **stored**
+	rather than dropped: ERPNext is the record of what was said, and a mirror that silently
+	loses the messages in which the conversation left the company acquires holes in exactly
+	the rows somebody will one day need.
+
+	The risk that creates is small and specific. Every membership rule in this module keys on
+	the **room**, never on the sender, so an unattributable sender should change nothing.
+	"Should" is doing work in that sentence — a null Link is the shape that makes a join
+	behave unexpectedly, and this is the one row type where nobody's `User` record can be
+	used as a fallback scope.
+	"""
+
+	EXTERNAL = "someone@external-partner.example"
+
+	def setUp(self) -> None:
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.external_message = frappe.get_doc(
+			{
+				"doctype": "Chat Message",
+				"room": self.room,
+				"seq": 30,
+				"sender": None,
+				"sender_email": self.EXTERNAL,
+				"sender_kind": "Human",
+				"message_type": "Text",
+				"text": "external partner text that must stay in the room",
+				"text_plain": "external partner text that must stay in the room",
+				"client_message_id": "client-bench-external-30",
+				"sync_origin": "Google Chat",
+				"sync_state": "Inbound",
+			}
+		).insert(ignore_permissions=True)
+
+	def test_the_row_stored_with_no_sender_link(self) -> None:
+		"""The fixture is the premise of every assertion below; prove it before using it."""
+		row = frappe.db.get_value(
+			"Chat Message", self.external_message.name, ["sender", "sender_email"], as_dict=True
+		)
+		self.assertFalse(row.get("sender"), "sender should be null for an external Chat member")
+		self.assertEqual(row.get("sender_email"), self.EXTERNAL)
+
+	def test_a_non_member_cannot_read_it(self) -> None:
+		frappe.set_user(OUTSIDER)
+		self.assertEqual(frappe.get_list("Chat Message", fields=["name"], limit_page_length=0), [])
+		self.assertFalse(frappe.has_permission("Chat Message", doc=self.external_message.name, ptype="read"))
+		self.assertIs(
+			permissions.chat_message_has_permission(self.external_message, "read", OUTSIDER),
+			False,
+		)
+
+	def test_the_raw_membership_fragment_scopes_it_to_the_room(self) -> None:
+		"""The path that matters, since `Chat Message` has zero DocPerm: history paging and
+		search read this table with the fragment, not with `get_list`."""
+		outsider_fragment = permissions.membership_filter_sql(
+			"`tabChat Message`.`room`", user=OUTSIDER, seq_column="`tabChat Message`.`seq`"
+		)
+		self.assertEqual(
+			frappe.db.sql(f"select name from `tabChat Message` where {outsider_fragment}", as_dict=True),
+			[],
+		)
+
+		member_fragment = permissions.membership_filter_sql(
+			"`tabChat Message`.`room`", user=MEMBER, seq_column="`tabChat Message`.`seq`"
+		)
+		names = {
+			row["name"]
+			for row in frappe.db.sql(
+				f"select name from `tabChat Message` where {member_fragment}", as_dict=True
+			)
+		}
+		self.assertIn(
+			self.external_message.name,
+			names,
+			"a room member cannot see a message sent by an external Chat user in their own "
+			"room. The scope is the ROOM, never the sender — dropping these rows out of a "
+			"member's view is the other half of the same bug as leaking them to a stranger.",
+		)
+
+	def test_the_hook_admits_a_member_for_the_external_message(self) -> None:
+		self.assertIs(permissions.chat_message_has_permission(self.external_message, "read", MEMBER), True)
+
+
+class TestTheExceptionPathsOfEveryHook(ChatPermissionFixture):
+	"""v16 denies on `None`, so the exception branches are the ones that lock production out.
+
+	:class:`TestEveryHookReturnsARealBoolean` already forces the membership probes to raise.
+	This class forces the two the oversight hatch depends on — `frappe.db.get_single_value`
+	(reading `Chat Settings.admin_oversight_role`) and `frappe.get_roles` — which are the
+	first calls in every hook and therefore the ones a happy-path test never reaches.
+
+	A hook that raised here would take down every desk page touching a chat DocType, and it
+	would do it during `bench migrate` on a site where `Chat Settings` does not exist yet.
+	"""
+
+	HOOKS = (
+		"chat_room_has_permission",
+		"chat_room_member_has_permission",
+		"chat_message_has_permission",
+		"chat_attachment_has_permission",
+	)
+	BUILDERS = (
+		"chat_room_query",
+		"chat_room_member_query",
+		"chat_message_query",
+		"chat_attachment_query",
+	)
+
+	def _explode(self, *args: Any, **kwargs: Any) -> Any:
+		raise RuntimeError("simulated failure reading Chat Settings / roles")
+
+	def test_hooks_fail_closed_when_the_settings_read_raises(self) -> None:
+		original = frappe.db.get_single_value
+		try:
+			frappe.db.get_single_value = self._explode
+			for funcname in self.HOOKS:
+				hook = getattr(permissions, funcname)
+				result = hook({"room": self.room, "message": self.msg_1, "user": MEMBER}, "read", OUTSIDER)
+				self.assertIs(
+					result,
+					False,
+					f"{funcname} did not fail closed when Chat Settings was unreadable; got "
+					f"{result!r}. An unanswerable question about the oversight role is a 'no'.",
+				)
+		finally:
+			frappe.db.get_single_value = original
+
+	def test_hooks_fail_closed_when_the_role_lookup_raises(self) -> None:
+		original = frappe.get_roles
+		try:
+			frappe.get_roles = self._explode
+			for funcname in self.HOOKS:
+				hook = getattr(permissions, funcname)
+				result = hook({"room": self.other_room}, "read", OUTSIDER)
+				self.assertIs(result, False, f"{funcname} returned {result!r} with roles unreadable")
+		finally:
+			frappe.get_roles = original
+
+	def test_query_builders_still_return_a_string_when_the_settings_read_raises(self) -> None:
+		"""A `permission_query_conditions` hook returning `None` is a `TypeError` inside
+		`DatabaseQuery` — it takes the list view down rather than leaking, but it takes it
+		down for everybody including the people who are allowed to be there."""
+		original = frappe.db.get_single_value
+		try:
+			frappe.db.get_single_value = self._explode
+			for funcname in self.BUILDERS:
+				condition = getattr(permissions, funcname)(OUTSIDER)
+				self.assertIsInstance(condition, str, funcname)
+				self.assertNotEqual(
+					condition,
+					"",
+					f"{funcname} returned an UNRESTRICTED condition while Chat Settings was "
+					"unreadable. An unreadable oversight setting must never read as 'the "
+					"hatch is open' — that is failing open on the one path that grants "
+					"everything.",
+				)
+		finally:
+			frappe.db.get_single_value = original
+
+	def test_the_fragment_builder_fails_closed_rather_than_unrestricted(self) -> None:
+		"""`membership_filter_sql` spells unrestricted as `1 = 1`. Under a failing settings
+		read it must never produce that."""
+		original = frappe.db.get_single_value
+		try:
+			frappe.db.get_single_value = self._explode
+			fragment = permissions.membership_filter_sql("`tabChat Message`.`room`", user=OUTSIDER)
+			self.assertNotEqual(fragment.strip(), "1 = 1")
+			self.assertTrue(fragment.strip())
+		finally:
+			frappe.db.get_single_value = original
+
+
+class TestThePrivateFileBoundary(ChatPermissionFixture):
+	"""§4.I's live-bench acceptance test, from the permission side.
+
+	Every chat attachment is `is_private = 1` and attached to the `Chat Message` row, which
+	makes Frappe's private-file check delegate to `chat_message_has_permission` — so
+	attachment security follows room security **by construction** rather than by a second
+	rule somebody has to maintain.
+
+	*"By construction"* is exactly the kind of claim that is true right up until it is not:
+	there is a long tail of reported issues where Frappe private files are more accessible
+	than expected. So it is asserted, twice, against the function the web route actually
+	calls.
+
+	Deliberately duplicated with `tests/test_chat_attachments_bench.py`. That suite owns the
+	attachment pipeline; this one is what a human is told to run when a chat *permission*
+	changes, and the two get run at different times by different people.
+	"""
+
+	def setUp(self) -> None:
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.private_file = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": "chat-perm-boundary.txt",
+				"attached_to_doctype": "Chat Message",
+				"attached_to_name": self.foreign_message,
+				"is_private": 1,
+				"content": "bytes that belong to a room the outsider is not in",
+			}
+		).insert(ignore_permissions=True)
+
+	def test_the_attachment_is_private_which_is_what_makes_the_check_run_at_all(self) -> None:
+		"""A public file is served by the web server with no auth and no hook of ours is
+		consulted. The whole delegation argument rests on this one flag."""
+		self.assertTrue(frappe.db.get_value("File", self.private_file.name, "is_private"))
+		self.assertTrue(str(self.private_file.file_url or "").startswith("/private/"))
+
+	def test_an_authenticated_non_member_is_refused_the_file_url(self) -> None:
+		from frappe.utils.response import download_private_file
+
+		frappe.set_user(OUTSIDER)
+		with self.assertRaises(frappe.PermissionError):
+			download_private_file(self.private_file.file_url)
+
+	def test_an_unauthenticated_request_is_refused_the_file_url(self) -> None:
+		"""Guest is refused on a different line of `download_private_file` from the
+		authenticated stranger, so it is a genuinely separate case rather than the same
+		assertion twice."""
+		from frappe.utils.response import download_private_file
+
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			download_private_file(self.private_file.file_url)
+
+	def test_the_file_row_itself_is_not_listable_by_a_non_member(self) -> None:
+		"""The URL is not the only way in — `/api/resource/File` is a list of file rows, and a
+		row carries the name and the URL even when the bytes are refused."""
+		frappe.set_user(OUTSIDER)
+		rendered = _rendered(
+			frappe.get_list(
+				"File",
+				filters={"attached_to_doctype": "Chat Message"},
+				fields=["name", "file_url"],
+				limit_page_length=0,
+			)
+		)
+		self.assertNotIn(self.private_file.name, rendered)

@@ -17,6 +17,8 @@
   "column_break_local",
   "content_type",
   "file_size",
+  "content_hash",
+  "byte_size_verified",
   "google_section",
   "gchat_attachment_name",
   "gchat_attachment_data_ref",
@@ -116,6 +118,21 @@
    "fieldtype": "Int",
    "label": "File Size",
    "read_only": 1
+  },
+  {
+   "description": "§4.I. SHA-256 of the stored bytes, lowercase hex - 64 characters exactly, which is why the field is Data(64) rather than the varchar(140) default. Two jobs: a re-download after a failed or partial ingest can prove it fetched the SAME object rather than a replacement uploaded in the meantime, and the same blob attached in two places is recognised without a second copy of the bytes. DELIBERATELY NOT UNIQUE - the same screenshot legitimately appears in many rooms, and a unique index here would refuse the second attachment of a file somebody sent twice, which is normal behaviour, not a duplicate.",
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash (SHA-256)",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "The bytes actually written match file_size as Google reported it. A TRUNCATED DOWNLOAD IS OTHERWISE INDISTINGUISHABLE FROM A SMALL FILE: media.download streams, and a connection dropped mid-body still leaves a perfectly readable File row that opens and shows half an image. Unticked means the row exists but its bytes are not trustworthy and the ingest should be retried - it is not the same thing as ingest_state = Failed, which means no bytes at all.",
+   "fieldname": "byte_size_verified",
+   "fieldtype": "Check",
+   "label": "Byte Size Verified"
   },
   {
    "fieldname": "google_section",

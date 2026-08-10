@@ -14,9 +14,12 @@
   "event_types",
   "expiry_section",
   "expire_time",
+  "renew_after",
   "last_renewed",
   "column_break_expiry",
   "consecutive_failures",
+  "event_count",
+  "last_event_at",
   "last_error"
  ],
  "fields": [
@@ -92,6 +95,14 @@
    "read_only": 1
   },
   {
+   "description": "When the renewal scheduler should next attempt this subscription: expire_time minus Chat Settings.subscription_renew_before_seconds. DERIVED FROM THE RETURNED expireTime, never from a constant and never from the TTL we asked for. ttl is input-only, and every published lifetime is a ceiling - 'up to 7 days' with includeResource false, 'up to 4 hours' with it - so nothing guarantees Google granted what Chat Settings requested. Computing this from subscription_ttl_seconds would schedule the renewal AFTER the subscription had already been deleted, and Google does not keep an expired subscription in any state to reactivate: the loss of inbound sync would be permanent, total and silent. Recomputed after every create and every patch, from the response body.",
+   "fieldname": "renew_after",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Renew After",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_renewed",
    "fieldtype": "Datetime",
    "label": "Last Renewed",
@@ -107,6 +118,19 @@
    "fieldname": "consecutive_failures",
    "fieldtype": "Int",
    "label": "Consecutive Failures"
+  },
+  {
+   "default": "0",
+   "description": "Events received on this subscription since it was created. THE 'IS THIS THING ACTUALLY DELIVERING' SIGNAL, and the only one available: a subscription can sit in state = ACTIVE with a valid expire_time and deliver nothing at all - a revoked scope that has not yet been reported, a Pub/Sub topic whose IAM binding was changed, a subscription created against the wrong target. That failure looks exactly like a quiet week. A per-coworker count that has stopped growing while others keep growing is what tells the two apart.",
+   "fieldname": "event_count",
+   "fieldtype": "Int",
+   "label": "Event Count"
+  },
+  {
+   "description": "When this subscription last delivered anything. Read with event_count, not instead of it - a timestamp alone cannot distinguish 'delivered nothing since Tuesday' from 'was created on Tuesday'.",
+   "fieldname": "last_event_at",
+   "fieldtype": "Datetime",
+   "label": "Last Event At"
   },
   {
    "fieldname": "last_error",

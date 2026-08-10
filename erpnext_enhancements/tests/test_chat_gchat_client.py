@@ -34,12 +34,32 @@ What each block is defending, in one line each:
 * **Dry-run** — *"the transport is never entered"* is a Phase 1 acceptance
   criterion, so it is asserted the only way that means anything: by patching the
   single method that performs I/O and counting the calls.
+
+Phase 2 adds three blocks and one module. ``events_client`` targets a **second
+Google host** and is covered here rather than in a suite of its own, because it
+deliberately shares this one's transport: the same ``_request``, the same retry
+loop, the same dry-run branch. Splitting the tests would let the two drift
+exactly where the design says they cannot.
+
+* **Attachments** — the auth asymmetry is the whole design and it is asserted in
+  both directions: ``media.upload`` refuses the app identity because ``chat.bot``
+  is absent from its scope list, while ``media.download`` accepts either. A
+  builder that silently allowed an app-auth upload would fail as a 403 four steps
+  later, reading like a DWD misconfiguration rather than an impossibility.
+* **No threading** — ``spaceThreadingState`` is output-only and the API cannot
+  create a threaded space, so the assertion is structural: **no** builder in the
+  module may grow a thread argument.
+* **Subscriptions** — ``ttl`` is input-only and every published ceiling is an
+  "up to", so the tests pin the two properties that follow: the field is *omitted*
+  by default, and a response without ``expireTime`` raises rather than defaults.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import itertools
+import pathlib
 import random
 import re
 import sys
@@ -50,6 +70,7 @@ import pytest
 from erpnext_enhancements.chat.gchat import backoff as backoff_module
 from erpnext_enhancements.chat.gchat import client as client_module
 from erpnext_enhancements.chat.gchat import dryrun as dryrun_module
+from erpnext_enhancements.chat.gchat import events_client as events_module
 from erpnext_enhancements.chat.gchat import ids as ids_module
 from erpnext_enhancements.chat.gchat.backoff import (
 	RetryDecision,
@@ -60,13 +81,37 @@ from erpnext_enhancements.chat.gchat.backoff import (
 )
 from erpnext_enhancements.chat.gchat.client import (
 	AuthIdentity,
+	GoogleChatAPIError,
 	GoogleChatClient,
+	GoogleChatError,
 	SpaceType,
 	ThreadReply,
+	attachment_bytes,
+	attachment_content_type,
+	build_create_membership_call,
 	build_create_message_call,
+	build_delete_membership_call,
+	build_download_media_call,
+	build_get_space_call,
+	build_list_members_call,
 	build_setup_space_call,
+	build_upload_attachment_call,
+	chat_target_resource,
 	message_ids_for,
 	validate_client_message_id,
+)
+from erpnext_enhancements.chat.gchat.events_client import (
+	MESSAGE_EVENT_TYPES,
+	SubscriptionExpiryUnknown,
+	WorkspaceEventsClient,
+	build_create_subscription_call,
+	build_delete_subscription_call,
+	build_get_subscription_call,
+	build_list_subscriptions_call,
+	build_patch_subscription_call,
+	build_reactivate_subscription_call,
+	parse_rfc3339_epoch,
+	parse_subscription,
 )
 from erpnext_enhancements.chat.gchat.ids import (
 	CLIENT_MESSAGE_ID_MAX_LENGTH,
@@ -86,6 +131,9 @@ LEGAL_ID_CHARS = re.compile(r"\A[a-z0-9-]+\Z")
 SITE = "chat-test.localhost"
 OTHER_SITE = "staging.localhost"
 SPACE = "spaces/AAAAmoUb1234"
+MEMBERSHIP = f"{SPACE}/members/105250506097979753968"
+PUBSUB_TOPIC = "projects/erpnext-465317/topics/chat-events"
+SUBSCRIPTION = "subscriptions/0dc4c8ba-d4c9-4b2b-b0a1-2b1d1f2a3b4c"
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +193,48 @@ class RecordingTransport:
 		return self.status, dict(self.payload), {}
 
 
+class FakeResponse:
+	"""A ``requests``-shaped response. ``content`` is optional **on purpose**.
+
+	``PHASE2_INTERFACES.md §8`` contracts the fake Chat harness's response double to expose
+	``.status_code``, ``.text`` and ``.headers`` — three attributes, no fourth. So the
+	binary read path must work against a double that has no ``.content``, and the way to
+	assert that is to have a double that genuinely lacks it.
+	"""
+
+	def __init__(
+		self,
+		*,
+		status_code: int = 200,
+		text: str = "{}",
+		content: bytes | None = None,
+		headers: dict[str, str] | None = None,
+	) -> None:
+		self.status_code = status_code
+		self.text = text
+		self.headers = headers or {}
+		if content is not None:
+			self.content = content
+
+
+class FakeSession:
+	"""A ``transport=`` double: the seam the fake Chat harness plugs into.
+
+	Injected as ``transport=`` rather than patched over ``_request``, so these tests
+	exercise the **real** ``_request`` — the kwargs it chooses, the bytes/JSON fork, the
+	header it sets — which is the whole reason the fake harness is a transport double and
+	not a client subclass.
+	"""
+
+	def __init__(self, *responses: FakeResponse) -> None:
+		self.queue = list(responses) or [FakeResponse()]
+		self.calls: list[dict[str, Any]] = []
+
+	def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+		self.calls.append({"method": method, "url": url, **kwargs})
+		return self.queue.pop(0) if len(self.queue) > 1 else self.queue[0]
+
+
 def _exception_named(name: str, base: type[BaseException] = Exception) -> BaseException:
 	"""An exception whose *class name* is ``name``.
 
@@ -162,7 +252,7 @@ def _exception_named(name: str, base: type[BaseException] = Exception) -> BaseEx
 
 
 def test_the_pure_tier_imports_with_frappe_and_requests_unavailable() -> None:
-	"""``backoff``/``ids``/``dryrun``/``client`` must import with both blocked.
+	"""``backoff``/``ids``/``dryrun``/``client``/``events_client`` import with both blocked.
 
 	CI installs neither ``frappe`` nor ``requests`` on this job, so every other
 	assertion in this file rests on this one. ``sys.modules[name] = None`` is the
@@ -178,6 +268,7 @@ def test_the_pure_tier_imports_with_frappe_and_requests_unavailable() -> None:
 		"erpnext_enhancements.chat.gchat.ids",
 		"erpnext_enhancements.chat.gchat.dryrun",
 		"erpnext_enhancements.chat.gchat.client",
+		"erpnext_enhancements.chat.gchat.events_client",
 	)
 	saved = {name: sys.modules.get(name) for name in (*modules, "frappe", "requests")}
 	try:
@@ -561,6 +652,13 @@ def test_dry_run_never_enters_the_transport(monkeypatch: pytest.MonkeyPatch) -> 
 	single choke point that performs I/O — the guarantee being made is "no network
 	at all", and a guarantee implemented *inside* the transport would be one
 	refactor away from untrue, which is why the dry-run branch sits above it.
+
+	**Phase 2 extends the list rather than adding a second test**, and that is the
+	point of the design it is testing. Attachments send raw bytes and subscriptions
+	go to a *different host*; both were built to route through this one method, so
+	both are covered by this one patch. A second transport would need a second
+	assertion, and the day someone forgot to write it the guarantee would be half
+	true with nothing to say so.
 	"""
 	transport = RecordingTransport()
 	monkeypatch.setattr(GoogleChatClient, "_request", transport)
@@ -580,6 +678,25 @@ def test_dry_run_never_enters_the_transport(monkeypatch: pytest.MonkeyPatch) -> 
 	client.delete_message(f"{SPACE}/messages/{message_id}")
 	client.list_messages(SPACE)
 	client.get_message(f"{SPACE}/messages/{message_id}")
+
+	# Phase 2, same client: spaces, memberships, attachments.
+	client.get_space(SPACE)
+	client.list_members(SPACE)
+	client.create_membership(SPACE, "coworker@example.com")
+	client.delete_membership(MEMBERSHIP)
+	client.upload_attachment(SPACE, "plan.pdf", content=b"%PDF-1.4 fake", content_type="application/pdf")
+	client.download_media("CO4ZjpGVUOWEDgcy")
+
+	# Phase 2, second host, same transport. WorkspaceEventsClient composes the client
+	# above rather than owning a socket, so these must be counted by the same patch.
+	events = WorkspaceEventsClient(chat_client=client)
+	events.create_subscription(target_resource=chat_target_resource(), pubsub_topic=PUBSUB_TOPIC)
+	events.validate_subscription(target_resource=chat_target_resource(), pubsub_topic=PUBSUB_TOPIC)
+	events.patch_subscription(SUBSCRIPTION)
+	events.reactivate_subscription(SUBSCRIPTION)
+	events.get_subscription(SUBSCRIPTION)
+	events.list_subscriptions(filter_expression=f'event_types:"{MESSAGE_EVENT_TYPES[0]}"')
+	events.delete_subscription(SUBSCRIPTION)
 
 	assert transport.calls == [], f"dry-run entered the transport {len(transport.calls)} time(s)"
 
@@ -947,6 +1064,775 @@ def test_the_retry_policy_module_holds_the_audited_status_set() -> None:
 	"""Pinned as a set so widening it is a visible diff rather than a stray
 	``or status >= 500``."""
 	assert backoff_module.RETRYABLE_STATUS_CODES == frozenset({429, 500, 502, 503, 504})
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: threading is settled, and settled means "no new argument"
+# ---------------------------------------------------------------------------
+
+
+def test_no_builder_in_the_module_takes_a_thread_argument_except_create_message() -> None:
+	"""**SETTLED 2026-08-09: the API cannot create a threaded space, so nothing threads.**
+
+	Three independent confirmations closed this: the discovery document marks
+	``Space.spaceThreadingState`` ``"readOnly": true``; ``spaces.setup`` states
+	*"Spaces with threaded replies aren't supported."*; and ``spaces.patch``'s
+	``updateMask`` enumerates every updatable path and does not include it. There
+	is no create-time decision to get wrong because there is no way to ask.
+
+	So the assertion is structural rather than about one function. ``ThreadReply``
+	stays — it is the right shape for the day the capability exists, and deleting
+	it would delete the explanation — but ``build_create_message_call`` is the only
+	builder permitted to name it. This test is what makes adding a thread argument
+	to the new membership, attachment or space builders a failing test rather than
+	a review comment nobody leaves.
+	"""
+	import inspect
+
+	forbidden = {"thread", "thread_name", "thread_key", "threadkey", "message_reply_option"}
+	#: The two that legitimately name a thread, and the reason each is not a write.
+	#: ``build_create_message_call`` takes a ``ThreadReply`` and would be the only way to
+	#: thread if threading existed; ``build_message_filter`` names ``thread.name``, which is
+	#: one of the two fields ``messages.list`` can filter on — reading a thread somebody
+	#: else created is unaffected by our inability to create one.
+	permitted = {"build_create_message_call": {"thread"}, "build_message_filter": {"thread_name"}}
+
+	offenders: list[str] = []
+	for name, function in vars(client_module).items():
+		if not name.startswith("build_") or not callable(function):
+			continue
+		named = set(inspect.signature(function).parameters) & forbidden
+		if named - permitted.get(name, set()):
+			offenders.append(f"{name}({sorted(named)})")
+
+	assert not offenders, (
+		f"these builders take a thread argument: {offenders}. spaceThreadingState is output-only "
+		"and spaces.setup refuses threaded spaces, so a thread argument on a WRITE can only be "
+		"ignored by Google or silently start a new top-level thread. Read ThreadReply's docstring."
+	)
+
+	# And the one that may: still a ThreadReply, still no loose thread id beside it.
+	parameters = inspect.signature(client_module.build_create_message_call).parameters
+	assert parameters["thread"].annotation == "ThreadReply | None"
+
+
+def test_the_threading_verify_block_records_the_answer_rather_than_the_question() -> None:
+	"""A resolved ``VERIFY:`` left open is worse than none: the next reader re-researches it.
+
+	``ThreadReply``'s docstring is the only place a developer meets this decision, so it
+	must say what was settled and what follows — not still be asking. What legitimately
+	remains open is *which* ``spaceThreadingState`` an API-created space lands in, and the
+	answer to that is "read it back", which is a different kind of statement.
+	"""
+	doc = ThreadReply.__doc__ or ""
+	assert "SETTLED" in doc
+	assert "aren't supported" in doc
+	assert "read" in doc.lower() and "gchat_threading_state" in doc
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: attachments, and the auth asymmetry that is the whole design
+# ---------------------------------------------------------------------------
+
+
+def test_media_upload_is_user_auth_only_because_chat_bot_is_not_in_its_scopes() -> None:
+	"""**Not a policy of ours — a property of the API.**
+
+	``media.upload``'s scope list is exactly ``chat.import``, ``chat.messages`` and
+	``chat.messages.create``. ``chat.bot`` — the app-authentication scope — is *absent*, so
+	no app-auth token can create an attachment at all. Pinning the identity on the builder
+	turns that from a 403 arriving four steps later (which reads like a DWD
+	misconfiguration) into a refusal at the point of construction.
+	"""
+	call = build_upload_attachment_call(SPACE, "plan.pdf", content=b"%PDF-1.4 fake")
+	assert call.requires_identity is AuthIdentity.USER
+
+	app_client = GoogleChatClient(
+		identity=AuthIdentity.APP,
+		dry_run=False,
+		settings=object(),
+		token_provider=lambda _i, _s: "FAKE-DO-NOT-USE-token",
+		transport=FakeSession(),
+	)
+	with pytest.raises(GoogleChatError, match="requires the USER identity"):
+		app_client.upload_attachment(SPACE, "plan.pdf", content=b"%PDF-1.4 fake")
+
+
+def test_media_download_accepts_either_identity_and_that_asymmetry_is_the_point() -> None:
+	"""``media.download``'s scopes *include* ``chat.bot``, unlike ``media.upload``'s.
+
+	The asymmetry is real and it runs in the direction this design needs: ERPNext ingests
+	far more attachments than it sends, and the sender of an inbound one is frequently
+	somebody we hold no DWD mandate for. Leaving ``requires_identity`` open is what lets a
+	sweep download without impersonating anyone.
+	"""
+	call = build_download_media_call("CO4ZjpGVUOWEDgcy")
+	assert call.requires_identity is None
+	assert call.expects_binary is True
+	assert call.path == "/v1/media/CO4ZjpGVUOWEDgcy"
+	assert call.query == {"alt": "media"}
+
+
+def test_the_upload_is_multipart_with_the_filename_in_its_own_json_part() -> None:
+	"""``uploadType=media`` would be simpler and would lose the filename.
+
+	The media-only form carries bytes and nothing else, so the attachment arrives with
+	nothing for Chat to title it. The metadata part is what makes ``multipart`` mandatory
+	rather than a preference.
+	"""
+	content = b"%PDF-1.4 quarterly numbers"
+	call = build_upload_attachment_call(SPACE, "plan.pdf", content=content, content_type="application/pdf")
+
+	assert call.path == f"/upload/v1/{SPACE}/attachments:upload"
+	assert call.query == {"uploadType": "multipart"}
+	assert call.content_type.startswith("multipart/related; boundary=")
+	assert call.body is None, "an upload must not also carry a JSON body — the transport forks on this"
+
+	boundary = call.content_type.split("boundary=", 1)[1]
+	raw = call.raw_body or b""
+	assert raw.startswith(f"--{boundary}".encode())
+	assert raw.endswith(f"--{boundary}--\r\n".encode())
+	assert b'{"filename": "plan.pdf"}' in raw
+	assert b"Content-Type: application/pdf" in raw
+	assert content in raw
+
+
+def test_the_upload_boundary_is_deterministic_and_cannot_occur_inside_the_payload() -> None:
+	"""Two properties, and both have to hold at once.
+
+	Deterministic, because the builder is a pure function and the pure tier is the only one
+	CI protects — a random boundary would make the built payload un-assertable. And absent
+	from the content, because a boundary that appears in the body terminates the part early:
+	Google receives a truncated file and answers 200, which is the worst combination
+	available.
+	"""
+	content = b"%PDF-1.4 quarterly numbers"
+	first = build_upload_attachment_call(SPACE, "plan.pdf", content=content)
+	second = build_upload_attachment_call(SPACE, "plan.pdf", content=content)
+	assert first.raw_body == second.raw_body
+
+	# Different bytes, different boundary: two uploads of the same filename must not share
+	# one, or a fixture built from either would silently validate the other.
+	assert (
+		build_upload_attachment_call(SPACE, "plan.pdf", content=b"other").content_type != first.content_type
+	)
+
+	boundary = first.content_type.split("boundary=", 1)[1]
+	assert boundary.encode("ascii") not in content
+
+	# The adversarial case: a file whose bytes contain the boundary the builder would have
+	# picked. The loop must move off it rather than produce a truncated upload.
+	digest = hashlib.sha256(b"|".join((b"evil.bin", b"placeholder"))).hexdigest()
+	hostile = f"chatupload{digest[:24]}".encode()
+	call = build_upload_attachment_call(SPACE, "evil.bin", content=hostile)
+	chosen = call.content_type.split("boundary=", 1)[1]
+	assert chosen.encode("ascii") not in hostile
+
+
+@pytest.mark.parametrize(
+	("filename", "reason"),
+	[
+		("", "requires a filename"),
+		("/private/files/plan.pdf", "no path separators"),
+		("..\\..\\secrets.env", "no path separators"),
+		("plan\r\n.pdf", "no path separators"),
+	],
+)
+def test_an_upload_filename_may_not_carry_a_path_or_a_control_character(filename: str, reason: str) -> None:
+	"""ERPNext ``File`` rows hold a ``file_name`` that is *sometimes* a private path.
+
+	Uploading ``/private/files/….pdf`` publishes this server's directory layout into a Chat
+	space as the attachment's visible title, and a CR or LF would be written straight into a
+	multipart part header. Rejected rather than stripped: a caller passing either has a bug
+	worth surfacing.
+	"""
+	with pytest.raises(ValueError, match=reason):
+		build_upload_attachment_call(SPACE, filename, content=b"x")
+
+
+def test_a_zero_byte_upload_is_refused_rather_than_sent() -> None:
+	"""Google accepts it. Chat then shows an attachment nobody can open, which is
+	indistinguishable from a delivery failure at the only moment anyone looks."""
+	with pytest.raises(ValueError, match="zero bytes"):
+		build_upload_attachment_call(SPACE, "plan.pdf", content=b"")
+
+
+def test_upload_content_is_a_required_keyword_and_not_an_optional_one() -> None:
+	"""**A ``TypeError``, for the same reason ``messageId`` is positional.**
+
+	A multipart body cannot be built without the bytes, and a ``content`` that defaulted to
+	empty is how a caller who forgot to read the file uploads nothing and gets a 200.
+	"""
+	with pytest.raises(TypeError):
+		build_upload_attachment_call(SPACE, "plan.pdf")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+	"resource",
+	["", "/leading-slash", "../../etc/passwd", "has space", "query?alt=media", "frag#ment"],
+)
+def test_a_download_resource_name_cannot_smuggle_a_different_url(resource: str) -> None:
+	"""``resourceName`` is interpolated into a URL path unescaped, because Google's own
+	template is ``v1/media/{resourceName=**}`` and the ``**`` means slashes are legitimate.
+	So the validator's job is what must *not* get through, not what the charset is."""
+	with pytest.raises(ValueError):
+		build_download_media_call(resource)
+
+
+def test_download_returns_bytes_through_the_one_transport_and_never_a_download_uri() -> None:
+	"""The real ``_request`` runs here — injected transport, not a patched method.
+
+	``downloadUri`` and ``thumbnailUri`` are human, browser-session URLs and do not accept a
+	bearer token; a download built on either works when a developer pastes it into a
+	logged-in browser and fails in every background job. The only correct call is
+	``GET /v1/media/{resourceName}?alt=media`` with the ``Authorization`` header, which is
+	what this asserts by reading the request the transport actually made.
+	"""
+	png = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+	session = FakeSession(FakeResponse(content=png, headers={"Content-Type": "image/png"}))
+	client = GoogleChatClient(
+		subject="relay.user@example.com",
+		dry_run=False,
+		settings=object(),
+		token_provider=lambda _i, _s: "FAKE-DO-NOT-USE-token",
+		transport=session,
+	)
+
+	payload = client.download_media("CO4ZjpGVUOWEDgcy")
+
+	assert attachment_bytes(payload) == png
+	assert attachment_content_type(payload) == "image/png"
+	sent = session.calls[0]
+	assert sent["url"] == "https://chat.googleapis.com/v1/media/CO4ZjpGVUOWEDgcy"
+	assert sent["params"] == {"alt": "media"}
+	assert sent["headers"]["Authorization"].startswith("Bearer ")
+	assert "data" not in sent, "a GET must not carry a raw body"
+
+
+def test_download_works_against_a_response_double_with_no_content_attribute() -> None:
+	"""``PHASE2_INTERFACES.md §8`` contracts the fake harness's response to expose
+	``.status_code``, ``.text`` and ``.headers`` — three attributes, no fourth.
+
+	A transport helper that hard-depended on ``.content`` would make the entire download
+	path untestable against the fake, silently, and the fake is where the §4.D race and the
+	fault injection live. So the fallback is asserted against a double that genuinely lacks
+	the attribute rather than one that fakes its absence.
+	"""
+	session = FakeSession(FakeResponse(text="plain bytes", headers={"Content-Type": "text/plain"}))
+	client = GoogleChatClient(
+		subject="relay.user@example.com",
+		dry_run=False,
+		settings=object(),
+		token_provider=lambda _i, _s: "FAKE-DO-NOT-USE-token",
+		transport=session,
+	)
+	assert attachment_bytes(client.download_media("CO4ZjpGVUOWEDgcy")) == b"plain bytes"
+
+
+def test_a_failed_download_still_parses_the_json_error_envelope() -> None:
+	"""The byte path is entered on 2xx **only**.
+
+	Chat is served by ESF and answers errors with the modern AIP-193 envelope. Routing a 403
+	through the byte path would turn a legible ``PERMISSION_DENIED`` into an unparsed blob
+	in ``Chat Relay Job.last_error`` — and 403 is the status this integration produces most
+	often while a DWD grant is still being got right.
+	"""
+	body = (
+		'{"error": {"code": 403, "message": "The caller does not have permission", '
+		'"status": "PERMISSION_DENIED"}}'
+	)
+	session = FakeSession(FakeResponse(status_code=403, text=body))
+	client = GoogleChatClient(
+		subject="relay.user@example.com",
+		dry_run=False,
+		settings=object(),
+		token_provider=lambda _i, _s: "FAKE-DO-NOT-USE-token",
+		transport=session,
+	)
+	with pytest.raises(GoogleChatAPIError, match="PERMISSION_DENIED"):
+		client.download_media("CO4ZjpGVUOWEDgcy")
+
+
+def test_the_upload_sends_raw_bytes_and_the_multipart_content_type_not_json() -> None:
+	"""The transport forks on ``raw_body``, and ``data=`` is passed **only** on that fork.
+
+	The fake Chat harness implements ``request(method, url, params, json, headers,
+	timeout)``. A ``data=`` that was always present would break every JSON call against it,
+	so the two are mutually exclusive by construction and this is what holds that in place.
+	"""
+	session = FakeSession(FakeResponse(text='{"attachmentDataRef": {"attachmentUploadToken": "t"}}'))
+	client = GoogleChatClient(
+		subject="relay.user@example.com",
+		dry_run=False,
+		settings=object(),
+		token_provider=lambda _i, _s: "FAKE-DO-NOT-USE-token",
+		transport=session,
+	)
+	client.upload_attachment(SPACE, "plan.pdf", content=b"%PDF-1.4 fake", content_type="application/pdf")
+
+	sent = session.calls[0]
+	assert sent["data"].startswith(b"--chatupload")
+	assert "json" not in sent
+	assert sent["headers"]["Content-Type"].startswith("multipart/related; boundary=")
+
+
+def test_a_log_record_carries_the_attachment_size_and_never_the_attachment() -> None:
+	"""An attachment's bytes are exactly as private as a message body, and there is **no**
+	setting that turns them on.
+
+	``Chat Settings.log_message_bodies`` reaches ``call.body``; ``raw_body`` is a different
+	field and no logging path in the module touches it. That separation is the reason the
+	two are separate fields at all, so the length — which is operationally useful — is what
+	the record carries.
+	"""
+	secret = b"%PDF-1.4 the quarterly numbers are bad"
+	call = build_upload_attachment_call(SPACE, "quarterly.pdf", content=secret)
+	record = client_module.build_log_record(
+		call=call,
+		correlation_id="abc123",
+		attempt=0,
+		status=200,
+		latency_ms=12.3,
+		dry_run=False,
+		identity=AuthIdentity.USER,
+	)
+	rendered = repr(record)
+
+	assert record["raw_bytes"] == len(call.raw_body or b"")
+	assert record["raw_bytes"] > 0
+	assert "quarterly numbers" not in rendered
+	assert "%PDF" not in rendered
+	assert "raw_body" not in record
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: which calls actually spend the space's one write per second
+# ---------------------------------------------------------------------------
+
+
+def test_membership_and_space_creation_do_not_spend_the_per_space_write_budget() -> None:
+	"""**PHASE2_VERIFIED.md §2, corrections 1 and 2 — and getting it wrong costs 300×.**
+
+	``members.create`` / ``members.delete`` appear in **no** per-space bucket; they consume
+	the project-wide 300-per-minute membership bucket alone. ``spaces.setup`` has no
+	per-space bucket either, because the space does not exist yet. Charging either to the
+	1-write-per-second space bucket would throttle a bulk org provisioning sweep about 300
+	times harder than the API requires — a difference between minutes and most of a day.
+
+	The flag is a field on the call rather than an inference from the HTTP verb precisely
+	because all four of these are POSTs and DELETEs that look identical to a verb check.
+	"""
+	message_id, derived_request_id = message_ids_for("CHAT-MSG-00042", site=SITE)
+	spends = {
+		"create_message": build_create_message_call(SPACE, message_id, derived_request_id, "hi"),
+		"patch_message": client_module.build_patch_message_call(
+			f"{SPACE}/messages/{message_id}", text="edited"
+		),
+		"delete_message": client_module.build_delete_message_call(f"{SPACE}/messages/{message_id}"),
+		"upload_attachment": build_upload_attachment_call(SPACE, "plan.pdf", content=b"x"),
+	}
+	free = {
+		"setup_space": build_setup_space_call(
+			space_type=SpaceType.SPACE, request_id="req-1", member_emails=["a@example.com"], display_name="X"
+		),
+		"create_membership": build_create_membership_call(SPACE, "a@example.com"),
+		"delete_membership": build_delete_membership_call(MEMBERSHIP),
+		"list_members": build_list_members_call(SPACE),
+		"get_space": build_get_space_call(SPACE),
+	}
+
+	for name, call in spends.items():
+		assert call.consumes_space_write_budget is True, f"{name} spends a space write and must say so"
+	for name, call in free.items():
+		assert call.consumes_space_write_budget is False, (
+			f"{name} does not consume the per-space bucket (PHASE2_VERIFIED.md §2). Charging it to "
+			"the 1-write-per-second bucket throttles provisioning ~300x harder than necessary."
+		)
+
+
+def test_an_attachment_message_costs_two_of_the_spaces_seconds_not_one() -> None:
+	"""``media.upload`` shares the bucket with ``messages.create``, so the relay's cost
+	model for one message with one attachment is two seconds of that space's budget. Stated
+	as an assertion because it is the number the relay worker's pacing is derived from."""
+	message_id, derived_request_id = message_ids_for("CHAT-MSG-00042", site=SITE)
+	pair = (
+		build_upload_attachment_call(SPACE, "plan.pdf", content=b"x"),
+		build_create_message_call(SPACE, message_id, derived_request_id, "see attached"),
+	)
+	assert sum(1 for call in pair if call.consumes_space_write_budget) == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: spaces and memberships
+# ---------------------------------------------------------------------------
+
+
+def test_membership_writes_are_pinned_to_the_user_identity() -> None:
+	"""The app-authenticated form needs ``chat.app.memberships``, a Marketplace
+	admin-install scope. PHASE2_CONTRACT.md §2 rules that whole family out — it is not a
+	fallback we can reach for — so leaving the identity open would only defer a 403."""
+	assert build_create_membership_call(SPACE, "a@example.com").requires_identity is AuthIdentity.USER
+	assert build_delete_membership_call(MEMBERSHIP).requires_identity is AuthIdentity.USER
+	# Reads are app-capable: a reconciliation sweep should not have to impersonate anyone
+	# to ask who is in a space.
+	assert build_list_members_call(SPACE).requires_identity is None
+	assert build_get_space_call(SPACE).requires_identity is None
+
+
+def test_a_membership_needs_a_stated_role_and_unspecified_is_not_offered() -> None:
+	call = build_create_membership_call(SPACE, "a@example.com", role="ROLE_MANAGER")
+	assert call.body == {"member": {"name": "users/a@example.com", "type": "HUMAN"}, "role": "ROLE_MANAGER"}
+	with pytest.raises(ValueError, match="role must be one of"):
+		build_create_membership_call(SPACE, "a@example.com", role="MEMBERSHIP_ROLE_UNSPECIFIED")
+
+
+def test_a_membership_name_is_not_an_email_and_is_validated_as_a_resource_name() -> None:
+	"""``users/{email}`` is the *request* form for creating a membership; the resource that
+	comes back is named differently, and deleting the wrong one is not undone by re-adding —
+	a re-added member rejoins with no history."""
+	with pytest.raises(ValueError, match="membership resource name"):
+		build_delete_membership_call("users/a@example.com")
+	with pytest.raises(ValueError, match="membership resource name"):
+		build_delete_membership_call(f"{SPACE}/members/one/two")
+
+
+def test_a_member_list_filter_naming_no_supported_field_is_refused_locally() -> None:
+	"""``spaces.members.list`` filters on ``member.type`` and ``role`` and nothing else.
+
+	The failure this catches is a filter copied from ``messages.list``: Google answers 400,
+	the sweep logs a failure, and membership quietly stops reconciling. The check is
+	coarse on purpose — it asks whether a supported field is named at all, and is not, and
+	must not become, a parser.
+	"""
+	assert "filter" in build_list_members_call(SPACE, filter_expression='role = "ROLE_MANAGER"').query
+	with pytest.raises(ValueError, match="filters on"):
+		build_list_members_call(SPACE, filter_expression='createTime > "2026-01-01T00:00:00Z"')
+
+
+def test_the_member_page_size_is_clamped_rather_than_sent() -> None:
+	"""A rejected page is a sweep that silently does not run — same reasoning as
+	``messages.list``, different limits (100 default, 1000 max, not 25/1000)."""
+	assert build_list_members_call(SPACE).query["pageSize"] == "100"
+	assert build_list_members_call(SPACE, page_size=99_999).query["pageSize"] == "1000"
+	assert build_list_members_call(SPACE, page_size=-5).query["pageSize"] == "1"
+
+
+def test_a_dry_run_membership_and_attachment_are_visibly_fake() -> None:
+	"""Same two independent detectors as every other synthetic resource: a ``DRYRUN-``
+	marker in the name and a ``dryRun`` key in the payload. An attachment upload token is
+	the one most likely to be stored and later replayed against Google."""
+	membership = build_create_membership_call(SPACE, "a@example.com").dry_run_payload or {}
+	assert dryrun_module.is_dryrun_name(membership["name"]) is True
+	assert membership["dryRun"] is True
+
+	upload = build_upload_attachment_call(SPACE, "plan.pdf", content=b"x").dry_run_payload or {}
+	assert dryrun_module.is_dryrun_name(upload["attachmentDataRef"]["attachmentUploadToken"]) is True
+	assert upload["dryRun"] is True
+
+
+def test_a_builder_supplied_dry_run_payload_wins_over_the_kind_dispatch() -> None:
+	"""The seam that lets a resource family this module holds no template for stay synthetic
+	without teaching ``dry_run_response`` a shape that does not belong to it."""
+	call = build_download_media_call("CO4ZjpGVUOWEDgcy")
+	assert client_module.dry_run_response(call)["dryRun"] is True
+	assert attachment_bytes(client_module.dry_run_response(call)) == b""
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: the Workspace Events subscription client — a second host, one socket
+# ---------------------------------------------------------------------------
+
+
+def test_the_events_client_targets_a_different_host_through_the_same_call_type() -> None:
+	"""One socket, two hosts. ``GoogleCall.host`` is what makes that possible without a
+	second ``_request``, and a second ``_request`` would double the retry loop, the logging,
+	the token handling and the dry-run branch while keeping none of them in step."""
+	call = build_create_subscription_call(
+		target_resource=chat_target_resource(), event_types=MESSAGE_EVENT_TYPES, pubsub_topic=PUBSUB_TOPIC
+	)
+	assert call.url.startswith("https://workspaceevents.googleapis.com/")
+	assert call.host == events_module.WORKSPACE_EVENTS_HOST
+	# The default is unchanged, so no Chat call was affected by adding the field.
+	assert build_get_space_call(SPACE).url.startswith("https://chat.googleapis.com/")
+
+
+def test_the_chat_host_is_composed_by_the_transport_module_not_typed_in_the_events_one() -> None:
+	"""The guardrail permits one module per Google host, and a subscription's
+	``targetResource`` names the *Chat* host from inside the *events* builder's caller.
+
+	``chat_target_resource()`` is how those two facts coexist: the literal stays in
+	``client.py`` and the events module only shape-checks what it is handed.
+	"""
+	assert chat_target_resource() == "//chat.googleapis.com/spaces/-"
+	assert chat_target_resource(SPACE) == f"//chat.googleapis.com/{SPACE}"
+
+	source = pathlib.Path(events_module.__file__).read_text(encoding="utf-8")
+	live = source.split('"""', 2)[2] if source.count('"""') >= 2 else source
+	assert "chat.googleapis.com" not in live, (
+		"events_client.py names the Chat host outside its module docstring. One host per module is "
+		"what makes the containment argument checkable; compose the target with "
+		"client.chat_target_resource() instead."
+	)
+
+
+def test_ttl_is_omitted_by_default_because_omitted_means_the_maximum() -> None:
+	"""**``ttl`` is input-only, and unspecified means "use the maximum possible duration".**
+
+	So the correct request is the one that does not mention it. Asserting the *absence* of
+	a key rather than the presence of a value is the only way to pin that: a builder that
+	sent ``"ttl": "604800s"`` would look right, would be a request rather than a promise,
+	and would quietly cap every subscription at whatever number somebody typed.
+	"""
+	call = build_create_subscription_call(
+		target_resource=chat_target_resource(), event_types=MESSAGE_EVENT_TYPES, pubsub_topic=PUBSUB_TOPIC
+	)
+	assert "ttl" not in (call.body or {})
+	assert (call.body or {})["payloadOptions"] == {"includeResource": False}
+	assert (call.body or {})["notificationEndpoint"] == {"pubsubTopic": PUBSUB_TOPIC}
+	assert call.query["validateOnly"] == "false"
+
+	# The renewal patch too: same field, same reasoning, and an empty body is correct.
+	patch = build_patch_subscription_call(SUBSCRIPTION, ttl=None)
+	assert patch.query["updateMask"] == "ttl"
+	assert patch.body == {}
+
+	explicit = build_create_subscription_call(
+		target_resource=chat_target_resource(),
+		event_types=MESSAGE_EVENT_TYPES,
+		pubsub_topic=PUBSUB_TOPIC,
+		ttl="3600s",
+	)
+	assert (explicit.body or {})["ttl"] == "3600s"
+	with pytest.raises(ValueError, match="protobuf duration"):
+		build_create_subscription_call(
+			target_resource=chat_target_resource(),
+			event_types=MESSAGE_EVENT_TYPES,
+			pubsub_topic=PUBSUB_TOPIC,
+			ttl="3600",
+		)
+
+
+def test_include_resource_defaults_false_because_it_is_the_only_seven_day_ceiling() -> None:
+	"""ADR §G.4.2's binding reason, restated as an assertion.
+
+	``includeResource: false`` is the **only** configuration with a 7-day TTL ceiling — 4
+	hours with resource data, 24 hours with resource data *and* domain-wide delegation. The
+	24-hour figure raises the ``includeResource: true`` branch and **not** the 7-day one, so
+	DWD buys no TTL benefit here at all. The cost of ``false`` is that an event carries a
+	resource name and nothing else, which is why every inbound event costs one
+	``messages.get``.
+	"""
+	default = build_create_subscription_call(
+		target_resource=chat_target_resource(), event_types=MESSAGE_EVENT_TYPES, pubsub_topic=PUBSUB_TOPIC
+	)
+	assert (default.body or {})["payloadOptions"]["includeResource"] is False
+
+
+def test_a_subscription_cannot_be_held_without_the_expiry_google_actually_granted() -> None:
+	"""**Never schedule a renewal from a constant.**
+
+	Every published TTL figure is a ceiling — "up to 7 days" — and nothing guarantees the
+	server granted one. So the type refuses to exist without an ``expireTime``: there is no
+	way to obtain a ``Subscription`` and then discover you have to invent its expiry, which
+	is the shape of the bug this closes (a renewal scheduled from
+	``Chat Settings.subscription_ttl_seconds``, which is a *request*).
+	"""
+	with pytest.raises(SubscriptionExpiryUnknown, match="no expireTime"):
+		parse_subscription({"name": SUBSCRIPTION, "state": "ACTIVE"})
+	with pytest.raises(SubscriptionExpiryUnknown, match="no name"):
+		parse_subscription({"expireTime": "2026-08-16T10:00:00Z"})
+	with pytest.raises(SubscriptionExpiryUnknown, match="unparseable"):
+		parse_subscription({"name": SUBSCRIPTION, "expireTime": "next tuesday"})
+
+	parsed = parse_subscription(
+		{"name": SUBSCRIPTION, "expireTime": "2026-08-16T10:00:00Z", "state": "ACTIVE"}
+	)
+	assert parsed.expire_time == "2026-08-16T10:00:00Z"
+	assert parsed.expire_epoch == parse_rfc3339_epoch("2026-08-16T10:00:00Z")
+
+
+def test_the_operation_envelope_is_unwrapped_and_a_pending_one_is_an_error() -> None:
+	"""``create``/``patch``/``reactivate``/``delete`` are declared as returning an
+	``Operation``, not the resource.
+
+	In practice a Chat subscription operation comes back ``done: true``, but "in practice"
+	is not a contract. An operation that is *not* done must raise rather than yield ``{}``:
+	nothing here polls operations, so a caller handed an empty mapping would store a
+	subscription with no name and never find it again.
+	"""
+	envelope = {
+		"name": "operations/abc",
+		"done": True,
+		"response": {"name": SUBSCRIPTION, "expireTime": "2026-08-16T10:00:00Z", "state": "ACTIVE"},
+	}
+	assert parse_subscription(envelope).name == SUBSCRIPTION
+
+	with pytest.raises(GoogleChatAPIError, match="not done"):
+		parse_subscription({"name": "operations/abc", "done": False})
+	with pytest.raises(GoogleChatAPIError, match="PERMISSION_DENIED"):
+		parse_subscription({"name": "operations/abc", "done": True, "error": {"status": "PERMISSION_DENIED"}})
+
+
+@pytest.mark.parametrize(
+	("stamp", "expected"),
+	[
+		("2026-08-16T10:00:00Z", 1786874400.0),
+		# Nine fractional digits, truncated to six — not rounded, or a renewal could be
+		# scheduled a microsecond after the expiry it was derived from.
+		("2026-08-16T10:00:00.123456789Z", 1786874400.123456),
+		("2026-08-16T11:00:00+01:00", 1786874400.0),
+		("2026-08-16T11:00:00+0100", 1786874400.0),
+	],
+)
+def test_expire_time_parsing_survives_nanoseconds_and_offsets(stamp: str, expected: float) -> None:
+	"""``datetime.fromisoformat`` accepts 0, 3 or 6 fractional digits and Google emits 9.
+
+	A raise here happens inside the renewal scheduler, which is the one place a crash means
+	every subscription silently lapses seven days later. Truncation rather than rounding,
+	so a renewal is never scheduled *after* the expiry it was derived from.
+	"""
+	assert parse_rfc3339_epoch(stamp) == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_dry_run_subscription_is_born_expired_and_says_so() -> None:
+	"""The trap this flag exists for, made explicit.
+
+	``dryrun.py``'s rule is that a plausible-looking timestamp is the field most likely to
+	make a fake read as real, so a synthetic ``expireTime`` is the Unix epoch. The
+	consequence is that a dry-run subscription is *already expired*, and a renewal scheduler
+	that did not check would renew it forever at one Workspace Events call per pass.
+	"""
+	call = build_create_subscription_call(
+		target_resource=chat_target_resource(), event_types=MESSAGE_EVENT_TYPES, pubsub_topic=PUBSUB_TOPIC
+	)
+	subscription = parse_subscription(call.dry_run_payload)
+	assert subscription.is_dry_run is True
+	assert subscription.expire_epoch == 0.0
+	assert dryrun_module.is_dryrun_name(subscription.name) is True
+
+
+def test_lifecycle_event_types_are_delivered_not_subscribed_to() -> None:
+	"""Naming one in ``eventTypes`` is a 400 whose message does not say why.
+
+	They arrive on the same topic regardless — ``expirationReminder`` at T−12h and T−1h,
+	then ``suspended`` and ``expired`` — and their payload uses ``snake_case`` inside the
+	subscription object, unlike every Chat resource. Both facts shape the consumer, not the
+	subscription.
+	"""
+	with pytest.raises(ValueError, match="lifecycle event"):
+		build_create_subscription_call(
+			target_resource=chat_target_resource(),
+			event_types=[events_module.EVENT_TYPE_EXPIRATION_REMINDER],
+			pubsub_topic=PUBSUB_TOPIC,
+		)
+
+
+@pytest.mark.parametrize(
+	("kwargs", "reason"),
+	[
+		({"target_resource": "spaces/-"}, "targetResource must be"),
+		({"target_resource": "//chat.example.com/spaces/-"}, "targetResource must be"),
+		({"pubsub_topic": "chat-events"}, "pubsubTopic must be"),
+		({"pubsub_topic": PUBSUB_TOPIC.replace("topics", "subscriptions")}, "pubsubTopic must be"),
+		({"event_types": []}, "at least one event type"),
+		({"event_types": ["message.created"]}, "namespaced"),
+	],
+)
+def test_the_subscription_builder_refuses_what_google_would_reject(
+	kwargs: dict[str, Any], reason: str
+) -> None:
+	"""Each of these is a 400 whose text names the wrong thing, and two of them are worse
+	than a 400: a topic that is really a *subscription* name, and the interaction topic
+	pasted where the events topic belongs, both accept the create and then deliver into the
+	wrong pipeline."""
+	call_kwargs: dict[str, Any] = {
+		"target_resource": chat_target_resource(),
+		"event_types": MESSAGE_EVENT_TYPES,
+		"pubsub_topic": PUBSUB_TOPIC,
+	}
+	call_kwargs.update(kwargs)
+	with pytest.raises(ValueError, match=reason):
+		build_create_subscription_call(**call_kwargs)
+
+
+def test_duplicate_event_types_are_dropped_and_the_callers_order_is_kept() -> None:
+	"""Order preserved so a diff of two subscriptions reads the way the caller wrote them;
+	duplicates dropped because a repeated event type is a paste, not an intent."""
+	call = build_create_subscription_call(
+		target_resource=chat_target_resource(),
+		event_types=[MESSAGE_EVENT_TYPES[1], MESSAGE_EVENT_TYPES[0], MESSAGE_EVENT_TYPES[1]],
+		pubsub_topic=PUBSUB_TOPIC,
+	)
+	assert (call.body or {})["eventTypes"] == [MESSAGE_EVENT_TYPES[1], MESSAGE_EVENT_TYPES[0]]
+
+
+def test_listing_subscriptions_without_a_filter_is_refused_locally() -> None:
+	"""The API marks ``filter`` Required and wants at least one event type. Enforcing it
+	here turns a bare 400 into a sentence, in a code path (orphan detection across the
+	roster) whose failure mode is "reconciliation quietly did nothing"."""
+	with pytest.raises(ValueError, match="requires a filter"):
+		build_list_subscriptions_call()
+	assert build_list_subscriptions_call(filter_expression='event_types:"x"').query["filter"] == (
+		'event_types:"x"'
+	)
+
+
+def test_every_subscription_call_is_user_authenticated() -> None:
+	"""Shape B targets ``spaces/-``, which is user-auth only. Shape A needs Marketplace
+	admin-install approval for ``chat.app.*`` and shape C needs Developer Preview plus an
+	Enterprise SKU, so neither is a fallback — pinning the identity turns an impossibility
+	into a local refusal instead of a 403 that reads like a scope problem."""
+	calls = (
+		build_create_subscription_call(
+			target_resource=chat_target_resource(),
+			event_types=MESSAGE_EVENT_TYPES,
+			pubsub_topic=PUBSUB_TOPIC,
+		),
+		build_patch_subscription_call(SUBSCRIPTION, ttl=None),
+		build_reactivate_subscription_call(SUBSCRIPTION),
+		build_get_subscription_call(SUBSCRIPTION),
+		build_list_subscriptions_call(filter_expression='event_types:"x"'),
+		build_delete_subscription_call(SUBSCRIPTION),
+	)
+	for call in calls:
+		assert call.requires_identity is AuthIdentity.USER, call.client_method
+
+
+def test_validate_only_is_a_separate_method_so_create_can_always_return_a_subscription() -> None:
+	"""The ``validateOnly`` preflight is what settles whether a DWD-impersonated user may
+	create a ``spaces/-`` subscription at all — the docs say the target supports user
+	authentication and DWD *is* user authentication, but no page states the combination and
+	the whole inbound design rests on it.
+
+	It returns the raw response, because a validated non-creation has no expiry to read and
+	forcing one would defeat the type's entire purpose.
+	"""
+	transport = RecordingTransport()
+	client = _dry_client()
+	events = WorkspaceEventsClient(chat_client=client)
+
+	validated = events.validate_subscription(
+		target_resource=chat_target_resource(), pubsub_topic=PUBSUB_TOPIC
+	)
+	assert isinstance(validated, dict)
+	assert validated["dryRun"] is True
+
+	created = events.create_subscription(target_resource=chat_target_resource(), pubsub_topic=PUBSUB_TOPIC)
+	assert isinstance(created, events_module.Subscription)
+	assert transport.calls == []
+
+
+def test_a_subscription_name_cannot_smuggle_a_second_path_segment() -> None:
+	for bad in ("", "0dc4c8ba", "subscriptions/a/b", "subscriptions/../spaces"):
+		with pytest.raises(ValueError, match="subscription resource name"):
+			build_get_subscription_call(bad)
+
+
+def test_deleting_an_already_deleted_subscription_is_only_a_success_when_asked_for() -> None:
+	"""``allowMissing`` off by default: a retried teardown wants it on, and a reconciliation
+	sweep deleting something it did not expect to be missing should still say so."""
+	assert "allowMissing" not in build_delete_subscription_call(SUBSCRIPTION).query
+	assert build_delete_subscription_call(SUBSCRIPTION, allow_missing=True).query["allowMissing"] == "true"
 
 
 def test_ids_module_ships_no_inverse_and_that_is_deliberate() -> None:

@@ -10,6 +10,7 @@
   "seq",
   "column_break_head",
   "sender",
+  "sender_email",
   "sender_kind",
   "message_type",
   "body_section",
@@ -38,7 +39,9 @@
   "client_message_id",
   "sync_state",
   "sync_origin",
-  "truncated_for_relay"
+  "truncated_for_relay",
+  "late_arrival",
+  "clock_skew_ms"
  ],
  "fields": [
   {
@@ -63,13 +66,21 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "The author, when they map to an ERPNext User. DELIBERATELY NOT reqd - it was reqd in Phase 1 and Phase 2 relaxes it on purpose, before any row exists. A Google Chat member with no ERPNext account (an external participant, or a Workspace user we have not provisioned) has to be STORED, because ERPNext is the record of what was said and a mirror that silently drops the messages it cannot attribute is not a record. With reqd on, those inserts fail outright and the transcript acquires holes exactly where the conversation left the company. The rule is sender OR sender_email, NEVER neither, and ChatMessage.validate enforces exactly that pair - the Link is not merely optional, it is half of a required pair.",
    "fieldname": "sender",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Sender",
    "options": "User",
-   "reqd": 1,
    "set_only_once": 1
+  },
+  {
+   "description": "The author's Chat address when sender is empty. Fills the other half of the sender OR sender_email pair (see Sender). Data(255) rather than the varchar(140) default because an address is not bounded at 140 and a truncated address is a wrong attribution rather than a missing one. Never used to look up a User at read time: if a matching User appears later, a backfill sets sender, and until it does this column is what the UI renders. Not unique and not indexed - it is an attribute of a message, not an identity to join on.",
+   "fieldname": "sender_email",
+   "fieldtype": "Data",
+   "label": "Sender Email",
+   "length": 255,
+   "read_only": 1
   },
   {
    "default": "Human",
@@ -267,6 +278,22 @@
    "fieldname": "truncated_for_relay",
    "fieldtype": "Check",
    "label": "Truncated For Relay",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "§4.G. Ingested with a Google createTime OLDER than the room's current tail - this message genuinely predates messages that already hold a higher seq. seq is allocated at insert and is never renumbered (Phase 5's digest watermarks and cache keys derive from it, and ADR §G.8 makes seq the only ordering), so the transcript's seq order and its createTime order disagree on exactly these rows. This flag is how a read path knows that, how the reconciliation sweep counts what it recovered after an outage, and the signal that the inbound pipeline was behind rather than that a clock was wrong - which is what clock_skew_ms answers separately.",
+   "fieldname": "late_arrival",
+   "fieldtype": "Check",
+   "label": "Late Arrival",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "§4.G instrumentation: Google's createTime minus our own receive time, in milliseconds, SIGNED. Recorded, never corrected - ordering is by seq and never by a timestamp, so a skewed clock must not be allowed to move a message. Its value is as a trend: Google returns RFC-3339 UTC while Frappe writes datetimes site-local, so the mistake this catches shows up as a CONSTANT offset the size of the site's timezone rather than as jitter, which is exactly how the Turnstile always-fail bug presented. Alarms above Chat Settings.clock_skew_alert_ms.",
+   "fieldname": "clock_skew_ms",
+   "fieldtype": "Int",
+   "label": "Clock Skew (ms)",
    "read_only": 1
   }
  ],

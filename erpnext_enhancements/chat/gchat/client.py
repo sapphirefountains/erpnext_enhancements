@@ -25,6 +25,26 @@ is, in practice, unprotected.
 the same reason: the bench-free CI tier installs neither, and the builders must stay
 importable there.
 
+One socket, two hosts
+---------------------
+``chat/gchat/events_client.py`` speaks to a *different* host —
+``workspaceevents.googleapis.com`` — and owns that literal the same way this module owns
+the Chat one. It does **not** open its own socket: it builds a :class:`GoogleCall` with
+``host=`` set and hands it to :meth:`GoogleChatClient.execute`, so there is still exactly
+one retry loop, one dry-run branch, one place a bearer token exists and one method to
+patch to prove "dry run performs zero network I/O". A second ``_request`` would double
+every one of those and halve the value of each.
+
+Raw bytes, and why they are a separate field
+--------------------------------------------
+``media.upload`` sends a ``multipart/related`` body and ``media.download`` returns file
+bytes, so :class:`GoogleCall` carries an explicit :attr:`GoogleCall.raw_body` and
+:attr:`GoogleCall.content_type` rather than overloading ``body``. Two reasons, both
+operational: ``body`` is what the logger enumerates keys from and what
+``Chat Settings.log_message_bodies`` can be made to dump, and neither should ever be able
+to reach a file attachment; and a single ``body`` field carrying "sometimes a mapping,
+sometimes bytes" is how a JSON serialiser ends up base64-ing an image into a log line.
+
 The rate limit that shapes Phase 2 — read this before writing a relay
 ---------------------------------------------------------------------
 * **1 write per second, per space.** This is the binding limit. It is not implemented
@@ -97,6 +117,17 @@ from erpnext_enhancements.chat.gchat.backoff import (
 CHAT_API_HOST: Final[str] = "https://chat.googleapis.com"
 CHAT_API_VERSION: Final[str] = "v1"
 
+# `media.upload` is served from a `/upload` prefix on the same host — Google's standard
+# media-upload endpoint shape. Same host, different path root, so the guardrail's
+# one-module rule is untouched.
+MEDIA_UPLOAD_PATH_PREFIX: Final[str] = "/upload"
+
+# Derived, never re-typed: a Workspace Events subscription names its target as
+# `//chat.googleapis.com/spaces/-`, and `chat/gchat/events_client.py` must not contain that
+# literal or the guardrail fires. Splitting the constant keeps the host in this module and
+# still gives the subscription builder's caller a correct string (see chat_target_resource).
+_CHAT_API_AUTHORITY: Final[str] = CHAT_API_HOST.split("://", 1)[-1]
+
 # Google's constraints on a client-assigned id live in `ids.py` and are re-exported, not
 # re-stated: two copies of "≤ 63 characters, lowercase, begins with client-" is one copy
 # too many, and the one that drifts is always the copy furthest from the derivation.
@@ -110,8 +141,49 @@ MAX_SETUP_MEMBERSHIPS: Final[int] = 49
 DEFAULT_PAGE_SIZE: Final[int] = 25
 MAX_PAGE_SIZE: Final[int] = 1000
 
+# spaces.members.list: default 100, maximum 1000. Different defaults from messages.list,
+# so they get their own constants rather than a shared "page size" that is wrong for one.
+DEFAULT_MEMBER_PAGE_SIZE: Final[int] = 100
+MAX_MEMBER_PAGE_SIZE: Final[int] = 1000
+
 # messages.list `filter` supports exactly two fields and nothing else.
 LIST_FILTER_FIELDS: Final[frozenset[str]] = frozenset({"createTime", "thread.name"})
+
+# spaces.members.list `filter` supports these two. Used as a coarse "did you filter on
+# something real" guard rather than as a parser — see build_list_members_call.
+MEMBER_LIST_FILTER_FIELDS: Final[frozenset[str]] = frozenset({"member.type", "role"})
+
+# Membership.role. MEMBERSHIP_ROLE_UNSPECIFIED exists in the enum and is not offered here:
+# it is the "not stated" value, and a membership created without a stated role is a
+# membership nobody can reason about later.
+MEMBERSHIP_ROLES: Final[frozenset[str]] = frozenset({"ROLE_MEMBER", "ROLE_MANAGER"})
+
+JSON_CONTENT_TYPE: Final[str] = "application/json; charset=UTF-8"
+
+# What an attachment is assumed to be when the caller cannot say. Deliberately the inert
+# one: guessing `text/plain` or `image/png` on behalf of a caller is how a mislabelled file
+# renders as garbage in Chat with nothing in any log to explain it.
+DEFAULT_ATTACHMENT_CONTENT_TYPE: Final[str] = "application/octet-stream"
+
+# `media.download` returns bytes, not JSON, and every other method in this module returns a
+# dict. Rather than fork the return type — which would fork the retry loop, the logging and
+# the dry-run branch with it — the bytes are handed back under these two non-Google keys,
+# the same convention `parse_response_body` already uses for `_unparsed` / `_value`.
+# Read them with attachment_bytes() / attachment_content_type(), never by hand.
+MEDIA_BYTES_KEY: Final[str] = "_media_bytes"
+MEDIA_CONTENT_TYPE_KEY: Final[str] = "_media_content_type"
+
+# A multipart boundary and a part's Content-Type are written into the request as raw header
+# lines, so a CR, an LF or a NUL arriving from a filename or a mime type is header
+# injection. Rejected at the builder rather than sanitised: a caller passing a control
+# character in a mime type has a bug worth surfacing.
+_HEADER_UNSAFE_RE: Final[re.Pattern[str]] = re.compile(r"[\r\n\x00]")
+
+# 24 hex characters of a content-derived digest. Deterministic, so the upload builder stays
+# a pure function a test can assert byte-for-byte; long enough that colliding with the
+# payload's own contents needs deliberate effort (and is handled anyway — see
+# _multipart_boundary).
+_MULTIPART_BOUNDARY_CHARS: Final[int] = 24
 
 # The only updateMask path user (DWD) authentication may set. `cards`, `cardsV2`,
 # `accessoryWidgets` are app-auth only; `quotedMessageMetadata` is removal-only.
@@ -212,15 +284,34 @@ class ThreadReply:
 	way to express "thread without option" in the type. ``tests/test_chat_gchat_client.py``
 	asserts that ``create_message`` has no separate thread argument.
 
-	``VERIFY:`` ``spaceThreadingState`` is documented **Output only** — a threaded space
-	cannot be requested at creation time, and ``spaces.setup`` states *"Spaces with threaded
-	replies aren't supported."* Whether ``messageReplyOption`` does anything at all in a
-	``GROUPED_MESSAGES`` space is unresolved (ADR §G.9.2–§G.9.3), and decision #5's in-thread
-	Triton replies depend on the answer. Settle it with one ``spaces.get`` against a
-	throwaway space and set ``Chat Settings.threading_enabled`` only if it passes.
+	**SETTLED 2026-08-09 — the outbound relay does not thread, and cannot.** What was a
+	``VERIFY:`` here is now closed against the live reference, three ways independently: the
+	discovery document marks ``Space.spaceThreadingState`` ``"readOnly": true``;
+	``spaces.setup`` states verbatim *"Spaces with threaded replies aren't supported."*; and
+	``spaces.patch``'s ``updateMask`` enumerates every updatable path and does not include
+	it. There is therefore **no create-time decision to get wrong**, because there is no way
+	to ask the API for a threaded space at all.
 
-	``VERIFY:`` the reference states ``messageReplyOption`` is *"Only supported in named
-	spaces"* — what that means for threaded replies in a DM is untested.
+	What that settles, concretely:
+
+	* ``Chat Settings.threading_enabled`` stays **0**, and threading remains an
+	  ERPNext-side-only concept — which ``Chat Message.thread_root``'s own field description
+	  already anticipated.
+	* **No new ``thread`` argument goes anywhere in this module.** This class stays because
+	  it is the correct shape for the day the API grows the capability, and because deleting
+	  it would delete the explanation; nothing new may take a thread.
+	* Decision #5's in-thread Triton replies need re-planning in Phase 5. That is a product
+	  decision, not a transport one, and it belongs at the checkpoint rather than here.
+
+	Two traps recorded for whoever revisits this: ``thread.threadKey`` is scoped **per Chat
+	app**, so a space also written to by a human or by another app contains threads our
+	``threadKey`` cannot address; and ``messageReplyOption`` is *"Only supported in named
+	spaces"* and is ignored entirely when responding to a user interaction.
+
+	``VERIFY:`` which ``spaceThreadingState`` an API-created named space actually lands in.
+	``GROUPED_MESSAGES`` is the only plausible reading and no document states it, so the
+	provisioning path **reads the value back** into ``Chat Room.gchat_threading_state``
+	rather than assuming one (PHASE2_VERIFIED.md §1.2, §8.6).
 	"""
 
 	thread_name: str
@@ -255,6 +346,26 @@ class GoogleCall:
 	#: ``None`` means either identity is acceptable; otherwise the call is refused unless
 	#: the client was constructed with this identity.
 	requires_identity: AuthIdentity | None = None
+	#: The API origin. Defaults to the Chat API; ``gchat/events_client.py`` sets the
+	#: Workspace Events one. A field rather than a hard-coded prefix is what lets a second
+	#: Google surface reuse this module's one retry loop and one socket instead of growing
+	#: a parallel transport nobody would keep in step.
+	host: str = CHAT_API_HOST
+	#: A pre-encoded request body — ``media.upload``'s ``multipart/related`` payload. Kept
+	#: apart from ``body`` so a file's bytes can never be reached by the logger or by
+	#: ``Chat Settings.log_message_bodies``; see the module docstring.
+	raw_body: bytes | None = None
+	content_type: str = JSON_CONTENT_TYPE
+	#: ``media.download`` answers with file bytes, not JSON. See :data:`MEDIA_BYTES_KEY`.
+	expects_binary: bool = False
+	#: Does this call spend one of the space's **1 write per second**? Set explicitly rather
+	#: than inferred from the HTTP verb, because two of Google's own corrections turn on it:
+	#: membership writes and ``spaces.setup`` are POSTs that consume **no** per-space budget
+	#: (PHASE2_VERIFIED.md §2, corrections 1 and 2), and charging them to the space bucket
+	#: throttles provisioning roughly 300× harder than the API requires. ``media.upload``
+	#: *does* consume one, shared with ``messages.create`` — so an attachment message costs
+	#: two.
+	consumes_space_write_budget: bool = False
 	text_length: int = 0
 	text_bytes: int = 0
 	text_hash: str = ""
@@ -264,10 +375,16 @@ class GoogleCall:
 	dry_run_space_type: str = ""
 	dry_run_message_id: str = ""
 	dry_run_thread_name: str = ""
+	#: A synthetic response computed by the builder itself, used verbatim in dry-run.
+	#: The ``dry_run_kind`` dispatch below covers the Chat resources Phase 1 shipped; a
+	#: builder for a resource this module has no template for (a membership, a subscription
+	#: on another host) supplies its own rather than teaching :func:`dry_run_response` about
+	#: a shape that does not belong to it.
+	dry_run_payload: Mapping[str, Any] | None = None
 
 	@property
 	def url(self) -> str:
-		return f"{CHAT_API_HOST}{self.path}"
+		return f"{self.host}{self.path}"
 
 
 # --------------------------------------------------------------------------------------
@@ -362,6 +479,99 @@ def validate_user_email(email: str) -> str:
 	if not candidate or "@" not in candidate or "/" in candidate or any(c.isspace() for c in candidate):
 		raise ValueError(f"Expected a Workspace email address; got {candidate!r}.")
 	return candidate
+
+
+def validate_membership_name(membership_name: str) -> str:
+	"""``spaces/<id>/members/<id>``.
+
+	The member segment is Google's own opaque id, not an email — ``users/{email}`` is the
+	*request* form for creating a membership, and the resource that comes back is named
+	differently. Deleting the wrong one is not recoverable by re-adding: a re-added member
+	rejoins with no history and, in a space that was ever set up by us, a new membership id.
+	"""
+	candidate = str(membership_name or "").strip()
+	if not re.fullmatch(r"spaces/[A-Za-z0-9_-]+/members/[A-Za-z0-9_.-]+", candidate):
+		raise ValueError(
+			f"Expected a membership resource name of the form 'spaces/<id>/members/<id>'; got {candidate!r}."
+		)
+	return candidate
+
+
+def validate_media_resource_name(resource_name: str) -> str:
+	"""``attachmentDataRef.resourceName`` — the only handle that can download an attachment.
+
+	Google's path template for ``media.download`` is ``v1/media/{resourceName=**}``, and the
+	``**`` means the value legitimately contains slashes; it is interpolated into a URL path
+	unescaped, so the checks here are about what must **not** be smuggled through it — a
+	traversal segment, a leading slash, a query or fragment delimiter, whitespace.
+
+	``VERIFY:`` the exact character set of ``resourceName`` is not documented anywhere — it
+	is an opaque token. The set permitted below was widened to cover base64url-ish values
+	(``-``, ``_``, ``=``) on the assumption that is what it is; if a real download ever
+	fails this validator, widen it against the observed value rather than removing it.
+
+	**Never substitute ``downloadUri`` or ``thumbnailUri`` for this.** Both are human,
+	browser-session URLs and are not usable with a bearer token (PHASE2_VERIFIED.md §4).
+	"""
+	candidate = str(resource_name or "").strip()
+	if not candidate:
+		raise ValueError("An attachment download needs attachmentDataRef.resourceName; got an empty value.")
+	if candidate.startswith("/") or ".." in candidate or not re.fullmatch(r"[A-Za-z0-9_.\-/=]+", candidate):
+		raise ValueError(
+			f"Expected an opaque attachmentDataRef.resourceName; got {candidate!r}. It is interpolated "
+			"into a URL path, so a leading slash, a '..' segment or a '?' would address a different "
+			"resource entirely."
+		)
+	return candidate
+
+
+def validate_attachment_filename(filename: str) -> str:
+	"""The ``filename`` ``media.upload`` records for an attachment.
+
+	A path separator is rejected rather than stripped. ERPNext's ``File`` rows hold a
+	``file_name`` that is *usually* a bare name and occasionally a private path, and
+	uploading ``/private/files/….pdf`` would publish this server's directory layout into a
+	Chat space as the attachment's visible title.
+	"""
+	candidate = str(filename or "").strip()
+	if not candidate:
+		raise ValueError("media.upload requires a filename; Chat shows it as the attachment's title.")
+	if "/" in candidate or "\\" in candidate or _HEADER_UNSAFE_RE.search(candidate):
+		raise ValueError(
+			f"filename must be a bare file name with no path separators or control characters; "
+			f"got {candidate!r}."
+		)
+	return candidate
+
+
+def validate_media_content_type(content_type: str) -> str:
+	"""A MIME type safe to write into a raw multipart part header.
+
+	ASCII-only and control-character-free, because :func:`build_multipart_related_body`
+	concatenates it into a header line by hand — this is the injection check, not a
+	taxonomy check, and no attempt is made to police whether the type is a real one.
+	"""
+	candidate = str(content_type or "").strip() or DEFAULT_ATTACHMENT_CONTENT_TYPE
+	if _HEADER_UNSAFE_RE.search(candidate) or not candidate.isascii():
+		raise ValueError(f"Content-Type must be ASCII with no control characters; got {content_type!r}.")
+	return candidate
+
+
+def chat_target_resource(space: str = "-") -> str:
+	"""``//chat.googleapis.com/spaces/<id>`` — a Workspace Events subscription's target.
+
+	Lives here, and is a function rather than a constant, for one structural reason: the
+	Chat host may appear in exactly one module (``tests/test_chat_guardrails.py``), and the
+	subscription builder lives in another. ``chat/gchat/events_client.py`` therefore takes
+	the target as an argument and its caller composes it here.
+
+	``spaces/-`` is the wildcard "every space this user is in", which is subscription
+	**shape B** from PHASE2_CONTRACT.md §2: one subscription per coworker, **user
+	authentication only**. Shape A (``chat.app.*``) needs Marketplace admin-install approval
+	and shape C needs Developer Preview plus an Enterprise SKU, so neither is a fallback.
+	"""
+	target = "-" if str(space or "-").strip() in ("", "-") else validate_space_name(space).split("/", 1)[-1]
+	return f"//{_CHAT_API_AUTHORITY}/spaces/{target}"
 
 
 def message_alias(space: str, client_message_id: str) -> str:
@@ -639,6 +849,7 @@ def build_create_message_call(
 		query=query,
 		body=body,
 		space_name=parent,
+		consumes_space_write_budget=True,
 		text_length=characters,
 		text_bytes=byte_length,
 		text_hash=digest,
@@ -700,6 +911,7 @@ def build_patch_message_call(
 		query={"updateMask": ",".join(mask), "allowMissing": _qbool(allow_missing)},
 		body={"text": text or ""},
 		space_name=name.split("/messages/")[0],
+		consumes_space_write_budget=True,
 		text_length=characters,
 		text_bytes=byte_length,
 		text_hash=digest,
@@ -738,6 +950,7 @@ def build_delete_message_call(
 		path=f"/{CHAT_API_VERSION}/{name}",
 		query={"force": _qbool(force)},
 		space_name=name.split("/messages/")[0],
+		consumes_space_write_budget=True,
 		dry_run_kind="EMPTY",
 		dry_run_seed=(name,),
 	)
@@ -841,6 +1054,335 @@ def build_get_message_call(message_name: str) -> GoogleCall:
 	)
 
 
+def build_get_space_call(space: str) -> GoogleCall:
+	"""``GET /v1/{name=spaces/*}`` — read one space back.
+
+	Phase 2 needs this for two things and both are "read it, do not assume it".
+	Provisioning reads ``spaceThreadingState`` back into ``Chat Room.gchat_threading_state``
+	rather than guessing which state an API-created space lands in (see :class:`ThreadReply`
+	— the enum member is documented but which one you get is not), and the reconciliation
+	sweep uses it to notice a space that has been deleted or renamed outside ERPNext.
+
+	App-authentication capable, so ``requires_identity`` is left open: a sweep does not need
+	to impersonate anybody to ask whether a space still exists.
+
+	The dry-run answer folds the space through its deterministic twin, so a
+	``spaceThreadingState`` read in dry-run is honest about being synthetic. Do not branch
+	on that value in dry-run — ``dryrun.synthetic_space`` deliberately reports
+	``SPACE_THREADING_STATE_UNSPECIFIED`` rather than invent an enum member.
+	"""
+	name = validate_space_name(space)
+	return GoogleCall(
+		client_method="get_space",
+		google_method="spaces.get",
+		http_method="GET",
+		path=f"/{CHAT_API_VERSION}/{name}",
+		space_name=name,
+		dry_run_kind="SPACE",
+		dry_run_seed=(name,),
+	)
+
+
+def build_list_members_call(
+	space: str,
+	*,
+	page_size: int = DEFAULT_MEMBER_PAGE_SIZE,
+	page_token: str | None = None,
+	filter_expression: str | None = None,
+	show_groups: bool = False,
+	show_invited: bool = False,
+) -> GoogleCall:
+	"""``GET /v1/{parent=spaces/*}/members`` — the membership reconciliation sweep's read.
+
+	``filter_expression`` supports exactly ``member.type`` and ``role``
+	(:data:`MEMBER_LIST_FILTER_FIELDS`). The check below is a **coarse** one — it asks
+	whether the expression mentions a supported field at all, not whether it parses. That
+	catches the failure that actually happens, which is a filter copied from
+	``messages.list`` naming ``createTime``: Google answers 400, the sweep logs a failure,
+	and nobody notices membership has stopped reconciling. It is not a parser and must not
+	grow into one; the API is the parser.
+
+	``show_invited`` returns memberships in the ``INVITED`` state, which matters because an
+	invited-but-not-joined coworker is *not* a member for relay purposes and would otherwise
+	look like a member ERPNext had failed to add.
+
+	``VERIFY:`` the documented interaction between ``show_groups`` and the ``member.type``
+	filter. Google Group memberships behave differently from human ones here and the rule
+	was not read this session — Phase 2's membership sync only needs humans, so it passes
+	``show_groups=False`` and the question stays parked rather than guessed at.
+	"""
+	parent = validate_space_name(space)
+	size = max(1, min(int(page_size or DEFAULT_MEMBER_PAGE_SIZE), MAX_MEMBER_PAGE_SIZE))
+
+	query: dict[str, str] = {
+		"pageSize": str(size),
+		"showGroups": _qbool(show_groups),
+		"showInvited": _qbool(show_invited),
+	}
+	if page_token:
+		query["pageToken"] = str(page_token)
+	if filter_expression:
+		expression = str(filter_expression).strip()
+		if not any(field_name in expression for field_name in MEMBER_LIST_FILTER_FIELDS):
+			raise ValueError(
+				f"spaces.members.list filters on {sorted(MEMBER_LIST_FILTER_FIELDS)} and nothing else; "
+				f"{expression!r} names none of them and would be a 400. A sweep whose filter 400s is a "
+				"sweep that silently stops reconciling membership."
+			)
+		query["filter"] = expression
+
+	return GoogleCall(
+		client_method="list_members",
+		google_method="spaces.members.list",
+		http_method="GET",
+		path=f"/{CHAT_API_VERSION}/{parent}/members",
+		query=query,
+		space_name=parent,
+		# Empty is the only honest dry-run answer, for the same reason messages.list is
+		# empty: a reconciliation that finds fiction acts on it. A caller must treat a
+		# dry-run listing as "no data", which dryrun.is_dryrun_name on the room detects.
+		dry_run_payload={"memberships": [], "nextPageToken": "", "dryRun": True},
+	)
+
+
+def build_create_membership_call(space: str, member_email: str, *, role: str = "ROLE_MEMBER") -> GoogleCall:
+	"""``POST /v1/{parent=spaces/*}/members`` — add one human to a space.
+
+	**User authentication.** The app-authenticated form needs ``chat.app.memberships``,
+	which is a Marketplace admin-install scope, and PHASE2_CONTRACT.md §2 rules that whole
+	family out: it is not a fallback we can reach for, so a builder that left the identity
+	open would only defer a 403 to production.
+
+	**This call does not spend the space's write-per-second budget.** Membership writes
+	appear in no per-space bucket at all (PHASE2_VERIFIED.md §2 correction 1); they consume
+	the project-wide **300 per minute** membership bucket and nothing else. Charging them to
+	the space bucket would throttle a bulk provisioning sweep about 300× harder than the API
+	requires, which is why :attr:`GoogleCall.consumes_space_write_budget` is a field and not
+	an inference from the HTTP verb.
+	"""
+	parent = validate_space_name(space)
+	email = validate_user_email(member_email)
+	membership_role = str(role or "").strip().upper()
+	if membership_role not in MEMBERSHIP_ROLES:
+		raise ValueError(
+			f"role must be one of {sorted(MEMBERSHIP_ROLES)}; got {role!r}. "
+			"MEMBERSHIP_ROLE_UNSPECIFIED is deliberately not offered — a membership with no stated "
+			"role is one nobody can reason about when reconciliation later disagrees with Chat."
+		)
+
+	twin = dryrun.dryrun_space_for(parent)
+	return GoogleCall(
+		client_method="create_membership",
+		google_method="spaces.members.create",
+		http_method="POST",
+		path=f"/{CHAT_API_VERSION}/{parent}/members",
+		body={"member": {"name": f"users/{email}", "type": "HUMAN"}, "role": membership_role},
+		space_name=parent,
+		requires_identity=AuthIdentity.USER,
+		dry_run_payload={
+			"name": f"{twin}/members/{dryrun.DRYRUN_MARKER}{dryrun.dryrun_hash(parent, email)}",
+			"state": "JOINED",
+			"role": membership_role,
+			"member": {"name": f"users/{email}", "type": "HUMAN"},
+			"createTime": dryrun.DRYRUN_CREATE_TIME,
+			"dryRun": True,
+		},
+	)
+
+
+def build_delete_membership_call(membership_name: str) -> GoogleCall:
+	"""``DELETE /v1/{name=spaces/*/members/*}`` — remove one member from a space.
+
+	User authentication, same reasoning as :func:`build_create_membership_call`, and the
+	same quota note: no per-space budget, only the project-wide 300-per-minute membership
+	bucket.
+
+	Removing a member is the one membership operation with a blast radius: they lose the
+	space's history in the native client immediately, and re-adding does not give it back.
+	``Chat Room.membership_authority`` is what decides whether ERPNext is even allowed to
+	drive this direction — it is an explicit field precisely so that removal is never
+	inferred from "ERPNext has fewer rows than Chat does".
+	"""
+	name = validate_membership_name(membership_name)
+	return GoogleCall(
+		client_method="delete_membership",
+		google_method="spaces.members.delete",
+		http_method="DELETE",
+		path=f"/{CHAT_API_VERSION}/{name}",
+		space_name=name.split("/members/")[0],
+		requires_identity=AuthIdentity.USER,
+		dry_run_payload={"dryRun": True},
+	)
+
+
+def _multipart_boundary(filename: str, content: bytes) -> str:
+	"""A deterministic multipart boundary that cannot occur inside the payload.
+
+	Deterministic because the upload builder is a pure function and a random boundary would
+	make its output un-assertable — the whole tier that protects this module is the one that
+	compares built payloads. Content-derived rather than filename-derived so two uploads of
+	the same name do not share a boundary.
+
+	The loop is not decoration. A boundary that appears in the body terminates the part
+	early and Google receives a truncated file with a 200; the digest makes that
+	astronomically unlikely and a caller uploading a file that literally contains its own
+	digest prefix makes it certain, so it is checked rather than reasoned about.
+	"""
+	digest = hashlib.sha256(b"|".join((filename.encode("utf-8"), content))).hexdigest()
+	stem = f"chatupload{digest[:_MULTIPART_BOUNDARY_CHARS]}"
+	candidate = stem
+	suffix = 0
+	while candidate.encode("ascii") in content:
+		suffix += 1
+		candidate = f"{stem}{suffix}"
+	return candidate
+
+
+def build_multipart_related_body(
+	*, metadata: Mapping[str, Any], content: bytes, content_type: str, boundary: str
+) -> bytes:
+	"""Google's ``uploadType=multipart`` request body: JSON metadata part, then media part.
+
+	Hand-rolled, and deliberately so — this app ships no Google SDK (``CLAUDE.md``: the host
+	is a managed server where packages cannot be pip-installed, which is also why
+	``stripe_payments`` hand-rolls its webhook signatures). The format is small, fixed and
+	fully specified: CRLF line endings, ``--boundary`` before each part, ``--boundary--`` to
+	close.
+
+	``uploadType=media`` would be simpler and is wrong: it carries the bytes and nothing
+	else, so the attachment would arrive with no ``filename`` and Chat would have nothing to
+	title it with.
+	"""
+	delimiter = f"--{boundary}".encode("ascii")
+	return b"".join(
+		(
+			delimiter,
+			b"\r\nContent-Type: ",
+			JSON_CONTENT_TYPE.encode("ascii"),
+			b"\r\n\r\n",
+			json.dumps(dict(metadata), sort_keys=True).encode("utf-8"),
+			b"\r\n",
+			delimiter,
+			b"\r\nContent-Type: ",
+			content_type.encode("ascii"),
+			b"\r\n\r\n",
+			bytes(content),
+			b"\r\n",
+			delimiter,
+			b"--\r\n",
+		)
+	)
+
+
+def build_upload_attachment_call(
+	space: str,
+	filename: str,
+	*,
+	content: bytes,
+	content_type: str = DEFAULT_ATTACHMENT_CONTENT_TYPE,
+) -> GoogleCall:
+	"""``POST /upload/v1/{parent=spaces/*}/attachments:upload?uploadType=multipart``.
+
+	**User authentication only, and this is a hard property of the API rather than a policy
+	of ours.** ``media.upload``'s scope list is exactly ``chat.import``, ``chat.messages``
+	and ``chat.messages.create``. ``chat.bot`` — the app-authentication scope — is *absent*,
+	so **no app-auth token can create an attachment at all** (PHASE2_VERIFIED.md §4). The
+	relay must impersonate the sending author, which it already does for the message itself,
+	and the DWD grant holds ``chat.messages``.
+
+	The mirror-image asymmetry is :func:`build_download_media_call`, which *is* app-auth
+	capable — and the asymmetry runs in the direction this design needs, since ERPNext
+	ingests far more attachments than it sends.
+
+	**Costs one of the space's writes per second, shared with ``messages.create``** — so
+	relaying one message with one attachment costs **two** seconds of that space's budget,
+	not one. That is why :attr:`GoogleCall.consumes_space_write_budget` is set here.
+
+	``content`` is a **required keyword argument**. A multipart body cannot be built without
+	the bytes, and an "optional" content parameter defaulting to empty is how a zero-byte
+	attachment gets uploaded by a caller who forgot to read the file — a failure that
+	returns 200 and produces an unopenable attachment.
+
+	The response is an ``UploadAttachmentResponse`` carrying
+	``attachmentDataRef.attachmentUploadToken``. Turning that token into a message is a
+	*separate* call and is **not** implemented here; see the note in this module's Phase 2
+	hand-off, because the ``Message.attachment`` field's writability was not verified and
+	this module does not guess at Google's shapes.
+	"""
+	parent = validate_space_name(space)
+	name = validate_attachment_filename(filename)
+	media_type = validate_media_content_type(content_type)
+
+	if not isinstance(content, bytes | bytearray):
+		raise ValueError(f"media.upload needs the file's bytes; got {type(content).__name__}.")
+	payload = bytes(content)
+	if not payload:
+		raise ValueError(
+			f"Refusing to upload {name!r} with zero bytes. Google accepts it and Chat then shows an "
+			"attachment nobody can open, which is indistinguishable from a delivery failure at the "
+			"only moment anyone looks."
+		)
+
+	boundary = _multipart_boundary(name, payload)
+	token = f"{dryrun.DRYRUN_MARKER}{dryrun.dryrun_hash(parent, name, str(len(payload)))}"
+	return GoogleCall(
+		client_method="upload_attachment",
+		google_method="media.upload",
+		http_method="POST",
+		path=f"{MEDIA_UPLOAD_PATH_PREFIX}/{CHAT_API_VERSION}/{parent}/attachments:upload",
+		query={"uploadType": "multipart"},
+		space_name=parent,
+		requires_identity=AuthIdentity.USER,
+		raw_body=build_multipart_related_body(
+			metadata={"filename": name}, content=payload, content_type=media_type, boundary=boundary
+		),
+		content_type=f"multipart/related; boundary={boundary}",
+		consumes_space_write_budget=True,
+		dry_run_payload={
+			"attachmentDataRef": {"resourceName": token, "attachmentUploadToken": token},
+			"dryRun": True,
+		},
+	)
+
+
+def build_download_media_call(resource_name: str) -> GoogleCall:
+	"""``GET /v1/media/{resourceName}?alt=media`` — fetch an inbound attachment's bytes.
+
+	**App-authentication capable**, and that is the finding the whole attachment design
+	rests on: ``media.download``'s scope list *includes* ``chat.bot``, unlike
+	``media.upload``'s. ERPNext can therefore ingest an attachment without impersonating
+	whoever sent it — which matters, because the sender of an inbound attachment is often
+	someone we hold no DWD mandate for.
+
+	``requires_identity`` is left open rather than pinned to ``APP``: the user identity can
+	download too, and a relay already holding a user client should not have to build a
+	second one.
+
+	**Never use ``downloadUri`` or ``thumbnailUri``.** They are documented as human,
+	browser-session URLs and do not accept a bearer token — a download built on them works
+	when a developer pastes it into a logged-in browser and fails in every job.
+
+	The response is bytes, not JSON. It comes back under :data:`MEDIA_BYTES_KEY`; read it
+	with :func:`attachment_bytes`.
+	"""
+	resource = validate_media_resource_name(resource_name)
+	return GoogleCall(
+		client_method="download_media",
+		google_method="media.download",
+		http_method="GET",
+		path=f"/{CHAT_API_VERSION}/media/{resource}",
+		query={"alt": "media"},
+		expects_binary=True,
+		# Zero bytes, marked. Dry-run has nothing to hand back and inventing a file would be
+		# worse than an empty one: it would be written to disk as a real attachment.
+		dry_run_payload={
+			MEDIA_BYTES_KEY: b"",
+			MEDIA_CONTENT_TYPE_KEY: DEFAULT_ATTACHMENT_CONTENT_TYPE,
+			"dryRun": True,
+		},
+	)
+
+
 # --------------------------------------------------------------------------------------
 # Pure helpers: dry-run dispatch, response parsing, log records
 # --------------------------------------------------------------------------------------
@@ -854,7 +1396,14 @@ def dry_run_response(call: GoogleCall, *, subject: str | None = None) -> dict[st
 	That case is the one that matters: a room whose ``gchat_space_name`` is real, written to
 	while ``dry_run_mode`` is on, must not hand back a message name that a later
 	reconciliation sweep would try to find in Google.
+
+	A builder may also carry its own :attr:`GoogleCall.dry_run_payload`, and that wins. It
+	is how a resource this module holds no template for — a membership, an attachment ref, a
+	subscription on another host — stays synthetic without teaching this dispatcher a shape
+	that belongs to a different resource family.
 	"""
+	if call.dry_run_payload is not None:
+		return dict(call.dry_run_payload)
 	if call.dry_run_kind == "SPACE":
 		return dryrun.synthetic_space(
 			seed=call.dry_run_seed,
@@ -894,6 +1443,49 @@ def parse_response_body(raw: str | bytes | None) -> dict[str, Any]:
 	except ValueError:
 		return {"_unparsed": scrub_secrets(text[:500])}
 	return parsed if isinstance(parsed, dict) else {"_value": parsed}
+
+
+def _response_bytes(response: Any) -> bytes:
+	"""The raw body of a transport response, without requiring it to expose ``.content``.
+
+	``requests`` always has ``.content``; the fake Chat harness's response double is only
+	contracted to expose ``.status_code``, ``.text`` and ``.headers``
+	(``PHASE2_INTERFACES.md §8``), and a transport helper that hard-depends on a fourth
+	attribute quietly makes the fake untestable against the download path. ``surrogateescape``
+	on the fallback so a text-shaped double carrying non-UTF-8 bytes round-trips rather than
+	raising inside a background job.
+	"""
+	raw = getattr(response, "content", None)
+	if isinstance(raw, bytes | bytearray):
+		return bytes(raw)
+	text = getattr(response, "text", "") or ""
+	return text.encode("utf-8", "surrogateescape") if isinstance(text, str) else bytes(text)
+
+
+def attachment_bytes(payload: Mapping[str, Any] | None) -> bytes:
+	"""The file bytes from a :meth:`GoogleChatClient.download_media` response.
+
+	An accessor rather than a dictionary lookup at the call site, because the key is a
+	non-Google private one and a caller who reaches for ``payload["data"]`` — a plausible
+	guess — gets a ``KeyError`` in a background job instead of a file. Returns ``b""`` for a
+	dry-run response, which is the same thing dry-run downloads.
+	"""
+	raw = (payload or {}).get(MEDIA_BYTES_KEY)
+	if isinstance(raw, bytes | bytearray):
+		return bytes(raw)
+	return b""
+
+
+def attachment_content_type(payload: Mapping[str, Any] | None) -> str:
+	"""The ``Content-Type`` Google served an attachment with, or the inert default.
+
+	Worth keeping: it is the only trustworthy statement of what the bytes are. The
+	``filename`` recorded on the Chat attachment is whatever the sender's client called it,
+	and ERPNext's ``File`` doctype infers a type from the extension — both are guesses about
+	content this function does not have to make.
+	"""
+	value = (payload or {}).get(MEDIA_CONTENT_TYPE_KEY)
+	return str(value or "").strip() or DEFAULT_ATTACHMENT_CONTENT_TYPE
 
 
 def extract_error_status(payload: Mapping[str, Any] | None) -> str:
@@ -938,6 +1530,11 @@ def build_log_record(
 
 	``correlation_id`` is per **call**, shared by every attempt of that call, which is what
 	makes "this message took four attempts and 9 seconds" a single grep.
+
+	``raw_bytes`` is a **length**, never the bytes. An attachment's content is exactly as
+	private as a message body and there is no setting that turns it on: ``raw_body`` is
+	unreachable from every logging path in this module by construction, which is the reason
+	it is a separate field from ``body`` at all.
 	"""
 	return {
 		"event": "chat_gchat_call",
@@ -945,8 +1542,10 @@ def build_log_record(
 		"client_method": call.client_method,
 		"google_method": call.google_method,
 		"http_method": call.http_method,
+		"host": call.host,
 		"path": call.path,
 		"space": call.space_name,
+		"raw_bytes": len(call.raw_body or b""),
 		"identity": identity.value,
 		"status": status,
 		"latency_ms": round(float(latency_ms), 1),
@@ -1234,36 +1833,94 @@ class GoogleChatClient:
 		json_body: Mapping[str, Any] | None,
 		headers: Mapping[str, str],
 		timeout: tuple[float, float],
+		raw_body: bytes | None = None,
+		expects_binary: bool = False,
 	) -> tuple[int, dict[str, Any], Mapping[str, str]]:
 		"""**The single choke point that performs I/O.** Nothing else in the app opens a socket.
 
 		Patch this one method and dry-run's "zero network calls" claim becomes a test with
 		one assertion — which is exactly how ``tests/test_chat_gchat_client.py`` proves it.
+		That claim is only worth making while there is exactly one of these, which is why
+		``gchat/events_client.py`` routes its own host through here rather than growing a
+		second one.
 
 		``requests`` is imported here rather than at module scope so the pure tier stays
 		importable in CI, which installs neither ``frappe`` nor ``requests``. The app already
 		depends on ``requests`` at runtime (``stripe_payments``, ``quickbooks_online``); there
 		is no new dependency and, per this repo's standing constraint, no SDK.
-		"""
-		import requests
 
-		session = self._transport if self._transport is not None else requests
-		response = session.request(
-			http_method,
-			url,
-			params=dict(params),
-			json=dict(json_body) if json_body is not None else None,
-			headers=dict(headers),
-			timeout=timeout,
-		)
-		return response.status_code, parse_response_body(response.text), dict(response.headers or {})
+		``raw_body`` and ``json`` are mutually exclusive and only one is ever passed to the
+		session. That is not tidiness: the fake Chat harness
+		(``PHASE2_INTERFACES.md §8``) implements ``request(method, url, params, json,
+		headers, timeout)``, so a ``data=`` that was always present would break every
+		JSON call against it, and only the upload path — which the fake must support anyway
+		— has to know about the extra argument.
+
+		**The import happens only when no transport was injected.** An unconditional
+		``import requests`` would raise on the bench-free CI tier — which installs neither
+		``frappe`` nor ``requests`` — and take the injected-transport path down with it. That
+		path is the *only* way the fake harness reaches this method, so an unconditional
+		import would quietly mean the retry loop, the byte paths and the ``_request``
+		contract are exercised by nothing CI runs.
+		"""
+		if self._transport is not None:
+			session: Any = self._transport
+		else:
+			import requests
+
+			session = requests
+
+		kwargs: dict[str, Any] = {
+			"params": dict(params),
+			"headers": dict(headers),
+			"timeout": timeout,
+		}
+		if raw_body is not None:
+			kwargs["data"] = raw_body
+		else:
+			kwargs["json"] = dict(json_body) if json_body is not None else None
+
+		response = session.request(http_method, url, **kwargs)
+		status = int(response.status_code)
+		response_headers = dict(response.headers or {})
+
+		if expects_binary and 200 <= status < 300:
+			# Only on success. A failed download answers with the ordinary AIP-193 JSON
+			# error envelope, and routing that through the byte path would turn a legible
+			# 403 into an unparsed blob.
+			return (
+				status,
+				{
+					MEDIA_BYTES_KEY: _response_bytes(response),
+					MEDIA_CONTENT_TYPE_KEY: header_value(response_headers, "Content-Type")
+					or DEFAULT_ATTACHMENT_CONTENT_TYPE,
+				},
+				response_headers,
+			)
+		return status, parse_response_body(response.text), response_headers
+
+	def execute(self, call: GoogleCall) -> dict[str, Any]:
+		"""Run a :class:`GoogleCall` built elsewhere. The seam ``events_client.py`` uses.
+
+		Public only so that a sibling builder module targeting a **different Google host**
+		can reuse this module's retry loop, dry-run branch, logging and token handling
+		instead of duplicating them. Duplicating them is the actual risk: four behaviours
+		that must not drift, in two files nobody diffs against each other.
+
+		Not an invitation for application code to hand-build calls. Everything the Chat API
+		can do has a named method below, and a call that has no method is a call nobody has
+		written a docstring's worth of constraints for yet.
+		"""
+		return self._execute(call)
 
 	def _execute(self, call: GoogleCall) -> dict[str, Any]:
 		"""Dry-run short-circuit, then the retry loop around :meth:`_request`.
 
 		The dry-run branch sits **above** ``_request`` deliberately: the guarantee being made
 		is "no network I/O at all", and a guarantee implemented inside the transport is one
-		refactor away from being untrue.
+		refactor away from being untrue. It sits above the byte paths too — an upload in
+		dry-run neither opens a socket nor reads a credential, and the identical assertion
+		covers it because there is only one place to assert about.
 		"""
 		if call.requires_identity is not None and call.requires_identity is not self.identity:
 			raise GoogleChatError(
@@ -1293,10 +1950,12 @@ class GoogleChatClient:
 					json_body=call.body,
 					headers={
 						"Authorization": f"Bearer {self._access_token()}",
-						"Content-Type": "application/json; charset=UTF-8",
+						"Content-Type": call.content_type,
 						"X-Correlation-Id": correlation_id,
 					},
 					timeout=self.timeout,
+					raw_body=call.raw_body,
+					expects_binary=call.expects_binary,
 				)
 			except Exception as exc:
 				# Broad on purpose: `requests` raises a wide family and the classifier —
@@ -1375,7 +2034,7 @@ class GoogleChatClient:
 			client_method=call.client_method,
 		) from None
 
-	# -- the seven Google methods --------------------------------------------------------
+	# -- Phase 1: spaces, messages ---------------------------------------------------------
 
 	def setup_space(
 		self,
@@ -1508,5 +2167,104 @@ class GoogleChatClient:
 		)
 
 	def get_message(self, message_name: str) -> dict[str, Any]:
-		"""``spaces.messages.get`` — read one message, by resource name or ``client-`` alias."""
+		"""``spaces.messages.get`` — read one message, by resource name or ``client-`` alias.
+
+		Phase 2's inbound pipeline runs one of these **per event**. That is not an
+		inefficiency to optimise away later: the subscription is configured
+		``payloadOptions.includeResource: false`` because it is the only configuration with a
+		7-day TTL ceiling, and the price of that ceiling is that an event carries a resource
+		name and nothing else — no body, no sender, no ``clientAssignedMessageId``. The read
+		was budgeted against the 3,000-reads-per-minute project bucket
+		(PHASE2_CONTRACT.md §2).
+
+		``VERIFY:`` whether ``clientAssignedMessageId`` is actually **populated** in this
+		response. The proto declares it ``OPTIONAL`` — not ``OUTPUT_ONLY``, not
+		``INPUT_ONLY`` — and the discovery document does not mark it ``readOnly``, so it is a
+		plain read/write field and the design is not inverted; but no Google document or
+		sample shows it populated in a response, and the one published event example is a
+		human-sent message that would carry no custom id either way. Echo suppression's
+		primary path depends on the answer. One live round trip settles it: create a message
+		with a ``client-`` id, ``get`` it, print the field
+		(PHASE2_VERIFIED.md §8.1).
+		"""
 		return self._execute(build_get_message_call(message_name))
+
+	# -- Phase 2: spaces, memberships, attachments ----------------------------------------
+
+	def get_space(self, space: str) -> dict[str, Any]:
+		"""``spaces.get`` — read a space back, including ``spaceThreadingState``."""
+		return self._execute(build_get_space_call(space))
+
+	def list_members(
+		self,
+		space: str,
+		*,
+		page_size: int = DEFAULT_MEMBER_PAGE_SIZE,
+		page_token: str | None = None,
+		filter_expression: str | None = None,
+		show_groups: bool = False,
+		show_invited: bool = False,
+	) -> dict[str, Any]:
+		"""``spaces.members.list`` — what Chat believes the membership of a space is.
+
+		The other half of §4.H's membership reconciliation. Which side wins a disagreement is
+		``Chat Room.membership_authority``'s answer, never this method's.
+		"""
+		return self._execute(
+			build_list_members_call(
+				space,
+				page_size=page_size,
+				page_token=page_token,
+				filter_expression=filter_expression,
+				show_groups=show_groups,
+				show_invited=show_invited,
+			)
+		)
+
+	def create_membership(
+		self, space: str, member_email: str, *, role: str = "ROLE_MEMBER"
+	) -> dict[str, Any]:
+		"""``spaces.members.create`` — add one human to a space, as the impersonated caller.
+
+		Charged to the project-wide **300 membership writes per minute** bucket and to *no*
+		per-space bucket. A bulk org sweep is therefore throttled at 300/minute, not at one
+		per second per space — see :func:`build_create_membership_call`.
+		"""
+		return self._execute(build_create_membership_call(space, member_email, role=role))
+
+	def delete_membership(self, membership_name: str) -> dict[str, Any]:
+		"""``spaces.members.delete`` — remove one member. Same quota bucket as the create."""
+		return self._execute(build_delete_membership_call(membership_name))
+
+	def upload_attachment(
+		self,
+		space: str,
+		filename: str,
+		*,
+		content: bytes,
+		content_type: str = DEFAULT_ATTACHMENT_CONTENT_TYPE,
+	) -> dict[str, Any]:
+		"""``media.upload`` — upload one file and get back an ``attachmentUploadToken``.
+
+		**Only ever reachable under the user identity**, and this client raises rather than
+		sends if it was constructed as the app: ``chat.bot`` is absent from ``media.upload``'s
+		scope list, so an app-auth upload cannot succeed and a 403 four steps later would read
+		like a DWD misconfiguration instead of an impossibility.
+
+		Costs **two** seconds of the space's write budget when it accompanies a message, since
+		the upload and the ``messages.create`` share one bucket.
+		"""
+		return self._execute(
+			build_upload_attachment_call(space, filename, content=content, content_type=content_type)
+		)
+
+	def download_media(self, resource_name: str) -> dict[str, Any]:
+		"""``media.download`` — fetch an inbound attachment's bytes.
+
+		Returns the usual dict, with the bytes under :data:`MEDIA_BYTES_KEY`; read them with
+		:func:`attachment_bytes` and the served type with :func:`attachment_content_type`.
+		Keeping the return type identical to every other method is deliberate — a method that
+		returned raw bytes would be the one call in this class a caller could not check for
+		``dryRun``, and would write an empty file to disk as though it were real.
+		"""
+		return self._execute(build_download_media_call(resource_name))

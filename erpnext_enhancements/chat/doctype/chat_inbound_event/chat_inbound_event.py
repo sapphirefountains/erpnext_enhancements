@@ -18,9 +18,22 @@ the fields today's parser happens to read. Three things depend on that:
 
 **``pubsub_message_id`` is unique, and that single constraint is the entire duplicate defence.**
 Pub/Sub is at-least-once by contract: the same delivery *will* arrive twice, and not rarely. The
-second insert therefore raises ``DuplicateEntryError``, which the puller treats as success and
-acks — structural dedupe, not a procedural "have I seen this?" check that races with itself under
-concurrency. The HTTP interaction transport carries no Pub/Sub id and leaves the field empty;
+second insert therefore raises **``frappe.UniqueValidationError``**, which the puller treats as
+success and acks — structural dedupe, not a procedural "have I seen this?" check that races with
+itself under concurrency.
+
+**The exception class matters and the obvious guess is wrong.** ``frappe.DuplicateEntryError`` is
+raised *only* for a **primary key** collision — a duplicate ``name``. Every other unique index,
+including this one, raises ``frappe.UniqueValidationError``, and the two share no base beyond
+``Exception`` (``DuplicateEntryError(NameError)`` vs ``UniqueValidationError(ValidationError)``).
+So ``except frappe.DuplicateEntryError`` alone would **not** catch the collision this design
+depends on, and structural dedupe would fail open into a logged error on every redelivery — the
+exact opposite of the intent. Catch both, inside ``frappe.database.database.savepoint``, because a
+failed statement can otherwise poison the surrounding transaction. Verified against Frappe v16
+``model/base_document.py:db_insert`` on 2026-08-09; ADR 0009 §G.3.1 and §G.8 Rule 2 both name only
+``DuplicateEntryError`` and are wrong on this point.
+
+The HTTP interaction transport carries no Pub/Sub id and leaves the field empty;
 Frappe coerces empty to ``NULL`` on a unique DocField and MariaDB allows unlimited ``NULL``s in a
 unique index, so those rows coexist. That coercion only fires because ``unique: 1`` is declared on
 the DocField — an index added by patch alone would let the *second* empty row collide, and only in
@@ -30,7 +43,17 @@ One row is one **delivery**, not one contained resource: Workspace Events emits 
 ``batchCreated`` / ``batchUpdated`` / ``batchDeleted`` / ``batchChanged`` variants, and the worker
 fans one row out to N message operations so that acking the delivery stays a single decision.
 
-Schema only in Phase 1. No webhook handler logic, no Pub/Sub consumer, no worker.
+WHO WRITES AND READS THESE ROWS (Phase 2)
+-----------------------------------------
+* :func:`erpnext_enhancements.chat.sync.pubsub.ingest_delivery` writes them — one per Pub/Sub
+  delivery, payload verbatim, **committed before the ack**.
+* :func:`erpnext_enhancements.chat.sync.inbound.process_inbound_event` settles them, and is safe
+  to run twice on the same row: ``status`` is the idempotence gate.
+* :func:`erpnext_enhancements.chat.sync.inbound.sweep_stuck_inbound_events` re-drives ``Received``
+  rows the queue lost. It is the **only** delivery guarantee there is — the production deploy
+  ``FLUSHDB``s the queue Redis and Frappe v16 wires no RQ retries — which is why ``status`` and
+  ``received_at`` carry a composite index and why ``Failed`` is never swept: a ``Failed`` row is
+  evidence somebody has to look at, not work to redo.
 """
 
 from typing import Final

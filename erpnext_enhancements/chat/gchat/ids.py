@@ -51,10 +51,25 @@ default would silently produce a second, site-less id space the day someone
 forgets it.
 
 **Derived once, stored forever.** ``client_message_id`` is computed in
-``before_insert`` and stored in a column; it is never re-derived on read. The
-site name is in the seed, so a site *rename* would change the derivation — which
-is precisely why the stored value, not the function, is the source of truth
+``Chat Message.validate`` and stored in a column; it is never re-derived on read.
+The site name is in the seed, so a site *rename* would change the derivation —
+which is precisely why the stored value, not the function, is the source of truth
 after insert.
+
+**Not in ``before_insert``, and it cannot be** — stated here because that is
+where an earlier revision of this docstring sent people, and because
+``before_insert`` is the obvious place to look. Frappe v16's ``Document.insert``
+runs ``before_insert`` *before* ``set_new_name``, and ``set_new_name`` begins by
+assigning ``doc.name = None`` for every autoname other than ``prompt``/``UUID``
+(``frappe/model/naming.py``). ``Chat Message`` is ``autoname: hash``, so at
+``before_insert`` there is no name to seed the derivation with and the id would
+be minted from ``""``. ``validate`` is the first hook after the name is final,
+and it still runs before Frappe's mandatory-field check — which matters, because
+``client_message_id`` is ``reqd``. See
+:func:`erpnext_enhancements.chat.sync.outbox.derive_client_message_id`, and
+``tests/test_chat_outbox.py::test_before_insert_cannot_see_the_document_name``,
+which executes the claim so that a change in Frappe's ordering shows up as a red
+test rather than as a comment nobody re-reads.
 """
 
 from __future__ import annotations

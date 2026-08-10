@@ -1,0 +1,166 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-09 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "mode",
+  "dry_run",
+  "column_break_head",
+  "status",
+  "cursor",
+  "counts_section",
+  "planned_count",
+  "created_count",
+  "column_break_counts",
+  "skipped_count",
+  "failed_count",
+  "timing_section",
+  "started_at",
+  "column_break_timing",
+  "finished_at",
+  "outcome_section",
+  "last_error",
+  "log"
+ ],
+ "fields": [
+  {
+   "description": "Which slice of the org this sweep walks (§4.H mode 2). One run is one mode: a single row that meant 'departments and then teams' could not be resumed without re-deriving where the boundary fell, which is the exact question the cursor exists to answer.",
+   "fieldname": "mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Mode",
+   "options": "Department\nTeam\nProject",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Plan only: resolve every unit, count what WOULD be created, create nothing. ON BY DEFAULT, and that direction is the point. This sweep creates Google spaces, which are visible in every coworker's Chat client, are capped at 60 project-wide space writes per minute, and cannot be un-created without spaces.delete - a call this codebase deliberately never makes without an explicit human confirmation step, because it cascades and takes the conversation history with it. The destructive default is the wrong default here, so the safe one ships and a human unticks it.",
+   "fieldname": "dry_run",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Dry Run"
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "description": "Paused is a first-class state, not a synonym for Failed: an operator stopping a sweep mid-flight and the 60/minute space-write quota deferring one both leave a run that should RESUME from the cursor rather than restart from the top. Failed means the run itself broke; individual unit failures are counted in Failed Count and do not fail the run.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nPaused\nCompleted\nFailed",
+   "reqd": 1
+  },
+  {
+   "description": "THE CHECKPOINT. The last org unit this run finished, so an interrupted sweep resumes rather than restarts. Restarting is not merely slow: it re-walks units that already have spaces, spends the 60-per-minute project space-write quota re-confirming them, and turns a deploy landing mid-sweep into an hour of quota starvation for every other space operation on the site. Written after each unit COMMITS, never before - a cursor ahead of the work skips a unit silently, which is the one failure this field cannot afford.",
+   "fieldname": "cursor",
+   "fieldtype": "Data",
+   "label": "Cursor",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "Counts"
+  },
+  {
+   "description": "Units the planning pass resolved as in scope. Set once, before any write, so 'created + skipped + failed vs planned' is a completeness check and not a tautology.",
+   "fieldname": "planned_count",
+   "fieldtype": "Int",
+   "label": "Planned Count",
+   "read_only": 1
+  },
+  {
+   "description": "Spaces actually created. Stays 0 for a dry run - a dry run that incremented this would make the two kinds of run indistinguishable in the list view.",
+   "fieldname": "created_count",
+   "fieldtype": "Int",
+   "label": "Created Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Units deliberately not provisioned - already has a space, no members, or excluded by the external-user gate (Chat Room.external_users_allowed without mirror_whitelisted). Skipped is a decision and is expected to be large on a re-run; it is not a soft failure.",
+   "fieldname": "skipped_count",
+   "fieldtype": "Int",
+   "label": "Skipped Count",
+   "read_only": 1
+  },
+  {
+   "description": "Units that errored. Counted rather than raised: one department whose owner has no Workspace account must not abort a sweep of forty, because the resume path would then re-attempt the same thirty-nine on every retry.",
+   "fieldname": "failed_count",
+   "fieldtype": "Int",
+   "label": "Failed Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "timing_section",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "description": "Set from frappe.utils.now_datetime(), never from SQL NOW() - the site clock and the database clock are not guaranteed to be the same reading.",
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_timing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Set only on a terminal status. Empty on a Paused run is correct and is how the resume path recognises one.",
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome_section",
+   "fieldtype": "Section Break",
+   "label": "Outcome"
+  },
+  {
+   "description": "Truncated to 1000 characters at write. The writer never raises: logging must not break the sweep being logged.",
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "description": "Per-unit decisions, one line each, appended as the sweep runs. THIS IS THE DELIVERABLE OF A DRY RUN - the counts say how many, only this says which, and 'which' is what a human reads before unticking Dry Run. Identifiers and reasons only: never a message body, never a token.",
+   "fieldname": "log",
+   "fieldtype": "Long Text",
+   "label": "Log",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-09 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Provisioning Run",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

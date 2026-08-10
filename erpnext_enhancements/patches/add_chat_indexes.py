@@ -59,8 +59,14 @@ import frappe
 #: Order is stable so the log reads the same on every site.
 UNIQUE_CONSTRAINTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 	# ADR §F.6.6. The backlog page (`room = %s AND seq < %s ORDER BY seq DESC`), the
-	# unread count, the seq allocator's MAX(seq) probe — and the structural enforcement
-	# of D6's "one message per (room, seq)".
+	# unread count, and the structural enforcement of D6's "one message per (room, seq)".
+	# It is the last of those that is load-bearing: seq is allocated by incrementing
+	# `Chat Room.seq_high_water` under that row's lock, NOT by a MAX(seq) probe over this
+	# table (an earlier revision of this comment said otherwise) — so this constraint is
+	# the guarantee and the counter is only the optimisation that keeps it from being
+	# tested. `outbox.insert_message` reads this exact name out of MariaDB's duplicate-entry
+	# text to tell "somebody took this seq, allocate another" from "this Google message is
+	# already stored"; renaming it turns a retry into an unhandled error.
 	("Chat Message", ("room", "seq"), "unique_room_seq"),
 	# ADR §F.6.6. Echo suppression in one probe (§G.3): an inbound message carrying a
 	# `client-` id we issued is definitionally our own message coming back. Scoped to
