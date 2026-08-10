@@ -442,6 +442,18 @@ import { BubbleChatSurface } from "./chat_surface.js";
 	// it is a website route with no Desk bundle.
 	function subscribeRealtime() {
 		if (!window.frappe || !frappe.realtime || !frappe.realtime.on) return;
+
+		// Re-join the active room after a reconnect. Frappe's client does NOT replay
+		// `open_docs` on connect and `doc_subscribe` early-returns while the key is still in
+		// it, so without this the bubble goes permanently deaf after the first disconnect —
+		// and the load balancer guarantees there will be one.
+		const raw = frappe.realtime.socket;
+		if (raw && typeof raw.on === "function") {
+			raw.on("connect", () => {
+				if (state.chat) state.chat.rejoinAfterReconnect();
+			});
+		}
+
 		const events = [
 			"chat_message_created",
 			"chat_message_edited",

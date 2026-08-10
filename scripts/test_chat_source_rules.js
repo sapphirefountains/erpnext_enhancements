@@ -432,7 +432,75 @@ function stripComments(source) {
 	}
 }
 
-// ------------------------------------------------------------------ 6. the bundle rule
+// ------------------------------------------------------------------ 6. listening != joining
+
+/**
+ * **Anything that binds chat event handlers must also JOIN a document room.**
+ *
+ * This is the rule the bubble shipped without, and the failure is completely silent:
+ * `frappe.realtime.on(name, fn)` binds a callback, but the server only delivers a room's
+ * events to sockets that emitted `doc_subscribe` for it. A client that only calls `on()`
+ * looks perfectly wired, throws nothing, logs nothing, and receives nothing forever. There
+ * is no error for "you are not in the room you never asked to join".
+ *
+ * Both surfaces are checked because they join by different means — the SPA owns its own
+ * socket (`socket.js`), the bubble borrows Desk's `frappe.realtime` — and a rule that only
+ * covers the implementation you happened to look at is how the other one regressed.
+ */
+{
+	const surfaces = [
+		{
+			file: SOCKET_JS,
+			label: 'the SPA socket client',
+			listens: /\.on\(\s*name\s*,|EVENT_NAMES/,
+			joins: /emit\(\s*["']doc_subscribe["']/,
+		},
+		{
+			file: SURFACE_JS,
+			label: "the bubble's coworker surface",
+			listens: /onRealtime\s*\(/,
+			joins: /doc_subscribe\s*\(/,
+		},
+	];
+
+	const problems = [];
+	for (const s of surfaces) {
+		const src = stripComments(must(s.file));
+		if (!s.listens.test(src)) {
+			console.error(
+				'MARKERS NOT FOUND: could not find the event-handling marker in ' +
+				path.relative(ROOT, s.file) + '. Re-derive this check rather than deleting it.'
+			);
+			process.exit(2);
+		}
+		if (!s.joins.test(src)) {
+			problems.push(
+				`${s.label} (${path.basename(s.file)}) binds chat event handlers but never joins a ` +
+				`document room. It will receive nothing, silently and forever.`
+			);
+		}
+	}
+
+	// The reconnect half, which is separately silent: Frappe's client never replays
+	// `open_docs` on connect, and `doc_subscribe` early-returns while the key is still there,
+	// so a surface that does not clear it goes permanently deaf after the first disconnect.
+	const surfaceSrc = stripComments(must(SURFACE_JS));
+	if (!/open_docs\s*&&\s*\w+\.open_docs\.delete|open_docs\.delete\(/.test(surfaceSrc)) {
+		problems.push(
+			"the bubble re-joins after a reconnect without clearing frappe.realtime.open_docs " +
+			"first, so doc_subscribe early-returns and the re-join never happens. The load " +
+			"balancer guarantees a disconnect, so this is the common path."
+		);
+	}
+
+	if (problems.length) {
+		fail('listening is not joining:\n        ' + problems.join('\n        '));
+	} else {
+		pass('every surface that binds chat events also joins the room, and re-joins on reconnect');
+	}
+}
+
+// ------------------------------------------------------------------ 7. the bundle rule
 
 {
 	const bundle = must(SPA_BUNDLE);
