@@ -238,6 +238,64 @@ def _opportunity_handoff(opportunity):
 	}
 
 
+def record_handoff_on_project(opportunity, when=None, by=None, skip_reason=None):
+	"""Close step 2 on a Project whose hand-off was recorded after it was created.
+
+	The seeding path (:func:`_append_steps`) covers the other order: hand-off
+	first, project second, step 2 seeded already Completed. Since v1.263.0 the
+	gate opens when the meeting is *booked*, so the usual order is the reverse —
+	the project exists while step 2 is still Pending, and closing it is this
+	function's job. Called from
+	``crm_enhancements.handoff._stamp_handoff``, which swallows and logs anything
+	raised here.
+
+	Saved with ``ignore_permissions``: the person recording the hand-off owns the
+	Opportunity, which is not the same as holding write on the Project. The
+	authority to record it was already checked there.
+
+	Returns the project it touched, or ``None`` when there was nothing to do.
+	"""
+	if not opportunity:
+		return None
+	try:
+		if not frappe.db.has_column("Opportunity", "custom_created_project"):
+			return None
+	except Exception:
+		return None
+
+	project = frappe.db.get_value("Opportunity", opportunity, "custom_created_project")
+	if not project or not frappe.db.exists("Project", project):
+		return None
+
+	doc = frappe.get_doc("Project", project)
+	if not _has_steps_field(doc):
+		return None
+	row = next(
+		(
+			r
+			for r in (doc.get(STEPS_FIELD) or [])
+			if cint(r.step_number) == HANDOFF_STEP_NUMBER
+		),
+		None,
+	)
+	if not row or row.status != "Pending":
+		return None
+
+	row.status = "Completed"
+	# The Opportunity's stamps, not fresh ones: the hand-off happened when it
+	# happened, and re-stamping here would report every one of them as instant.
+	row.completed_on = get_datetime(when) if when else now_datetime()
+	row.completed_by = by or frappe.session.user
+	if skip_reason:
+		row.notes = f"{SKIPPED_PREFIX} {skip_reason}"
+
+	# save() rather than a db_set: the before_save chain starts the next step's
+	# clock and on_update tells its owner they are up — which is the whole point
+	# of a step completing.
+	doc.save(ignore_permissions=True)
+	return project
+
+
 def _append_steps(doc):
 	"""Copy enabled templates onto ``doc``; retro-complete anchored steps.
 
@@ -303,7 +361,10 @@ def _source_opportunity(doc):
 
 
 def enforce_handoff_gate(doc, method=None):
-	"""Project ``before_insert`` — refuse a project whose hand-off is unrecorded.
+	"""Project ``before_insert`` — refuse a project with no hand-off meeting booked.
+
+	"Booked", not "held", since v1.263.0 — the predicate itself lives in
+	``crm_enhancements.handoff.handoff_block_reason``, which documents why.
 
 	**This must stay on ``before_insert``.** The obvious home is ``validate``, but
 	the app's own creation path
@@ -721,6 +782,7 @@ def escalate_overdue_handoffs():
 			"customer_name",
 			"party_name",
 			"opportunity_owner",
+			"custom_handoff_event",
 			"custom_handoff_due_by",
 			"custom_handoff_last_reminded_on",
 		],
@@ -778,10 +840,19 @@ def _deliver_handoff_overdue(row, now):
 	label = row.customer_name or row.party_name or row.name
 	days_over = _days_overdue(row.custom_handoff_due_by)
 	link = get_url_to_form("Opportunity", row.name)
+	# What the reader has to do differs by which half is missing, and since
+	# v1.263.0 so does the consequence — a booked meeting has already unblocked
+	# project creation, so telling them otherwise is both wrong and ignorable.
+	consequence = (
+		"The meeting is booked but has not been recorded — use Hand-Off Meeting Finished "
+		"on the opportunity."
+		if row.get("custom_handoff_event")
+		else "No project can be created until a hand-off meeting is booked."
+	)
 	message = (
 		f"OVERDUE hand-off meeting for {label}: due "
 		f"{frappe.utils.format_datetime(row.custom_handoff_due_by)}, {days_over} day(s) over.\n"
-		f"No project can be created until the hand-off is recorded.\n{link}"
+		f"{consequence}\n{link}"
 	)
 	subject = _("{0} days overdue — {1}: Hold Hand-Off Meeting").format(days_over, label)
 	_deliver(

@@ -3,15 +3,26 @@
  * @description
  * Shows the first three hand-off steps — Mark Opportunity as Won, Hold Hand-Off
  * Meeting, Create Project — in the Opportunity's "Hand-Off Process" tab
- * (`custom_process_progress` HTML field), and adds the buttons that *do* step 2.
+ * (`custom_process_progress` HTML field), together with the buttons that walk
+ * through them.
  *
  * As of the 2026-08-06 process meeting, step 2 happens HERE, before the project
- * exists: "Hold Hand-Off Meeting" books a real calendar Event and emails the
- * invite, then becomes "Mark Hand-Off Complete", and that recording is what
- * unlocks project creation. A System Manager can skip with a written reason.
- * The buttons are convenience only — `process_steps.enforce_handoff_gate` on
- * Project `before_insert` is the enforcement, because the audit found 8 of 28
- * projects created through paths no button controls.
+ * exists. As of v1.263.0 the order inside the tab is:
+ *
+ *   Closed Won  ->  [Schedule Hand-Off Meeting]
+ *   booked      ->  [Create Project in PM System]  [Hand-Off Meeting Finished]
+ *
+ * Booking the meeting is what opens the gate; "Hand-Off Meeting Finished" closes
+ * step 2 and never blocks the project — a meeting two days out should not hold up
+ * a project that starts today, and making it do so was teaching people to tick
+ * "held" for meetings still in the diary. See `crm_enhancements/handoff.py`.
+ *
+ * **The buttons live in the tab, not the toolbar.** They are the tab's content,
+ * next to the step they advance, rather than five entries in a form menu that is
+ * shared with every other thing an Opportunity can do. They are also convenience
+ * only — `process_steps.enforce_handoff_gate` on Project `before_insert` is the
+ * enforcement, because the audit found 8 of 28 projects created through paths no
+ * button controls.
  *
  * Steps 4-7 continue on the Project once it exists.
  *
@@ -49,6 +60,11 @@
 			.ee-process-step.skipped .ee-step-title { text-decoration: line-through; }
 			.ee-process-step.current { border-color: var(--primary, #2490ef); box-shadow: 0 0 0 1px var(--primary, #2490ef); }
 			.ee-process-step.current .ee-step-no { background: var(--primary, #2490ef); border-color: var(--primary, #2490ef); color: #fff; }
+			.ee-process-status { font-size: 12px; margin-top: 10px; }
+			.ee-process-status.green { color: #16a34a; }
+			.ee-process-status.orange { color: #d97706; }
+			.ee-process-status.red { color: #dc2626; font-weight: 600; }
+			.ee-process-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 		</style>
 	`;
 
@@ -70,12 +86,55 @@
 			</div>`;
 	}
 
-	function paint(field, steps, footer) {
+	function paint(field, steps, footer, extra) {
 		let html = `${STYLE}<div class="ee-process-bar">`;
 		steps.forEach((s) => (html += step_html(s)));
 		html += "</div>";
 		if (footer) html += footer;
+		if (extra) html += extra;
 		field.$wrapper.html(html);
+	}
+
+	function when(value) {
+		return value ? frappe.datetime.str_to_user(value) : "";
+	}
+
+	// -----------------------------------------------------------------------
+	// One view of the truth
+	//
+	// `handoff_state` is authoritative (it is the server's own gate predicate),
+	// but it is a round trip that can fail, and a tab that renders nothing on a
+	// dropped request is the bug this file already had once. So every fact falls
+	// back to the document the form is holding.
+	// -----------------------------------------------------------------------
+
+	function facts(frm, state) {
+		const s = state || {};
+		const known = !!s.available;
+		const held = !!(known ? s.held : frm.doc.custom_handoff_meeting_held);
+		const due_by = (known ? s.due_by : frm.doc.custom_handoff_due_by) || "";
+		const won = frm.doc.status === "Closed Won";
+		return {
+			won: won,
+			held: held,
+			skip_reason: (known ? s.skip_reason : frm.doc.custom_handoff_skip_reason) || "",
+			held_on: (known ? s.held_on : frm.doc.custom_handoff_meeting_on) || "",
+			held_by: s.held_by || "",
+			scheduled: !!(known ? s.event : frm.doc.custom_handoff_event),
+			event_on: s.event_on || "",
+			due_by: due_by,
+			overdue: known
+				? !!s.overdue
+				: won && !held && !!due_by && due_by < frappe.datetime.now_datetime(),
+			// Unknown state is treated as "the gate applies and is closed": the
+			// pessimistic reading only ever hides a button, and the server refuses
+			// anything the hidden button would have started anyway.
+			gate_applies: known ? !!(s.gate_applies && s.enabled) : true,
+			gate_open: known ? !!s.gate_open : false,
+			gate_message: s.gate_message || __("Schedule the Hand-Off Meeting on the Opportunity first."),
+			can_skip: !!s.can_skip,
+			project: (known ? s.project : frm.doc.custom_created_project) || "",
+		};
 	}
 
 	// The three opportunity->project steps derived from the Opportunity itself.
@@ -83,170 +142,167 @@
 	// tracker was never started (in-flight projects aren't auto-seeded — see
 	// process_steps.py), so "Create Project" reads as done and the meeting is the
 	// live step. When false (no project yet) this is the original pre-project view.
-	function derived_steps(frm, project_created) {
-		const won = frm.doc.status === "Closed Won";
-		const won_meta = won
+	function derived_steps(frm, f, project_created) {
+		const won_meta = f.won
 			? frm.doc.custom_date_closed_won
-				? `${__("Done")} ${frappe.datetime.str_to_user(frm.doc.custom_date_closed_won)}`
+				? `${__("Done")} ${when(frm.doc.custom_date_closed_won)}`
 				: __("Done")
 			: __("Mark the opportunity Closed Won");
 
 		// Step 2 is recorded HERE now, ahead of the project (2026-08-06 meeting),
 		// so it reads from the Opportunity's own hand-off fields rather than
 		// waiting for a project row to exist.
-		const held = !!frm.doc.custom_handoff_meeting_held;
-		const overdue =
-			won &&
-			!held &&
-			frm.doc.custom_handoff_due_by &&
-			frm.doc.custom_handoff_due_by < frappe.datetime.now_datetime();
 		let handoff_meta;
-		if (held) {
-			handoff_meta = frm.doc.custom_handoff_skip_reason
+		if (f.held) {
+			handoff_meta = f.skip_reason
 				? __("Skipped")
-				: frm.doc.custom_handoff_meeting_on
-					? `${__("Done")} ${frappe.datetime.str_to_user(frm.doc.custom_handoff_meeting_on)}`
+				: f.held_on
+					? `${__("Done")} ${when(f.held_on)}`
 					: __("Done");
-		} else if (!won) {
+		} else if (!f.won) {
 			handoff_meta = __("After the opportunity is won");
-		} else if (frm.doc.custom_handoff_due_by) {
-			handoff_meta = `${overdue ? __("OVERDUE") : __("due")} ${frappe.datetime.str_to_user(
-				frm.doc.custom_handoff_due_by
-			)}`;
+		} else if (f.scheduled) {
+			handoff_meta = f.event_on ? `${__("Booked")} ${when(f.event_on)}` : __("Booked");
+		} else if (f.due_by) {
+			handoff_meta = `${f.overdue ? __("OVERDUE") : __("due")} ${when(f.due_by)}`;
 		} else {
 			handoff_meta = __("Hold the hand-off meeting");
 		}
 
+		// The gate, shown rather than merely enforced, so the order is visible
+		// before somebody hits a server error.
+		const unblocked = f.scheduled || f.held || !f.gate_applies;
+		let create_meta;
+		if (project_created) {
+			create_meta = __("Done");
+		} else if (f.won && !unblocked) {
+			create_meta = __("Blocked until the hand-off meeting is booked");
+		} else if (f.won) {
+			create_meta = __("Ready");
+		} else {
+			create_meta = "";
+		}
+
 		return [
-			{ no: 1, title: __("Mark Opportunity as Won"), status: won ? "Completed" : "Pending", current: !won, meta: won_meta },
+			{
+				no: 1,
+				title: __("Mark Opportunity as Won"),
+				status: f.won ? "Completed" : "Pending",
+				current: !f.won,
+				meta: won_meta,
+			},
 			{
 				no: 2,
 				title: __("Hold Hand-Off Meeting"),
-				status: held ? (frm.doc.custom_handoff_skip_reason ? "Skipped" : "Completed") : "Pending",
-				current: won && !held,
+				status: f.held ? (f.skip_reason ? "Skipped" : "Completed") : "Pending",
+				current: f.won && !f.held,
 				meta: handoff_meta,
 			},
 			{
 				no: 3,
 				title: __("Create Project in PM System"),
 				status: project_created ? "Completed" : "Pending",
-				// Blocked until the hand-off is recorded — the gate, shown rather
-				// than merely enforced, so the order is visible before somebody
-				// hits a server error.
-				current: won && held && !project_created,
-				meta: project_created
-					? __("Done")
-					: won && !held
-						? __("Blocked until the hand-off is recorded")
-						: won
-							? __("Use the Create project prompt")
-							: "",
+				current: f.won && unblocked && !project_created,
+				meta: create_meta,
 			},
 		];
 	}
 
-	function render(frm) {
-		const field = frm.get_field("custom_process_progress");
-		if (!field || !field.$wrapper) return;
-		// Master switch (server guards are authority): hide while dormant.
-		if (!frappe.boot.ee_process_automation || frm.is_new()) {
-			field.$wrapper.html("");
-			return;
-		}
+	// -----------------------------------------------------------------------
+	// The buttons that DO the steps — rendered into the tab.
+	// -----------------------------------------------------------------------
 
-		if (frm.doc.custom_created_project) {
-			// Mirror the linked Project's first three steps (live statuses).
-			frappe
-				.xcall(
-					"erpnext_enhancements.crm_enhancements.project_prompt.opportunity_handoff_steps",
-					{ opportunity_name: frm.doc.name }
-				)
-				.then((data) => {
-					const rows = (data && data.steps) || [];
-					const proj = (data && data.project) || frm.doc.custom_created_project;
-					if (!rows.length) {
-						// Project exists but its hand-off tracker was never started
-						// (in-flight projects opt in on the Project via "Start Hand-Off
-						// Process"). Show the project-aware derived view + a pointer,
-						// so the tab is never blank.
-						const footer = `<div class="ee-step-meta" style="margin-top:6px;">
-							${__("Detailed hand-off tracker not started on")} <a href="/app/project/${encodeURIComponent(proj)}">${frappe.utils.escape_html(proj)}</a>
-						</div>`;
-						paint(field, derived_steps(frm, true), footer);
-						return;
-					}
-					const current = rows.find((s) => s.status === "Pending");
-					const steps = rows.map((s) => ({
-						no: s.step_number,
-						title: s.step_title,
-						status: s.status,
-						current: !!current && s.step_number === current.step_number,
-						meta:
-							s.status === "Completed" && s.completed_on
-								? `${__("Done")} ${frappe.datetime.str_to_user(s.completed_on)}`
-								: s.responsible_role || "",
-					}));
-					const footer = `<div class="ee-step-meta" style="margin-top:6px;">
-						${__("Full hand-off continues on")} <a href="/app/project/${encodeURIComponent(proj)}">${frappe.utils.escape_html(proj)}</a>
-					</div>`;
-					paint(field, steps, footer);
-				})
-				.catch(() => {
-					// Never leave the tab blank on a transient call failure.
-					paint(field, derived_steps(frm, true));
-				});
-			return;
-		}
-
-		// No project yet — derive the three steps from the Opportunity.
-		paint(field, derived_steps(frm, false));
+	function button(action, label, variant) {
+		return `<button type="button" class="btn btn-${variant} btn-sm" data-ee-handoff="${action}">
+			${frappe.utils.escape_html(label)}</button>`;
 	}
 
-	// -----------------------------------------------------------------------
-	// The hand-off gate: buttons that DO step 2, on the Opportunity.
-	//
-	// Per the 2026-08-06 meeting the hand-off must happen before a Project can
-	// exist, so the action lives here rather than on a project that does not yet
-	// exist. These buttons are convenience and signposting only — the server
-	// enforces the gate on Project before_insert, so hiding a button can never be
-	// the thing that stops a non-compliant project.
-	// -----------------------------------------------------------------------
+	function status_html(f) {
+		if (!f.won) return "";
+		let cls = "orange";
+		let text;
+		if (f.held && f.skip_reason) {
+			text = __("Hand-off SKIPPED {0} by {1}: {2}", [
+				when(f.held_on) || __("earlier"),
+				f.held_by || "",
+				f.skip_reason,
+			]);
+		} else if (f.held) {
+			cls = "green";
+			text = __("Hand-off recorded {0} by {1}.", [when(f.held_on) || __("earlier"), f.held_by || ""]);
+		} else if (f.scheduled) {
+			// Booked and still past SLA is a real state — the meeting can be booked
+			// for later than the two business days allowed — and it must not read
+			// as "all good" just because half of it was done.
+			const record_it = __(
+				"Use Hand-Off Meeting Finished once it has happened — the project does not wait for it."
+			);
+			const booked = f.event_on
+				? __("Meeting booked for {0}.", [when(f.event_on)])
+				: __("Meeting booked.");
+			cls = f.overdue ? "red" : "green";
+			text = f.overdue
+				? `${__("Hand-off is past SLA (due {0}).", [when(f.due_by)])} ${booked} ${record_it}`
+				: `${booked} ${record_it}`;
+		} else if (f.overdue) {
+			cls = "red";
+			text = __("Hand-off meeting is OVERDUE (due {0}). {1}", [when(f.due_by), f.gate_message]);
+		} else if (f.gate_applies) {
+			text = f.gate_message;
+		} else {
+			return "";
+		}
+		return `<div class="ee-process-status ${cls}">${frappe.utils.escape_html(text)}</div>`;
+	}
 
-	function schedule_meeting(frm, state) {
-		frappe
-			.xcall("erpnext_enhancements.crm_enhancements.handoff.resolve_attendees", {
-				opportunity: frm.doc.name,
-			})
-			.then((attendees) => {
-				erpnext_enhancements.handoff_meeting_dialog.open({
-					title: __("Hold Hand-Off Meeting"),
-					description: __(
-						"Sales, Production and Billing are invited by email and the meeting is added to the calendar. Recording the meeting afterwards is what unlocks project creation."
-					),
-					attendees: attendees,
-					on_submit(values) {
-						return frappe
-							.xcall(
-								"erpnext_enhancements.crm_enhancements.handoff.schedule_handoff_meeting",
-								{
-									opportunity: frm.doc.name,
-									starts_on: values.starts_on,
-									duration_minutes: values.duration_minutes,
-									attendees: values.attendees,
-								}
-							)
-							.then((result) => {
-								frappe.show_alert({
-									message: result.invited
-										? __("Meeting created and invites sent.")
-										: __("Meeting created, but the invite email failed — check the Error Log."),
-									indicator: result.invited ? "green" : "orange",
-								});
-								frm.reload_doc();
-							});
-					},
-				});
-			});
+	function actions_html(f) {
+		if (!f.won) return "";
+		const buttons = [];
+
+		// Booking is step 2 and comes first. On a gate-exempt legacy deal the two
+		// can be offered together, and then this one still leads — one primary
+		// button, pointing at the step the process actually wants next.
+		const booking_first = !f.held && !f.scheduled;
+		if (booking_first) {
+			buttons.push(button("schedule", __("Schedule Hand-Off Meeting"), "primary"));
+		}
+		// Offered strictly on the server's own predicate, so the tab can never
+		// show a button whose insert is guaranteed to be refused.
+		if (!f.project && (f.gate_open || !f.gate_applies)) {
+			buttons.push(
+				button("create", __("Create Project in PM System"), booking_first ? "default" : "primary")
+			);
+		}
+		// Secondary on purpose: closing step 2 is bookkeeping the process needs,
+		// not the thing standing between the user and their project.
+		if (!f.held && (f.scheduled || !f.gate_applies)) {
+			buttons.push(button("finish", __("Hand-Off Meeting Finished"), "default"));
+		}
+		// A meeting that moved is a normal thing to happen, just no longer the
+		// primary action once one is on the calendar.
+		if (!f.held && f.scheduled) {
+			buttons.push(button("reschedule", __("Re-schedule Meeting"), "default"));
+		}
+		if (!f.held && f.gate_applies && f.can_skip) {
+			buttons.push(button("skip", __("Skip Hand-Off"), "default"));
+		}
+
+		if (!buttons.length) return "";
+		return `<div class="ee-process-actions">${buttons.join("")}</div>`;
+	}
+
+	function schedule_meeting(frm, reschedule) {
+		erpnext_enhancements.handoff_meeting_dialog.schedule_for_opportunity(frm.doc.name, {
+			title: reschedule ? __("Re-schedule Hand-Off Meeting") : __("Schedule Hand-Off Meeting"),
+			on_success: () => frm.reload_doc(),
+		});
+	}
+
+	function create_project(frm) {
+		erpnext_enhancements.crm.open_create_project_dialog(frm.doc.name, {
+			frm: frm,
+			on_success: () => frm.reload_doc(),
+		});
 	}
 
 	function mark_complete(frm) {
@@ -255,10 +311,7 @@
 				opportunity: frm.doc.name,
 			})
 			.then(() => {
-				frappe.show_alert({
-					message: __("Hand-off recorded. You can now create the project."),
-					indicator: "green",
-				});
+				frappe.show_alert({ message: __("Hand-off recorded."), indicator: "green" });
 				frm.reload_doc();
 			});
 	}
@@ -297,69 +350,115 @@
 		dialog.show();
 	}
 
-	function add_buttons(frm) {
-		if (frm.is_new() || !frappe.boot.ee_process_automation) return;
+	const ACTIONS = {
+		schedule: (frm) => schedule_meeting(frm, false),
+		reschedule: (frm) => schedule_meeting(frm, true),
+		create: create_project,
+		finish: mark_complete,
+		skip: skip_handoff,
+	};
+
+	function bind(frm, field) {
+		field.$wrapper.find("[data-ee-handoff]").on("click", function () {
+			const run = ACTIONS[$(this).attr("data-ee-handoff")];
+			if (run) run(frm);
+		});
+	}
+
+	// -----------------------------------------------------------------------
+	// Render
+	// -----------------------------------------------------------------------
+
+	/** `{steps, footer}` for the bar — the project's real rows where they exist. */
+	function step_view(frm, f) {
+		if (!f.project) return Promise.resolve({ steps: derived_steps(frm, f, false) });
+
+		return frappe
+			.xcall("erpnext_enhancements.crm_enhancements.project_prompt.opportunity_handoff_steps", {
+				opportunity_name: frm.doc.name,
+			})
+			.then((data) => {
+				const rows = (data && data.steps) || [];
+				const proj = (data && data.project) || f.project;
+				const link = `<a href="/app/project/${encodeURIComponent(proj)}">${frappe.utils.escape_html(
+					proj
+				)}</a>`;
+				if (!rows.length) {
+					// Project exists but its hand-off tracker was never started
+					// (in-flight projects opt in on the Project via "Start Hand-Off
+					// Process"). Show the project-aware derived view + a pointer, so
+					// the tab is never blank.
+					return {
+						steps: derived_steps(frm, f, true),
+						footer: `<div class="ee-step-meta" style="margin-top:6px;">
+							${__("Detailed hand-off tracker not started on")} ${link}
+						</div>`,
+					};
+				}
+				const current = rows.find((s) => s.status === "Pending");
+				return {
+					steps: rows.map((s) => ({
+						no: s.step_number,
+						title: s.step_title,
+						status: s.status,
+						current: !!current && s.step_number === current.step_number,
+						meta:
+							s.status === "Completed" && s.completed_on
+								? `${__("Done")} ${when(s.completed_on)}`
+								: s.responsible_role || "",
+					})),
+					footer: `<div class="ee-step-meta" style="margin-top:6px;">
+						${__("Full hand-off continues on")} ${link}
+					</div>`,
+				};
+			})
+			// Never leave the tab blank on a transient call failure.
+			.catch(() => ({ steps: derived_steps(frm, f, true) }));
+	}
+
+	function render(frm) {
+		const field = frm.get_field("custom_process_progress");
+		if (!field || !field.$wrapper) return;
+		// Master switch (server guards are authority): hide while dormant.
+		if (!frappe.boot.ee_process_automation || frm.is_new()) {
+			field.$wrapper.html("");
+			return;
+		}
 
 		frappe
 			.xcall("erpnext_enhancements.crm_enhancements.handoff.handoff_state", {
 				opportunity: frm.doc.name,
 			})
+			.catch(() => null)
 			.then((state) => {
-				if (!state || !state.available || !state.enabled) return;
-				if (!state.is_won || !state.gate_applies) return;
-
-				if (state.held) {
-					// Already recorded — say so where the user is looking, rather
-					// than leaving them to find a read-only field on a tab.
-					const when = state.held_on
-						? frappe.datetime.str_to_user(state.held_on)
-						: __("earlier");
+				const f = facts(frm, state);
+				// An overdue hand-off is the one thing that stays on the form
+				// dashboard rather than moving into the tab with the buttons: the
+				// audit found 17 of 17 meetings silently past SLA, and a warning
+				// only visible to somebody who already went looking is the failure
+				// mode, not the fix.
+				if (f.overdue && !f.held) {
 					frm.dashboard.add_comment(
-						state.skip_reason
-							? __("Hand-off SKIPPED {0} by {1}: {2}", [when, state.held_by || "", state.skip_reason])
-							: __("Hand-off recorded {0} by {1}.", [when, state.held_by || ""]),
-						state.skip_reason ? "orange" : "green",
+						__("Hand-off meeting is OVERDUE (due {0}). {1}", [
+							when(f.due_by),
+							f.scheduled
+								? __("A meeting is booked — record it on the Hand-Off Process tab.")
+								: f.gate_message,
+						]),
+						"red",
 						true
 					);
-					return;
 				}
-
-				// The gate is closed. Say what to do, in the words the server uses.
-				frm.dashboard.add_comment(
-					state.overdue
-						? __("Hand-off meeting is OVERDUE (due {0}). {1}", [
-								frappe.datetime.str_to_user(state.due_by),
-								state.gate_message,
-							])
-						: state.gate_message,
-					state.overdue ? "red" : "orange",
-					true
-				);
-
-				frm.add_custom_button(
-					state.event ? __("Mark Hand-Off Complete") : __("Hold Hand-Off Meeting"),
-					() => (state.event ? mark_complete(frm) : schedule_meeting(frm, state))
-				).addClass("btn-primary");
-
-				// Once a meeting is booked, scheduling another is still legitimate
-				// (it got moved) — just no longer the primary action.
-				if (state.event) {
-					frm.add_custom_button(__("Re-schedule Meeting"), () => schedule_meeting(frm, state), __("Hand-Off"));
-				}
-				if (state.can_skip) {
-					frm.add_custom_button(
-						__("Skip hand-off (requires reason)"),
-						() => skip_handoff(frm),
-						__("Hand-Off")
-					);
-				}
+				return step_view(frm, f).then((view) => {
+					paint(field, view.steps, view.footer, status_html(f) + actions_html(f));
+					bind(frm, field);
+				});
 			});
 	}
 
 	frappe.ui.form.on("Opportunity", {
 		refresh(frm) {
 			render(frm);
-			add_buttons(frm);
 		},
 	});
 })();
