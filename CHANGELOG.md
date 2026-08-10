@@ -7,6 +7,289 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.264.2] - 2026-08-10
+
+Seven defects in v1.264.1, found by an adversarial review of that change — four independent
+lenses over the diff, each finding then handed to a separate agent whose only job was to
+refute it. Fourteen were raised and seven survived. Chat is still dormant, so none of this
+changes behaviour on any site until it is switched on.
+
+Two of the seven are worth reading even if you skip the rest, because both are cases where
+the code and its own documentation disagreed and only the documentation was checked.
+
+### Fixed
+
+- **`citations_append` re-sorted the sources row mid-answer.** `renderManifestSources()`
+  always sorted cited-first, and the mid-turn append arm called it — so on every tool call
+  the chips reshuffled under a reader who might be about to click one. The code comment,
+  the module README and the v1.264.1 changelog all state that the reorder happens "once, in
+  `finishStreaming`, and nowhere else". They were describing an intent, not the code.
+
+  The sort is now gated on the caller (`orderManifestForDisplay(..., {sortCitedFirst})`) and
+  requested only from `finishStreaming` and from a restored history turn. **The marks stay
+  live** — that was always the valuable half — and only the order waits. The rule is
+  positional, so the pure test cannot see it; `scripts/test_triton_widget_guards.js` now
+  asserts which call sites pass the flag, and is mutation-tested in three directions.
+
+- **v1.264.1's own "keep the row last" fix was itself the regression.** It moved the sources
+  row to the end of the message on every rebuild, on the belief that the pre-Phase-3 row was
+  always last. It was not: the `done` handler runs `renderSources()` and only *then*
+  `renderChart()`, so the old row sat **above** the chart — and `renderHistoryMessage` does
+  the same. Forcing it to the end therefore moved it, and made a live turn disagree with the
+  same turn re-opened from history. The row is now appended only when newly created, which
+  gives it the slot the old row had in both paths.
+
+- **The `citation_miss` counter counted render frames, not misses.** `onMiss` fires again for
+  the same bad id on every streaming frame, so a single unresolvable `[[ref:N]]` on one long
+  answer tripped the "repeated citation misses" warning within a second. A counter that fires
+  on one occurrence is not a rate signal, it is a false alarm — and a false alarm is how the
+  real one gets ignored. Misses are now a per-turn `Set`, folded into the module counter once,
+  at stream end.
+
+- **The bubble's coworker composer lost its IME fix to a `git checkout` during mutation
+  testing**, and shipped in v1.264.1 without it. Restored — and the adversarial review
+  *refuted* this finding, having read the reverted file and reasoned about the wrong code, so
+  it was confirmed by hand against the commit rather than taken on the review's word.
+
+- **Three keydown handlers had the IME guard in the wrong position.** Enter and Tab commit an
+  IME candidate, Escape cancels one and the arrows move through it, so a guard placed below a
+  mention-menu block protects every path except the one the user is on. Both composers now
+  check first, before any branch.
+
+- **The SPA's document-level Escape closed the thread pane during composition**, discarding
+  the half-typed reply on a keystroke aimed at the candidate window. Guarded.
+
+- **The SPA's `j`/`k` shortcuts had the exact AltGr defect `Alt+T` was fixed for** one file
+  over, and additionally swallowed `Ctrl+J` / `Cmd+K` from the browser. Single-letter global
+  shortcuts are where this always shows up; `ctrl`/`meta`/`alt` are now excluded.
+
+### Changed
+
+- **`scripts/test_chat_source_rules.js` now enforces keydown ORDERING** across all three chat
+  handlers — the IME guard first, modifiers excluded before bare single-letter shortcuts —
+  because in this family presence is worthless and position is everything.
+
+- **`scripts/test_triton_widget_guards.js` now asserts the no-manifest path is still
+  *reached*, not merely still present.** The previous block proved `renderSources()` existed
+  with the right shape; a preserved function nothing calls is preserved the way a museum
+  piece is. It now checks the live `case "sources":` arm and the history fallback, including
+  that the short-circuit is `live.manifest && live.manifest.size` — `if (live.manifest)` alone
+  would swallow the sources row on every turn where retrieval returned nothing.
+
+## [1.264.1] - 2026-08-10
+
+The four answers from the Phase 3 checkpoint. Chat is still dormant, so none of this
+changes behaviour on any site until it is switched on.
+
+### Changed
+
+- **The sources row now shows the full citation manifest, with the entries the model
+  actually cited marked and sorted first** — approved at the checkpoint, and recorded here
+  because it is a deliberate exception to locked decision #7's "the sources dropdown must be
+  preserved exactly". Research 03 §12.6 proposed it and required an explicit human yes
+  rather than a unilateral edit; that yes was given on 2026-08-10.
+
+  Three properties make the change safe rather than merely approved:
+
+  * **The pre-Phase-3 renderer is untouched and is still the path every turn takes.** No
+    site emits a manifest until Phase 5 ships, so `renderSources()` — same container class,
+    same chip class, same `label || title || url` fallback, same `textContent`, same
+    `target="_blank" rel="noopener"` — is what runs today, on every answer.
+    `renderManifestSources()` is a **separate function** beside it, which is what makes
+    "with no manifest, nothing changed" a fact rather than a claim.
+    `scripts/test_triton_widget_guards.js` now asserts both, and fails if the old renderer
+    grows an `innerHTML` or loses any of that shape.
+  * **The row is still the whole retrieved set.** Uncited entries are dimmed, never dropped
+    — that superset is the property decision #7 was protecting, and hiding retrieved-but-
+    unused sources would remove exactly what somebody checking an answer wants to see.
+  * **Marking is live; reordering happens once, at stream end.** A chip lighting up as the
+    model leans on it is worth watching; a row that reshuffles several times a second moves
+    the chip the reader was about to click.
+
+  Ordering within each group is by id, not by relevance: the inline markers read `[1]`,
+  `[2]`, `[3]`, and any other order makes the reader hunt for the chip matching the number
+  they just clicked past. `orderManifestForDisplay()` is pure and carries the rule.
+
+- **`/chat/triton` returning the user to the bubble is confirmed as the shipped scope**, not
+  a placeholder. The bubble remains the full Triton client; the SPA renders `@triton` replies
+  inside coworker rooms with the same message component and the same inline citations. The
+  alternative was a second Triton client inside a website route, which is the fork locked
+  decision #8 forbids and the regression the Phase 3 gate exists to prevent.
+
+- **Presence rendering is confirmed as shipped**: a coworker with no ERPNext session shows
+  offline with an explicit "presence reflects ERPNext, not Google Chat" explanation, rather
+  than a bare grey dot that would imply they are away from their desk.
+
+### Fixed
+
+- **Enter-to-send fired while an IME was composing.** Pressing Enter to commit a candidate is
+  the ordinary way to type Japanese, Chinese and Korean; the widget sent the half-finished
+  message instead of finishing the word. Now guarded on `isComposing` **and** the legacy
+  `keyCode === 229`, because older WebKit and several Android IMEs leave `isComposing` unset
+  on the keydown that ends composition and report 229 instead — the exact case the guard is
+  for. Present since the widget's first commit; invisible to anybody typing in a Latin script,
+  which is why it survived.
+
+- **`Alt+T` also fired for AltGr.** Windows and many EU layouts report AltGr as
+  `ctrlKey + altKey`, so typing a perfectly ordinary character opened the assistant over
+  whatever the user was writing. `ctrlKey`/`metaKey` are now excluded, before the branch
+  rather than after it. Both fixes are guarded with **ordering** assertions — an early return
+  that lands after the branch it is meant to skip is decoration — and both were
+  mutation-tested in five directions.
+
+  Three further widget defects found by the same audit remain **reported and unfixed**, since
+  they were not part of this approval: `state.live` is write-only dead state, `newChat()`
+  leaks the personas overlay, and the approve→continuation `send()` is silently dropped
+  mid-stream.
+
+- **The IME rule is now one function, not four copies.** `dom.js::isComposingKey` checks both
+  signals and is consulted by all four composers (the widget, the bubble's coworker surface,
+  the SPA composer, the SPA thread composer) plus the SPA's search box. The three written in
+  v1.264.0 carried only the `isComposing` half — i.e. they were fixed everywhere except on the
+  engines the fix is for. Four copies of a rule is four chances for the next one to carry half
+  of it.
+
+- **`isComposingKey` was used in the widget and never imported** — a bare global reference that
+  would have thrown `ReferenceError` at load and taken the *entire* assistant with it on every
+  desk page. Caught by the guard written in the same change, before it ever ran.
+
+  esbuild cannot catch this class: it fails on an unresolvable import *path*, but a name that
+  is simply never imported compiles to a global lookup and fails only in the browser. So
+  `scripts/test_chat_source_rules.js` now resolves cross-module names statically — every
+  imported name is really exported, and every shared helper a file uses is really imported —
+  across the client **and the widget**, which is the largest consumer and was the file the bug
+  was in. Mutation-tested in both directions.
+
+- **The manifest sources row could jump above a chart.** The manifest arrives *before* the
+  first token, so a row created then sat above the charts and action cards that arrive later,
+  whereas the pre-Phase-3 row was appended from `sources`/`done` and was always last. Now
+  re-appended on each rebuild, which moves it back to the end. Decision #7 does not enumerate
+  the row's position, but "preserve exactly" is not a licence to move it — and a row that
+  jumps only when Phase 5 is emitting is drift nobody would trace back here.
+
+## [1.264.0] - 2026-08-10
+
+ADR 0009 **Phase 3 — the chat SPA**. Chat remains dormant (`Chat Settings.enabled = 0`,
+`dry_run_mode = 1`, `restrict_to_whitelist = 1` with an empty allow-list), so nothing in this
+release changes behaviour on any site until somebody deliberately turns it on.
+
+### Added
+
+- **The entire chat read/write HTTP surface (`erpnext_enhancements/chat/api/`).** Phase 2's
+  brief said "no SPA and no UI of any kind" and was followed literally: `chat/` exposed six
+  whitelisted methods and every one was operational. There was no `get_rooms`, no
+  `get_messages`, no `send_message`. This release builds all of it — room list, keyset
+  history paging, threads, the deep-link "page containing this message" read, search, member
+  list, mention autocomplete, compose/edit/delete, read state, typing and presence.
+
+  It lives under `chat/` rather than in `api/chat.py` for one reason:
+  `tests/test_chat_rawsql_guard.py` walks `chat/**/*.py` with `ast` and fails the build on a
+  raw query against a conversation-bearing table that does not AND in
+  `permissions.membership_filter_sql`. This package is *made of* raw queries — keyset paging
+  and search are exactly where somebody reaches for `frappe.db.sql` — so putting it anywhere
+  else would have moved the most leak-prone code in the feature outside its only automated
+  guard. The guard caught the new modules on the day they were written, which is the point.
+
+- **The SPA at `/chat`** (`www/chat.html` + `www/chat.py` + `public/js/chat/`), served for
+  every sub-path via a new `website_route_rules` entry, so a hard refresh at
+  `/chat/room/<room>?thread=<msg>&message=<msg>` renders the shell rather than 404ing. Every
+  deep-link criterion in this phase, every notification link Phase 4 sends and every
+  `chat_message` citation Phase 5 resolves depends on that one rule.
+
+  Room list with unread and mention indicators, a virtualised transcript (≤~80 DOM nodes
+  retained at rest regardless of scroll depth), day separators and message grouping,
+  tombstones, threads in a side pane, a composer with drafts and `@mention` autocomplete,
+  optimistic send with reconciliation, attachments and an image lightbox, search, the member
+  list, keyboard operation, and a narrow-viewport push-navigation stack.
+
+- **A dual-surface floating bubble** (decision #8). The bubble stays where it is on every
+  Desk page and now carries both Triton and coworker conversations, with an unread badge, an
+  expand control that deep-links into the SPA, and a symmetric reverse handoff so collapsing
+  back returns to the same conversation. The handoff record lives in `sessionStorage` (per
+  tab, survives the same-tab navigation) and is mirrored to `localStorage` with a nonce and a
+  60-second TTL for the middle-click-opens-a-new-tab case — consumed and deleted on read, so
+  a week-old record cannot silently hijack a fresh `/chat` visit.
+
+- **Inline `[[ref:N]]` citation rendering** (decision #7), applied to the markdown renderer's
+  **output** rather than its input, so the existing sanitiser policy sees exactly the string
+  it saw before and is untouched. The sources dropdown is unchanged. Written against the
+  Phase 5 contract and **degrades to today's exact behaviour when no `citations` event
+  arrives** — that is the required behaviour rather than a fallback, and it is what lets this
+  phase ship before Phase 5 exists.
+
+- **Presence, typing and read receipts, all ERPNext-side** (invariant I14). Google Chat
+  exposes none of the three: it has no typing API at all, and its availability and read-state
+  surfaces are self-scoped, so they cannot power a dot next to a coworker's name. Presence is
+  **Redis with a 75-second TTL and no DocType** — at fifty users heartbeating every 30 s a
+  DocType would be ~144,000 writes a day for data worthless after a minute, and more
+  importantly the TTL *is* the crash handling, so there is deliberately no cleanup path for a
+  dead browser. Typing writes nothing to the database at all.
+
+  Keys are per (user, **client**), not per user. A user has three tabs; presence is the union
+  across them and focus is "**no** client of this user has that room focused". Keying on the
+  user alone lets the last tab to heartbeat overwrite the others, which reads as
+  "notifications stopped working when I opened a second tab".
+
+- **Four test suites, all mutation-tested in both directions**: one bench-free pytest suite
+  for the server contracts and three plain-`node` scripts for the client (`node`, no runner,
+  no `npm install` — the shape the repo's existing JS guards already use). They caught three
+  real defects while being written, including a zero-initialised timestamp in the read
+  batcher and the typing throttle that swallowed the first emission of each and would have
+  been invisible against a real clock.
+
+### Changed
+
+- **`chat/realtime.py` gained the seven Phase 3 event names** and an `ALL_EVENTS` set.
+  `scripts/test_chat_source_rules.js` fails the build when that set and the client's
+  `EVENT_NAMES` disagree, because a client listening for an event nobody publishes is
+  indistinguishable — from the client's side — from a quiet room.
+
+  The names use an underscore (`chat_message_created`), not the colon form the phase brief's
+  §4.5 table shows. Phase 1 shipped the underscore form and Phase 2 publishes it; adopting
+  the colon form would have been a silent break of the sync engine's own events.
+
+- **Transcript ordering is `seq`, not `creation`**, diverging from the brief's §4.13 wording.
+  `seq` is allocated under the room's row lock, is immutable, is dense per room and has no
+  timezone; a late-arriving inbound message (a Google `createTime` weeks old) still takes the
+  next `seq` and renders in `seq` order with a "recovered" affordance rather than being
+  re-sorted into the past. Two systems with independent clocks cannot agree on anything else.
+  It also makes unread arithmetic — `seq_high_water - last_read_seq` — exact and join-free.
+
+- **Search is `LIKE`, not `MATCH`.** `Chat Message.text_plain` is documented as suitable for
+  a FULLTEXT index and no such index exists; Phase 1 shipped the column, not the index. At
+  this data volume an indexed scan over one user's rooms is comfortably fast. Stated
+  explicitly rather than left implicit, with the upgrade path (one `alter table` plus a
+  `MATCH … AGAINST` branch) written down for when a room passes ~100k messages.
+
+- **The two-Vue-copies hazard is closed structurally rather than by configuration.** The SPA
+  bundles no Vue at all and is a separate document at a website route reached by navigation,
+  so the Desk document has `window.Vue` and no SPA and the SPA document has neither. A
+  build-time guard fails if either bundle ever grows a Vue import or a `createApp` call — the
+  hazard would otherwise return years from now as "the widget stopped updating after I opened
+  chat", six weeks after the change that caused it.
+
+### Fixed
+
+- **An edit or delete made in ERPNext published no realtime event, so no other ERPNext client
+  saw it until they refreshed.** `sync/inbound.py::_publish` fans out `chat_message_edited` /
+  `chat_message_deleted` for a change arriving from Google; `outbox.propagate_message_change`
+  — its ERPNext-side twin — relays the change onward to Google and publishes nothing.
+
+  Phase 3's own write path now announces its own writes (`api/compose.py::_publish_change`),
+  which closes it for the SPA without touching the sync engine — Phase 2's soak asserts
+  against `finalise_new_message` and editing it would put a Phase 3 concern inside the thing
+  that proof measures. It does **not** close the general case: an edit made through the desk,
+  a patch or a future admin tool still publishes nothing. That residual belongs to whoever
+  owns `propagate_message_change` and is carried into the Phase 3 checkpoint as a Phase 2
+  defect rather than papered over here.
+
+- **`ReadBatcher` and `TypingThrottle` swallowed their first emission.** Both compared
+  `now - lastEmitAt` against a zero-initialised timestamp, so the first flush and the first
+  typing indicator were throttled against the epoch. Invisible with a real `Date.now()` —
+  the first call is 1.7e12 ms past zero — which is exactly why it survived review and only
+  surfaced under a test clock. Both now initialise to `-Infinity`, which is what "no emission
+  has happened yet" actually means.
+
 ## [1.263.2] - 2026-08-10
 
 ### Fixed

@@ -108,6 +108,7 @@ The app ships the Frappe modules registered in [`modules.txt`](erpnext_enhanceme
 | **Device Management** (`device_management/`) | Device inventory and dashboard | [README](erpnext_enhancements/device_management/README.md) |
 | **MDM Integration** (`mdm_integration/`) | Mobile device management (locate / lock / wipe / patch) | [README](erpnext_enhancements/mdm_integration/README.md) |
 | **Offsite Backup** (`offsite_backup/`) | Verified nightly/weekly backups to a Google Drive Shared Drive, with retention and a staleness watchdog | [README](erpnext_enhancements/offsite_backup/README.md) |
+| **Chat** (`chat/`) | Employee chat mirrored bidirectionally with Google Chat: rooms, threaded messages, the transactional-outbox relay, the inbound Workspace Events pipeline, and (Phase 3) the SPA at `/chat` plus the coworker surface in the floating bubble. **Ships dormant** — `Chat Settings.enabled = 0` on every site. See [ADR 0009](decisions/adr/0009-erpnext-google-chat-triton.md). | [README](erpnext_enhancements/chat/README.md) |
 
 Shared / cross-cutting code (not a Frappe module):
 

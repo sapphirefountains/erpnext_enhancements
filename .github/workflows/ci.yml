@@ -657,6 +657,21 @@ jobs:
       # duplicates would have passed with both of them present.
       - name: Chat 200-message two-way soak (checkpoint gate, cold + replay)
         run: python -m pytest erpnext_enhancements/tests/test_chat_soak.py -q
+      # Phase 3's server surface: the read/write API the SPA runs on, which Phase 2
+      # deliberately did not ship (there was no get_rooms, no get_messages, no
+      # send_message at all). Its own pytest step, like every other bench-free chat
+      # suite, because each installs its own `frappe` stub in module scope and they
+      # cross-talk in a shared process.
+      #
+      # The rows that matter: a deleted row never emits its body (is_deleted = 1 rows
+      # KEEP their text -- Google's tombstone is content-free, so ERPNext is the only
+      # copy -- and one read path forgetting to strip it leaks exactly the thing the
+      # user chose to delete); the membership fragment never returns "" (an empty
+      # fragment disappears out of a hand-written WHERE and the query then returns
+      # everything); paging is keyset on `seq` and never OFFSET or a timestamp; and
+      # every whitelisted endpoint calls a gate before it reads.
+      - name: Chat Phase 3 API contracts (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_api_contracts.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
@@ -695,8 +710,56 @@ jobs:
       # Ordering is asserted, not just presence: a guard after the destructive line is
       # decoration. Phase 3 rewires session switching entirely, which is exactly when a
       # rule this easy to agree with gets forgotten on the next function.
-      - name: Triton widget streaming guards (bench-free, node)
+      #
+      # Phase 3's checkpoint added two more rule families to the same file, both
+      # silent in production and both invisible to anybody not using the affected
+      # input method or keyboard layout: Enter-to-send must ignore an in-flight IME
+      # composition (pressing Enter to COMMIT a candidate is how you type Japanese,
+      # Chinese or Korean), and Alt+T must ignore AltGr (reported as ctrlKey+altKey
+      # on Windows and many EU layouts). Plus the guard on decision #7: the human
+      # approved a NEW manifest-backed sources row, not a change to what a turn with
+      # no manifest sees -- which is every turn until Phase 5 ships.
+      - name: Triton widget source guards (streaming, keyboard, preserved behaviour)
         run: node scripts/test_triton_widget_guards.js
+      # ------------------------------------------------------------------
+      # Phase 3's chat client. Three node steps, no runner and no npm install --
+      # the same shape as the three guards above, and for the same reason: a test
+      # framework that needs `npm ci` is a test framework this deploy pipeline does
+      # not have, and one that is installed but never invoked is worse than none.
+      #
+      # These are .mjs because the code under test is ESM. Node prints a
+      # MODULE_TYPELESS_PACKAGE_JSON warning on the imported .js files; do NOT
+      # silence it by adding "type": "module" to package.json, which would turn the
+      # two CommonJS guards above into parse errors.
+      # ------------------------------------------------------------------
+      # The whole §4.10 degradation table as executable rows. Every failure mode it
+      # covers is INVISIBLE in production: a dropped token looks like the model chose
+      # not to cite, a truncated tail looks like the model stopped early, a split
+      # token looks like a glitch nobody can reproduce. The row that matters most is
+      # "no citations event at all renders identically to today" -- that is what lets
+      # Phase 3 ship before Phase 5 exists.
+      - name: Chat inline citation renderer (bench-free, node)
+        run: node scripts/test_chat_citations.mjs
+      # Routes, the three-tier restoration precedence, the handoff record, optimistic
+      # reconciliation, the read batcher, typing and the multi-tab presence union.
+      #
+      # Each is a rule that is impossible to notice breaking: the URL losing to
+      # restored state dumps people in the wrong room only when they happen to have
+      # restored state; a non-idempotent reconciliation duplicates a message in only
+      # one of four orderings; a presence union that takes the last writer makes
+      # notifications stop when somebody opens a second tab. It found three real
+      # defects on its first run.
+      - name: Chat SPA pure client logic (bench-free, node)
+        run: node scripts/test_chat_client_logic.mjs
+      # Source rules "we were careful" cannot keep: no innerHTML anywhere in the chat
+      # client (every message body, sender name, room title and filename is written
+      # by an employee and rendered to every other employee), no Vue in the SPA
+      # bundle (the two-runtime hazard, which presents six weeks later as "the widget
+      # stopped updating after I opened chat"), and the realtime event names matching
+      # between chat/realtime.py and chat/socket.js (a name added on one side only is
+      # indistinguishable, from the client, from a quiet room).
+      - name: Chat client source rules (bench-free, node)
+        run: node scripts/test_chat_source_rules.js
       # The Address coordinate gate. Latitude/longitude are user-editable and
       # every map trusts that point over the address text, so this is the one
       # place a typo silently relocates a job site. Both failures it rejects --

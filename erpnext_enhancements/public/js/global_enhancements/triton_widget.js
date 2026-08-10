@@ -11,7 +11,30 @@
  * stream is relayed back as SSE and rendered token-by-token. Users can pin the
  * page they're on (document / list / report) as context, and Triton's proposed
  * ERPNext changes arrive as confirmation cards.
+ *
+ * PHASE 3 (ADR 0009, decision #8) made this bubble DUAL-SURFACE. It now hosts both the
+ * Triton conversation (everything below, unchanged) and a coworker chat surface
+ * (`chat_surface.js`), and it can expand into the full SPA at /chat deep-linked to the
+ * conversation the user was in. Every Phase 3 addition is marked `--- phase 3 ---` and is
+ * additive: Appendix A of ADR 0009 is this widget's preserved-behaviour inventory, and a
+ * regression against it is a phase failure rather than a tradeoff. The streaming
+ * re-entrancy rule (`scripts/test_triton_widget_guards.js`) still holds — the surface
+ * switch HIDES the Triton transcript rather than clearing it, so `pumpText` keeps writing
+ * into an attached node.
  */
+import {
+	applyCitations,
+	citationLabel,
+	holdbackLength,
+	indexManifest,
+	isSafeUrl,
+	orderManifestForDisplay,
+} from "../chat/citations.js";
+import { isComposingKey } from "../chat/dom.js";
+import { writeHandoff, readHandoff } from "../chat/handoff.js";
+import { buildRoute } from "../chat/routes.js";
+import { BubbleChatSurface } from "./chat_surface.js";
+
 (function () {
 	const METHOD = "erpnext_enhancements.triton_chat";
 	const LS_SESSION = "triton_session_id";
@@ -38,6 +61,13 @@
 		els: {},
 		// The assistant message currently being streamed.
 		live: null,
+		// --- phase 3 --- which half of the bubble is showing: "triton" or "chat".
+		surface: "triton",
+		// --- phase 3 --- the coworker surface (BubbleChatSurface), built on first switch.
+		chat: null,
+		// --- phase 3 --- total unread across coworker rooms, rendered as the FAB badge.
+		// Decision #3c: this is the count that matters, and Phase 4 wires notifications to it.
+		unread: 0,
 	};
 
 	// ---- helpers ---------------------------------------------------------
@@ -215,18 +245,31 @@
 		fab.title = "Ask Triton (Alt+T)";
 		fab.textContent = "🔱";
 		fab.addEventListener("click", toggle);
+		// --- phase 3 --- unread badge. Appended rather than folded into textContent so the
+		// trident is still the button's accessible name and the existing CSS still positions it.
+		const badge = document.createElement("span");
+		badge.className = "triton-fab-badge is-hidden";
+		fab.appendChild(badge);
 		document.body.appendChild(fab);
 
 		const panel = document.createElement("div");
 		panel.className = "triton-panel";
+		// --- phase 3 --- two additions to the header markup, and nothing removed: the surface
+		// tabs and the expand control. Every existing control keeps its class and its order, so
+		// Appendix A's header rows still resolve.
 		panel.innerHTML = `
 			<div class="triton-header">
 				<span class="triton-logo">🔱</span>
 				<span class="triton-title">Triton</span>
+				<div class="triton-surface-tabs" role="tablist">
+					<button class="triton-surface-tab is-active" data-surface="triton" role="tab" aria-selected="true">Triton</button>
+					<button class="triton-surface-tab" data-surface="chat" role="tab" aria-selected="false">Chats</button>
+				</div>
 				<select class="triton-persona-select" title="Choose persona"></select>
 				<select class="triton-model-select" title="Choose model"></select>
 				<button class="triton-icon-btn triton-history" title="Chat history">🕘</button>
 				<button class="triton-icon-btn triton-new" title="New chat">✎</button>
+				<a class="triton-icon-btn triton-expand" title="Open the full chat app" href="/chat">⤢</a>
 				<button class="triton-icon-btn triton-close" title="Close">✕</button>
 			</div>
 			<div class="triton-context-bar">
@@ -251,11 +294,16 @@
 					<button class="triton-icon-btn triton-persona-new" title="New persona">＋</button>
 				</div>
 				<div class="triton-history-list triton-personas-list"></div>
-			</div>`;
+			</div>
+			<div class="triton-chat-surface is-hidden"></div>`;
 		document.body.appendChild(panel);
 
 		state.els = {
 			fab,
+			badge,
+			chatSurface: panel.querySelector(".triton-chat-surface"),
+			surfaceTabs: panel.querySelectorAll(".triton-surface-tab"),
+			expand: panel.querySelector(".triton-expand"),
 			panel,
 			messages: panel.querySelector(".triton-messages"),
 			contextBar: panel.querySelector(".triton-context-bar"),
@@ -289,6 +337,13 @@
 		state.els.contextAdd.addEventListener("click", addCurrentPage);
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
+			// --- phase 3 fix --- `isComposing` (and the legacy 229 keycode that older WebKit
+			// and Android IMEs report instead of it). Without this, an IME user pressing Enter
+			// to COMMIT a candidate — the ordinary way to type Japanese, Chinese or Korean —
+			// sends the half-finished message instead of finishing the word. The two checks are
+			// belt and braces because `isComposing` is unset on the keydown that ends
+			// composition in some engines, and 229 is the only signal there.
+			if (isComposingKey(e)) return;
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				onSend();
@@ -297,6 +352,12 @@
 		state.els.text.addEventListener("input", autoGrow);
 
 		document.addEventListener("keydown", (e) => {
+			// --- phase 3 fix --- exclude ctrl/meta. AltGr is reported as ctrlKey+altKey on
+			// Windows and on many EU layouts, so the un-excluded form made AltGr+T — which is
+			// how you type a perfectly ordinary character on several of them — open the
+			// assistant over whatever the user was writing. `altKey` alone is not a shortcut on
+			// those keyboards; it is a modifier the user did not press.
+			if (e.ctrlKey || e.metaKey) return;
 			if (e.altKey && (e.key === "t" || e.key === "T")) {
 				e.preventDefault();
 				toggle();
@@ -306,6 +367,170 @@
 		if (!state.config.enable_page_context) {
 			state.els.contextAdd.style.display = "none";
 		}
+
+		// --- phase 3 --- surface tabs and the expand control.
+		state.els.surfaceTabs.forEach((tab) => {
+			tab.addEventListener("click", () => setSurface(tab.dataset.surface));
+		});
+		// A real <a href> so middle-click and ctrl-click open a tab, which the handoff's
+		// localStorage mirror is there to survive. The click handler navigates in the SAME tab
+		// (location.assign) because sessionStorage is per-tab and that is the primary copy.
+		state.els.expand.addEventListener("click", onExpand);
+		if (!chatEnabled()) {
+			state.els.surfaceTabs.forEach((tab) => {
+				if (tab.dataset.surface === "chat") tab.style.display = "none";
+			});
+			state.els.expand.style.display = "none";
+		}
+	}
+
+	// ---- phase 3: dual surface, badge, handoff ---------------------------
+
+	// Gated on the same boolean boot.py computes: the master switch AND this user's pilot
+	// standing. Cosmetic only — every endpoint re-checks — but it keeps a tab out of the
+	// header for the people it would 403 for.
+	function chatEnabled() {
+		return !!(window.frappe && frappe.boot && frappe.boot.ee_chat);
+	}
+
+	// Switch which half of the bubble is showing.
+	//
+	// Deliberately does NOT clear the Triton transcript and therefore carries no
+	// `state.streaming` guard: hiding an attached node is safe, and `pumpText` keeps writing
+	// into it, so switching to Chats mid-answer and back finds the answer where it was left.
+	// Clearing here instead would be the exact defect
+	// `scripts/test_triton_widget_guards.js` exists to catch.
+	function setSurface(name) {
+		const surface = name === "chat" ? "chat" : "triton";
+		state.surface = surface;
+		state.els.surfaceTabs.forEach((tab) => {
+			const active = tab.dataset.surface === surface;
+			tab.classList.toggle("is-active", active);
+			tab.setAttribute("aria-selected", active ? "true" : "false");
+		});
+
+		const showChat = surface === "chat";
+		state.els.chatSurface.classList.toggle("is-hidden", !showChat);
+		state.els.messages.classList.toggle("is-hidden", showChat);
+		state.els.contextBar.classList.toggle("is-hidden", showChat);
+		state.els.panel.querySelector(".triton-input-bar").classList.toggle("is-hidden", showChat);
+		state.els.modelSelect.classList.toggle("is-hidden", showChat);
+		state.els.personaSelect.classList.toggle("is-hidden", showChat);
+		state.els.historyBtn.classList.toggle("is-hidden", showChat);
+
+		if (showChat) {
+			ensureChatSurface();
+			state.chat.ensureLoaded();
+		}
+		writeBubbleHandoff();
+	}
+
+	function ensureChatSurface() {
+		if (state.chat) return state.chat;
+		state.chat = new BubbleChatSurface(state.els.chatSurface, {
+			me: (window.frappe && frappe.session && frappe.session.user) || null,
+			onUnread: (total) => renderBadge(total),
+			onStateChange: () => writeBubbleHandoffThrottled(),
+		});
+		subscribeRealtime();
+		return state.chat;
+	}
+
+	// Realtime through Desk's OWN socket. `frappe.realtime` is already connected and
+	// authenticated on every Desk page, so opening a second socket here would double the
+	// connection count for every employee to gain nothing. The SPA connects its own because
+	// it is a website route with no Desk bundle.
+	function subscribeRealtime() {
+		if (!window.frappe || !frappe.realtime || !frappe.realtime.on) return;
+		const events = [
+			"chat_message_created",
+			"chat_message_edited",
+			"chat_message_deleted",
+			"chat_typing",
+			"chat_typing_stopped",
+			"chat_read_receipt",
+			"chat_unread_updated",
+			"chat_room_updated",
+			"chat_mention",
+		];
+		events.forEach((name) => {
+			frappe.realtime.on(name, (payload) => {
+				if (state.chat) state.chat.onRealtime(name, payload || {});
+			});
+		});
+	}
+
+	function renderBadge(total) {
+		state.unread = Number(total) || 0;
+		const badge = state.els.badge;
+		if (!badge) return;
+		badge.textContent = state.unread > 99 ? "99+" : String(state.unread);
+		badge.classList.toggle("is-hidden", state.unread < 1);
+		state.els.fab.setAttribute(
+			"aria-label",
+			state.unread ? `Ask Triton — ${state.unread} unread messages` : "Ask Triton"
+		);
+	}
+
+	// The handoff record the SPA reads on load. Written on every meaningful change and
+	// SYNCHRONOUSLY immediately before navigating — see onExpand.
+	function writeBubbleHandoff() {
+		const chatState = state.chat ? state.chat.handoffState() : {};
+		writeHandoff(
+			{
+				room: chatState.room || null,
+				thread: chatState.thread || null,
+				anchorMessage: chatState.anchorMessage || null,
+				anchorRatio: chatState.anchorRatio,
+				draft: chatState.draft || "",
+				surface: state.surface === "chat" ? "coworker" : "triton",
+				tritonConversation: state.sessionId ? String(state.sessionId) : null,
+			},
+			{ session: window.sessionStorage, local: window.localStorage },
+			Date.now()
+		);
+	}
+
+	let _handoffAt = 0;
+	function writeBubbleHandoffThrottled() {
+		const now = Date.now();
+		if (now - _handoffAt < 500) return;
+		_handoffAt = now;
+		writeBubbleHandoff();
+	}
+
+	// Expand. The write is SYNCHRONOUS and happens before navigation, because a throttled
+	// write that has not fired yet when location.assign runs is a handoff that silently does
+	// not happen — and it fails for exactly the user who clicks expand quickly, which is most
+	// of them.
+	function onExpand(e) {
+		if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) {
+			// A deliberate new tab. sessionStorage will not follow, which is what the
+			// localStorage mirror (nonce + 60s TTL) exists for; writeHandoff wrote both.
+			writeBubbleHandoff();
+			return;
+		}
+		if (e) e.preventDefault();
+		writeBubbleHandoff();
+		const chatState = state.chat ? state.chat.handoffState() : {};
+		window.location.assign(
+			chatState.room
+				? buildRoute({ room: chatState.room, thread: chatState.thread || null })
+				: "/chat"
+		);
+	}
+
+	// The reverse handoff: the SPA wrote where it left off, so the bubble opens there.
+	// Symmetric or it is half a feature.
+	function restoreFromHandoff() {
+		if (!chatEnabled()) return;
+		const record = readHandoff(
+			{ session: window.sessionStorage, local: window.localStorage },
+			Date.now()
+		);
+		if (!record || record.surface !== "coworker" || !record.room) return;
+		setSurface("chat");
+		ensureChatSurface().restore(record);
 	}
 
 	function autoGrow() {
@@ -898,6 +1123,19 @@
 			// raf handles
 			pumpRaf: null,
 			thoughtRaf: null,
+			// ids the model cited that the manifest does not contain. A Set, per turn, for the
+			// same reason `cited` is one: onMiss fires again on every streaming frame.
+			missed: null,
+			// --- phase 3 --- the citation manifest for this turn, or null. Null is the
+			// shipped state until Phase 5 emits a `citations` event, and null means the
+			// message renders exactly as it does today.
+			manifest: null,
+			// The ids the model actually cited in THIS answer. Accumulated across streaming
+			// frames rather than recomputed, because `renderBubble` rebuilds the bubble from
+			// scratch every frame and text only ever grows.
+			cited: new Set(),
+			// k -> chip element, so marking a chip is a lookup rather than a re-render.
+			sourceChips: null,
 		};
 		scrollDown();
 		return live;
@@ -963,8 +1201,61 @@
 
 	// ---- streamed answer text (typewriter smoothing) --------------------
 	function renderBubble(live) {
-		live.bubble.innerHTML = md(live.text.slice(0, live.shownLen));
+		// --- phase 3 --- hold back a partial citation token so `[[re` never flashes as
+		// literal text before `f:7]]` arrives. `holdbackLength` is the pure tail-buffer
+		// arithmetic from chat/citations.js; with no manifest the slice is unchanged and this
+		// line is a no-op, which is what keeps streaming byte-for-byte identical to today.
+		let visible = live.text.slice(0, live.shownLen);
+		if (live.manifest && live.shownLen < live.text.length) {
+			visible = visible.slice(0, visible.length - holdbackLength(visible));
+		}
+		live.bubble.innerHTML = md(visible);
+		// --- phase 3 --- inline citations, applied to the markdown renderer's OUTPUT rather
+		// than to its input. The sanitiser policy Appendix A records is load-bearing and is
+		// therefore untouched: it sees exactly the string it saw before this phase, and the
+		// anchors are added afterwards as DOM with createElement/textContent. With no
+		// manifest applyCitations returns immediately.
+		if (live.manifest) {
+			applyCitations(live.bubble, live.manifest, {
+				onMiss: (k) => noteCitationMiss(live, k),
+				// Feeds the sources row's "cited" marking (approved 2026-08-10). A Set, because
+				// this fires once per rendered token per frame and the bubble is rebuilt from
+				// scratch on every frame.
+				onCite: (k) => live.cited.add(k),
+			});
+			markCitedSources(live);
+		}
 		scrollDown();
+	}
+
+	// --- phase 3 --- a `citation_miss` is a token whose id is not in the manifest. Dropped
+	// silently from the render (never a raw token, never a dead link) and counted here,
+	// because a miss rate over ~2% means a prompt edit broke citing and the only symptom is
+	// inline links quietly disappearing.
+	//
+	// **Counted per DISTINCT id per turn, not per callback.** `renderBubble` rebuilds the
+	// bubble from scratch on every streaming frame, so `onMiss` fires again for the same bad
+	// id on every frame — dozens of times on a long answer. An earlier revision incremented a
+	// module counter directly, which meant ONE bad id on ONE turn tripped the "repeated
+	// misses" warning within a second. A counter that fires on a single occurrence is not a
+	// rate signal, it is a false alarm, and a false alarm is how the real one gets ignored.
+	let _citationMisses = 0;
+	function noteCitationMiss(live, k) {
+		if (!live.missed) live.missed = new Set();
+		live.missed.add(k);
+	}
+
+	// Folded into the module counter once, when the turn is complete and `live.missed` is
+	// final. Called from finishStreaming.
+	function tallyCitationMisses(live) {
+		if (!live.missed || !live.missed.size) return;
+		_citationMisses += live.missed.size;
+		if (_citationMisses >= 10) {
+			console.warn(
+				"triton: repeated citation misses — the manifest and the answer disagree",
+				{ this_turn: [...live.missed], total: _citationMisses }
+			);
+		}
 	}
 
 	function schedulePump(live) {
@@ -1014,11 +1305,22 @@
 			cancelAnimationFrame(live.thoughtRaf);
 			live.thoughtRaf = null;
 		}
+		// This line is also the citation tail-buffer FLUSH: `renderBubble` only holds back a
+		// partial token while `shownLen < text.length`, so setting them equal releases
+		// everything held. Forgetting the flush truncates the last few characters of every
+		// answer that happens to end near a token, which is maddening to diagnose.
 		live.shownLen = live.text.length;
 		if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
 		collapseThinking(live);
 		markActiveStepsDone(live);
 		renderBubble(live);
+		// --- phase 3 --- the ONE reorder of the sources row, here and nowhere else. Marking
+		// happens live (a chip lighting up as the model leans on it is worth watching);
+		// reordering live would reshuffle the row several times a second and move a chip the
+		// reader was about to click. By this point the answer is complete, so `live.cited` is
+		// final and the order is stable.
+		if (live.manifest) renderManifestSources(live, { sortCitedFirst: true });
+		tallyCitationMisses(live);
 		renderMermaidIn(live.bubble);
 		live.wrap.classList.remove("triton-streaming");
 		live.streaming = false;
@@ -1087,6 +1389,10 @@
 		if (live.thinkingTimer) live.thinkingTimer.textContent = "";
 	}
 
+	// UNCHANGED from before Phase 3, deliberately and byte for byte. This is the path taken
+	// whenever there is no citation manifest — which is every site until Phase 5 emits one,
+	// and every turn where the retrieval produced nothing. Decision #7's "preserve exactly"
+	// still governs it.
 	function renderSources(container, sources) {
 		if (!sources || !sources.length) return;
 		const box = document.createElement("div");
@@ -1108,6 +1414,90 @@
 			box.appendChild(a);
 		});
 		container.appendChild(box);
+	}
+
+	// --- phase 3 --- the manifest-backed sources row: every retrieved entry, with the ones
+	// the model actually cited MARKED and SORTED FIRST.
+	//
+	// **This is an approved change to a "preserve exactly" surface.** Locked decision #7 says
+	// the sources dropdown is preserved; research 03 §12.6 proposed exactly this instead and
+	// required an explicit human yes rather than a unilateral edit. Raised at the Phase 3
+	// checkpoint, approved 2026-08-10.
+	//
+	// It renders into the same `.triton-sources` container with the same `.triton-source`
+	// chips, so the existing "already rendered?" guard in the `done` handler still works and
+	// no CSS moves. What is added is a `[k]` marker matching the inline `[k]` in the answer,
+	// an `is-cited` class, and the ordering.
+	//
+	// Same node-building discipline as everywhere else in chat: labels and snippets are
+	// user-authored — a document title, a coworker's message, a filename — so every one of
+	// them goes in through `textContent`.
+	function renderManifestSources(live, opts) {
+		if (!live.manifest || !live.manifest.size) return;
+
+		let box = live.wrap.querySelector(".triton-sources");
+		if (!box) {
+			box = document.createElement("div");
+			box.className = "triton-sources";
+			// Appended only when NEWLY created, never repositioned on a rebuild.
+			//
+			// An earlier revision of this function moved the box to the end on every call, on
+			// the belief that the pre-Phase-3 row was always last. It was not: the `done`
+			// handler runs `renderSources()` and only THEN `renderChart()`, so the old row sat
+			// *above* the chart — and `renderHistoryMessage` does the same. Forcing it to the
+			// end therefore moved it, and made a live turn disagree with the same turn
+			// re-opened from history. Creating it in place gives it the slot the old row had,
+			// in both paths.
+			live.wrap.appendChild(box);
+		}
+		box.classList.add("triton-sources-manifest");
+		box.textContent = "";
+		live.sourceChips = new Map();
+
+		// `sortCitedFirst` only at the end of the turn. `live.cited` grows with every frame,
+		// so sorting on it mid-stream — which `citations_append` did — reshuffles chips the
+		// reader may be about to click, once per append. The MARKS stay accurate throughout;
+		// only the order waits.
+		const sortCitedFirst = !!(opts && opts.sortCitedFirst);
+		for (const entry of orderManifestForDisplay(live.manifest, live.cited, { sortCitedFirst })) {
+			const citation = entry.citation || {};
+			const label = citationLabel(citation);
+			const linkable = isSafeUrl(citation.url);
+
+			const chip = document.createElement(linkable ? "a" : "span");
+			chip.className = "triton-source" + (entry.cited ? " is-cited" : "");
+			if (linkable) {
+				chip.href = citation.url;
+				// Same as the pre-Phase-3 chip: new tab, noopener. `noreferrer` is added for
+				// the external case only, matching the inline-citation renderer.
+				chip.target = "_blank";
+				chip.rel = /^https?:\/\//i.test(String(citation.url)) ? "noopener noreferrer" : "noopener";
+			}
+
+			const marker = document.createElement("span");
+			marker.className = "triton-source-k";
+			marker.textContent = String(entry.k);
+			chip.appendChild(marker);
+			chip.appendChild(document.createTextNode(label));
+			chip.title = citation.snippet ? `${label} — ${citation.snippet}` : label;
+
+			box.appendChild(chip);
+			live.sourceChips.set(entry.k, chip);
+		}
+	}
+
+	// Mark newly-cited chips as the answer streams, WITHOUT reordering.
+	//
+	// The split is the point. Marking live is informative — a chip lighting up as the model
+	// leans on it is the thing worth watching. Reordering live is not: the row would reshuffle
+	// under the reader's eyes several times a second, and a chip they were about to click
+	// would move. So the sort happens exactly once, in `finishStreaming`.
+	function markCitedSources(live) {
+		if (!live.sourceChips || !live.cited) return;
+		for (const k of live.cited) {
+			const chip = live.sourceChips.get(k);
+			if (chip) chip.classList.add("is-cited");
+		}
 	}
 
 	function renderActionCard(container, params, opts) {
@@ -1198,11 +1588,22 @@
 			return;
 		}
 		const live = newAssistantMsg();
+		// --- phase 3 --- a stored turn carries its manifest, so re-opening a conversation
+		// renders the same inline links it had while streaming. Set BEFORE appendText, which
+		// renders. Absent on every turn stored before Phase 5 ships, and absent is today's
+		// behaviour rather than an error.
+		if (meta.citations && meta.citations.length) live.manifest = indexManifest(meta.citations);
 		appendText(live, m.content || "");
 		if (meta.thinking) {
 			appendThought(live, meta.thinking);
 		}
-		if (meta.sources) renderSources(live.wrap, meta.sources);
+		// --- phase 3 --- `appendText` renders synchronously for a stored turn (no streaming,
+		// so `shownLen` is set to the full length and `renderBubble` runs once), which means
+		// `live.cited` is already populated by the time we get here. So a re-opened
+		// conversation shows the same marked-and-sorted row it ended with, rather than an
+		// unmarked one — the ordering is a property of the answer, not of the session.
+		if (live.manifest && live.manifest.size) renderManifestSources(live, { sortCitedFirst: true });
+		else if (meta.sources) renderSources(live.wrap, meta.sources);
 		if (meta.direct_chart) renderChart(live.wrap, meta.direct_chart);
 		(meta.pending_actions || []).forEach((p) =>
 			renderActionCard(live.wrap, p, { liveStatus: p.live_status || "pending" })
@@ -1356,8 +1757,37 @@
 				appendText(live, ev.content || "");
 				break;
 			case "sources":
+				// The manifest wins when there is one. It is a superset of this list — every
+				// retrieved item, with ids — so rendering both would show the same sources
+				// twice, and the manifest is the version the human approved on 2026-08-10
+				// (marked and sorted). With no manifest this is the pre-Phase-3 path, and it
+				// renders exactly as it did before, which is what decision #7 protects.
+				if (live.manifest && live.manifest.size) break;
 				if (ev.content) renderSources(live.wrap, ev.content);
 				break;
+			// --- phase 3 --- the citation manifest. Arrives BEFORE any token (that ordering is
+			// what makes streaming citations possible at all: the ids are assigned at
+			// context-assembly time, so the manifest is known before generation starts).
+			// `citations_append` extends the SAME integer space from a mid-turn tool call —
+			// one id space, one renderer, no special cases.
+			case "citations":
+				live.manifest = indexManifest(ev.content || ev.citations || []);
+				// Painted immediately, before a single token: the sources row is the reader's
+				// answer to "what is it about to look at", and it is known before generation
+				// starts. Every chip starts unmarked and lights up as the answer cites it.
+				renderManifestSources(live);
+				renderBubble(live);
+				break;
+			case "citations_append": {
+				const extra = indexManifest(ev.content || ev.citations || []);
+				if (!live.manifest) live.manifest = extra;
+				else for (const [k, entry] of extra) live.manifest.set(k, entry);
+				// A mid-turn tool call added entries. Re-render the row rather than appending,
+				// so a late arrival lands in id order instead of after everything.
+				renderManifestSources(live);
+				renderBubble(live);
+				break;
+			}
 			case "pending_action":
 				if (ev.params) renderActionCard(live.wrap, ev.params, { liveStatus: "pending" });
 				break;
@@ -1412,6 +1842,20 @@
 		state.config = cfg;
 		build();
 		showEmpty();
+
+		// --- phase 3 --- the coworker half. Both calls are guarded on `frappe.boot.ee_chat`
+		// and both fail closed, so a site with chat off boots exactly as before.
+		if (chatEnabled()) {
+			// The badge ships to every Desk page, so the room list is fetched once per page
+			// load and nothing else. It is the only chat call a user who never opens the
+			// bubble ever makes.
+			ensureChatSurface()
+				.ensureLoaded()
+				.catch(() => {});
+			// The reverse handoff: if the SPA (or a previous bubble session in this tab) left a
+			// coworker conversation open, come back to it.
+			restoreFromHandoff();
+		}
 	}
 
 	$(document).on("app_ready", init);

@@ -1,9 +1,22 @@
 #!/usr/bin/env node
 /**
- * Guards the streaming re-entrancy rule in the floating Triton widget.
+ * Source-shape guards for the floating Triton widget. Three rule families, all of
+ * which fail SILENTLY in production and none of which a code review reliably catches.
  *
- * THE RULE: every function that clears the transcript, or switches which session
- * the transcript belongs to, must refuse while a stream is in flight.
+ *   1. Streaming re-entrancy (original) — every function that clears the transcript,
+ *      or switches which session it belongs to, refuses while a stream is in flight.
+ *   2. Keyboard correctness (added at the Phase 3 checkpoint) — Enter-to-send ignores
+ *      an in-flight IME composition, and Alt+T ignores AltGr. Both defects are
+ *      invisible to anybody not using the affected input method or keyboard layout,
+ *      which is exactly why they survived from the widget's first commit.
+ *   3. Decision #7's "preserve exactly" (added at the same checkpoint) — the human
+ *      approved a NEW manifest-backed sources row that marks and reorders; they did
+ *      not approve changing what a turn with no manifest sees, which is every turn on
+ *      every site until Phase 5 ships. So the original renderer must still be there
+ *      and must still be a separate function.
+ *
+ * THE STREAMING RULE: every function that clears the transcript, or switches which
+ * session the transcript belongs to, must refuse while a stream is in flight.
  *
  * Why it needs a test rather than a code review. The failure is completely
  * silent. `pumpText` writes into a `live.wrap` captured in a closure, so once
@@ -90,7 +103,7 @@ function bodyOf(name) {
 	return next === -1 ? rest : rest.slice(0, next);
 }
 
-console.log('triton widget — streaming re-entrancy guards\n');
+console.log('triton widget — streaming, keyboard and preserved-behaviour guards\n');
 
 for (const { fn, destructive } of MUST_GUARD) {
 	const body = bodyOf(fn);
@@ -159,9 +172,222 @@ for (const { fn, destructive } of MUST_GUARD) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// The two keyboard defects fixed at the Phase 3 checkpoint (approved 2026-08-10).
+//
+// Both are ORDERING rules, like the streaming guards above: an early `return`
+// that lands after the branch it is meant to skip is decoration. And both are
+// invisible to anybody who does not use the keyboard layout in question, which
+// is why they survived from the widget's first commit and why they need a test
+// rather than a code review.
+// ---------------------------------------------------------------------------
+{
+	// (a) Enter-to-send must not fire while an IME is composing. Pressing Enter to
+	// COMMIT a candidate is the ordinary way to type Japanese, Chinese or Korean;
+	// without the guard it sends the half-finished message instead.
+	// The rule itself lives in ONE place — `chat/dom.js::isComposingKey`, which checks both
+	// `isComposing` and the legacy `keyCode === 229` and is exercised executably by
+	// scripts/test_chat_client_logic.mjs. What this asserts is the half that file cannot:
+	// that the widget consults it, and consults it BEFORE it sends.
+	const composerStart = SOURCE.indexOf('state.els.text.addEventListener("keydown"');
+	const composerEnd = SOURCE.indexOf('state.els.text.addEventListener("input"');
+	const block = composerStart === -1 ? '' : SOURCE.slice(composerStart, composerEnd);
+	const imeAt = block.indexOf('isComposingKey(e)');
+	const sendAt = block.indexOf('onSend()');
+
+	if (composerStart === -1 || composerEnd === -1 || sendAt === -1) {
+		console.error(
+			'MARKERS NOT FOUND: could not locate the composer keydown handler in ' +
+				path.relative(process.cwd(), TARGET) + '.\nRe-derive this check rather than ' +
+				'deleting it — the rule outlives the handler shape.'
+		);
+		process.exit(2);
+	} else if (imeAt === -1) {
+		fail(
+			'the composer keydown handler does not call isComposingKey(). Pressing Enter to ' +
+				'COMMIT an IME candidate is how Japanese, Chinese and Korean are typed; without ' +
+				'the guard it sends the half-finished message instead, on every word.'
+		);
+	} else if (imeAt > sendAt) {
+		fail('the composer calls isComposingKey() AFTER onSend(). By then the message is gone.');
+	} else if (!/import \{[^}]*\bisComposingKey\b/s.test(SOURCE)) {
+		fail(
+			'isComposingKey is used but not imported from chat/dom.js — so it is either a local ' +
+				'reimplementation (two copies of one rule, which is how the next one carries only ' +
+				'half of it) or a ReferenceError at load.'
+		);
+	} else {
+		pass('Enter-to-send consults isComposingKey() before it sends');
+	}
+}
+
+{
+	// (b) Alt+T must not fire for AltGr. Windows and many EU layouts report AltGr as
+	// ctrlKey+altKey, so the un-excluded form opened the assistant over whatever the
+	// user was writing every time they typed a perfectly ordinary character.
+	const start = SOURCE.indexOf('document.addEventListener("keydown"');
+	const block = SOURCE.slice(start, start + 800);
+	const excludeAt = block.search(/e\.ctrlKey \|\| e\.metaKey/);
+	const toggleAt = block.indexOf('toggle()');
+
+	if (start === -1 || toggleAt === -1) {
+		console.error(
+			'MARKERS NOT FOUND: no document-level keydown handler with a toggle() call in ' +
+				path.relative(process.cwd(), TARGET) + '.'
+		);
+		process.exit(2);
+	} else if (excludeAt === -1) {
+		fail(
+			'the Alt+T shortcut does not exclude ctrlKey/metaKey. AltGr is reported as ' +
+				'ctrlKey+altKey on many EU layouts, so AltGr+T toggles the assistant over the ' +
+				"user's work."
+		);
+	} else if (excludeAt > toggleAt) {
+		fail('the Alt+T shortcut excludes ctrl/meta AFTER calling toggle(). Presence is not enough.');
+	} else {
+		pass('Alt+T ignores AltGr (ctrlKey/metaKey excluded before toggle())');
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Decision #7's "preserve exactly", now that Phase 3 renders a SECOND sources row.
+//
+// The human approved a manifest-backed row that marks and reorders (2026-08-10).
+// They did not approve changing what a turn WITHOUT a manifest sees — which is
+// every turn on every site until Phase 5 ships, i.e. all of them today. So the
+// original renderer must still be there, still be called, and still be the
+// no-manifest path.
+// ---------------------------------------------------------------------------
+{
+	const body = bodyOf('renderSources');
+	if (body === null) {
+		console.error(
+			'MARKERS NOT FOUND: no renderSources() in ' + path.relative(process.cwd(), TARGET) +
+				'.\nThat function IS decision #7. If the sources row was restructured, re-derive ' +
+				'this check deliberately and say so in the changelog.'
+		);
+		process.exit(2);
+	}
+
+	// The exact shape recorded in ADR 0009 Appendix A: a flat `.triton-sources` box of
+	// `.triton-source` chips, anchor when the source has a url and span when it does not,
+	// label from `label || title || url`, textContent (never innerHTML), target=_blank
+	// + rel=noopener.
+	const required = [
+		['box.className = "triton-sources"', 'the container class'],
+		['s.label || s.title || s.url', 'the label fallback chain'],
+		['a.className = "triton-source"', 'the chip class'],
+		['a.textContent = label', 'textContent, never innerHTML'],
+		['a.target = "_blank"', 'new-tab behaviour'],
+		['a.rel = "noopener"', 'the rel'],
+	];
+	const missing = required.filter(([needle]) => !body.includes(needle)).map(([, what]) => what);
+
+	if (missing.length) {
+		fail(
+			'renderSources() no longer preserves the pre-Phase-3 rendering (' + missing.join('; ') +
+				'). This is the path every turn takes until Phase 5 emits a manifest, and ' +
+				'decision #7 says it is preserved exactly. The APPROVED change is the separate ' +
+				'renderManifestSources().'
+		);
+	} else if (/innerHTML/.test(body)) {
+		fail('renderSources() now uses innerHTML. Source labels are user-authored.');
+	} else {
+		pass('renderSources() still renders the pre-Phase-3 row exactly (the no-manifest path)');
+	}
+
+	// And the approved second renderer must be a SEPARATE function, not an edit to the
+	// first — otherwise "with no manifest, nothing changed" is a claim rather than a fact.
+	if (bodyOf('renderManifestSources') === null) {
+		fail(
+			'renderManifestSources() is gone. The approved marked/sorted row must live beside ' +
+				'renderSources(), not inside it.'
+		);
+	} else {
+		pass('the approved manifest row is a separate renderer, so the old path is untouched');
+	}
+
+	// A preserved function nobody CALLS is preserved the way a museum piece is. The block
+	// above proves the renderer still exists and still has its shape; these prove the
+	// no-manifest path still reaches it, on both the live and the restored-from-history route.
+	const sourcesArm = SOURCE.slice(SOURCE.indexOf('case "sources":'));
+	const armBody = sourcesArm.slice(0, sourcesArm.indexOf('case "citations"'));
+	if (!sourcesArm || armBody.length === 0) {
+		console.error(
+			'MARKERS NOT FOUND: could not locate the `case "sources":` arm in ' +
+				path.relative(process.cwd(), TARGET) + '. That arm IS the live no-manifest path.'
+		);
+		process.exit(2);
+	} else if (!armBody.includes('renderSources(live.wrap, ev.content)')) {
+		fail(
+			'the `sources` stream event no longer calls renderSources(). A preserved renderer ' +
+				'that nothing reaches is not preservation.'
+		);
+	} else if (!/live\.manifest && live\.manifest\.size/.test(armBody)) {
+		fail(
+			'the `sources` arm short-circuits on something other than ' +
+				'`live.manifest && live.manifest.size`. A manifest that arrived EMPTY must still ' +
+				'fall through to the old renderer — `if (live.manifest)` alone would swallow the ' +
+				'sources row on every turn where retrieval returned nothing.'
+		);
+	} else {
+		pass('the `sources` event still reaches renderSources() unless a NON-EMPTY manifest exists');
+	}
+
+	// ONE reorder, at stream end. `live.cited` grows with every frame, so sorting on it while
+	// the answer is still arriving slides chips out from under a reader about to click one —
+	// which `citations_append` did, once per append, contradicting the invariant the code
+	// itself documents. The rule is positional (which call sites pass the flag), so it cannot
+	// be checked by the pure test on `orderManifestForDisplay`; only here.
+	const manifestRenderer = bodyOf('renderManifestSources');
+	if (!/opts && opts\.sortCitedFirst/.test(manifestRenderer)) {
+		fail(
+			'renderManifestSources() no longer gates the cited-first sort on its caller. It then ' +
+				're-sorts on every call, including the mid-stream `citations_append`, which ' +
+				'reshuffles the row while the reader is using it.'
+		);
+	} else {
+		const streamingArms = SOURCE.slice(
+			SOURCE.indexOf('case "citations":'),
+			SOURCE.indexOf('case "pending_action":')
+		);
+		const finish = bodyOf('finishStreaming') || '';
+		if (/renderManifestSources\(live,\s*\{[^}]*sortCitedFirst/.test(streamingArms)) {
+			fail(
+				'a mid-stream citations arm asks for the cited-first sort. Only the end of the ' +
+					'turn may reorder; while streaming the marks update and the order holds.'
+			);
+		} else if (!/renderManifestSources\(live,\s*\{\s*sortCitedFirst:\s*true\s*\}\)/.test(finish)) {
+			fail(
+				'finishStreaming() no longer performs the one cited-first reorder, so the row ' +
+					'stays in plain id order forever and the approved behaviour never happens.'
+			);
+		} else {
+			pass('the cited-first reorder happens once, at stream end, and nowhere else');
+		}
+	}
+
+	const history = bodyOf('renderHistoryMessage');
+	if (history === null) {
+		console.error(
+			'MARKERS NOT FOUND: no renderHistoryMessage() in ' + path.relative(process.cwd(), TARGET) +
+				'. That is the restored-from-history no-manifest path.'
+		);
+		process.exit(2);
+	} else if (!/else if \(meta\.sources\) renderSources\(/.test(history)) {
+		fail(
+			'a stored turn with no manifest no longer falls back to renderSources(). Re-opening ' +
+				'a conversation would then show no sources row at all, which is a silent loss of ' +
+				'the surface decision #7 protects.'
+		);
+	} else {
+		pass('a stored turn with no manifest still renders the pre-Phase-3 row');
+	}
+}
+
 console.log('');
 if (failures) {
 	console.error(failures + ' assertion(s) failed');
 	process.exit(1);
 }
-console.log('triton widget streaming guards: all assertions passed');
+console.log('triton widget source guards: all assertions passed');

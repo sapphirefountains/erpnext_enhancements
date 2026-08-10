@@ -757,3 +757,358 @@
 	border-radius: 8px;
 	padding: 6px 10px;
 }
+
+/* ===================================================================== *
+ * PHASE 3 (ADR 0009 decision #8) — the bubble's second surface.
+ *
+ * Appended rather than interleaved, so a diff against the pre-Phase-3 file
+ * shows every chat rule in one block and nothing above this line moved.
+ * Appendix A's visual rows are defended by that: the panel, the FAB, the
+ * header controls and the transcript all keep the exact rules they had.
+ * ===================================================================== */
+
+/* Unread badge on the floating button. Decision #3c: this is the count that
+   matters, and Phase 4 wires notifications to the same number. */
+.triton-fab-badge {
+	position: absolute;
+	top: -2px;
+	right: -2px;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: 9px;
+	background: #cf222e;
+	color: #fff;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 18px;
+	text-align: center;
+	pointer-events: none;
+}
+.triton-fab-badge.is-hidden {
+	display: none;
+}
+
+/* Surface tabs. Sized to leave the existing header controls where they were —
+   the model and persona selects hide while the coworker surface is showing,
+   which is what keeps the row from wrapping on a 380px panel. */
+.triton-surface-tabs {
+	display: inline-flex;
+	gap: 2px;
+	margin-left: 6px;
+	padding: 2px;
+	border-radius: 999px;
+	background: var(--subtle-fg, #f1f3f5);
+}
+.triton-surface-tab {
+	border: none;
+	background: none;
+	border-radius: 999px;
+	padding: 2px 10px;
+	font-size: 11px;
+	color: var(--text-muted, #8d99a6);
+	cursor: pointer;
+}
+.triton-surface-tab.is-active {
+	background: var(--card-bg, #fff);
+	color: var(--text-color, #1f272e);
+	font-weight: 600;
+}
+
+.triton-expand {
+	text-decoration: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.triton-chat-surface {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+}
+.triton-chat-surface.is-hidden,
+.triton-messages.is-hidden,
+.triton-context-bar.is-hidden,
+.triton-input-bar.is-hidden,
+.triton-model-select.is-hidden,
+.triton-persona-select.is-hidden,
+.triton-history.is-hidden {
+	display: none !important;
+}
+
+.triton-chat-rooms,
+.triton-chat-conv {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+.triton-chat-rooms {
+	overflow-y: auto;
+}
+.triton-chat-conv.is-hidden,
+.triton-chat-rooms.is-hidden {
+	display: none;
+}
+
+.triton-chat-room {
+	display: grid;
+	grid-template-columns: 28px minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	/* 44px tap target — the bubble is used on phones and this list is the densest
+	   thing in it. */
+	min-height: 44px;
+	padding: 6px 10px;
+	border: none;
+	background: none;
+	text-align: left;
+	cursor: pointer;
+}
+.triton-chat-room:hover {
+	background: var(--subtle-fg, #f1f3f5);
+}
+.triton-chat-avatar {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: var(--border-color, #e2e6e9);
+	font-size: 10px;
+	font-weight: 600;
+}
+.triton-chat-room-main {
+	min-width: 0;
+}
+.triton-chat-room-title,
+.triton-chat-room-preview {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.triton-chat-room-preview,
+.triton-chat-room-time {
+	color: var(--text-muted, #8d99a6);
+	font-size: 11px;
+}
+/* Non-colour cues for unread: bold title plus a count, never the tint alone. */
+.triton-chat-room.is-unread .triton-chat-room-title {
+	font-weight: 700;
+}
+.triton-chat-badge {
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 9px;
+	background: var(--primary, #00a0dd);
+	color: #fff;
+	font-size: 10px;
+	font-weight: 700;
+	text-align: center;
+}
+
+.triton-chat-conv-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border-color, #e2e6e9);
+}
+.triton-chat-conv-title {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.triton-chat-messages {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 6px 0;
+}
+.triton-chat-msg {
+	padding: 2px 10px;
+}
+.triton-chat-msg.is-pending {
+	opacity: 0.6;
+}
+.triton-chat-msg-who {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--text-muted, #8d99a6);
+}
+.triton-chat-msg-text {
+	white-space: pre-wrap;
+	/* Long unbroken tokens must wrap; a 380px panel has no room for horizontal
+	   scroll and the whole panel would scroll with it. */
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.triton-chat-msg-text.is-tombstone {
+	color: var(--text-muted, #8d99a6);
+	font-style: italic;
+}
+.triton-chat-mention {
+	padding: 0 3px;
+	border-radius: 4px;
+	background: rgba(0, 160, 221, 0.18);
+	font-weight: 600;
+}
+.triton-chat-thread {
+	font-size: 11px;
+	color: var(--primary, #00a0dd);
+}
+.triton-chat-failed {
+	display: flex;
+	gap: 8px;
+	font-size: 11px;
+	color: #cf222e;
+}
+.triton-chat-retry {
+	border: none;
+	background: none;
+	color: var(--primary, #00a0dd);
+	cursor: pointer;
+	font: inherit;
+}
+.triton-chat-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 4px;
+}
+.triton-chat-attachment {
+	font-size: 11px;
+	color: var(--primary, #00a0dd);
+}
+.triton-chat-typing {
+	min-height: 15px;
+	padding: 0 10px;
+	font-size: 11px;
+	color: var(--text-muted, #8d99a6);
+}
+.triton-chat-composer {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 6px;
+	padding: 8px 10px;
+	border-top: 1px solid var(--border-color, #e2e6e9);
+}
+.triton-chat-text {
+	width: 100%;
+	max-height: 90px;
+	padding: 6px 9px;
+	border: 1px solid var(--border-color, #e2e6e9);
+	border-radius: 8px;
+	font: inherit;
+	resize: none;
+}
+.triton-chat-send {
+	width: 36px;
+	border: none;
+	border-radius: 8px;
+	background: var(--primary, #00a0dd);
+	color: #fff;
+	cursor: pointer;
+}
+.triton-chat-mentions {
+	position: absolute;
+	bottom: 100%;
+	left: 10px;
+	right: 10px;
+	max-height: 180px;
+	margin: 0 0 4px;
+	padding: 4px;
+	list-style: none;
+	background: var(--card-bg, #fff);
+	border: 1px solid var(--border-color, #e2e6e9);
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+	overflow-y: auto;
+	z-index: 5;
+}
+.triton-chat-mentions.is-hidden {
+	display: none;
+}
+.triton-chat-mention-option {
+	padding: 8px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+	min-height: 36px;
+}
+.triton-chat-mention-option.is-active {
+	background: rgba(0, 160, 221, 0.16);
+}
+.triton-chat-mention-option.is-triton {
+	color: var(--primary, #00a0dd);
+	font-weight: 700;
+}
+.triton-chat-empty {
+	padding: 16px 12px;
+	color: var(--text-muted, #8d99a6);
+	font-size: 12px;
+	text-align: center;
+}
+
+/* Inline citations in a Triton answer (decision #7's addition). The sources
+   dropdown above is UNCHANGED; these sit inside the message body beside it. */
+.ee-citation {
+	display: inline-block;
+	margin: 0 1px;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: rgba(0, 160, 221, 0.16);
+	color: var(--primary, #00a0dd);
+	font-size: 10px;
+	font-weight: 700;
+	text-decoration: none;
+	vertical-align: 1px;
+}
+.ee-citation.is-flat {
+	background: var(--subtle-fg, #f1f3f5);
+	color: var(--text-muted, #8d99a6);
+	cursor: default;
+}
+
+/* Manifest-backed sources row (approved 2026-08-10; decision #7 otherwise says
+   "preserve exactly", and the pre-Phase-3 rendering above is untouched and is
+   still what a turn with no manifest gets).
+   
+   Two additions to the chip, and only two: a [k] marker matching the inline
+   marker in the answer, and an emphasis for the entries the model actually
+   cited. Uncited entries are dimmed rather than hidden — the row is the full
+   retrieved set, which is the property decision #7 was protecting. */
+.triton-source-k {
+	display: inline-block;
+	margin-right: 5px;
+	min-width: 13px;
+	padding: 0 3px;
+	border-radius: 6px;
+	background: var(--border-color, #e2e6e9);
+	color: var(--text-muted, #8d99a6);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 13px;
+	text-align: center;
+	vertical-align: 1px;
+}
+.triton-source.is-cited {
+	border-color: var(--primary, #1f6feb);
+	font-weight: 600;
+}
+.triton-source.is-cited .triton-source-k {
+	background: var(--primary, #1f6feb);
+	color: #fff;
+}
+/* Not colour alone: an uncited chip is also dimmed, and a cited one is also
+   bolder, so the distinction survives a monochrome display and a colour-vision
+   difference. */
+.triton-sources-manifest .triton-source:not(.is-cited) {
+	opacity: 0.68;
+}

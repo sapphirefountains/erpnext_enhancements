@@ -20,10 +20,10 @@ a bot with a name attached. That single decision shapes most of this package; se
 
 ## Phase status — read this before you go looking for something
 
-**Phases 1 and 2 are complete: schema, auth, transport, and the bidirectional sync
-engine.** There is still **no chat window** — nothing under `chat/` renders anything. What
-Phase 2 added is the machinery that moves a message between ERPNext and Google Chat and
-survives a deploy while doing it.
+**Phases 1, 2 and 3 are complete: schema, auth, transport, the bidirectional sync engine,
+and — new in Phase 3 — the read/write HTTP surface and the chat application itself.** There
+is now a chat window: a SPA at `/chat`, and a coworker surface inside the floating Triton
+bubble on every Desk page.
 
 | | State |
 |---|---|
@@ -37,10 +37,25 @@ survives a deploy while doing it.
 | Pub/Sub puller, inbound ingest, the echo ladder, edit/delete propagation | **built** (Phase 2) |
 | Space provisioning (3 modes), membership sync, attachments both ways | **built** (Phase 2) |
 | Subscription lifecycle, reconciliation sweep, `health.py`, the Phase 4/5 seams | **built** (Phase 2) |
-| Any UI at all — SPA, `www/` page, bundles, widget changes | Phase 3 |
-| Notifications, Web Push, VAPID, presence, typing, read receipts | Phase 4 |
-| Triton integration, retrieval gate, embeddings, digests | Phase 5 |
+| The read/write HTTP surface (`chat/api/`) — rooms, history, threads, search, compose | **built** (Phase 3) |
+| The SPA at `/chat`, deep links, virtualised transcript, composer, attachments | **built** (Phase 3) |
+| Presence, typing, read receipts (**ERPNext-side, Redis, no DocType**) | **built** (Phase 3) |
+| Dual-surface bubble, bubble→SPA handoff, unread badge | **built** (Phase 3) |
+| Inline `[[ref:N]]` citation rendering, feature-degrading to today's behaviour | **built** (Phase 3) |
+| Notifications, Web Push, VAPID, the suppression matrix | Phase 4 |
+| Triton integration, retrieval gate, embeddings, digests, the citation MANIFEST | Phase 5 |
 | Export, audit writes, drift reports, pilot rollout | Phase 6 |
+
+**Phase 3 built the entire API surface, not just a UI on top of one.** Phase 2's brief said
+"no SPA and no UI of any kind" and was followed literally, so `chat/` exposed six
+whitelisted methods and every one was operational — the inbound webhook, attachment
+download, relay retry, two provisioning starters, document-room creation. There was no
+`get_rooms`, no `get_messages`, no `send_message`. Everything under `chat/api/` is new.
+
+**The SPA does not need Google.** ERPNext is the source of truth and the SPA reads ERPNext,
+so the whole application works with chat dormant — `enabled = 0`, no relay, no
+subscriptions, no Google credentials in play. Composing a message writes a row and a
+`Chat Relay Job` that never leaves `Pending`. Nothing has to be armed to use the UI.
 
 **The system ships dormant, and Phase 2 did not change that.** `Chat Settings.enabled = 0`,
 `dry_run_mode = 1`, `restrict_to_whitelist = 1`, `google_sync_enabled = 0`,
@@ -100,8 +115,19 @@ are written from day one.
 | `gchat/webhook.py` | The `allow_guest=True` inbound endpoint. Verifier first, handler second. |
 | `gchat/smoke_test.py` | Phase 1's checkpoint gate — eleven steps against real Google Chat. See [the smoke test](#the-smoke-test). |
 | `permissions.py` | `permission_query_conditions` and `has_permission` for the four user-facing DocTypes, plus `membership_filter_sql` / `visible_room_names` for raw SQL. Read its module docstring before writing any query here. |
-| `links.py` | `build_message_deep_link()` — one function, three future consumers (the SPA router, the notification deep link, Triton's citation resolver). Written in Phase 1 precisely so those three do not diverge. |
-| `../api/chat.py` | The whitelisted HTTP surface: `get_settings_public()`, feature flags only. Phase 3 fills it. |
+| `links.py` | `build_message_deep_link()` — one function, three consumers (the SPA router, the notification deep link, Triton's citation resolver). Written in Phase 1 precisely so those three do not diverge; `public/js/chat/routes.js` and `tests/test_chat_api_contracts.py` assert the same route table on both sides. |
+| `api/_common.py` | **New in Phase 3.** The gate (`require_session` / `require_room` / `require_message`) and the serialisers. **The only place a message body is emitted**, which is what makes "a deleted row cannot leak its text" structural rather than a rule four read paths have to remember. |
+| `api/rooms.py` | **New in Phase 3.** Room list (zero joins — it renders from the denormalised `last_message_*` columns), room detail, member list, the SPA bootstrap, and the Redis-backed `last_open_room` hint. |
+| `api/history.py` | **New in Phase 3.** Transcript paging, thread paging, and the "page containing this message" read a deep link resolves to. **Keyset on `seq`, never `OFFSET`, never a timestamp.** |
+| `api/compose.py` | **New in Phase 3.** Send / edit / delete and the upload gate. Goes through `sync.outbox.insert_message` rather than around it, so Phase 2's document events still do all the work and Phase 3 adds no second copy of any of it. Idempotent on `client_message_id`, catching **both** `UniqueValidationError` and `DuplicateEntryError`. |
+| `api/search.py` | **New in Phase 3.** Room-scoped and global search. `LIKE` rather than `MATCH` — the column exists, the FULLTEXT index does not — stated explicitly rather than left implicit, with the upgrade path written down. The oversight-role read is the one place `note_privileged_read` fires on a search. |
+| `api/mentions.py` | **New in Phase 3.** `@mention` autocomplete, members first. `@triton` is offered in every room. Non-members are *offerable* but not *mentionable* — the write side drops them. |
+| `api/readstate.py` | **New in Phase 3.** `mark_read`, the wholesale unread count, per-member read marks, and the `after_insert` counter fan-out that drives the room-list indicator and the bubble badge. |
+| `api/presence.py` | **New in Phase 3.** Typing (no database write at all) and presence (**Redis with a TTL, never a DocType**). `focus_state` is the pure multi-tab union Phase 4's suppression matrix will read. |
+| `../../www/chat.html` + `chat.py` | **New in Phase 3.** The SPA shell. No hyphen in either filename — `scripts/check_www_controllers.py` guards it. Serves every sub-path of `/chat` via the `website_route_rules` entry in `hooks.py`. |
+| `../../public/js/chat/` | **New in Phase 3.** The SPA, as plain DOM modules. **No Vue**, which is how the two-runtime hazard is closed structurally rather than by configuration. |
+| `../../public/js/global_enhancements/chat_surface.js` | **New in Phase 3.** The coworker surface inside the floating bubble. Shares the SPA's transport, handoff, optimistic and signal modules, so the two halves cannot disagree about the API shape or the idempotency rule. |
+| `../api/chat.py` | The whitelisted feature-flag endpoint: `get_settings_public()`, flags only. The real surface is `chat/api/` — it lives under `chat/` so `tests/test_chat_rawsql_guard.py` scans it. |
 
 ## Indentation
 
@@ -285,6 +311,31 @@ change is `pubsub.run_pull_cycle`'s bound, not the ingest below it.
 | `erpnext_enhancements.chat.sync.provisioning.enroll_org_units` | no | Creates `Chat Room` rows for named org units and performs **zero Google I/O**. This is the per-entity opt-in: enrolling a hundred departments creates zero spaces. |
 | `erpnext_enhancements.chat.sync.provisioning.start_org_mirror` | no | Opens a `Chat Provisioning Run`. `dry_run` defaults to **1** and the default is the point — the thing being planned creates spaces in twenty people's clients and cannot be undone without a call this codebase refuses to make. |
 | `erpnext_enhancements.chat.sync.provisioning.create_document_room` | no | A per-document room, **user-initiated and registered in no hook.** Never automatic: 60 project-wide space writes per minute means a rule creating a space per Project would saturate the budget for hours and leave thousands of empty spaces behind. Permission is the *document's* permission, checked here — a room hung off a document must not be an easier door than the document. |
+
+**Phase 3's read/write surface — everything under `chat/api/`.** Every one begins with
+`_common.require_session` or `require_room`, which resolves the caller, refuses Guest,
+enforces the pilot whitelist, and (for room-scoped calls) asserts active membership through
+`chat_room_has_permission` — the *same* function the socket server calls on `doc_subscribe`,
+so the REST boundary and the realtime boundary cannot disagree about who is in a room.
+`tests/test_chat_api_contracts.py` walks the AST and fails the build on a whitelisted
+function that never calls a gate.
+
+| Path | What it does |
+|---|---|
+| `chat.api.rooms.get_bootstrap` | Everything the SPA needs for its first frame, in one round trip. Deliberately **not** `extend_bootinfo`: bootinfo is serialised into every desk page load for every user, and the room list belongs to the one page that renders it. |
+| `chat.api.rooms.get_rooms` / `get_room` / `get_members` | The room list (zero joins), room detail plus roster, roster alone. |
+| `chat.api.rooms.set_last_open_room` | §4.3 tier 3. **Redis, not a DocType**, debounced server-side to one write per 30 s per user. It is a hint: losing it costs one click, which does not justify a table. A prod deploy flushes Redis, so the first visit after a deploy lands on the room list — documented behaviour, not a bug. |
+| `chat.api.history.get_messages` | Keyset paging on `seq`. Three cursors, one query shape: newest page, `before_seq` scrollback, and `after_seq` — **the reconnect backfill**, which is the reconciliation path that makes realtime an accelerator rather than a dependency. |
+| `chat.api.history.get_thread` | A thread root plus its replies. One indexed range scan on `(thread_root, seq)`; threading is exactly one level deep by construction. **Google cannot represent this at all** — `spaceThreadingState` is output-only and `spaces.setup` states verbatim that threaded replies are unsupported — so the structure is ERPNext's alone and the thread pane works with chat dormant. |
+| `chat.api.history.get_message_context` | The history page *containing* a message, plus one page either side. What a deep link, a citation and a search result all resolve to. |
+| `chat.api.compose.send_message` | Idempotent on `client_message_id`. A retry after an unseen success returns the existing row **as success** — catching both `UniqueValidationError` (the one that actually fires; it is not the primary key) and `DuplicateEntryError`. |
+| `chat.api.compose.edit_message` / `delete_message` | Author only. Delete is a **tombstone**: `is_deleted = 1` and the body stays, because Google's tombstone is content-free and ERPNext is the only copy. |
+| `chat.api.compose.prepare_upload` | Gates an upload and returns the limits, before the bytes move. Uploads go through Frappe's own `upload_file` with `is_private = 1`, attached to the room, and `send_message` re-points the `File` at the message. |
+| `chat.api.search.search_messages` | Room-scoped and global. Returns snippet **offsets**, never pre-wrapped `<mark>` HTML — message bodies are user-authored and handing the client a string to `innerHTML` is the stored-XSS vector. |
+| `chat.api.mentions.search_mention_targets` | Members first, then other users, `@triton` always. |
+| `chat.api.readstate.mark_read` / `mark_all_read` / `get_unread_state` / `get_read_marks` | The high-water mark, the wholesale count, and the per-member marks receipts render from. Monotonicity is enforced by the statement (`where coalesce(last_read_seq,0) < :seq`), not by trusting the client. |
+| `chat.api.presence.set_typing` | **Writes nothing to the database.** Check membership, publish, done. |
+| `chat.api.presence.heartbeat` / `goodbye` / `get_presence` | Redis with a 75-second TTL, keyed per (user, client). `goodbye` is an optimisation; the TTL is the mechanism. |
 
 ### `after_migrate` / `after_install`
 
@@ -607,6 +658,124 @@ explicit `room=` (the only thing that short-circuits the whole chain) *and*
 two poisoned event names with a `ValueError`** rather than documenting them as a hazard.
 Payloads carry identifiers and let the client fetch — never file bytes, never long bodies.
 
+### The realtime event contract
+
+Every event this package publishes, and which room it belongs in. The client generates its
+handler map from the same list (`public/js/chat/socket.js::EVENT_NAMES`) and
+`scripts/test_chat_source_rules.js` fails the build when the two disagree — a client
+listening for an event nobody publishes is indistinguishable, from the client's side, from a
+quiet room.
+
+**The room split is invariant I8, and it is what makes socket security free.** A *document*
+room is permission-checked when a client joins it: the socket server calls back into
+`chat_room_has_permission` under the joining user's own session. A *user* room is not
+joinable by anybody else — there is no `user_subscribe` verb a client can call — but it is
+not scoped to a conversation either. So content and content-adjacent state go to the doc
+room, counters go to the user room, and never the other way round.
+
+| Event | Room | Payload | Published by |
+|---|---|---|---|
+| `chat_message_created` | doc | `{message, room, seq, sender, sender_kind, message_type, thread_root, has_attachments}` | `sync/outbox.py` (`after_insert`) |
+| `chat_message_edited` | doc | `{message, room, seq, origin}` | `sync/inbound.py` for a Google-side edit; `api/compose.py` for an ERPNext-side one — see the note below |
+| `chat_message_deleted` | doc | `{message, room, seq, origin}` | same pair |
+| `chat_typing` | doc | `{room, user, thread_root?}` | `api/presence.py`. **No database write at all** |
+| `chat_typing_stopped` | doc | `{room, user}` | `api/presence.py` |
+| `chat_presence` | doc | `{user, state, ts}` | `api/presence.py`, **transitions only** — never the heartbeat |
+| `chat_read_receipt` | doc | `{room, user, last_read_seq}` | `api/readstate.py`. A high-water mark, not per message |
+| `chat_room_updated` | doc | `{room, changed}` | reserved; title/membership/archive changes |
+| `chat_unread_updated` | **user** | `{room?, unread?, mention, total_unread?, total_mentions?}` | `api/readstate.py`. Counters only, ≤512 bytes |
+| `chat_mention` | **user** | `{room, message, thread_root, by}` | reserved for Phase 4's ping |
+
+Every one of them is `after_commit=True`, without exception. The consumer immediately
+re-reads the database, so an event that beats its own transaction points at a row that does
+not exist yet — an intermittent 404 that reproduces only under load.
+
+**Names use an underscore (`chat_message_created`), not a colon.** The Phase 3 brief's §4.5
+table spells them `chat:message_created`; Phase 1 shipped the underscore form and Phase 2
+publishes it, so the colon form would be a silent break of the sync engine's own events.
+`realtime.py::_EVENT_PREFIXES` accepts both, and the underscore form is what exists.
+
+**A reported Phase 2 gap.** `sync/inbound.py::_publish` fans out `chat_message_edited` /
+`chat_message_deleted` for a change arriving *from Google*; `outbox.propagate_message_change`
+— its ERPNext-side twin — relays the change onward but publishes **no realtime event at
+all**. So before Phase 3, an edit made in ERPNext reached the Google space and reached no
+other ERPNext client until they refreshed. Phase 3's own write path
+(`api/compose.py::_publish_change`) announces its own writes, which closes it for the SPA
+without touching the sync engine. It does **not** close the general case: an edit made
+through the desk, a patch, or a future admin tool still publishes nothing. That belongs to
+whoever owns `propagate_message_change`.
+
+### The sources row: an approved exception to "preserve exactly"
+
+Locked decision #7 says the Triton sources dropdown is **preserved exactly**. Research 03
+§12.6 proposed the opposite — show the full manifest with cited entries marked and sorted
+first — and was explicit that it required a human yes rather than a unilateral edit. It was
+raised at the Phase 3 checkpoint and **approved on 2026-08-10**.
+
+What that means concretely, because "approved" is not the same as "safe":
+
+* **`renderSources()` is untouched.** Same container class, same chip class, same
+  `label || title || url` fallback, same `textContent`, same `target="_blank"
+  rel="noopener"`. It is still the path taken by every turn on every site — no manifest
+  exists until Phase 5 emits one.
+* **`renderManifestSources()` is a separate function beside it**, not an edit to it. That
+  separation is what makes "with no manifest, nothing changed" a fact rather than a claim,
+  and `scripts/test_triton_widget_guards.js` fails the build if either the old renderer
+  changes shape or the new one is folded back into it.
+* **The row is still the whole retrieved set** — uncited entries are dimmed, never dropped.
+  That superset is the property decision #7 was protecting; hiding retrieved-but-unused
+  sources removes exactly what somebody checking an answer wants.
+* **Ordering is by id within each group**, because the inline markers read `[1]`, `[2]`,
+  `[3]`. `citations.js::orderManifestForDisplay` is pure and carries the rule.
+* **Marking is live, reordering happens once**, in `finishStreaming` (and once more if the
+  turn is later restored from history). A row that reshuffles while the reader is using it
+  moves the chip they were about to click. The sort is gated on the caller —
+  `orderManifestForDisplay(manifest, cited, {sortCitedFirst})` — because the first revision
+  of this feature *said* "one reorder, nowhere else" and then re-sorted from the mid-stream
+  `citations_append` arm. The rule is positional, so `test_triton_widget_guards.js` asserts
+  which call sites may ask for it.
+* **The row is created in place, never repositioned.** The pre-Phase-3 row was not last: the
+  `done` handler runs `renderSources()` and only then `renderChart()`. Forcing the manifest
+  row to the end moved it, and made a live turn disagree with the same turn re-opened from
+  history.
+
+If a future phase wants the row back to strictly-preserved, delete the `citations` case's
+call to `renderManifestSources` — the old renderer is still there and still correct.
+
+### Presence, typing and read receipts are ERPNext-sourced — and a coworker in the native Google Chat client shows as offline
+
+This is invariant I14, it is a real product limitation, and it must not be discovered in
+production.
+
+Google Chat exposes **none** of the three. It has no typing-indicator API at all, for
+anyone, ever. Its `users.availability` and read-state surfaces are **self-scoped** — a caller
+reads their own, never a coworker's — so they cannot power a presence dot next to another
+employee's name. All three signals here are therefore built on Frappe realtime and on the
+user's **ERPNext session**.
+
+The consequence: a colleague who is chatting happily from the native Google Chat client
+contributes no typing signal and no presence signal to this application, and renders as
+offline. The UI states that rather than implying they are away from their desk — the member
+list carries the sentence "Presence and typing come from ERPNext. Someone using only Google
+Chat shows as offline", and each offline dot carries the same explanation for a screen
+reader. **No code path may infer a coworker's presence or read state from a Google Chat API
+response.**
+
+Two mechanical consequences worth knowing:
+
+* **Presence is Redis with a TTL, never a DocType.** At fifty users heartbeating every 30 s a
+  DocType would take ~144,000 writes a day for data worthless after sixty seconds. More
+  importantly the TTL *is* the crash handling — a dead browser, a closed lid, a killed tab
+  all simply expire — so there is deliberately **no cleanup code path** for the crash case.
+  A "goodbye" on `pagehide` exists as an optimisation and correctness never depends on it.
+* **Keys are per (user, client), not per user.** A user has three tabs. Presence is the union
+  across their clients, and focus is evaluated as "**no** client of this user has that room
+  focused". Keying on the user alone lets the last tab to heartbeat overwrite the others,
+  which reads as "notifications stopped working when I opened a second tab" and is the single
+  most likely thing to get wrong here. `presence.focus_state` is the pure function that union
+  is written in, it has its own test, and `public/js/chat/signals.js::unionPresence` is its
+  client-side twin tested against the same table of cases.
+
 ---
 
 ## Operating it
@@ -854,9 +1023,29 @@ red for reasons that have nothing to do with the code under test. All pytest.
 | `tests/test_chat_attachments.py` | Permission parity, upload cost, Drive links staying links. |
 | `tests/test_chat_subscriptions.py` | Subscription lifecycle and the reconciliation sweep (chaos 10). |
 
-**Not yet written:** the 200-message soak of §9. Nothing in this repo runs it today, so no
-claim about sustained throughput, ordering under load, or drain time is currently backed by
-anything executed.
+Phase 3 added four more — one pytest suite and three plain-`node` scripts. The JS ones need
+no runner and no `npm install`, which is the same shape as the repo's three existing JS
+guards and the reason they run at all: a framework that needs `npm ci` is a framework this
+deploy pipeline does not have, and one that is installed but never invoked is worse than
+none because it looks like coverage.
+
+| Suite | Style | What it pins |
+|---|---|---|
+| `tests/test_chat_api_contracts.py` | pytest | A deleted row never emits its body; the membership fragment never returns `""`; page sizes are clamped; search escapes the user's own `LIKE` wildcards; paging is keyset on `seq` and never `OFFSET` or a timestamp; the Python and JS route builders produce the same bytes; every whitelisted endpoint calls a gate. |
+| `scripts/test_chat_citations.mjs` | node | The whole §4.10 degradation table: unknown `k` dropped silently, malformed tokens left literal, split tokens reassembled, **the tail buffer flushed on stream end**, `javascript:` refused, a `digest` rendered as a non-navigating pill, and — the row that lets this phase ship before Phase 5 — **no `citations` event renders identically to today**. |
+| `scripts/test_chat_client_logic.mjs` | node | Routes and the three-tier restoration precedence (**the URL wins, always**), the handoff record's nonce and TTL, optimistic reconciliation in all four orderings, the read batcher's monotonicity and dwell, typing throttle and expiry, and the multi-tab presence union. |
+| `scripts/test_chat_source_rules.js` | node | No `innerHTML` anywhere in the chat client; no Vue in the SPA bundle; the realtime event names matching between `realtime.py` and `socket.js`; **every cross-module name resolving** (esbuild fails on a bad import *path*, but a name that is never imported compiles to a global lookup and throws only in the browser); and `www/chat.html` loading bundles rather than raw `/assets` paths. |
+
+All of them were **mutation-tested in both directions** when they were written: a planted
+defect turns each one red naming the offender, and removing it turns them green. That is not
+a formality here — between them they found **five real defects before the code ever ran**:
+
+- a zero-initialised timestamp in the read batcher and another in the typing throttle, each
+  swallowing its own first emission, both invisible against a real clock;
+- three composers carrying only half the IME rule (`isComposing` without the legacy 229),
+  i.e. fixed everywhere except the engines the fix exists for;
+- `isComposingKey` used in the widget and never imported — a bare global reference that would
+  have thrown `ReferenceError` at load and taken the whole assistant down on every desk page.
 
 The CI runner installs only `httpx pytest jinja2`, so a bench-free suite must stub
 `requests` the way `tests/test_triton_personas.py` already does. That is also why

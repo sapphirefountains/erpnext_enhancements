@@ -96,10 +96,51 @@ from frappe.realtime import get_doc_room, get_user_room
 #: name, the permission hook and the socket join must all agree on the same spelling.
 ROOM_DOCTYPE: Final[str] = "Chat Room"
 
-#: The three events Phase 3's SPA subscribes to. Declared here so no caller spells one.
+#: The three message events. Declared here so no caller spells one.
 EVENT_MESSAGE_CREATED: Final[str] = "chat_message_created"
 EVENT_MESSAGE_EDITED: Final[str] = "chat_message_edited"
 EVENT_MESSAGE_DELETED: Final[str] = "chat_message_deleted"
+
+#: Phase 3's additions, and which room each one belongs in. The split is invariant I8 and it
+#: is what makes socket security free: a **document room** is permission-checked when a
+#: client joins it (the socket server calls back into ``chat_room_has_permission``), a
+#: **user room** is not joinable by anybody else but is not scoped to a conversation either.
+#: So content and content-adjacent state go to the doc room, and counters go to the user
+#: room — never the other way round.
+#:
+#: Document room (``publish_room_event``):
+EVENT_TYPING: Final[str] = "chat_typing"
+EVENT_TYPING_STOPPED: Final[str] = "chat_typing_stopped"
+EVENT_PRESENCE: Final[str] = "chat_presence"
+EVENT_READ_RECEIPT: Final[str] = "chat_read_receipt"
+EVENT_ROOM_UPDATED: Final[str] = "chat_room_updated"
+#: User room (``publish_user_counter``):
+EVENT_UNREAD_UPDATED: Final[str] = "chat_unread_updated"
+EVENT_MENTION: Final[str] = "chat_mention"
+
+#: Every event name this package may publish, as one set. The SPA generates its handler map
+#: from the same list (``public/js/chat/events.js``) so a name added on one side and not the
+#: other is visible rather than silent — a client listening for an event nobody publishes is
+#: indistinguishable, from the client's side, from a quiet room.
+#:
+#: The prompt's §4.5 table spells these ``chat:message_created``. The repo shipped
+#: ``chat_message_created`` in Phase 1 and Phase 2 publishes it, so the underscore form is
+#: what exists and the colon form would be a silent break of the sync engine's own events.
+#: ``_EVENT_PREFIXES`` accepts both; ``chat/README.md`` records the divergence.
+ALL_EVENTS: Final[frozenset[str]] = frozenset(
+	{
+		EVENT_MESSAGE_CREATED,
+		EVENT_MESSAGE_EDITED,
+		EVENT_MESSAGE_DELETED,
+		EVENT_TYPING,
+		EVENT_TYPING_STOPPED,
+		EVENT_PRESENCE,
+		EVENT_READ_RECEIPT,
+		EVENT_ROOM_UPDATED,
+		EVENT_UNREAD_UPDATED,
+		EVENT_MENTION,
+	}
+)
 
 #: Trap 3. Both names are special-cased inside ``publish_realtime`` and **overwrite an
 #: explicitly passed** ``room=`` before the ``if not room:`` guard runs. Refused, not

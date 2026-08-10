@@ -1,0 +1,77 @@
+{#
+  Chat SPA shell (served at /chat and every sub-path; controller: chat.py).
+
+  Chrome-free full-viewport application page, following the Time Kiosk / itinerary /
+  training shells. Its jobs, and only these:
+
+    * load chat.bundle.css and chat.bundle.js — BUNDLES, resolved through assets.json to
+      content-hashed filenames. Raw /assets paths are served immutable for a year with no
+      content hash, so an edit never reaches a device that already cached it (the "fix works
+      on desktop, phones still broken" bug this app has shipped once). Invariant I15.
+    * hand the server-computed boot payload to the front end as window.EE_CHAT_BOOT.
+    * provide the single mount point. Every node inside it is built by the bundle with
+      document.createElement / textContent — this file contains no message, name, room
+      title or filename, because those are user-authored and a template that interpolates
+      them is a stored-XSS vector with a straight path from any employee to every employee.
+
+  NO VUE. Not the vendored UMD global (that is app_include_js, i.e. Desk pages only, and
+  this is a website route) and not a bundled copy. The SPA is plain DOM, which resolves the
+  two-Vue-copies hazard structurally rather than by configuration: the Desk document has
+  window.Vue and no SPA, this document has the SPA and no Vue, and expanding the bubble
+  NAVIGATES here rather than mounting the SPA into a Desk page. See §4.1 option (c), and
+  scripts/test_chat_single_vue.js, which fails the build if either bundle ever grows one.
+
+  Deep links: hooks.py routes /chat/<path:chat_path> here, so a hard refresh at
+  /chat/room/<room>?thread=<msg>&message=<msg> renders this same shell and the bundle reads
+  the path out of location. The server does not parse the route — a server that parses it is
+  a second router to keep in step with the first.
+#}
+{% extends "templates/web.html" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block head_include %}
+<meta name="theme-color" content="#00a0dd">
+<meta name="mobile-web-app-capable" content="yes">
+{# 100dvh and env(safe-area-inset-*) live in the bundle; this stops the mobile browser
+   scaling the layout before the CSS gets a chance to. #}
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="{{ bundled_asset('chat.bundle.css') }}">
+{% endblock %}
+
+{# Best-effort removal of the website chrome; the CSS in the bundle is the real guarantee. #}
+{% block banner %}{% endblock %}
+{% block navbar %}{% endblock %}
+{% block header %}{% endblock %}
+{% block page_header %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block footer_extension %}{% endblock %}
+
+{% block page_content %}
+<div id="ee-chat-root" class="ee-chat-root" role="application" aria-label="Chat">
+	{# The only pre-rendered content in the page, and deliberately: a bundle that fails to
+	   load must not leave a blank screen. The bundle removes this node on mount. #}
+	<div class="ee-chat-boot" role="status">
+		<div class="ee-chat-boot-mark">💬</div>
+		<div class="ee-chat-boot-text">Loading chat…</div>
+		<noscript>Chat needs JavaScript enabled.</noscript>
+	</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+	// Server-computed boot payload. Identity and connection facts only — never a room list
+	// and never a message. The room list is one fetch away (chat.api.rooms.get_bootstrap)
+	// and putting it here would mean a stale list on every back-navigation to a cached page.
+	window.EE_CHAT_BOOT = {
+		user: {{ chat_user | tojson }},
+		full_name: {{ chat_full_name | tojson }},
+		site_name: {{ chat_site_name | tojson }},
+		socketio_port: {{ chat_socketio_port | tojson }},
+		csrf_token: {{ csrf_token | tojson }},
+		build: {{ deploy_version | tojson }}
+	};
+</script>
+<script src="{{ bundled_asset('chat.bundle.js') }}"></script>
+{% endblock %}
