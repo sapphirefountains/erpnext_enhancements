@@ -9,6 +9,10 @@
   won-date stamp, and refuses once a Project exists.
 * ``default_project_notify_users`` resolves the Account Executive + Project
   Manager role holders, skips a missing role, and falls back to the current user.
+* ``crm_enhancements.api._notify_recipients`` — tested here rather than beside its
+  module because it exists to clean up what *this* dialog submits — drops the empty
+  element a trailing MultiSelect separator leaves behind, which used to reach
+  ``frappe.sendmail`` as a blank recipient and get the message refused by Gmail.
 
 These fake the document / DB calls; full delivery + creation run against a bench.
 """
@@ -18,6 +22,10 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from erpnext_enhancements.crm_enhancements.api import (
+	_notify_recipients,
+	enqueue_project_creation,
+)
 from erpnext_enhancements.crm_enhancements.project_prompt import (
 	default_project_notify_users,
 	opportunity_handoff_steps,
@@ -208,3 +216,37 @@ class TestOpportunityHandoffSteps(FrappeTestCase):
 		with patch.object(frappe, "has_permission", return_value=False):
 			with self.assertRaises(frappe.PermissionError):
 				opportunity_handoff_steps("OPP-0001")
+
+
+class TestNotifyRecipients(FrappeTestCase):
+	"""``_notify_recipients`` — the guard on what reaches ``frappe.sendmail``."""
+
+	def test_trailing_separator_yields_no_blank(self):
+		# What the MultiSelect actually submits after two picks.
+		self.assertEqual(
+			_notify_recipients("a@x.com, b@y.com, "),
+			["a@x.com", "b@y.com"],
+		)
+
+	def test_strips_surrounding_whitespace(self):
+		self.assertEqual(_notify_recipients(" a@x.com ,b@y.com"), ["a@x.com", "b@y.com"])
+
+	def test_accepts_a_list(self):
+		self.assertEqual(_notify_recipients(["a@x.com", "", " ", None]), ["a@x.com"])
+
+	def test_separators_only_resolve_to_nobody(self):
+		for raw in (",", " , ", "", None, []):
+			self.assertEqual(_notify_recipients(raw), [], f"unexpected recipients for {raw!r}")
+
+	def test_enqueue_refuses_a_separators_only_field(self):
+		with patch.object(frappe, "enqueue") as enqueue:
+			with self.assertRaises(frappe.ValidationError):
+				enqueue_project_creation("OPP-0001", users=",", project_template="PT-0001")
+		enqueue.assert_not_called()
+
+	def test_enqueue_passes_the_cleaned_list(self):
+		with patch.object(frappe, "enqueue") as enqueue:
+			enqueue_project_creation(
+				"OPP-0001", users="a@x.com, b@y.com, ", project_template="PT-0001"
+			)
+		self.assertEqual(enqueue.call_args.kwargs["users"], ["a@x.com", "b@y.com"])
