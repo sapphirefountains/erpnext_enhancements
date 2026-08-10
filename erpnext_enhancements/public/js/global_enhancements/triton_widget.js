@@ -376,11 +376,19 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// localStorage mirror is there to survive. The click handler navigates in the SAME tab
 		// (location.assign) because sessionStorage is per-tab and that is the primary copy.
 		state.els.expand.addEventListener("click", onExpand);
-		if (!chatEnabled()) {
-			state.els.surfaceTabs.forEach((tab) => {
-				if (tab.dataset.surface === "chat") tab.style.display = "none";
-			});
-			state.els.expand.style.display = "none";
+		// --- phase 3 --- header space. The tabs and the expand control added ~155px to a
+		// header that had ~64px of slack at 410px, which pushed new-chat / expand / close off
+		// the right edge entirely.
+		//
+		// With chat ON the tabs literally read "Triton", so the separate title beside them is
+		// a duplicate — `has-tabs` drops it and returns most of the space. With chat OFF there
+		// is nothing to switch between, so the whole switcher goes and the title comes back;
+		// a one-item toggle is not a toggle.
+		if (chatEnabled()) {
+			panel.querySelector(".triton-header").classList.add("has-tabs");
+		} else {
+			panel.querySelector(".triton-surface-tabs").classList.add("is-hidden");
+			state.els.expand.classList.add("is-hidden");
 		}
 	}
 

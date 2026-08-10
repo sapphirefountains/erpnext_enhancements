@@ -71,6 +71,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   button will not until that runbook is executed on the VM. Every Print action
   added here therefore goes through the browser's print window, the same choice
   `pick_routing_map.js` and `project_brief.js` already made.
+## [1.265.3] - 2026-08-10
+
+### Fixed
+
+- **Read receipts never fired. A dwell that nothing re-samples never completes.**
+
+  `ReadBatcher.observe()` promotes a seq on the **second** call that finds its conditions
+  still holding — the first only records when they started. That is deliberate: it is what
+  stops a fast scroll past 200 messages marking them all read on the way to the bottom.
+
+  But every caller was a DOM event — a render, a scroll, an `IntersectionObserver` callback —
+  and a message that simply sits on screen **being read** generates no further events. An
+  `IntersectionObserver` fires on intersection *changes*; a message already fully visible
+  reports once and never again. So the second sample never happened and the dwell never
+  completed.
+
+  Caught on production, not by a test: after a real two-person exchange, both read marks had
+  been moved by `_advance_author_read_mark` — 8–13ms after each person's own message — and
+  neither had ever been moved by reading. One participant's mark sat at seq 3 while seq 4 was
+  visibly on their screen.
+
+  **Nothing in the pure tests could have caught this.** The dwell logic is correct in
+  isolation and every one of its cases passes; what was missing was a caller that came back.
+  `ReadBatcher` now exposes `hasPending()`, both surfaces schedule one follow-up sample when
+  anything is mid-dwell, and both re-evaluate on window focus and `visibilitychange` — focus
+  being one of the three read conditions, a change in it has to re-open the question.
+
+  One follow-up, not an interval: if the conditions stop holding, `observe` drops the entry,
+  `hasPending()` goes false, and nothing reschedules.
+
+### Added
+
+- **`scripts/test_chat_source_rules.js` asserts that a dwell has a sampler** — any surface
+  feeding `observe()` must consult `hasPending()` *and* schedule another look. The rule is
+  asserted where the gap actually was, since no unit test of `ReadBatcher` can see whether its
+  caller returns. Mutation-tested three ways.
+
+  The check itself shipped broken on its first run and is worth recording: it used
+  `setTimeout\([^)]*…` to find the follow-up, and a negated-paren class cannot cross the `)`
+  in the arrow function's own parameter list — so it failed against correct code. Fixed to a
+  lazy `[\s\S]{0,80}?`.
+
+## [1.265.2] - 2026-08-10
+
+### Fixed
+
+- **The widget header overflowed: new-chat, expand and close were pushed off the right edge.**
+  Phase 3 added a surface switcher (~120px) and an expand control (~34px) to a bar that had
+  about 64px of slack at the panel's 410px width — the CSS even carries a note saying the
+  pickers were capped at 92px specifically so they would not push the icon buttons off. They
+  got pushed off anyway.
+
+  Four changes, in order of how much they buy:
+
+  * **The title is dropped when the switcher is present.** The first tab already reads
+    "Triton", so the title beside it was the same word twice and the widest item in the row.
+    With chat off there is nothing to switch between, so the switcher is hidden entirely and
+    the title comes back — a one-item toggle is not a toggle.
+  * **The header wraps instead of overflowing** (`flex-wrap`). No amount of shrinking fits
+    eight controls across a 328px phone panel, and wrapping costs a second row only when it
+    is actually needed. It hides nothing, which shrinking far enough eventually would.
+  * **The pickers can shrink** — `flex: 1 1 auto` with `min-width: 0`, still capped at 88px.
+    The `min-width: 0` is the load-bearing half: without it a flex item refuses to shrink
+    below its content width and the row overflows instead of compressing.
+  * Icon buttons 28→26px and the gap 6→4px.
+
+  **Touch keeps its tap targets.** 26px is a pointer-device size; under `(hover: none)` the
+  buttons go to 40px and the tabs to a 36px minimum, per §4.12. On a phone that buys a second
+  header row rather than an unreachable control, which is the right trade in that direction.
+
+  **The chat-off header cannot regress**: it now consumes 296px of the 386px available where
+  it previously consumed 322px — 26px roomier than before Phase 3, with strictly the same
+  controls.
 
 ## [1.265.1] - 2026-08-10
 
