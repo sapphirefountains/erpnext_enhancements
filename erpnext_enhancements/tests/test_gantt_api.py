@@ -13,6 +13,7 @@ denial raises, limits clamp, and dependency links can never reference a row
 the permission-checked main query did not return.
 """
 
+import base64
 import sys
 import types
 from datetime import datetime
@@ -226,11 +227,33 @@ def install_frappe_stub():
 	frappe_utils.flt = _flt
 	frappe_utils.cint = lambda value=0, *args, **kwargs: int(_flt(value))
 	frappe_utils.cstr = lambda value=None: "" if value is None else str(value)
+	# Fixed rather than date.today(): the export filenames assert against it, and
+	# a real clock would make those tests fail once a day at midnight.
+	frappe_utils.nowdate = lambda: "2026-01-15"
 	frappe.utils = frappe_utils
+
+	# The spreadsheet writers are imported lazily inside build_payload, so they
+	# only need to exist by the time an export test calls it. Real CSV quoting is
+	# not what these tests are checking — row content and ordering are — so the
+	# stub joins with commas and the xlsx one just marks that it was reached.
+	csvutils = sys.modules.get("frappe.utils.csvutils") or types.ModuleType("frappe.utils.csvutils")
+	csvutils.to_csv = lambda rows: "\n".join(",".join(str(c) for c in row) for row in rows)
+	xlsxutils = sys.modules.get("frappe.utils.xlsxutils") or types.ModuleType("frappe.utils.xlsxutils")
+
+	class _FakeXlsx:
+		def __init__(self, rows):
+			self.rows = rows
+
+		def getvalue(self):
+			return b"XLSX:" + "\n".join(",".join(str(c) for c in r) for r in self.rows).encode()
+
+	xlsxutils.make_xlsx = lambda rows, sheet_name=None, **kw: _FakeXlsx(rows)
 
 	sys.modules["frappe"] = frappe
 	sys.modules["frappe.model"] = frappe_model
 	sys.modules["frappe.utils"] = frappe_utils
+	sys.modules["frappe.utils.csvutils"] = csvutils
+	sys.modules["frappe.utils.xlsxutils"] = xlsxutils
 	return frappe
 
 
@@ -1504,3 +1527,180 @@ def test_can_write_reflects_doctype_permission_per_source(env):
 	frappe.has_permission = lambda doctype, ptype=None, *a, **k: not (ptype == "write" and doctype == "Task")
 	out = gantt.get_gantt_data(composite_config())
 	assert out["meta"]["can_write"] == {"Project": True, "Task": False}
+
+
+# ---------------------------------------------------------------------------
+# Data export (CSV / XLSX)
+# ---------------------------------------------------------------------------
+
+
+def _t(name, subject, start, end, parent=None, progress=0):
+	"""One Task row as the query layer would return it."""
+	return {
+		"name": name,
+		"subject": subject,
+		"exp_start_date": start,
+		"exp_end_date": end,
+		"progress": progress,
+		"parent_task": parent,
+		"modified": "x",
+	}
+
+
+ONE_TASK = [_t("T1", "One", "2026-01-01", "2026-01-05")]
+
+
+def _task_rows(rows):
+	"""get_list stub returning ``rows`` for Task and nothing else."""
+
+	def get_list(doctype, **kwargs):
+		return [Row(r) for r in rows] if doctype == "Task" else []
+
+	return get_list
+
+
+def _export_csv(gantt, frappe, rows, title="PRJ-1"):
+	"""Run the export and return ``(payload, parsed lines)``."""
+	frappe.get_list = _task_rows(rows)
+	payload = gantt.export_gantt_data(base_config(), "csv", title)
+	body = base64.b64decode(payload["filecontent"]).decode("utf-8-sig")
+	return payload, [line.split(",") for line in body.splitlines()]
+
+
+def test_export_orders_parents_before_their_children(env):
+	"""The wire format carries the tree as parent pointers in query order, so a
+	naive dump interleaves branches. The file must read top-down."""
+	frappe, gantt = env
+	_payload, lines = _export_csv(
+		gantt,
+		frappe,
+		[
+			_t("C1", "Child", "2026-01-02", "2026-01-03", parent="P1"),
+			_t("P1", "Parent", "2026-01-01", "2026-01-05"),
+		],
+	)
+	assert [line[1].strip() for line in lines[1:]] == ["Parent", "Child"]
+	assert [line[0] for line in lines[1:]] == ["0", "1"]
+
+
+def test_export_indents_the_subject_by_level(env):
+	frappe, gantt = env
+	_payload, lines = _export_csv(
+		gantt,
+		frappe,
+		[
+			_t("P1", "Parent", "2026-01-01", "2026-01-05"),
+			_t("C1", "Child", "2026-01-02", "2026-01-03", parent="P1"),
+		],
+	)
+	assert lines[2][1].startswith("    ")
+
+
+def test_export_converts_the_exclusive_end_back_to_the_inclusive_day(env):
+	"""_shape_row pushes a date-only end +1 day because DHTMLX's end is
+	exclusive. A spreadsheet is read by a human, so it has to be pushed back —
+	otherwise every task in the file appears a day longer than it is."""
+	frappe, gantt = env
+	_payload, lines = _export_csv(gantt, frappe, ONE_TASK)
+	assert lines[1][2] == "2026-01-01"
+	assert lines[1][3] == "2026-01-05"
+
+
+def test_export_keeps_a_real_datetime_end_untouched(env):
+	"""Only a midnight end is a human-inclusive date; a real time is a real
+	time and must not have a day subtracted from it."""
+	frappe, gantt = env
+	_payload, lines = _export_csv(gantt, frappe, [_t("T1", "One", "2026-01-01 09:00", "2026-01-05 17:30")])
+	assert lines[1][3] == "2026-01-05 17:30"
+
+
+def test_export_scales_progress_back_to_percent(env):
+	frappe, gantt = env
+	_payload, lines = _export_csv(gantt, frappe, [_t("T1", "One", "2026-01-01", "2026-01-05", progress=40)])
+	assert lines[1][4] == "40.0"
+
+
+def test_export_emits_a_row_whose_parent_was_never_returned(env):
+	"""A parent filtered out or past the row cap must not take its children
+	with it — losing rows silently from an export is worse than a flat file."""
+	frappe, gantt = env
+	_payload, lines = _export_csv(
+		gantt, frappe, [_t("C1", "Orphan", "2026-01-02", "2026-01-03", parent="GONE")]
+	)
+	assert [line[1].strip() for line in lines[1:]] == ["Orphan"]
+	assert lines[1][0] == "0"
+
+
+def test_export_terminates_on_a_parent_cycle(env):
+	"""Two tasks parented to each other would recurse forever in the walk."""
+	_frappe, gantt = env
+	rows = [
+		_t("A", "A", "2026-01-01", "2026-01-02", parent="B"),
+		_t("B", "B", "2026-01-01", "2026-01-02", parent="A"),
+	]
+	tasks, _unscheduled = gantt._shape_tasks([Row(r) for r in rows], dict(VALID_FIELDS))
+	# _shape_tasks re-roots against emitted rows, so force the cycle back on to
+	# prove _flatten_for_export itself cannot hang.
+	tasks[0]["parent"] = "B"
+	tasks[1]["parent"] = "A"
+	out = gantt._flatten_for_export(tasks)
+	assert sorted(t["id"] for _lvl, t in out) == ["A", "B"]
+
+
+def test_export_forces_eager_children_so_the_file_is_not_just_the_roots(env):
+	"""On screen, lazy branches are the point. In a file, exporting only the
+	roots somebody expanded produces a spreadsheet missing most of the work."""
+	_frappe, gantt = env
+	seen = {}
+
+	def fake_get_gantt_data(cfg):
+		seen["cfg"] = cfg
+		return {"tasks": [], "links": [], "meta": {}}
+
+	gantt.get_gantt_data = fake_get_gantt_data
+	cfg = base_config(children={"doctype": "Task", "link_field": "project", "lazy": True})
+	gantt.export_gantt_data(cfg, "csv", "PRJ-1")
+	assert seen["cfg"]["children"]["lazy"] is False
+	# the caller's dict must not be mutated underneath it
+	assert cfg["children"]["lazy"] is True
+
+
+def test_export_rejects_an_unknown_format(env):
+	frappe, gantt = env
+	frappe.get_list = _task_rows(ONE_TASK)
+	with pytest.raises(Exception, match="Unsupported export format"):
+		gantt.export_gantt_data(base_config(), "pdf", "PRJ-1")
+
+
+def test_export_returns_none_when_there_are_no_rows(env):
+	"""Callers surface "nothing to export" rather than handing the user a file
+	containing only a header."""
+	frappe, gantt = env
+	frappe.get_list = lambda *a, **k: []
+	assert gantt.export_gantt_data(base_config(), "csv", "PRJ-1") is None
+
+
+def test_export_sanitises_the_client_supplied_filename(env):
+	frappe, gantt = env
+	payload, _lines = _export_csv(gantt, frappe, ONE_TASK)
+	assert payload["filename"] == "PRJ-1-2026-01-15.csv"
+
+	nasty, _lines = _export_csv(gantt, frappe, ONE_TASK, title="../../etc/passwd\x00")
+	assert "/" not in nasty["filename"]
+	assert "\x00" not in nasty["filename"]
+
+
+def test_export_inherits_the_read_permission_gate(env):
+	"""The export must not be a way around the chart's own permission check."""
+	frappe, gantt = env
+	frappe.has_permission = lambda *a, **k: False
+	with pytest.raises(Exception, match="Not permitted"):
+		gantt.export_gantt_data(base_config(), "csv", "PRJ-1")
+
+
+def test_export_xlsx_uses_the_spreadsheet_writer(env):
+	frappe, gantt = env
+	frappe.get_list = _task_rows(ONE_TASK)
+	payload = gantt.export_gantt_data(base_config(), "xlsx", "PRJ-1")
+	assert payload["filename"].endswith(".xlsx")
+	assert base64.b64decode(payload["filecontent"]).startswith(b"XLSX:")

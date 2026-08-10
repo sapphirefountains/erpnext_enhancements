@@ -10,6 +10,7 @@ site-wide behaviour, so read those before assuming this package is inert.
 | `working_days.py` | Business-day date arithmetic for the PRO-0204 hand-off SLAs. Monday–Friday only, skipping weekends and any configured Holiday List, so a 2-day SLA set on a Friday lands on Tuesday rather than Sunday. Holidays come from the standard ERPNext "Holiday List" — no new dependency. Used by `process_steps._refresh_due` |
 | `phone.py` | Phone-number normalisation, extracted so the fountain-move intake matcher and any future party resolution agree on what "the same number" means instead of each re-deriving it |
 | `deploy.py` | Per-deploy cache-bust token shared by the standalone PWAs (`/kiosk`, `/wall`) so both shells version their assets and service workers off one value |
+| `spreadsheet.py` | Turns a table of rows into a downloadable CSV/XLSX payload, shared by the Gantt export (`api/gantt.py`) and the Scope-tab task-tree export (`project_dashboard.py`). Returns the bytes **base64 inside the JSON response** rather than as a streamed download: the desk's `frappe.call` parses responses as JSON and would lose a binary body, and the redirect alternative would need the whole widget config in a URL query string. CSV is written with a UTF-8 **BOM** — without it Excel on Windows reads the file as the system codepage and mangles any non-ASCII customer or task name |
 
 ## `patch_delete.py`
 

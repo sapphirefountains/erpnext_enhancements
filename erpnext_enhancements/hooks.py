@@ -854,10 +854,18 @@ website_route_rules = [
 # cannot parse the Water Feature Design pipe segments' fittings/components JSON
 # rows, so the aggregation (DOC-0121 Fitting Schedule) and the typed design
 # issues (Design Review section) are exposed as callables instead.
+#
+# The Project Schedule format draws Gantt bars as percentage-positioned divs, and
+# a bar's left/width are a fraction of the project's whole date span. The print
+# sandbox has no date arithmetic to compute that per row, and a Print Format
+# renders server-side with no JavaScript (so the browser SVG renderer in
+# public/js/gantt_widget/gantt_export.js cannot help) -- hence pre-computed rows.
 jinja = {
 	"methods": [
 		"erpnext_enhancements.water_engineering.issues.we_fitting_schedule",
 		"erpnext_enhancements.water_engineering.issues.we_design_issues",
+		"erpnext_enhancements.project_enhancements.print_data.project_schedule_rows",
+		"erpnext_enhancements.project_enhancements.print_data.project_task_rows",
 	],
 }
 
@@ -975,6 +983,11 @@ after_migrate = [
 	# package_dispatch: the Package Dispatch Sheet Print Format (idempotent +
 	# guarded; re-upserts the HTML so template edits deploy on migrate).
 	"erpnext_enhancements.package_dispatch.setup_print_formats.ensure_package_dispatch_print_formats",
+	# project_enhancements: the Project Schedule (task tree + HTML/CSS Gantt bars)
+	# and Project Task List formats. Same idempotent-upsert shape as the others,
+	# and like them it MUST sit ABOVE ensure_chrome_pdf_generator so that pass
+	# sees the formats and points them at a backend.
+	"erpnext_enhancements.project_enhancements.setup_print_formats.ensure_project_print_formats",
 	# training: starter Training Categories, so the builder's category picker is
 	# never empty on a fresh site (an empty picker reads as a broken form).
 	# Insert-only — a category somebody renamed or deleted stays that way.

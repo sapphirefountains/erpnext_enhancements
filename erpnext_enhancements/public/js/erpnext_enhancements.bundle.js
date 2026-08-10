@@ -86,6 +86,9 @@ import "./global_enhancements/triton_widget.js";
 // project_enhancements (task_tree_manager / column_selector / gantt_zoom are
 // preloaded globally so doctype scripts and lazy dashboard tabs can use their
 // erpnext_enhancements.* namespaces immediately)
+// Shared export/print helpers (branding, downloads, the print window shell).
+// Imported before its consumers so the namespace exists when they evaluate.
+import "./export_utils.js";
 import "./project_enhancements/task_tree_manager.js";
 import "./project_enhancements/dashboard_components/column_selector.js";
 import "./project_enhancements/dashboard_components/column_resizer.js";
@@ -96,5 +99,9 @@ import "./project_enhancements/gantt_zoom.js";
 // window.Gantt/window.gantt save-restore bracket so the frappe-gantt global
 // above is never clobbered, even transiently).
 import "./gantt_widget/gantt_widget.js";
+// Export/print for the Gantt (erpnext_enhancements.gantt_export) — renders its
+// own vector SVG from the widget's rows rather than capturing the DHTMLX DOM,
+// which virtualises its rows and would export only what is scrolled into view.
+import "./gantt_widget/gantt_export.js";
 // Live collaborative form sync (COLLAB_DOCTYPES allowlist inside)
 import "./collab/live_form_sync.js";

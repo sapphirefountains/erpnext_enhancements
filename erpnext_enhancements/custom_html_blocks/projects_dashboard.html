@@ -144,6 +144,18 @@
                         </div>
                     </div>
 
+                    <div class="dropdown check-dropdown">
+                        <button class="btn btn-sm btn-default border custom-dropdown-toggle" type="button" id="ganttExportDropdown" title="Export or print the portfolio chart">Export</button>
+                        <div class="dropdown-menu p-1 shadow-sm" id="gantt-export-menu">
+                            <button type="button" class="dropdown-item pg-export-item" data-export="print">Print / Save as PDF</button>
+                            <button type="button" class="dropdown-item pg-export-item" data-export="png">PNG image</button>
+                            <button type="button" class="dropdown-item pg-export-item" data-export="svg">SVG (vector)</button>
+                            <div class="dropdown-divider"></div>
+                            <button type="button" class="dropdown-item pg-export-item" data-export="csv">CSV data</button>
+                            <button type="button" class="dropdown-item pg-export-item" data-export="xlsx">Excel data</button>
+                        </div>
+                    </div>
+
                     <button type="button" class="btn btn-sm btn-link text-muted" id="gantt-reset-view" title="Clear saved filters, columns, zoom and expanded projects">Reset view</button>
 
                     <!-- colour key; populated by render_gantt_legend() -->

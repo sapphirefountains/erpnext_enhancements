@@ -140,6 +140,35 @@
 	color: var(--text-color, inherit);
 }
 
+/* ---- export menu ------------------------------------------------------- */
+
+/* Anchored to the right edge: the export control is the last thing in the
+   toolbar, so a left-anchored menu would hang off the chart. */
+.ee-gantt-export-menu {
+	left: auto;
+	right: 0;
+	min-width: 190px;
+	padding: 4px;
+}
+
+.ee-gantt-export-item {
+	display: block;
+	width: 100%;
+	padding: 6px 10px;
+	border: 0;
+	border-radius: var(--border-radius-sm, 4px);
+	background: none;
+	text-align: left;
+	white-space: nowrap;
+	color: var(--text-color, inherit);
+	cursor: pointer;
+}
+
+.ee-gantt-export-item:hover,
+.ee-gantt-export-item:focus {
+	background: var(--fg-hover-color, rgba(0, 0, 0, 0.06));
+}
+
 /* ---- chart area -------------------------------------------------------- */
 
 .ee-gantt-chart-wrap {

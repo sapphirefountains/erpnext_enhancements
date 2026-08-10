@@ -414,6 +414,42 @@
 
         $root.find('#gantt-reset-view').on('click', reset_gantt_view);
 
+        // Export / print. This block owns its own toolbar markup, so it drives
+        // the widget's export methods directly rather than switching on the
+        // widget's built-in toolbar (which would render a second control row).
+        //
+        // Images and print come from gantt_export.js, which re-draws the chart
+        // as vector SVG from the rows — NOT a screenshot of the DHTMLX DOM.
+        // That matters most here: this chart is the one with 50+ projects, and
+        // DHTMLX only keeps the rows near the viewport in the DOM, so a capture
+        // would silently export the handful that were scrolled into view.
+        $root.find('.pg-export-item').on('click', async function() {
+            const $btn = $(this);
+            const kind = $btn.data('export');
+            if (!portfolio_gantt_widget) return;
+            const meta = {
+                title: __('Project Portfolio'),
+                subtitle: gantt_export_subtitle(),
+                filename: 'Portfolio-Gantt',
+            };
+            $root.find('#ganttExportDropdown').prop('disabled', true);
+            try {
+                const NS = erpnext_enhancements.gantt_export;
+                if (kind === 'print') {
+                    await NS.print(portfolio_gantt_widget, meta);
+                } else if (kind === 'png' || kind === 'svg') {
+                    await (kind === 'png' ? NS.export_png : NS.export_svg)(portfolio_gantt_widget, meta);
+                } else {
+                    await portfolio_gantt_widget.export_data(kind, meta);
+                }
+            } catch (e) {
+                console.error('Portfolio Gantt export failed', e);
+                frappe.show_alert({ message: __('Export failed.'), indicator: 'red' });
+            } finally {
+                $root.find('#ganttExportDropdown').prop('disabled', false);
+            }
+        });
+
         // Find-a-project: filters the chart in place (server-side, debounced)
         // so the user never leaves the dashboard.
         let search_timer = null;
@@ -658,6 +694,24 @@
             filters.push(["percent_complete", "<", 100]);
         }
         return filters;
+    }
+
+    // What the exported document says it is showing. A portfolio chart is
+    // almost always filtered, and a PNG pasted into an email with no note of
+    // the filters is actively misleading — it reads as "all our projects".
+    function gantt_export_subtitle() {
+        const parts = [];
+        if (gantt_search) parts.push(__('Search: "{0}"', [gantt_search]));
+        if (gantt_selected_projects.size > 0) {
+            parts.push(__("{0} projects selected", [gantt_selected_projects.size]));
+        }
+        if (gantt_status_filters.length) parts.push(gantt_status_filters.join(", "));
+        if (gantt_customer_filters.size > 0) {
+            parts.push(__("{0} customers", [gantt_customer_filters.size]));
+        }
+        if (gantt_date_window) parts.push(__("next {0} days", [gantt_date_window]));
+        if (gantt_at_risk) parts.push(__("at risk only"));
+        return parts.length ? parts.join(" · ") : __("All active projects");
     }
 
     function gantt_widget_config() {
