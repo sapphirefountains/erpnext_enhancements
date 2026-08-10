@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.262.1] - 2026-08-10
+## [1.262.2] - 2026-08-10
 
 ### Fixed
 
@@ -36,6 +36,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Note for anyone auditing the rest of the codebase against this class of bug: every other
   comma-split in the app already filtered (`[x.strip() for x in … if x.strip()]`).
   `crm_enhancements/api.py` was the sole exception.
+
+## [1.262.1] - 2026-08-10
+
+### Added
+
+- **`chat/bench_verify.py` — the three Phase 2 claims that only a real MariaDB and a real
+  Redis can falsify, as a `bench execute` probe.**
+
+  Phase 2 shipped ~1,000 bench-free tests, every one against an in-memory stub. The obvious
+  follow-up — "run the bench suites" — is **not an instruction anybody here can follow**, and
+  `CLAUDE.md` already says why: this repo has no Frappe integration-test job because v16's
+  test-record auto-generation walks the whole ERPNext DocType dependency graph and aborts on
+  environment gaps. That is why the job was removed rather than fixed.
+
+  But the blocker is the **test runner**, not the bench. `bench execute` bootstraps no test
+  records — it imports a module and calls a function — which is exactly how `smoke_test.py`
+  and the two Google verification scripts already work here. So the three unproven claims get
+  probed directly instead:
+
+  - **The `seq` row lock.** `allocate_seq` does `UPDATE … seq_high_water + 1` then reads the
+    value back, and that is only safe because MariaDB holds the row lock until commit. The
+    probe takes the lock on one connection without committing and watches a *second*
+    connection block on it with a short `innodb_lock_wait_timeout`. A stub cannot have an
+    opinion about this, and if it is wrong the symptom is a transcript in the wrong order
+    rather than an error.
+  - **Which exception a non-primary-key unique collision raises.** Every dedupe insert in the
+    chat package catches `(DuplicateEntryError, UniqueValidationError)` on the strength of
+    *reading* v16's `base_document.py`, contradicting ADR §G.3.1 and §G.8 Rule 2. The probe
+    provokes a real collision and prints the class name it actually got. It separately checks
+    that the transaction is still usable afterwards, which is the half the savepoint exists
+    for and is not implied by catching the right class.
+  - **The Redis token bucket.** The GCRA arithmetic is unit-tested; the Lua script that
+    deploys it had never been sent to a Redis.
+
+  **It refuses to run unless every chat table is empty and `Chat Settings.enabled` is 0.**
+  That is not politeness: an empty table is what makes "delete what I created" a complete
+  statement rather than a hopeful one. It creates one scratch room, deletes everything in a
+  `finally`, then *verifies* the tables are empty again and says so — a cleanup that silently
+  half-worked on production is worse than one that never ran. It imports no transport and
+  makes no Google call.
+
+  It runs nowhere in CI, deliberately: it imports `frappe` at module scope, so it belongs to
+  the bench-required tier by construction.
+
+### Changed
+
+- `tests/test_chat_rawsql_guard.py` gains one `SYSTEM_CONTEXT_READS` entry, for
+  `bench_verify._check_seq_row_lock` against `Chat Room`. Worth recording *why* there is an
+  entry at all: the guard caught the new file on its first run — twice, in fact, once for a
+  query target it could not resolve statically and once for touching a conversation-bearing
+  table without the membership filter. The first was fixed rather than exempted (the cleanup
+  now deletes by literal DocType and reads nothing); only the second earned an exemption,
+  because two `UPDATE`s that take a row lock and read no column, on a row the probe created
+  seconds earlier, under `bench execute` with no session user, is genuinely system context.
+  The key is the `(file, function, table)` triple, so the entry covers that one function and
+  gives no cover to the next one added to the file — verified by adding a sibling function
+  and watching the guard reject it.
 
 ## [1.262.0] - 2026-08-09
 
