@@ -95,10 +95,11 @@ doctype_js = {
 		"public/js/global_enhancements/primary_contact.js",
 		"project_enhancements/doctype/opportunity/opportunity.js",
 		"public/js/crm_enhancements/opportunity_migrated_scripts.js",
-		# must load BEFORE opportunity_handoff.js: that script calls open() on it
-		# from the "Hold Hand-Off Meeting" button. Shared with the Project form,
-		# where step 7 books the same kind of meeting.
-		"public/js/crm_enhancements/handoff_meeting_dialog.js",
+		# handoff_meeting_dialog.js is NOT listed here: it moved into
+		# erpnext_enhancements.bundle.js (app_include_js) in v1.263.0, because the
+		# Closed-Won prompt now opens it from the Kanban board and the list view
+		# too. Global load also retires the load-order pairing this entry used to
+		# carry.
 		"public/js/crm_enhancements/opportunity_handoff.js",
 		"public/js/contracts.js",
 		"public/js/global_enhancements/drive_folder_button.js",
@@ -116,9 +117,9 @@ doctype_js = {
 		"public/js/project_enhancements/project_form_script.js",
 		"public/js/project_enhancements/project_brief.js",
 		"public/js/project_migrated_scripts.js",
-		# same pairing as on Opportunity: the dialog first, then the script that
-		# opens it (step 7, "Hold Project Launch Meeting").
-		"public/js/crm_enhancements/handoff_meeting_dialog.js",
+		# step 7 ("Hold Project Launch Meeting") opens the shared meeting dialog,
+		# which now loads globally from erpnext_enhancements.bundle.js — see the
+		# Opportunity entry above.
 		"public/js/project_enhancements/process_steps.js",
 		"public/js/contracts.js",
 		# Contracts tab (custom_contracts_html): every contract on the job —

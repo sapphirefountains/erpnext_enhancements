@@ -34,8 +34,13 @@ import "./global_comments.js";
 import "./comments.js";
 import "./comments_auto.js";
 import "./crm_note_enhancements.js";
-// Closed Won -> "Create project now?" prompt (global listener; works on the
-// Opportunity form and the Kanban board). Server half: crm_enhancements/project_prompt.py.
+// Hand-off meeting booking dialog. Global rather than a doctype_js because the
+// Closed-Won prompt below opens it from the Kanban board and the list view, where
+// no form script is loaded; the Opportunity and Project forms use it too.
+import "./crm_enhancements/handoff_meeting_dialog.js";
+// Closed Won -> next-step prompt ("schedule the hand-off meeting" / "create the
+// project"; global listener, works on the Opportunity form and the Kanban
+// board). Server half: crm_enhancements/project_prompt.py.
 import "./crm_enhancements/create_project_prompt.js";
 import "./performance_fixes.js";
 import "./activity_log_numbering.js";

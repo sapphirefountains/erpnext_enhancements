@@ -10,10 +10,12 @@
  *    tag; for already-saved docs missing those tags it persists them directly via
  *    the `sync_opportunity_tags_for_existing` API instead of waiting for a save.
  *  - Reopen-on-load: an Opportunity already "Closed Won" with no project yet gets
- *    the "Create project now?" prompt once (here "No" just dismisses). Fresh
- *    transitions into Closed Won are handled by the global realtime prompt in
- *    create_project_prompt.js — there is no longer a manual "Create Project"
- *    button (project creation is gated entirely behind that prompt).
+ *    the next-step prompt once — "Schedule the hand-off meeting now?" while the
+ *    hand-off is unbooked, "Create project now?" after (here "No" just
+ *    dismisses). Fresh transitions into Closed Won are handled by the global
+ *    realtime prompt in create_project_prompt.js. There is no manual "Create
+ *    Project" button on the toolbar; project creation runs from that prompt or
+ *    from the Hand-Off Process tab (opportunity_handoff.js).
  *  - Listen on the `project_creation_status` realtime channel to report
  *    background project-creation success/failure (incl. Google Drive folder
  *    provisioning results).
@@ -96,9 +98,10 @@ frappe.ui.form.on("Opportunity", {
 		// Sync tags on load
 		sync_tags_from_child_table(frm);
 
-		// Project creation is triggered only by the "Create project now?" prompt
-		// (create_project_prompt.js), never a manual button. Defensively drop any
-		// standard "Create > Project" entry if a future ERPNext / site adds one.
+		// Project creation is triggered by the next-step prompt
+		// (create_project_prompt.js) or the Hand-Off Process tab, never a toolbar
+		// button. Defensively drop any standard "Create > Project" entry if a
+		// future ERPNext / site adds one.
 		frm.remove_custom_button("Project", "Create");
 
 		// Reopen-on-load: an opportunity already Closed Won with no project yet
@@ -112,10 +115,10 @@ frappe.ui.form.on("Opportunity", {
 			frm.doc.status === "Closed Won" &&
 			!frm.doc.custom_created_project &&
 			erpnext_enhancements.crm &&
-			erpnext_enhancements.crm.confirm_create_project
+			erpnext_enhancements.crm.confirm_won_next_step
 		) {
 			frm._ee_reopen_checked = true;
-			erpnext_enhancements.crm.confirm_create_project(frm.doc.name, {
+			erpnext_enhancements.crm.confirm_won_next_step(frm.doc.name, {
 				mode: "reopen",
 				frm: frm,
 			});

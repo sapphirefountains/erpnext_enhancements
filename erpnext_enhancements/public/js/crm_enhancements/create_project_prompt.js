@@ -1,5 +1,5 @@
 /**
- * Closed Won -> "Create project now?" prompt (shared, global).
+ * Closed Won -> "what's next?" prompt (shared, global).
  *
  * Loaded globally via erpnext_enhancements.bundle.js (app_include_js), so it
  * works on the Opportunity form, the Kanban board, and the list view — anywhere
@@ -8,15 +8,27 @@
  * on_update and publishes the "ee_prompt_create_project" realtime event to the
  * acting user; the global listener below shows the popup.
  *
- * Project creation no longer has a manual button — this prompt (and the form's
- * reopen-on-load check, which calls confirm_create_project with mode "reopen";
- * see opportunity.js) is the only entry point.
+ * The prompt asks for whichever step is actually next (v1.263.0), because on a
+ * fresh transition the answer is never "create the project" — the hand-off gate
+ * wants a meeting booked first, and offering a dialog that is guaranteed to be
+ * refused was the worst of both:
  *
- *   - Yes -> the "Create Project" dialog (Project Template + Users to Notify,
- *     defaulting to the Account Executive + Project Manager role holders), then
- *     the same background creation the old button used.
- *   - No  -> mode "transition": roll the opportunity back out of Closed Won and
- *            clear the won-date stamp. mode "reopen": just dismiss.
+ *   - hand-off still unbooked -> "Schedule the hand-off meeting now?", Yes opens
+ *     the booking dialog (shared with the Hand-Off Process tab).
+ *   - otherwise               -> "Create project now?", Yes opens the "Create
+ *     Project" dialog (Project Template + Users to Notify, defaulting to the
+ *     Account Executive + Project Manager role holders) and then the same
+ *     background creation the old button used.
+ *
+ * No is unchanged and means the same thing for both questions — mode
+ * "transition": roll the opportunity back out of Closed Won and clear the
+ * won-date stamp; mode "reopen": just dismiss. That consequence is spelled out
+ * in the prompt itself, since "not right now" is an easy thing to read into a
+ * No that actually un-wins the deal.
+ *
+ * Project creation has no manual button on the form: this prompt, the form's
+ * reopen-on-load check (mode "reopen"; see opportunity.js) and the Hand-Off
+ * Process tab are the entry points.
  */
 frappe.provide("erpnext_enhancements.crm");
 
@@ -30,11 +42,15 @@ frappe.provide("erpnext_enhancements.crm");
 	/**
 	 * Gate check before the create-project dialog opens (PRO-0204, 2026-08-06).
 	 *
-	 * The hand-off meeting must be recorded on the Opportunity first. This is
+	 * A hand-off meeting must be booked on the Opportunity first. This is
 	 * signposting, not enforcement — `process_steps.enforce_handoff_gate` refuses
 	 * on Project `before_insert` regardless — but offering a dialog that is
 	 * guaranteed to fail is a worse experience than saying why up front, and this
 	 * prompt is the path most people take.
+	 *
+	 * Reads the server's own `gate_open` rather than re-deriving the predicate
+	 * from the pieces: this check and the insert have to agree, and there are now
+	 * two ways to open the gate.
 	 */
 	function open_create_project_dialog(opportunity_name, opts) {
 		frappe
@@ -42,7 +58,7 @@ frappe.provide("erpnext_enhancements.crm");
 				opportunity: opportunity_name,
 			})
 			.then(function (state) {
-				if (state && state.available && state.enabled && state.gate_applies && !state.held) {
+				if (state && state.available && state.enabled && !state.gate_open) {
 					frappe.msgprint({
 						title: __("Hand-Off Required"),
 						indicator: "orange",
@@ -141,10 +157,10 @@ frappe.provide("erpnext_enhancements.crm");
 		});
 	}
 
-	// Ask "Create project now?" and route Yes/No.
+	// Ask for whatever step is next, and route Yes/No.
 	//  - mode "transition": No rolls the opportunity back out of Closed Won.
 	//  - mode "reopen": No just dismisses (it was intentionally won earlier).
-	function confirm_create_project(opportunity_name, opts) {
+	function confirm_won_next_step(opportunity_name, opts) {
 		opts = opts || {};
 		if (open_prompts[opportunity_name]) return; // already prompting for this opp
 		open_prompts[opportunity_name] = true;
@@ -169,51 +185,85 @@ frappe.provide("erpnext_enhancements.crm");
 			}
 		};
 
-		const d = frappe.confirm(
-			__("Create project now?"),
-			function () {
-				// Yes
+		// The No branch is the same for both questions, and its consequence is
+		// worth spelling out: on a fresh transition, No un-wins the deal.
+		const on_no = function () {
+			done();
+			if (opts.mode !== "transition") return; // reopen mode: just dismiss.
+			frappe.call({
+				method: "erpnext_enhancements.crm_enhancements.project_prompt.revert_won_status",
+				args: {
+					opportunity_name: opportunity_name,
+					previous_status: opts.previous_status || null,
+				},
+				callback: function () {
+					frappe.show_alert({
+						message: __("Reverted — opportunity is no longer Closed Won."),
+						indicator: "orange",
+					});
+					refresh_view();
+				},
+			});
+		};
+
+		const ask = function (question, on_yes) {
+			const message =
+				opts.mode === "transition"
+					? `${question}<p class="text-muted" style="margin-top:8px;">${__(
+							"No returns this opportunity to its previous status."
+						)}</p>`
+					: question;
+			const d = frappe.confirm(message, on_yes, on_no);
+			// Also release the guard if the dialog is closed via Esc/X (no button).
+			if (d) {
+				const prev_onhide = d.onhide;
+				d.onhide = function () {
+					done();
+					if (typeof prev_onhide === "function") prev_onhide.call(d);
+				};
+			}
+		};
+
+		const ask_create = function () {
+			ask(__("Create project now?"), function () {
 				done();
 				open_create_project_dialog(opportunity_name, {
 					frm: opts.frm,
 					on_success: refresh_view,
 				});
-			},
-			function () {
-				// No
-				done();
-				if (opts.mode === "transition") {
-					frappe.call({
-						method: "erpnext_enhancements.crm_enhancements.project_prompt.revert_won_status",
-						args: {
-							opportunity_name: opportunity_name,
-							previous_status: opts.previous_status || null,
-						},
-						callback: function () {
-							frappe.show_alert({
-								message: __("Reverted — opportunity is no longer Closed Won."),
-								indicator: "orange",
-							});
-							refresh_view();
-						},
-					});
-				}
-				// reopen mode: just dismiss.
-			}
-		);
+			});
+		};
 
-		// Also release the guard if the dialog is closed via Esc/X (no button).
-		if (d) {
-			const prev_onhide = d.onhide;
-			d.onhide = function () {
+		const ask_schedule = function () {
+			ask(__("Schedule the hand-off meeting now?"), function () {
 				done();
-				if (typeof prev_onhide === "function") prev_onhide.call(d);
-			};
-		}
+				erpnext_enhancements.handoff_meeting_dialog.schedule_for_opportunity(opportunity_name, {
+					on_success: refresh_view,
+				});
+			});
+		};
+
+		frappe
+			.xcall("erpnext_enhancements.crm_enhancements.handoff.handoff_state", {
+				opportunity: opportunity_name,
+			})
+			.then(function (state) {
+				const needs_meeting =
+					state && state.available && state.enabled && state.gate_applies && !state.held && !state.event;
+				if (needs_meeting) ask_schedule();
+				else ask_create();
+			})
+			// A transient failure of the state read must not swallow the prompt
+			// entirely: fall back to the older question, which the gate check
+			// inside the create dialog will correct if it turns out to be wrong.
+			.catch(ask_create);
 	}
 
 	erpnext_enhancements.crm.open_create_project_dialog = open_create_project_dialog;
-	erpnext_enhancements.crm.confirm_create_project = confirm_create_project;
+	erpnext_enhancements.crm.confirm_won_next_step = confirm_won_next_step;
+	// Kept as an alias: the name it went out under, and a site Client Script may
+	// well be calling it.
+	erpnext_enhancements.crm.confirm_create_project = confirm_won_next_step;
 
 	// Global listener: the server fires this to the acting user on the transition
 	// into Closed Won (form save, Kanban drag, list edit, API — all covered).
@@ -221,7 +271,7 @@ frappe.provide("erpnext_enhancements.crm");
 		frappe._ee_prompt_listener_registered = true;
 		frappe.realtime.on(EVENT, function (data) {
 			if (!data || !data.opportunity_name) return;
-			confirm_create_project(data.opportunity_name, {
+			confirm_won_next_step(data.opportunity_name, {
 				mode: "transition",
 				previous_status: data.previous_status,
 			});

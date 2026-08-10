@@ -7,7 +7,7 @@ Customizes the **Opportunity** doctype (Opportunity→Project conversion + tag s
 | File | Purpose | Key functions | Wiring |
 |---|---|---|---|
 | `api.py` | Opportunity→Project conversion + tag sync | `enqueue_project_creation` (whitelisted), `create_project_from_opportunity_background` (provisions the Drive tree via `google_drive.drive_utils`), `sync_opportunity_tags`, `sync_opportunity_tags_for_existing` (whitelisted) | `sync_opportunity_tags` → `Opportunity` `before_save` |
-| `handoff.py` | The Closed-Won hand-off gate (PRO-0204, v1.250.0): a Project cannot be created from a Closed-Won Opportunity until its hand-off meeting is recorded, and the buttons that record it — booking a real calendar `Event` and emailing the invite | `handoff_block_reason` / `throw_if_handoff_missing` (the gate predicate), `schedule_handoff_meeting`, `mark_handoff_complete`, `skip_handoff` (System Manager + mandatory reason), `resolve_attendees`, `schedule_project_meeting`, `handoff_state` / `project_handoff_context` (whitelisted); `stamp_handoff_gate`, `launch_deadline_for_project` | `stamp_handoff_gate` → `Opportunity` `before_save` (after `stamp_won_date`); enforced by `process_steps.enforce_handoff_gate` on `Project` `before_insert`; see below |
+| `handoff.py` | The Closed-Won hand-off gate (PRO-0204, v1.250.0): a Project cannot be created from a Closed-Won Opportunity until a hand-off meeting is **booked** (v1.263.0; it was "recorded"), and the buttons that book it — a real calendar `Event` and an emailed invite | `handoff_block_reason` / `throw_if_handoff_missing` (the gate predicate), `schedule_handoff_meeting`, `mark_handoff_complete`, `skip_handoff` (System Manager + mandatory reason), `resolve_attendees` / `attendee_options`, `schedule_project_meeting`, `handoff_state` / `project_handoff_context` (whitelisted); `stamp_handoff_gate`, `launch_deadline_for_project` | `stamp_handoff_gate` → `Opportunity` `before_save` (after `stamp_won_date`); enforced by `process_steps.enforce_handoff_gate` on `Project` `before_insert`; see below |
 | `doctype/accounts_lead`, `accounts_opportunity`, `accounts_project`, `lead_source`, `opportunity_contributor`, `value_stream`, `value_streams` | CRM child tables / masters ported from DB-only custom DocTypes (v0.7.0) so fresh installs can import the Custom Field fixtures that reference them | stub controllers | synced on migrate |
 | `doctype/sales_activity_settings/…py` | Single: global `inactivity_threshold` (days) — fallback reminder window for `script_migrations.customer.customer_inactivity_reminder` (ported v0.8.0) | `SalesActivitySettings` (pass) | synced on migrate |
 | `pay_period_reports.py` | Semi-monthly (1st–15th, 16th–EOM) delivery of the "Brian's Closed Won" commission report — moves the report's saved date window and emails the closed period on the 1st and the 16th (v1.232.0) | `run_pay_period_cycle`; `pay_period_bounds` / `previous_pay_period` (generic, reusable) | `hooks.py` `scheduler_events.cron` `"0 7 * * *"`; see below |
@@ -111,32 +111,54 @@ reaches CRM; a partial failure is resumable rather than duplicating master data
 
 ### The hand-off gate (`handoff.py`, v1.250.0)
 
-A Project cannot be created from a Closed-Won Opportunity until its hand-off meeting has
-been recorded. Three things about it are easy to get wrong:
+A Project cannot be created from a Closed-Won Opportunity until a hand-off meeting has been
+**booked**. Four things about it are easy to get wrong:
 
-1. **The enforcement is on `Project.before_insert`, not `validate`.** `api.py` sets
+1. **It opens on "booked", not "held" — changed in v1.263.0.** The meeting is routinely two
+   days out while the project needs to start today, so gating on the completion stamp was
+   inviting exactly the falsification the audit was about: tick "held" for a meeting still
+   in the diary. Booking cannot be faked into existence without inviting three functions
+   and putting it on a calendar, so it is the better thing to gate on. Recording the
+   meeting (`mark_handoff_complete`) still closes step 2 and still feeds the SLA report —
+   it just no longer blocks anything, and it now has to reach across to a Project that
+   probably already exists (`process_steps.record_handoff_on_project`).
+
+2. **The enforcement is on `Project.before_insert`, not `validate`.** `api.py` sets
    `flags.ignore_validate` before inserting (see the ordering constraints above), and
    Frappe's `run_before_save_methods()` returns early on that flag — so a `validate` gate
    would pass review and then silently never fire on the path that creates most projects.
    `before_insert` survives both `ignore_validate` and `ignore_permissions`. `make_project`
    and the background creator refuse as well, but only so the message is readable; the
    `before_insert` hook is the authority.
-2. **The gate keys on `custom_handoff_gate_applies`, not on a date.** That flag is set only
+3. **The gate keys on `custom_handoff_gate_applies`, not on a date.** That flag is set only
    on a genuine *transition* into Closed Won. A date comparison would have been unsafe:
    `script_migrations.opportunity.stamp_won_date` fills a blank `custom_date_closed_won` on
    **any** Closed-Won save, so merely re-saving one of the 227 already-won deals would have
    dragged it into the gate. `patches.ensure_handoff_gate_fields` writes an explicit `0`
    across that backlog so "exempt" is a stored fact, not an absence.
-3. **Skipping is allowed; silence is not.** `skip_handoff` is System Manager only and
+4. **Skipping is allowed; silence is not.** `skip_handoff` is System Manager only and
    requires a written reason, which lands on the record and on the Project's step 2 row
    prefixed `[SKIPPED]` so it reads as a skip in the tracker and the compliance report
    rather than as a completion.
 
 Attendees come from **ERPNext Enhancements Settings → Hand-Off Attendee Roles** (an explicit
 email wins, else the holders of a Role; Sales additionally picks up the deal owner) —
-configuration, so changing who attends is never a deploy. Note `Event Participants` marks
-both reference fields `reqd`, so a group address like `production@` cannot be a participant
-row at all; those attendees get the invite email, which is the part that matters.
+configuration, so changing who attends is never a deploy. That resolution is only the
+*prefill*: the dialog's three attendee fields are `MultiSelect`, autocompleting over
+`attendee_options` (every desk user plus every configured address) while still accepting
+anything typed, so a one-off attendee needs no configuration change. Note `Event
+Participants` marks both reference fields `reqd`, so a group address like `production@`
+cannot be a participant row at all; those attendees get the invite email, which is the part
+that matters.
+
+The buttons live on the Opportunity's **Hand-Off Process** tab, rendered into the
+`custom_process_progress` HTML field beneath the step bar rather than added to the form
+toolbar (`public/js/crm_enhancements/opportunity_handoff.js`) — they are steps in a process,
+and they read as one next to the step they advance. The Closed-Won prompt
+(`create_project_prompt.js`, global) asks for whichever of those steps is next, and shares
+the booking dialog with the tab; that is why `handoff_meeting_dialog.js` loads from
+`erpnext_enhancements.bundle.js` rather than as a `doctype_js` — the prompt also fires on
+the Kanban board and the list view, where no form script exists.
 
 ### Attribution, and a schema trap
 
