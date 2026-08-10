@@ -1,0 +1,865 @@
+/*
+ * Chat SPA styles — a single esbuild bundle (content-hashed filename), loaded by
+ * www/chat.html through bundled_asset('chat.bundle.css'). Same cache rationale as the JS.
+ *
+ * Three things here are load-bearing rather than cosmetic and must survive a redesign:
+ *
+ *   1. 100dvh, not 100vh. Under a mobile browser's collapsing toolbar 100vh puts the
+ *      composer under the URL bar — the classic mobile chat bug — and env(safe-area-inset-*)
+ *      keeps it off the home indicator.
+ *   2. Focus outlines are never removed. :focus-visible is styled, not suppressed; a
+ *      keyboard user who cannot see where they are cannot use this application at all.
+ *   3. Unread state carries a non-colour cue (bold title + a count), because a colour-only
+ *      indicator fails WCAG and fails anybody who cannot distinguish it.
+ *
+ * prefers-reduced-motion removes every transition and animation, including the typing dots.
+ */
+
+:root {
+	--ee-brand: #00a0dd;
+	--ee-bg: #ffffff;
+	--ee-bg-alt: #f6f8fa;
+	--ee-border: #d8dee4;
+	--ee-text: #1f2328;
+	--ee-muted: #656d76;
+	--ee-danger: #cf222e;
+	--ee-ok: #2da44e;
+	--ee-radius: 8px;
+	--ee-sidebar-w: 300px;
+	--ee-pane-w: 340px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ee-bg: #0d1117;
+		--ee-bg-alt: #161b22;
+		--ee-border: #30363d;
+		--ee-text: #e6edf3;
+		--ee-muted: #8b949e;
+	}
+}
+
+/* The website shell wraps page_content in containers that would letterbox a full-height
+   application. Overridden here rather than by removing the blocks, so an upgrade that
+   changes templates/web.html does not silently un-fix it. */
+body,
+.ee-chat-root {
+	margin: 0;
+	background: var(--ee-bg);
+	color: var(--ee-text);
+}
+body > .main-section,
+body .page_content,
+body .container {
+	max-width: none;
+	padding: 0;
+	margin: 0;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.is-hidden {
+	display: none !important;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.ee-chat-shell {
+	display: grid;
+	grid-template-columns: var(--ee-sidebar-w) minmax(0, 1fr) auto auto;
+	height: 100dvh;
+	padding-bottom: env(safe-area-inset-bottom);
+	font:
+		14px/1.5 -apple-system,
+		BlinkMacSystemFont,
+		"Segoe UI",
+		Roboto,
+		sans-serif;
+	overflow: hidden;
+}
+
+.ee-chat-boot {
+	display: grid;
+	place-content: center;
+	gap: 8px;
+	height: 100dvh;
+	text-align: center;
+	color: var(--ee-muted);
+}
+.ee-chat-boot-mark {
+	font-size: 40px;
+}
+
+.ee-chat-fatal {
+	display: grid;
+	place-content: center;
+	gap: 12px;
+	height: 100dvh;
+	text-align: center;
+	padding: 24px;
+}
+
+/* ------------------------------------------------------------------ sidebar */
+
+.ee-sidebar {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-right: 1px solid var(--ee-border);
+	background: var(--ee-bg-alt);
+}
+.ee-sidebar-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--ee-border);
+}
+.ee-sidebar-title {
+	margin: 0;
+	font-size: 16px;
+}
+.ee-sidebar-search {
+	padding: 10px 12px;
+}
+.ee-sidebar-foot {
+	padding: 10px 14px;
+	border-top: 1px solid var(--ee-border);
+}
+.ee-input {
+	width: 100%;
+	padding: 7px 10px;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	background: var(--ee-bg);
+	color: inherit;
+	font: inherit;
+}
+
+.ee-room-list {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+.ee-room-item {
+	list-style: none;
+}
+.ee-room {
+	display: grid;
+	grid-template-columns: 36px minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	color: inherit;
+	text-decoration: none;
+	/* 44px minimum tap target (§4.12), reached by the padding above plus this floor. */
+	min-height: 44px;
+}
+.ee-room:hover,
+.ee-room.is-active {
+	background: color-mix(in srgb, var(--ee-brand) 12%, transparent);
+}
+.ee-room-avatar {
+	display: grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var(--ee-border);
+	font-size: 12px;
+	font-weight: 600;
+}
+.ee-room-main {
+	min-width: 0;
+}
+.ee-room-title-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+}
+.ee-room-title,
+.ee-room-preview,
+.ee-room-doc {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ee-room-preview,
+.ee-room-doc {
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+.ee-room-time {
+	flex: none;
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+/* The non-colour cues for unread: a bold title and a numeric badge, not just a tint. */
+.ee-room.is-unread .ee-room-title {
+	font-weight: 700;
+}
+.ee-room-badge {
+	min-width: 20px;
+	padding: 1px 6px;
+	border-radius: 10px;
+	background: var(--ee-brand);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 700;
+	text-align: center;
+}
+.ee-room-mention {
+	font-weight: 700;
+	color: var(--ee-brand);
+}
+.ee-room-empty {
+	padding: 16px 14px;
+	color: var(--ee-muted);
+}
+
+/* ------------------------------------------------------------------ conversation */
+
+.ee-conversation {
+	display: grid;
+	grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+	min-width: 0;
+	min-height: 0;
+}
+.ee-conv-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--ee-border);
+}
+.ee-conv-title {
+	margin: 0;
+	font-size: 15px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ee-conv-subtitle {
+	flex: 1;
+	min-width: 0;
+	color: var(--ee-muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ee-back {
+	display: none;
+}
+
+.ee-notice {
+	padding: 8px 14px;
+	background: color-mix(in srgb, var(--ee-brand) 10%, transparent);
+	border-bottom: 1px solid var(--ee-border);
+	font-size: 13px;
+}
+
+.ee-transcript {
+	min-height: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	overscroll-behavior: contain;
+	padding: 8px 0;
+}
+.ee-transcript-canvas {
+	display: flex;
+	flex-direction: column;
+}
+.ee-vt-spacer {
+	flex: none;
+}
+
+.ee-jump-latest {
+	position: absolute;
+	right: 24px;
+	bottom: 96px;
+	padding: 6px 12px;
+	border: 1px solid var(--ee-border);
+	border-radius: 999px;
+	background: var(--ee-bg);
+	color: inherit;
+	cursor: pointer;
+}
+
+.ee-typing {
+	min-height: 18px;
+	padding: 0 14px;
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+
+.ee-connection {
+	padding: 6px 14px;
+	background: var(--ee-danger);
+	color: #fff;
+	font-size: 12px;
+	text-align: center;
+}
+
+/* ------------------------------------------------------------------ messages */
+
+.ee-msg {
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr) auto;
+	gap: 4px 6px;
+	padding: 3px 14px;
+	position: relative;
+}
+.ee-msg.is-pending {
+	opacity: 0.6;
+}
+.ee-msg.is-deleted .ee-msg-text {
+	color: var(--ee-muted);
+	font-style: italic;
+}
+.ee-msg.is-highlighted {
+	background: color-mix(in srgb, var(--ee-brand) 18%, transparent);
+	transition: background 1.2s ease-out;
+}
+.ee-msg-gutter {
+	display: flex;
+	justify-content: center;
+	padding-top: 2px;
+}
+.ee-avatar {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background: var(--ee-border);
+	font-size: 11px;
+	font-weight: 600;
+	object-fit: cover;
+}
+.ee-avatar.is-triton {
+	background: color-mix(in srgb, var(--ee-brand) 25%, transparent);
+}
+.ee-msg-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+.ee-msg-sender {
+	font-weight: 600;
+}
+.ee-msg-time,
+.ee-msg-edited {
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-badge {
+	padding: 0 6px;
+	border-radius: 8px;
+	background: var(--ee-border);
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.ee-msg-text {
+	white-space: pre-wrap;
+	/* Long unbroken tokens (URLs, ids) must wrap rather than force horizontal page scroll —
+	   §4.12's 320px requirement is mostly this line. */
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+.ee-msg-recovered {
+	margin-top: 2px;
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-msg-failed {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	margin-top: 4px;
+	color: var(--ee-danger);
+	font-size: 12px;
+}
+.ee-mention {
+	padding: 0 3px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--ee-brand) 18%, transparent);
+	font-weight: 600;
+}
+.ee-mention.is-me {
+	background: color-mix(in srgb, #d29922 35%, transparent);
+}
+.ee-chat-link {
+	color: var(--ee-brand);
+}
+
+.ee-msg-actions {
+	display: flex;
+	gap: 2px;
+	opacity: 0;
+	align-self: start;
+}
+.ee-msg:hover .ee-msg-actions,
+.ee-msg:focus-within .ee-msg-actions {
+	opacity: 1;
+}
+/* Hover-only affordances need a tap equivalent (§4.12): on a touch device they are always
+   visible rather than requiring a hover that will never happen. */
+@media (hover: none) {
+	.ee-msg-actions {
+		opacity: 1;
+	}
+}
+
+.ee-thread-affordance {
+	margin-top: 4px;
+	padding: 2px 8px;
+	border: 1px solid var(--ee-border);
+	border-radius: 999px;
+	background: none;
+	color: var(--ee-brand);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.ee-receipts {
+	display: flex;
+	gap: 2px;
+	margin-top: 3px;
+}
+.ee-receipt-avatar {
+	display: grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--ee-border);
+	font-size: 8px;
+	object-fit: cover;
+}
+
+.ee-day {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px 6px;
+	color: var(--ee-muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.ee-day::before,
+.ee-day::after {
+	content: "";
+	flex: 1;
+	border-top: 1px solid var(--ee-border);
+}
+
+/* ------------------------------------------------------------------ attachments */
+
+.ee-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 6px;
+}
+.ee-attachment {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	color: inherit;
+	text-decoration: none;
+}
+.ee-attachment-size {
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-attachment-thumb {
+	padding: 0;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	background: none;
+	cursor: pointer;
+	overflow: hidden;
+}
+.ee-attachment-image {
+	display: block;
+	max-width: min(360px, 70vw);
+	max-height: 300px;
+	/* An intrinsic box before load, so the transcript does not reflow and destroy scroll
+	   position when the bytes arrive. */
+	aspect-ratio: 4 / 3;
+	object-fit: cover;
+}
+
+.ee-lightbox {
+	position: fixed;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	background: rgba(0, 0, 0, 0.85);
+	z-index: 60;
+}
+.ee-lightbox-image {
+	max-width: 92vw;
+	max-height: 88dvh;
+}
+.ee-lightbox-close {
+	position: absolute;
+	top: 16px;
+	right: 16px;
+	width: 40px;
+	height: 40px;
+	border: none;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.15);
+	color: #fff;
+	font-size: 18px;
+	cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ composer */
+
+.ee-composer {
+	position: relative;
+	padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+	border-top: 1px solid var(--ee-border);
+	background: var(--ee-bg);
+}
+.ee-composer-row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: end;
+	gap: 8px;
+}
+.ee-composer-text {
+	width: 100%;
+	min-height: 38px;
+	max-height: 160px;
+	padding: 9px 12px;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	background: var(--ee-bg);
+	color: inherit;
+	font: inherit;
+	resize: none;
+}
+.ee-composer-hint {
+	margin-top: 4px;
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-file-input {
+	display: none;
+}
+.ee-composer-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+.ee-upload {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	font-size: 12px;
+}
+.ee-upload.is-failed {
+	border-color: var(--ee-danger);
+	color: var(--ee-danger);
+}
+.ee-send {
+	width: 44px;
+	height: 38px;
+	border: none;
+	border-radius: var(--ee-radius);
+	background: var(--ee-brand);
+	color: #fff;
+	font-size: 15px;
+	cursor: pointer;
+}
+
+.ee-mention-menu {
+	position: absolute;
+	bottom: 100%;
+	left: 14px;
+	right: 14px;
+	max-height: 260px;
+	margin: 0 0 6px;
+	padding: 4px;
+	border: 1px solid var(--ee-border);
+	border-radius: var(--ee-radius);
+	background: var(--ee-bg);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+	list-style: none;
+	overflow-y: auto;
+	z-index: 20;
+}
+.ee-mention-option {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	min-height: 44px;
+}
+.ee-mention-option.is-active {
+	background: color-mix(in srgb, var(--ee-brand) 16%, transparent);
+}
+.ee-mention-option.is-triton .ee-mention-label {
+	color: var(--ee-brand);
+	font-weight: 700;
+}
+.ee-mention-option.is-outsider {
+	opacity: 0.75;
+}
+.ee-mention-desc {
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ side panes */
+
+.ee-thread,
+.ee-members {
+	display: flex;
+	flex-direction: column;
+	width: var(--ee-pane-w);
+	min-height: 0;
+	border-left: 1px solid var(--ee-border);
+	background: var(--ee-bg);
+}
+.ee-thread-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--ee-border);
+}
+.ee-thread-title {
+	margin: 0;
+	font-size: 14px;
+}
+.ee-thread-list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 8px 0;
+}
+.ee-thread-composer {
+	padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+	border-top: 1px solid var(--ee-border);
+}
+.ee-member-list {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+.ee-member {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 9px 14px;
+	min-height: 44px;
+}
+.ee-member-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ee-member-role {
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-members-note {
+	margin: 0;
+	padding: 10px 14px;
+	color: var(--ee-muted);
+	font-size: 12px;
+}
+.ee-presence {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--ee-muted);
+	flex: none;
+}
+.ee-presence.is-online {
+	background: var(--ee-ok);
+}
+.ee-presence.is-away {
+	background: #d29922;
+}
+.ee-presence.is-offline {
+	background: transparent;
+	border: 1px solid var(--ee-muted);
+}
+
+/* ------------------------------------------------------------------ search */
+
+.ee-search-hit {
+	display: block;
+	padding: 10px 14px;
+	border-bottom: 1px solid var(--ee-border);
+	color: inherit;
+	text-decoration: none;
+}
+.ee-search-meta {
+	display: block;
+	color: var(--ee-muted);
+	font-size: 11px;
+}
+.ee-search-snippet mark {
+	background: color-mix(in srgb, #d29922 45%, transparent);
+	color: inherit;
+}
+
+/* ------------------------------------------------------------------ citations */
+
+.ee-citation {
+	display: inline-block;
+	margin: 0 1px;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--ee-brand) 16%, transparent);
+	color: var(--ee-brand);
+	font-size: 11px;
+	font-weight: 700;
+	text-decoration: none;
+	vertical-align: 1px;
+}
+.ee-citation.is-flat {
+	color: var(--ee-muted);
+	background: var(--ee-border);
+	cursor: default;
+}
+
+/* ------------------------------------------------------------------ buttons + focus */
+
+.ee-icon-btn,
+.ee-link-btn {
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+	padding: 6px;
+	border-radius: 6px;
+	min-width: 32px;
+	min-height: 32px;
+}
+.ee-link-btn {
+	color: var(--ee-brand);
+	min-width: 0;
+}
+.ee-icon-btn:hover,
+.ee-link-btn:hover {
+	background: var(--ee-bg-alt);
+}
+
+/* Never removed. A keyboard user who cannot see where focus is cannot use this at all. */
+:focus-visible {
+	outline: 2px solid var(--ee-brand);
+	outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ narrow viewport */
+
+.ee-chat-shell.is-narrow {
+	grid-template-columns: minmax(0, 1fr);
+}
+.ee-chat-shell.is-narrow .ee-sidebar,
+.ee-chat-shell.is-narrow .ee-conversation,
+.ee-chat-shell.is-narrow .ee-thread,
+.ee-chat-shell.is-narrow .ee-members {
+	grid-column: 1;
+	grid-row: 1;
+	width: auto;
+	border: none;
+}
+.ee-chat-shell.is-narrow[data-pane="list"] .ee-conversation,
+.ee-chat-shell.is-narrow[data-pane="list"] .ee-thread,
+.ee-chat-shell.is-narrow[data-pane="conversation"] .ee-sidebar,
+.ee-chat-shell.is-narrow[data-pane="conversation"] .ee-thread,
+.ee-chat-shell.is-narrow[data-pane="thread"] .ee-sidebar,
+.ee-chat-shell.is-narrow[data-pane="thread"] .ee-conversation {
+	display: none;
+}
+.ee-chat-shell.is-narrow .ee-back {
+	display: inline-grid;
+	place-items: center;
+}
+
+/* ------------------------------------------------------------------ motion */
+
+.ee-thinking {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	height: 20px;
+}
+.ee-thinking-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ee-muted);
+	animation: ee-bounce 1.2s infinite ease-in-out;
+}
+.ee-thinking-dot:nth-child(2) {
+	animation-delay: 0.15s;
+}
+.ee-thinking-dot:nth-child(3) {
+	animation-delay: 0.3s;
+}
+
+@keyframes ee-bounce {
+	0%,
+	80%,
+	100% {
+		opacity: 0.3;
+	}
+	40% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+		scroll-behavior: auto !important;
+	}
+}

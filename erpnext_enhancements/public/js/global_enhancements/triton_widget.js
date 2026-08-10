@@ -11,7 +11,22 @@
  * stream is relayed back as SSE and rendered token-by-token. Users can pin the
  * page they're on (document / list / report) as context, and Triton's proposed
  * ERPNext changes arrive as confirmation cards.
+ *
+ * PHASE 3 (ADR 0009, decision #8) made this bubble DUAL-SURFACE. It now hosts both the
+ * Triton conversation (everything below, unchanged) and a coworker chat surface
+ * (`chat_surface.js`), and it can expand into the full SPA at /chat deep-linked to the
+ * conversation the user was in. Every Phase 3 addition is marked `--- phase 3 ---` and is
+ * additive: Appendix A of ADR 0009 is this widget's preserved-behaviour inventory, and a
+ * regression against it is a phase failure rather than a tradeoff. The streaming
+ * re-entrancy rule (`scripts/test_triton_widget_guards.js`) still holds — the surface
+ * switch HIDES the Triton transcript rather than clearing it, so `pumpText` keeps writing
+ * into an attached node.
  */
+import { applyCitations, holdbackLength, indexManifest } from "../chat/citations.js";
+import { writeHandoff, readHandoff } from "../chat/handoff.js";
+import { buildRoute } from "../chat/routes.js";
+import { BubbleChatSurface } from "./chat_surface.js";
+
 (function () {
 	const METHOD = "erpnext_enhancements.triton_chat";
 	const LS_SESSION = "triton_session_id";
@@ -38,6 +53,13 @@
 		els: {},
 		// The assistant message currently being streamed.
 		live: null,
+		// --- phase 3 --- which half of the bubble is showing: "triton" or "chat".
+		surface: "triton",
+		// --- phase 3 --- the coworker surface (BubbleChatSurface), built on first switch.
+		chat: null,
+		// --- phase 3 --- total unread across coworker rooms, rendered as the FAB badge.
+		// Decision #3c: this is the count that matters, and Phase 4 wires notifications to it.
+		unread: 0,
 	};
 
 	// ---- helpers ---------------------------------------------------------
@@ -215,18 +237,31 @@
 		fab.title = "Ask Triton (Alt+T)";
 		fab.textContent = "🔱";
 		fab.addEventListener("click", toggle);
+		// --- phase 3 --- unread badge. Appended rather than folded into textContent so the
+		// trident is still the button's accessible name and the existing CSS still positions it.
+		const badge = document.createElement("span");
+		badge.className = "triton-fab-badge is-hidden";
+		fab.appendChild(badge);
 		document.body.appendChild(fab);
 
 		const panel = document.createElement("div");
 		panel.className = "triton-panel";
+		// --- phase 3 --- two additions to the header markup, and nothing removed: the surface
+		// tabs and the expand control. Every existing control keeps its class and its order, so
+		// Appendix A's header rows still resolve.
 		panel.innerHTML = `
 			<div class="triton-header">
 				<span class="triton-logo">🔱</span>
 				<span class="triton-title">Triton</span>
+				<div class="triton-surface-tabs" role="tablist">
+					<button class="triton-surface-tab is-active" data-surface="triton" role="tab" aria-selected="true">Triton</button>
+					<button class="triton-surface-tab" data-surface="chat" role="tab" aria-selected="false">Chats</button>
+				</div>
 				<select class="triton-persona-select" title="Choose persona"></select>
 				<select class="triton-model-select" title="Choose model"></select>
 				<button class="triton-icon-btn triton-history" title="Chat history">🕘</button>
 				<button class="triton-icon-btn triton-new" title="New chat">✎</button>
+				<a class="triton-icon-btn triton-expand" title="Open the full chat app" href="/chat">⤢</a>
 				<button class="triton-icon-btn triton-close" title="Close">✕</button>
 			</div>
 			<div class="triton-context-bar">
@@ -251,11 +286,16 @@
 					<button class="triton-icon-btn triton-persona-new" title="New persona">＋</button>
 				</div>
 				<div class="triton-history-list triton-personas-list"></div>
-			</div>`;
+			</div>
+			<div class="triton-chat-surface is-hidden"></div>`;
 		document.body.appendChild(panel);
 
 		state.els = {
 			fab,
+			badge,
+			chatSurface: panel.querySelector(".triton-chat-surface"),
+			surfaceTabs: panel.querySelectorAll(".triton-surface-tab"),
+			expand: panel.querySelector(".triton-expand"),
 			panel,
 			messages: panel.querySelector(".triton-messages"),
 			contextBar: panel.querySelector(".triton-context-bar"),
@@ -306,6 +346,170 @@
 		if (!state.config.enable_page_context) {
 			state.els.contextAdd.style.display = "none";
 		}
+
+		// --- phase 3 --- surface tabs and the expand control.
+		state.els.surfaceTabs.forEach((tab) => {
+			tab.addEventListener("click", () => setSurface(tab.dataset.surface));
+		});
+		// A real <a href> so middle-click and ctrl-click open a tab, which the handoff's
+		// localStorage mirror is there to survive. The click handler navigates in the SAME tab
+		// (location.assign) because sessionStorage is per-tab and that is the primary copy.
+		state.els.expand.addEventListener("click", onExpand);
+		if (!chatEnabled()) {
+			state.els.surfaceTabs.forEach((tab) => {
+				if (tab.dataset.surface === "chat") tab.style.display = "none";
+			});
+			state.els.expand.style.display = "none";
+		}
+	}
+
+	// ---- phase 3: dual surface, badge, handoff ---------------------------
+
+	// Gated on the same boolean boot.py computes: the master switch AND this user's pilot
+	// standing. Cosmetic only — every endpoint re-checks — but it keeps a tab out of the
+	// header for the people it would 403 for.
+	function chatEnabled() {
+		return !!(window.frappe && frappe.boot && frappe.boot.ee_chat);
+	}
+
+	// Switch which half of the bubble is showing.
+	//
+	// Deliberately does NOT clear the Triton transcript and therefore carries no
+	// `state.streaming` guard: hiding an attached node is safe, and `pumpText` keeps writing
+	// into it, so switching to Chats mid-answer and back finds the answer where it was left.
+	// Clearing here instead would be the exact defect
+	// `scripts/test_triton_widget_guards.js` exists to catch.
+	function setSurface(name) {
+		const surface = name === "chat" ? "chat" : "triton";
+		state.surface = surface;
+		state.els.surfaceTabs.forEach((tab) => {
+			const active = tab.dataset.surface === surface;
+			tab.classList.toggle("is-active", active);
+			tab.setAttribute("aria-selected", active ? "true" : "false");
+		});
+
+		const showChat = surface === "chat";
+		state.els.chatSurface.classList.toggle("is-hidden", !showChat);
+		state.els.messages.classList.toggle("is-hidden", showChat);
+		state.els.contextBar.classList.toggle("is-hidden", showChat);
+		state.els.panel.querySelector(".triton-input-bar").classList.toggle("is-hidden", showChat);
+		state.els.modelSelect.classList.toggle("is-hidden", showChat);
+		state.els.personaSelect.classList.toggle("is-hidden", showChat);
+		state.els.historyBtn.classList.toggle("is-hidden", showChat);
+
+		if (showChat) {
+			ensureChatSurface();
+			state.chat.ensureLoaded();
+		}
+		writeBubbleHandoff();
+	}
+
+	function ensureChatSurface() {
+		if (state.chat) return state.chat;
+		state.chat = new BubbleChatSurface(state.els.chatSurface, {
+			me: (window.frappe && frappe.session && frappe.session.user) || null,
+			onUnread: (total) => renderBadge(total),
+			onStateChange: () => writeBubbleHandoffThrottled(),
+		});
+		subscribeRealtime();
+		return state.chat;
+	}
+
+	// Realtime through Desk's OWN socket. `frappe.realtime` is already connected and
+	// authenticated on every Desk page, so opening a second socket here would double the
+	// connection count for every employee to gain nothing. The SPA connects its own because
+	// it is a website route with no Desk bundle.
+	function subscribeRealtime() {
+		if (!window.frappe || !frappe.realtime || !frappe.realtime.on) return;
+		const events = [
+			"chat_message_created",
+			"chat_message_edited",
+			"chat_message_deleted",
+			"chat_typing",
+			"chat_typing_stopped",
+			"chat_read_receipt",
+			"chat_unread_updated",
+			"chat_room_updated",
+			"chat_mention",
+		];
+		events.forEach((name) => {
+			frappe.realtime.on(name, (payload) => {
+				if (state.chat) state.chat.onRealtime(name, payload || {});
+			});
+		});
+	}
+
+	function renderBadge(total) {
+		state.unread = Number(total) || 0;
+		const badge = state.els.badge;
+		if (!badge) return;
+		badge.textContent = state.unread > 99 ? "99+" : String(state.unread);
+		badge.classList.toggle("is-hidden", state.unread < 1);
+		state.els.fab.setAttribute(
+			"aria-label",
+			state.unread ? `Ask Triton — ${state.unread} unread messages` : "Ask Triton"
+		);
+	}
+
+	// The handoff record the SPA reads on load. Written on every meaningful change and
+	// SYNCHRONOUSLY immediately before navigating — see onExpand.
+	function writeBubbleHandoff() {
+		const chatState = state.chat ? state.chat.handoffState() : {};
+		writeHandoff(
+			{
+				room: chatState.room || null,
+				thread: chatState.thread || null,
+				anchorMessage: chatState.anchorMessage || null,
+				anchorRatio: chatState.anchorRatio,
+				draft: chatState.draft || "",
+				surface: state.surface === "chat" ? "coworker" : "triton",
+				tritonConversation: state.sessionId ? String(state.sessionId) : null,
+			},
+			{ session: window.sessionStorage, local: window.localStorage },
+			Date.now()
+		);
+	}
+
+	let _handoffAt = 0;
+	function writeBubbleHandoffThrottled() {
+		const now = Date.now();
+		if (now - _handoffAt < 500) return;
+		_handoffAt = now;
+		writeBubbleHandoff();
+	}
+
+	// Expand. The write is SYNCHRONOUS and happens before navigation, because a throttled
+	// write that has not fired yet when location.assign runs is a handoff that silently does
+	// not happen — and it fails for exactly the user who clicks expand quickly, which is most
+	// of them.
+	function onExpand(e) {
+		if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) {
+			// A deliberate new tab. sessionStorage will not follow, which is what the
+			// localStorage mirror (nonce + 60s TTL) exists for; writeHandoff wrote both.
+			writeBubbleHandoff();
+			return;
+		}
+		if (e) e.preventDefault();
+		writeBubbleHandoff();
+		const chatState = state.chat ? state.chat.handoffState() : {};
+		window.location.assign(
+			chatState.room
+				? buildRoute({ room: chatState.room, thread: chatState.thread || null })
+				: "/chat"
+		);
+	}
+
+	// The reverse handoff: the SPA wrote where it left off, so the bubble opens there.
+	// Symmetric or it is half a feature.
+	function restoreFromHandoff() {
+		if (!chatEnabled()) return;
+		const record = readHandoff(
+			{ session: window.sessionStorage, local: window.localStorage },
+			Date.now()
+		);
+		if (!record || record.surface !== "coworker" || !record.room) return;
+		setSurface("chat");
+		ensureChatSurface().restore(record);
 	}
 
 	function autoGrow() {
@@ -898,6 +1102,10 @@
 			// raf handles
 			pumpRaf: null,
 			thoughtRaf: null,
+			// --- phase 3 --- the citation manifest for this turn, or null. Null is the
+			// shipped state until Phase 5 emits a `citations` event, and null means the
+			// message renders exactly as it does today.
+			manifest: null,
 		};
 		scrollDown();
 		return live;
@@ -963,8 +1171,37 @@
 
 	// ---- streamed answer text (typewriter smoothing) --------------------
 	function renderBubble(live) {
-		live.bubble.innerHTML = md(live.text.slice(0, live.shownLen));
+		// --- phase 3 --- hold back a partial citation token so `[[re` never flashes as
+		// literal text before `f:7]]` arrives. `holdbackLength` is the pure tail-buffer
+		// arithmetic from chat/citations.js; with no manifest the slice is unchanged and this
+		// line is a no-op, which is what keeps streaming byte-for-byte identical to today.
+		let visible = live.text.slice(0, live.shownLen);
+		if (live.manifest && live.shownLen < live.text.length) {
+			visible = visible.slice(0, visible.length - holdbackLength(visible));
+		}
+		live.bubble.innerHTML = md(visible);
+		// --- phase 3 --- inline citations, applied to the markdown renderer's OUTPUT rather
+		// than to its input. The sanitiser policy Appendix A records is load-bearing and is
+		// therefore untouched: it sees exactly the string it saw before this phase, and the
+		// anchors are added afterwards as DOM with createElement/textContent. With no
+		// manifest applyCitations returns immediately.
+		if (live.manifest) {
+			applyCitations(live.bubble, live.manifest, { onMiss: () => noteCitationMiss(live) });
+		}
 		scrollDown();
+	}
+
+	// --- phase 3 --- a `citation_miss` is a token whose id is not in the manifest. Dropped
+	// silently from the render (never a raw token, never a dead link) and counted here,
+	// because a miss rate over ~2% means a prompt edit broke citing and the only symptom is
+	// inline links quietly disappearing.
+	let _citationMisses = 0;
+	function noteCitationMiss(live) {
+		_citationMisses += 1;
+		if (_citationMisses === 10) {
+			console.warn("triton: repeated citation misses — the manifest and the answer disagree");
+		}
+		void live;
 	}
 
 	function schedulePump(live) {
@@ -1014,6 +1251,10 @@
 			cancelAnimationFrame(live.thoughtRaf);
 			live.thoughtRaf = null;
 		}
+		// This line is also the citation tail-buffer FLUSH: `renderBubble` only holds back a
+		// partial token while `shownLen < text.length`, so setting them equal releases
+		// everything held. Forgetting the flush truncates the last few characters of every
+		// answer that happens to end near a token, which is maddening to diagnose.
 		live.shownLen = live.text.length;
 		if (live.thinkingEl) live.thinkingEl.innerHTML = md(live.thoughts);
 		collapseThinking(live);
@@ -1198,6 +1439,11 @@
 			return;
 		}
 		const live = newAssistantMsg();
+		// --- phase 3 --- a stored turn carries its manifest, so re-opening a conversation
+		// renders the same inline links it had while streaming. Set BEFORE appendText, which
+		// renders. Absent on every turn stored before Phase 5 ships, and absent is today's
+		// behaviour rather than an error.
+		if (meta.citations && meta.citations.length) live.manifest = indexManifest(meta.citations);
 		appendText(live, m.content || "");
 		if (meta.thinking) {
 			appendThought(live, meta.thinking);
@@ -1356,8 +1602,29 @@
 				appendText(live, ev.content || "");
 				break;
 			case "sources":
+				// UNCHANGED. Decision #7: the sources dropdown is preserved exactly — same data
+				// shape, same open behaviour, same per-source rendering, same order. Inline
+				// citations are an addition beside it, never a replacement for it, and the
+				// dropdown is still populated from the manifest rather than from what the model
+				// actually cited.
 				if (ev.content) renderSources(live.wrap, ev.content);
 				break;
+			// --- phase 3 --- the citation manifest. Arrives BEFORE any token (that ordering is
+			// what makes streaming citations possible at all: the ids are assigned at
+			// context-assembly time, so the manifest is known before generation starts).
+			// `citations_append` extends the SAME integer space from a mid-turn tool call —
+			// one id space, one renderer, no special cases.
+			case "citations":
+				live.manifest = indexManifest(ev.content || ev.citations || []);
+				renderBubble(live);
+				break;
+			case "citations_append": {
+				const extra = indexManifest(ev.content || ev.citations || []);
+				if (!live.manifest) live.manifest = extra;
+				else for (const [k, entry] of extra) live.manifest.set(k, entry);
+				renderBubble(live);
+				break;
+			}
 			case "pending_action":
 				if (ev.params) renderActionCard(live.wrap, ev.params, { liveStatus: "pending" });
 				break;
@@ -1412,6 +1679,20 @@
 		state.config = cfg;
 		build();
 		showEmpty();
+
+		// --- phase 3 --- the coworker half. Both calls are guarded on `frappe.boot.ee_chat`
+		// and both fail closed, so a site with chat off boots exactly as before.
+		if (chatEnabled()) {
+			// The badge ships to every Desk page, so the room list is fetched once per page
+			// load and nothing else. It is the only chat call a user who never opens the
+			// bubble ever makes.
+			ensureChatSurface()
+				.ensureLoaded()
+				.catch(() => {});
+			// The reverse handoff: if the SPA (or a previous bubble session in this tab) left a
+			// coworker conversation open, come back to it.
+			restoreFromHandoff();
+		}
 	}
 
 	$(document).on("app_ready", init);

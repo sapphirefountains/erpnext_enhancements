@@ -1,12 +1,24 @@
-# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary)
+# `www/` — standalone web pages (Time Kiosk, Wall Display, traveler itinerary, chat)
 
-Four standalone web pages live here, separate from the heavy desk app:
+Several standalone web pages live here, separate from the heavy desk app:
 
 - the **Time Kiosk** at **`/kiosk`** — installable PWA for technicians, chrome-free (most of this README);
 - the **Wall Display** at **`/wall`** — read-only project/TV dashboard, chrome-free (see below);
 - the **traveler itinerary** at **`/itinerary`** — chrome-free (see [its section below](#itinerary--traveler-itinerary-page));
 - the **travel guidelines** at **`/travel_guidelines`** — the company travel policy document, login-gated, standard website chrome (`travel_guidelines.py` + `.html`; static content with "In the system" callouts mapping each policy rule to the Travel Management flows). Linked from the Travel workspace shortcut, the `/itinerary` footer, and the trip-booked/traveler-added emails.
 - the **fountain move intake form** at **`/fountain-move`** — the public, guest-accessible Cactus & Tropicals intake form (`fountain_move.py` + `fountain-move.html`; note the underscored controller — see [Controller filenames](#controller-filenames-hyphens-are-silently-fatal)). See [its section below](#fountain-move--public-intake-form).
+- the **chat SPA** at **`/chat`** — the employee chat application (ADR 0009 Phase 3), chrome-free, login-gated and additionally gated on `Chat Settings.enabled` plus the pilot whitelist (`chat.py` + `chat.html`; front end in [`public/js/chat/`](../public/js/chat/README.md), server surface in [`chat/api/`](../chat/README.md)).
+
+  **It is the only page here that serves a whole URL subtree.** `hooks.py` carries
+  `website_route_rules = [{"from_route": "/chat/<path:chat_path>", "to_route": "chat"}]`, so
+  a hard refresh at `/chat/room/<room>?thread=<msg>&message=<msg>` renders this same shell and
+  the bundle routes itself from `location`. The server does not parse the path — a server that
+  parses it is a second router to keep in step with the first.
+
+  **The `website_404` trap comes with that rule.** Loading `/chat/room/X` *before* the rule
+  shipped caches that URL in Frappe's `website_404` cache until Redis is flushed. A full
+  deploy FLUSHDBs Redis and clears it; a hotfix without a restart does not. Do not advertise
+  the route before the deploy carrying it has landed.
 
 This folder is each app's *shell* (page controller, HTML, service worker where applicable); front-end logic lives in [`public/js/kiosk/`](../public/README.md#kiosk-pwa-front-end) / `public/js/wall/` / `public/js/travel/` and the server endpoints in [`api/`](../api/README.md).
 

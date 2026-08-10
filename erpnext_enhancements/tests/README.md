@@ -45,6 +45,13 @@ python -m pytest test_sync_time_kiosk.py        # at repo root
 
 The standalone Time Kiosk REST sync tool is tested separately by [`test_sync_time_kiosk.py`](../../test_sync_time_kiosk.py) at the repo root (34 tests, `httpx` mocked) — see the [www README](../www/README.md).
 
+**The ~20 `test_chat_*.py` suites are documented in [`chat/README.md`](../chat/README.md#tests)**, not here — that README explains what each one defends and why, and splitting the explanation across two files is how one half goes stale. Two things about them belong in this file because they are general rules:
+
+- **Every chat suite gets its own CI step.** Each installs its own `frappe` stub at module scope, and run together in one process they go red for reasons that have nothing to do with the code under test.
+- **`test_chat_rawsql_guard.py` is a build gate, not a coverage suite.** It walks `chat/**/*.py` with `ast` and fails on a raw query against a conversation-bearing table that does not AND in `permissions.membership_filter_sql`. If it goes red the fix is almost always to name the DocType literally and AND in the filter — not to add an exemption.
+
+The chat **client** is guarded by three plain-`node` scripts rather than by anything in this folder: `scripts/test_chat_citations.mjs`, `scripts/test_chat_client_logic.mjs` and `scripts/test_chat_source_rules.js`. No runner and no `npm install`, matching `test_pick_routing_lines.js` and `test_address_components.js`. See [`public/js/chat/README.md`](../public/js/chat/README.md#running-the-tests).
+
 ## Notes
 
 - `test_quickbooks_online.py` must be importable **without** a bench, hence the `sys.modules` stub. It fails if run expecting a real `frappe`.

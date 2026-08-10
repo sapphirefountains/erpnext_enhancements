@@ -219,6 +219,23 @@ FOREIGN_TABLES: dict[str, str] = {
 		"The pilot roster child table on Chat Settings: a list of email addresses allowed to "
 		"use the feature. Not conversation."
 	),
+	"User": (
+		"Display names and avatars, joined onto rows the membership filter has ALREADY "
+		"scoped — the room roster, a search hit's author, a mention candidate. It is the one "
+		"join that turns a room of hash docnames into a room of people, and doing it in the "
+		"client would be fifty round trips to paint fifty avatars.\n\n"
+		"It discloses nothing new: every authenticated user can already read `User` through "
+		"any link field's search on any form, and `chat/api/mentions.py::_other_candidates` "
+		"is deliberately the only place that reads it WITHOUT a chat table beside it — a "
+		"coworker directory, filtered to enabled System Users, which is the same list the "
+		"awesomebar returns. The columns selected are `name`, `full_name`, `user_image` and "
+		"`enabled`; a password, an API key or a session is never in the select list and a "
+		"query here that grows one is a finding.\n\n"
+		"Scoping it by membership would be incoherent in the direction that matters: the "
+		"mention menu's whole job is to let somebody discover a colleague who is NOT yet in "
+		"the room. What stops that becoming an escalation is the write side — "
+		"`compose._clean_mentions` drops a User mention of a non-member — not this read."
+	),
 }
 
 #: The ``(file, function, table)`` triples permitted to read a scoped table **without** the

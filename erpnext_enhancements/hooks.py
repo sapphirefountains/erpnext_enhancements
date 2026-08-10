@@ -279,6 +279,23 @@ override_doctype_class = {
 }
 
 doc_events = {
+	# Chat (ADR 0009 Phase 3). ONE hook, and it is deliberately here rather than a
+	# line inside `chat.sync.outbox.finalise_new_message`.
+	#
+	# The counter fan-out — "publish each OTHER member's new unread total to their
+	# own user room" — is what drives the room-list indicator and the floating
+	# bubble's badge on a desk page where no room's document room has been joined.
+	# It is a Phase 3 concern, and `finalise_new_message` is the subject of Phase 2's
+	# soak proof ("exactly once per genuinely new message, zero for echoes"). Adding
+	# to it would put a Phase 3 concern inside the thing the proof measures; additive
+	# wiring keeps that proof measuring what it was written to measure.
+	#
+	# It never raises: it runs in the inserting transaction's after_insert, where an
+	# exception destroys the message it exists to announce. A missing badge costs one
+	# refresh.
+	"Chat Message": {
+		"after_insert": "erpnext_enhancements.chat.api.readstate.announce_unread",
+	},
 	"Task": {
 		"before_save": "erpnext_enhancements.script_migrations.task.calculate_project_elapsed_time",
 		"after_insert": "erpnext_enhancements.script_migrations.task.sync_task_to_google_calendar",
@@ -810,6 +827,28 @@ scheduler_events = {
 # Currently: the live-collab doctype allowlist (frappe.boot.collab_doctypes),
 # read from ERPNext Enhancements Settings — see boot.py and api/collab.py.
 extend_bootinfo = "erpnext_enhancements.boot.boot_session"
+
+# ---------------------------------------------------------------------------
+# Website routes.
+#
+# The chat SPA (ADR 0009 Phase 3) is a single shell at www/chat.html that serves
+# EVERY sub-path of /chat. The rule below is what makes a HARD REFRESH at
+# /chat/room/<room>?thread=<msg>&message=<msg> render that shell instead of
+# 404ing — and every deep-link acceptance criterion in Phase 3, every
+# notification link Phase 4 sends, and every `chat_message` citation Phase 5
+# resolves depends on it. Frappe v16 hands from_route to werkzeug's Rule
+# verbatim, so the full converter set including <path:...> is available.
+#
+# TRAP, recorded because it is operational rather than visible in code: loading
+# /chat/room/X BEFORE this rule shipped caches that URL in the `website_404`
+# cache until Redis is flushed. A full deploy FLUSHDBs Redis and clears it; a
+# hotfix without a restart does not. So do not advertise the route to anybody
+# before the deploy carrying it has landed.
+#
+# The bare /chat path is matched by www/chat.html itself and needs no rule.
+website_route_rules = [
+	{"from_route": "/chat/<path:chat_path>", "to_route": "chat"},
+]
 
 # Jinja methods available to Print Formats / web templates. The print sandbox
 # cannot parse the Water Feature Design pipe segments' fittings/components JSON

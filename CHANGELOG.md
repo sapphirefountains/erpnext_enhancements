@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.264.0] - 2026-08-10
+
+ADR 0009 **Phase 3 — the chat SPA**. Chat remains dormant (`Chat Settings.enabled = 0`,
+`dry_run_mode = 1`, `restrict_to_whitelist = 1` with an empty allow-list), so nothing in this
+release changes behaviour on any site until somebody deliberately turns it on.
+
+### Added
+
+- **The entire chat read/write HTTP surface (`erpnext_enhancements/chat/api/`).** Phase 2's
+  brief said "no SPA and no UI of any kind" and was followed literally: `chat/` exposed six
+  whitelisted methods and every one was operational. There was no `get_rooms`, no
+  `get_messages`, no `send_message`. This release builds all of it — room list, keyset
+  history paging, threads, the deep-link "page containing this message" read, search, member
+  list, mention autocomplete, compose/edit/delete, read state, typing and presence.
+
+  It lives under `chat/` rather than in `api/chat.py` for one reason:
+  `tests/test_chat_rawsql_guard.py` walks `chat/**/*.py` with `ast` and fails the build on a
+  raw query against a conversation-bearing table that does not AND in
+  `permissions.membership_filter_sql`. This package is *made of* raw queries — keyset paging
+  and search are exactly where somebody reaches for `frappe.db.sql` — so putting it anywhere
+  else would have moved the most leak-prone code in the feature outside its only automated
+  guard. The guard caught the new modules on the day they were written, which is the point.
+
+- **The SPA at `/chat`** (`www/chat.html` + `www/chat.py` + `public/js/chat/`), served for
+  every sub-path via a new `website_route_rules` entry, so a hard refresh at
+  `/chat/room/<room>?thread=<msg>&message=<msg>` renders the shell rather than 404ing. Every
+  deep-link criterion in this phase, every notification link Phase 4 sends and every
+  `chat_message` citation Phase 5 resolves depends on that one rule.
+
+  Room list with unread and mention indicators, a virtualised transcript (≤~80 DOM nodes
+  retained at rest regardless of scroll depth), day separators and message grouping,
+  tombstones, threads in a side pane, a composer with drafts and `@mention` autocomplete,
+  optimistic send with reconciliation, attachments and an image lightbox, search, the member
+  list, keyboard operation, and a narrow-viewport push-navigation stack.
+
+- **A dual-surface floating bubble** (decision #8). The bubble stays where it is on every
+  Desk page and now carries both Triton and coworker conversations, with an unread badge, an
+  expand control that deep-links into the SPA, and a symmetric reverse handoff so collapsing
+  back returns to the same conversation. The handoff record lives in `sessionStorage` (per
+  tab, survives the same-tab navigation) and is mirrored to `localStorage` with a nonce and a
+  60-second TTL for the middle-click-opens-a-new-tab case — consumed and deleted on read, so
+  a week-old record cannot silently hijack a fresh `/chat` visit.
+
+- **Inline `[[ref:N]]` citation rendering** (decision #7), applied to the markdown renderer's
+  **output** rather than its input, so the existing sanitiser policy sees exactly the string
+  it saw before and is untouched. The sources dropdown is unchanged. Written against the
+  Phase 5 contract and **degrades to today's exact behaviour when no `citations` event
+  arrives** — that is the required behaviour rather than a fallback, and it is what lets this
+  phase ship before Phase 5 exists.
+
+- **Presence, typing and read receipts, all ERPNext-side** (invariant I14). Google Chat
+  exposes none of the three: it has no typing API at all, and its availability and read-state
+  surfaces are self-scoped, so they cannot power a dot next to a coworker's name. Presence is
+  **Redis with a 75-second TTL and no DocType** — at fifty users heartbeating every 30 s a
+  DocType would be ~144,000 writes a day for data worthless after a minute, and more
+  importantly the TTL *is* the crash handling, so there is deliberately no cleanup path for a
+  dead browser. Typing writes nothing to the database at all.
+
+  Keys are per (user, **client**), not per user. A user has three tabs; presence is the union
+  across them and focus is "**no** client of this user has that room focused". Keying on the
+  user alone lets the last tab to heartbeat overwrite the others, which reads as
+  "notifications stopped working when I opened a second tab".
+
+- **Four test suites, all mutation-tested in both directions**: one bench-free pytest suite
+  for the server contracts and three plain-`node` scripts for the client (`node`, no runner,
+  no `npm install` — the shape the repo's existing JS guards already use). They caught three
+  real defects while being written, including a zero-initialised timestamp in the read
+  batcher and the typing throttle that swallowed the first emission of each and would have
+  been invisible against a real clock.
+
+### Changed
+
+- **`chat/realtime.py` gained the seven Phase 3 event names** and an `ALL_EVENTS` set.
+  `scripts/test_chat_source_rules.js` fails the build when that set and the client's
+  `EVENT_NAMES` disagree, because a client listening for an event nobody publishes is
+  indistinguishable — from the client's side — from a quiet room.
+
+  The names use an underscore (`chat_message_created`), not the colon form the phase brief's
+  §4.5 table shows. Phase 1 shipped the underscore form and Phase 2 publishes it; adopting
+  the colon form would have been a silent break of the sync engine's own events.
+
+- **Transcript ordering is `seq`, not `creation`**, diverging from the brief's §4.13 wording.
+  `seq` is allocated under the room's row lock, is immutable, is dense per room and has no
+  timezone; a late-arriving inbound message (a Google `createTime` weeks old) still takes the
+  next `seq` and renders in `seq` order with a "recovered" affordance rather than being
+  re-sorted into the past. Two systems with independent clocks cannot agree on anything else.
+  It also makes unread arithmetic — `seq_high_water - last_read_seq` — exact and join-free.
+
+- **Search is `LIKE`, not `MATCH`.** `Chat Message.text_plain` is documented as suitable for
+  a FULLTEXT index and no such index exists; Phase 1 shipped the column, not the index. At
+  this data volume an indexed scan over one user's rooms is comfortably fast. Stated
+  explicitly rather than left implicit, with the upgrade path (one `alter table` plus a
+  `MATCH … AGAINST` branch) written down for when a room passes ~100k messages.
+
+- **The two-Vue-copies hazard is closed structurally rather than by configuration.** The SPA
+  bundles no Vue at all and is a separate document at a website route reached by navigation,
+  so the Desk document has `window.Vue` and no SPA and the SPA document has neither. A
+  build-time guard fails if either bundle ever grows a Vue import or a `createApp` call — the
+  hazard would otherwise return years from now as "the widget stopped updating after I opened
+  chat", six weeks after the change that caused it.
+
+### Fixed
+
+- **An edit or delete made in ERPNext published no realtime event, so no other ERPNext client
+  saw it until they refreshed.** `sync/inbound.py::_publish` fans out `chat_message_edited` /
+  `chat_message_deleted` for a change arriving from Google; `outbox.propagate_message_change`
+  — its ERPNext-side twin — relays the change onward to Google and publishes nothing.
+
+  Phase 3's own write path now announces its own writes (`api/compose.py::_publish_change`),
+  which closes it for the SPA without touching the sync engine — Phase 2's soak asserts
+  against `finalise_new_message` and editing it would put a Phase 3 concern inside the thing
+  that proof measures. It does **not** close the general case: an edit made through the desk,
+  a patch or a future admin tool still publishes nothing. That residual belongs to whoever
+  owns `propagate_message_change` and is carried into the Phase 3 checkpoint as a Phase 2
+  defect rather than papered over here.
+
+- **`ReadBatcher` and `TypingThrottle` swallowed their first emission.** Both compared
+  `now - lastEmitAt` against a zero-initialised timestamp, so the first flush and the first
+  typing indicator were throttled against the epoch. Invisible with a real `Date.now()` —
+  the first call is 1.7e12 ms past zero — which is exactly why it survived review and only
+  surfaced under a test clock. Both now initialise to `-Infinity`, which is what "no emission
+  has happened yet" actually means.
+
 ## [1.263.2] - 2026-08-10
 
 ### Fixed
