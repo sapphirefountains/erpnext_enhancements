@@ -90,6 +90,10 @@ COUNTER_QUOTA_BACKOFFS: Final[str] = "quota_backoffs"
 COUNTER_NOTIFY_NEW_MESSAGE: Final[str] = "notify_new_message"
 COUNTER_CONTEXT_STALE: Final[str] = "context_stale"
 COUNTER_ECHO_ORPHANS: Final[str] = "echo_orphans"
+#: A message Google will not return and never will — observed live 2026-08-10, where a reply
+#: cascaded by `force=true` on its thread parent answers 403 rather than a tombstone. Counted
+#: rather than merely logged because one is an anomaly and a rising rate is an incident.
+COUNTER_RESOURCES_GONE: Final[str] = "resources_gone"
 COUNTER_HEURISTIC_BINDS: Final[str] = "heuristic_binds"
 COUNTER_REVERTS_APPLIED: Final[str] = "reverts_applied"
 COUNTER_SUBSCRIPTION_RENEWALS: Final[str] = "subscription_renewals"
@@ -112,6 +116,7 @@ COUNTER_NAMES: Final[tuple[str, ...]] = (
 	COUNTER_NOTIFY_NEW_MESSAGE,
 	COUNTER_CONTEXT_STALE,
 	COUNTER_ECHO_ORPHANS,
+	COUNTER_RESOURCES_GONE,
 	COUNTER_HEURISTIC_BINDS,
 	COUNTER_REVERTS_APPLIED,
 	COUNTER_SUBSCRIPTION_RENEWALS,

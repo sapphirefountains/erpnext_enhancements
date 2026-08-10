@@ -588,8 +588,56 @@ def _reader_subject(room: str) -> str:
 	)
 
 
+class MessageResourceGone(frappe.ValidationError):
+	"""Google will not return this message resource, and will not on a later attempt either.
+
+	Distinct from the generic failure on purpose: this one must **not** be retried. Retrying an
+	unfixable read burns the attempt ceiling, alarms once per attempt, and buries the one Error
+	Log line that actually described the anomaly under nine that repeat it.
+	"""
+
+
+#: The statuses Google uses when a message cannot be read. **403 is in here and that is
+#: uncomfortable**, because Chat's 403 body says, verbatim, *"Permission denied to perform the
+#: requested action on the specified resource, or the resource doesn't exist."* — one status for
+#: two conditions with opposite handling. :func:`_space_is_readable` is what separates them.
+_RESOURCE_GONE_STATUSES: Final[frozenset[int]] = frozenset({403, 404})
+
+
+def _space_is_readable(room: str, resource_name: str, *, client: Any) -> bool:
+	"""Can the reader subject read *anything* in this space? One bounded probe, error path only.
+
+	This exists because of an observation from the 2026-08-10 live run, and it is the whole
+	reason the 403 branch is safe. Deleting a thread parent with ``force=true`` cascades to its
+	replies, and ``messages.get`` on a cascaded reply answers **403**, not a tombstone — while a
+	*directly* deleted message answers with a readable tombstone. So 403 genuinely does mean
+	"this message is gone" sometimes.
+
+	But it also means "you are not in this space", and those two need opposite handling: the
+	first is one lost message that nobody can recover, the second is **every** message in that
+	space silently failing until somebody notices. Treating them alike in either direction is
+	the bug. So on a 403 we ask a second, cheaper question — can this subject list the space at
+	all? — and let the answer decide.
+
+	Returns ``True`` only on a clean read. Any failure returns ``False``, which routes the
+	caller to the loud branch: when we cannot tell, the answer must be the one that alarms.
+	"""
+	space = str(resource_name or "").split("/messages/", 1)[0]
+	if not space:
+		return False
+	try:
+		client.list_messages(space, page_size=1)
+	except Exception:
+		return False
+	return True
+
+
 def fetch_message_resource(room: str, resource_name: str, *, client: Any = None) -> dict[str, Any]:
 	"""``spaces.messages.get`` for one resource name. ``client`` is the test injection point.
+
+	Raises :class:`MessageResourceGone` when Google will never return this resource, and
+	``frappe.ValidationError`` for everything else. The caller treats those differently and
+	should: one is a message nobody can recover, the other is a fault that wants an operator.
 
 	Exceptions are re-raised ``from None``. A bare re-raise out of a background job publishes
 	the failing frames' locals into the Error Log, and the transport's frame holds the
@@ -603,6 +651,12 @@ def fetch_message_resource(room: str, resource_name: str, *, client: Any = None)
 	try:
 		return dict(client.get_message(resource_name) or {})
 	except Exception as exc:
+		status = getattr(exc, "status", None)
+		if status in _RESOURCE_GONE_STATUSES and _space_is_readable(room, resource_name, client=client):
+			raise MessageResourceGone(
+				f"spaces.messages.get returned {status} for {resource_name} while the space "
+				"itself is readable, so the message is gone rather than forbidden"
+			) from None
 		raise frappe.ValidationError(
 			f"spaces.messages.get failed for a mirrored message: {type(exc).__name__}: {exc}"
 		) from None
@@ -1153,7 +1207,21 @@ def _apply_event(row: Any, parsed: ParsedEvent, *, client: Any) -> tuple[Inbound
 	if verdict is InboundVerdict.RESOLVE_VIA_GET:
 		# The normal path, not a fallback — see the module docstring before deciding it looks
 		# expensive.
-		resource = fetch_message_resource(room or "", parsed.resource_name, client=client)
+		try:
+			resource = fetch_message_resource(room or "", parsed.resource_name, client=client)
+		except MessageResourceGone as gone:
+			# The message existed in Chat and no longer does, and the space is readable, so no
+			# number of retries will produce it. Observed live 2026-08-10: a reply cascaded by
+			# `force=true` on its thread parent answers 403 rather than a tombstone.
+			#
+			# Settle rather than retry. There is nothing to store: without the resource there is
+			# no client id to tell an echo from a stranger, no body, and no sender — and Google
+			# keeps no copy of the text either, so inventing a row would manufacture a message
+			# nobody can produce. `Ignored` with the reason on the row is the honest record, and
+			# the counter is what turns "one anomaly" into "this is happening a lot".
+			seams.bump(seams.COUNTER_RESOURCES_GONE)
+			_log("info", "message resource is gone; settling", resource=parsed.resource_name)
+			return (InboundVerdict.IGNORE, _settle(row, STATUS_IGNORED, last_error=str(gone)))
 		client_id = resource_client_id(resource)
 		local = _local_by_client_id(room or "", client_id)
 		facts = _with(

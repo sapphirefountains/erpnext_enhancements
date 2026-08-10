@@ -111,6 +111,7 @@ _COUNTER_GROUPS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 			"duplicates_rejected",
 			"echoes_suppressed",
 			"echo_orphans",
+			"resources_gone",
 			"heuristic_binds",
 			"late_arrivals",
 			"skew_alerts",
