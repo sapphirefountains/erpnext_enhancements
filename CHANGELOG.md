@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.265.2] - 2026-08-10
+
+### Fixed
+
+- **The widget header overflowed: new-chat, expand and close were pushed off the right edge.**
+  Phase 3 added a surface switcher (~120px) and an expand control (~34px) to a bar that had
+  about 64px of slack at the panel's 410px width — the CSS even carries a note saying the
+  pickers were capped at 92px specifically so they would not push the icon buttons off. They
+  got pushed off anyway.
+
+  Four changes, in order of how much they buy:
+
+  * **The title is dropped when the switcher is present.** The first tab already reads
+    "Triton", so the title beside it was the same word twice and the widest item in the row.
+    With chat off there is nothing to switch between, so the switcher is hidden entirely and
+    the title comes back — a one-item toggle is not a toggle.
+  * **The header wraps instead of overflowing** (`flex-wrap`). No amount of shrinking fits
+    eight controls across a 328px phone panel, and wrapping costs a second row only when it
+    is actually needed. It hides nothing, which shrinking far enough eventually would.
+  * **The pickers can shrink** — `flex: 1 1 auto` with `min-width: 0`, still capped at 88px.
+    The `min-width: 0` is the load-bearing half: without it a flex item refuses to shrink
+    below its content width and the row overflows instead of compressing.
+  * Icon buttons 28→26px and the gap 6→4px.
+
+  **Touch keeps its tap targets.** 26px is a pointer-device size; under `(hover: none)` the
+  buttons go to 40px and the tabs to a 36px minimum, per §4.12. On a phone that buys a second
+  header row rather than an unreachable control, which is the right trade in that direction.
+
+  **The chat-off header cannot regress**: it now consumes 296px of the 386px available where
+  it previously consumed 322px — 26px roomier than before Phase 3, with strictly the same
+  controls.
+
 ## [1.265.1] - 2026-08-10
 
 ### Fixed

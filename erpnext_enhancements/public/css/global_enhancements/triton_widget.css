@@ -99,7 +99,14 @@
 .triton-header {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	/* Wraps rather than overflowing. Phase 3 added a surface switcher and an expand
+	   control to a bar that was already budgeted to the pixel (see the max-width note
+	   on the selects below), and on a phone-width panel no amount of shrinking fits
+	   eight controls on one line. Wrapping costs a second row only when it is actually
+	   needed -- flex-wrap does nothing while everything fits -- and it hides no control,
+	   which shrinking far enough eventually would. */
+	flex-wrap: wrap;
+	gap: 4px;
 	padding: 10px 12px;
 	background: linear-gradient(135deg, #1f6feb, #0a3d91);
 	color: #fff;
@@ -108,6 +115,12 @@
 .triton-header .triton-logo {
 	font-size: 18px;
 	flex: 0 0 auto;
+}
+/* The switcher's first tab already reads "Triton", so the title beside it is the same
+   word twice and the widest thing in the row. Dropped when the tabs are present; kept
+   when they are not (chat off), where it is the only label there is. */
+.triton-header.has-tabs .triton-title {
+	display: none;
 }
 .triton-header .triton-title {
 	font-weight: 600;
@@ -124,8 +137,12 @@
    the icon buttons off the 410px header. */
 .triton-header .triton-model-select,
 .triton-header .triton-persona-select {
-	flex: 0 0 auto;
-	max-width: 92px;
+	/* Shrinkable, not fixed. `min-width: 0` is the load-bearing half: without it a
+	   flex item refuses to shrink below its content width and the row overflows
+	   instead of compressing. Still capped, so on a wide panel they do not sprawl. */
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: 88px;
 	background: rgba(255, 255, 255, 0.16);
 	color: #fff;
 	border: 1px solid rgba(255, 255, 255, 0.25);
@@ -198,12 +215,12 @@
 	background: rgba(255, 255, 255, 0.15);
 	border: none;
 	color: #fff;
-	width: 28px;
-	height: 28px;
+	width: 26px;
+	height: 26px;
 	border-radius: 6px;
 	cursor: pointer;
-	font-size: 14px;
-	line-height: 28px;
+	font-size: 13px;
+	line-height: 26px;
 	text-align: center;
 	flex: 0 0 auto;
 	transition: background 0.15s ease, transform 0.12s ease;
@@ -1152,4 +1169,61 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* ---- Phase 3 header budget -------------------------------------------- *
+ * The switcher, compacted. It carries two short words and sat at ~120px in
+ * a row with ~64px to spare; at this size it is ~78px. Smaller than this
+ * and the labels stop being readable, which is the point at which an icon
+ * would be better than a squeezed word.
+ */
+.triton-surface-tabs {
+	flex: 0 0 auto;
+	margin-left: 2px;
+	padding: 1px;
+}
+.triton-surface-tabs.is-hidden,
+.triton-expand.is-hidden {
+	display: none;
+}
+.triton-surface-tab {
+	padding: 2px 7px;
+	font-size: 10px;
+	line-height: 16px;
+	white-space: nowrap;
+}
+
+/* Touch: the visual 26px is a pointer-device size. A finger needs ~44px, and
+   §4.12 asks for it explicitly. The header wraps, so buying the height back
+   costs a second row on a phone rather than an unreachable control -- which
+   is the right trade in that direction. */
+@media (hover: none) {
+	.triton-header .triton-icon-btn {
+		width: 40px;
+		height: 40px;
+		line-height: 40px;
+		font-size: 16px;
+	}
+	.triton-surface-tab {
+		min-height: 36px;
+		padding: 2px 12px;
+		font-size: 12px;
+	}
+	.triton-header .triton-model-select,
+	.triton-header .triton-persona-select {
+		min-height: 36px;
+		font-size: 13px;
+	}
+}
+
+/* Very narrow panels (a 360px phone gives ~328px of panel). Let the two
+   pickers share a full row of their own rather than fighting the icons for
+   space -- they are the only controls here that carry text and therefore the
+   only ones that genuinely need width. */
+@media (max-width: 480px) {
+	.triton-header .triton-model-select,
+	.triton-header .triton-persona-select {
+		flex: 1 1 40%;
+		max-width: none;
+	}
 }
