@@ -90,6 +90,24 @@ export class ReadBatcher {
 	}
 
 	/**
+	 * Is anything mid-dwell, i.e. waiting only for time to pass?
+	 *
+	 * **The caller MUST consult this and re-sample.** `observe()` promotes a seq on the
+	 * SECOND call that finds its conditions still holding — the first only records when they
+	 * started. So a caller that samples once per DOM event (a render, a scroll, an
+	 * IntersectionObserver callback) never completes a dwell for a message that simply sits
+	 * on screen being read, which is the ordinary case and the whole point.
+	 *
+	 * That was a real defect: read receipts never fired in production, and every read mark
+	 * that moved had been moved by the author's own send rather than by anybody reading.
+	 * Nothing in the pure tests caught it, because the dwell logic was correct in isolation —
+	 * the missing piece was a caller that came back.
+	 */
+	hasPending() {
+		return this.dwelling.size > 0;
+	}
+
+	/**
 	 * Whether a flush should happen now.
 	 * @param {boolean} force set on room switch, window blur, tab hide and `pagehide`.
 	 */

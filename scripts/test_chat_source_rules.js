@@ -500,7 +500,73 @@ function stripComments(source) {
 	}
 }
 
-// ------------------------------------------------------------------ 7. the bundle rule
+// ------------------------------------------------------------------ 7. the dwell needs a sampler
+
+/**
+ * **A dwell that nothing re-samples never completes.**
+ *
+ * `ReadBatcher.observe()` promotes a seq on the SECOND call that finds its conditions still
+ * holding; the first only records when they started. Every natural caller is a DOM event — a
+ * render, a scroll, an IntersectionObserver callback — and a message that simply sits on
+ * screen being read generates no further events. So a surface that samples once per event and
+ * never comes back can never mark anything read.
+ *
+ * That shipped. Read receipts never fired in production: every read mark that moved had been
+ * moved by the author's own send. The pure tests all passed, because the dwell logic is
+ * correct in isolation — what was missing was a caller that returned, which no unit test of
+ * `ReadBatcher` can see.
+ *
+ * So the rule is asserted where the gap actually was: any surface that calls `observe()` must
+ * also consult `hasPending()` and schedule another look.
+ */
+{
+	const samplers = [
+		{ file: path.join(CLIENT_DIR, "app.js"), label: "the SPA" },
+		{ file: SURFACE_JS, label: "the bubble" },
+	];
+
+	const problems = [];
+	for (const s of samplers) {
+		const src = stripComments(must(s.file));
+		if (!/readBatcher\.observe\(/.test(src)) {
+			console.error(
+				"MARKERS NOT FOUND: " + path.relative(ROOT, s.file) + " no longer calls " +
+				"readBatcher.observe(). Re-derive this check rather than deleting it."
+			);
+			process.exit(2);
+		}
+		if (!/hasPending\(\)/.test(src)) {
+			problems.push(
+				`${s.label} (${path.basename(s.file)}) feeds readBatcher.observe() but never checks ` +
+				`hasPending(). The dwell needs a second sample and nothing schedules one, so no ` +
+				`message is ever marked read by being read.`
+			);
+		// `[\s\S]{0,80}?` rather than `[^)]*`: the real call is
+		// `setTimeout(() => this.evaluateRead(), ...)`, and a negated-paren class cannot cross
+		// the `)` in the arrow's own parameter list. That mistake made this check fire on
+		// correct code the first time it ran.
+		} else if (!/setTimeout\([\s\S]{0,80}?(evaluateRead|sampleDwell)/.test(src)) {
+			problems.push(
+				`${s.label} checks hasPending() but schedules no follow-up sample, so knowing a ` +
+				`dwell is pending changes nothing.`
+			);
+		}
+	}
+
+	// And the batcher must actually expose it.
+	const sig = stripComments(must(path.join(CLIENT_DIR, "signals.js")));
+	if (!/hasPending\s*\(\s*\)\s*\{/.test(sig)) {
+		problems.push("ReadBatcher no longer exposes hasPending(), so no caller can re-sample.");
+	}
+
+  if (problems.length) {
+		fail("a dwell with no sampler:\n        " + problems.join("\n        "));
+	} else {
+		pass("both surfaces re-sample the read dwell instead of waiting for an event that never comes");
+	}
+}
+
+// ------------------------------------------------------------------ 8. the bundle rule
 
 {
 	const bundle = must(SPA_BUNDLE);

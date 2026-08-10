@@ -18,6 +18,7 @@ import { renderDaySeparator, renderMessage, renderThinkingPlaceholder } from "./
 import { OfflineQueue, OutboxStore, STATE, newClientMessageId, mergeForRender } from "./optimistic.js";
 import { KIND, buildRoute, degrade, parseRoute, resolveRestoration } from "./routes.js";
 import {
+	READ_DWELL_MS,
 	ReadBatcher,
 	TypingRegistry,
 	TypingThrottle,
@@ -1327,6 +1328,35 @@ class ChatApp {
 		if (!this.readObserver) return;
 		for (const node of this.transcript.nodes.values()) {
 			if (node.dataset.seq) this.readObserver.observe(node);
+		}
+
+		// Same defect the bubble had, same fix. An IntersectionObserver fires on intersection
+		// CHANGES: a message that is already fully visible reports once and never again. Since
+		// `observe()` promotes only on the second sample that finds the conditions holding, a
+		// message sitting on screen being read would never complete its dwell.
+		clearTimeout(this._dwellTimer);
+		if (this.readBatcher.hasPending()) {
+			this._dwellTimer = setTimeout(() => this.sampleDwell(), READ_DWELL_MS + 60);
+		}
+	}
+
+	/** Re-sample the rows already on screen, without re-registering the observer. */
+	sampleDwell() {
+		if (!this.state.room) return;
+		const now = Date.now();
+		const reading = this.windowIsBeingRead();
+		const viewport = this.els.viewport.getBoundingClientRect();
+		for (const node of this.transcript.nodes.values()) {
+			const seq = Number(node.dataset.seq);
+			if (!seq) continue;
+			const rect = node.getBoundingClientRect();
+			const visible = rect.bottom > viewport.top && rect.top < viewport.bottom;
+			this.readBatcher.observe(seq, visible && reading, now);
+		}
+		this.flushRead(false);
+		clearTimeout(this._dwellTimer);
+		if (this.readBatcher.hasPending()) {
+			this._dwellTimer = setTimeout(() => this.sampleDwell(), READ_DWELL_MS + 60);
 		}
 	}
 

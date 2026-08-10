@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.265.3] - 2026-08-10
+
+### Fixed
+
+- **Read receipts never fired. A dwell that nothing re-samples never completes.**
+
+  `ReadBatcher.observe()` promotes a seq on the **second** call that finds its conditions
+  still holding — the first only records when they started. That is deliberate: it is what
+  stops a fast scroll past 200 messages marking them all read on the way to the bottom.
+
+  But every caller was a DOM event — a render, a scroll, an `IntersectionObserver` callback —
+  and a message that simply sits on screen **being read** generates no further events. An
+  `IntersectionObserver` fires on intersection *changes*; a message already fully visible
+  reports once and never again. So the second sample never happened and the dwell never
+  completed.
+
+  Caught on production, not by a test: after a real two-person exchange, both read marks had
+  been moved by `_advance_author_read_mark` — 8–13ms after each person's own message — and
+  neither had ever been moved by reading. One participant's mark sat at seq 3 while seq 4 was
+  visibly on their screen.
+
+  **Nothing in the pure tests could have caught this.** The dwell logic is correct in
+  isolation and every one of its cases passes; what was missing was a caller that came back.
+  `ReadBatcher` now exposes `hasPending()`, both surfaces schedule one follow-up sample when
+  anything is mid-dwell, and both re-evaluate on window focus and `visibilitychange` — focus
+  being one of the three read conditions, a change in it has to re-open the question.
+
+  One follow-up, not an interval: if the conditions stop holding, `observe` drops the entry,
+  `hasPending()` goes false, and nothing reschedules.
+
+### Added
+
+- **`scripts/test_chat_source_rules.js` asserts that a dwell has a sampler** — any surface
+  feeding `observe()` must consult `hasPending()` *and* schedule another look. The rule is
+  asserted where the gap actually was, since no unit test of `ReadBatcher` can see whether its
+  caller returns. Mutation-tested three ways.
+
+  The check itself shipped broken on its first run and is worth recording: it used
+  `setTimeout\([^)]*…` to find the follow-up, and a negated-paren class cannot cross the `)`
+  in the arrow function's own parameter list — so it failed against correct code. Fixed to a
+  lazy `[\s\S]{0,80}?`.
+
 ## [1.265.2] - 2026-08-10
 
 ### Fixed

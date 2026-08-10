@@ -24,7 +24,13 @@
 import { clear, el, initials, isComposingKey, linkify, relativeTime } from "../chat/dom.js";
 import * as mentions from "../chat/mentions.js";
 import { OutboxStore, newClientMessageId, mergeForRender } from "../chat/optimistic.js";
-import { ReadBatcher, TypingRegistry, TypingThrottle, typingLabel } from "../chat/signals.js";
+import {
+	READ_DWELL_MS,
+	ReadBatcher,
+	TypingRegistry,
+	TypingThrottle,
+	typingLabel,
+} from "../chat/signals.js";
 import { M, call } from "../chat/transport.js";
 
 /** How many messages the bubble loads at once. Smaller than the SPA's 50: the panel is
@@ -96,6 +102,17 @@ export class BubbleChatSurface {
 		this.host.appendChild(this.els.list);
 		this.host.appendChild(this.els.conversation);
 		this.els.messages.addEventListener("scroll", () => this.onScroll(), { passive: true });
+
+		// Focus is one of the three read conditions, so a change in it must re-open the
+		// question. Losing focus flushes what is already earned; regaining it restarts the
+		// dwell for whatever is on screen. Without the focus half, alt-tabbing away and back
+		// leaves every pending dwell cleared with nothing to restart it.
+		window.addEventListener("focus", () => this.evaluateRead());
+		window.addEventListener("blur", () => this.flushRead(true));
+		document.addEventListener("visibilitychange", () => {
+			if (document.visibilityState === "visible") this.evaluateRead();
+			else this.flushRead(true);
+		});
 	}
 
 	/** Load the room list, once per Desk page. Cheap: zero joins, denormalised columns. */
@@ -710,6 +727,20 @@ export class BubbleChatSurface {
 			this.readBatcher.observe(seq, visible && focused, now);
 		}
 		this.flushRead(false);
+
+		// **Come back.** `observe()` promotes on the SECOND call that finds the conditions
+		// still holding; the first only records when they started. Every other caller here is
+		// a DOM event (a render, a scroll), and a message that simply sits on screen being
+		// read generates no further events — so without this the dwell never completes and no
+		// read mark ever moves except via the author's own send. That is exactly what
+		// production showed.
+		//
+		// One follow-up, not an interval: if the conditions stop holding, `observe` drops the
+		// entry, `hasPending()` goes false, and nothing reschedules.
+		clearTimeout(this._dwellTimer);
+		if (this.readBatcher.hasPending()) {
+			this._dwellTimer = setTimeout(() => this.evaluateRead(), READ_DWELL_MS + 60);
+		}
 	}
 
 	flushRead(force) {
