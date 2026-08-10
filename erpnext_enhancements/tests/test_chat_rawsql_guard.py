@@ -248,6 +248,23 @@ SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
 		"<module>",
 		"Chat Room Member",
 	): ("_MEMBER_TABLE, same as _MESSAGE_TABLE above: the identifier the fragment is built from."),
+	# --- chat/bench_verify.py: a probe that refuses to run beside real data -------------
+	(
+		"bench_verify.py",
+		"_check_seq_row_lock",
+		"Chat Room",
+	): (
+		"Two UPDATEs and no SELECT — it takes the row lock on one connection and watches a "
+		"second connection block on it, which is the only way to prove the claim that makes "
+		"`allocate_seq`'s read-after-UPDATE safe. It reads no column and returns no row.\n\n"
+		"It is also structurally incapable of touching anybody's data: `run()` refuses to "
+		"start unless EVERY chat table is empty and `Chat Settings.enabled` is 0, and the "
+		"room it locks is one it created seconds earlier and deletes in a `finally`. A "
+		"membership filter here would be meaningless — there is no session user under "
+		"`bench execute`, and the row set is bounded by 'the row this function just made'.\n\n"
+		"Scoped to this function on purpose. The next function somebody adds to this file "
+		"gets no cover from this entry, which is why the key is a triple."
+	),
 	# --- chat/health.py: bench execute only, aggregates only ---------------------------
 	(
 		"health.py",
