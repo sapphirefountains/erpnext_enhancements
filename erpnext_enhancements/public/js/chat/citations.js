@@ -257,9 +257,55 @@ export function renderTokens(parent, tokens, options) {
 			parent.appendChild(doc.createTextNode(token.value));
 			continue;
 		}
+		// `onCite` is what lets the sources row mark which entries the model ACTUALLY used
+		// (approved 2026-08-10; see `orderManifestForDisplay`). It fires per rendered token,
+		// so it fires repeatedly across streaming frames for the same id — the caller
+		// accumulates into a Set, which is the only shape that is correct under a renderer
+		// that rebuilds the bubble from scratch on every frame.
+		if (typeof opts.onCite === "function") opts.onCite(token.k, token.citation);
 		parent.appendChild(buildCitationNode(doc, token, opts));
 	}
 	return parent;
+}
+
+/**
+ * **Pure.** Order a manifest for the sources row: **cited entries first, then the rest**,
+ * each group in id order, with a `cited` flag on every entry.
+ *
+ * WHY THIS IS A BEHAVIOUR CHANGE AND WHY IT IS DELIBERATE. Locked decision #7 says the
+ * sources dropdown is "preserved exactly", and research 03 §12.6 flagged the counter-proposal
+ * — show the full manifest with cited entries marked and sorted first — as needing an
+ * explicit human decision rather than a unilateral one. It was raised at the Phase 3
+ * checkpoint and **approved on 2026-08-10**. This function is where that approval lives.
+ *
+ * Two properties worth stating because they are what make the change safe:
+ *
+ * * **With no manifest there is nothing to order**, and the caller falls back to rendering
+ *   the `sources` event exactly as it did before this phase. The old path is not merely
+ *   reachable, it is the path taken on every site until Phase 5 emits a manifest.
+ * * **Id order, not relevance order, within each group.** The ids are assigned at
+ *   context-assembly time and the inline markers in the answer read `[1]`, `[2]`, `[3]`; a
+ *   sources row sorted by anything else makes the reader hunt for the chip matching the
+ *   number they just clicked past.
+ *
+ * @param {Map|Array} manifest
+ * @param {Set|Array} cited  ids that appeared in the rendered answer
+ * @returns {Array<{k, citation, cited}>}
+ */
+export function orderManifestForDisplay(manifest, cited) {
+	const index = manifest instanceof Map ? manifest : indexManifest(manifest);
+	const used = cited instanceof Set ? cited : new Set(cited || []);
+
+	const entries = Array.from(index.entries(), ([k, citation]) => ({
+		k,
+		citation,
+		cited: used.has(k),
+	}));
+
+	// Stable within each group: sort on (not cited, k). Comparing booleans by subtraction
+	// after coercion keeps this a single comparator rather than two passes and a concat.
+	entries.sort((a, b) => (a.cited === b.cited ? a.k - b.k : a.cited ? -1 : 1));
+	return entries;
 }
 
 /**

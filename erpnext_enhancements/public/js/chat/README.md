@@ -52,7 +52,7 @@ precisely the string it saw before and is untouched.
 | `optimistic.js` | **yes** | The pending-message store, keyed on `client_message_id` throughout. |
 | `signals.js` | **yes** | Read batcher, typing throttle and registry, presence union. |
 | `mentions.js` | **yes** | Trigger detection, insertion, re-anchoring, and the payload. |
-| `dom.js` | no | Node builders, linkification, relative time, grouping. |
+| `dom.js` | partly | Node builders, linkification, relative time, grouping, and `isComposingKey` — **the one IME rule every Enter-to-send handler consults**. Four copies of that rule is four chances for the next one to carry half of it, which is exactly what happened before it was extracted. |
 | `transport.js` | no | `fetch` against `/api/method/…`. No `frappe.*` — the SPA has no Desk bundle. |
 | `socket.js` | no | The socket.io connection, `doc_subscribe`, and the reconnect resync. **SPA only.** |
 | `virtual_list.js` | no | Windowed transcript with dynamic heights, anchored on a message docname. **SPA only.** |

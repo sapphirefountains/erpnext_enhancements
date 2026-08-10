@@ -705,6 +705,34 @@ without touching the sync engine. It does **not** close the general case: an edi
 through the desk, a patch, or a future admin tool still publishes nothing. That belongs to
 whoever owns `propagate_message_change`.
 
+### The sources row: an approved exception to "preserve exactly"
+
+Locked decision #7 says the Triton sources dropdown is **preserved exactly**. Research 03
+§12.6 proposed the opposite — show the full manifest with cited entries marked and sorted
+first — and was explicit that it required a human yes rather than a unilateral edit. It was
+raised at the Phase 3 checkpoint and **approved on 2026-08-10**.
+
+What that means concretely, because "approved" is not the same as "safe":
+
+* **`renderSources()` is untouched.** Same container class, same chip class, same
+  `label || title || url` fallback, same `textContent`, same `target="_blank"
+  rel="noopener"`. It is still the path taken by every turn on every site — no manifest
+  exists until Phase 5 emits one.
+* **`renderManifestSources()` is a separate function beside it**, not an edit to it. That
+  separation is what makes "with no manifest, nothing changed" a fact rather than a claim,
+  and `scripts/test_triton_widget_guards.js` fails the build if either the old renderer
+  changes shape or the new one is folded back into it.
+* **The row is still the whole retrieved set** — uncited entries are dimmed, never dropped.
+  That superset is the property decision #7 was protecting; hiding retrieved-but-unused
+  sources removes exactly what somebody checking an answer wants.
+* **Ordering is by id within each group**, because the inline markers read `[1]`, `[2]`,
+  `[3]`. `citations.js::orderManifestForDisplay` is pure and carries the rule.
+* **Marking is live, reordering happens once**, in `finishStreaming`. A row that reshuffles
+  several times a second moves the chip the reader was about to click.
+
+If a future phase wants the row back to strictly-preserved, delete the `citations` case's
+call to `renderManifestSources` — the old renderer is still there and still correct.
+
 ### Presence, typing and read receipts are ERPNext-sourced — and a coworker in the native Google Chat client shows as offline
 
 This is invariant I14, it is a real product limitation, and it must not be discovered in
@@ -997,13 +1025,18 @@ none because it looks like coverage.
 | `tests/test_chat_api_contracts.py` | pytest | A deleted row never emits its body; the membership fragment never returns `""`; page sizes are clamped; search escapes the user's own `LIKE` wildcards; paging is keyset on `seq` and never `OFFSET` or a timestamp; the Python and JS route builders produce the same bytes; every whitelisted endpoint calls a gate. |
 | `scripts/test_chat_citations.mjs` | node | The whole §4.10 degradation table: unknown `k` dropped silently, malformed tokens left literal, split tokens reassembled, **the tail buffer flushed on stream end**, `javascript:` refused, a `digest` rendered as a non-navigating pill, and — the row that lets this phase ship before Phase 5 — **no `citations` event renders identically to today**. |
 | `scripts/test_chat_client_logic.mjs` | node | Routes and the three-tier restoration precedence (**the URL wins, always**), the handoff record's nonce and TTL, optimistic reconciliation in all four orderings, the read batcher's monotonicity and dwell, typing throttle and expiry, and the multi-tab presence union. |
-| `scripts/test_chat_source_rules.js` | node | No `innerHTML` anywhere in the chat client; no Vue in the SPA bundle; the realtime event names matching between `realtime.py` and `socket.js`; and `www/chat.html` loading bundles rather than raw `/assets` paths. |
+| `scripts/test_chat_source_rules.js` | node | No `innerHTML` anywhere in the chat client; no Vue in the SPA bundle; the realtime event names matching between `realtime.py` and `socket.js`; **every cross-module name resolving** (esbuild fails on a bad import *path*, but a name that is never imported compiles to a global lookup and throws only in the browser); and `www/chat.html` loading bundles rather than raw `/assets` paths. |
 
-All four were **mutation-tested in both directions** when they were written: a planted defect
-turns each one red naming the offender, and removing it turns them green. `test_chat_client_logic.mjs`
-found three real defects on its first run — a zero-initialised timestamp in the read batcher
-and in the typing throttle that swallowed the first emission of each, and which would have
-been invisible against a real clock.
+All of them were **mutation-tested in both directions** when they were written: a planted
+defect turns each one red naming the offender, and removing it turns them green. That is not
+a formality here — between them they found **five real defects before the code ever ran**:
+
+- a zero-initialised timestamp in the read batcher and another in the typing throttle, each
+  swallowing its own first emission, both invisible against a real clock;
+- three composers carrying only half the IME rule (`isComposing` without the legacy 229),
+  i.e. fixed everywhere except the engines the fix exists for;
+- `isComposingKey` used in the widget and never imported — a bare global reference that would
+  have thrown `ReferenceError` at load and taken the whole assistant down on every desk page.
 
 The CI runner installs only `httpx pytest jinja2`, so a bench-free suite must stub
 `requests` the way `tests/test_triton_personas.py` already does. That is also why

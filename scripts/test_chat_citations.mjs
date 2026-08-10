@@ -26,6 +26,7 @@ import {
 	indexManifest,
 	isSafeUrl,
 	isTokenPrefix,
+	orderManifestForDisplay,
 	renderTokens,
 	tokenizeCitations,
 } from "../erpnext_enhancements/public/js/chat/citations.js";
@@ -221,6 +222,66 @@ test("a same-origin desk link does NOT open a new tab", () => {
 	const parent = doc.createElement("div");
 	renderTokens(parent, tokenizeCitations("[[ref:1]]", INDEX), {});
 	assert.equal(parent.children[0].attrs.target, undefined);
+});
+
+// --------------------------------------------------- the approved sources ordering
+
+test("the sources row puts CITED entries first, each group in id order", () => {
+	// Approved 2026-08-10 against decision #7's "preserve exactly". The ordering must be by
+	// id within each group, not by relevance: the inline markers in the answer read [1], [2],
+	// [3], and a row sorted any other way makes the reader hunt for the chip matching the
+	// number they just clicked past.
+	const ordered = orderManifestForDisplay(INDEX, new Set([3, 1]));
+	assert.deepEqual(ordered.map((e) => e.k), [1, 3, 2, 4, 5, 6]);
+	assert.deepEqual(ordered.map((e) => e.cited), [true, true, false, false, false, false]);
+});
+
+test("EVERY manifest entry survives the ordering — the row is the full retrieved set", () => {
+	// This is the half of decision #7 the approval did NOT change. Showing only what the
+	// model cited would hide retrieved-but-unused sources, which is exactly the information
+	// somebody checking the answer wants.
+	assert.equal(orderManifestForDisplay(INDEX, new Set()).length, INDEX.size);
+	assert.equal(orderManifestForDisplay(INDEX, new Set([1, 2, 3, 4, 5, 6])).length, INDEX.size);
+});
+
+test("with no citations at all the row is the manifest in plain id order", () => {
+	const ordered = orderManifestForDisplay(INDEX, new Set());
+	assert.deepEqual(ordered.map((e) => e.k), [1, 2, 3, 4, 5, 6]);
+	assert.ok(ordered.every((e) => e.cited === false));
+});
+
+test("an empty manifest orders to nothing, so the caller falls back to today's row", () => {
+	assert.deepEqual(orderManifestForDisplay([], new Set()), []);
+	assert.deepEqual(orderManifestForDisplay(new Map(), new Set([1])), []);
+});
+
+test("it accepts an array manifest and an array of cited ids, not just Map/Set", () => {
+	const ordered = orderManifestForDisplay(MANIFEST, [2]);
+	assert.equal(ordered[0].k, 2);
+	assert.equal(ordered[0].cited, true);
+});
+
+test("onCite reports each RESOLVED id and never a miss", () => {
+	const cited = [];
+	const missed = [];
+	const doc = fakeDocument();
+	const parent = doc.createElement("div");
+	const tokens = tokenizeCitations("a [[ref:1]] b [[ref:99]] c [[ref:3]]", INDEX, (k) => missed.push(k));
+	renderTokens(parent, tokens, { onCite: (k) => cited.push(k) });
+	assert.deepEqual(cited, [1, 3], "a dropped token must not mark a chip");
+	assert.deepEqual(missed, [99]);
+});
+
+test("onCite fires again on a re-render, which is why the caller accumulates into a Set", () => {
+	// `renderBubble` rebuilds the bubble from scratch on every streaming frame, so the same
+	// token is rendered many times. A counter here would be wrong; a Set is right.
+	const seen = new Set();
+	const doc = fakeDocument();
+	for (let frame = 0; frame < 3; frame++) {
+		const parent = doc.createElement("div");
+		renderTokens(parent, tokenizeCitations("[[ref:1]]", INDEX), { onCite: (k) => seen.add(k) });
+	}
+	assert.deepEqual([...seen], [1]);
 });
 
 /**

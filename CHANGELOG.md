@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.264.1] - 2026-08-10
+
+The four answers from the Phase 3 checkpoint. Chat is still dormant, so none of this
+changes behaviour on any site until it is switched on.
+
+### Changed
+
+- **The sources row now shows the full citation manifest, with the entries the model
+  actually cited marked and sorted first** — approved at the checkpoint, and recorded here
+  because it is a deliberate exception to locked decision #7's "the sources dropdown must be
+  preserved exactly". Research 03 §12.6 proposed it and required an explicit human yes
+  rather than a unilateral edit; that yes was given on 2026-08-10.
+
+  Three properties make the change safe rather than merely approved:
+
+  * **The pre-Phase-3 renderer is untouched and is still the path every turn takes.** No
+    site emits a manifest until Phase 5 ships, so `renderSources()` — same container class,
+    same chip class, same `label || title || url` fallback, same `textContent`, same
+    `target="_blank" rel="noopener"` — is what runs today, on every answer.
+    `renderManifestSources()` is a **separate function** beside it, which is what makes
+    "with no manifest, nothing changed" a fact rather than a claim.
+    `scripts/test_triton_widget_guards.js` now asserts both, and fails if the old renderer
+    grows an `innerHTML` or loses any of that shape.
+  * **The row is still the whole retrieved set.** Uncited entries are dimmed, never dropped
+    — that superset is the property decision #7 was protecting, and hiding retrieved-but-
+    unused sources would remove exactly what somebody checking an answer wants to see.
+  * **Marking is live; reordering happens once, at stream end.** A chip lighting up as the
+    model leans on it is worth watching; a row that reshuffles several times a second moves
+    the chip the reader was about to click.
+
+  Ordering within each group is by id, not by relevance: the inline markers read `[1]`,
+  `[2]`, `[3]`, and any other order makes the reader hunt for the chip matching the number
+  they just clicked past. `orderManifestForDisplay()` is pure and carries the rule.
+
+- **`/chat/triton` returning the user to the bubble is confirmed as the shipped scope**, not
+  a placeholder. The bubble remains the full Triton client; the SPA renders `@triton` replies
+  inside coworker rooms with the same message component and the same inline citations. The
+  alternative was a second Triton client inside a website route, which is the fork locked
+  decision #8 forbids and the regression the Phase 3 gate exists to prevent.
+
+- **Presence rendering is confirmed as shipped**: a coworker with no ERPNext session shows
+  offline with an explicit "presence reflects ERPNext, not Google Chat" explanation, rather
+  than a bare grey dot that would imply they are away from their desk.
+
+### Fixed
+
+- **Enter-to-send fired while an IME was composing.** Pressing Enter to commit a candidate is
+  the ordinary way to type Japanese, Chinese and Korean; the widget sent the half-finished
+  message instead of finishing the word. Now guarded on `isComposing` **and** the legacy
+  `keyCode === 229`, because older WebKit and several Android IMEs leave `isComposing` unset
+  on the keydown that ends composition and report 229 instead — the exact case the guard is
+  for. Present since the widget's first commit; invisible to anybody typing in a Latin script,
+  which is why it survived.
+
+- **`Alt+T` also fired for AltGr.** Windows and many EU layouts report AltGr as
+  `ctrlKey + altKey`, so typing a perfectly ordinary character opened the assistant over
+  whatever the user was writing. `ctrlKey`/`metaKey` are now excluded, before the branch
+  rather than after it. Both fixes are guarded with **ordering** assertions — an early return
+  that lands after the branch it is meant to skip is decoration — and both were
+  mutation-tested in five directions.
+
+  Three further widget defects found by the same audit remain **reported and unfixed**, since
+  they were not part of this approval: `state.live` is write-only dead state, `newChat()`
+  leaks the personas overlay, and the approve→continuation `send()` is silently dropped
+  mid-stream.
+
+- **The IME rule is now one function, not four copies.** `dom.js::isComposingKey` checks both
+  signals and is consulted by all four composers (the widget, the bubble's coworker surface,
+  the SPA composer, the SPA thread composer) plus the SPA's search box. The three written in
+  v1.264.0 carried only the `isComposing` half — i.e. they were fixed everywhere except on the
+  engines the fix is for. Four copies of a rule is four chances for the next one to carry half
+  of it.
+
+- **`isComposingKey` was used in the widget and never imported** — a bare global reference that
+  would have thrown `ReferenceError` at load and taken the *entire* assistant with it on every
+  desk page. Caught by the guard written in the same change, before it ever ran.
+
+  esbuild cannot catch this class: it fails on an unresolvable import *path*, but a name that
+  is simply never imported compiles to a global lookup and fails only in the browser. So
+  `scripts/test_chat_source_rules.js` now resolves cross-module names statically — every
+  imported name is really exported, and every shared helper a file uses is really imported —
+  across the client **and the widget**, which is the largest consumer and was the file the bug
+  was in. Mutation-tested in both directions.
+
+- **The manifest sources row could jump above a chart.** The manifest arrives *before* the
+  first token, so a row created then sat above the charts and action cards that arrive later,
+  whereas the pre-Phase-3 row was appended from `sources`/`done` and was always last. Now
+  re-appended on each rebuild, which moves it back to the end. Decision #7 does not enumerate
+  the row's position, but "preserve exactly" is not a licence to move it — and a row that
+  jumps only when Phase 5 is emitting is drift nobody would trace back here.
+
 ## [1.264.0] - 2026-08-10
 
 ADR 0009 **Phase 3 — the chat SPA**. Chat remains dormant (`Chat Settings.enabled = 0`,

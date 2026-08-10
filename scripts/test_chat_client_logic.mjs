@@ -24,6 +24,7 @@ import { HANDOFF_VERSION, MIRROR_TTL_MS, buildRecord, validateRecord } from "../
 import { OfflineQueue, OutboxStore, STATE, mergeForRender } from "../erpnext_enhancements/public/js/chat/optimistic.js";
 import { ReadBatcher, TypingRegistry, TypingThrottle, hasRead, readersOf, typingLabel, unionPresence } from "../erpnext_enhancements/public/js/chat/signals.js";
 import { findTrigger, insertMention, reanchor, tokenizeMentions, toPayload } from "../erpnext_enhancements/public/js/chat/mentions.js";
+import { isComposingKey, shouldGroup } from "../erpnext_enhancements/public/js/chat/dom.js";
 
 let failures = 0;
 let checks = 0;
@@ -425,6 +426,39 @@ test("tokenizeMentions drops out-of-range and overlapping spans rather than trus
 		1,
 		"overlapping: keep the first"
 	);
+});
+
+// =================================================================== IME composition
+
+test("isComposingKey catches BOTH the modern signal and the legacy 229", () => {
+	// Two checks, not one. `isComposing` is the modern signal, but older WebKit and several
+	// Android IMEs leave it unset on the keydown that ENDS composition and report
+	// keyCode 229 instead — which is precisely the keystroke the guard exists for, so
+	// checking only isComposing fixes the bug everywhere except where it bites.
+	assert.equal(isComposingKey({ isComposing: true, key: "Enter" }), true);
+	assert.equal(isComposingKey({ isComposing: false, keyCode: 229, key: "Enter" }), true);
+	assert.equal(isComposingKey({ keyCode: 229 }), true);
+});
+
+test("isComposingKey does NOT swallow an ordinary keystroke", () => {
+	// The composers return early on true, so a false positive here would break Enter-to-send
+	// for every user who is not using an IME — i.e. it would trade one silent bug for a loud
+	// one affecting everybody.
+	assert.equal(isComposingKey({ isComposing: false, key: "Enter", keyCode: 13 }), false);
+	assert.equal(isComposingKey({ key: "Enter" }), false);
+	assert.equal(isComposingKey({ key: "a", keyCode: 65 }), false);
+	assert.equal(isComposingKey(null), false, "a missing event must not read as composing");
+	assert.equal(isComposingKey(undefined), false);
+});
+
+test("message grouping never groups across senders, or a tombstone", () => {
+	const base = { sender: "a@x", sender_kind: "Human", creation: "2026-08-10 10:00:00" };
+	const soon = { ...base, creation: "2026-08-10 10:01:00" };
+	assert.equal(shouldGroup(base, soon), true);
+	assert.equal(shouldGroup(base, { ...soon, sender: "b@x" }), false);
+	assert.equal(shouldGroup(base, { ...soon, sender_kind: "Triton" }), false);
+	assert.equal(shouldGroup(base, { ...soon, is_deleted: 1 }), false, "a tombstone stands alone");
+	assert.equal(shouldGroup(base, { ...base, creation: "2026-08-10 10:30:00" }), false, "outside the window");
 });
 
 console.log("");

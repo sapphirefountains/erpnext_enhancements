@@ -11,7 +11,7 @@
  */
 
 import { applyCitations, indexManifest } from "./citations.js";
-import { clear, el, fill, initials, relativeTime, shouldGroup } from "./dom.js";
+import { clear, el, fill, initials, isComposingKey, relativeTime, shouldGroup } from "./dom.js";
 import { clearHandoff, readHandoff, writeHandoff } from "./handoff.js";
 import * as mentions from "./mentions.js";
 import { renderDaySeparator, renderMessage, renderThinkingPlaceholder } from "./message_view.js";
@@ -204,6 +204,10 @@ class ChatApp {
 					placeholder: "Search messages",
 					"aria-label": "Search all conversations",
 					onkeydown: (ev) => {
+						// Same IME rule as the composers: Enter commits a candidate before it
+						// submits anything. Searching on a half-typed word is milder than
+						// sending one, and it is the same one-line guard.
+						if (isComposingKey(ev)) return;
 						if (ev.key === "Enter") this.openSearch(ev.target.value.trim());
 					},
 				})),
@@ -676,7 +680,8 @@ class ChatApp {
 					placeholder: "Reply in thread",
 					"aria-label": "Reply in thread",
 					onkeydown: (ev) => {
-						if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+						if (isComposingKey(ev)) return;
+						if (ev.key === "Enter" && !ev.shiftKey) {
 							ev.preventDefault();
 							this.sendThreadReply(ev.target);
 						}
@@ -748,7 +753,8 @@ class ChatApp {
 		// `isComposing` guard: without it an IME user pressing Enter to COMMIT a character
 		// sends the half-finished message instead. The existing widget has this defect and it
 		// is reported separately rather than being repeated here.
-		if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+		if (isComposingKey(ev)) return;
+		if (ev.key === "Enter" && !ev.shiftKey) {
 			ev.preventDefault();
 			this.send();
 		}

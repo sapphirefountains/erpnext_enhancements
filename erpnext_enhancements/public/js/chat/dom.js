@@ -44,6 +44,30 @@ export function el(tag, attrs, children) {
 	return node;
 }
 
+/**
+ * Is this keydown part of an in-flight IME composition?
+ *
+ * **Every Enter-to-send handler in chat must consult this before sending.** Pressing Enter to
+ * COMMIT a candidate is the ordinary way to type Japanese, Chinese and Korean; a handler that
+ * sends on a bare `key === "Enter"` sends the half-finished message instead of finishing the
+ * word, and does it on every single word.
+ *
+ * Two checks, not one. `isComposing` is the modern signal, but older WebKit and several
+ * Android IMEs leave it **unset on the keydown that ends composition** and report
+ * `keyCode === 229` instead — which is precisely the keystroke this guard exists for, so
+ * checking only `isComposing` fixes the bug everywhere except where it actually bites.
+ *
+ * One function rather than the same two clauses in four composers (the widget, the bubble's
+ * coworker surface, the SPA composer, the SPA thread composer), because four copies is four
+ * chances for the next one to carry only half the rule. `scripts/test_chat_client_logic.mjs`
+ * exercises it; `scripts/test_triton_widget_guards.js` asserts the widget calls it *before*
+ * it sends.
+ */
+export function isComposingKey(ev) {
+	if (!ev) return false;
+	return !!ev.isComposing || ev.keyCode === 229;
+}
+
 /** Empty a node without `innerHTML = ""` (which is still an HTML parse in some engines). */
 export function clear(node) {
 	while (node && node.firstChild) node.removeChild(node.firstChild);

@@ -22,7 +22,15 @@
  * switch HIDES the Triton transcript rather than clearing it, so `pumpText` keeps writing
  * into an attached node.
  */
-import { applyCitations, holdbackLength, indexManifest } from "../chat/citations.js";
+import {
+	applyCitations,
+	citationLabel,
+	holdbackLength,
+	indexManifest,
+	isSafeUrl,
+	orderManifestForDisplay,
+} from "../chat/citations.js";
+import { isComposingKey } from "../chat/dom.js";
 import { writeHandoff, readHandoff } from "../chat/handoff.js";
 import { buildRoute } from "../chat/routes.js";
 import { BubbleChatSurface } from "./chat_surface.js";
@@ -329,6 +337,13 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.els.contextAdd.addEventListener("click", addCurrentPage);
 		state.els.send.addEventListener("click", onSend);
 		state.els.text.addEventListener("keydown", (e) => {
+			// --- phase 3 fix --- `isComposing` (and the legacy 229 keycode that older WebKit
+			// and Android IMEs report instead of it). Without this, an IME user pressing Enter
+			// to COMMIT a candidate — the ordinary way to type Japanese, Chinese or Korean —
+			// sends the half-finished message instead of finishing the word. The two checks are
+			// belt and braces because `isComposing` is unset on the keydown that ends
+			// composition in some engines, and 229 is the only signal there.
+			if (isComposingKey(e)) return;
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				onSend();
@@ -337,6 +352,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		state.els.text.addEventListener("input", autoGrow);
 
 		document.addEventListener("keydown", (e) => {
+			// --- phase 3 fix --- exclude ctrl/meta. AltGr is reported as ctrlKey+altKey on
+			// Windows and on many EU layouts, so the un-excluded form made AltGr+T — which is
+			// how you type a perfectly ordinary character on several of them — open the
+			// assistant over whatever the user was writing. `altKey` alone is not a shortcut on
+			// those keyboards; it is a modifier the user did not press.
+			if (e.ctrlKey || e.metaKey) return;
 			if (e.altKey && (e.key === "t" || e.key === "T")) {
 				e.preventDefault();
 				toggle();
@@ -1106,6 +1127,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			// shipped state until Phase 5 emits a `citations` event, and null means the
 			// message renders exactly as it does today.
 			manifest: null,
+			// The ids the model actually cited in THIS answer. Accumulated across streaming
+			// frames rather than recomputed, because `renderBubble` rebuilds the bubble from
+			// scratch every frame and text only ever grows.
+			cited: new Set(),
+			// k -> chip element, so marking a chip is a lookup rather than a re-render.
+			sourceChips: null,
 		};
 		scrollDown();
 		return live;
@@ -1186,7 +1213,14 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// anchors are added afterwards as DOM with createElement/textContent. With no
 		// manifest applyCitations returns immediately.
 		if (live.manifest) {
-			applyCitations(live.bubble, live.manifest, { onMiss: () => noteCitationMiss(live) });
+			applyCitations(live.bubble, live.manifest, {
+				onMiss: () => noteCitationMiss(live),
+				// Feeds the sources row's "cited" marking (approved 2026-08-10). A Set, because
+				// this fires once per rendered token per frame and the bubble is rebuilt from
+				// scratch on every frame.
+				onCite: (k) => live.cited.add(k),
+			});
+			markCitedSources(live);
 		}
 		scrollDown();
 	}
@@ -1260,6 +1294,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		collapseThinking(live);
 		markActiveStepsDone(live);
 		renderBubble(live);
+		// --- phase 3 --- the ONE reorder of the sources row, here and nowhere else. Marking
+		// happens live (a chip lighting up as the model leans on it is worth watching);
+		// reordering live would reshuffle the row several times a second and move a chip the
+		// reader was about to click. By this point the answer is complete, so `live.cited` is
+		// final and the order is stable.
+		if (live.manifest) renderManifestSources(live);
 		renderMermaidIn(live.bubble);
 		live.wrap.classList.remove("triton-streaming");
 		live.streaming = false;
@@ -1328,6 +1368,10 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		if (live.thinkingTimer) live.thinkingTimer.textContent = "";
 	}
 
+	// UNCHANGED from before Phase 3, deliberately and byte for byte. This is the path taken
+	// whenever there is no citation manifest — which is every site until Phase 5 emits one,
+	// and every turn where the retrieval produced nothing. Decision #7's "preserve exactly"
+	// still governs it.
 	function renderSources(container, sources) {
 		if (!sources || !sources.length) return;
 		const box = document.createElement("div");
@@ -1349,6 +1393,83 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			box.appendChild(a);
 		});
 		container.appendChild(box);
+	}
+
+	// --- phase 3 --- the manifest-backed sources row: every retrieved entry, with the ones
+	// the model actually cited MARKED and SORTED FIRST.
+	//
+	// **This is an approved change to a "preserve exactly" surface.** Locked decision #7 says
+	// the sources dropdown is preserved; research 03 §12.6 proposed exactly this instead and
+	// required an explicit human yes rather than a unilateral edit. Raised at the Phase 3
+	// checkpoint, approved 2026-08-10.
+	//
+	// It renders into the same `.triton-sources` container with the same `.triton-source`
+	// chips, so the existing "already rendered?" guard in the `done` handler still works and
+	// no CSS moves. What is added is a `[k]` marker matching the inline `[k]` in the answer,
+	// an `is-cited` class, and the ordering.
+	//
+	// Same node-building discipline as everywhere else in chat: labels and snippets are
+	// user-authored — a document title, a coworker's message, a filename — so every one of
+	// them goes in through `textContent`.
+	function renderManifestSources(live) {
+		if (!live.manifest || !live.manifest.size) return;
+
+		let box = live.wrap.querySelector(".triton-sources");
+		if (!box) {
+			box = document.createElement("div");
+			box.className = "triton-sources";
+		}
+		// appendChild on a node that is ALREADY a child moves it to the end. That is the
+		// point: the manifest arrives *before* the first token, so a box created then would
+		// otherwise sit above the charts and action cards that arrive later — whereas before
+		// this phase the sources row was appended from the `sources` event or from `done` and
+		// was always last. Decision #7 does not enumerate the row's position, but "preserve
+		// exactly" is not a licence to move it, and a row that jumps above a chart only when
+		// Phase 5 is emitting is exactly the kind of drift nobody traces back to here.
+		live.wrap.appendChild(box);
+		box.classList.add("triton-sources-manifest");
+		box.textContent = "";
+		live.sourceChips = new Map();
+
+		for (const entry of orderManifestForDisplay(live.manifest, live.cited)) {
+			const citation = entry.citation || {};
+			const label = citationLabel(citation);
+			const linkable = isSafeUrl(citation.url);
+
+			const chip = document.createElement(linkable ? "a" : "span");
+			chip.className = "triton-source" + (entry.cited ? " is-cited" : "");
+			if (linkable) {
+				chip.href = citation.url;
+				// Same as the pre-Phase-3 chip: new tab, noopener. `noreferrer` is added for
+				// the external case only, matching the inline-citation renderer.
+				chip.target = "_blank";
+				chip.rel = /^https?:\/\//i.test(String(citation.url)) ? "noopener noreferrer" : "noopener";
+			}
+
+			const marker = document.createElement("span");
+			marker.className = "triton-source-k";
+			marker.textContent = String(entry.k);
+			chip.appendChild(marker);
+			chip.appendChild(document.createTextNode(label));
+			chip.title = citation.snippet ? `${label} — ${citation.snippet}` : label;
+
+			box.appendChild(chip);
+			live.sourceChips.set(entry.k, chip);
+		}
+	}
+
+	// Mark newly-cited chips as the answer streams, WITHOUT reordering.
+	//
+	// The split is the point. Marking live is informative — a chip lighting up as the model
+	// leans on it is the thing worth watching. Reordering live is not: the row would reshuffle
+	// under the reader's eyes several times a second, and a chip they were about to click
+	// would move. So the sort happens exactly once, in `finishStreaming`.
+	function markCitedSources(live) {
+		if (!live.sourceChips || !live.cited) return;
+		for (const k of live.cited) {
+			const chip = live.sourceChips.get(k);
+			if (chip) chip.classList.add("is-cited");
+		}
 	}
 
 	function renderActionCard(container, params, opts) {
@@ -1448,7 +1569,13 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		if (meta.thinking) {
 			appendThought(live, meta.thinking);
 		}
-		if (meta.sources) renderSources(live.wrap, meta.sources);
+		// --- phase 3 --- `appendText` renders synchronously for a stored turn (no streaming,
+		// so `shownLen` is set to the full length and `renderBubble` runs once), which means
+		// `live.cited` is already populated by the time we get here. So a re-opened
+		// conversation shows the same marked-and-sorted row it ended with, rather than an
+		// unmarked one — the ordering is a property of the answer, not of the session.
+		if (live.manifest && live.manifest.size) renderManifestSources(live);
+		else if (meta.sources) renderSources(live.wrap, meta.sources);
 		if (meta.direct_chart) renderChart(live.wrap, meta.direct_chart);
 		(meta.pending_actions || []).forEach((p) =>
 			renderActionCard(live.wrap, p, { liveStatus: p.live_status || "pending" })
@@ -1602,11 +1729,12 @@ import { BubbleChatSurface } from "./chat_surface.js";
 				appendText(live, ev.content || "");
 				break;
 			case "sources":
-				// UNCHANGED. Decision #7: the sources dropdown is preserved exactly — same data
-				// shape, same open behaviour, same per-source rendering, same order. Inline
-				// citations are an addition beside it, never a replacement for it, and the
-				// dropdown is still populated from the manifest rather than from what the model
-				// actually cited.
+				// The manifest wins when there is one. It is a superset of this list — every
+				// retrieved item, with ids — so rendering both would show the same sources
+				// twice, and the manifest is the version the human approved on 2026-08-10
+				// (marked and sorted). With no manifest this is the pre-Phase-3 path, and it
+				// renders exactly as it did before, which is what decision #7 protects.
+				if (live.manifest && live.manifest.size) break;
 				if (ev.content) renderSources(live.wrap, ev.content);
 				break;
 			// --- phase 3 --- the citation manifest. Arrives BEFORE any token (that ordering is
@@ -1616,12 +1744,19 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			// one id space, one renderer, no special cases.
 			case "citations":
 				live.manifest = indexManifest(ev.content || ev.citations || []);
+				// Painted immediately, before a single token: the sources row is the reader's
+				// answer to "what is it about to look at", and it is known before generation
+				// starts. Every chip starts unmarked and lights up as the answer cites it.
+				renderManifestSources(live);
 				renderBubble(live);
 				break;
 			case "citations_append": {
 				const extra = indexManifest(ev.content || ev.citations || []);
 				if (!live.manifest) live.manifest = extra;
 				else for (const [k, entry] of extra) live.manifest.set(k, entry);
+				// A mid-turn tool call added entries. Re-render the row rather than appending,
+				// so a late arrival lands in id order instead of after everything.
+				renderManifestSources(live);
 				renderBubble(live);
 				break;
 			}

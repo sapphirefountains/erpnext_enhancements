@@ -710,7 +710,16 @@ jobs:
       # Ordering is asserted, not just presence: a guard after the destructive line is
       # decoration. Phase 3 rewires session switching entirely, which is exactly when a
       # rule this easy to agree with gets forgotten on the next function.
-      - name: Triton widget streaming guards (bench-free, node)
+      #
+      # Phase 3's checkpoint added two more rule families to the same file, both
+      # silent in production and both invisible to anybody not using the affected
+      # input method or keyboard layout: Enter-to-send must ignore an in-flight IME
+      # composition (pressing Enter to COMMIT a candidate is how you type Japanese,
+      # Chinese or Korean), and Alt+T must ignore AltGr (reported as ctrlKey+altKey
+      # on Windows and many EU layouts). Plus the guard on decision #7: the human
+      # approved a NEW manifest-backed sources row, not a change to what a turn with
+      # no manifest sees -- which is every turn until Phase 5 ships.
+      - name: Triton widget source guards (streaming, keyboard, preserved behaviour)
         run: node scripts/test_triton_widget_guards.js
       # ------------------------------------------------------------------
       # Phase 3's chat client. Three node steps, no runner and no npm install --

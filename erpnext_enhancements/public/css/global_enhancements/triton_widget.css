@@ -1075,3 +1075,40 @@
 	color: var(--text-muted, #8d99a6);
 	cursor: default;
 }
+
+/* Manifest-backed sources row (approved 2026-08-10; decision #7 otherwise says
+   "preserve exactly", and the pre-Phase-3 rendering above is untouched and is
+   still what a turn with no manifest gets).
+   
+   Two additions to the chip, and only two: a [k] marker matching the inline
+   marker in the answer, and an emphasis for the entries the model actually
+   cited. Uncited entries are dimmed rather than hidden — the row is the full
+   retrieved set, which is the property decision #7 was protecting. */
+.triton-source-k {
+	display: inline-block;
+	margin-right: 5px;
+	min-width: 13px;
+	padding: 0 3px;
+	border-radius: 6px;
+	background: var(--border-color, #e2e6e9);
+	color: var(--text-muted, #8d99a6);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 13px;
+	text-align: center;
+	vertical-align: 1px;
+}
+.triton-source.is-cited {
+	border-color: var(--primary, #1f6feb);
+	font-weight: 600;
+}
+.triton-source.is-cited .triton-source-k {
+	background: var(--primary, #1f6feb);
+	color: #fff;
+}
+/* Not colour alone: an uncited chip is also dimmed, and a cited one is also
+   bolder, so the distinction survives a monochrome display and a colour-vision
+   difference. */
+.triton-sources-manifest .triton-source:not(.is-cited) {
+	opacity: 0.68;
+}

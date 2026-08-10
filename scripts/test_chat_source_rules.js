@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * Three source-level rules for the chat client, each of which is a rule "we were careful"
- * cannot keep.
+ * Source-level rules for the chat client, each of which "we were careful" cannot keep.
  *
  * 1. NO `innerHTML` IN THE CHAT CLIENT. Not "no innerHTML with user data" — none at all, so
  *    the rule needs no judgement call at the call site. Message bodies, sender names, room
@@ -21,6 +20,15 @@
  *    silent: a client listening for an event nobody publishes is indistinguishable, from the
  *    client's side, from a quiet room.
  *
+ * 4. CROSS-MODULE NAMES RESOLVE. Every imported name is really exported, and every shared
+ *    helper a file USES is really imported. The second half is the one the bundler cannot
+ *    do for you: esbuild fails on an unresolvable import PATH, but a name that is simply
+ *    never imported compiles to a bare global reference and throws `ReferenceError` at load,
+ *    in the browser, on every desk page — which for the widget means the whole assistant
+ *    silently fails to build. This caught exactly that during the Phase 3 checkpoint.
+ *
+ * 5. THE BUNDLE RULES. One content-hashed entry, and no raw `/assets` path in the shell.
+ *
  * Plain CommonJS `node`, no runner and no npm install — the shape of the repo's other JS
  * guards. Exits 2 with a loud message if the markers stop resolving, rather than passing
  * vacuously.
@@ -37,6 +45,9 @@ const SURFACE_JS = path.join(
 	ROOT, 'erpnext_enhancements', 'public', 'js', 'global_enhancements', 'chat_surface.js'
 );
 const SPA_BUNDLE = path.join(ROOT, 'erpnext_enhancements', 'public', 'js', 'chat.bundle.js');
+const WIDGET_JS = path.join(
+	ROOT, 'erpnext_enhancements', 'public', 'js', 'global_enhancements', 'triton_widget.js'
+);
 
 let failures = 0;
 const fail = (m) => { failures += 1; console.error('  FAIL  ' + m); };
@@ -218,7 +229,123 @@ function stripComments(source) {
 	}
 }
 
-// ------------------------------------------------------------------ 4. the bundle rule
+// ------------------------------------------------------------------ 4. cross-module names
+
+/**
+ * Every name a chat module imports must actually be exported by the module it names, and
+ * every chat-module export a file USES must actually be imported by that file.
+ *
+ * The second half is the one that matters, and it is the reason this check exists rather
+ * than being left to the bundler. esbuild fails loudly on an unresolvable *import path*, but
+ * a name that is simply never imported is not an error to it at all — it compiles to a bare
+ * global reference and throws `ReferenceError` at load, in the browser, on every desk page.
+ * For the widget that means the entire assistant silently fails to build.
+ *
+ * This caught exactly that during the Phase 3 checkpoint: `isComposingKey` was wired into
+ * `triton_widget.js` and never imported.
+ *
+ * It is a heuristic, not a scope analyser — it looks for chat-module export names used as
+ * identifiers in a file that neither imports nor declares them. That is enough to catch the
+ * failure mode and cheap enough to run with no dependencies.
+ */
+{
+	// The widget is scanned HERE but not by the innerHTML/Vue rules above, and the asymmetry
+	// is deliberate: it is a pre-existing Desk IIFE that legitimately renders markdown through
+	// `innerHTML` (Appendix A protects that renderer and its sanitiser policy), but it is also
+	// the single largest CONSUMER of the shared chat modules — so it is exactly where a
+	// used-but-not-imported name does the most damage. Leaving it out is how the first such
+	// bug got through.
+	const nameFiles = clientFiles.concat([WIDGET_JS]);
+
+	const modules = new Map(); // basename -> {exports:Set, source:string}
+	for (const file of nameFiles) {
+		const source = stripComments(must(file));
+		const exports = new Set();
+		for (const m of source.matchAll(/^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)/gm)) {
+			exports.add(m[1]);
+		}
+		for (const m of source.matchAll(/^export\s*\{([^}]*)\}/gm)) {
+			for (const part of m[1].split(',')) {
+				const name = part.trim().split(/\s+as\s+/).pop().trim();
+				if (name) exports.add(name);
+			}
+		}
+		modules.set(path.basename(file), { exports, source });
+	}
+
+	const allExports = new Set();
+	for (const { exports } of modules.values()) for (const name of exports) allExports.add(name);
+
+	if (allExports.size < 20) {
+		console.error(
+			'MARKERS NOT FOUND: only ' + allExports.size + ' exported names found across the chat ' +
+			'client. The export scan has stopped matching and this check now compares nothing.'
+		);
+		process.exit(2);
+	}
+
+	const problems = [];
+	for (const [name, { source }] of modules) {
+		// What this file imports, and from where.
+		const imported = new Set();
+		for (const m of source.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+			const target = path.basename(m[2]);
+			const wanted = m[1]
+				.split(',')
+				.map((p) => p.trim().split(/\s+as\s+/)[0].trim())
+				.filter(Boolean);
+			for (const w of wanted) {
+				imported.add(w);
+				const mod = modules.get(target);
+				if (mod && !mod.exports.has(w)) {
+					problems.push(`${name} imports {${w}} from ${target}, which does not export it`);
+				}
+			}
+		}
+		// Namespace imports (`import * as mentions from ...`) put everything behind a prefix.
+		for (const m of source.matchAll(/import\s*\*\s*as\s*(\w+)/g)) imported.add(m[1]);
+		// Default-ish and side-effect imports contribute no bare names.
+
+		// Names DECLARED here, in any of the five shapes this codebase actually uses. Getting
+		// this set wrong in the LENIENT direction only weakens the check; getting it wrong in
+		// the strict direction produces false positives, and a guard that cries wolf is a
+		// guard somebody deletes. So it is deliberately generous.
+		const declared = new Set();
+		//  function foo(...)   /   export function foo(...)
+		for (const m of source.matchAll(/(?:^|\s)(?:export\s+)?(?:async\s+)?function\s+(\w+)/g)) declared.add(m[1]);
+		//  const/let/var/class foo   — including `for (let foo = 0` and `{ const foo`
+		for (const m of source.matchAll(/(?:^|[\s(;{,])(?:export\s+)?(?:const|let|var|class)\s+(\w+)/g)) declared.add(m[1]);
+		//  class METHODS: `start(room, thread) {`
+		for (const m of source.matchAll(/^\s*(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/gm)) declared.add(m[1]);
+		//  PARAMETERS of anything that looks like a signature — `(boot, route) =>` / `(a, b) {`
+		for (const m of source.matchAll(/\(([^()]*)\)\s*(?:=>|\{)/g)) {
+			for (const part of m[1].split(',')) {
+				const id = part.trim().replace(/=[\s\S]*$/, '').replace(/^\.\.\./, '').trim();
+				if (/^[A-Za-z_$][\w$]*$/.test(id)) declared.add(id);
+			}
+		}
+
+		for (const exported of allExports) {
+			if (imported.has(exported) || declared.has(exported)) continue;
+			// Used as a call, as a `new`, or as a bare identifier followed by a delimiter.
+			const used = new RegExp('(?<![.\\w$])' + exported + '\\s*[(<),.;\\]]').test(source);
+			if (used) {
+				problems.push(
+					`${name} uses ${exported} but neither imports nor declares it — a bare global ` +
+					`reference that throws ReferenceError at load`
+				);
+			}
+		}
+	}
+
+	if (problems.length) {
+		fail('cross-module names do not resolve:\n        ' + problems.join('\n        '));
+	} else {
+		pass(`every chat-module name resolves (${modules.size} modules, ${allExports.size} exports)`);
+	}
+}
+
+// ------------------------------------------------------------------ 5. the bundle rule
 
 {
 	const bundle = must(SPA_BUNDLE);
