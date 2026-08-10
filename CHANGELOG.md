@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.264.2] - 2026-08-10
+
+Seven defects in v1.264.1, found by an adversarial review of that change — four independent
+lenses over the diff, each finding then handed to a separate agent whose only job was to
+refute it. Fourteen were raised and seven survived. Chat is still dormant, so none of this
+changes behaviour on any site until it is switched on.
+
+Two of the seven are worth reading even if you skip the rest, because both are cases where
+the code and its own documentation disagreed and only the documentation was checked.
+
+### Fixed
+
+- **`citations_append` re-sorted the sources row mid-answer.** `renderManifestSources()`
+  always sorted cited-first, and the mid-turn append arm called it — so on every tool call
+  the chips reshuffled under a reader who might be about to click one. The code comment,
+  the module README and the v1.264.1 changelog all state that the reorder happens "once, in
+  `finishStreaming`, and nowhere else". They were describing an intent, not the code.
+
+  The sort is now gated on the caller (`orderManifestForDisplay(..., {sortCitedFirst})`) and
+  requested only from `finishStreaming` and from a restored history turn. **The marks stay
+  live** — that was always the valuable half — and only the order waits. The rule is
+  positional, so the pure test cannot see it; `scripts/test_triton_widget_guards.js` now
+  asserts which call sites pass the flag, and is mutation-tested in three directions.
+
+- **v1.264.1's own "keep the row last" fix was itself the regression.** It moved the sources
+  row to the end of the message on every rebuild, on the belief that the pre-Phase-3 row was
+  always last. It was not: the `done` handler runs `renderSources()` and only *then*
+  `renderChart()`, so the old row sat **above** the chart — and `renderHistoryMessage` does
+  the same. Forcing it to the end therefore moved it, and made a live turn disagree with the
+  same turn re-opened from history. The row is now appended only when newly created, which
+  gives it the slot the old row had in both paths.
+
+- **The `citation_miss` counter counted render frames, not misses.** `onMiss` fires again for
+  the same bad id on every streaming frame, so a single unresolvable `[[ref:N]]` on one long
+  answer tripped the "repeated citation misses" warning within a second. A counter that fires
+  on one occurrence is not a rate signal, it is a false alarm — and a false alarm is how the
+  real one gets ignored. Misses are now a per-turn `Set`, folded into the module counter once,
+  at stream end.
+
+- **The bubble's coworker composer lost its IME fix to a `git checkout` during mutation
+  testing**, and shipped in v1.264.1 without it. Restored — and the adversarial review
+  *refuted* this finding, having read the reverted file and reasoned about the wrong code, so
+  it was confirmed by hand against the commit rather than taken on the review's word.
+
+- **Three keydown handlers had the IME guard in the wrong position.** Enter and Tab commit an
+  IME candidate, Escape cancels one and the arrows move through it, so a guard placed below a
+  mention-menu block protects every path except the one the user is on. Both composers now
+  check first, before any branch.
+
+- **The SPA's document-level Escape closed the thread pane during composition**, discarding
+  the half-typed reply on a keystroke aimed at the candidate window. Guarded.
+
+- **The SPA's `j`/`k` shortcuts had the exact AltGr defect `Alt+T` was fixed for** one file
+  over, and additionally swallowed `Ctrl+J` / `Cmd+K` from the browser. Single-letter global
+  shortcuts are where this always shows up; `ctrl`/`meta`/`alt` are now excluded.
+
+### Changed
+
+- **`scripts/test_chat_source_rules.js` now enforces keydown ORDERING** across all three chat
+  handlers — the IME guard first, modifiers excluded before bare single-letter shortcuts —
+  because in this family presence is worthless and position is everything.
+
+- **`scripts/test_triton_widget_guards.js` now asserts the no-manifest path is still
+  *reached*, not merely still present.** The previous block proved `renderSources()` existed
+  with the right shape; a preserved function nothing calls is preserved the way a museum
+  piece is. It now checks the live `case "sources":` arm and the history fallback, including
+  that the short-circuit is `live.manifest && live.manifest.size` — `if (live.manifest)` alone
+  would swallow the sources row on every turn where retrieval returned nothing.
+
 ## [1.264.1] - 2026-08-10
 
 The four answers from the Phase 3 checkpoint. Chat is still dormant, so none of this

@@ -727,8 +727,17 @@ What that means concretely, because "approved" is not the same as "safe":
   sources removes exactly what somebody checking an answer wants.
 * **Ordering is by id within each group**, because the inline markers read `[1]`, `[2]`,
   `[3]`. `citations.js::orderManifestForDisplay` is pure and carries the rule.
-* **Marking is live, reordering happens once**, in `finishStreaming`. A row that reshuffles
-  several times a second moves the chip the reader was about to click.
+* **Marking is live, reordering happens once**, in `finishStreaming` (and once more if the
+  turn is later restored from history). A row that reshuffles while the reader is using it
+  moves the chip they were about to click. The sort is gated on the caller —
+  `orderManifestForDisplay(manifest, cited, {sortCitedFirst})` — because the first revision
+  of this feature *said* "one reorder, nowhere else" and then re-sorted from the mid-stream
+  `citations_append` arm. The rule is positional, so `test_triton_widget_guards.js` asserts
+  which call sites may ask for it.
+* **The row is created in place, never repositioned.** The pre-Phase-3 row was not last: the
+  `done` handler runs `renderSources()` and only then `renderChart()`. Forcing the manifest
+  row to the end moved it, and made a live turn disagree with the same turn re-opened from
+  history.
 
 If a future phase wants the row back to strictly-preserved, delete the `citations` case's
 call to `renderManifestSources` — the old renderer is still there and still correct.

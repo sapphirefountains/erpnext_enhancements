@@ -1123,6 +1123,9 @@ import { BubbleChatSurface } from "./chat_surface.js";
 			// raf handles
 			pumpRaf: null,
 			thoughtRaf: null,
+			// ids the model cited that the manifest does not contain. A Set, per turn, for the
+			// same reason `cited` is one: onMiss fires again on every streaming frame.
+			missed: null,
 			// --- phase 3 --- the citation manifest for this turn, or null. Null is the
 			// shipped state until Phase 5 emits a `citations` event, and null means the
 			// message renders exactly as it does today.
@@ -1214,7 +1217,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// manifest applyCitations returns immediately.
 		if (live.manifest) {
 			applyCitations(live.bubble, live.manifest, {
-				onMiss: () => noteCitationMiss(live),
+				onMiss: (k) => noteCitationMiss(live, k),
 				// Feeds the sources row's "cited" marking (approved 2026-08-10). A Set, because
 				// this fires once per rendered token per frame and the bubble is rebuilt from
 				// scratch on every frame.
@@ -1229,13 +1232,30 @@ import { BubbleChatSurface } from "./chat_surface.js";
 	// silently from the render (never a raw token, never a dead link) and counted here,
 	// because a miss rate over ~2% means a prompt edit broke citing and the only symptom is
 	// inline links quietly disappearing.
+	//
+	// **Counted per DISTINCT id per turn, not per callback.** `renderBubble` rebuilds the
+	// bubble from scratch on every streaming frame, so `onMiss` fires again for the same bad
+	// id on every frame — dozens of times on a long answer. An earlier revision incremented a
+	// module counter directly, which meant ONE bad id on ONE turn tripped the "repeated
+	// misses" warning within a second. A counter that fires on a single occurrence is not a
+	// rate signal, it is a false alarm, and a false alarm is how the real one gets ignored.
 	let _citationMisses = 0;
-	function noteCitationMiss(live) {
-		_citationMisses += 1;
-		if (_citationMisses === 10) {
-			console.warn("triton: repeated citation misses — the manifest and the answer disagree");
+	function noteCitationMiss(live, k) {
+		if (!live.missed) live.missed = new Set();
+		live.missed.add(k);
+	}
+
+	// Folded into the module counter once, when the turn is complete and `live.missed` is
+	// final. Called from finishStreaming.
+	function tallyCitationMisses(live) {
+		if (!live.missed || !live.missed.size) return;
+		_citationMisses += live.missed.size;
+		if (_citationMisses >= 10) {
+			console.warn(
+				"triton: repeated citation misses — the manifest and the answer disagree",
+				{ this_turn: [...live.missed], total: _citationMisses }
+			);
 		}
-		void live;
 	}
 
 	function schedulePump(live) {
@@ -1299,7 +1319,8 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// reordering live would reshuffle the row several times a second and move a chip the
 		// reader was about to click. By this point the answer is complete, so `live.cited` is
 		// final and the order is stable.
-		if (live.manifest) renderManifestSources(live);
+		if (live.manifest) renderManifestSources(live, { sortCitedFirst: true });
+		tallyCitationMisses(live);
 		renderMermaidIn(live.bubble);
 		live.wrap.classList.remove("triton-streaming");
 		live.streaming = false;
@@ -1411,27 +1432,34 @@ import { BubbleChatSurface } from "./chat_surface.js";
 	// Same node-building discipline as everywhere else in chat: labels and snippets are
 	// user-authored — a document title, a coworker's message, a filename — so every one of
 	// them goes in through `textContent`.
-	function renderManifestSources(live) {
+	function renderManifestSources(live, opts) {
 		if (!live.manifest || !live.manifest.size) return;
 
 		let box = live.wrap.querySelector(".triton-sources");
 		if (!box) {
 			box = document.createElement("div");
 			box.className = "triton-sources";
+			// Appended only when NEWLY created, never repositioned on a rebuild.
+			//
+			// An earlier revision of this function moved the box to the end on every call, on
+			// the belief that the pre-Phase-3 row was always last. It was not: the `done`
+			// handler runs `renderSources()` and only THEN `renderChart()`, so the old row sat
+			// *above* the chart — and `renderHistoryMessage` does the same. Forcing it to the
+			// end therefore moved it, and made a live turn disagree with the same turn
+			// re-opened from history. Creating it in place gives it the slot the old row had,
+			// in both paths.
+			live.wrap.appendChild(box);
 		}
-		// appendChild on a node that is ALREADY a child moves it to the end. That is the
-		// point: the manifest arrives *before* the first token, so a box created then would
-		// otherwise sit above the charts and action cards that arrive later — whereas before
-		// this phase the sources row was appended from the `sources` event or from `done` and
-		// was always last. Decision #7 does not enumerate the row's position, but "preserve
-		// exactly" is not a licence to move it, and a row that jumps above a chart only when
-		// Phase 5 is emitting is exactly the kind of drift nobody traces back to here.
-		live.wrap.appendChild(box);
 		box.classList.add("triton-sources-manifest");
 		box.textContent = "";
 		live.sourceChips = new Map();
 
-		for (const entry of orderManifestForDisplay(live.manifest, live.cited)) {
+		// `sortCitedFirst` only at the end of the turn. `live.cited` grows with every frame,
+		// so sorting on it mid-stream — which `citations_append` did — reshuffles chips the
+		// reader may be about to click, once per append. The MARKS stay accurate throughout;
+		// only the order waits.
+		const sortCitedFirst = !!(opts && opts.sortCitedFirst);
+		for (const entry of orderManifestForDisplay(live.manifest, live.cited, { sortCitedFirst })) {
 			const citation = entry.citation || {};
 			const label = citationLabel(citation);
 			const linkable = isSafeUrl(citation.url);
@@ -1574,7 +1602,7 @@ import { BubbleChatSurface } from "./chat_surface.js";
 		// `live.cited` is already populated by the time we get here. So a re-opened
 		// conversation shows the same marked-and-sorted row it ended with, rather than an
 		// unmarked one — the ordering is a property of the answer, not of the session.
-		if (live.manifest && live.manifest.size) renderManifestSources(live);
+		if (live.manifest && live.manifest.size) renderManifestSources(live, { sortCitedFirst: true });
 		else if (meta.sources) renderSources(live.wrap, meta.sources);
 		if (meta.direct_chart) renderChart(live.wrap, meta.direct_chart);
 		(meta.pending_actions || []).forEach((p) =>

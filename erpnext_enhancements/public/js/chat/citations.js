@@ -288,13 +288,22 @@ export function renderTokens(parent, tokens, options) {
  *   sources row sorted by anything else makes the reader hunt for the chip matching the
  *   number they just clicked past.
  *
+ * **The `cited` flag and the SORT are separately controllable**, and that separation is
+ * load-bearing rather than tidy. While an answer is still streaming the caller wants the
+ * marks to be accurate — a chip lighting up as the model leans on it is the thing worth
+ * watching — but it does **not** want the row re-sorted, because `cited` grows with every
+ * frame and a mid-stream sort slides chips out from under the reader's cursor. So the caller
+ * passes `sortCitedFirst: false` while streaming and `true` once at the end.
+ *
  * @param {Map|Array} manifest
  * @param {Set|Array} cited  ids that appeared in the rendered answer
+ * @param {{sortCitedFirst?: boolean}} [options] defaults to sorting cited-first
  * @returns {Array<{k, citation, cited}>}
  */
-export function orderManifestForDisplay(manifest, cited) {
+export function orderManifestForDisplay(manifest, cited, options) {
 	const index = manifest instanceof Map ? manifest : indexManifest(manifest);
 	const used = cited instanceof Set ? cited : new Set(cited || []);
+	const sortCitedFirst = !options || options.sortCitedFirst !== false;
 
 	const entries = Array.from(index.entries(), ([k, citation]) => ({
 		k,
@@ -304,7 +313,8 @@ export function orderManifestForDisplay(manifest, cited) {
 
 	// Stable within each group: sort on (not cited, k). Comparing booleans by subtraction
 	// after coercion keeps this a single comparator rather than two passes and a concat.
-	entries.sort((a, b) => (a.cited === b.cited ? a.k - b.k : a.cited ? -1 : 1));
+	if (sortCitedFirst) entries.sort((a, b) => (a.cited === b.cited ? a.k - b.k : a.cited ? -1 : 1));
+	else entries.sort((a, b) => a.k - b.k);
 	return entries;
 }
 

@@ -21,7 +21,7 @@
  * exists; touching it would be the two-runtime hazard from the wrong direction.
  */
 
-import { clear, el, initials, linkify, relativeTime } from "../chat/dom.js";
+import { clear, el, initials, isComposingKey, linkify, relativeTime } from "../chat/dom.js";
 import * as mentions from "../chat/mentions.js";
 import { OutboxStore, newClientMessageId, mergeForRender } from "../chat/optimistic.js";
 import { ReadBatcher, TypingRegistry, TypingThrottle, typingLabel } from "../chat/signals.js";
@@ -290,6 +290,11 @@ export class BubbleChatSurface {
 	// ------------------------------------------------------------------ composer
 
 	onKey(ev) {
+		// FIRST, above the mention menu. Every branch below is a key an IME may own while a
+		// composition is in flight — Enter and Tab commit a candidate, Escape cancels one, the
+		// arrows move through it — so a guard placed after the menu block protects the exact
+		// keystrokes it exists to protect on every path except the one the user is on.
+		if (isComposingKey(ev)) return;
 		if (this.menuOpen) {
 			if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
 				ev.preventDefault();
@@ -310,10 +315,7 @@ export class BubbleChatSurface {
 				return;
 			}
 		}
-		// `isComposing`: without it an IME user pressing Enter to COMMIT a character sends the
-		// half-finished message. The Triton composer next door has this defect; it is reported
-		// rather than copied.
-		if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+		if (ev.key === "Enter" && !ev.shiftKey) {
 			ev.preventDefault();
 			this.send();
 		}

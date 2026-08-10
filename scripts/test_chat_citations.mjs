@@ -255,6 +255,28 @@ test("an empty manifest orders to nothing, so the caller falls back to today's r
 	assert.deepEqual(orderManifestForDisplay(new Map(), new Set([1])), []);
 });
 
+test("sortCitedFirst:false keeps ID ORDER while still marking accurately", () => {
+	// The streaming case. `cited` grows with every frame, so sorting on it mid-answer slides
+	// chips out from under a reader who is about to click one — which `citations_append` did,
+	// once per append, contradicting the "one reorder, at stream end" rule the code documents.
+	// The marks must stay accurate throughout; only the ORDER waits.
+	const ordered = orderManifestForDisplay(INDEX, new Set([3, 1]), { sortCitedFirst: false });
+	assert.deepEqual(ordered.map((e) => e.k), [1, 2, 3, 4, 5, 6], "id order, not cited-first");
+	assert.deepEqual(
+		ordered.filter((e) => e.cited).map((e) => e.k),
+		[1, 3],
+		"the marks are still correct — only the sort is deferred"
+	);
+});
+
+test("sortCitedFirst defaults to true, so the end-of-turn call needs no argument", () => {
+	assert.deepEqual(orderManifestForDisplay(INDEX, new Set([3])).map((e) => e.k), [3, 1, 2, 4, 5, 6]);
+	assert.deepEqual(
+		orderManifestForDisplay(INDEX, new Set([3]), {}).map((e) => e.k),
+		[3, 1, 2, 4, 5, 6]
+	);
+});
+
 test("it accepts an array manifest and an array of cited ids, not just Map/Set", () => {
 	const ordered = orderManifestForDisplay(MANIFEST, [2]);
 	assert.equal(ordered[0].k, 2);

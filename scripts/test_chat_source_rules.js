@@ -345,7 +345,94 @@ function stripComments(source) {
 	}
 }
 
-// ------------------------------------------------------------------ 5. the bundle rule
+// ------------------------------------------------------------------ 5. keyboard ordering
+
+/**
+ * Two ORDERING rules for every keydown handler in the chat client. Both are rules where
+ * presence is worthless and position is everything, and both were got wrong once already.
+ *
+ *  (a) A composer's IME guard must be the FIRST thing in the handler. Enter and Tab commit an
+ *      IME candidate, Escape cancels one and the arrows move through it — so a guard sitting
+ *      below a mention-menu block protects the exact keystrokes it exists to protect on every
+ *      path except the one the user is on.
+ *
+ *  (b) A handler that binds BARE single-letter shortcuts must exclude ctrl/meta/alt before
+ *      acting. AltGr is reported as ctrlKey+altKey on Windows and many EU layouts, and
+ *      Ctrl+J / Cmd+K belong to the browser. This is the same defect Alt+T was fixed for.
+ */
+{
+	const handlers = [
+		{
+			file: SURFACE_JS,
+			fn: 'onKey',
+			kind: 'composer',
+			// The first branch the guard must precede.
+			firstBranch: 'this.menuOpen',
+		},
+		{
+			file: path.join(CLIENT_DIR, 'app.js'),
+			fn: 'onComposerKey',
+			kind: 'composer',
+			firstBranch: 'this.mentionState.open',
+		},
+		{
+			file: path.join(CLIENT_DIR, 'app.js'),
+			fn: 'onShortcut',
+			kind: 'global',
+			firstBranch: 'ev.key === "Escape"',
+		},
+	];
+
+	let checked = 0;
+	for (const h of handlers) {
+		const source = stripComments(must(h.file));
+		const start = source.indexOf(`${h.fn}(ev) {`);
+		if (start === -1) {
+			console.error(
+				'MARKERS NOT FOUND: no ' + h.fn + '(ev) in ' + path.relative(ROOT, h.file) +
+				'.\nRe-derive this list rather than deleting it — the rule outlives the handler names.'
+			);
+			process.exit(2);
+		}
+		const body = source.slice(start, start + 2500);
+		const branchAt = body.indexOf(h.firstBranch);
+		const imeAt = body.indexOf('isComposingKey(ev)');
+
+		if (imeAt === -1) {
+			fail(`${h.fn}() in ${path.basename(h.file)} does not consult isComposingKey().`);
+		} else if (branchAt !== -1 && imeAt > branchAt) {
+			fail(
+				`${h.fn}() in ${path.basename(h.file)} checks isComposingKey() AFTER its first ` +
+				`branch (${h.firstBranch}). During a composition that branch swallows the key ` +
+				`first, so the guard protects everything except the case it is for.`
+			);
+		} else {
+			checked += 1;
+		}
+
+		if (h.kind === 'global') {
+			const modAt = body.search(/ev\.ctrlKey \|\| ev\.metaKey/);
+			if (modAt === -1) {
+				fail(
+					`${h.fn}() binds bare single-letter shortcuts without excluding ctrl/meta/alt. ` +
+					`AltGr is ctrlKey+altKey on many EU layouts and Ctrl+J / Cmd+K are the browser's.`
+				);
+			} else if (branchAt !== -1 && modAt > branchAt + 400) {
+				fail(`${h.fn}() excludes ctrl/meta too late to protect its own branches.`);
+			} else {
+				checked += 1;
+			}
+		}
+	}
+
+	if (checked < handlers.length) {
+		// Some handler failed above; the failure message already named it.
+	} else {
+		pass(`all ${handlers.length} keydown handlers guard IME and modifiers, in the right order`);
+	}
+}
+
+// ------------------------------------------------------------------ 6. the bundle rule
 
 {
 	const bundle = must(SPA_BUNDLE);

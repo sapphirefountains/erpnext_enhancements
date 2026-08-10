@@ -306,6 +306,83 @@ for (const { fn, destructive } of MUST_GUARD) {
 	} else {
 		pass('the approved manifest row is a separate renderer, so the old path is untouched');
 	}
+
+	// A preserved function nobody CALLS is preserved the way a museum piece is. The block
+	// above proves the renderer still exists and still has its shape; these prove the
+	// no-manifest path still reaches it, on both the live and the restored-from-history route.
+	const sourcesArm = SOURCE.slice(SOURCE.indexOf('case "sources":'));
+	const armBody = sourcesArm.slice(0, sourcesArm.indexOf('case "citations"'));
+	if (!sourcesArm || armBody.length === 0) {
+		console.error(
+			'MARKERS NOT FOUND: could not locate the `case "sources":` arm in ' +
+				path.relative(process.cwd(), TARGET) + '. That arm IS the live no-manifest path.'
+		);
+		process.exit(2);
+	} else if (!armBody.includes('renderSources(live.wrap, ev.content)')) {
+		fail(
+			'the `sources` stream event no longer calls renderSources(). A preserved renderer ' +
+				'that nothing reaches is not preservation.'
+		);
+	} else if (!/live\.manifest && live\.manifest\.size/.test(armBody)) {
+		fail(
+			'the `sources` arm short-circuits on something other than ' +
+				'`live.manifest && live.manifest.size`. A manifest that arrived EMPTY must still ' +
+				'fall through to the old renderer — `if (live.manifest)` alone would swallow the ' +
+				'sources row on every turn where retrieval returned nothing.'
+		);
+	} else {
+		pass('the `sources` event still reaches renderSources() unless a NON-EMPTY manifest exists');
+	}
+
+	// ONE reorder, at stream end. `live.cited` grows with every frame, so sorting on it while
+	// the answer is still arriving slides chips out from under a reader about to click one —
+	// which `citations_append` did, once per append, contradicting the invariant the code
+	// itself documents. The rule is positional (which call sites pass the flag), so it cannot
+	// be checked by the pure test on `orderManifestForDisplay`; only here.
+	const manifestRenderer = bodyOf('renderManifestSources');
+	if (!/opts && opts\.sortCitedFirst/.test(manifestRenderer)) {
+		fail(
+			'renderManifestSources() no longer gates the cited-first sort on its caller. It then ' +
+				're-sorts on every call, including the mid-stream `citations_append`, which ' +
+				'reshuffles the row while the reader is using it.'
+		);
+	} else {
+		const streamingArms = SOURCE.slice(
+			SOURCE.indexOf('case "citations":'),
+			SOURCE.indexOf('case "pending_action":')
+		);
+		const finish = bodyOf('finishStreaming') || '';
+		if (/renderManifestSources\(live,\s*\{[^}]*sortCitedFirst/.test(streamingArms)) {
+			fail(
+				'a mid-stream citations arm asks for the cited-first sort. Only the end of the ' +
+					'turn may reorder; while streaming the marks update and the order holds.'
+			);
+		} else if (!/renderManifestSources\(live,\s*\{\s*sortCitedFirst:\s*true\s*\}\)/.test(finish)) {
+			fail(
+				'finishStreaming() no longer performs the one cited-first reorder, so the row ' +
+					'stays in plain id order forever and the approved behaviour never happens.'
+			);
+		} else {
+			pass('the cited-first reorder happens once, at stream end, and nowhere else');
+		}
+	}
+
+	const history = bodyOf('renderHistoryMessage');
+	if (history === null) {
+		console.error(
+			'MARKERS NOT FOUND: no renderHistoryMessage() in ' + path.relative(process.cwd(), TARGET) +
+				'. That is the restored-from-history no-manifest path.'
+		);
+		process.exit(2);
+	} else if (!/else if \(meta\.sources\) renderSources\(/.test(history)) {
+		fail(
+			'a stored turn with no manifest no longer falls back to renderSources(). Re-opening ' +
+				'a conversation would then show no sources row at all, which is a silent loss of ' +
+				'the surface decision #7 protects.'
+		);
+	} else {
+		pass('a stored turn with no manifest still renders the pre-Phase-3 row');
+	}
 }
 
 console.log('');

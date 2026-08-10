@@ -725,6 +725,12 @@ class ChatApp {
 	// ------------------------------------------------------------------ composer
 
 	onComposerKey(ev) {
+		// FIRST, above every branch. Enter and Tab commit an IME candidate, Escape cancels
+		// one, the arrows move through it — so a guard placed after the mention-menu block
+		// protects the exact keystrokes it exists to protect on every path except the one the
+		// user is actually on. Returning unconditionally is correct here: nothing in this
+		// handler should run while a composition is in flight.
+		if (isComposingKey(ev)) return;
 		if (this.mentionState.open) {
 			if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
 				ev.preventDefault();
@@ -750,10 +756,6 @@ class ChatApp {
 			this.closeThread();
 			return;
 		}
-		// `isComposing` guard: without it an IME user pressing Enter to COMMIT a character
-		// sends the half-finished message instead. The existing widget has this defect and it
-		// is reported separately rather than being repeated here.
-		if (isComposingKey(ev)) return;
 		if (ev.key === "Enter" && !ev.shiftKey) {
 			ev.preventDefault();
 			this.send();
@@ -1609,6 +1611,17 @@ class ChatApp {
 	}
 
 	onShortcut(ev) {
+		// Before ANY branch, including Escape. Escape is how an IME user cancels a
+		// composition, so an un-guarded Escape here closes the thread pane — and
+		// `closeThread()` discards the reply they were half way through typing — on a
+		// keystroke they aimed at the candidate window.
+		if (isComposingKey(ev)) return;
+		// A modifier the user did not press. AltGr is reported as ctrlKey+altKey on Windows
+		// and many EU layouts, and Ctrl+J / Cmd+K are the browser's, not ours. This is the
+		// same defect Alt+T was just fixed for, one file over; single-letter global shortcuts
+		// are where it always shows up.
+		if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+
 		// Never hijack a shortcut while the user is typing, except Escape.
 		const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
 		if (ev.key === "Escape" && this.state.thread) {
