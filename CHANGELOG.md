@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.262.2] - 2026-08-10
+
+### Fixed
+
+- **Every Opportunity→Project conversion sent one email to nobody and logged a traceback for
+  it.** The create-project dialog's "Users to Notify" field is a `MultiSelect`, and a
+  `MultiSelect` leaves a trailing separator behind after each pick — it submits
+  `"a@x.com, b@y.com, "`. `create_project_from_opportunity_background` split that on `,`
+  without filtering, so the empty final element became its own `frappe.sendmail` call with a
+  blank recipient. Gmail refuses the entire message at `RCPT TO` (`555 5.5.2 Syntax error,
+  cannot decode response`), which surfaces as an `smtplib.SMTPRecipientsRefused` traceback in
+  the Error Log.
+
+  **The visible symptom was misleading, which is why this sat for two weeks.** The real
+  recipients were notified normally — each user gets a separate email, so only the phantom
+  one failed. What it produced was a dead Email Queue row and an Error Log entry per
+  conversion (six of each on production between 2026-07-24 and 2026-08-10, every one of them
+  subject `New Project Created: …`), with nobody reporting a missing notification. Frappe then
+  retried each dud three times, so the Error Log count runs ahead of the queue count.
+
+  Normalization now lives in one place, `_notify_recipients`, and is applied at both ends:
+  in `enqueue_project_creation`, so a field holding only separators is refused up front
+  instead of queueing a job that notifies nobody, and again in the background worker
+  immediately before `frappe.sendmail`, because that is the last point at which a blank
+  recipient can still poison a message. Whitespace-only and `None` entries go too.
+
+  Note for anyone auditing the rest of the codebase against this class of bug: every other
+  comma-split in the app already filtered (`[x.strip() for x in … if x.strip()]`).
+  `crm_enhancements/api.py` was the sole exception.
+
 ## [1.262.1] - 2026-08-10
 
 ### Added
