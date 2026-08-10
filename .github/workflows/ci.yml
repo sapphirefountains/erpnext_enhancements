@@ -685,6 +685,18 @@ jobs:
       # two-letter form cannot be exercised on this US-only site at all.
       - name: Address component mapping (bench-free, node)
         run: node scripts/test_address_components.js
+      # The floating Triton widget's streaming re-entrancy rule: every function that
+      # clears the transcript, or switches which session it belongs to, must refuse
+      # while a stream is in flight. Two of the four were missing it, and the failure is
+      # entirely silent -- pumpText keeps writing into a detached node, finishStreaming
+      # runs mermaid against dead DOM, and the turn is still persisted against the
+      # session the user walked away from. Nothing throws, so nothing reports it.
+      #
+      # Ordering is asserted, not just presence: a guard after the destructive line is
+      # decoration. Phase 3 rewires session switching entirely, which is exactly when a
+      # rule this easy to agree with gets forgotten on the next function.
+      - name: Triton widget streaming guards (bench-free, node)
+        run: node scripts/test_triton_widget_guards.js
       # The Address coordinate gate. Latitude/longitude are user-editable and
       # every map trusts that point over the address text, so this is the one
       # place a typo silently relocates a job site. Both failures it rejects --
