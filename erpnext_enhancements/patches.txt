@@ -526,3 +526,13 @@ erpnext_enhancements.patches.default_chat_settings
 # implementations -- the originals stay untouched and a fresh install still runs them
 # exactly once, in order. Same end state on a fresh site and on prod; safe twice.
 erpnext_enhancements.patches.finish_chat_bootstrap
+# Chat Phase 2 (v1.262.0): the composites Frappe's DocType JSON cannot express, for the
+# two new DocTypes and the new Chat Relay Job lease column. A SECOND file rather than
+# rows appended to add_chat_indexes, and the reason is the repair three lines above:
+# add_chat_indexes is already in Patch Log on every site and run_all() has no re-run
+# path, so a row added there would create the index on a fresh site and never on prod.
+# unique(message, revision_no) is correctness rather than speed -- every writer of the
+# audit table is retried, so a duplicate revision is scheduled, not unlikely.
+# Backstopped from after_migrate AND after_install for the reason stated at both of
+# those hooks. Idempotent, checks information_schema before any DDL, safe twice.
+erpnext_enhancements.patches.add_chat_phase2_indexes

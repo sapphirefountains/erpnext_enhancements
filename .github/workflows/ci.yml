@@ -599,6 +599,64 @@ jobs:
         run: python -m pytest erpnext_enhancements/tests/test_chat_webhook_verify.py -q
       - name: Chat Settings budget arithmetic (tier budgets + reserve <= ceiling)
         run: python -m pytest erpnext_enhancements/tests/test_chat_settings_budget.py -q
+      # Phase 2's pure tier. These six exist BECAUSE this is the only tier with automatic
+      # regression protection in this repo, so leaving any of them unwired would defeat the
+      # entire reason the modules were written frappe-free. One file per step, same as the
+      # suites above: each installs its own `frappe` stub in setUpModule and a shared
+      # process is how they cross-talk.
+      #
+      # The decisions suite is the one to look at first when it goes red. Its table IS the
+      # echo-suppression specification, and the failure mode it guards is asymmetric: a
+      # duplicated message is visible and annoying, while a SUPPRESSED one is a coworker's
+      # message that silently never arrives. Test names say which direction they defend.
+      - name: Chat relay state machine (every legal transition, and every illegal one raising)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_sync_states.py -q
+      - name: Chat echo suppression + event parsing (the decision matrix is the spec)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_sync_decisions.py -q
+      - name: Chat 32,000-byte budget (emoji, CJK, no split codepoints)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_budget.py -q
+      - name: Chat per-space token bucket arithmetic (GCRA, pure half only)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_ratelimit.py -q
+      - name: Chat realtime targeting (never a bare room, never task_id, always after_commit)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_realtime_targeting.py -q
+      - name: Chat fake API harness (quotas, requestId replay, tombstones, the race)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_fake_api.py -q
+      # The engine. Separate steps rather than one pytest invocation over the directory,
+      # because each suite installs its own `frappe` stub in setUpModule and they cross-talk
+      # in a shared process -- run together these six go red for reasons that have nothing to
+      # do with the code under test.
+      - name: Chat write path / outbox (seq allocation, relay refusal, edit+delete ordering)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_outbox.py -q
+      - name: Chat outbound relay (state machine, token bucket, sweeper, kill switch, chaos 4-9)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_outbound.py -q
+      - name: Chat inbound ingest + Pub/Sub puller (echo ladder, the §4.D race, defer timer)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_inbound.py -q
+      - name: Chat provisioning + membership (three modes, revert cap, converging diff)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_provisioning.py -q
+      - name: Chat attachments (permission parity, upload cost, Drive links stay links)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_attachments.py -q
+      - name: Chat subscription lifecycle + reconciliation sweep (chaos 10)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_subscriptions.py -q
+      # Raw SQL is the one path the permission stack does NOT cover: a
+      # permission_query_conditions fragment is appended by get_list and by nothing else, and
+      # frappe.get_all is get_list(ignore_permissions=True) wearing a friendlier name. So this
+      # walks every module under chat/ with `ast` and asserts each raw query either lives in an
+      # allowlisted operational table or ANDs in permissions.membership_filter_sql itself.
+      # Mutation-tested in both directions when it was written: a planted non-compliant query
+      # turns it red and naming the offender, and the same query with the filter turns it green.
+      - name: Chat raw-SQL membership guard (the likeliest route to a real data leak)
+        run: python -m unittest erpnext_enhancements.tests.test_chat_rawsql_guard -v
+      # The Phase 2 checkpoint gate. Two hundred messages both ways through the fake Chat API --
+      # edits, deletes, attachments, three 10-in-2-second bursts, a 60-second outage, every tenth
+      # event redelivered, both out-of-order pairs, a worker killed mid-relay -- then the whole
+      # thing replayed to prove reprocessing the backlog is a no-op.
+      #
+      # It asserts ARRIVAL counts per origin, not just the absence of duplicates, and that is
+      # deliberate: both of the worst bugs this phase produced were SUPPRESSIONS -- a real
+      # message consumed while believed to be our own echo -- and a soak that only counted
+      # duplicates would have passed with both of them present.
+      - name: Chat 200-message two-way soak (checkpoint gate, cold + replay)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_soak.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,

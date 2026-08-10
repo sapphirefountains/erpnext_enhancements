@@ -1,0 +1,145 @@
+{
+ "actions": [],
+ "allow_events_in_timeline": 0,
+ "autoname": "hash",
+ "creation": "2026-08-09 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "message",
+  "room",
+  "revision_no",
+  "column_break_head",
+  "change_type",
+  "origin",
+  "origin_timestamp",
+  "actor_section",
+  "actor",
+  "column_break_actor",
+  "actor_email",
+  "body_section",
+  "text_before",
+  "text_after",
+  "note"
+ ],
+ "fields": [
+  {
+   "description": "The message this revision describes. Never changes once written - a revision that could be re-pointed at another message is not an audit trail.",
+   "fieldname": "message",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Message",
+   "options": "Chat Message",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Denormalised from the message on purpose, for exactly the reason Chat Attachment.room is: the oversight read's membership filter must not have to join through Chat Message to find out which room a revision belongs to. Backfilled from the message in before_insert, so a caller cannot get the denormalisation wrong.",
+   "fieldname": "room",
+   "fieldtype": "Link",
+   "label": "Room",
+   "options": "Chat Room",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "1 for the create row, then 2, 3, ... per subsequent change. Unique with message (created by patch, because Frappe's DocType JSON has no composite-index field), which is what makes 'two workers replayed the same edit' a failed insert instead of two audit rows claiming to be the same revision. Allocated by the writer inside the same transaction as the message update, never from MAX() outside one.",
+   "fieldname": "revision_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Revision No",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "What happened. Create is written once, at insert, so the trail is complete rather than starting at the first edit - reconstructing an original body from an edit's text_before works right up until the first edit that was itself lost.",
+   "fieldname": "change_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Change Type",
+   "options": "Create\nEdit\nDelete",
+   "reqd": 1
+  },
+  {
+   "description": "Which side made the change. Same three values and the same spelling as Chat Message.sync_origin, deliberately, so an operator reading both tables during an incident does not have to translate.",
+   "fieldname": "origin",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Origin",
+   "options": "ERPNext\nGoogle Chat\nTriton",
+   "reqd": 1
+  },
+  {
+   "description": "The originating side's own timestamp - Google's lastUpdateTime or deleteTime for an inbound change, converted from RFC-3339 UTC. Stored ALONGSIDE creation, never instead of it: creation is when we learned, this is when it happened, and the gap between them is the only evidence of a delayed redelivery. Ordering questions are answered by Chat Message.seq, never by either of these.",
+   "fieldname": "origin_timestamp",
+   "fieldtype": "Datetime",
+   "label": "Origin Timestamp"
+  },
+  {
+   "fieldname": "actor_section",
+   "fieldtype": "Section Break",
+   "label": "Actor"
+  },
+  {
+   "description": "Who made the change, when they map to an ERPNext User. Empty is legitimate and does not mean unknown - see Actor Email.",
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User"
+  },
+  {
+   "fieldname": "column_break_actor",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The Chat member's address when they map to no ERPNext User - an external participant, or a Workspace user with no account here. The same reasoning as Chat Message.sender_email: an edit or a delete we cannot attribute to a User must still be RECORDED, because the alternative is an audit trail with holes in exactly the rows somebody will one day need.",
+   "fieldname": "actor_email",
+   "fieldtype": "Data",
+   "label": "Actor Email",
+   "length": 255
+  },
+  {
+   "fieldname": "body_section",
+   "fieldtype": "Section Break",
+   "label": "Body"
+  },
+  {
+   "description": "The body as it stood BEFORE this change. Empty on a Create row. THIS COLUMN IS WHY THIS TABLE IS MORE SENSITIVE THAN THE MESSAGE TABLE: superseded text exists nowhere else, because Chat Message.text holds only the current body and Google's tombstone is content-free.",
+   "fieldname": "text_before",
+   "fieldtype": "Long Text",
+   "label": "Text Before"
+  },
+  {
+   "description": "The body as it stands AFTER this change. Empty on a Delete row. Note that the delete itself is SOFT and Chat Message.text keeps the body (ADR §F.6.5) - this table records that the delete happened and who did it, it is not where the deleted body was moved to.",
+   "fieldname": "text_after",
+   "fieldtype": "Long Text",
+   "label": "Text After"
+  },
+  {
+   "description": "Free-text context from the writer - which reconciliation pass produced this row, which conflict rule fired, why an inbound edit was discarded. Never a message body and never a token.",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-09 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Chat",
+ "name": "Chat Message Revision",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0,
+ "track_seen": 0,
+ "track_views": 0
+}

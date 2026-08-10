@@ -66,6 +66,17 @@
   "presence_heartbeat_seconds",
   "presence_ttl_seconds",
   "log_message_bodies",
+  "sync_engine_section",
+  "circuit_breaker_threshold",
+  "circuit_breaker_cooldown_seconds",
+  "max_reverts_per_hour",
+  "clock_skew_alert_ms",
+  "reconcile_window_minutes",
+  "column_break_sync_engine",
+  "echo_defer_budget",
+  "echo_fallback_enabled",
+  "echo_fallback_window_seconds",
+  "oversized_message_policy",
   "retention_section",
   "message_retention_days",
   "hard_delete_after_days",
@@ -489,6 +500,80 @@
    "fieldname": "log_message_bodies",
    "fieldtype": "Check",
    "label": "Log Message Bodies"
+  },
+  {
+   "fieldname": "sync_engine_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Engine"
+  },
+  {
+   "default": "10",
+   "description": "§4.B.9. Consecutive Google failures against ONE space before the relay opens that space's circuit breaker and stops trying it. 10 and not 1: a single 503 is weather, and a breaker that trips on weather converts a blip into an outage. What it actually prevents is the other case - a space that has been deleted, or whose grant was revoked, where every queued job burns an HTTP call, a slot in the 3,000-per-minute project message-write bucket and a retry budget that a healthy space needed. Per space, never global: one broken space must not stop the other nineteen.",
+   "fieldname": "circuit_breaker_threshold",
+   "fieldtype": "Int",
+   "label": "Circuit Breaker Threshold (consecutive failures)"
+  },
+  {
+   "default": "300",
+   "description": "How long an open breaker stays open before ONE probe request is allowed through. Jobs are not failed while it is open - they are deferred by pushing Chat Relay Job.available_at forward, so the backlog stays in job_seq order and drains in order once the space recovers. Failing them instead would spend the retry budget during the outage and send the room's messages to Dead for a reason that had nothing to do with them.",
+   "fieldname": "circuit_breaker_cooldown_seconds",
+   "fieldtype": "Int",
+   "label": "Circuit Breaker Cooldown (seconds)"
+  },
+  {
+   "default": "5",
+   "description": "§4.H. Ceiling on membership reverts per room per hour when Chat Room.membership_authority is ERPNext. THIS IS A LOOP BREAKER, not a rate limit: somebody re-adding themselves in the native Chat client against a reconciler that keeps removing them never terminates on its own, and each round trip spends the 300-per-minute project membership-write quota that every room shares. At the cap the room stops reverting and alarms, because two systems disagreeing about who belongs in a room is a question for a human about the org, not something to retry harder.",
+   "fieldname": "max_reverts_per_hour",
+   "fieldtype": "Int",
+   "label": "Max Membership Reverts per Hour"
+  },
+  {
+   "default": "300000",
+   "description": "§4.G. Absolute value of Chat Message.clock_skew_ms above which a skew alarm fires, in MILLISECONDS. 300000 is five minutes. The bug class this exists for is not drift but a timezone mistake - Google returns RFC-3339 UTC and Frappe writes datetimes site-local, so getting the conversion wrong produces a CONSTANT offset the size of the site's offset, in the direction that always makes Google win an ADR §G.8 Rule 3 tie. A threshold well under an hour is what makes that visible instead of plausible.",
+   "fieldname": "clock_skew_alert_ms",
+   "fieldtype": "Int",
+   "label": "Clock Skew Alert Threshold (ms)"
+  },
+  {
+   "default": "60",
+   "description": "§4.J. How far back the reconciliation sweep re-lists a room's Google messages looking for anything the event pipeline missed. Both directions cost: wider spends the 3,000-per-minute project message-READ bucket on every room on every pass, narrower cannot see a gap longer than the outage that caused it. 60 minutes sits above the subscription lifecycle's own reminder cadence and below the point where a sweep of every active room stops fitting in one scheduler slot.",
+   "fieldname": "reconcile_window_minutes",
+   "fieldtype": "Int",
+   "label": "Reconcile Window (minutes)"
+  },
+  {
+   "fieldname": "column_break_sync_engine",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "3",
+   "description": "§4.D. How many times one inbound event may be DEFERRED while an outbound write for the same room is still in flight (a Chat Relay Job In Progress with an unexpired lease), before it is processed anyway. The defer exists because a Workspace Event can overtake our own POST's response, and ingesting it then would store our own message a second time as a foreign one. The budget exists because the claim it waits on can outlive the worker that took it, and an event deferred forever is an event lost. Three, then process and let the structural dedupe on gchat_message_name catch it.",
+   "fieldname": "echo_defer_budget",
+   "fieldtype": "Int",
+   "label": "Echo Defer Budget (attempts)"
+  },
+  {
+   "default": "0",
+   "description": "ADR §G.3.2's bounded echo heuristic. SHIPS OFF, and off is the correct steady state - leave it off unless a specific residue is being cleaned up. The primary echo check is the clientAssignedMessageId probe against unique(room, client_message_id); this fallback exists only for messages that carry no client id at all, which means an older build, a manual API call or an import backfill. Its guards are what make it defensible rather than a guess: an EXACT normalised body hash and never a similarity, a sender match, a bounded window, an alarm on every single firing, and - the guard the ADR itself omits - a refusal to bind when MORE THAN ONE candidate matches. Ambiguity is treated as NEW plus an alarm, which is what deterministically answers the objection that two identical short messages seconds apart would be mis-bound.",
+   "fieldname": "echo_fallback_enabled",
+   "fieldtype": "Check",
+   "label": "Echo Fallback Heuristic Enabled"
+  },
+  {
+   "default": "120",
+   "depends_on": "eval:doc.echo_fallback_enabled",
+   "description": "The echo heuristic's window, in seconds. Only consulted when the heuristic is enabled. A candidate outside the window is never bound, however exactly its body matches: past a couple of minutes an identical message is far more likely to be a person repeating themselves than our own write coming back.",
+   "fieldname": "echo_fallback_window_seconds",
+   "fieldtype": "Int",
+   "label": "Echo Fallback Window (seconds)"
+  },
+  {
+   "default": "Truncate With Link",
+   "description": "What happens to a message that does not fit Google's 32,000-byte limit - a limit measured over the WHOLE encoded message resource, not len(text). Truncate With Link relays a truncated body plus a deep link back to the full text and sets Chat Message.truncated_for_relay; nothing is lost, because the ERPNext row keeps the whole thing and is the source of truth. Reject refuses the relay outright. Truncate is the default deliberately: rejecting at compose time would let Google's transport limit dictate what an employee may say inside ERPNext, which inverts the decision that ERPNext is the master copy and Google Chat is the mirror.",
+   "fieldname": "oversized_message_policy",
+   "fieldtype": "Select",
+   "label": "Oversized Message Policy",
+   "options": "Truncate With Link\nReject"
   },
   {
    "fieldname": "retention_section",

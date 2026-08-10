@@ -21,9 +21,12 @@
   "provisioning_section",
   "provisioning_mode",
   "provisioning_state",
+  "membership_authority",
   "column_break_provisioning",
   "provisioning_attempts",
   "provisioning_error",
+  "external_users_allowed",
+  "mirror_whitelisted",
   "google_section",
   "gchat_space_name",
   "gchat_space_type",
@@ -34,9 +37,13 @@
   "seq_high_water",
   "last_message",
   "last_message_at",
+  "last_event_at",
+  "last_reconcile_at",
   "column_break_activity",
   "last_message_sender",
-  "last_message_preview"
+  "last_message_preview",
+  "reverts_this_hour",
+  "revert_window_start"
  ],
  "fields": [
   {
@@ -142,6 +149,15 @@
    "read_only": 1
   },
   {
+   "default": "Bidirectional",
+   "description": "§4.H. WHO decides who is in this room - stated explicitly, never inferred from whichever side changed last, because inferring it is how a membership flaps. Bidirectional accepts a change from either side and reconciles to the union. ERPNext makes the Chat Room Member rows authoritative: a member added in the native Chat client is REVERTED back out on the next reconciliation. That revert is capped by Chat Settings.max_reverts_per_hour and counted in reverts_this_hour, because a person who keeps re-adding themselves and a reconciler that keeps removing them is an infinite loop that burns the 300-per-minute project membership-write quota. Per room, not site-wide: a Document room whose membership is derived from a Project's team and an ad-hoc Group room want opposite answers.",
+   "fieldname": "membership_authority",
+   "fieldtype": "Select",
+   "label": "Membership Authority",
+   "options": "Bidirectional\nERPNext",
+   "reqd": 1
+  },
+  {
    "fieldname": "column_break_provisioning",
    "fieldtype": "Column Break"
   },
@@ -158,6 +174,21 @@
    "fieldtype": "Small Text",
    "label": "Provisioning Error",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "OBSERVED FROM GOOGLE, never requested: this space admits members from outside the Workspace domain. §4.H data-egress policy - a room an external participant can read must not be mirrored automatically, because mirroring it sends company conversation to somebody the org chart does not cover. The provisioning sweep and the outbound relay both skip such a room unless Mirror Whitelisted is ticked. Read back on every reconciliation pass rather than cached at creation, because a space can acquire an external member long after we provisioned it.",
+   "fieldname": "external_users_allowed",
+   "fieldtype": "Check",
+   "label": "External Users Allowed",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "A human has explicitly approved mirroring this room despite External Users Allowed. The ONLY override, and deliberately a manual tick rather than a rule: the whole point of the external-user gate is that the decision to send company conversation outside the domain belongs to a person, and any rule that could set this automatically would be that decision made by a config field instead. The one field in this section that is not read_only, for exactly that reason.",
+   "fieldname": "mirror_whitelisted",
+   "fieldtype": "Check",
+   "label": "Mirror Whitelisted"
   },
   {
    "fieldname": "google_section",
@@ -206,7 +237,7 @@
    "label": "Activity"
   },
   {
-   "description": "ADVISORY MIRROR ONLY. The allocator is MAX(seq) FOR UPDATE over the room's messages; this column exists so a nightly drift check can compare the two. Never read it to allocate.",
+   "description": "THE SEQUENCE ALLOCATOR. outbox.allocate_seq issues UPDATE tabChat Room SET seq_high_water = seq_high_water + 1 WHERE name = %s and reads the value back, both inside the inserting transaction: the UPDATE takes an exclusive lock on this one row, held to commit, which is what makes the read-back safe under concurrency. unique(room, seq) remains the GUARANTEE; this counter is the OPTIMISATION that stops the guarantee ever being tested. Never allocate with MAX(seq) over tabChat Message - that takes range locks across the busiest table in the feature. MAX(seq) is legitimate only as the repair (outbox.repair_seq_high_water) after a collision has already proved the counter is behind. Never move it backwards: ChatRoom.validate refuses, because a decrement re-issues sequence numbers that already exist.",
    "fieldname": "seq_high_water",
    "fieldtype": "Int",
    "label": "Sequence High Water",
@@ -227,6 +258,20 @@
    "read_only": 1
   },
   {
+   "description": "When an inbound Google event last touched this room - any event, not only a message. §4.J's reconciliation sweep picks its rooms from the gap between this and last_reconcile_at: a room with recent events and a stale reconcile is where drift is both most likely and cheapest to find, and a room with neither can be skipped for free. Distinct from last_message_at, which moves for our OWN messages too and so cannot answer 'is the inbound pipeline alive for this space'.",
+   "fieldname": "last_event_at",
+   "fieldtype": "Datetime",
+   "label": "Last Event At",
+   "read_only": 1
+  },
+  {
+   "description": "When the §4.J reconciliation sweep last compared this room against Google. Paired with last_event_at and never with modified - modified moves for a dozen reasons that have nothing to do with sync, so scheduling off it would re-reconcile a room because somebody renamed it.",
+   "fieldname": "last_reconcile_at",
+   "fieldtype": "Datetime",
+   "label": "Last Reconcile At",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_activity",
    "fieldtype": "Column Break"
   },
@@ -242,6 +287,21 @@
    "fieldname": "last_message_preview",
    "fieldtype": "Small Text",
    "label": "Last Message Preview",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many membership reverts this room has applied inside the current window (see Revert Window Start). Capped by Chat Settings.max_reverts_per_hour, and THE CAP IS THE POINT: with membership_authority = ERPNext, somebody who keeps re-adding themselves in the native client against a reconciler that keeps removing them is an infinite loop, and each round trip spends the 300-per-minute project membership-write quota that every other room shares. At the cap this room stops reverting and raises an alarm for a human, because two systems disagreeing about who belongs in a room is a question about the org, not a retry.",
+   "fieldname": "reverts_this_hour",
+   "fieldtype": "Int",
+   "label": "Reverts This Hour",
+   "read_only": 1
+  },
+  {
+   "description": "Start of the current revert-count window; reverts_this_hour resets when this is more than an hour old. A stored column rather than a Redis counter deliberately: the prod deploy FLUSHDBs Redis, and a loop-breaker that resets on every release is not a loop-breaker - the flap would resume the moment a deploy landed, which is exactly when nobody is watching this field.",
+   "fieldname": "revert_window_start",
+   "fieldtype": "Datetime",
+   "label": "Revert Window Start",
    "read_only": 1
   }
  ],

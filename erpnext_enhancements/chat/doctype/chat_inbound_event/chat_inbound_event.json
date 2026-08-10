@@ -11,6 +11,8 @@
   "column_break_head",
   "status",
   "attempts",
+  "defer_count",
+  "available_at",
   "resulting_message",
   "routing_section",
   "gchat_space_name",
@@ -66,9 +68,24 @@
   },
   {
    "default": "0",
+   "description": "Failure retries only - a Google 5xx, a token mint that timed out, a room with nobody to read as. Compared against Chat Settings.relay_max_attempts by sync.inbound._fail_or_retry, and against nothing else.",
    "fieldname": "attempts",
    "fieldtype": "Int",
    "label": "Attempts"
+  },
+  {
+   "default": "0",
+   "description": "Defer budget spend, kept SEPARATE from attempts on purpose. A DEFER means an outbound write for this room is still in flight and we cannot yet tell our own echo from a coworker's message; a failed attempt means Google did not answer. Sharing one column made two unrelated ceilings eat each other - three defers left only two real retries before the row was marked Failed, and one transient messages.get timeout permanently shrank that event's defer budget. classify_inbound compares THIS against Chat Settings.echo_defer_budget.",
+   "fieldname": "defer_count",
+   "fieldtype": "Int",
+   "label": "Defer Count"
+  },
+  {
+   "description": "Do not re-drive this row before this moment. A defer's delay has to be DURABLE or it is not a delay: frappe.enqueue exposes no way to reach RQ's scheduler, and RQ's own scheduling lives in the queue Redis a production deploy FLUSHDBs - so the previous 'delay_seconds' argument was dropped on the floor, a DEFER re-enqueued instantly, and three defers burned the whole echo_defer_budget in milliseconds while waiting out nothing. sweep_stuck_inbound_events honours this column, which makes the sweeper's cron interval the real defer granularity (it is scheduled every minute for exactly that reason). Empty is the normal state: a Pub/Sub-delivered row has never asked to wait, and the sweeper treats empty as 'eligible once received_at is older than STUCK_EVENT_MINUTES'.",
+   "fieldname": "available_at",
+   "fieldtype": "Datetime",
+   "label": "Available At",
+   "search_index": 1
   },
   {
    "description": "What this delivery produced, if anything. A batched payload produces many message operations from one row, so this points at the first or only one.",
@@ -135,7 +152,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-08-08 09:00:00.000000",
+ "modified": "2026-08-09 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Chat",
  "name": "Chat Inbound Event",

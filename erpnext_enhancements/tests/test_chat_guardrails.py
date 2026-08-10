@@ -115,22 +115,37 @@ PERMITTED_GOOGLE_HOSTS: frozenset[str] = frozenset(
 	{
 		# the Chat API itself — client.py
 		"chat.googleapis.com",
+		# the Pub/Sub pull consumer — sync/pubsub.py. A THIRD service, again on its own host.
+		# Listed rather than left unnamed on purpose: this check can only catch a host it knows
+		# about, so a new Google surface that is not added here is a call path the guardrail
+		# silently stops guarding.
+		"pubsub.googleapis.com",
 		# the DWD assertion exchange — auth.py
 		"oauth2.googleapis.com",
 		# signJwt, the keyless half of the design — auth.py
 		"iamcredentials.googleapis.com",
 		# the VM's own ADC token — auth.py
 		"metadata.google.internal",
+		# Workspace Events subscriptions — events_client.py. A DIFFERENT service on a
+		# different host from the Chat API, and it is here for the same reason
+		# chat.googleapis.com is: an expired subscription is permanently deleted and cannot
+		# be renewed, so the code that manages one must be findable in a single place.
+		"workspaceevents.googleapis.com",
 	}
 )
 
 #: The modules permitted to name one of :data:`PERMITTED_GOOGLE_HOSTS` in a live string.
-#: Two, because identity and transport are genuinely two concerns: ``auth.py`` mints
-#: tokens and never calls the Chat API; ``client.py`` calls the Chat API and never mints.
+#: Four, because identity, transport, subscription lifecycle and event delivery are genuinely
+#: four concerns: ``auth.py`` mints tokens and never calls an API; ``client.py`` calls the Chat
+#: API and never mints; ``events_client.py`` talks to a different service entirely; and
+#: ``sync/pubsub.py`` drains the topic those subscriptions publish to, which is a third service
+#: again and is authenticated as the **VM** rather than as any coworker.
 TRANSPORT_MODULES: frozenset[Path] = frozenset(
 	{
 		CHAT_DIR / "gchat" / "client.py",
 		CHAT_DIR / "gchat" / "auth.py",
+		CHAT_DIR / "gchat" / "events_client.py",
+		CHAT_DIR / "sync" / "pubsub.py",
 	}
 )
 

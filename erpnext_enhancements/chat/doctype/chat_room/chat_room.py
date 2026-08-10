@@ -23,15 +23,71 @@ text — so what the grant buys back is bounded. ``Chat Room`` stays on the
 assistant-tool denylist regardless, because raw-SQL tooling consults no
 permission layer at all.
 
-Phase 1 scope: schema plus the two normalisations below. No Google call, no
+``seq_high_water`` IS THE SEQUENCE ALLOCATOR, NOT A MIRROR
+-----------------------------------------------------------
+The column's own field description still calls it an *"advisory mirror"* of
+``MAX(seq)`` and says never to allocate from it. Phase 2 supersedes that, and the
+description is the thing that needs the edit:
+:func:`erpnext_enhancements.chat.sync.outbox.allocate_seq` issues
+``UPDATE tabChat Room SET seq_high_water = seq_high_water + 1 WHERE name = %s``
+and reads the value back, both inside the inserting transaction. The ``UPDATE``
+takes an exclusive lock on **one row** — this one — held to commit, which is what
+makes the read-back safe under concurrency. The rejected alternative,
+``MAX(seq) … FOR UPDATE`` over ``tabChat Message``, takes range locks across the
+busiest table in the feature and grows a deadlock surface with the size of the
+room.
+
+``unique(room, seq)`` remains the *guarantee*; this counter is the
+*optimisation* that stops the guarantee ever being tested. Which is exactly why
+:meth:`ChatRoom.validate` refuses to let the counter move backwards: a decrement
+re-issues sequence numbers that already exist on messages, so every subsequent
+insert into that room collides with the unique index, forever, and the error
+names a constraint nobody set on purpose.
+
+Phase 1 scope was schema plus the two normalisations below. No Google call, no
 space provisioning, no relay. ``provisioning_mode`` and ``provisioning_state``
 exist; the automation that reads them does not yet.
 """
 
+import frappe
 from frappe.model.document import Document
+from frappe.utils import cint
 
 
 class ChatRoom(Document):
+	def validate(self) -> None:
+		"""Refuse a backwards ``seq_high_water``. The counter only ever goes up.
+
+		``seq_high_water`` is ``read_only`` on the DocField, so the Desk cannot lower it —
+		but ``read_only`` is a form property and not a constraint, and a script, a fixture
+		or a well-meaning data fix reaches the column regardless. Lowering it hands the next
+		message a ``seq`` that an existing message already holds, and ``unique(room, seq)``
+		then refuses every insert into that room until somebody works out what happened.
+
+		Only *document saves* pass through here. The allocator's raw ``UPDATE`` deliberately
+		does not, which is the point: it is the one writer that may move the counter, it only
+		ever increments, and routing it through a full document save would take a second lock
+		and churn ``modified`` on the room for every message sent.
+		"""
+		if self.is_new():
+			# A new room starts at zero. Not None: `coalesce` in the allocator covers a NULL,
+			# but an explicit zero means the drift check has something to compare from day one.
+			self.seq_high_water = cint(getattr(self, "seq_high_water", None))
+			return
+
+		previous = cint(frappe.db.get_value(self.doctype, self.name, "seq_high_water"))
+		current = cint(getattr(self, "seq_high_water", None))
+		if current < previous:
+			frappe.throw(
+				frappe._(
+					"Chat Room {0}: seq_high_water cannot go backwards ({1} to {2}). It is the "
+					"per-room message sequence allocator, not a statistic — lowering it re-issues "
+					"sequence numbers that existing messages already hold, and unique(room, seq) "
+					"then rejects every new message in this room."
+				).format(self.name, previous, current),
+				title=frappe._("Chat Room"),
+			)
+
 	def before_insert(self) -> None:
 		"""Normalise the two column pairs that back composite UNIQUE indexes.
 

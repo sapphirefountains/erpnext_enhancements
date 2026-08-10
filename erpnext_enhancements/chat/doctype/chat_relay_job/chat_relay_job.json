@@ -12,6 +12,7 @@
   "status",
   "available_at",
   "attempts",
+  "lease_expires_at",
   "reference_section",
   "reference_doctype",
   "reference_name",
@@ -88,6 +89,13 @@
    "fieldname": "attempts",
    "fieldtype": "Int",
    "label": "Attempts"
+  },
+  {
+   "description": "ONE FIELD DOING TWO JOBS, and that is the design rather than an economy. (1) It is the §4.D IN-FLIGHT CLAIM: the set of writes in flight for a room is exactly the rows with status = 'In Progress' AND lease_expires_at > now(), which is what an inbound event checks before deciding it is looking at a foreign message rather than the echo of our own POST. (2) It is the CRASHED-WORKER DETECTOR: a row still In Progress past its lease is a worker that died, and the sweeper reclaims it. No separate claims table and no Redis key - a Redis claim does not survive the deploy FLUSHDB, and during an incident it cannot be read from the desk. CLEANUP IS BY LEASE EXPIRY, NEVER BY A FINALLY BLOCK ALONE: a finally block does not run when the process is killed, which is precisely the case a lease exists for, so a claim released only in Python is a claim held forever.",
+   "fieldname": "lease_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Lease Expires At",
+   "read_only": 1
   },
   {
    "fieldname": "reference_section",
