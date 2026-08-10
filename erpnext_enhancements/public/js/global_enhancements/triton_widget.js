@@ -713,6 +713,11 @@
 	// Briefing as the opening assistant message. Prior conversations remain
 	// reachable through the history picker.
 	async function startDailyBriefing() {
+		// Same guard as newChat(), and deliberately BEFORE the LS_BRIEF stamp below: if we
+		// refuse to show the briefing we must not record that today's was shown, or the
+		// user silently loses it until tomorrow. Clearing the transcript mid-stream has the
+		// same detached-node consequence described on newChat().
+		if (state.streaming) return;
 		localStorage.setItem(LS_BRIEF, todayStr());
 		state.sessionId = null;
 		localStorage.removeItem(LS_SESSION);
@@ -1206,6 +1211,17 @@
 
 	// ---- sending / streaming --------------------------------------------
 	function newChat() {
+		// Refuse mid-stream, exactly as selectSession() and send() do. Without this,
+		// clicking the new-chat pencil while an answer is streaming clears
+		// messages.innerHTML below while pumpText keeps writing into the now-detached
+		// live.wrap: the caret animates on a node nobody can see, finishStreaming runs
+		// against a dead subtree, and the turn is still persisted server-side against the
+		// session the user just abandoned. Nothing throws, so nothing reports it.
+		//
+		// scripts/test_triton_widget_guards.js asserts every transcript-clearing function
+		// carries this line, because this is the third such function and the guard was
+		// missing from two of them.
+		if (state.streaming) return;
 		state.sessionId = null;
 		localStorage.removeItem(LS_SESSION);
 		state.contextRefs = [];

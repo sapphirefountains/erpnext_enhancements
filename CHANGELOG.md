@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.263.2] - 2026-08-10
+
+### Fixed
+
+- **Clicking "new chat" while an answer was streaming silently broke the widget.**
+  `selectSession()` and `send()` both refuse while `state.streaming` is set; `newChat()` and
+  `startDailyBriefing()` did not, and both clear `state.els.messages.innerHTML`.
+
+  The consequence is invisible rather than loud. `pumpText` writes into a `live.wrap` captured
+  in a closure, so once the transcript is cleared the typewriter keeps animating a node that is
+  no longer in the document, `finishStreaming` runs `mermaid` against a dead subtree, and the
+  in-flight turn is still persisted server-side against the session the user just abandoned.
+  Nothing throws and nothing logs; the user sees an empty panel and assumes they misclicked.
+
+  Found by auditing the widget source against ADR 0009 Appendix A while opening Phase 3 — the
+  appendix records the two guards that exist and never noticed the two that do not. Both are
+  fixed, because they are one defect in two places and fixing half of it is worse than fixing
+  none. In `startDailyBriefing()` the guard sits deliberately **before** the `LS_BRIEF` stamp:
+  refusing to show the briefing must not record it as shown, or the user loses today's silently.
+
+### Added
+
+- `scripts/test_triton_widget_guards.js`, wired into CI as its own node step. It asserts the
+  rule rather than the instance — *every* function that clears the transcript or switches its
+  session must refuse while streaming — and asserts **ordering**, because a guard placed after
+  the destructive line is decoration. Verified against three mutations: removing the guard,
+  moving it after the clear, and stamping `LS_BRIEF` before refusing. All three fail the script.
+
+  This matters more than one bug fix: Phase 3 rewires session switching entirely, and this is a
+  rule that is easy to state, easy to agree with, and easy to forget on the next function.
 ## [1.263.1] - 2026-08-10
 
 ### Fixed
