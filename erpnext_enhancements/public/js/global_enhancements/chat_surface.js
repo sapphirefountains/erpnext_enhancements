@@ -237,9 +237,82 @@ export class BubbleChatSurface {
 		}
 	}
 
+	// ------------------------------------------------------------------ the doc-room join
+	//
+	// **Binding a handler is not subscribing.** `frappe.realtime.on(name, fn)` registers a
+	// callback; the server only DELIVERS a room's events to sockets that have joined that
+	// room. The bubble listened for all nine chat events and never emitted `doc_subscribe`,
+	// so it received nothing — silently, because there is no error for "you are not in the
+	// room you never asked to join".
+	//
+	// Only the ACTIVE room is joined. Unread counters ride the user room
+	// (`chat_unread_updated`), which the server joins from the authenticated session with no
+	// client verb at all, so the badge works without subscribing to anything.
+	//
+	// Two traps in Frappe's client, both read from `socketio_client.js` (v16):
+	//
+	//  1. `doc_subscribe` is throttled to **one per second GLOBALLY** via
+	//     `frappe.flags.doc_subscribe`, and a throttled call logs "throttled" and returns —
+	//     it does not queue and it does not add to `open_docs`. Opening a room within a
+	//     second of any form subscribing silently never joins. Hence the verify-and-retry.
+	//  2. `open_docs` is **never replayed on reconnect** — nothing iterates it in the connect
+	//     handler — and `doc_subscribe` early-returns when the key is present. So after any
+	//     disconnect the client believes it is subscribed and refuses to re-emit, forever.
+	//     The GCLB will disconnect us, so this is the common case, not the exotic one.
+
+	_docKey(room) {
+		return "Chat Room:" + room;
+	}
+
+	_realtime() {
+		const rt = window.frappe && frappe.realtime;
+		return rt && typeof rt.doc_subscribe === "function" ? rt : null;
+	}
+
+	/** Join `room`'s document room, retrying past the 1/sec throttle. */
+	joinRoom(room, attempt) {
+		const rt = this._realtime();
+		if (!rt || !room) return;
+		rt.doc_subscribe("Chat Room", room);
+
+		// `open_docs` gains the key only when the emit actually happened, so it distinguishes
+		// "throttled, never sent" from "sent". It does NOT prove the server accepted the join
+		// — a refused join is silent and never settles — which is why the read paths re-fetch
+		// regardless and never treat a subscribe as delivery.
+		const sent = rt.open_docs && rt.open_docs.has(this._docKey(room));
+		if (sent || (attempt || 0) >= 4) return;
+		clearTimeout(this._joinTimer);
+		this._joinTimer = setTimeout(() => {
+			if (this.room === room) this.joinRoom(room, (attempt || 0) + 1);
+		}, 1100);
+	}
+
+	leaveRoom(room) {
+		const rt = this._realtime();
+		if (!rt || !room || typeof rt.doc_unsubscribe !== "function") return;
+		rt.doc_unsubscribe("Chat Room", room);
+	}
+
+	/**
+	 * Re-join after a reconnect, clearing Frappe's stale bookkeeping first.
+	 *
+	 * Without the delete, `doc_subscribe` sees the key still in `open_docs` and returns
+	 * immediately — so the one call that matters after a disconnect is the one call the
+	 * client refuses to make.
+	 */
+	rejoinAfterReconnect() {
+		const rt = this._realtime();
+		if (!rt || !this.room) return;
+		if (rt.open_docs) rt.open_docs.delete(this._docKey(this.room));
+		this.joinRoom(this.room);
+		this.resync();
+	}
+
 	async openRoom(room) {
 		this.flushRead(true);
+		if (this.room && this.room !== room) this.leaveRoom(this.room);
 		this.room = room;
+		this.joinRoom(room);
 		this.readBatcher.reset();
 		try {
 			this.roomDetail = await call(M.ROOM, { room });
@@ -270,6 +343,7 @@ export class BubbleChatSurface {
 
 	closeRoom() {
 		this.flushRead(true);
+		this.leaveRoom(this.room);
 		this.room = null;
 		this.roomDetail = null;
 		this.messages = [];

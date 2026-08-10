@@ -662,6 +662,31 @@ explicit `room=` (the only thing that short-circuits the whole chain) *and*
 two poisoned event names with a `ValueError`** rather than documenting them as a hazard.
 Payloads carry identifiers and let the client fetch — never file bytes, never long bodies.
 
+### Granting `Chat User` is a ROLLOUT STEP, and nothing does it for you
+
+`patches/seed_chat_roles.py` **creates** `Chat User` and `Chat Auditor` and deliberately
+stops — its docstring says so and ends *"This command has not been run."* It still has not
+been, and on 2026-08-10 that produced a live pilot in which **nobody held the role**.
+
+`Chat Room` carries exactly one DocPerm: `read` for `Chat User`. That single row is what
+lets the realtime doc-room join reach `chat_room_has_permission` at all. Without it:
+
+| path | works? | why |
+|---|---|---|
+| The whole REST surface (`chat/api/**`) | **yes** | raw SQL + `membership_filter_sql`, and `require_room` calls the hook directly — no DocPerm in the way |
+| The realtime doc-room join | **no** | `frappe.realtime.has_permission` → `frappe.has_permission(..., throw=True)` — the FULL stack, DocPerm first |
+
+So chat looks like it works — rooms list, messages send and store — and **no live update ever
+arrives**, because a refused join is silent and its promise never settles. Measured on prod:
+`chat_room_has_permission` returned `True` and `frappe.has_permission` returned `False` for
+the same user and room.
+
+**Grant it directly to a user with no Role Profile; grant it via a profile to a user who has
+one.** Both directions of that rule are load-bearing and the patch documents them: a role
+granted directly to a *profiled* user is wiped on the next save of that user, and assigning a
+profile to a *profile-less* user regenerates their roles from it — wiping `System Manager`.
+Check `User.role_profile_name` before choosing, every time.
+
 ### The realtime event contract
 
 Every event this package publishes, and which room it belongs in. The client generates its

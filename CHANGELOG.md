@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.265.1] - 2026-08-10
+
+### Fixed
+
+- **The floating bubble listened for chat events and never joined the room, so it received
+  nothing — silently, forever.** Found the first time a real message was sent between two
+  people on production.
+
+  `frappe.realtime.on(name, fn)` binds a callback; the server only *delivers* a room's events
+  to sockets that emitted `doc_subscribe` for that room. The bubble did the first and never
+  the second. There is no error for "you are not in the room you never asked to join", so the
+  client looked perfectly wired: the message stored, the room appeared, and no live update
+  ever arrived for either participant. The SPA (`chat/socket.js`) always joined correctly;
+  only the bubble was wrong, which is exactly the kind of asymmetry a rule written for one
+  implementation misses.
+
+  Two further traps came with the fix, both read out of Frappe v16's `socketio_client.js`
+  rather than assumed:
+
+  * **`doc_subscribe` is throttled to one per second GLOBALLY** (`frappe.flags.doc_subscribe`),
+    and a throttled call logs "throttled", returns, does not queue, and does not add to
+    `open_docs`. Opening a room within a second of any form subscribing therefore never
+    joined. The fix verifies the emit actually happened by checking `open_docs` and retries
+    past the window.
+  * **`open_docs` is never replayed on reconnect** — nothing iterates it in the connect
+    handler — and `doc_subscribe` early-returns while the key is present. So after any
+    disconnect the client believed it was subscribed and refused to re-emit, permanently. The
+    load balancer guarantees a disconnect, so this was the common path, not the exotic one.
+    The reconnect handler now clears our own key before re-joining.
+
+  Only the **active** room is joined. Unread counters ride the user room
+  (`chat_unread_updated`), which the server joins from the authenticated session with no
+  client verb, so the badge never depended on this.
+
+### Added
+
+- **`scripts/test_chat_source_rules.js` now enforces "listening is not joining"** across both
+  surfaces — the SPA's own socket client and the bubble borrowing Desk's `frappe.realtime` —
+  plus the reconnect half. Mutation-tested in three directions. A rule that only covers the
+  implementation you happened to look at is how the other one regressed in the first place.
+
+### Changed
+
+- **`chat/README.md` now documents that granting `Chat User` is a rollout step nothing performs
+  for you.** `patches/seed_chat_roles.py` creates the role and deliberately stops; on
+  2026-08-10 that produced a live pilot in which the role existed and **nobody held it**.
+
+  The consequence is worth stating precisely, because it looks like the feature working: the
+  entire REST surface functions (raw SQL plus `membership_filter_sql`, and `require_room`
+  calls the permission hook directly), while the realtime join fails — it goes through
+  `frappe.has_permission`, the full stack, which checks DocPerm first. Measured on production:
+  the hook returned `True` and `frappe.has_permission` returned `False` for the same user and
+  the same room. The README now also records which direction to grant from, since granting
+  directly to a profiled user is silently wiped and assigning a profile to a profile-less user
+  wipes `System Manager`.
+
 ## [1.265.0] - 2026-08-10
 
 ### Added
