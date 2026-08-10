@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.266.1] - 2026-08-10
+
+### Fixed
+
+Three defects in the v1.266.0 Gantt export, all found in the first real export
+off production (PRJ-00754, 29 tasks).
+
+- **Dependency arrows were never drawn.** DHTMLX renders them on screen and the
+  Schedule tab passes `dependencies: "depends_on"`, but the SVG renderer
+  ignored `links` entirely, so every export silently lost them. They are now
+  elbow polylines with arrowheads, read from the live datastore via
+  `getLinks()` rather than `widget.data.links` — lazily expanded branches merge
+  their links in through `add_rows()` and never reach the last server response.
+  A link whose successor starts at or before its predecessor finishes (the
+  common case here, where dependencies get recorded before dates do) routes
+  back through the gutter between the two rows instead of drawing a
+  right-to-left line straight through both bars. Capped at 300, past which the
+  arrows obscure the bars they connect.
+- **A project whose tasks all sit on one day rendered as a sliver in an empty
+  box.** ERPNext task templates land every row on the creation date until
+  somebody schedules them, so all 29 of PRJ-00754's tasks sat on 2026-08-10 —
+  a 2-day span, which at the widget's default week zoom is 22px of chart. A
+  hard 240px floor on the timeline padded the remainder with dead space instead
+  of rescaling, so every bar was crushed against the left edge, `Aug 2026`
+  truncated to `A…` and the week cell to `10 …`. Fixed three ways: a range
+  shorter than a week is padded (centred) for calendar context, the day width
+  is **stretched to fill** the minimum rather than leaving it empty, and the
+  scale now steps **in** (week → day) when the chart is being stretched anyway
+  — gated on being under the minimum, so a normal-length project is never
+  zoomed past what the caller asked for. The same chart now reads `Aug 2026`
+  over columns `8 9 10 11 12 13 14`.
+- **Summary-bar end caps collapsed into a blob.** The two 2px caps only read as
+  caps when there is bar between them; at 11px wide they merged with the body
+  into a dark glyph that looked like a broken arrowhead. Dropped below 10px.
+
+The "scaled to {zoom} view to fit" footer note now appears only when the export
+is **coarser** than the screen. Stepping in needs no apology, and the note would
+have been nonsense on a chart that had room to spare.
+
 ## [1.266.0] - 2026-08-10
 
 ### Added

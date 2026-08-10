@@ -86,6 +86,25 @@ frappe.provide("erpnext_enhancements.gantt_export");
 	};
 	const MAX_TIMELINE_W = MAX_W.vector;
 
+	// The other end of the same problem. A project whose tasks all sit on one
+	// day (very common here — ERPNext task templates land every row on the
+	// creation date until somebody schedules them) has a 1-2 day span, which
+	// at week zoom is 22px of chart. Two things follow, and both were visible
+	// in the first real export:
+	//   - the timeline box has a minimum width, so 22px of content sat in a
+	//     240px box and every bar was crushed against the left edge;
+	//   - a 22px-wide month cell truncates "Aug 2026" to "A…".
+	// So a short span gets BOTH: the range is padded to MIN_SPAN_DAYS for
+	// calendar context, and the day width is stretched to fill MIN_TIMELINE_W
+	// instead of leaving the remainder empty.
+	const MIN_TIMELINE_W = 420;
+	const MIN_SPAN_DAYS = 7;
+
+	// Dependency arrows. Past this many the chart is a hairball and the arrows
+	// obscure the bars they connect, so they are dropped with a note rather
+	// than drawn.
+	const MAX_LINKS = 300;
+
 	const FONT =
 		"Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -107,6 +126,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		bar_group: "#475569",
 		bar_late: "#dc2626",
 		milestone: "#7c3aed",
+		link: "#64748b",
 		white: "#ffffff",
 	};
 
@@ -290,6 +310,34 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		return out;
 	}
 
+	/**
+	 * Dependency links currently in the datastore, as `{source, target}`.
+	 *
+	 * Read from the live instance rather than `widget.data.links`, because
+	 * lazily-expanded branches merge their links in through `add_rows()` and
+	 * never reach the last server response.
+	 */
+	function collect_links(widget) {
+		const g = widget && widget.gantt;
+		if (!g) {
+			return [];
+		}
+		let raw = [];
+		try {
+			if (typeof g.getLinks === "function") {
+				raw = g.getLinks() || [];
+			}
+		} catch (e) {
+			raw = [];
+		}
+		if (!raw.length && widget.data && Array.isArray(widget.data.links)) {
+			raw = widget.data.links;
+		}
+		return raw
+			.filter((l) => l && l.source != null && l.target != null)
+			.map((l) => ({ source: String(l.source), target: String(l.target) }));
+	}
+
 	/** Overall [min start, max end) across rows, padded to whole days. */
 	function date_range(rows) {
 		let min = null;
@@ -306,7 +354,18 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			const today = start_of_day(new Date());
 			return { start: today, end: add_days(today, 30) };
 		}
-		return { start: start_of_day(min), end: add_days(start_of_day(max), 1) };
+		let start = start_of_day(min);
+		let end = add_days(start_of_day(max), 1);
+		// Pad a degenerate span so the chart reads as a calendar rather than
+		// one enormous column. Centred, so the work stays in the middle.
+		const span = day_span(start, end);
+		if (span < MIN_SPAN_DAYS) {
+			const extra = MIN_SPAN_DAYS - span;
+			const before = Math.floor(extra / 2);
+			start = add_days(start, -before);
+			end = add_days(end, extra - before);
+		}
+		return { start: start, end: end };
 	}
 
 	/**
@@ -327,6 +386,20 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		}
 		while (i < ZOOM_ORDER.length - 1 && span_days * PX_PER_DAY[ZOOM_ORDER[i]] > max_w) {
 			i++;
+		}
+		// And step IN when the span is so short that the chart is being
+		// stretched to the minimum width anyway. A one-week project at the
+		// widget's default week zoom draws as two enormous week cells labelled
+		// "3 Aug" / "10 Aug"; the same width spent on day columns reads as a
+		// calendar and puts the today marker in an identifiable place. Gated on
+		// being under MIN_TIMELINE_W so a normal-length project is never
+		// zoomed past what the caller asked for.
+		while (
+			i > 0 &&
+			span_days * PX_PER_DAY[ZOOM_ORDER[i]] < MIN_TIMELINE_W &&
+			span_days * PX_PER_DAY[ZOOM_ORDER[i - 1]] <= max_w
+		) {
+			i--;
 		}
 		return ZOOM_ORDER[i];
 	}
@@ -402,6 +475,81 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		return { top: top, bottom: bottom, grid: grid };
 	}
 
+	/**
+	 * Finish-to-start dependency arrows, as elbow polylines.
+	 *
+	 * The API only emits type "0" (finish-to-start), so every arrow runs from
+	 * the predecessor's END to the successor's START. Two routings:
+	 *
+	 *   FORWARD (the successor starts after the predecessor finishes) — out of
+	 *     the end, across, and into the start. The vertical leg is placed one
+	 *     ARROW_GAP short of the target so the horizontal approach is always
+	 *     visible, otherwise the arrowhead appears to grow straight out of a
+	 *     vertical line and the direction is unreadable.
+	 *
+	 *   BACKWARD (the successor starts at or before the predecessor finishes —
+	 *     common in ERPNext, where dependencies are recorded but dates are
+	 *     not, so both tasks sit on the same day) — a straight line would run
+	 *     right-to-left through both bars. Instead it steps out to the right,
+	 *     drops into the gutter BETWEEN the two rows, tracks back left, and
+	 *     comes down into the target's start. That is the standard
+	 *     Gantt-around-the-back route and it keeps the arrow off the bars.
+	 */
+	function draw_links(links, geom) {
+		const g = el("g", { fill: "none", stroke: C.link, "stroke-width": 1 });
+		const GAP = 7;
+		const HEAD = 4;
+		links.forEach((l) => {
+			const s = geom[l.source];
+			const t = geom[l.target];
+			// The arrowhead occupies the last few px, so the line stops short
+			// of the bar rather than overlapping it.
+			const tip = t.x1 - 1;
+			const enter = tip - HEAD;
+			let points;
+			if (enter > s.x2 + GAP) {
+				const mx = Math.max(s.x2 + GAP, enter - GAP);
+				points = [
+					[s.x2, s.cy],
+					[mx, s.cy],
+					[mx, t.cy],
+					[enter, t.cy],
+				];
+			} else {
+				// Route through the gutter between the two rows. When the rows
+				// are adjacent this is the row boundary; when they are not it
+				// still clears both bars.
+				const gutter = t.cy > s.cy ? s.cy + ROW_H / 2 : s.cy - ROW_H / 2;
+				const back = Math.min(enter - GAP, s.x2 + GAP);
+				points = [
+					[s.x2, s.cy],
+					[s.x2 + GAP, s.cy],
+					[s.x2 + GAP, gutter],
+					[back, gutter],
+					[back, t.cy],
+					[enter, t.cy],
+				];
+			}
+			g.appendChild(
+				el("polyline", { points: points.map((p) => `${round2(p[0])},${round2(p[1])}`).join(" ") })
+			);
+			g.appendChild(
+				el("path", {
+					d: `M ${round2(tip)} ${round2(t.cy)} L ${round2(tip - HEAD)} ${round2(t.cy - HEAD)} L ${round2(
+						tip - HEAD
+					)} ${round2(t.cy + HEAD)} Z`,
+					fill: C.link,
+					stroke: "none",
+				})
+			);
+		});
+		return g;
+	}
+
+	function round2(n) {
+		return Math.round(n * 100) / 100;
+	}
+
 	/* ------------------------------------------------------------------ *
 	 * The renderer
 	 * ------------------------------------------------------------------ */
@@ -420,8 +568,12 @@ frappe.provide("erpnext_enhancements.gantt_export");
 		const max_w = opts.max_width || MAX_TIMELINE_W;
 		const requested_zoom = opts.zoom || "week";
 		const zoom = pick_zoom(span, requested_zoom, max_w);
-		const ppd = PX_PER_DAY[zoom];
-		const timeline_w = Math.min(max_w, Math.max(240, span * ppd));
+		// Stretch the day width so a short project FILLS the minimum rather
+		// than drawing hairline columns in a mostly-empty box (see
+		// MIN_TIMELINE_W). Never shrink below the preset — that direction is
+		// pick_zoom's job, and shrinking here would undo it.
+		const ppd = Math.max(PX_PER_DAY[zoom], Math.min(max_w, MIN_TIMELINE_W) / span);
+		const timeline_w = Math.min(max_w, Math.max(1, span * ppd));
 		const scale = build_scale(range, zoom, ppd);
 
 		// Date columns are worth their width only when there is room; on a
@@ -627,6 +779,9 @@ frappe.provide("erpnext_enhancements.gantt_export");
 
 		/* ---- rows ---- */
 		const body = el("g", {});
+		// Bar geometry per row id, so dependency arrows have endpoints to
+		// connect once every bar has been placed.
+		const geom = {};
 		rows.forEach((r, i) => {
 			const y = body_y + i * ROW_H;
 			if (i % 2 === 1) {
@@ -680,6 +835,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			const x2 = tx0 + day_span(range.start, r.end) * ppd;
 			const w = Math.max(2, x2 - x1);
 			const by = y + (ROW_H - BAR_H) / 2;
+			geom[r.id] = { x1: x1, x2: x1 + w, cy: y + ROW_H / 2 };
 
 			if (r.type === "milestone" || (w <= 3 && r.progress === null)) {
 				const cy = y + ROW_H / 2;
@@ -696,8 +852,19 @@ frappe.provide("erpnext_enhancements.gantt_export");
 				body.appendChild(
 					el("rect", { x: x1, y: by + 3, width: w, height: 6, fill: C.bar_group, rx: 2 })
 				);
-				body.appendChild(el("rect", { x: x1, y: by + 3, width: 2, height: 11, fill: C.bar_group }));
-				body.appendChild(el("rect", { x: x2 - 2, y: by + 3, width: 2, height: 11, fill: C.bar_group }));
+				// The two 2px end caps only read as caps when there is bar
+				// between them. Below ~10px they merge with the body into an
+				// solid blob that looks like a broken glyph rather than a
+				// summary bar — which is exactly how a same-day project
+				// rendered before the scale fixes above.
+				if (w >= 10) {
+					body.appendChild(
+						el("rect", { x: x1, y: by + 3, width: 2, height: 11, fill: C.bar_group })
+					);
+					body.appendChild(
+						el("rect", { x: x1 + w - 2, y: by + 3, width: 2, height: 11, fill: C.bar_group })
+					);
+				}
 			} else {
 				const overdue = r.end < new Date() && (r.progress == null || r.progress < 1);
 				body.appendChild(
@@ -746,6 +913,14 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			}
 		});
 		svg.appendChild(body);
+
+		/* ---- dependency arrows ---- */
+		// Drawn AFTER the bars so an arrow is never hidden under one, and
+		// before the frame so the frame's rules still sit on top.
+		const links = (opts.links || []).filter((l) => geom[l.source] && geom[l.target]);
+		if (links.length && links.length <= MAX_LINKS) {
+			svg.appendChild(draw_links(links, geom));
+		}
 
 		/* ---- frame + column rules (drawn last, over the row fills) ---- */
 		const frame = el("g", {});
@@ -804,10 +979,12 @@ frappe.provide("erpnext_enhancements.gantt_export");
 				__("Generated {0}", [fmt_date(new Date())])
 			)
 		);
-		// Say so when the export is coarser than what is on screen — otherwise a
+		// Say so when the export is COARSER than what is on screen — otherwise a
 		// reader compares the file against the chart, sees different columns,
-		// and reasonably concludes the export is wrong.
-		if (zoom !== requested_zoom) {
+		// and reasonably concludes the export is wrong. Stepping in needs no
+		// note: a finer scale shows strictly more, and "scaled to day view to
+		// fit" would be nonsense on a chart that had room to spare.
+		if (ZOOM_ORDER.indexOf(zoom) > ZOOM_ORDER.indexOf(requested_zoom)) {
 			svg.appendChild(
 				el(
 					"text",
@@ -899,6 +1076,9 @@ frappe.provide("erpnext_enhancements.gantt_export");
 			columns: opts.columns,
 			show_today: opts.show_today,
 			max_width: opts.max_width || MAX_W.vector,
+			// Dependency arrows are drawn on screen by DHTMLX; without this
+			// they were silently absent from every export.
+			links: opts.links === false ? [] : collect_links(widget),
 		});
 	}
 
@@ -971,6 +1151,7 @@ frappe.provide("erpnext_enhancements.gantt_export");
 	}
 
 	NS.collect_rows = collect_rows;
+	NS.collect_links = collect_links;
 	NS.render_svg = render_svg;
 	NS.svg_string = svg_string;
 	NS.svg_to_png = svg_to_png;
