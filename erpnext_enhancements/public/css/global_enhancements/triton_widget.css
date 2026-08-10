@@ -1112,3 +1112,44 @@
 .triton-sources-manifest .triton-source:not(.is-cited) {
 	opacity: 0.68;
 }
+
+/* The bubble's one-line people picker (group creation is SPA-only — naming a room
+   and picking a roster is not a thing to do in a 380px strip). */
+.triton-chat-newrow {
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--border-color, #e2e6e9);
+}
+.triton-chat-newinput {
+	width: 100%;
+	padding: 6px 9px;
+	border: 1px solid var(--border-color, #e2e6e9);
+	border-radius: 8px;
+	font: inherit;
+}
+.triton-chat-people {
+	border-bottom: 1px solid var(--border-color, #e2e6e9);
+}
+.triton-chat-people.is-hidden {
+	display: none;
+}
+.triton-chat-person {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 44px;
+	padding: 6px 10px;
+	border: none;
+	background: none;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.triton-chat-person:hover {
+	background: var(--subtle-fg, #f1f3f5);
+}
+.triton-chat-person-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

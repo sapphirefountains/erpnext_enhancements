@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.264.2] - 2026-08-10
+## [1.265.0] - 2026-08-10
+
+### Added
+
+- **You can now start a conversation.** Phase 3 shipped the whole client and the whole read
+  surface and left no way to *make* a room — Phase 2 creates rooms three ways (the org sweep,
+  per-document rooms, inbound provisioning from Google), all of which need an org structure or
+  a document to hang off. On an empty site that produced a correct, working, completely empty
+  application, which is what turning the pilot on would have shown.
+
+  `chat/api/conversations.py` adds `create_direct_message`, `create_group` and
+  `search_people`, with a "+" picker in the SPA sidebar and a one-line "Message someone…"
+  search in the floating bubble. Group creation is SPA-only: naming a room and choosing a
+  roster is not a thing to do in a 380px strip.
+
+  **Nothing here is a second room creator.** Both writes go through the helpers Phase 2
+  already made race-safe — `provisioning._insert_room_deduped` (probe, insert, treat a
+  composite-unique collision as success) and `membership.insert_room_member` (a
+  `unique(room, user)` collision means "already a member", which is what the caller wanted).
+  Reaching across a module boundary for an underscore-prefixed helper is the deliberate trade:
+  the alternative is a second implementation of "create a room without duplicating one", and
+  both of those docstrings exist because that rule was got wrong the first time.
+
+  **A DM cannot be created twice.** `unique(dm_user_1, dm_user_2)` is a real index and
+  `ChatRoom.before_insert` sorts the pair lexicographically, so A→B and B→A are one row
+  whoever clicks first. The endpoint therefore takes no lock — it probes in the *same* sorted
+  order the index uses and lets the index settle the race it cannot see. Probing in the
+  caller's order instead would find the existing room exactly when the caller's address sorts
+  first and miss it the other half of the time, eventually producing two Google spaces for one
+  pair of people. There is a test for the sort, and it is mutation-tested.
+
+  **A group is deliberately not deduplicated.** Two rooms may legitimately share a title —
+  "Riverwalk" the design review and "Riverwalk" the install crew are different conversations.
+  Only DMs and document rooms have an identity the database can enforce; a group's is that
+  somebody made it. The client guards the double-click; the server does not pretend a title is
+  a key.
+
+  Rosters are capped at 50 on creation — a blast-radius limit rather than a schema one, since
+  a fat-fingered select-all eventually provisions a large Google space and this codebase has
+  no `spaces.delete` call on purpose (deleting a space takes the conversation with it).
+
+### Changed
+
+- **`test_chat_api_contracts.py` now asserts on CALL nodes, not source text.** A mutation test
+  caught the previous form passing after the calls were ripped out, because the module
+  docstring names both helpers at length and a substring scan was satisfied by the prose. It
+  also scopes the member-row assertion **per function**, since module-wide presence is
+  satisfied by whichever path still has it — "the group path stopped creating member rows"
+  read as fine while it was not. Both gaps were found by mutation, not by review.
 
 Seven defects in v1.264.1, found by an adversarial review of that change — four independent
 lenses over the diff, each finding then handed to a separate agent whose only job was to

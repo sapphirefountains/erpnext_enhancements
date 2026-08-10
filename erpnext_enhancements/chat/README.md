@@ -117,6 +117,7 @@ are written from day one.
 | `permissions.py` | `permission_query_conditions` and `has_permission` for the four user-facing DocTypes, plus `membership_filter_sql` / `visible_room_names` for raw SQL. Read its module docstring before writing any query here. |
 | `links.py` | `build_message_deep_link()` — one function, three consumers (the SPA router, the notification deep link, Triton's citation resolver). Written in Phase 1 precisely so those three do not diverge; `public/js/chat/routes.js` and `tests/test_chat_api_contracts.py` assert the same route table on both sides. |
 | `api/_common.py` | **New in Phase 3.** The gate (`require_session` / `require_room` / `require_message`) and the serialisers. **The only place a message body is emitted**, which is what makes "a deleted row cannot leak its text" structural rather than a rule four read paths have to remember. |
+| `api/conversations.py` | **New in v1.265.0.** Starting a conversation — the one thing Phase 3 shipped without. `create_direct_message` (idempotent: `unique(dm_user_1, dm_user_2)` plus the controller's canonical sort mean A→B and B→A are one room), `create_group`, and the people picker's `search_people`. **Not a second room creator** — both writes go through Phase 2's already-race-safe `_insert_room_deduped` and `insert_room_member`. |
 | `api/rooms.py` | **New in Phase 3.** Room list (zero joins — it renders from the denormalised `last_message_*` columns), room detail, member list, the SPA bootstrap, and the Redis-backed `last_open_room` hint. |
 | `api/history.py` | **New in Phase 3.** Transcript paging, thread paging, and the "page containing this message" read a deep link resolves to. **Keyset on `seq`, never `OFFSET`, never a timestamp.** |
 | `api/compose.py` | **New in Phase 3.** Send / edit / delete and the upload gate. Goes through `sync.outbox.insert_message` rather than around it, so Phase 2's document events still do all the work and Phase 3 adds no second copy of any of it. Idempotent on `client_message_id`, catching **both** `UniqueValidationError` and `DuplicateEntryError`. |
@@ -322,6 +323,9 @@ function that never calls a gate.
 
 | Path | What it does |
 |---|---|
+| `chat.api.conversations.create_direct_message` | Open (or create) the DM with one person. Idempotent — clicking somebody you already talk to opens that room. |
+| `chat.api.conversations.create_group` | A named group room, caller as Manager. Deliberately **not** deduplicated: two rooms may legitimately share a title, and only DMs and document rooms have an identity the database can enforce. |
+| `chat.api.conversations.search_people` | The picker used *before* a room exists, so unlike `search_mention_targets` it is not room-scoped. Reads `tabUser` only. |
 | `chat.api.rooms.get_bootstrap` | Everything the SPA needs for its first frame, in one round trip. Deliberately **not** `extend_bootinfo`: bootinfo is serialised into every desk page load for every user, and the room list belongs to the one page that renders it. |
 | `chat.api.rooms.get_rooms` / `get_room` / `get_members` | The room list (zero joins), room detail plus roster, roster alone. |
 | `chat.api.rooms.set_last_open_room` | §4.3 tier 3. **Redis, not a DocType**, debounced server-side to one write per 30 s per user. It is a hint: losing it costs one click, which does not justify a table. A prod deploy flushes Redis, so the first visit after a deploy lands on the room list — documented behaviour, not a bug. |

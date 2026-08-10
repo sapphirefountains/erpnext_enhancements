@@ -190,6 +190,14 @@ class ChatApp {
 		this.els.sidebar = el("nav", { class: "ee-sidebar", "aria-label": "Conversations" }, [
 			el("div", { class: "ee-sidebar-head" }, [
 				el("h1", { class: "ee-sidebar-title", text: "Chat" }),
+				(this.els.newConversation = el("button", {
+					class: "ee-icon-btn ee-new-conversation",
+					type: "button",
+					title: "New conversation",
+					"aria-label": "New conversation",
+					text: "＋",
+					onclick: () => this.openPeoplePicker(),
+				})),
 				(this.els.markAll = el("button", {
 					class: "ee-link-btn",
 					type: "button",
@@ -432,6 +440,227 @@ class ChatApp {
 				this.renderRoomList();
 			})
 			.catch(() => this.renderRoomList());
+	}
+
+	// ------------------------------------------------------------------ new conversation
+
+	/**
+	 * The people picker. One dialog, two outcomes: click a person to open the DM, or switch to
+	 * group mode to name a room and pick several.
+	 *
+	 * A DM is **idempotent server-side** (`unique(dm_user_1, dm_user_2)` plus a canonical sort),
+	 * so clicking somebody you already have a conversation with opens it rather than creating a
+	 * second one. A group is not deduplicated — two rooms may legitimately share a name — so the
+	 * only guard against a double-click is the one below, which disables the button while the
+	 * call is in flight.
+	 */
+	openPeoplePicker() {
+		const state = { mode: "dm", selected: new Map(), busy: false };
+
+		const search = el("input", {
+			class: "ee-input",
+			type: "search",
+			placeholder: "Search people",
+			"aria-label": "Search people",
+			oninput: () => this.debouncedPeopleSearch(search.value, results, state),
+			onkeydown: (ev) => {
+				// Same IME rule as every other Enter handler in chat.
+				if (isComposingKey(ev)) return;
+				if (ev.key === "Escape") close();
+			},
+		});
+		const results = el("ul", { class: "ee-people-list", role: "listbox" });
+		const groupName = el("input", {
+			class: "ee-input is-hidden",
+			type: "text",
+			placeholder: "Group name",
+			"aria-label": "Group name",
+			maxlength: "140",
+		});
+		const createBtn = el("button", {
+			class: "ee-primary-btn is-hidden",
+			type: "button",
+			text: "Create group",
+			onclick: () => submitGroup(),
+		});
+		const modeBtn = el("button", {
+			class: "ee-link-btn",
+			type: "button",
+			text: "Create a group instead",
+			onclick: () => toggleMode(),
+		});
+		const error = el("div", { class: "ee-picker-error is-hidden", role: "alert" });
+
+		const overlay = el(
+			"div",
+			{
+				class: "ee-modal",
+				role: "dialog",
+				"aria-modal": "true",
+				"aria-label": "New conversation",
+				onclick: (ev) => {
+					if (ev.target === overlay) close();
+				},
+			},
+			[
+				el("div", { class: "ee-modal-box" }, [
+					el("div", { class: "ee-modal-head" }, [
+						el("h2", { class: "ee-modal-title", text: "New conversation" }),
+						el("button", {
+							class: "ee-icon-btn",
+							type: "button",
+							"aria-label": "Close",
+							text: "✕",
+							onclick: () => close(),
+						}),
+					]),
+					groupName,
+					search,
+					error,
+					results,
+					el("div", { class: "ee-modal-foot" }, [modeBtn, createBtn]),
+				]),
+			]
+		);
+
+		const onKey = (ev) => {
+			if (ev.key === "Escape") close();
+		};
+		const close = () => {
+			document.removeEventListener("keydown", onKey);
+			overlay.remove();
+			this.els.newConversation.focus();
+		};
+		const fail = (err) => {
+			error.textContent = (err && err.message) || "That did not work.";
+			error.classList.remove("is-hidden");
+		};
+
+		const toggleMode = () => {
+			state.mode = state.mode === "dm" ? "group" : "dm";
+			const group = state.mode === "group";
+			groupName.classList.toggle("is-hidden", !group);
+			createBtn.classList.toggle("is-hidden", !group);
+			modeBtn.textContent = group ? "Message one person instead" : "Create a group instead";
+			state.selected.clear();
+			this.debouncedPeopleSearch(search.value, results, state);
+			(group ? groupName : search).focus();
+		};
+
+		const submitGroup = async () => {
+			if (state.busy) return;
+			state.busy = true;
+			createBtn.disabled = true;
+			try {
+				const room = await call(M.NEW_GROUP, {
+					title: groupName.value,
+					members: Array.from(state.selected.keys()),
+				});
+				close();
+				await this.absorbNewRoom(room);
+			} catch (err) {
+				fail(err);
+			} finally {
+				state.busy = false;
+				createBtn.disabled = false;
+			}
+		};
+
+		state.startDm = async (user) => {
+			if (state.busy) return;
+			state.busy = true;
+			try {
+				const room = await call(M.NEW_DM, { user });
+				close();
+				await this.absorbNewRoom(room);
+			} catch (err) {
+				fail(err);
+			} finally {
+				state.busy = false;
+			}
+		};
+
+		document.addEventListener("keydown", onKey);
+		document.body.appendChild(overlay);
+		search.focus();
+		this.debouncedPeopleSearch("", results, state);
+	}
+
+	debouncedPeopleSearch(query, results, state) {
+		clearTimeout(this._peopleTimer);
+		this._peopleTimer = setTimeout(async () => {
+			let people = [];
+			try {
+				people = (await call(M.PEOPLE, { query })) || [];
+			} catch (e) {
+				people = [];
+			}
+			clear(results);
+			if (!people.length) {
+				results.appendChild(el("li", { class: "ee-people-empty", text: "Nobody found." }));
+				return;
+			}
+			for (const person of people) {
+				results.appendChild(this.renderPersonRow(person, state));
+			}
+		}, 150);
+	}
+
+	renderPersonRow(person, state) {
+		const avatar = person.user_image
+			? el("img", { class: "ee-avatar", src: person.user_image, alt: "" })
+			: el("span", { class: "ee-avatar", text: initials(person.label) });
+
+		if (state.mode === "group") {
+			const box = el("input", {
+				class: "ee-people-check",
+				type: "checkbox",
+				"aria-label": person.label,
+				onchange: (ev) => {
+					if (ev.target.checked) state.selected.set(person.user, person.label);
+					else state.selected.delete(person.user);
+				},
+			});
+			box.checked = state.selected.has(person.user);
+			return el("li", { class: "ee-person" }, [
+				box,
+				avatar,
+				el("span", { class: "ee-person-main" }, [
+					el("span", { class: "ee-person-name", text: person.label }),
+					el("span", { class: "ee-person-email", text: person.description }),
+				]),
+			]);
+		}
+
+		return el("li", { class: "ee-person" }, [
+			el(
+				"button",
+				{
+					class: "ee-person-btn",
+					type: "button",
+					role: "option",
+					onclick: () => state.startDm(person.user),
+				},
+				[
+					avatar,
+					el("span", { class: "ee-person-main" }, [
+						el("span", { class: "ee-person-name", text: person.label }),
+						el("span", { class: "ee-person-email", text: person.description }),
+					]),
+				]
+			),
+		]);
+	}
+
+	/** Drop a newly created (or newly found) room into the list and open it. */
+	async absorbNewRoom(room) {
+		if (!room || !room.name) return;
+		if (!this.state.roomsById.has(room.name)) {
+			this.state.rooms.unshift(room);
+			this.indexRooms();
+		}
+		this.renderRoomList();
+		await this.openRoom(room.name).catch(() => this.notice("Could not open that conversation."));
 	}
 
 	// ------------------------------------------------------------------ conversation
