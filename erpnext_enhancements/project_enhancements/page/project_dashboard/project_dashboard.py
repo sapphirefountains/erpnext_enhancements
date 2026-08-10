@@ -15,7 +15,10 @@ import json
 from datetime import timedelta
 
 import frappe
-from frappe.utils import getdate, nowdate
+from frappe import _
+from frappe.utils import cint, flt, getdate, nowdate
+
+from erpnext_enhancements.utils.spreadsheet import build_payload
 
 # Fields the dashboard is allowed to inline-edit on a Project via
 # update_project_details(). Kept deliberately narrow: this is a whitelisted
@@ -692,6 +695,174 @@ def get_project_tasks(project, parent=None):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Error fetching tasks for project {project}")
 		return {"error": "Could not fetch tasks."}
+
+
+# ---------------------------------------------------------------------------
+# Scope-tab task tree — export and print
+# ---------------------------------------------------------------------------
+
+# Untranslated at module scope on purpose: _() here would resolve against
+# whichever language the worker happened to import the module under and then
+# serve that to every user. Translated per request in _task_tree_rows.
+TASK_EXPORT_COLUMNS = (
+	"Level",
+	"Task",
+	"Status",
+	"Priority",
+	"Assigned To",
+	"Start Date",
+	"Due Date",
+	"% Complete",
+	"Expected Time (h)",
+	"Task ID",
+)
+
+
+def _flatten_task_tree(project):
+	"""Every Task on ``project`` as ``[(level, task), ...]``, parent before child.
+
+	The on-screen tree loads children lazily one level at a time
+	(``get_task_children``), which is right for a grid the user is clicking
+	through and wrong for an export — a file built from that would contain only
+	the branches somebody happened to expand. This reads the whole project in
+	ONE query and links it in memory instead.
+
+	Uses ``frappe.get_list``, not ``get_all``: the neighbouring read endpoints
+	here predate the permission review and use ``get_all``, but an export
+	produces a file that leaves the system, so it goes through the
+	permission-checked path. A task the user may not read is not in the file.
+
+	Orphans (``parent_task`` set but pointing outside the project, at a deleted
+	task, or at one this user cannot read) are emitted as roots rather than
+	dropped — losing rows silently from an export is worse than a flat one.
+	"""
+	fields = [
+		"name",
+		"subject",
+		"status",
+		"priority",
+		"exp_start_date",
+		"exp_end_date",
+		"progress",
+		"expected_time",
+		"parent_task",
+		"custom_subtask_order",
+		"is_milestone",
+	]
+	tasks = frappe.get_list(
+		"Task",
+		fields=fields,
+		filters={"project": project},
+		order_by="custom_subtask_order asc, creation asc",
+		limit_page_length=0,
+	)
+	if not tasks:
+		return []
+
+	by_name = {t["name"]: t for t in tasks}
+	children = {}
+	roots = []
+	for task in tasks:
+		parent = task.get("parent_task")
+		if parent and parent in by_name:
+			children.setdefault(parent, []).append(task)
+		else:
+			roots.append(task)
+
+	out = []
+	seen = set()
+
+	def walk(nodes, level):
+		for task in nodes:
+			if task["name"] in seen:
+				continue  # a parent_task cycle would otherwise recurse forever
+			seen.add(task["name"])
+			out.append((level, task))
+			walk(children.get(task["name"], []), level + 1)
+
+	walk(roots, 0)
+	# Only reachable if parent_task forms a cycle; still belongs in the file.
+	for task in tasks:
+		if task["name"] not in seen:
+			out.append((0, task))
+	return out
+
+
+def _task_tree_rows(project):
+	"""``[[header...], [cell...], ...]`` for the task-tree export."""
+	rows = [[_(label) for label in TASK_EXPORT_COLUMNS]]
+	for level, task in _flatten_task_tree(project):
+		assignees = _get_assignee_names("Task", task["name"])
+		rows.append(
+			[
+				level,
+				("    " * level) + (task.get("subject") or ""),
+				task.get("status") or "",
+				task.get("priority") or "",
+				", ".join(d["full_name"] for d in assignees) if assignees else "",
+				task.get("exp_start_date") or "",
+				task.get("exp_end_date") or "",
+				flt(task.get("progress") or 0),
+				flt(task.get("expected_time") or 0),
+				task["name"],
+			]
+		)
+	return rows
+
+
+@frappe.whitelist()
+def get_project_task_tree(project):
+	"""The project's full task tree, flattened, for the print view.
+
+	Same data as :func:`export_project_tasks` but as JSON, so the browser can
+	lay it out as a printable document. Kept separate from ``get_project_tasks``
+	because that one is deliberately lazy and per-level.
+	"""
+	if not project:
+		frappe.throw(_("Project is required"))
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read {0}").format(project), frappe.PermissionError)
+
+	out = []
+	for level, task in _flatten_task_tree(project):
+		assignees = _get_assignee_names("Task", task["name"])
+		out.append(
+			{
+				"level": level,
+				"name": task["name"],
+				"subject": task.get("subject") or "",
+				"status": task.get("status") or "",
+				"priority": task.get("priority") or "",
+				"assigned_to": ", ".join(d["full_name"] for d in assignees) if assignees else "",
+				"exp_start_date": task.get("exp_start_date"),
+				"exp_end_date": task.get("exp_end_date"),
+				"progress": flt(task.get("progress") or 0),
+				"expected_time": flt(task.get("expected_time") or 0),
+				"is_milestone": cint(task.get("is_milestone")),
+			}
+		)
+	return out
+
+
+@frappe.whitelist()
+def export_project_tasks(project, file_format="csv", title=None):
+	"""The project's task tree as a base64 CSV/XLSX payload.
+
+	Returns ``{filename, content_type, filecontent}``, or ``None`` when the
+	project has no tasks. See ``utils/spreadsheet.py`` for why the bytes come
+	back base64 inside JSON rather than as a streamed download.
+	"""
+	if not project:
+		frappe.throw(_("Project is required"))
+	if not frappe.has_permission("Project", "read", doc=project):
+		frappe.throw(_("Not permitted to read {0}").format(project), frappe.PermissionError)
+
+	return build_payload(
+		_task_tree_rows(project),
+		file_format,
+		title or project,
+		sheet_name=_("Tasks"),
+	)
 
 
 def _fetch_all_master_project_projects(master_project):

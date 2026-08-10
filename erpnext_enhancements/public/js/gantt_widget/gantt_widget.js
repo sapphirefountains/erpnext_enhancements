@@ -59,6 +59,12 @@
  *         selected: "start",                //   defaults to the first option
  *         on_change: (value, option) => {}, //   e.g. persist the choice
  *       },
+ *       export: {                           //   export dropdown (true for all)
+ *         title: "PRJ-0001",                //   header line on the output
+ *         subtitle: "Fountain rebuild",
+ *         filename: "PRJ-0001-schedule",
+ *         formats: ["print", "png", "svg", "csv", "xlsx"],
+ *       },
  *     },
  *     group_by: "custom_master_project",    // optional: composite grouping
  *                                           //   (or a list: first non-empty wins)
@@ -80,6 +86,10 @@
  *                                           //   pass parent_id to retire its
  *                                           //   loading placeholder)
  *   w.open_task_ids();                      // currently expanded ids
+ *   w.print(); w.export_image("png"|"svg"); // see gantt_export.js — the chart
+ *   w.export_data("csv"|"xlsx");            //   is re-rendered as vector SVG
+ *                                           //   from the rows, NOT captured
+ *                                           //   from the (virtualised) DOM
  *   // other config keys (children, group_by, ...) may be mutated on
  *   // w.config followed by w.refresh()
  *
@@ -564,6 +574,9 @@ frappe.provide("erpnext_enhancements.gantt");
 				btn.addEventListener("click", () => this.scroll_to_today());
 				bar.appendChild(btn);
 			}
+			if (this.config.toolbar.export) {
+				bar.appendChild(this._build_export());
+			}
 			this.el.appendChild(bar);
 			this.toolbar = bar;
 			// close open filter menus on outside clicks
@@ -649,6 +662,136 @@ frappe.provide("erpnext_enhancements.gantt");
 			wrap.appendChild(menu);
 			sync_label();
 			return wrap;
+		}
+
+		_export_config() {
+			const cfg = this.config.toolbar && this.config.toolbar.export;
+			return cfg && typeof cfg === "object" ? cfg : {};
+		}
+
+		/**
+		 * Export dropdown. Carries `ee-gantt-filter` alongside its own class so
+		 * the outside-click handler in _build_toolbar closes it too — that
+		 * handler matches `.ee-gantt-filter.open`, and a second bespoke listener
+		 * would be one more thing to remove in destroy().
+		 *
+		 * Image and print output is produced ENTIRELY IN THE BROWSER by
+		 * erpnext_enhancements.gantt_export; the data formats round-trip to
+		 * api/gantt.py so they reuse the same permission-checked query the chart
+		 * was drawn from rather than trusting rows the client hands back.
+		 */
+		_build_export() {
+			const cfg = this._export_config();
+			const wrap = document.createElement("div");
+			wrap.className = "ee-gantt-filter ee-gantt-export";
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "btn btn-default btn-sm ee-gantt-filter-btn";
+			btn.textContent = __("Export");
+			const menu = document.createElement("div");
+			menu.className = "ee-gantt-filter-menu ee-gantt-export-menu";
+
+			const items = [
+				{ key: "print", label: __("Print / Save as PDF"), run: () => this.print() },
+				{ key: "png", label: __("PNG image"), run: () => this.export_image("png") },
+				{ key: "svg", label: __("SVG (vector)"), run: () => this.export_image("svg") },
+				{ key: "csv", label: __("CSV data"), run: () => this.export_data("csv") },
+				{ key: "xlsx", label: __("Excel data"), run: () => this.export_data("xlsx") },
+			];
+			const allowed = Array.isArray(cfg.formats) ? cfg.formats : null;
+
+			items.forEach((item) => {
+				if (allowed && !allowed.includes(item.key)) {
+					return;
+				}
+				const row = document.createElement("button");
+				row.type = "button";
+				row.className = "ee-gantt-export-item";
+				row.textContent = item.label;
+				row.addEventListener("click", async () => {
+					wrap.classList.remove("open");
+					// Image/print work can take a beat on a large chart; disable
+					// the whole menu so a double-click cannot start two renders.
+					btn.disabled = true;
+					const original = btn.textContent;
+					btn.textContent = __("Working…");
+					try {
+						await item.run();
+					} catch (e) {
+						// eslint-disable-next-line no-console
+						console.error("erpnext_enhancements.gantt export:", e);
+						frappe.show_alert({ message: __("Export failed."), indicator: "red" });
+					} finally {
+						btn.disabled = false;
+						btn.textContent = original;
+					}
+				});
+				menu.appendChild(row);
+			});
+
+			btn.addEventListener("click", () => wrap.classList.toggle("open"));
+			wrap.appendChild(btn);
+			wrap.appendChild(menu);
+			return wrap;
+		}
+
+		/** Title/subtitle for the exported document header. */
+		_export_meta() {
+			const cfg = this._export_config();
+			return {
+				title: cfg.title || this.config.doctype || __("Gantt Chart"),
+				subtitle: cfg.subtitle || "",
+				filename: cfg.filename || cfg.title || this.config.doctype || "gantt",
+				orientation: cfg.orientation || "landscape",
+			};
+		}
+
+		/** Download the chart as a PNG or SVG file. */
+		export_image(format) {
+			const NS = erpnext_enhancements.gantt_export;
+			if (!NS) {
+				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
+				return;
+			}
+			const meta = this._export_meta();
+			return format === "svg" ? NS.export_svg(this, meta) : NS.export_png(this, meta);
+		}
+
+		/** Open the branded print view (the working path to a PDF on this host). */
+		print() {
+			const NS = erpnext_enhancements.gantt_export;
+			if (!NS) {
+				frappe.show_alert({ message: __("Export is unavailable."), indicator: "red" });
+				return;
+			}
+			return NS.print(this, this._export_meta());
+		}
+
+		/**
+		 * Download the underlying rows as CSV or XLSX.
+		 *
+		 * Re-runs the query server-side through the same validated config the
+		 * chart uses instead of serialising the datastore: the file then
+		 * includes rows the user never expanded, and the server — not the
+		 * client — decides what this user is allowed to read.
+		 */
+		export_data(format, meta) {
+			// `meta` lets a host with its own toolbar (the Projects Dashboard
+			// block) name the file without configuring toolbar.export.
+			const resolved = { ...this._export_meta(), ...(meta || {}) };
+			const args = {
+				config: this._server_config(),
+				file_format: format === "xlsx" ? "xlsx" : "csv",
+				title: resolved.filename,
+			};
+			// open_url_post posts through a generated form, so the browser
+			// handles the response as a download; frappe.call would buffer the
+			// bytes into JS and need a manual Blob dance.
+			return frappe.call({
+				method: "erpnext_enhancements.api.gantt.export_gantt_data",
+				args: args,
+				callback: (r) => erpnext_enhancements.export_utils.download_payload(r && r.message),
+			});
 		}
 
 		_queue_filter_refresh() {

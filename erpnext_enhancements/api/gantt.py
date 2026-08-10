@@ -66,6 +66,8 @@ from frappe import _
 from frappe.model import default_fields, no_value_fields
 from frappe.utils import cint, cstr, flt, get_datetime
 
+from erpnext_enhancements.utils.spreadsheet import build_payload
+
 MAX_ROWS = 1000
 DEFAULT_ROWS = 500
 MAX_CHILD_ROWS = 5000
@@ -919,3 +921,151 @@ def update_gantt_row(config, ref_doctype, ref_name, changes, modified=None):
 
 	row = _shape_row(doc.as_dict(), field_map)
 	return {"status": "success", "row": row, "modified": cstr(doc.modified)}
+
+
+# ---------------------------------------------------------------------------
+# Data export — CSV / XLSX
+# ---------------------------------------------------------------------------
+
+# Untranslated on purpose: calling _() at module scope resolves against
+# whatever language happened to be active when the module was first imported
+# by the worker, and then serves that to everyone. Translated per request in
+# _export_rows instead.
+EXPORT_COLUMNS = ("Level", "Task", "Start", "End", "Progress %", "Document Type", "Document")
+
+
+def _export_end_date(value):
+	"""Exclusive ``end_date`` -> the inclusive day a person would write down.
+
+	``_shape_row`` pushes a midnight (date-only) end forward one day because
+	DHTMLX's end is exclusive. A spreadsheet is read by a human, not by DHTMLX,
+	so it has to be pushed back — otherwise every task in the export appears to
+	run a day longer than it does. Times other than midnight are real datetimes
+	and are left alone.
+	"""
+	if not value:
+		return ""
+	try:
+		end = get_datetime(value)
+	except Exception:
+		return cstr(value)
+	if end.hour == end.minute == end.second == 0:
+		end = end - timedelta(days=1)
+		return end.strftime("%Y-%m-%d")
+	return _format_dt(end)
+
+
+def _export_start_date(value):
+	if not value:
+		return ""
+	try:
+		start = get_datetime(value)
+	except Exception:
+		return cstr(value)
+	if start.hour == start.minute == start.second == 0:
+		return start.strftime("%Y-%m-%d")
+	return _format_dt(start)
+
+
+def _flatten_for_export(tasks):
+	"""Order tasks parent-before-child and stamp each with its tree depth.
+
+	The wire format carries the tree as ``parent`` pointers in query order, not
+	as nesting, so a naive dump interleaves branches and loses the hierarchy
+	that makes the chart readable. Walking it here keeps a spreadsheet row
+	directly under its parent and gives it a Level column to indent by.
+
+	Rows whose parent is missing (filtered out, past the row cap) are emitted at
+	the root rather than dropped — ``_shape_tasks`` already re-roots those, but
+	composite payloads can still reference a group row that was never emitted,
+	and silently losing rows from an export is worse than a flat one.
+	"""
+	by_parent = {}
+	known = {t.get("id") for t in tasks}
+	for task in tasks:
+		parent = task.get("parent")
+		if not parent or parent not in known:
+			parent = 0
+		by_parent.setdefault(parent, []).append(task)
+
+	out = []
+	seen = set()
+
+	def walk(parent_id, level):
+		for task in by_parent.get(parent_id, ()):
+			tid = task.get("id")
+			if tid in seen:
+				continue  # a cycle in the parent pointers would otherwise hang
+			seen.add(tid)
+			out.append((level, task))
+			walk(tid, level + 1)
+
+	walk(0, 0)
+	# Anything unreachable from a root (only possible via a parent cycle) still
+	# belongs in the file.
+	for task in tasks:
+		if task.get("id") not in seen:
+			out.append((0, task))
+	return out
+
+
+def _export_rows(tasks):
+	"""``[[header...], [cell...], ...]`` for the spreadsheet writers."""
+	data = [[_(label) for label in EXPORT_COLUMNS]]
+	for level, task in _flatten_for_export(tasks):
+		if task.get("ee_placeholder"):
+			continue
+		progress = task.get("progress")
+		data.append(
+			[
+				level,
+				("    " * level) + cstr(task.get("text")),
+				_export_start_date(task.get("start_date")),
+				_export_end_date(task.get("end_date")),
+				"" if progress is None else round(flt(progress) * 100, 1),
+				cstr(task.get("ref_doctype")),
+				cstr(task.get("ref_name")),
+			]
+		)
+	return data
+
+
+@frappe.whitelist()
+def export_gantt_data(config, file_format="csv", title=None):
+	"""Return the chart's rows as a base64 CSV/XLSX payload.
+
+	Delegates wholesale to :func:`get_gantt_data`, so the export inherits every
+	permission gate and fieldname validator rather than re-implementing them —
+	and so a client cannot widen its own access by asking for a file instead of
+	a chart. Nothing here reads the config directly except to force eager child
+	loading.
+
+	``children.lazy`` is turned OFF for the export. On screen, lazy branches are
+	the point (55 projects, tasks fetched per expand); in a file, exporting only
+	the roots the user happened to expand produces a spreadsheet that silently
+	omits most of the schedule. The child row cap (``MAX_CHILD_ROWS``) still
+	applies, so this cannot become an unbounded query.
+
+	Args:
+		config: the same widget config passed to ``get_gantt_data``.
+		file_format: ``"csv"`` (default) or ``"xlsx"``. Anything else throws.
+		title: base filename; sanitised, defaults to "gantt".
+
+	Returns:
+		``{filename, content_type, filecontent}`` — ``filecontent`` base64, so
+		it survives the JSON response; the client rebuilds a Blob and downloads
+		it without a second round trip. ``None`` when there is nothing to write.
+	"""
+	cfg = frappe.parse_json(config) or {}
+	if not isinstance(cfg, dict):
+		frappe.throw(_("Invalid Gantt config"))
+	children = cfg.get("children")
+	if isinstance(children, dict) and children.get("lazy"):
+		children = dict(children)
+		children["lazy"] = False
+		cfg = dict(cfg)
+		cfg["children"] = children
+
+	data = get_gantt_data(cfg)
+	rows = _export_rows(data.get("tasks") or [])
+	return build_payload(rows, file_format, title or "gantt", sheet_name=_("Gantt"))

@@ -121,7 +121,6 @@
 		"localforage": true,
 		"extend_cscript": true,
 		"erpnext_enhancements": true,
-		"root_element": true,
-		"domtoimage": true
+		"root_element": true
 	}
 }

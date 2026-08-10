@@ -188,6 +188,15 @@ frappe.ui.form.on("Project", {
 							options: EE_TASK_STATUSES,
 						},
 					],
+					// Print / PNG / SVG / CSV / Excel. Image and print output is
+					// rendered from the rows as vector SVG (gantt_export.js), so
+					// it is not limited to the rows DHTMLX has virtualised into
+					// the DOM; the data formats re-query server-side.
+					export: {
+						title: frm.doc.project_name || docname,
+						subtitle: [docname, frm.doc.customer].filter(Boolean).join(" · "),
+						filename: `${docname}-schedule`,
+					},
 				},
 				on_task_click: (id) => frappe.set_route("Form", "Task", id),
 			});

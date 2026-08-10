@@ -561,6 +561,14 @@ jobs:
       # configs must never reach the query layer with an unvalidated fieldname.
       - name: Gantt widget read API (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_gantt_api.py -q
+      # The Project Schedule print format draws its Gantt bars as percentage-
+      # positioned divs, and a wrong percentage does not raise -- it silently
+      # puts the bar in the wrong place on a document that goes to a customer.
+      # Its own step (not appended to a unittest module list): these are plain
+      # pytest functions, which `python -m unittest` collects nothing from while
+      # still reporting success.
+      - name: Project print-format geometry (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_project_print_data.py -q
       # Guards the "the badge says Partially Ordered on a line that is fully
       # ordered" class of bug: an item's status must be computed from that item's
       # own ordered-vs-requested quantity, never inherited from its parent

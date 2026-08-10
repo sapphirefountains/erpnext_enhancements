@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.266.0] - 2026-08-10
+
+### Added
+
+- **Export and print for the Gantt views and the Scope-tab task tree.** Both
+  surfaces had none. The Gantt gets an **Export** menu (Print / PNG / SVG / CSV
+  / Excel) and the task tree gets a download menu (Print / CSV / Excel), both
+  opt-in per embed so nothing changes for a host that does not ask for it.
+- **A Gantt chart is now rendered as vector SVG from its rows** — a new
+  `erpnext_enhancements.gantt_export` module (`public/js/gantt_widget/
+  gantt_export.js`) that draws the grid, scale, bars, progress fills, today
+  marker and branded header itself. One renderer feeds SVG, PNG (rasterised
+  through a canvas) and the print view.
+- **Two server-side Print Formats on Project** — *Project Schedule* (the task
+  tree beside real Gantt bars) and *Project Task List* (the tree as an indented
+  table), both letterheaded, shipped idempotently on migrate like the other
+  formats. Bars are percentage-positioned divs computed server-side
+  (`project_enhancements/print_data.py`, exposed as `jinja.methods`): a Print
+  Format renders with no JavaScript, so the browser SVG renderer cannot run,
+  and plain divs survive every PDF backend.
+- `api/gantt.py::export_gantt_data` and
+  `project_dashboard.py::export_project_tasks` / `get_project_task_tree`, plus
+  a shared `utils/spreadsheet.py`.
+
+### Changed
+
+- **PNG export is back, on a different foundation.** v1.166.0 added one and
+  v1.167.0 removed it. That implementation captured the DHTMLX DOM with
+  `dom-to-image` fetched from cdnjs, and the approach could not have worked
+  reliably: **DHTMLX virtualises its rows**, so only the ~40 near the viewport
+  exist in the DOM and a 300-row chart exported the handful that happened to be
+  scrolled into view — a bug invisible on a small test project. The capture was
+  also clipped to the current scroll position and depended on a third-party CDN
+  at runtime. Rendering from the data instead makes the output complete and
+  deterministic. DHTMLX's own `exportToPNG()`/`exportToPDF()` remain rejected
+  for the original reason: they POST the whole chart to `export.dhtmlx.com`,
+  and project schedules must not leave the browser.
+- **Exports re-query server-side rather than serialising what the client
+  holds.** Both trees load children lazily, so the browser only ever has the
+  branches somebody expanded; a file built from that silently omits most of the
+  schedule. `export_gantt_data` forces `children.lazy = False` for the export
+  only, and the task-tree export reads the whole project in one query. Both go
+  through `frappe.get_list` and the existing config validators, so the export
+  cannot be a way around the chart's own permission checks.
+- The Gantt CSV/XLSX writes the **inclusive** end date. The API's `end_date` is
+  exclusive (a date-only end is pushed +1 day for DHTMLX), and a spreadsheet is
+  read by a human — without the inverse conversion every task in the file reads
+  a day longer than it is.
+
+### Fixed
+
+- Removed the stale `domtoimage` global from `.eslintrc` — its only consumer
+  was deleted in v1.167.0.
+
+### Notes
+
+- **Server-side PDF is still broken on production and this release does not fix
+  it** — both backends fail for environment reasons (`docs/pdf-generation.md`:
+  Debian's wkhtmltopdf segfaults on a one-line HTML file, the bench Chromium
+  SIGTRAPs on `--version`). The new Print Formats' HTML print views render
+  correctly and browser print-to-PDF works; the desk's own **Download PDF**
+  button will not until that runbook is executed on the VM. Every Print action
+  added here therefore goes through the browser's print window, the same choice
+  `pick_routing_map.js` and `project_brief.js` already made.
+
 ## [1.265.1] - 2026-08-10
 
 ### Fixed

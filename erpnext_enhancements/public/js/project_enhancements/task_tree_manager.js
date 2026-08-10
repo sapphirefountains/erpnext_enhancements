@@ -17,6 +17,11 @@
  * handleDragMove). All mutations round-trip through the project_dashboard.py
  * whitelisted methods. Expanded-state and column choices persist in localStorage.
  *
+ * Export / print (exportTasks, printTasks) re-fetch the WHOLE tree server-side
+ * rather than reading `this.tasks` — the grid loads children lazily per level,
+ * so the client only holds the branches the user expanded. Shared branding and
+ * the print window live in public/js/export_utils.js.
+ *
  * Assets: styles ship globally in desk_addons.bundle.css (task_tree import);
  * SortableJS is loaded on demand from CDN in loadAssets().
  */
@@ -152,6 +157,17 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
                         </div>
                         <div class="d-flex align-items-center">
                             <div class="dropdown mr-2">
+                                <button class="btn btn-sm btn-default dropdown-toggle task-export-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" title="Export or print this task list">
+                                    <i class="fa fa-download"></i>
+                                </button>
+                                <div class="dropdown-menu dropdown-menu-right">
+                                    <a href="#" class="dropdown-item task-print-btn"><i class="fa fa-print mr-1"></i> Print / Save as PDF</a>
+                                    <div class="dropdown-divider"></div>
+                                    <a href="#" class="dropdown-item task-export-btn" data-format="csv"><i class="fa fa-file-text-o mr-1"></i> CSV data</a>
+                                    <a href="#" class="dropdown-item task-export-btn" data-format="xlsx"><i class="fa fa-file-excel-o mr-1"></i> Excel data</a>
+                                </div>
+                            </div>
+                            <div class="dropdown mr-2">
                                 <button class="btn btn-sm btn-default dropdown-toggle" type="button" id="columnToggleDropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                                     <i class="fa fa-columns"></i>
                                 </button>
@@ -268,6 +284,89 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 
 	refresh() {
 		this.fetchData();
+	}
+
+	/**
+	 * Export / print the project's task tree.
+	 *
+	 * Both pull the WHOLE tree from the server rather than reading `this.tasks`.
+	 * The grid loads children one level at a time as the user expands them, so
+	 * the client only ever holds the branches somebody clicked into — a file
+	 * built from that would silently omit most of the project. The screen
+	 * filters are not applied either: this produces a schedule document for the
+	 * project, not a snapshot of the current search box.
+	 */
+	exportTasks(format) {
+		frappe.call({
+			method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.export_project_tasks",
+			args: {
+				project: this.projectName,
+				file_format: format === "xlsx" ? "xlsx" : "csv",
+				title: `${this.projectName}-tasks`,
+			},
+			callback: (r) => {
+				erpnext_enhancements.export_utils.download_payload(r && r.message);
+			},
+			error: () => {
+				frappe.show_alert({ message: __("Could not export the task list."), indicator: "red" });
+			},
+		});
+	}
+
+	printTasks() {
+		frappe.call({
+			method: "erpnext_enhancements.project_enhancements.page.project_dashboard.project_dashboard.get_project_task_tree",
+			args: { project: this.projectName },
+			callback: async (r) => {
+				const rows = (r && r.message) || [];
+				if (!rows.length) {
+					frappe.show_alert({ message: __("No tasks to print."), indicator: "orange" });
+					return;
+				}
+				const U = erpnext_enhancements.export_utils;
+				U.print_document(this.buildPrintTable(rows), {
+					title: this.projectName,
+					subtitle: __("Task List"),
+					brand: await U.build_brand({}),
+					orientation: "portrait",
+					footer: __("{0} tasks", [rows.length]),
+				});
+			},
+		});
+	}
+
+	/** The task tree as a printable table; hierarchy shown by indentation. */
+	buildPrintTable(rows) {
+		const esc = erpnext_enhancements.export_utils.escape_html;
+		const date = (v) => (v ? frappe.datetime.str_to_user(v) : "");
+		const body = rows
+			.map((t) => {
+				// Indent in em so it scales with the print font size; a nested
+				// task must still read as nested once the browser shrinks the
+				// page to fit.
+				const indent = `padding-left:${t.level * 1.2}em;`;
+				const weight = t.level === 0 ? "font-weight:600;" : "";
+				const name = t.is_milestone ? `◆ ${t.subject}` : t.subject;
+				return (
+					`<tr>` +
+					`<td style="${indent}${weight}">${esc(name)}</td>` +
+					`<td>${esc(t.status)}</td>` +
+					`<td>${esc(t.priority)}</td>` +
+					`<td>${esc(t.assigned_to)}</td>` +
+					`<td style="white-space:nowrap;">${esc(date(t.exp_start_date))}</td>` +
+					`<td style="white-space:nowrap;">${esc(date(t.exp_end_date))}</td>` +
+					`<td style="text-align:right;">${t.progress ? Math.round(t.progress) + "%" : ""}</td>` +
+					`</tr>`
+				);
+			})
+			.join("");
+		return (
+			`<table><thead><tr>` +
+			`<th>${__("Task")}</th><th>${__("Status")}</th><th>${__("Priority")}</th>` +
+			`<th>${__("Assigned To")}</th><th>${__("Start")}</th><th>${__("Due")}</th>` +
+			`<th style="text-align:right;">${__("%")}</th>` +
+			`</tr></thead><tbody>${body}</tbody></table>`
+		);
 	}
 
 	applyFilters() {
@@ -510,6 +609,15 @@ erpnext_enhancements.TaskTreeManager = class TaskTreeManager {
 			me.wrapper.find(".task-status-cb").prop("checked", false);
 			me.wrapper.find("#statusFilterMenu").text("Statuses");
 			me.applyFilters();
+		});
+
+		this.wrapper.on("click", ".task-export-btn", function (e) {
+			e.preventDefault();
+			me.exportTasks($(this).data("format"));
+		});
+		this.wrapper.on("click", ".task-print-btn", (e) => {
+			e.preventDefault();
+			me.printTasks();
 		});
 
 		this.wrapper.on("click", ".toggle-child-tasks", function () {
