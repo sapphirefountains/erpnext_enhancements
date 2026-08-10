@@ -191,6 +191,12 @@ class SmokeState:
 	thread_name: str = ""
 	reply_name: str = ""
 	reply_client_id: str = ""
+	#: ``clientAssignedMessageId`` as returned by ``messages.get`` — **not** by ``create``.
+	#: ``""`` means the field was absent from the fetch, and that is a finding rather than a
+	#: failure; see :func:`_step_6_edit`. The summary reports it either way because Phase 2's
+	#: entire inbound echo ladder reads this field off a ``get``.
+	fetched_client_id: str = ""
+	fetched_client_id_seen: bool = False
 	human_answers: dict[str, str] = field(default_factory=dict)
 	created_spaces: list[str] = field(default_factory=list)
 
@@ -606,6 +612,40 @@ def _step_6_edit(state: SmokeState, client: GoogleChatClient) -> str:
 	_say(f"  text after get                {observed_text[:80]!r}")
 	_say(f"  lastUpdateTime after get      {observed_update or '(absent)'}")
 
+	# --- the phase-blocking observation, and the reason this step is worth running ---
+	#
+	# Step 4 already read `clientAssignedMessageId` off the messages.CREATE response. That is
+	# NOT the question. Phase 2's inbound echo ladder never sees a create response: the
+	# subscription runs `payloadOptions.includeResource: false` (the only configuration with a
+	# 7-day TTL), so an event carries a resource NAME and nothing else, and the pipeline
+	# resolves it with `messages.get`. The client id is then checked against
+	# `unique(room, client_message_id)` to decide "our own echo" versus "a coworker's message".
+	#
+	# So the field's presence ON THE FETCH is what the design rests on, and no Google document
+	# or sample anywhere shows it populated in a response — the proto declares it a plain
+	# read/write field, which is an argument, not evidence. This is the line that settles it.
+	#
+	# Absence is deliberately NOT a StepFailed. The smoke test's job is to report what the API
+	# does; treating an unwelcome truth as a broken test is how a finding gets argued with
+	# instead of acted on. The summary prints the verdict either way.
+	state.fetched_client_id = str(fetched.get("clientAssignedMessageId") or "")
+	state.fetched_client_id_seen = True
+	_say(f"  clientAssignedMessageId (get) {state.fetched_client_id or '(ABSENT)'}")
+
+	if state.fetched_client_id:
+		if state.fetched_client_id != state.primary_client_id:
+			raise StepFailed(
+				f"messages.get returned clientAssignedMessageId={state.fetched_client_id!r} but "
+				f"create returned {state.primary_client_id!r}. Echo suppression matches this "
+				"value against an index; two different answers for one message would make it "
+				"match neither."
+			)
+		_say("  -> layer 1 echo suppression is available: the id survives a round trip.")
+	else:
+		_say("  -> ABSENT. Phase 2's primary echo path cannot work as designed. The fallback is")
+		_say("     ADR §G.3.2's bounded heuristic, which ships DISABLED (echo_fallback_enabled=0)")
+		_say("     and refuses ambiguity. Raise this before Phase 3 builds on the engine.")
+
 	if observed_text != new_text:
 		raise StepFailed(f"text did not change; messages.get still returns {observed_text[:120]!r}")
 	if not observed_update:
@@ -865,6 +905,19 @@ def _print_summary(results: Sequence[StepResult], state: SmokeState) -> None:
 	skipped = [result for result in results if result.status == "SKIP"]
 	_say(f"  total elapsed {total:.0f}ms across {len(results)} step(s)")
 	_say(f"  {len(results) - len(failures) - len(skipped)} PASS / {len(failures)} FAIL / {len(skipped)} SKIP")
+
+	if state.fetched_client_id_seen:
+		_say("")
+		_say("  PHASE 2 ECHO SUPPRESSION — clientAssignedMessageId as returned by messages.get:")
+		if state.fetched_client_id:
+			_say(f"    PRESENT ({state.fetched_client_id})")
+			_say("    Layer 1 works. An inbound event resolves to its client id and an index probe")
+			_say("    decides echo-or-foreign, which is what the design assumes.")
+		else:
+			_say("    ABSENT")
+			_say("    The design's primary echo path is unavailable. This is the single unproven")
+			_say("    assumption Phase 2 shipped on; it is now disproven and needs a decision before")
+			_say("    the relay is armed for real traffic.")
 
 	if state.human_answers:
 		_say("")
