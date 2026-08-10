@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.263.0] - 2026-08-10
+
+### Changed
+
+- **The Closed-Won hand-off gate now opens when the meeting is *booked*, not when somebody
+  records that it happened.**
+
+  The gate shipped in v1.250.0 keyed on `custom_handoff_meeting_held` — the stamp written by
+  "Mark Hand-Off Complete". In practice the hand-off meeting is booked for a day or two out
+  while the project needs to start now, so the only way through a gate that wants "held" is
+  to tick it for a meeting still in the diary. That is precisely the falsification the
+  2026-08-06 audit was about, and the gate was manufacturing it.
+
+  So `handoff_block_reason` now also passes on `custom_handoff_event`: a Project may be
+  created as soon as a hand-off meeting exists on the calendar. Booking is the better thing
+  to gate on anyway — it cannot be faked into existence without inviting three functions and
+  putting a real `Event` in front of them, whereas a checkbox can. `GATE_MESSAGE` is
+  reworded to match ("Schedule the Hand-Off Meeting on the Opportunity first"); an error
+  that asks for something other than what unblocks it sends people to the wrong button.
+
+  Recording the meeting is unchanged in every other respect — same server-stamped who/when,
+  same feed into step 2 and the SLA report, same skip-with-a-reason escape hatch. It simply
+  no longer blocks anything.
+
+- **Opportunity: the hand-off buttons moved off the form toolbar and into the Hand-Off
+  Process tab**, rendered into `custom_process_progress` beneath the step bar they advance.
+  Five toolbar entries competing with everything else an Opportunity can do described the
+  process badly; sitting under the three steps, in order, they *are* the process:
+
+  ```
+  Closed Won   ->  [Schedule Hand-Off Meeting]
+  booked       ->  [Create Project in PM System]  [Hand-Off Meeting Finished]  [Re-schedule]  [Skip]
+  ```
+
+  Create Project is offered strictly on the server's own gate predicate (`handoff_state`
+  gained `gate_open`), so the tab can never show a button whose insert is guaranteed to be
+  refused. One thing deliberately stays on the form dashboard: the red OVERDUE banner. A
+  warning visible only to somebody who already went looking is the failure mode the audit
+  found (17 of 17 meetings silently past SLA), not the fix.
+
+- **The Closed-Won prompt asks for the step that is actually next.** On a fresh transition
+  the answer was never "create the project" — the gate wanted a meeting first — so the popup
+  offered a dialog it knew would be refused. It now asks "Schedule the hand-off meeting
+  now?" while the hand-off is unbooked and "Create project now?" after. No still means the
+  same thing for both, and now says so in the prompt: on a transition it returns the
+  opportunity to its previous status, which is easy to read "not right now" into.
+
+- **Meeting attendees are pickable as well as typeable.** The three attendee fields in the
+  booking dialog were free-text boxes prefilled from configuration; they are now
+  `MultiSelect` autocompletes over every desk user and every configured hand-off address
+  (new whitelisted `handoff.attendee_options`), and still accept anything typed. Picking is
+  what stops `firstname.lastname@sapphirefountains.com` being mistyped into a silent
+  non-delivery; typing is how a subcontractor or a customer's PM gets into the room without
+  a configuration change.
+
+- **The hand-off meeting dialog defaults to now, rounded up to the next quarter hour**
+  (it proposed next business day 09:00). It is a 15-minute handover between people who are
+  frequently still on the call when the deal closes, so "tomorrow" made the commonest answer
+  a correction. Nothing bounds the field: the picker starts at the present and goes wherever
+  the meeting actually is. The step-7 project launch meeting keeps the next-business-day
+  default.
+
+### Added
+
+- **`process_steps.record_handoff_on_project`** — closes step 2 on a Project that was
+  created before the hand-off was recorded. This state could not occur before: the gate
+  required the hand-off recorded, so seeding always found the completion waiting for it and
+  stamped step 2 done at creation. With the gate opening on "booked" the usual order is now
+  the reverse, and a step 2 nothing can close is a tracker plus a daily escalation sweep
+  nagging forever about a meeting that already happened. Carries the Opportunity's own
+  timestamps across rather than re-stamping (the SLA report measures how long the hand-off
+  took), and saves `ignore_permissions` because owning the deal is not the same as holding
+  write on the project.
+
+### Fixed
+
+- `handoff_meeting_dialog.js` now loads globally from `erpnext_enhancements.bundle.js`
+  instead of as a `doctype_js` on Opportunity and Project. The Closed-Won prompt is a global
+  realtime listener that fires on the Kanban board and the list view too, where no form
+  script is loaded — it could not have opened the booking dialog there. Moving it also
+  retires the load-order pairing both `doctype_js` entries had to carry.
+
 ## [1.262.3] - 2026-08-10
 
 ### Fixed

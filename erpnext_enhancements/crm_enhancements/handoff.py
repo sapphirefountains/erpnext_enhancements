@@ -22,10 +22,21 @@ So the hand-off moves onto the **Opportunity**, in front of project creation:
   attendees, creates a calendar Event, and emails the invite. The design intent
   from the meeting is that the compliant path is the easiest path, so the button
   holds the meeting rather than merely recording that you held it.
-* :func:`mark_handoff_complete` — one click, server-stamped who/when. This
-  unlocks project creation.
+* :func:`mark_handoff_complete` — one click, server-stamped who/when. Closes
+  step 2.
 * :func:`skip_handoff` — the escape hatch, System Manager only and requiring a
   written reason. Silence must be impossible; a *visible* skip is fine.
+
+**What the gate opens on (changed in v1.263.0).** It used to be
+:func:`mark_handoff_complete` — the project waited until somebody recorded that
+the meeting had *happened*. In practice the meeting is routinely booked for a
+day or two out while the project needs to start now, so the gate was inviting
+exactly the lie the audit was about: tick "held" for a meeting still in the
+diary. The gate now opens as soon as a meeting is **booked**
+(``custom_handoff_event``), and recording it afterwards is a separate,
+non-blocking act. Booking is the part that cannot be faked into existence
+without inviting three functions and putting it on a calendar, so it is the
+better thing to gate on.
 
 Attendees are configured, never hard-coded: **ERPNext Enhancements Settings →
 Hand-Off Attendee Roles** maps each function (Sales / Production / Billing) to an
@@ -50,8 +61,10 @@ from erpnext_enhancements.utils.working_days import add_working_days
 WON_STATUS = "Closed Won"
 
 #: The one message the whole gate speaks with. The meeting asked for an error
-#: that says what to do, not what went wrong.
-GATE_MESSAGE = "Hold and record the Hand-Off Meeting on the Opportunity first."
+#: that says what to do, not what went wrong. Reworded in v1.263.0 with the gate
+#: itself: what it now asks for is a *booked* meeting, and an error that asks for
+#: something other than what unblocks it is worse than no error.
+GATE_MESSAGE = "Schedule the Hand-Off Meeting on the Opportunity first."
 
 #: Business days from Closed Won to the hand-off meeting (meeting decision).
 HANDOFF_SLA_BUSINESS_DAYS = 2
@@ -126,7 +139,9 @@ def handoff_block_reason(opportunity):
 	  Won *after* this feature shipped. The pre-existing backlog (227 deals at
 	  the time of writing) is deliberately exempt; see
 	  ``patches/ensure_handoff_gate_fields``;
-	* and the hand-off has not been recorded or skipped.
+	* and no hand-off meeting has been booked, recorded or skipped. Booked is
+	  enough (v1.263.0) — see the module docstring for why the gate moved off
+	  "recorded".
 	"""
 	if not opportunity:
 		return None
@@ -148,7 +163,13 @@ def handoff_block_reason(opportunity):
 	row = frappe.db.get_value(
 		"Opportunity",
 		opportunity,
-		["name", "status", "custom_handoff_gate_applies", "custom_handoff_meeting_held"],
+		[
+			"name",
+			"status",
+			"custom_handoff_gate_applies",
+			"custom_handoff_meeting_held",
+			"custom_handoff_event",
+		],
 		as_dict=True,
 	)
 	if not row:
@@ -158,6 +179,12 @@ def handoff_block_reason(opportunity):
 	if not cint(row.custom_handoff_gate_applies):
 		return None
 	if cint(row.custom_handoff_meeting_held):
+		return None
+	if row.custom_handoff_event:
+		# A meeting is on the calendar. Keying on the stored link rather than on
+		# the Event still existing is deliberate: deleting the Event is not a way
+		# to un-book a hand-off, and a gate that re-closes behind a project that
+		# already exists would strand the deal with no button that helps.
 		return None
 	return _(GATE_MESSAGE)
 
@@ -262,6 +289,39 @@ def resolve_attendees(opportunity=None):
 			addresses.append(FALLBACK_ATTENDEES[function])
 		resolved[function] = _dedupe(addresses)
 	return resolved
+
+
+@frappe.whitelist()
+def attendee_options():
+	"""Addresses the meeting dialog offers in its attendee pickers.
+
+	Enabled desk users, plus every address the hand-off configuration names
+	(explicit rows, the holders of the configured Roles, and the fallbacks). These
+	are *suggestions only* — the dialog's attendee fields stay free text, so an
+	address nobody has ever entered before is still perfectly valid to type. The
+	list exists because typing ``firstname.lastname@sapphirefountains.com`` from
+	memory is how an invite quietly goes to nobody.
+	"""
+	if not frappe.has_permission("Opportunity", "read"):
+		frappe.throw(_("Not permitted."), frappe.PermissionError)
+
+	addresses = frappe.get_all(
+		"User",
+		filters={"enabled": 1, "user_type": "System User"},
+		pluck="name",
+	)
+	addresses = [user for user in addresses if user not in ("Administrator", "Guest")]
+
+	for function, rows in _configured_rows().items():
+		for row in rows:
+			if row.get("email"):
+				addresses.append(row.get("email"))
+			else:
+				addresses.extend(_role_holder_emails(row.get("role")))
+		if not rows:
+			addresses.append(FALLBACK_ATTENDEES[function])
+
+	return sorted(_dedupe(addresses), key=str.lower)
 
 
 @frappe.whitelist()
@@ -598,7 +658,29 @@ def _stamp_handoff(doc, skip_reason=None):
 		},
 		update_modified=False,
 	)
+	_mirror_onto_project(doc.name, now, frappe.session.user, skip_reason)
 	return now
+
+
+def _mirror_onto_project(opportunity, when, by, skip_reason):
+	"""Carry the recorded hand-off onto a Project that already exists.
+
+	Before v1.263.0 this could not happen: no project could exist until the
+	hand-off was recorded, so ``_append_steps`` always found the completion
+	waiting for it and seeded step 2 done. Now that booking the meeting opens the
+	gate, the project is usually created *first* and its step 2 row sits Pending —
+	so recording the meeting here has to reach across and close it, or the tracker
+	nags forever about a meeting that already happened.
+
+	Failures are logged, never raised: the stamp on the Opportunity is the record
+	of the hand-off, and losing the mirror must not undo it.
+	"""
+	try:
+		from erpnext_enhancements.process_steps import record_handoff_on_project
+
+		record_handoff_on_project(opportunity, when=when, by=by, skip_reason=skip_reason)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "Hand-off: mirror onto project failed")
 
 
 @frappe.whitelist()
@@ -682,6 +764,11 @@ def handoff_state(opportunity):
 		and not cint(row.get("custom_handoff_meeting_held"))
 		and get_datetime(row.get("custom_handoff_due_by")) < now_datetime()
 	)
+	# When the booked meeting is, for the tab. Read from the Event rather than
+	# stored on the Opportunity so a re-scheduled meeting reads correctly without
+	# a second field to keep in sync; ``None`` if somebody deleted the Event.
+	event = row.get("custom_handoff_event")
+	event_on = frappe.db.get_value("Event", event, "starts_on") if event else None
 	return {
 		"available": True,
 		"enabled": process_automation_enabled() and handoff_gate_enabled(),
@@ -691,12 +778,17 @@ def handoff_state(opportunity):
 		"held_on": str(row.get("custom_handoff_meeting_on") or ""),
 		"held_by": row.get("custom_handoff_meeting_by"),
 		"skip_reason": row.get("custom_handoff_skip_reason"),
-		"event": row.get("custom_handoff_event"),
+		"event": event,
+		"event_on": str(event_on or ""),
 		"due_by": str(row.get("custom_handoff_due_by") or ""),
 		"launch_deadline": str(row.get("custom_launch_deadline") or ""),
 		"project": row.get("custom_created_project"),
 		"overdue": overdue,
 		"can_skip": "System Manager" in frappe.get_roles(),
+		# Whether a Project may be created *right now* — the same predicate the
+		# three server-side enforcement layers use, so the tab's Create Project
+		# button can never be offered for something the insert will refuse.
+		"gate_open": not handoff_block_reason(opportunity),
 		"gate_message": _(GATE_MESSAGE),
 	}
 

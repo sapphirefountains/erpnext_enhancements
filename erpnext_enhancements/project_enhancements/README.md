@@ -63,6 +63,13 @@ module [`process_steps.py`](../process_steps.py):
   project-side reporting measures the hand-off that happened rather than stamping it
   complete at creation time. In-flight projects are never back-filled (Jun 9 meeting
   decision); they opt in via the form button → whitelisted `start_process`.
+- **Step 2 in the other order** — since v1.263.0 the gate opens when the hand-off meeting
+  is *booked*, so the project is usually created while step 2 is still Pending. Recording
+  the meeting on the Opportunity afterwards reaches across and closes that row
+  (`process_steps.record_handoff_on_project`, called from `handoff._stamp_handoff`) — with
+  the Opportunity's own timestamps, and saved `ignore_permissions` because owning the deal
+  is not the same as holding write on the project. Without it the tracker and the daily
+  sweep would nag forever about a meeting that already happened.
 - **Anchors** — a *Payment Received* anchor completes its step when
   `custom_payment_received` is ticked (runs after `status_alerts.stamp_payment_received_date`
   in the `before_save` chain — order matters).

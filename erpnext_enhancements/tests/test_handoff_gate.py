@@ -130,6 +130,9 @@ def _install_frappe_stub():
 	frappe.scrub = lambda s: str(s).lower().replace(" ", "_").replace("-", "_")
 	frappe.parse_json = lambda v: __import__("json").loads(v)
 	frappe.log_error = lambda *a, **k: None
+	# Real code calls this from inside `except` blocks. Without it the stub turns
+	# a swallowed, logged failure into an AttributeError that escapes.
+	frappe.get_traceback = lambda *a, **k: "traceback"
 	frappe.sendmail = lambda **kwargs: STATE.setdefault("sent", []).append(kwargs)
 	frappe.new_doc = lambda dt: _StubDoc("NEW", doctype=dt)
 	frappe.get_cached_doc = lambda dt: _StubDoc(dt, doctype=dt, **STATE["singles"])
@@ -254,6 +257,7 @@ def _reset(**overrides):
 		columns={
 			"custom_handoff_gate_applies",
 			"custom_handoff_meeting_held",
+			"custom_handoff_event",
 			"custom_handoff_due_by",
 			"custom_launch_deadline",
 		},
@@ -292,24 +296,40 @@ class TestGate(unittest.TestCase):
 		_reset()
 
 	def test_won_without_handoff_is_blocked(self):
-		"""The whole point: a won deal with no recorded hand-off cannot convert."""
+		"""The whole point: a won deal with no hand-off at all cannot convert."""
 		name = _opportunity()
 		self.assertEqual(
 			handoff.handoff_block_reason(name),
-			"Hold and record the Hand-Off Meeting on the Opportunity first.",
+			"Schedule the Hand-Off Meeting on the Opportunity first.",
 		)
 
 	def test_message_is_the_exact_agreed_wording(self):
-		"""The meeting asked for an error that says what to do. Pinned verbatim."""
+		"""The meeting asked for an error that says what to do. Pinned verbatim.
+
+		Reworded in v1.263.0 when the gate moved from "recorded" to "booked": an
+		error that asks for something other than what actually unblocks it sends
+		people to the wrong button.
+		"""
 		self.assertEqual(
 			handoff.GATE_MESSAGE,
-			"Hold and record the Hand-Off Meeting on the Opportunity first.",
+			"Schedule the Hand-Off Meeting on the Opportunity first.",
 		)
 
 	def test_throw_helper_raises_for_blocked(self):
 		name = _opportunity()
 		with self.assertRaises(StubThrow):
 			handoff.throw_if_handoff_missing(name)
+
+	def test_booked_meeting_unblocks(self):
+		"""v1.263.0: booking the meeting opens the gate — recording it is separate.
+
+		The meeting is routinely two days out while the project needs to start
+		now. Gating on "held" was therefore inviting the exact falsification the
+		audit was about: tick it for a meeting still in the diary.
+		"""
+		name = _opportunity(custom_handoff_event="EV-00001")
+		self.assertIsNone(handoff.handoff_block_reason(name))
+		handoff.throw_if_handoff_missing(name)  # must not raise
 
 	def test_recorded_handoff_unblocks(self):
 		name = _opportunity(custom_handoff_meeting_held=1)
@@ -399,6 +419,97 @@ class TestSkipPath(unittest.TestCase):
 	def test_mark_complete_is_idempotent(self):
 		name = _opportunity(custom_handoff_meeting_held=1)
 		self.assertTrue(handoff.mark_handoff_complete(name)["already"])
+
+
+# ---------------------------------------------------------------------------
+# Recording the hand-off after the project already exists
+# ---------------------------------------------------------------------------
+
+
+class TestMirrorOntoProject(unittest.TestCase):
+	"""Closing step 2 on a Project created before the hand-off was recorded.
+
+	A state that could not occur before v1.263.0: the gate used to require the
+	hand-off *recorded*, so ``_append_steps`` always found the completion waiting
+	and seeded step 2 done. Now that booking opens the gate, the project is
+	usually created first and its step 2 sits Pending — with nothing to close it,
+	the tracker and the escalation sweep would nag forever about a meeting that
+	already happened.
+	"""
+
+	def setUp(self):
+		_reset()
+		STATE["columns"].add("custom_created_project")
+		import erpnext_enhancements.process_steps as process_steps
+
+		self.process_steps = process_steps
+
+	def _project(self, name="PROJ-0001", step_two_status="Pending"):
+		frappe = sys.modules["frappe"]
+		rows = [
+			frappe._dict(name="row1", step_number=1, status="Completed"),
+			frappe._dict(name="row2", step_number=2, status=step_two_status),
+			frappe._dict(name="row3", step_number=3, status="Completed"),
+		]
+		doc = _StubDoc(name, doctype="Project", custom_process_steps=rows)
+		doc.meta = types.SimpleNamespace(get_field=lambda field: object())
+		doc.saved = []
+		doc.save = lambda **kwargs: doc.saved.append(kwargs)
+		STATE["records"][name] = {"name": name}
+		STATE["docs"][name] = doc
+		return doc, rows[1]
+
+	def test_pending_step_two_is_closed_with_the_opportunitys_own_stamps(self):
+		"""Not re-stamped "now": the SLA report measures how long it took."""
+		opportunity = _opportunity(custom_created_project="PROJ-0001")
+		doc, row = self._project()
+		held_on = datetime.datetime(2026, 8, 4, 11, 30)
+
+		touched = self.process_steps.record_handoff_on_project(
+			opportunity, when=held_on, by="pm@example.com"
+		)
+
+		self.assertEqual(touched, "PROJ-0001")
+		self.assertEqual(row.status, "Completed")
+		self.assertEqual(row.completed_on, held_on)
+		self.assertEqual(row.completed_by, "pm@example.com")
+		# ignore_permissions: whoever recorded the hand-off owns the Opportunity,
+		# which is not the same as holding write on the Project.
+		self.assertEqual(doc.saved, [{"ignore_permissions": True}])
+
+	def test_a_skip_reads_as_a_skip_on_the_project_too(self):
+		opportunity = _opportunity(custom_created_project="PROJ-0001")
+		_, row = self._project()
+
+		self.process_steps.record_handoff_on_project(
+			opportunity, when=NOW, by="admin@example.com", skip_reason="Repeat customer"
+		)
+		self.assertTrue(row.notes.startswith("[SKIPPED]"))
+
+	def test_a_step_already_completed_is_left_alone(self):
+		"""No second save, and no overwriting whoever actually completed it."""
+		opportunity = _opportunity(custom_created_project="PROJ-0001")
+		doc, _ = self._project(step_two_status="Completed")
+
+		self.assertIsNone(self.process_steps.record_handoff_on_project(opportunity, when=NOW))
+		self.assertEqual(doc.saved, [])
+
+	def test_no_project_yet_is_a_no_op(self):
+		"""The commonest case by far — the hand-off is recorded before the project."""
+		self.assertIsNone(
+			self.process_steps.record_handoff_on_project(_opportunity(), when=NOW)
+		)
+
+	def test_marking_complete_reaches_the_project(self):
+		"""End to end: the button on the Opportunity closes the row on the Project."""
+		opportunity = _opportunity(custom_created_project="PROJ-0001")
+		_, row = self._project()
+
+		handoff.mark_handoff_complete(opportunity)
+
+		self.assertEqual(STATE["records"][opportunity]["custom_handoff_meeting_held"], 1)
+		self.assertEqual(row.status, "Completed")
+		self.assertEqual(row.completed_on, NOW)
 
 
 # ---------------------------------------------------------------------------
