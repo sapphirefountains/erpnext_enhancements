@@ -117,6 +117,29 @@ export class BubbleChatSurface {
 
 	renderRooms() {
 		clear(this.els.list);
+
+		// The bubble gets a one-line people picker rather than the SPA's modal: a 380px panel
+		// has no room for a dialog, and the bubble's job here is "message somebody quickly".
+		// Group creation is deliberately SPA-only — naming a room and picking a roster is not a
+		// thing to do in a strip this narrow.
+		this.els.list.appendChild(
+			el("div", { class: "triton-chat-newrow" }, [
+				(this.els.newSearch = el("input", {
+					class: "triton-chat-newinput",
+					type: "search",
+					placeholder: "Message someone…",
+					"aria-label": "Search people to message",
+					oninput: (ev) => this.searchPeople(ev.target.value),
+					onkeydown: (ev) => {
+						if (isComposingKey(ev)) return;
+						if (ev.key === "Escape") this.clearPeople();
+					},
+				})),
+			])
+		);
+		this.els.people = el("div", { class: "triton-chat-people is-hidden" });
+		this.els.list.appendChild(this.els.people);
+
 		if (!this.rooms.length) {
 			this.els.list.appendChild(
 				el("div", { class: "triton-chat-empty", text: "No conversations yet." })
@@ -151,6 +174,66 @@ export class BubbleChatSurface {
 					]
 				)
 			);
+		}
+	}
+
+	searchPeople(query) {
+		const term = (query || "").trim();
+		if (!term) {
+			this.clearPeople();
+			return;
+		}
+		clearTimeout(this._peopleTimer);
+		this._peopleTimer = setTimeout(async () => {
+			let people = [];
+			try {
+				people = (await call(M.PEOPLE, { query: term })) || [];
+			} catch (e) {
+				people = [];
+			}
+			clear(this.els.people);
+			this.els.people.classList.toggle("is-hidden", !people.length);
+			for (const person of people) {
+				this.els.people.appendChild(
+					el(
+						"button",
+						{
+							class: "triton-chat-person",
+							type: "button",
+							onclick: () => this.startDm(person.user),
+						},
+						[
+							el("span", { class: "triton-chat-avatar", text: initials(person.label) }),
+							el("span", { class: "triton-chat-person-name", text: person.label }),
+						]
+					)
+				);
+			}
+		}, 150);
+	}
+
+	clearPeople() {
+		clearTimeout(this._peopleTimer);
+		if (this.els.newSearch) this.els.newSearch.value = "";
+		if (this.els.people) {
+			clear(this.els.people);
+			this.els.people.classList.add("is-hidden");
+		}
+	}
+
+	/** Idempotent server-side: clicking somebody you already talk to opens that room. */
+	async startDm(user) {
+		try {
+			const room = await call(M.NEW_DM, { user });
+			this.clearPeople();
+			if (room && room.name) {
+				const known = this.rooms.filter((r) => r.name === room.name).length;
+				if (!known) this.rooms.unshift(room);
+				this.renderRooms();
+				await this.openRoom(room.name);
+			}
+		} catch (err) {
+			this.notice((err && err.message) || "Could not start that conversation.");
 		}
 	}
 

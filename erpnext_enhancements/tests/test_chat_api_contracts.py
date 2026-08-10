@@ -162,7 +162,14 @@ def _install_frappe_stub() -> types.ModuleType:
 FRAPPE = _install_frappe_stub()
 
 from erpnext_enhancements.chat import links, permissions  # noqa: E402
-from erpnext_enhancements.chat.api import _common, compose, history, mentions, search  # noqa: E402
+from erpnext_enhancements.chat.api import (  # noqa: E402
+	_common,
+	compose,
+	conversations,
+	history,
+	mentions,
+	search,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +413,93 @@ def test_history_pages_on_seq_and_never_uses_offset() -> None:
 			assert "`creation`" not in ordering
 
 
+def test_a_dm_is_probed_in_the_same_canonical_order_the_unique_index_enforces() -> None:
+	"""The probe and the insert must both use the SORTED pair, or dedupe fails half the time.
+
+	``unique(dm_user_1, dm_user_2)`` is a real index and ``ChatRoom.before_insert`` sorts the
+	pair lexicographically, so a conversation between A and B is one row whoever starts it.
+	That only holds if the *lookup* sorts too: probing ``{dm_user_1: me, dm_user_2: them}``
+	unsorted finds the existing room exactly when the caller's address happens to sort first,
+	and misses it — creating a second room, and eventually a second Google space for one pair
+	of people — the other half of the time.
+
+	Asserted on the source because the behaviour needs a database. What it catches is the
+	shape that actually goes wrong: somebody "simplifying" the sort away.
+	"""
+	source = _module_source(conversations)
+	assert "sorted([me, other])" in source, (
+		"create_direct_message no longer sorts the pair before probing. See "
+		"ChatRoom._order_dm_pair — the index is on the sorted pair."
+	)
+	# The same two names must feed the probe AND the inserted values, not two different orders.
+	assert 'probe={"dm_user_1": first, "dm_user_2": second}' in source
+	assert '"dm_user_1": first' in source
+	assert '"dm_user_2": second' in source
+
+
+def test_room_creation_goes_through_phase_2s_deduped_helpers() -> None:
+	"""Not a second room creator. A collision on the unique index means SUCCESS.
+
+	``_insert_room_deduped`` and ``insert_room_member`` both already treat a composite-unique
+	collision as "somebody else got there first, return theirs". Re-implementing either is how
+	two people clicking the same button at the same moment produce two rooms, and both of those
+	docstrings exist because that rule was got wrong once.
+	"""
+	# Asserted on CALL nodes, not on the source text. The module docstring names both helpers
+	# at length, so a substring scan passes even after the calls are ripped out — which is
+	# exactly what a mutation test caught here. A guard that a comment can satisfy is not a
+	# guard.
+	called = _called_names(conversations)
+	assert "provisioning._insert_room_deduped" in called, (
+		"the DM path no longer calls the deduped room helper. A hand-rolled probe-then-insert "
+		"is the TOCTOU that produces two rooms for one pair of people."
+	)
+	# Per FUNCTION, not per module: a room created with no member rows is a conversation
+	# nobody can see, and module-wide presence is satisfied by whichever path still has it.
+	for fn in ("create_direct_message", "create_group"):
+		assert "membership.insert_room_member" in _called_names(conversations, fn), (
+			f"{fn} no longer creates member rows through the one helper that treats a "
+			"unique(room, user) collision as success. A room with no members is invisible "
+			"to the person who just made it."
+		)
+	assert "frappe.get_doc" in called, "the group path builds a room doc"
+	# A hand-rolled existence check in front of an insert is the TOCTOU the helpers exist to
+	# close; it must not reappear here.
+	assert "frappe.db.exists" not in called
+
+
+def test_a_group_is_deliberately_not_deduplicated() -> None:
+	"""Two group rooms may legitimately share a title. Only DMs and document rooms have an
+	identity the database can enforce; a group's identity is that somebody made it."""
+	source = _module_source(conversations)
+	assert "not deduplicated" in source.lower() or "Not deduplicated" in source
+
+
+def test_the_initial_roster_is_bounded() -> None:
+	"""A blast-radius limit, not a schema limit: a fat-fingered select-all would eventually
+	provision a large Google space, and this codebase deliberately has no ``spaces.delete``."""
+	assert 1 < conversations.MAX_INITIAL_MEMBERS <= 100
+	assert 1 < conversations.MAX_PEOPLE_RESULTS <= 50
+
+
+@pytest.mark.parametrize(
+	("supplied", "expected"),
+	[
+		(None, []),
+		("", []),
+		([], []),
+		(["a@x.com", "b@x.com"], ["a@x.com", "b@x.com"]),
+		('["a@x.com", " b@x.com "]', ["a@x.com", "b@x.com"]),
+		("not json at all", []),
+		({"0": "a@x.com"}, ["a@x.com"]),
+		(["a@x.com", "", "   "], ["a@x.com"]),
+	],
+)
+def test_member_lists_survive_both_wire_shapes(supplied: Any, expected: list[str]) -> None:
+	"""``frappe.xcall`` sends arrays as JSON strings on some paths and lists on others."""
+	assert conversations._coerce_list(supplied) == expected
+
+
 def test_every_whitelisted_endpoint_gates_before_it_reads() -> None:
 	"""One membership decision per request, taken once, at the top.
 
@@ -416,7 +510,7 @@ def test_every_whitelisted_endpoint_gates_before_it_reads() -> None:
 	from erpnext_enhancements.chat.api import presence, readstate, rooms
 
 	seen = 0
-	for module in (history, compose, search, mentions, rooms, readstate, presence):
+	for module in (history, compose, search, mentions, rooms, readstate, presence, conversations):
 		tree = ast.parse(_module_source(module))
 		for node in ast.walk(tree):
 			if not isinstance(node, ast.FunctionDef):
@@ -437,7 +531,7 @@ def test_every_whitelisted_endpoint_gates_before_it_reads() -> None:
 	# Not vacuous: if the decorator resolver stops matching, `seen` collapses to 0 and every
 	# assertion above is skipped while this test still reports success. That is the exact
 	# failure this repo has shipped twice.
-	assert seen >= 18, (
+	assert seen >= 21, (
 		f"only {seen} whitelisted endpoints were found across chat/api. Either the surface "
 		"genuinely shrank — lower this floor deliberately, in the same commit — or "
 		"_decorator_name stopped resolving @frappe.whitelist() and this test is now green "
@@ -460,6 +554,41 @@ def _module_source(module: Any) -> str:
 	import pathlib
 
 	return pathlib.Path(module.__file__).read_text(encoding="utf-8")
+
+
+def _called_names(module: Any, function: str | None = None) -> set[str]:
+	"""Every dotted callee name actually invoked — in the module, or in one function of it.
+
+	Deliberately AST rather than text: these modules explain their own rules at length in
+	docstrings, so a substring scan for ``provisioning._insert_room_deduped`` passes on the
+	prose alone. Only a call counts.
+
+	``function`` narrows it, which matters for a helper that several paths must ALL use:
+	module-wide presence is satisfied by one surviving caller, so "the group path stopped
+	creating member rows" reads as fine while it is not.
+	"""
+	tree: Any = ast.parse(_module_source(module))
+	if function:
+		tree = None
+		for node in ast.walk(ast.parse(_module_source(module))):
+			if isinstance(node, ast.FunctionDef) and node.name == function:
+				tree = node
+		assert tree is not None, f"{module.__name__} has no function named {function}"
+
+	names: set[str] = set()
+	for node in ast.walk(tree):
+		if not isinstance(node, ast.Call):
+			continue
+		parts: list[str] = []
+		target: Any = node.func
+		while isinstance(target, ast.Attribute):
+			parts.append(target.attr)
+			target = target.value
+		if isinstance(target, ast.Name):
+			parts.append(target.id)
+		if parts:
+			names.add(".".join(reversed(parts)))
+	return names
 
 
 def _sql_literals(module: Any) -> list[str]:

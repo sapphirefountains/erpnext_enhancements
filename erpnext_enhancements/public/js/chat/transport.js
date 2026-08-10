@@ -42,6 +42,10 @@ export const M = {
 	MEMBERS: "erpnext_enhancements.chat.api.rooms.get_members",
 	LAST_OPEN: "erpnext_enhancements.chat.api.rooms.set_last_open_room",
 
+	NEW_DM: "erpnext_enhancements.chat.api.conversations.create_direct_message",
+	NEW_GROUP: "erpnext_enhancements.chat.api.conversations.create_group",
+	PEOPLE: "erpnext_enhancements.chat.api.conversations.search_people",
+
 	MESSAGES: "erpnext_enhancements.chat.api.history.get_messages",
 	THREAD: "erpnext_enhancements.chat.api.history.get_thread",
 	CONTEXT: "erpnext_enhancements.chat.api.history.get_message_context",
