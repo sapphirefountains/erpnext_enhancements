@@ -37,6 +37,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   This matters more than one bug fix: Phase 3 rewires session switching entirely, and this is a
   rule that is easy to state, easy to agree with, and easy to forget on the next function.
+## [1.263.1] - 2026-08-10
+
+### Fixed
+
+- **A message Google will never return was retried to the attempt ceiling and alarmed on every
+  attempt.** Found by the live smoke run rather than by any test: deleting a thread parent with
+  `force=true` cascades to its replies, and `spaces.messages.get` on a cascaded reply answers
+  **403**, not a tombstone — while a *directly* deleted message answers with a readable
+  tombstone carrying `deleteTime` and `deletionMetadata`.
+
+  The inbound pipeline's one `messages.get` (the `RESOLVE_VIA_GET` rung, which is the normal
+  path and not a fallback, because `includeResource: false` means an event carries only a
+  resource name) had no guard. A 403 propagated into `_fail_or_retry`, which retried every ten
+  minutes to `relay_max_attempts` and wrote an Error Log line each time — nine repetitions
+  burying the one that described the anomaly, for something no retry could ever fix.
+
+  **The hard part is that Chat's 403 means two opposite things.** Its body is, verbatim,
+  *"Permission denied to perform the requested action on the specified resource, or the resource
+  doesn't exist."* One status; two conditions. "Gone" is a single message nobody can recover.
+  "Forbidden" means the reader subject is not in that space, and **every** message in it will
+  fail silently until somebody notices — which is precisely the failure mode this phase exists
+  to prevent. Treating them alike in either direction is the bug.
+
+  So a 403 or 404 now asks a second, cheaper question on the error path only: can this subject
+  list that space at all? A clean read means the message is gone — settle the delivery
+  `Ignored` with the reason on the row, count it, and store nothing, because without the
+  resource there is no client id to tell an echo from a stranger, no body and no sender, and
+  Google keeps no copy of the text either. Any other answer, including a failure to ask, routes
+  to the loud path: when we cannot tell, the answer must be the one that alarms.
+
+  A 5xx is never eligible and does not even ask the question.
+
+  Four regression tests, each confirmed to kill a mutant in both directions — disabling the new
+  branch fails three of them, and wrongly admitting 500 to the gone-set fails the fourth.
+
+### Added
+
+- `seams.COUNTER_RESOURCES_GONE` (`resources_gone`), grouped under inbound ingest in
+  `chat/health.py`. One gone resource is an anomaly; a rising rate is an incident, and a status
+  an operator has to go and query for is not observability.
 
 ## [1.263.0] - 2026-08-10
 

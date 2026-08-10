@@ -2160,3 +2160,106 @@ def test_an_unparseable_timestamp_is_none_rather_than_now() -> None:
 	assert inbound.parse_google_timestamp("not a timestamp") is None
 	assert inbound.parse_google_timestamp("") is None
 	assert inbound.parse_google_timestamp(None) is None
+
+
+# ======================================================================================
+# A resource Google will not return — and the 403 that means two opposite things
+# ======================================================================================
+#
+# Observed on production 2026-08-10, in the live smoke run. Deleting a thread parent with
+# `force=true` cascades to its replies, and `messages.get` on a cascaded reply answers
+# **403 PERMISSION_DENIED**, not a tombstone — while a *directly* deleted message answers
+# with a readable tombstone carrying deleteTime and deletionMetadata.
+#
+# Chat's 403 body is, verbatim: "Permission denied to perform the requested action on the
+# specified resource, or the resource doesn't exist." One status, two conditions, opposite
+# handling. "Gone" is one message nobody can recover; "forbidden" is EVERY message in that
+# space failing silently until somebody notices. The space-readability probe is what tells
+# them apart, and these tests are the reason it can be trusted.
+
+
+class _ApiError(Exception):
+	"""Shaped like the transport's GoogleChatAPIError: what matters is `.status`.
+
+	Defined locally rather than imported so this suite keeps its stdlib-only module scope —
+	and so the test states its own contract with `fetch_message_resource`, which is "any
+	exception carrying a .status", not "this one class".
+	"""
+
+	def __init__(self, status: int) -> None:
+		super().__init__(f"HTTP {status}")
+		self.status = status
+
+
+class _GoneClient:
+	"""``get_message`` fails with a chosen status; ``list_messages`` decides which branch."""
+
+	def __init__(self, status: int, *, space_readable: bool) -> None:
+		self.status = status
+		self.space_readable = space_readable
+		self.gets: list[str] = []
+		self.lists: list[str] = []
+
+	def get_message(self, name: str) -> dict[str, Any]:
+		self.gets.append(name)
+		raise _ApiError(self.status)
+
+	def list_messages(self, space: str, **_kwargs: Any) -> dict[str, Any]:
+		self.lists.append(space)
+		if not self.space_readable:
+			raise _ApiError(403)
+		return {"messages": []}
+
+
+def _gone_run(status: int, *, space_readable: bool) -> tuple[str, _GoneClient]:
+	make_room()
+	client = _GoneClient(status, space_readable=space_readable)
+	verdict = process(f"{SPACE}/messages/gone1", event="created", client=client)
+	return verdict, client
+
+
+def test_a_gone_resource_is_settled_not_retried_to_the_ceiling() -> None:
+	"""403 + a readable space ⇒ the message is gone. Settle it; do not burn the budget."""
+	verdict, client = _gone_run(403, space_readable=True)
+
+	assert verdict == InboundVerdict.IGNORE.value
+	row = STORE.table("Chat Inbound Event")[next(iter(STORE.table("Chat Inbound Event")))]
+	assert row["status"] == "Ignored", "a retry cannot conjure a resource Google has deleted"
+	assert "gone rather than forbidden" in (row.get("last_error") or "")
+	assert int(row.get("attempts") or 0) == 0, "settling is not a failure; attempts must not move"
+	assert seams.counters()[seams.COUNTER_RESOURCES_GONE] == 1
+	# No row invented: without the resource there is no client id, no body and no sender, and
+	# Google keeps no copy of the text either.
+	assert STORE.table("Chat Message") == {}
+
+
+def test_a_404_is_gone_for_the_same_reason() -> None:
+	verdict, _client = _gone_run(404, space_readable=True)
+	assert verdict == InboundVerdict.IGNORE.value
+	assert seams.counters()[seams.COUNTER_RESOURCES_GONE] == 1
+
+
+def test_a_403_on_an_UNREADABLE_space_is_loud_because_it_is_not_gone() -> None:
+	"""The direction that matters. A broken reader subject loses every message in the space.
+
+	If this ever starts settling quietly, the symptom is that one space stops syncing and
+	nothing anywhere says so — which is the exact failure mode the whole phase is built
+	against. It must stay on the retry-and-alarm path.
+	"""
+	verdict, client = _gone_run(403, space_readable=False)
+
+	assert verdict != InboundVerdict.IGNORE.value
+	row = STORE.table("Chat Inbound Event")[next(iter(STORE.table("Chat Inbound Event")))]
+	assert row["status"] != "Ignored", "an inaccessible space must never be settled as 'gone'"
+	assert int(row.get("attempts") or 0) == 1, "it has to be retried; the fault may be transient"
+	assert seams.counters()[seams.COUNTER_RESOURCES_GONE] == 0
+	assert client.lists, "the readability probe is what distinguishes the two 403s"
+
+
+def test_a_500_is_never_gone() -> None:
+	"""Transient failures keep their retries. Only 403/404 are eligible for the gone branch."""
+	verdict, client = _gone_run(500, space_readable=True)
+
+	assert verdict != InboundVerdict.IGNORE.value
+	assert seams.counters()[seams.COUNTER_RESOURCES_GONE] == 0
+	assert not client.lists, "a 5xx must not even ask the readability question"
