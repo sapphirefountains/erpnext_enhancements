@@ -159,6 +159,7 @@ def handle(envelope: Envelope, *, origin: str = "") -> str | None:
 			question=envelope.text,
 			context=result.assembly.text() if result.assembly else "",
 			request_id=envelope.request_id,
+			room=envelope.room,
 		)
 	except Exception as exc:
 		_close_log(

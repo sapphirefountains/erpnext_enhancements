@@ -44,17 +44,34 @@ from typing import Any
 import frappe
 from frappe.utils import cint
 
-#: Non-streaming query endpoint. The streaming sibling is what the widget uses.
-QUERY_PATH: str = "/api/v1/assistant/query"
+#: Triton's query endpoint is **session-scoped**. There is no session-less
+#: ``/api/v1/assistant/query`` — the first version of this module assumed one and would have
+#: 404'd on every single turn, which is what comes of writing a client against a remembered
+#: API instead of against the repository sitting next to this one.
+SESSIONS_PATH: str = "/api/v1/assistant/sessions"
+QUERY_PATH_TEMPLATE: str = "/api/v1/assistant/sessions/{session_id}/query"
 
 DEFAULT_TIMEOUT: int = 120
+
+#: One Triton session per (person, room), cached. Long-lived: a follow-up mention in the same
+#: room continues the same conversation, which is what "what about the other one" needs.
+#:
+#: **The duplication this accepts, stated rather than discovered later.** The assembled context
+#: carries the current thread verbatim *and* Triton keeps its own history of previous mentions,
+#: so a follow-up shows the model some of the same text twice. It is bounded — Triton's history
+#: is only the mentions, which are sparse — and the alternative, a fresh session per turn,
+#: throws away continuity and fills the person's Triton session list with one entry per
+#: question. Revisit by switching this to a per-turn session if the duplication shows up in
+#: `Triton Invocation Log.prompt_tokens`.
+SESSION_CACHE_TTL: int = 30 * 24 * 3600
+SESSION_TITLE: str = "Google Chat"
 
 
 class TritonUnavailable(Exception):
 	"""Triton could not be reached or refused the turn. Never carries a token."""
 
 
-def ask(*, user: str, question: str, context: str, request_id: str = "") -> dict[str, Any]:
+def ask(*, user: str, question: str, context: str, request_id: str = "", room: str = "") -> dict[str, Any]:
 	"""Ask Triton one question **as ``user``**, with the assembled chat context attached.
 
 	The context rides on the **user turn**, not in the system instruction, and that is a cost
@@ -67,8 +84,6 @@ def ask(*, user: str, question: str, context: str, request_id: str = "") -> dict
 		Token counts are best-effort: they are what the invocation log's cost columns are for,
 		and a missing count must not fail a turn that otherwise worked.
 	"""
-	import requests
-
 	from erpnext_enhancements import triton_chat
 
 	previous = frappe.session.user
@@ -84,43 +99,103 @@ def ask(*, user: str, question: str, context: str, request_id: str = "") -> dict
 		if not base_url:
 			raise TritonUnavailable("Triton Settings has no Gateway URL, so there is nothing to ask.")
 
-		token = triton_chat.mint_user_token()
-		payload = {
-			"prompt": _prompt(question, context),
-			"request_id": request_id or None,
-		}
-		try:
-			response = requests.post(
-				f"{base_url}{QUERY_PATH}",
-				json=payload,
-				headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-				timeout=cint(settings.get("timeout")) or DEFAULT_TIMEOUT,
-			)
-		except Exception as exc:
-			raise TritonUnavailable(f"Could not reach Triton: {exc.__class__.__name__}") from None
+		timeout = cint(settings.get("timeout")) or DEFAULT_TIMEOUT
+		session_id = _session_for(base_url, user=user, room=room, timeout=timeout)
+		body = _post(
+			base_url,
+			QUERY_PATH_TEMPLATE.format(session_id=session_id),
+			{"prompt": _prompt(question, context)},
+			timeout=timeout,
+		)
 
-		if response.status_code >= 400:
-			# Status only. The body can echo the prompt back, and the prompt contains the
-			# assembled chat context — which is employee-private conversation.
-			raise TritonUnavailable(f"Triton returned HTTP {response.status_code}") from None
-
-		try:
-			body = response.json() or {}
-		except Exception:
-			raise TritonUnavailable("Triton returned a body that is not JSON") from None
-
+		# `ChatMessage` on the wire: {role, content, id, session_id, tokens, ui_metadata,
+		# created_at}. The answer is `content` — NOT `response` or `text`, which is what the
+		# first version of this read and which would have produced an empty reply on every
+		# turn while looking like the model had nothing to say.
+		meta = body.get("ui_metadata") or {}
 		return {
-			"text": str(body.get("response") or body.get("text") or "").strip(),
-			"model": str(body.get("model") or ""),
-			"prompt_tokens": cint((body.get("usage") or {}).get("prompt_tokens")),
-			"completion_tokens": cint((body.get("usage") or {}).get("completion_tokens")),
-			"cached_content_tokens": cint((body.get("usage") or {}).get("cached_content_tokens")),
+			"text": str(body.get("content") or "").strip(),
+			"model": str(meta.get("model") or meta.get("model_name") or ""),
+			# One number upstream, and it is the turn's total. Recorded as the prompt count
+			# rather than split across two columns that would then both be guesses.
+			"prompt_tokens": cint(body.get("tokens")),
+			"completion_tokens": 0,
+			"cached_content_tokens": cint(meta.get("cached_content_token_count")),
 		}
 	finally:
 		# Restored on every path including the exception one. A job that left the session
 		# pointing at a coworker would attribute everything it did afterwards to them.
 		if previous:
 			frappe.set_user(previous)
+
+
+def _post(base_url: str, path: str, payload: dict[str, Any], *, timeout: int) -> dict[str, Any]:
+	"""One authed POST. Status only in the error, never the body.
+
+	The body can echo the prompt back, and the prompt contains the assembled chat context —
+	which is employee-private conversation. An exception message is the least controlled
+	string in the system: it reaches the Error Log, and from there a screenshot.
+	"""
+	import requests
+
+	from erpnext_enhancements import triton_chat
+
+	token = triton_chat.mint_user_token()
+	try:
+		response = requests.post(
+			f"{base_url}{path}",
+			json=payload,
+			headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+			timeout=timeout,
+		)
+	except Exception as exc:
+		raise TritonUnavailable(f"Could not reach Triton: {exc.__class__.__name__}") from None
+
+	if response.status_code >= 400:
+		raise TritonUnavailable(f"Triton returned HTTP {response.status_code} for {path}") from None
+
+	try:
+		return response.json() or {}
+	except Exception:
+		raise TritonUnavailable("Triton returned a body that is not JSON") from None
+
+
+def _session_for(base_url: str, *, user: str, room: str, timeout: int) -> int:
+	"""The Triton session this room's mentions continue in. Created on first use, then cached.
+
+	A **404 on a cached id is expected**, not exceptional: the person can delete the session
+	from the Triton web app at any time, and a client that treated that as an outage would
+	break `@triton` for them permanently with no way back. So the cached id is a hint —
+	verified by use, discarded on a miss, and recreated.
+	"""
+	key = f"triton:chat_session:{user}:{room or 'global'}"
+	try:
+		cached = frappe.cache().get_value(key)
+	except Exception:
+		cached = None
+
+	if cached:
+		try:
+			return int(cached)
+		except (TypeError, ValueError):
+			pass
+
+	created = _post(
+		base_url,
+		SESSIONS_PATH,
+		{"title": f"{SESSION_TITLE}{f' — {room}' if room else ''}"[:80]},
+		timeout=timeout,
+	)
+	session_id = cint(created.get("id"))
+	if not session_id:
+		raise TritonUnavailable("Triton created a session with no id") from None
+
+	try:
+		frappe.cache().set_value(key, session_id, expires_in_sec=SESSION_CACHE_TTL)
+	except Exception:
+		# A deploy FLUSHDBs this cache, so a miss is normal and costs one extra session.
+		pass
+	return session_id
 
 
 def _prompt(question: str, context: str) -> str:

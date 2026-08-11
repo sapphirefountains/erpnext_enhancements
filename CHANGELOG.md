@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.2] - 2026-08-11
+
+### Fixed
+
+- **The Triton client posted to an endpoint that does not exist.** `triton_client.ask` called
+  `POST /api/v1/assistant/query`. Triton has no session-less query endpoint — the route is
+  `POST /api/v1/assistant/sessions/{session_id}/query` — so **every `@triton` turn would have
+  404'd**, been logged as `Failed`, and answered *"Something went wrong answering that"*.
+- **It also read the wrong response fields.** The response is Triton's `ChatMessage`:
+  `{role, content, id, session_id, tokens, ui_metadata, created_at}`. The client read
+  `body["response"]`/`body["text"]` and a `usage` dict, none of which exist — so even against
+  the right URL it would have posted an **empty reply**, indistinguishable from the model
+  having nothing to say.
+- Added `_session_for`: one Triton session per (person, room), created on demand and cached
+  for 30 days.
+
+### Notes
+
+- **This was written against a remembered API rather than against the repository sitting in
+  the next working directory.** Both errors were one `grep` away the whole time. Neither
+  would have been caught by any test in this repo — the client is stubbed everywhere it is
+  tested — and both would have surfaced only as "Triton never answers", on the day of the
+  live round trip.
+- **A 404 on a cached session id is expected, not exceptional.** Somebody can delete the
+  session from the Triton web app at any time, and a client treating that as an outage would
+  break `@triton` for them permanently with no way back. The cached id is a hint: verified by
+  use, discarded on a miss, recreated.
+- **The duplication the session choice accepts, stated rather than discovered later.** The
+  assembled context carries the current thread verbatim *and* Triton keeps its own history of
+  previous mentions, so a follow-up shows the model some of the same text twice. It is bounded
+  — Triton's history is only the mentions, which are sparse — and a fresh session per turn
+  would throw away continuity and fill the person's session list with one entry per question.
+  Revisit if it shows up in `Triton Invocation Log.prompt_tokens`.
+- The error message carries the status and the path and **never the body**: the body can echo
+  the prompt back, and the prompt contains the assembled chat context.
+
 ## [1.277.1] - 2026-08-11
 
 ### Fixed
