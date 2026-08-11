@@ -1450,6 +1450,49 @@ has_permission = {
 # chat_phase4_notifications, and renaming one silently re-enables email for it.
 notification_skip_email_types = ["Chat Message", "Chat Mention"]
 
+# `tabNotification Log` has grown untrimmed since this site was built, and nothing anywhere
+# was ever going to stop it.
+#
+# Measured on production 2026-08-11: 9,717 rows, oldest 2025-07-09, and it is registered for
+# retention in NEITHER `frappe/hooks.py` NOR `erpnext/hooks.py` -- checked against both hook
+# dicts. `tabLogs To Clear` holds fifteen rows and Notification Log is not one of them. So
+# every bell notification this site has ever produced is still on disk.
+#
+# One line fixes it, because the framework does the rest: the next `daily_maintenance` run
+# calls LogSettings.add_default_logtypes(), which reads this hook and appends the missing
+# `Logs To Clear` row itself. No patch, no fixture, no UI step.
+#
+# THE NUMBER IS CHOSEN ONCE AND NEVER REVISITED, so it is worth knowing why it is 90.
+# `add_default_logtypes` only appends rows that are ABSENT -- it never updates an existing
+# one -- so changing this value later has no effect on a site that already has the row, and
+# the only remedy is editing `Logs To Clear` by hand on a bench. The site's own convention
+# settled it: all fifteen existing rows are 90 days (bar DuckDB Sync at 45), including Error
+# Log, whose hook value is 14 -- live proof that the hook loses to an existing row. 90 trims
+# 6,322 of the 9,717 rows on the first run and matches everything around it.
+#
+# Two more mechanics that make this safe rather than merely small:
+#   - `remove_unsupported_doctypes()` runs FIRST in run_log_clean_up and deletes the row of
+#     any doctype whose controller has no `clear_old_logs(days)` -- retention would then stop
+#     silently and permanently. Verified against the deployed build: NotificationLog
+#     implements it, taking `days`.
+#   - `frappe.get_hooks` merges dict-valued hooks across apps into a list per key and takes
+#     `retentions[-1]`, so a second app declaring Notification Log would win on install
+#     order. Nothing else declares it today.
+#
+# It also unlocks the one-time catch-up: `clear_log_table("Notification Log")` raises
+# ValidationError("Unsupported logging DocType") for anything absent from this hook, and that
+# helper is the only feasible way to clear thirteen months in one pass -- it copies the recent
+# rows into a new table and swaps them, rather than issuing a DELETE across most of a table.
+#
+# Deliberately NOT extended to the chat log tables. `Chat Relay Job` and `Chat Inbound Event`
+# both implement `clear_old_logs` and are both unregistered, so their retention is dead code
+# today -- but Chat Settings also carries `relay_job_retention_days` and
+# `inbound_event_retention_days`, and declaring a static number here while those fields claim
+# to control it would ship exactly the lying-settings-field trap Phase 4 just removed from the
+# presence constants. Wiring or removing those fields is chat work and does not belong in a
+# standalone repo fix.
+default_log_clearing_doctypes = {"Notification Log": 90}
+
 ignore_links_on_delete = ["User Form Draft"]
 
 portal_menu_items = [
