@@ -50,7 +50,7 @@ precisely the string it saw before and is untouched.
 | `handoff.js` | mostly | The bubble→SPA record. `sessionStorage` primary (per tab, survives a same-tab navigation), `localStorage` mirror with a nonce and a 60 s TTL for the new-tab case, consumed and deleted on read. |
 | `citations.js` | **yes** except `applyCitations` | `[[ref:N]]` tokenizing, the streaming tail buffer, and the DOM applier. |
 | `optimistic.js` | **yes** | The pending-message store, keyed on `client_message_id` throughout. |
-| `signals.js` | **yes** | Read batcher, typing throttle and registry, presence union. |
+| `signals.js` | **yes** | Read batcher, typing throttle and registry, presence union, and `ensureClientId` — **the one presence-client id generator**. It lives here rather than in whichever surface needed it first because the union above is keyed on it, and a second generator is a second way for three tabs to look like one person, or one to look like three. |
 | `mentions.js` | **yes** | Trigger detection, insertion, re-anchoring, and the payload. |
 | `dom.js` | partly | Node builders, linkification, relative time, grouping, and `isComposingKey` — **the one IME rule every Enter-to-send handler consults**. Four copies of that rule is four chances for the next one to carry half of it, which is exactly what happened before it was extracted. |
 | `transport.js` | no | `fetch` against `/api/method/…`. No `frappe.*` — the SPA has no Desk bundle. |
@@ -62,6 +62,25 @@ precisely the string it saw before and is untouched.
 The pure ones carry the logic on purpose: this repo has no Frappe integration-test job in CI,
 so the bench-free tier is the only one with automatic regression protection, and anything that
 matters is pushed into a function a plain `node` script can call.
+
+## Two rules the first day of pilot use bought
+
+Both of these shipped through review and a green suite, several times each, and both are now
+enforced by `scripts/test_chat_source_rules.js` rather than by remembering.
+
+**A surface that reads shared state must also write it.** The bubble and the SPA are two
+clients of one server, and every time a feature was wired into only one of them the result
+was silent: the bubble listened for room events and never joined the room, so it received
+nothing forever; it read the tier-3 restoration hint that only the SPA wrote, so `/chat`
+always opened cold; and it published typing but never presence, so its users rendered offline
+next to their own live typing indicator. None of these throw, log or degrade visibly — they
+look exactly like a quiet room, a first visit, and a colleague who stepped away.
+
+**Emptying the transcript is not a state.** `setItems([])` leaves the virtual list holding
+two zero-height spacers, which reads as a broken page rather than as "nothing here". Three
+separate panes did this — the cold empty state, a search with no hits, and a query the server
+rejected as too short. `showPlaceholder` is now the one writer, and a pane that clears the
+transcript without reaching it fails the build.
 
 ## Size
 

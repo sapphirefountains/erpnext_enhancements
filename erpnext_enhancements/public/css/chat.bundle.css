@@ -31,11 +31,15 @@
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--ee-bg: #0d1117;
-		--ee-bg-alt: #161b22;
-		--ee-border: #30363d;
+		/* Three distinguishable planes, not three shades of black. The first cut used
+		   #0d1117 on #161b22 with a #30363d border, which on a large screen reads as one
+		   flat void with a faint line in it — the transcript and the sidebar were the same
+		   surface to the eye. */
+		--ee-bg: #15181d;
+		--ee-bg-alt: #1c2027;
+		--ee-border: #333a44;
 		--ee-text: #e6edf3;
-		--ee-muted: #8b949e;
+		--ee-muted: #9aa4b1;
 	}
 }
 
@@ -121,14 +125,19 @@ body .container {
 .ee-sidebar-head {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
 	gap: 8px;
-	padding: 12px 14px;
+	padding: 14px 14px 12px;
 	border-bottom: 1px solid var(--ee-border);
 }
 .ee-sidebar-title {
+	/* flex:1 rather than space-between: the title should take the slack and push the two
+	   controls to the right, instead of all three fighting for the middle. */
+	flex: 1;
+	min-width: 0;
 	margin: 0;
-	font-size: 16px;
+	font-size: 15px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
 }
 .ee-sidebar-search {
 	padding: 10px 12px;
@@ -983,4 +992,75 @@ body .container {
 	padding: 14px 8px;
 	color: var(--ee-muted);
 	list-style: none;
+}
+
+/* ------------------------------------------------------------------ empty state
+ *
+ * The conversation column used to render NOTHING when no room was selected — the
+ * transcript was cleared and that was it, which on a wide screen is a
+ * full-height black rectangle. It reads as a broken page rather than as
+ * "nothing selected", and it was the first thing anybody saw on opening /chat.
+ */
+.ee-placeholder {
+	display: grid;
+	place-content: center;
+	justify-items: center;
+	gap: 6px;
+	padding: 40px 24px;
+	text-align: center;
+	/* Takes the row the transcript would have had, so the composer stays put and the
+	   column does not resize when a room is chosen. */
+	grid-row: 3;
+	min-height: 0;
+}
+.ee-placeholder-mark {
+	font-size: 34px;
+	opacity: 0.55;
+	line-height: 1;
+}
+.ee-placeholder-title {
+	margin: 6px 0 0;
+	font-size: 15px;
+	font-weight: 600;
+}
+.ee-placeholder-sub {
+	margin: 0;
+	max-width: 34ch;
+	color: var(--ee-muted);
+	font-size: 13px;
+}
+
+/* When the placeholder is showing, the transcript should not also claim a row. */
+.ee-placeholder:not(.is-hidden) ~ .ee-transcript {
+	display: none;
+}
+
+/* The composer spanned the full width of a very wide screen, which put the send
+   button a monitor away from the text you just typed. Cap it and centre it on the
+   same axis as the transcript. */
+.ee-composer-row,
+.ee-composer-hint,
+.ee-composer-files {
+	max-width: 900px;
+	margin-inline: auto;
+}
+
+/* Message rows get the same treatment, so a 2560px monitor does not stretch one
+   line of text across the whole desk. */
+.ee-msg,
+.ee-day {
+	max-width: 900px;
+	margin-inline: auto;
+	width: 100%;
+}
+
+/* A conversation header with nothing in it is just a stray line. Give it presence
+   only when it has content. */
+.ee-conv-head:empty,
+.ee-conv-title:empty {
+	display: none;
+}
+.ee-conv-head {
+	min-height: 46px;
+	background: var(--ee-bg-alt);
 }

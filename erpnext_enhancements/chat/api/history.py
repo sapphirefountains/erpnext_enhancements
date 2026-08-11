@@ -37,6 +37,7 @@ from frappe.utils import cint
 from erpnext_enhancements.chat import permissions
 from erpnext_enhancements.chat.api._common import (
 	attachment_payload,
+	mention_payload,
 	message_payload,
 	page_size,
 	require_message,
@@ -123,6 +124,7 @@ def get_messages(
 
 	messages = [message_payload(row) for row in rows]
 	_attach_attachments(messages)
+	_attach_mentions(messages)
 	if not (thread or "").strip():
 		_attach_reply_counts(name, messages)
 
@@ -170,6 +172,7 @@ def get_thread(root: str, limit: Any = None) -> dict[str, Any]:
 	page = get_messages(root_row[0]["room"], thread=root_name, limit=limit)
 	root_payload = message_payload(root_row[0])
 	_attach_attachments([root_payload])
+	_attach_mentions([root_payload])
 
 	return {
 		"root": root_payload,
@@ -229,6 +232,7 @@ def get_message_context(message: str, limit: Any = None) -> dict[str, Any]:
 	older.reverse()
 	messages = [message_payload(r) for r in older + newer]
 	_attach_attachments(messages)
+	_attach_mentions(messages)
 	if not thread_root:
 		_attach_reply_counts(row["room"], messages)
 
@@ -270,6 +274,52 @@ def _attach_reply_counts(room: str, messages: list[dict[str, Any]]) -> None:
 		row = counts.get(message["name"])
 		message["reply_count"] = cint(row["replies"]) if row else 0
 		message["thread_last_seq"] = cint(row["last_seq"]) if row else 0
+
+
+def _attach_mentions(messages: list[dict[str, Any]]) -> None:
+	"""Fill ``mentions`` on the messages in this page. One query, or none.
+
+	Without this the write side is inert. :func:`compose.send_message` validates and stores
+	``Chat Mention`` child rows on every send, and both renderers call ``tokenizeMentions(text,
+	message.mentions || [])`` — but ``message_payload`` builds an explicit dict, so a child row
+	that is never selected can never reach them. The whole feature therefore rendered as plain
+	text: ``.ee-mention`` was a CSS rule nothing could match, and a person who was mentioned by
+	name saw their name styled exactly like every other word in the sentence.
+
+	The spans are ``(start_index, length)`` offsets into the body, not markup. The client
+	slices at them and builds nodes; nothing here emits HTML, for the reason
+	:func:`search._result` gives at length.
+
+	Deleted messages are skipped: :func:`_common.message_payload` has already replaced the
+	body with the tombstone, so offsets into the original text now point at nothing, and
+	handing the client spans that overrun the string it holds is how a renderer throws.
+	"""
+	wanted = [m["name"] for m in messages if m.get("name") and not m.get("is_deleted")]
+	if not wanted:
+		return
+
+	scope = permissions.membership_filter_sql("`m`.`room`", seq_column="`m`.`seq`")
+	rows = frappe.db.sql(
+		f"""select
+				`x`.`parent` as `message`, `x`.`mention_type`, `x`.`user`,
+				`x`.`start_index`, `x`.`length`
+			from `tabChat Mention` `x`
+			join `tabChat Message` `m` on `m`.`name` = `x`.`parent`
+			where `x`.`parent` in %(names)s
+				and `x`.`parenttype` = 'Chat Message'
+				and {scope}
+			order by `x`.`parent` asc, `x`.`start_index` asc""",
+		{"names": tuple(wanted)},
+		as_dict=True,
+	)
+
+	by_message: dict[str, list[dict[str, Any]]] = {}
+	for row in rows:
+		by_message.setdefault(row["message"], []).append(mention_payload(row))
+
+	for message in messages:
+		if not message.get("is_deleted"):
+			message["mentions"] = by_message.get(message["name"], [])
 
 
 def _attach_attachments(messages: list[dict[str, Any]]) -> None:

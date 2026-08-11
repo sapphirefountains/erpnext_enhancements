@@ -205,6 +205,59 @@ def test_a_live_row_emits_its_body() -> None:
 	assert payload.get("deleted") is None
 
 
+def test_every_message_payload_carries_a_mentions_key() -> None:
+	"""The renderers call ``tokenizeMentions(text, message.mentions || [])``.
+
+	``message_payload`` builds an explicit literal dict — no ``**row`` spread — so a key that
+	is not written here can never reach them no matter what the query selects. It shipped
+	without one, and the result was that **no ``@mention`` had ever rendered as a mention** on
+	either surface: the spans were stored, one read path used them for the room-list badge, and
+	the transcript got plain text with a CSS class that could not match.
+
+	An empty list means "no mentions". It never means "not loaded" — see
+	``history._attach_mentions``, which fills it for every transcript row.
+	"""
+	payload = _common.message_payload({"name": "M1", "room": "R1", "seq": 1, "text": "hi @Jane"})
+	assert payload["mentions"] == []
+
+
+def test_a_mention_span_is_offsets_and_never_markup() -> None:
+	"""Same rule as the search snippet, for the same reason: the client slices, never parses.
+
+	``user`` is ``None`` for a Triton mention, which names no ``User`` row.
+	"""
+	span = _common.mention_payload(
+		{"mention_type": "User", "user": "jane@example.com", "start_index": "3", "length": "5"}
+	)
+	assert span == {
+		"mention_type": "User",
+		"user": "jane@example.com",
+		"start_index": 3,
+		"length": 5,
+	}
+	assert "<" not in str(span)
+
+	triton = _common.mention_payload({"mention_type": "Triton", "start_index": 0, "length": 7})
+	assert triton["user"] is None
+
+
+def test_every_transcript_path_hydrates_mentions() -> None:
+	"""All three of them, asserted structurally rather than by reading the code once.
+
+	A page that skips the hydration is not visibly broken — it renders, with the mention chips
+	silently missing — so "the one I remembered to wire" is exactly how this regresses.
+	"""
+	for function in ("get_messages", "get_thread", "get_message_context"):
+		assert "_attach_mentions" in _called_names(history, function), (
+			f"history.{function} does not hydrate mention spans, so mentions in that view render "
+			f"as plain text"
+		)
+
+	# And the send response, or the sender's own chips vanish the moment the server acks —
+	# `reconcile()` assigns the response over the optimistic entry that had them.
+	assert "_attach_mentions" in _called_names(compose, "_sent")
+
+
 def test_a_null_sender_is_rendered_from_sender_email() -> None:
 	"""An external Chat participant has no ``User`` link, and the client must not assume one."""
 	payload = _common.message_payload(
@@ -298,17 +351,63 @@ def test_search_snippet_carries_offsets_rather_than_pre_wrapped_html() -> None:
 		"room_title": "Riverwalk",
 		"sender_name": "Jane",
 	}
-	result = search._result(row, "pump")
+	result = search._result(row, "pump", "jane@example.com")
 	assert "<mark>" not in result["snippet"]
 	assert result["match_length"] == len("pump")
 	assert result["snippet"][result["match_start"] : result["match_start"] + 4] == "pump"
+
+
+def test_a_search_hit_in_a_dm_is_labelled_with_the_counterpart_not_the_docname() -> None:
+	"""A DM has no stored title, and ``Chat Room`` is ``autoname: hash``.
+
+	``search.py`` is the one payload builder that does not go through ``room_payload``, so it
+	emitted ``""`` for every DM hit — and the client's ``hit.room_title || hit.room`` fallback
+	turned that into a ten-character random hash sitting where the conversation name belongs.
+
+	Without a database ``dm_counterpart`` cannot resolve the display name and degrades to the
+	docname, which is the documented behaviour. What matters here, and what is actually
+	asserted, is that the field is **not empty** — an empty ``room_title`` is what let the
+	client fall through to the hash, and it is the failure this reproduces.
+	"""
+	row = {
+		"name": "M1",
+		"room": "b7f2c91a04",
+		"seq": 3,
+		"text_plain": "pump",
+		"room_title": None,
+		"room_type": "Direct Message",
+		"dm_user_1": "jane@example.com",
+		"dm_user_2": "james@example.com",
+	}
+	result = search._result(row, "pump", "jane@example.com")
+	assert result["room_title"], "a DM hit must carry a label, or the client renders the docname"
+	assert result["room_title"] != row["room"]
+	# The counterpart, not the viewer: a DM is named after whoever you are not.
+	assert result["room_title"] == "james@example.com"
+
+	# And from the other side, the same room resolves to the other name.
+	mirrored = search._result(row, "pump", "james@example.com")
+	assert mirrored["room_title"] == "jane@example.com"
+
+
+def test_a_group_search_hit_keeps_its_stored_title() -> None:
+	"""The DM resolution must not disturb the ordinary case."""
+	row = {
+		"name": "M1",
+		"room": "R1",
+		"seq": 3,
+		"text_plain": "pump",
+		"room_title": "Riverwalk",
+		"room_type": "Group",
+	}
+	assert search._result(row, "pump", "jane@example.com")["room_title"] == "Riverwalk"
 
 
 def test_search_result_carries_the_shared_deep_link() -> None:
 	"""One builder, three consumers. A second URL-shape implementation is how a notification
 	lands on an error page while the SPA's own links work fine."""
 	row = {"name": "M1", "room": "R1", "seq": 3, "text_plain": "pump", "thread_root": "T1"}
-	result = search._result(row, "pump")
+	result = search._result(row, "pump", "jane@example.com")
 	assert result["route"] == links.build_chat_route("R1", message="M1", thread="T1")
 	assert result["route"] == "/chat/room/R1?message=M1&thread=T1"
 
@@ -403,6 +502,17 @@ def test_history_pages_on_seq_and_never_uses_offset() -> None:
 		# Attachments legitimately order by `creation` — a Chat Attachment has no `seq`, and
 		# the order that matters there is the order they were uploaded within one message. The
 		# rule is about the TRANSCRIPT, so it is asserted only on Chat Message reads.
+		#
+		# Child-row fetches are the same carve-out for the same reason. `_attach_mentions`
+		# joins `tabChat Message` only to reach `room` for the membership filter; its rows are
+		# spans WITHIN one message and their meaningful order is by offset into the body. It is
+		# not a page of messages and `seq` would order it by nothing.
+		#
+		# Deliberately narrow: keyed on the child table actually being selected, not a blanket
+		# "unless the statement looks unusual". A page of messages that stopped ordering by
+		# `seq` still fails, which is the whole point of the rule.
+		if "`tabchat mention`" in statement:
+			continue
 		if "order by" in statement:
 			ordering = statement.split("order by", 1)[1]
 			assert "`seq`" in ordering, (

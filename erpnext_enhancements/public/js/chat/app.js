@@ -22,6 +22,7 @@ import {
 	ReadBatcher,
 	TypingRegistry,
 	TypingThrottle,
+	ensureClientId,
 	typingLabel,
 } from "./signals.js";
 import { ChatSocket } from "./socket.js";
@@ -275,9 +276,12 @@ class ChatApp {
 		this.els.composer = this.buildComposer();
 		this.els.notice = el("div", { class: "ee-notice is-hidden", role: "status" });
 
+		this.els.placeholder = el("div", { class: "ee-placeholder is-hidden", role: "status" });
+
 		this.els.conversation = el("section", { class: "ee-conversation", "aria-label": "Conversation" }, [
 			this.els.header,
 			this.els.notice,
+			this.els.placeholder,
 			this.els.viewport,
 			this.els.jumpLatest,
 			this.els.typing,
@@ -287,7 +291,12 @@ class ChatApp {
 		this.els.threadPane = el("aside", { class: "ee-thread is-hidden", "aria-label": "Thread" });
 		this.els.membersPane = el("aside", { class: "ee-members is-hidden", "aria-label": "Members" });
 
-		this.els.status = el("div", { class: "ee-connection", role: "status" });
+		// `is-hidden` from the start. `.ee-connection` is a solid red block, and the only thing
+		// that ever un-hides it is `setConnection`, which cannot run until the bootstrap fetch,
+		// a socket.io script download and a handshake have all completed. Built visible it was
+		// an empty red bar on screen for that whole window — an error state on a page that was
+		// fine — and the state at construction is `connecting`, not `disconnected`.
+		this.els.status = el("div", { class: "ee-connection is-hidden", role: "status" });
 
 		this.root.appendChild(
 			el("div", { class: "ee-chat-shell", "data-pane": "list" }, [
@@ -697,6 +706,7 @@ class ChatApp {
 		this.state.messages = page.messages || [];
 		this.state.hasMore = page.has_more != null ? page.has_more : page.has_more_before;
 
+		this.hideEmptyState();
 		this.renderHeader();
 		this.renderTranscript({
 			anchor: opts.message
@@ -837,14 +847,89 @@ class ChatApp {
 		if (!this._reducedMotion) setTimeout(() => node.classList.remove("is-highlighted"), 2500);
 	}
 
-	showEmptyState() {
+	showEmptyState(message) {
 		this.state.room = null;
 		this.state.roomDetail = null;
 		this.state.messages = [];
 		this.transcript.setItems([]);
 		this.els.roomTitle.textContent = "";
 		clear(this.els.roomSubtitle);
+
+		// A pane with nothing in it reads as a broken page, not as "nothing selected". This
+		// used to clear the transcript and render literally nothing — a full-height black
+		// rectangle — which is exactly how it looked the first time anybody opened /chat.
+		const hasRooms = this.state.rooms.some((r) => this.state.showArchived || !r.is_archived);
+		this.showPlaceholder(
+			"💬",
+			message || (hasRooms ? "Pick a conversation" : "No conversations yet"),
+			hasRooms
+				? "Choose one on the left, or start a new one with +."
+				: "Start one with + and search for a colleague."
+		);
+		this.setComposerVisible(false);
 		this.showPane("list");
+	}
+
+	/**
+	 * Paint the placeholder and show it. **The one writer.**
+	 *
+	 * Every "there is nothing here" state goes through this, because the alternative is what
+	 * shipped: each caller clearing the transcript and rendering its own nothing, which for
+	 * two of them was literally nothing at all.
+	 */
+	showPlaceholder(mark, title, sub) {
+		fill(this.els.placeholder, [
+			el("div", { class: "ee-placeholder-mark", text: mark, "aria-hidden": "true" }),
+			el("p", { class: "ee-placeholder-title", text: title }),
+			el("p", { class: "ee-placeholder-sub", text: sub || "" }),
+		]);
+		this.els.placeholder.classList.remove("is-hidden");
+	}
+
+	/**
+	 * Hide the placeholder.
+	 *
+	 * Separate from the composer, deliberately. While the placeholder is up CSS hides the
+	 * transcript entirely (`.ee-placeholder:not(.is-hidden) ~ .ee-transcript`), so any pane
+	 * that renders INTO the transcript has to clear it — including the search results pane,
+	 * which wants no composer. Bundling the two is how search rendered its hits into a
+	 * `display: none` element and read as "no results".
+	 */
+	hidePlaceholder() {
+		this.els.placeholder.classList.add("is-hidden");
+	}
+
+	setComposerVisible(on) {
+		this.els.composer.root.classList.toggle("is-hidden", !on);
+	}
+
+	/** Leave the empty state — a room is being shown. */
+	hideEmptyState() {
+		this.hidePlaceholder();
+		this.setComposerVisible(true);
+	}
+
+	/**
+	 * Enter a pane that is chrome around a transcript rather than a conversation: search
+	 * results, or the Triton signpost.
+	 *
+	 * Nulls the room and hides the composer *together*, because they are one fact. Leaving the
+	 * composer live over a search result list meant Enter posted into whichever room happened
+	 * to be open before the search — a message delivered to the wrong coworker with no
+	 * indication it had happened — and on a cold load of a `/chat/search` URL it posted with a
+	 * null room, producing a failed bubble that Retry could never clear and that then followed
+	 * the user into every room they opened afterwards.
+	 */
+	enterAuxPane() {
+		if (this.state.room && this.socket) this.socket.leaveRoom(this.state.room);
+		this.flushRead(true);
+		this.saveDraft();
+		this.state.room = null;
+		this.state.roomDetail = null;
+		this.state.thread = null;
+		this.setComposerVisible(false);
+		this.hidePlaceholder();
+		this.showPane("conversation");
 	}
 
 	// ------------------------------------------------------------------ threads
@@ -1093,6 +1178,25 @@ class ChatApp {
 		const text = (textarea.value || "").trim();
 		const files = this.pendingUploads.filter((u) => u.fileName).map((u) => u.fileName);
 		if (!text && !files.length) return;
+
+		// No room, no send. The composer is hidden without one, but a hidden element can still
+		// be reached — and posting with a null room produced a failed bubble that Retry could
+		// never clear (it resends the same null room) and that `mergeForRender` then redrew at
+		// the bottom of every room the user opened afterwards.
+		if (!this.state.room) {
+			this.notice("Open a conversation first.");
+			return;
+		}
+
+		// An upload with no `fileName` has not come back from the server yet. Sending now drops
+		// it: the names are collected above, the queue is emptied below, and the file stays
+		// attached to the ROOM with no `Chat Attachment` row pointing at any message. The
+		// sender sees their caption go and believes the file went with it; the recipient gets
+		// text only. Waiting is the whole fix — the upload resolves in a moment.
+		if (this.pendingUploads.some((u) => !u.fileName)) {
+			this.notice("Still uploading — send again in a moment.");
+			return;
+		}
 
 		textarea.value = "";
 		textarea.style.height = "auto";
@@ -1495,12 +1599,33 @@ class ChatApp {
 	}
 
 	applyUnread(payload) {
+		// `reconcile` means the change was not local to one room — mark-all-read moved every
+		// counter at once. The event cannot carry the new list (it is capped at 512 bytes and
+		// must not carry content), so it says "refetch" and we do. Without this branch a
+		// roomless payload resolved to no room and no-opped, and every other open tab kept a
+		// stale badge until a full page reload.
+		if (payload.reconcile) {
+			this.refreshUnreadWholesale();
+			return;
+		}
 		if (payload.room) {
 			const room = this.state.roomsById.get(payload.room);
 			if (room) room.unread = Number(payload.unread) || 0;
 		}
 		if (payload.total_unread != null) this.state.unread.total_unread = Number(payload.total_unread);
 		this.renderRoomList();
+	}
+
+	/** Re-read the room list and the unread totals from the server. One round trip. */
+	async refreshUnreadWholesale() {
+		try {
+			this.state.rooms = (await call(M.ROOMS, { include_archived: this.state.showArchived ? 1 : 0 })) || [];
+			this.indexRooms();
+			this.state.unread = await call(M.UNREAD);
+			this.renderRoomList();
+		} catch (e) {
+			/* the next reconnect resync covers it */
+		}
 	}
 
 	/**
@@ -1674,7 +1799,16 @@ class ChatApp {
 	}
 
 	showReaders(readers) {
-		this.notice(`Read by ${readers.map((r) => r.user).join(", ")}`);
+		// Through the roster, like every sibling call site (renderTyping, the members pane, the
+		// receipt avatars' tooltips). `reader.user` is a `User` docname, which on this site is
+		// an email address, so joining them raw put a list of coworkers' email addresses on
+		// screen where their names belong.
+		const members = (this.state.roomDetail || {}).members || [];
+		const names = readers.map((r) => {
+			const member = members.find((m) => m.user === r.user);
+			return (member && member.full_name) || r.user;
+		});
+		this.notice(`Read by ${names.join(", ")}`);
 	}
 
 	// ------------------------------------------------------------------ search
@@ -1683,20 +1817,36 @@ class ChatApp {
 		const opts = options || {};
 		this.state.search = query;
 		this.pushRoute({ kind: KIND.SEARCH, query }, opts.replace);
-		this.showPane("conversation");
+		this.enterAuxPane();
 		this.els.roomTitle.textContent = `Search: ${query}`;
 		clear(this.els.roomSubtitle);
 
 		try {
 			const res = await call(M.SEARCH, { query });
-			this.renderSearchResults(res);
+			this.renderSearchResults(res, query);
 		} catch (e) {
-			this.notice("Search failed.");
+			this.transcript.setItems([]);
+			this.showPlaceholder("🔍", "Search failed", "Something went wrong. Try again.");
 		}
 	}
 
-	renderSearchResults(res) {
+	renderSearchResults(res, query) {
 		const items = (res.results || []).map((hit) => ({ name: hit.message, kind: "search", hit }));
+
+		// The zero case is a real state, not an absence of one. Without this the pane went
+		// blank: no count, no "no matches", no way to tell whether the search had run, failed
+		// or genuinely matched nothing. `too_short` is the server telling us it declined to
+		// search at all (under two characters) — a different fact, and it says so.
+		if (!items.length) {
+			this.transcript.setItems([]);
+			if (res.too_short) {
+				this.showPlaceholder("🔍", "Type at least 2 characters", "One letter matches too much to be useful.");
+			} else {
+				this.showPlaceholder("🔍", `No messages match “${query || res.query || ""}”`, "Try a different word, or check another conversation.");
+			}
+			return;
+		}
+		this.hidePlaceholder();
 		this.transcript.renderRow = (item) => {
 			if (item.kind !== "search") return this.renderRow(item);
 			const hit = item.hit;
@@ -1724,7 +1874,15 @@ class ChatApp {
 					this.openRoom(hit.room, { message: hit.message }).catch(() => {});
 				},
 			}, [
-				el("span", { class: "ee-search-meta", text: `${hit.room_title || hit.room} · ${hit.sender_name}` }),
+				// No `|| hit.room` fallback. A `Chat Room` docname is a random hash, and this
+				// line rendered one for every direct message hit — a DM has no stored title,
+				// so the server resolves the counterpart's name and sends it in `room_title`.
+				// Falling back to the docname is what turned a missing label into a visible
+				// one; a blank is the honest failure and shows up in review.
+				el("span", {
+					class: "ee-search-meta",
+					text: `${hit.room_title || roomTitle(this.state.roomsById.get(hit.room), this.me) || "Conversation"} · ${hit.sender_name}`,
+				}),
 				snippet,
 			]);
 		};
@@ -1751,7 +1909,7 @@ class ChatApp {
 	openTriton(options) {
 		const opts = options || {};
 		this.pushRoute({ kind: KIND.TRITON }, opts.replace);
-		this.showPane("conversation");
+		this.enterAuxPane();
 		this.els.roomTitle.textContent = "Triton";
 		clear(this.els.roomSubtitle);
 		this.transcript.setItems([]);
@@ -1967,27 +2125,16 @@ class ChatApp {
 
 function roomTitle(room, me) {
 	if (!room) return "";
+	// Server-resolved per viewer. A DM has no stored title — it is named after whoever you
+	// are not — so without this the UI falls back to `dm_user_*`, which is a `User` docname,
+	// which on this site is an email address. Correct, and it reads as unfinished software.
+	if (room.display_title) return room.display_title;
 	if (room.title) return room.title;
 	if (room.room_type === "Direct Message") {
-		const other = room.dm_user_1 === me ? room.dm_user_2 : room.dm_user_1;
-		return other || "Direct message";
+		return room.other_user_name || room.other_user ||
+			(room.dm_user_1 === me ? room.dm_user_2 : room.dm_user_1) || "Direct message";
 	}
 	return room.name;
-}
-
-/** One id per TAB, in sessionStorage. The multi-tab presence union is keyed on it, and a
- *  localStorage id would make three tabs look like one client. */
-function ensureClientId() {
-	try {
-		let id = sessionStorage.getItem("ee_chat_client_id");
-		if (!id) {
-			id = "c-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-			sessionStorage.setItem("ee_chat_client_id", id);
-		}
-		return id;
-	} catch (e) {
-		return "c-" + Math.random().toString(36).slice(2);
-	}
 }
 
 export function start() {

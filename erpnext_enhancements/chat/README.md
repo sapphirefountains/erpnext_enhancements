@@ -790,6 +790,15 @@ Chat shows as offline", and each offline dot carries the same explanation for a 
 reader. **No code path may infer a coworker's presence or read state from a Google Chat API
 response.**
 
+**The caption is only true if every ERPNext surface actually beats.** It shipped with one
+writer — the SPA — while the bubble, which is where the pilot users live, published typing
+but never presence. So a colleague working in ERPNext all day rendered offline under a
+sentence saying they had no ERPNext session, beside a live "…is typing" line for the same
+person. The limitation above is about Google Chat; a missing heartbeat is a bug wearing its
+costume, and it is indistinguishable from the real thing on screen. Any new surface that
+renders chat must call `presence.heartbeat`, and `scripts/test_chat_source_rules.js` rule 11
+fails the build if one does not.
+
 Two mechanical consequences worth knowing:
 
 * **Presence is Redis with a TTL, never a DocType.** At fifty users heartbeating every 30 s a
