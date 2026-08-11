@@ -59,6 +59,17 @@ Verified, and all of them expensive to rediscover:
   `frappe.delete_doc(...)`. See [`fixtures/README.md`](erpnext_enhancements/fixtures/README.md).
 - **Every custom DocType must sit in its declared module.** `tests/test_doctype_modules.py`
   asserts it against the filesystem and fails the build otherwise.
+- **A `default` on a *new* field of a Single doctype never reaches the row that already
+  exists.** A Single stores one row per field in `tabSingles`; `bench migrate` adds no row for
+  a newly declared field, and `load_from_db` applies no defaults — they fire in `new_doc()`,
+  i.e. on a fresh install and never again. So the field reads `None`/`0` on every existing
+  site while the JSON says otherwise. Harmless until a controller *rejects* that value: adding
+  37 fields to Chat Settings made its settings page **unsaveable**, because `validate` refused
+  the fifteen zeros (v1.277.3). Note the shape of it — saving a Single deletes and re-inserts
+  every field row, so a page anyone actually uses self-heals on the next save, and the ones
+  that bite are the settings for **dormant** features, where the first save is the one you
+  need and the one that fails. Ship a backfill patch with the fields; there are 20 Singles in
+  this app. See [`patches/backfill_chat_settings_defaults.py`](erpnext_enhancements/patches/backfill_chat_settings_defaults.py).
 - **A `www/` controller whose filename contains a hyphen is never imported by Frappe**, so
   its `get_context()` silently never runs. `stripe-return.py` was broken this way from the
   day it was written. `scripts/check_www_controllers.py` guards it in CI.
