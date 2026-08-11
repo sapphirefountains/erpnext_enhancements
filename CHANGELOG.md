@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.270.0] - 2026-08-11
+
+Chat Phase 4, part one: the notification decision, presence, and the bell. Web
+Push lands with it but ships switched off behind a flag and an absent keypair.
+
+**The whole phase exists because its failures are invisible.** Nobody reports the
+notification they did not receive, and a correctly-suppressed message is
+indistinguishable from a silently broken one — the sender sees a delivered
+message, the recipient sees nothing, the push service returns 201 and the server
+logs a success. So the decision is one pure function with an exhaustive table
+test, every decision carries a reason code, and `debug.explain(user, room)`
+answers "why didn't Jane get this" without anybody reading the code.
+
+### Added
+
+- **The suppression rule as one pure function** (`chat/notifications/policy.py`).
+  ADR 0009 §H.1's twelve rows, with no Frappe import, no database access and **no
+  clock** — `now` is a parameter. That is what puts the rule deciding whether
+  twenty people's phones buzz in the bench-free CI tier, the only tier this repo
+  protects automatically. Its 44 tests assert against a literal transcription of
+  the ADR's table rather than a second implementation, because a test that
+  recomputes the rule passes whenever the code and the test share a misreading.
+- **Server-owned presence** (`chat/notifications/presence.py`), plus
+  `chat/notifications/settings.py` turning `Chat Settings` into a clamped policy.
+- **Bell notifications** (`chat/notifications/bell.py`,
+  `chat/notifications/fanout.py`), off Phase 2's `notify_new_message` seam.
+  Phase 2's proof that the seam fires exactly once per genuinely new message and
+  zero times for echoes is untouched, and the counter is still bumped before and
+  independently of the notification, so it keeps measuring what it was written to
+  measure.
+- **Web Push, hand-rolled** (`chat/notifications/webpush/`): RFC 8292 VAPID and
+  RFC 8188 `aes128gcm`, against `cryptography` and `PyJWT`. Frappe's own push
+  path is Google-Cloud-Messaging only and hardcoded to a relay this site does not
+  have — it reports itself enabled and then fails at request time — and every
+  usual Web Push library is absent from the production bench, which has no `pip
+  install` step in its deploy at all. `chat/notifications/README.md` says so
+  plainly, the way `stripe_payments` explains why it carries no Stripe SDK.
+- **`Chat Push Subscription`**, `www/chat-sw.js`, and the cross-surface read sync
+  (`chat/notifications/read_state.py`) — including the data push that closes the
+  operating-system banner, which is the step that makes reading on a phone clear
+  the desktop.
+- `notification_skip_email_types = ["Chat Message", "Chat Mention"]`. Frappe
+  consults this **before** it reads a user's own settings, so no per-user opt-in
+  can defeat it. Decision #3's "never an email" is now structural rather than a
+  default; at 600 messages a day fanned out to a ten-person room the alternative
+  is 12,000 emails a day out of a mail domain with a reputation to lose.
+
+### Fixed
+
+- **The bell would have gone permanently silent for a room after the first read.**
+  The plan specified `enqueue_create_notification(..., dedupe_on=[...])`, whose
+  own v16 docstring says it "does not re-surface an existing notification" and
+  whose existence check carries **no `read` filter**. So: first message writes a
+  row, the person reads the room, the row is marked read, and every later message
+  matches the check and writes nothing — with no error anywhere. The dedupe is
+  now ours and scoped to the unread row.
+- **Presence used the house 30 s / 75 s pair**, copied from
+  `collab/live_form_sync.js` — but **30 s is exactly the Google Cloud load
+  balancer's idle-connection cut**, and the only reason realtime works on this
+  site is that socket.io's stock 25 s ping beats it by five seconds. Chat now
+  uses 20 s / 55 s (ADR §H.3.1), and a patch moves the stored pair on sites still
+  holding Phase 3's, because Frappe synthesises a Single's DocField defaults only
+  while `tabSingles` holds no row — and production's row exists.
+- **Nothing re-beat presence on socket reconnect**, so after every deploy's Redis
+  `FLUSHDB` everybody would have read as absent — and been notified about
+  everything — for up to a full heartbeat. Both surfaces now beat from their
+  resync path.
+- **Nothing re-beat on a focus, blur, visibility or room change**, so the server
+  decided suppression from a record up to an interval stale. That is how somebody
+  gets pinged about the message already on their screen.
+- **`presence_heartbeat_seconds` and `presence_ttl_seconds` had been on the
+  Chat Settings form since Phase 1 with nothing reading them.** An operator could
+  change either and watch it have no effect, forever, with no error.
+
+### Notes
+
+- **The service worker registers at `/chat/`, not root.** A registration is keyed
+  by (storage key, scope URL), and an identical scope *replaces* the existing
+  registration rather than coexisting — `kiosk-sw.js` and `wall-sw.js` are
+  already at root and are, incidentally, already competing for that one slot.
+  Narrowing needs no `Service-Worker-Allowed` header and costs nothing: a push
+  subscription belongs to the registration, not to the pages it controls. This
+  settles ADR risk P3-3.
+- **The VAPID private key lives in `site_config.json`**, not on a DocType. The
+  chat guardrail suite forbids a `Password` field on any chat DocType because
+  "once it is in `__Auth` it is in every backup"; `site_config.json` satisfies
+  that rather than evading it. `webpush.vapid.generate` prints the two lines and
+  writes nothing.
+- **The ADR contradicts itself on whether a mention pierces a muted room** (§H.1
+  row 9 / §H.2.3 say no; CQ-8's ship-default says yes). Shipped as the table
+  says, with the other reading one Chat Settings flag away. Nikolas to settle.
+- Five ADR `VERIFY:` items closed against production: `get_url()` returns the
+  external HTTPS origin (so deep links in push are safe), `tabNotification Log`
+  **does** carry a `for_user` index, `Notification Log.type` is a Link to a real
+  `Notification Type` record, `link` is set on 0 of 9,714 rows, and the row count
+  is 9,714 rather than the ADR's 7,165 or 9,612.
+- **Not in this release, deliberately:** `Notification Log` has no retention on
+  production and is growing forever. That is CQ-21, which the ADR asks be offered
+  as its own PR rather than smuggled into a feature branch.
+
 ## [1.269.0] - 2026-08-11
 
 The decision #12 audit, rebuilt. v1.268.0 shipped it writing from inside the

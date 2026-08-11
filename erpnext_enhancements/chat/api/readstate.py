@@ -54,21 +54,29 @@ def mark_read(room: str, up_to_seq: Any) -> dict[str, Any]:
 	if target < 1:
 		return {"room": name, "last_read_seq": _current_mark(name, user), "changed": False}
 
-	from erpnext_enhancements.chat.doctype.chat_room_member.chat_room_member import advance_read_mark
+	# Delegated to Phase 4's single writer rather than advancing the mark here. A read has to
+	# do four things — persist the mark, clear the bell rows, tell this person's other tabs,
+	# and close the operating-system banner on their other devices — and the whole point of one
+	# writer is that no entry point can do three of them. This endpoint and the one a tapped
+	# notification calls are two doors into the same room.
+	from erpnext_enhancements.chat.notifications import read_state
 
-	before = _current_mark(name, user)
-	advance_read_mark(name, user, target)
-	after = _current_mark(name, user)
-	changed = after > before
+	result = read_state.mark_room_read(name, user=user, up_to_seq=target, source="app")
+	after = cint(result.get("last_read_seq"))
 
-	if changed:
+	if result.get("changed"):
 		# The room's members see the receipt; the reader's own other tabs and their floating
 		# bubble see the counter. Two rooms, two payload shapes, exactly as invariant I8 wants:
 		# content-adjacent state to the permission-checked doc room, counters to the user room.
 		_publish_receipt(name, user, after)
 		_publish_user_counter(user, name)
 
-	return {"room": name, "last_read_seq": after, "changed": changed}
+	return {
+		"room": name,
+		"last_read_seq": after,
+		"changed": bool(result.get("changed")),
+		"cleared_notifications": result.get("cleared_notifications") or [],
+	}
 
 
 @frappe.whitelist()

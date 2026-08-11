@@ -676,6 +676,20 @@ scheduler_events = {
 		# Orphaned document rooms -- a linked document deleted or cancelled must not silently
 		# leave a Google space nobody owns.
 		"30 4 * * *": ["erpnext_enhancements.chat.sync.provisioning.sweep_orphaned_document_rooms"],
+		# chat Phase 4: retire push subscriptions nothing has been delivered to in 60 days.
+		#
+		# A minute nothing else uses -- scheduler_events is one dict literal, so a duplicate
+		# key silently REPLACES the earlier entry with no warning, and the QuickBooks hourly
+		# jobs already own :00/:20/:40 while chat owns :25/:50 and 4:30am.
+		#
+		# Needed because the push services only ever report a subscription gone (404/410) when
+		# the BROWSER deliberately unsubscribed. A phone that was wiped, reassigned, or simply
+		# never opened again is never mentioned by anyone -- so without this the table only
+		# grows, and every dead row in it costs one HTTPS request per notification to that
+		# person, forever. Deactivates rather than deletes, so a device that comes back is
+		# reactivated by its next registration and the history survives somebody asking why
+		# their phone stopped buzzing.
+		"45 3 * * *": ["erpnext_enhancements.chat.notifications.webpush.subscriptions.prune_stale"],
 		# Semi-monthly commission report — 07:00 site TZ, DAILY on purpose even
 		# though it only emails on the 1st and the 16th. The job also owns the
 		# saved date window on the "Brian's Closed Won" Report Builder report, and
@@ -924,6 +938,10 @@ after_install = [
 	"erpnext_enhancements.patches.default_chat_settings.ensure_chat_settings",
 	# Phase 2's composites, same shape and same reason as the line above it.
 	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
+	# Phase 4's Notification Type records. Notification Log.type is a LINK on v16, so
+	# without these two rows every chat bell notification fails link validation on insert --
+	# one Error Log per message and a bell that never lights.
+	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
 ]
 
 # Run after each `bench migrate` (from global_enhancements)
@@ -1061,6 +1079,22 @@ after_migrate = [
 	# path this is five cheap reads and no writes. Never raises -- a hook that raised here
 	# would brick every future deploy rather than report one bad constraint.
 	"erpnext_enhancements.patches.add_chat_phase2_indexes.ensure_chat_phase2_indexes",
+	# chat Phase 4 (notifications): the two `Notification Type` records, plus the presence
+	# retune. Both need the after_migrate half specifically, for opposite reasons.
+	#
+	# The records, because `Notification Log.type` is a Link on v16 and inserting a row of an
+	# uninstalled type is a validation failure -- so a site that somehow reached Phase 4's
+	# code without this line would log one error per message and light no bell at all.
+	#
+	# The retune, because Frappe synthesises a Single's DocField defaults ONLY while tabSingles
+	# holds no row. Production's row exists and holds Phase 3's 30 s / 75 s (measured
+	# 2026-08-11), so changing the shipped default moves nothing there; the patch rewrites the
+	# stored pair to 20 s / 55 s, and only where it still equals what Phase 3 shipped. An
+	# operator's own number is left alone.
+	#
+	# Idempotent: two exists-checks and a get_singles_dict on a healthy migrate, no writes.
+	# Never raises.
+	"erpnext_enhancements.patches.chat_phase4_notifications.ensure_chat_phase4_notifications",
 ]
 
 # Version-controlled customizations: every manually created Custom Field and
@@ -1391,6 +1425,30 @@ has_permission = {
 	"Chat Message": "erpnext_enhancements.chat.permissions.chat_message_has_permission",
 	"Chat Attachment": "erpnext_enhancements.chat.permissions.chat_attachment_has_permission",
 }
+
+# Chat notifications (ADR 0009 Phase 4) may NEVER be emailed, and this hook is what makes
+# that structural rather than a default somebody can undo.
+#
+# `Notification Log.after_insert` calls send_notification_email() whenever
+# is_email_notifications_enabled_for_type(for_user, type) is true. That predicate consults
+# get_skip_email_types() FIRST -- before it reads the user's own Notification Settings -- so a
+# type listed here cannot be emailed by anybody, including a user who has explicitly ticked it
+# on. A per-user default would have been defeated by the first person who re-enabled it.
+#
+# Decision #3 is "at most two notification surfaces, and neither is email". At the measured
+# volume the alternative is not a nuisance, it is an incident: 600 messages a day fanned out
+# to a ten-person room is 12,000 emails a day out of a mail domain with a reputation to lose.
+#
+# Two consequences worth knowing rather than discovering:
+#   - Frappe's own hooks.py lists "Alert" here, so this MERGES to ["Alert", "Chat Message",
+#     "Chat Mention"] rather than replacing anything.
+#   - Registering a type here makes the desk's "enable email for all users" button THROW for
+#     it ("{0} never sends email, so it cannot be enabled for users."). That throw is the
+#     assertion we want, not a bug to work around.
+#
+# The names are keys, not labels: they must match the `Notification Type` records installed by
+# chat_phase4_notifications, and renaming one silently re-enables email for it.
+notification_skip_email_types = ["Chat Message", "Chat Mention"]
 
 ignore_links_on_delete = ["User Form Draft"]
 

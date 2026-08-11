@@ -141,6 +141,22 @@ PERMISSIONS_MODULE: str = "permissions.py"
 #: Adding a table here is a policy decision, not a convenience. The test that matters is the
 #: one below asserting the reason is actually written.
 UNSCOPED_TABLES: dict[str, str] = {
+	"Chat Push Subscription": (
+		"The Web Push device registry: one row per browser, holding an endpoint URL, the "
+		"subscription's own two keys, a user agent and delivery health. **No conversation, no "
+		"room and no message ever touches this table** — the only chat identifier a push "
+		"carries is in the encrypted payload, which is built in memory and never stored.\n\n"
+		"Membership is not the scope here because a device is not in a room. The scope that "
+		"does apply is `user`, and every read filters on it except the two sweeps, which are "
+		"deliberately global: `prune_stale` and `clear_old_logs` run on a schedule with no "
+		"session user and must see every row or they retire nothing.\n\n"
+		"What keeps it safe is that nothing user-facing reads it at all. Zero DocPerm keeps it "
+		"off the desk, out of /api/resource and away from the generic MCP tools; the only "
+		"reader is webpush/subscriptions.py. That matters more here than on most tables, "
+		"because **an endpoint is a bearer capability** — anybody holding one can push to that "
+		"browser — which is also why it is never written to a log line and why `_origin()` "
+		"reduces it to a host before it reaches one."
+	),
 	"Chat Retrieval Audit": (
 		"The decision #12 audit log. It records THAT a privileged read happened, by whom, for "
 		"what and over which rooms — never what was said: no body, no snippet, and the query "
@@ -234,6 +250,20 @@ FOREIGN_TABLES: dict[str, str] = {
 		"The pilot roster child table on Chat Settings: a list of email addresses allowed to "
 		"use the feature. Not conversation."
 	),
+	"Notification Log": (
+		"Frappe's own bell table, written and cleared by chat/notifications/bell.py. Every "
+		"query against it is filtered on `for_user`, which IS the scope — a Notification Log "
+		"row belongs to exactly one person by construction, so there is no membership "
+		"question to ask and no second reader to exclude.\n\n"
+		"What keeps it safe is the write side rather than the read side: a chat notification "
+		"row carries a subject naming a sender and a room, a deep link, and the "
+		"document_type/document_name pair — and **never any message text**. That is "
+		"deliberate and it is the reason this entry is narrow. `Chat Message` ships zero "
+		"DocPerm precisely so bodies are unreachable through /api/resource, the desk, global "
+		"search and the generic MCP tools; a snippet in a Notification Log subject would move "
+		"employee-private conversation into a table with ordinary permissions and undo all of "
+		"it. A query here that starts selecting or writing a body is a finding, not a feature."
+	),
 	"User": (
 		"Display names and avatars, joined onto rows the membership filter has ALREADY "
 		"scoped — the room roster, a search hit's author, a mention candidate. It is the one "
@@ -264,6 +294,28 @@ FOREIGN_TABLES: dict[str, str] = {
 #: bounded by something other than the reader's identity, and no column selected is a body.**
 #: A read that answers an HTTP request fails all three and does not belong here.
 SYSTEM_CONTEXT_READS: dict[tuple[str, str, str], str] = {
+	# --- chat/notifications/fanout.py: deciding who to tell, with nobody logged in ------
+	(
+		"notifications/fanout.py",
+		"_mentioned_users",
+		"Chat Mention",
+	): (
+		"Who a message names directly, read inside the notification background job so the "
+		"suppression rule knows whether to apply the mention override. It passes all three "
+		"tests. There is no session user — this runs on a queue, triggered by an insert that "
+		"may itself have come from the inbound sync worker relaying a coworker's message from "
+		"Google. The row set is bounded by `parent = <the one message being fanned out>` and "
+		"by `mention_type = 'User'`, not by anybody's identity. And the only column selected "
+		"is `user`: a mention row's span offsets are not read and the message body is not "
+		"touched at all.\n"
+		"Scoping it by membership would also be answering the wrong question. The reader here "
+		"is the SERVER deciding what to tell each member in turn, and it has already resolved "
+		"the room's active membership through the filtered statement in `_members` — the very "
+		"next thing it does with this set is intersect it with that roster. A membership "
+		"filter applied against `frappe.session.user` (Administrator, in a job) would expand "
+		"to `1 = 1` and mean nothing, which is worse than not asking: it would read as a "
+		"scoped query to the next person and be one only by accident."
+	),
 	# --- chat/audit.py: the writer that must not re-enter the permission stack ----------
 	(
 		"audit.py",
@@ -1103,6 +1155,11 @@ class TestTheAllowlistsAreHonest(unittest.TestCase):
 				"Chat Event Subscription",
 				"Chat Inbound Event",
 				"Chat Provisioning Run",
+				# Phase 4. A device registry, not a conversation table: endpoint, keys, user
+				# agent and delivery health, and no room or message reaches it at all. Its two
+				# sweeps run on a schedule with no session user and must see every row, which is
+				# what makes it unscoped rather than merely unfiltered.
+				"Chat Push Subscription",
 				"Chat Relay Job",
 				"Chat Retrieval Audit",
 				"Chat Retrieval Audit Room",

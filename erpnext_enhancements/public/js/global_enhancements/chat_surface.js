@@ -77,21 +77,50 @@ export class BubbleChatSurface {
 	 * server is answering is "is this person at this computer", and the panel losing focus to
 	 * a form field on the same page does not change the answer.
 	 */
-	startHeartbeat() {
-		const beat = () => {
-			if (!this.me) return;
-			call(M.HEARTBEAT, {
-				client_id: this.clientId,
-				active_room: this.room || null,
-				thread: null,
-				focused: document.hasFocus() ? 1 : 0,
-				visibility: document.visibilityState,
-			}).catch(() => {
+	beatPresence() {
+		if (!this.me) return Promise.resolve(null);
+		return call(M.HEARTBEAT, {
+			client_id: this.clientId,
+			active_room: this.room || null,
+			thread: null,
+			focused: document.hasFocus() && document.visibilityState === "visible" ? 1 : 0,
+			visibility: document.visibilityState,
+			// `desk`, and it is load-bearing rather than telemetry. A record from here with no
+			// active room is the ONLY evidence the server has that somebody is in ERPNext with
+			// chat closed — the row of the notification table that would otherwise be
+			// indistinguishable from "not logged in", because Frappe v16 exposes no view of who
+			// holds a socket. Without this the two rows collapse and an operator reading the
+			// debug output cannot tell a colleague at their desk from one who has gone home.
+			surface: "desk",
+		})
+			.then((res) => {
+				const seconds = Number(res && res.heartbeat_seconds) || 0;
+				if (seconds > 0 && seconds * 1000 !== this._heartbeatMs) this.restartHeartbeat(seconds * 1000);
+				return res;
+			})
+			.catch(() => {
 				/* presence is an accelerator; a missed beat expires by TTL */
+				return null;
 			});
-		};
-		beat();
-		this._heartbeat = setInterval(beat, 30000);
+	}
+
+	restartHeartbeat(ms) {
+		this._heartbeatMs = ms;
+		if (this._heartbeat) clearInterval(this._heartbeat);
+		this._heartbeat = setInterval(() => this.beatPresence(), ms);
+	}
+
+	startHeartbeat() {
+		this.beatPresence();
+		this.restartHeartbeat(this._heartbeatMs || 20000);
+
+		// Out of band on every transition, for the same reason the SPA does it: the server
+		// suppresses notifications from the last record this tab wrote, so a stale record is a
+		// wrong notification decision for up to a whole interval.
+		window.addEventListener("focus", () => this.beatPresence());
+		window.addEventListener("blur", () => this.beatPresence());
+		document.addEventListener("visibilitychange", () => this.beatPresence());
+		window.addEventListener("online", () => this.beatPresence());
 		window.addEventListener("pagehide", () => {
 			call(M.GOODBYE, { client_id: this.clientId }, { keepalive: true }).catch(() => {});
 		});
@@ -393,6 +422,9 @@ export class BubbleChatSurface {
 		this.room = room;
 		this.joinRoom(room);
 		this.readBatcher.reset();
+		// Tell the server which room this tab is watching before the first message can arrive
+		// in it, or the very next message notifies somebody who is looking straight at it.
+		this.beatPresence();
 		try {
 			this.roomDetail = await call(M.ROOM, { room });
 			this.marks = (this.roomDetail.members || []).map((m) => ({
@@ -786,6 +818,11 @@ export class BubbleChatSurface {
 
 	/** Re-read the room list wholesale. The reconciliation path, not the accelerator. */
 	async resyncRooms() {
+		// A resync means the socket dropped and came back, and the commonest cause of that is a
+		// deploy — which FLUSHDBs the presence keyspace on its way past. Re-beating here bounds
+		// the "everybody looks absent, so everybody gets notified about everything" window to
+		// reconnect latency rather than to the heartbeat interval.
+		this.beatPresence();
 		try {
 			this.rooms = (await call(M.ROOMS)) || [];
 			this.renderRooms();

@@ -545,3 +545,19 @@ erpnext_enhancements.patches.add_chat_phase2_indexes
 # around it. Selected on `recorded_at is null`, which cannot match a row written by the
 # current writer because the field is reqd. Idempotent, safe on a fresh site.
 erpnext_enhancements.patches.purge_pre_redesign_chat_audit_rows
+# Chat Phase 4 (notifications): install the two `Notification Type` records the bell rows
+# link to, and move the stored presence constants off Phase 3's pair.
+#
+# The records are an installer rather than a fixture because both names are public API from
+# the moment they ship -- `notification_skip_email_types` in hooks.py is keyed by NAME, so a
+# rename silently re-enables email -- and removing a fixture record is a two-step dance this
+# does not need. Without them, `Notification Log.type` (a Link on v16) fails validation and
+# every chat bell notification dies on insert.
+#
+# The retune exists because changing a DocField default moves nothing on a site whose Single
+# is already materialised, and production's is: it holds 30/75 today. Conditional on the
+# stored value still being Phase 3's, so an operator's deliberate number survives.
+#
+# Backstopped from after_migrate AND after_install for the reason stated at both hooks.
+# Idempotent, no DDL, safe twice.
+erpnext_enhancements.patches.chat_phase4_notifications

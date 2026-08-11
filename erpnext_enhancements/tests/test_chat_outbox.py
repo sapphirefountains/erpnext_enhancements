@@ -901,10 +901,16 @@ def test_job_seq_allocation_takes_the_room_row_lock() -> None:
 
 def test_the_enqueue_is_after_commit_and_deduplicated_by_job_id() -> None:
 	send(text="hello")
-	assert len(REC.enqueues) == 1
-	call = REC.enqueues[0]
 
-	assert call["method"] == outbox.RELAY_WORKER_PATH
+	# Filtered by method rather than counted. One send now schedules TWO jobs — the relay,
+	# and Phase 4's notification fan-out off the `notify_new_message` seam — and a bare
+	# `len(...) == 1` here asserted "the relay is the only thing anybody may ever enqueue",
+	# which was never the intended claim and would have to be relaxed again by whoever adds
+	# the third. Naming the method says what this test is actually about.
+	relays = [c for c in REC.enqueues if c["method"] == outbox.RELAY_WORKER_PATH]
+	assert len(relays) == 1, "exactly one relay job per message, and never two"
+	call = relays[0]
+
 	assert call["enqueue_after_commit"] is True, (
 		"without enqueue_after_commit the worker can get_doc the job before the transaction "
 		"commits and see nothing — an intermittent 'job not found' that only reproduces under load"
@@ -912,6 +918,28 @@ def test_the_enqueue_is_after_commit_and_deduplicated_by_job_id() -> None:
 	assert call["deduplicate"] is True
 	assert call["job_id"], "deduplicate=True REQUIRES job_id and frappe.enqueue throws without it"
 	assert call["job"] == relay_jobs()[0]["name"]
+
+
+def test_a_send_also_schedules_the_notification_fan_out_exactly_once() -> None:
+	"""The other half of what a send schedules, pinned here so it cannot quietly disappear.
+
+	The fan-out is what turns a message into a bell row and a push, and it is invisible when
+	it stops happening — no error, no log, just nobody being told. Its absence would otherwise
+	be caught by nothing in the bench-free tier, because every other assertion in this file is
+	about the relay.
+	"""
+	send(text="hello")
+
+	fanouts = [
+		c
+		for c in REC.enqueues
+		if c["method"] == "erpnext_enhancements.chat.notifications.fanout.run_fanout"
+	]
+	assert len(fanouts) == 1, "one message, one fan-out — twice would notify everybody twice"
+	assert fanouts[0]["enqueue_after_commit"] is True, (
+		"a fan-out that starts before its transaction lands reads a message row that does not "
+		"exist yet, and tells nobody about it"
+	)
 
 
 def test_a_failed_enqueue_does_not_fail_the_message() -> None:

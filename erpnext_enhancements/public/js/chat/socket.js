@@ -161,6 +161,12 @@ export const EVENT_NAMES = [
 	"chat_room_updated",
 	"chat_unread_updated",
 	"chat_mention",
+	// Phase 4. Fires whenever a read lands on ANY surface — this tab, another tab, or a
+	// notification tapped on a phone — carrying the new high-water mark and the bell rows it
+	// cleared. It is what makes reading on a phone clear the desktop badge.
+	// (No quoted text in this comment: the parity gate extracts quoted strings from this
+	// array and would read one as an event name nothing publishes.)
+	"chat_notification_state",
 ];
 
 function socketUrl(b) {

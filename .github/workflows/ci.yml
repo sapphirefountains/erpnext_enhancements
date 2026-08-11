@@ -692,6 +692,42 @@ jobs:
       # every whitelisted endpoint calls a gate before it reads.
       - name: Chat Phase 3 API contracts (bench-free pytest suite)
         run: python -m pytest erpnext_enhancements/tests/test_chat_api_contracts.py -q
+      # Phase 4's suppression matrix -- ADR 0009 §H.1's twelve rows, asserted against a
+      # LITERAL expectation table rather than a re-implementation. This is the one rule
+      # deciding whether twenty people's phones buzz, and every way of getting it wrong
+      # is invisible: nobody reports the notification they did not receive, and a
+      # correctly-suppressed message and a silently-broken one look identical from the
+      # sender's side, the recipient's side and the server log.
+      # It also carries the two named tests that stop presence quietly becoming a sticky
+      # flag: stop the heartbeat with NO cooperation from the client (no pagehide, no
+      # disconnect, no key deletion), advance past the TTL, and assert notifications
+      # resume. A flag-based design leaves a crashed browser suppressing its owner's
+      # messages forever, which people report as chat being broken rather than as a
+      # notification bug.
+      # No frappe stub: the module under test imports nothing outside the standard
+      # library, and the suite asserts that too -- a `frappe` import appearing there
+      # would delete this whole step from CI silently.
+      - name: Chat Phase 4 notification policy (bench-free pytest suite)
+        run: python -m pytest erpnext_enhancements/tests/test_chat_notification_policy.py -q
+      # The Web Push key schedule, pinned to RFC 8291's published example byte for byte.
+      # A round-trip test cannot substitute for this and it is worth saying why: every
+      # mistake available in that code is SYMMETRIC. Swap the two public keys in
+      # key_info, use the message salt where the auth secret belongs, write 0x01 as the
+      # padding delimiter instead of 0x02 -- in each case encryption and decryption still
+      # agree perfectly, the round trip passes, and every real browser silently discards
+      # the payload while the push service returns 201 and the server logs a success.
+      # Only an answer computed by somebody else catches a uniformly-wrong implementation.
+      #
+      # This is the ONE step that installs a package, and the exception is deliberate
+      # rather than drift: `cryptography` is already on the production bench (46.0.7,
+      # measured), nothing shipped gains a dependency, and the alternative is having no
+      # automated check at all on ~200 lines of hand-rolled authenticated crypto. The
+      # suite skips itself without the library, so the install is not optional -- a
+      # skipped step reads as a passing one.
+      - name: Chat Phase 4 Web Push crypto (RFC 8291 known-answer vectors)
+        run: |
+          python -m pip install cryptography
+          python -m pytest erpnext_enhancements/tests/test_chat_webpush_crypto.py -q
       # The only automated coverage of triton_chat.py, and `grep -c
       # test_triton_personas .github/workflows/ci.yml` returned 0 until this line:
       # the file shipped and then never ran. Everything it guards -- the SSE relay,
