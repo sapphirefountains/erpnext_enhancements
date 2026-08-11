@@ -146,7 +146,45 @@ class ChatTritonFixture(_ChatTestCase):
 
 	The asker is in one room only. That asymmetry is the whole fixture: every boundary test
 	below is "does anything from the other room reach them".
+
+	**This suite refuses to run on a site that looks real** — see :meth:`setUpClass`.
 	"""
+
+	@classmethod
+	def setUpClass(cls) -> None:
+		"""Refuse a site that looks like production, before anything is written.
+
+		This suite is **not** read-only. It switches chat on in Chat Settings, and it creates
+		users, rooms, messages and chunks. Several tests call ``frappe.db.commit()``, which
+		defeats the rollback a Frappe test case would otherwise give you — so on a real site
+		the leftovers are real rows and the switch stays flipped.
+
+		A warning in a runbook is not a control: this suite was pointed at production on its
+		first outing despite one. Two signals have to agree, and each is false on a live site
+		for an independent reason:
+
+		* ``developer_mode`` is on for a bench you develop against and off for a deployment;
+		* a site with **any** ``Chat Message`` is a site with somebody's conversation on it,
+		  whatever its name or config says.
+
+		The check runs in ``setUpClass`` rather than ``setUp`` so the refusal lands before the
+		first user is created rather than after three of them are.
+		"""
+		reasons = []
+		if not frappe.conf.get("developer_mode"):
+			reasons.append("developer_mode is off, which is how a deployed site is configured")
+		if frappe.db.count("Chat Message"):
+			reasons.append("this site already holds Chat Message rows, i.e. real conversation")
+
+		if reasons:
+			raise RuntimeError(
+				"Refusing to run the Triton bench suite here: "
+				+ "; ".join(reasons)
+				+ ". This suite enables chat in Chat Settings and creates users, rooms and "
+				"messages, and it commits — so a Frappe rollback will not undo it. Run it on a "
+				"development or staging site."
+			)
+		super().setUpClass()
 
 	def setUp(self) -> None:
 		super().setUp()
@@ -185,7 +223,19 @@ class ChatTritonFixture(_ChatTestCase):
 
 		Retrieval is enabled and **Google stays off** — `google_sync_enabled` and both relay
 		flags are untouched, so nothing in this suite can reach Google even by accident.
+
+		The backfill runs first because a Single's declared defaults never reach a row that
+		already exists, so on any site whose Chat Settings predates Phase 5 the numeric dials
+		are all zero and ``validate`` refuses the save below — which is how this was found.
+		Calling the real repair rather than setting the dials inline keeps the suite honest:
+		if the patch stops working, this stops working.
 		"""
+		from erpnext_enhancements.patches.backfill_chat_settings_defaults import (
+			backfill_chat_settings_defaults,
+		)
+
+		backfill_chat_settings_defaults()
+
 		settings = frappe.get_single("Chat Settings")
 		settings.enabled = 1
 		settings.pause_retrieval = 0

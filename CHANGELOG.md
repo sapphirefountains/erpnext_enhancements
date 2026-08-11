@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.277.3] - 2026-08-11
+
+### Fixed
+
+- **Chat Settings could not be saved at all.** v1.271.0 added 37 fields, every one carrying a
+  sensible `default` in the DocType JSON — and on the existing production row all of them read
+  `None`. For the fifteen numeric dials that means **0**, and `validate_retrieval` refuses a
+  zero on each one, deliberately. Opening Chat Settings, changing anything and pressing Save
+  returned fifteen validation errors about fields you never touched.
+- Added `patches/backfill_chat_settings_defaults.py`, registered on `after_install` and
+  `after_migrate`. Fills a field **only when it has no row** in `tabSingles`.
+
+### Notes
+
+- **A `default` on a new field of a Single doctype never reaches the row that already
+  exists.** A Single stores one row per field in `tabSingles`; `bench migrate` adds no row for
+  a newly declared field, and `Document.load_from_db` for a Single loads exactly what is
+  stored and applies no defaults. Defaults are applied by `new_doc()` — which runs on a *fresh
+  install* and never again. So the JSON defaults were correct and reached nothing.
+- **The feature was dormant, so nothing was broken at runtime — the settings page was broken,
+  which is the one page you have to use to switch the feature on.** A bug that only bites when
+  you go to enable something is invisible until exactly the moment it is most in the way.
+- **Missing, not falsy.** The patch fills only fields with no stored row, never one holding a
+  falsy value. An unchecked checkbox and a deliberate `0` are both falsy and are not the same
+  fact, and a patch that restored defaults over stored zeros could silently re-enable
+  something switched off on purpose.
+- **`tests/test_chat_triton_bench.py` now refuses to run on a site that looks real.** It
+  enables chat and creates users, rooms and messages, and several tests commit — so a Frappe
+  rollback does not undo it. Two signals must agree: `developer_mode` on, and zero
+  `Chat Message` rows. The check is in `setUpClass`, so a refusal lands before the first user
+  is created rather than after three.
+- **This is how the bug was found: the suite was pointed at production.** Which is worth
+  recording plainly, because a warning in a runbook is not a control, and the thing that
+  actually prevented damage was unrelated — `validate` refused the save, so the suite aborted
+  in `setUp` before it created a room or flipped a switch. A guard that works by accident is
+  not a guard, hence the one above.
+
 ## [1.277.2] - 2026-08-11
 
 ### Fixed
