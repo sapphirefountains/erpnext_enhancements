@@ -164,5 +164,62 @@ class TestHandlersLookReal(unittest.TestCase):
         )
 
 
+class TestLogRetention(unittest.TestCase):
+    """`default_log_clearing_doctypes` is one line whose absence is invisible.
+
+    `tabNotification Log` grew to 9,717 rows over thirteen months because nothing declared
+    it — not this app, not Frappe, not ERPNext. There is no error for an unregistered log
+    table; there is only a table that never stops growing, discovered when somebody looks.
+    """
+
+    def test_notification_log_is_registered_for_retention(self):
+        retention = ast.literal_eval(top_level_assignments()["default_log_clearing_doctypes"])
+        self.assertIn(
+            "Notification Log",
+            retention,
+            "tabNotification Log is registered for retention in neither frappe's hooks nor "
+            "ERPNext's (both checked), so removing it here means it grows forever again. It "
+            "was at 9,717 rows / 13 months when this was added.",
+        )
+
+    def test_the_retention_value_is_the_one_that_was_argued(self):
+        """Pinned, because the number can only be chosen once.
+
+        `LogSettings.add_default_logtypes` APPENDS rows that are absent and never updates one
+        that exists, so editing this value later changes nothing on a site that has already
+        run a daily maintenance pass — the only remedy is editing `Logs To Clear` by hand.
+        Error Log is the live proof: its hook value is 14 and its row on production says 90.
+
+        90 matches all fifteen rows already on the site. Changing it here is therefore a
+        decision about NEW sites only, and this test is where you notice that.
+        """
+        retention = ast.literal_eval(top_level_assignments()["default_log_clearing_doctypes"])
+        self.assertEqual(retention["Notification Log"], 90)
+
+    def test_every_retained_doctype_is_one_we_verified_supports_clearing(self):
+        """`remove_unsupported_doctypes()` runs FIRST in `run_log_clean_up` and DELETES the
+        `Logs To Clear` row of any doctype whose controller has no `clear_old_logs(days)`.
+
+        So registering a doctype that does not implement it is worse than not registering it:
+        the row is created, silently removed on the next daily run, and retention never
+        happens — with the hook sitting in the file looking like it works. This list is what
+        has actually been checked against the deployed build, and adding a name to the hook
+        without adding it here is the reminder to go and check.
+        """
+        verified = {
+            # frappe/desk/doctype/notification_log/notification_log.py — confirmed on the
+            # deployed v16 build 2026-08-11: `clear_old_logs(days)` exists.
+            "Notification Log",
+        }
+        retention = ast.literal_eval(top_level_assignments()["default_log_clearing_doctypes"])
+        self.assertEqual(
+            set(retention) - verified,
+            set(),
+            "a doctype was registered for retention without confirming its controller "
+            "implements clear_old_logs(days); Frappe will delete its Logs To Clear row on the "
+            "next daily run and retention will silently never happen",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

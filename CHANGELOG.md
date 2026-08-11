@@ -50,6 +50,57 @@ nothing.
   test was verified to fail against a deliberately broken implementation.
 - Field descriptions on the form were updated to say what they now do, and to
   record that until this release they did nothing.
+## [1.270.1] - 2026-08-11
+
+Register `Notification Log` for retention. It has never been registered — not by
+this app, not by Frappe, not by ERPNext — and has grown untrimmed since the site
+was built. ADR 0009 CQ-21 item 1, offered as its own change rather than folded
+into a feature branch.
+
+### Fixed
+
+- **`tabNotification Log` grew forever.** Measured on production 2026-08-11:
+  9,717 rows, oldest 2025-07-09, and `tabLogs To Clear` holds fifteen rows of
+  which none is this one. `default_log_clearing_doctypes = {"Notification Log":
+  90}` is the whole fix: the next `daily_maintenance` run calls
+  `LogSettings.add_default_logtypes()`, which reads the hook and appends the
+  missing row itself — no patch, no fixture, no UI step. It trims 6,322 rows on
+  the first pass.
+
+### Notes
+
+- **90 rather than the ADR's 30, and the number can only be chosen once.**
+  `add_default_logtypes` appends rows that are absent and never updates one that
+  exists, so this value has no effect on a site that already has the row. All
+  fifteen rows already on production are 90 days (bar DuckDB Sync at 45) —
+  including Error Log, whose hook value is 14 and whose row says 90, which is
+  live proof that the hook loses to an existing row. Matching the site's own
+  convention won.
+- **Verified before shipping, because the one-liner is otherwise a no-op:**
+  `remove_unsupported_doctypes()` runs first in `run_log_clean_up` and deletes
+  the `Logs To Clear` row of any doctype whose controller has no
+  `clear_old_logs(days)` — retention would then stop silently and permanently.
+  `NotificationLog` implements it on the deployed build. `test_hooks_integrity`
+  now pins the hook, the value, and the rule that a registered doctype must be
+  one whose support has actually been checked.
+- Registering it also unlocks `clear_log_table("Notification Log")`, which today
+  raises `ValidationError` for any doctype absent from this hook. That helper is
+  the only feasible way to clear thirteen months in one pass — it copies the
+  recent rows to a new table and swaps them rather than issuing a DELETE across
+  most of a table. **Not run by this change**; the daily sweep will get there on
+  its own, and the catch-up is an operator's call.
+- **Not extended to the chat log tables.** `Chat Relay Job` and `Chat Inbound
+  Event` both implement `clear_old_logs` and are both unregistered, so their
+  retention is dead code — but Chat Settings also carries
+  `relay_job_retention_days` and `inbound_event_retention_days`, and declaring a
+  static number here while those fields claim to control it would ship exactly
+  the lying-settings-field trap v1.270.0 removed from the presence constants.
+  That needs the fields wired or removed, which is chat work.
+- CQ-21's second item is a **site-side** change and cannot be a PR:
+  `Push Notification Settings.enable_push_notification_relay = 1` with
+  credentials present but `push_relay_server_url` null, so `is_enabled()` returns
+  True and the send then fails at request time. Either set the URL deliberately
+  or clear the flag — one write on a bench, and a decision rather than a fix.
 
 ## [1.270.0] - 2026-08-11
 
